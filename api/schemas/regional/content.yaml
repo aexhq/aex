@@ -357,18 +357,35 @@ schemas:
       sha256: { type: content_hash, doc: "The exact whole-object hash." }
       contentType: { type: string, min: 1, max: 255, doc: "The media type." }
 
-  UploadPartsRequest:
-    doc: Mint presigned PUT grants for the named parts.
+  UploadPartRequest:
+    doc: >-
+      One part to presign. The part's own SHA-256 is required because S3 verifies
+      it on the way up and the completion manifest checks it again; the server
+      never sees the bytes, so it cannot compute it.
     type: object
     fields:
-      partNumbers: { type: array, max: 1000, items: { type: integer, min: 1, max: 10000 }, doc: "The parts to grant." }
+      partNumber: { type: integer, min: 1, max: 10000, doc: "Which part." }
+      sha256: { type: content_hash, doc: "The part's own SHA-256." }
+      sizeBytes: { type: decimal, doc: "The exact Content-Length to be signed." }
+
+  UploadPartsRequest:
+    doc: >-
+      Mint presigned PUT grants for the named parts. At most 1000 parts per call
+      against the 10000-part ceiling, so a maximal upload needs at least ten calls.
+    type: object
+    fields:
+      parts: { type: array, max: 1000, items: { type: ref, to: UploadPartRequest }, doc: "The parts to grant." }
 
   UploadPartGrant:
-    doc: One presigned PUT grant.
+    doc: >-
+      One presigned PUT grant. The headers must be sent verbatim: they carry the
+      part checksum and length the signature covers, and a PUT without them is
+      rejected by the object store.
     type: object
     fields:
       partNumber: { type: integer, min: 1, max: 10000, doc: "Which part." }
       url: { type: https_url, doc: "The signed URL." }
+      headers: { type: array, max: 32, items: { type: ref, to: HttpHeader }, doc: "Headers the caller must replay verbatim." }
       expiresAt: { type: timestamp, doc: "When the signature stops verifying." }
 
   UploadPartGrants:

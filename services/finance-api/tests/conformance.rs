@@ -42,6 +42,13 @@ impl BillingAuthority for UnreachableAuthority {
         unreachable!("no case in this suite passes the edge")
     }
 
+    async fn account_profile(
+        &self,
+        _organization: aex_wire::ids::OrganizationId,
+    ) -> Result<aex_control_domain::AccountProfile, AuthorityError> {
+        unreachable!("no case in this suite passes the edge")
+    }
+
     async fn policy(
         &self,
         _organization: aex_wire::ids::OrganizationId,
@@ -91,6 +98,29 @@ impl BillingAuthority for UnreachableAuthority {
         _amount: Option<aex_finance_domain::Microusd>,
         _deadline_millis: i64,
     ) -> Result<EffectPreparation, AuthorityError> {
+        unreachable!("no case in this suite passes the edge")
+    }
+
+    async fn provider_customer(
+        &self,
+        _organization: aex_wire::ids::OrganizationId,
+    ) -> Result<Option<aex_payment_contracts::ProviderCustomerRef>, AuthorityError> {
+        unreachable!("no case in this suite passes the edge")
+    }
+
+    async fn billing_contact(
+        &self,
+        _organization: aex_wire::ids::OrganizationId,
+    ) -> Result<aex_payment_contracts::RedactedEmail, AuthorityError> {
+        unreachable!("no case in this suite passes the edge")
+    }
+
+    async fn settle_customer(
+        &self,
+        _effect: aex_payment_contracts::EffectId,
+        _organization: aex_wire::ids::OrganizationId,
+        _result: &aex_payment_contracts::PaymentResult,
+    ) -> Result<Option<aex_payment_contracts::ProviderCustomerRef>, AuthorityError> {
         unreachable!("no case in this suite passes the edge")
     }
 

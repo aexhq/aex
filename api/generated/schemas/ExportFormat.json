@@ -1,10 +1,9 @@
 {
   "$id": "https://schemas.aex.dev/v1/ExportFormat.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The three export formats.",
+  "description": "The two export formats. Parquet is deliberately absent: its encoder is a\ntyped refusal pending a writer that can be pinned to byte-identical\noutput, and admitting an operation guaranteed to fail is worse than\nrefusing the request. Re-adding it is a wire change.\n",
   "enum": [
     "ndjson",
-    "parquet",
     "otlp_json"
   ],
   "title": "ExportFormat",

@@ -5,6 +5,10 @@
       "scope": "account:read"
     },
     {
+      "description": "Decide the caller's own device authorizations and close their own browser session.",
+      "scope": "account:write"
+    },
+    {
       "description": "List and read organizations the caller belongs to.",
       "scope": "organizations:read"
     },
@@ -19,6 +23,10 @@
     {
       "description": "Invite people to an organization.",
       "scope": "memberships:write"
+    },
+    {
+      "description": "Redeem invitations addressed to the caller's own verified email.",
+      "scope": "memberships:accept"
     },
     {
       "description": "List and read workspaces.",

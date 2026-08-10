@@ -641,7 +641,7 @@ fn one_wake_drives_a_turn_from_claim_to_ack() {
 }
 
 #[test]
-fn model_tool_fields_refuse_truncation_and_enable_only_declared_safe_parallelism() {
+fn model_tool_fields_refuse_truncation_and_follow_the_model_on_parallel_emission() {
     let definition = CanonicalToolDef {
         name: aex_wire::ids::ResourceName::parse("todo_read").expect("name"),
         description: BoundedString::new("Read todo state.").expect("description"),
@@ -651,9 +651,14 @@ fn model_tool_fields_refuse_truncation_and_enable_only_declared_safe_parallelism
         .expect("schema"),
         strict: false,
     };
+    // `parallel_safe: false` is the live production shape: `web_fetch` is
+    // advertised on every deployed task and is neither pure nor zero-weight.
+    // It bounds our own concurrency and must not reach the provider request,
+    // because four of the six dialects cannot encode "one tool at a time" and
+    // refuse the whole request rather than send something else.
     let advertised = ToolAdvertisement {
         definitions: vec![definition],
-        parallel_safe: true,
+        parallel_safe: false,
     };
 
     let mut capable_entry = fixture::entry(
@@ -668,6 +673,18 @@ fn model_tool_fields_refuse_truncation_and_enable_only_declared_safe_parallelism
     assert_eq!(fields.tools.len(), 1);
     assert_eq!(fields.choice, ToolChoice::Auto);
     assert!(fields.parallel);
+
+    // The model's own declaration is the only thing that withholds it.
+    let mut without_parallel_entry = fixture::entry(
+        ProviderId::Deepseek,
+        "deepseek-chat",
+        CapabilitySet::from_slice(&[Capability::Tools]),
+    );
+    without_parallel_entry.limits.max_tools = 1;
+    let without_parallel = fixture::qualified(without_parallel_entry);
+    let fields = super::run::model_tool_fields(&without_parallel, advertised.clone())
+        .expect("one declared tool is within the model limit");
+    assert!(!fields.parallel);
 
     let mut bounded_entry = fixture::entry(
         ProviderId::Deepseek,

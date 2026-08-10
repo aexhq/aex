@@ -33,7 +33,6 @@ members = [
     "crates/aex-control-aurora",
     "crates/aex-control-domain",
     "crates/aex-finance-app",
-    "crates/aex-finance-aurora",
     "crates/aex-finance-domain",
     "crates/aex-hands-agent",
     "crates/aex-hands-control-aws",

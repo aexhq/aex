@@ -42,6 +42,10 @@ use aex_session_dynamodb::transactions::operation_cancel_owned;
 use aex_session_dynamodb::wire_pending::{
     Approval, ApprovalBinding, ApprovalStatus, StoredOperation,
 };
+use aex_usage_query_dynamodb::expressions::{
+    AggregateRequest, CoarseRequest, CoverageRow, Generation, QueryError,
+};
+use aex_usage_query_dynamodb::store::{AggregatePageRows, CoarsePageRows, UsageProjectionReads};
 use aex_wire::CanonicalJson;
 use aex_wire::cursor::Cursor;
 use aex_wire::error::{ErrorCode, WireError};
@@ -771,6 +775,28 @@ impl RegistryStore for FakeRegistry {
         Err(StoreError::Contended)
     }
 
+    async fn transition_upload_fenced(
+        &self,
+        _upload: UploadId,
+        _from: UploadState,
+        _to: UploadState,
+        _provider_upload_id: &str,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn record_part_declarations(&self, _upload: &StoredUpload) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn settle_ready(&self, _upload: &StoredUpload) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn delete_upload(&self, _upload: &StoredUpload) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
     async fn begin_completion(
         &self,
         _upload: UploadId,
@@ -840,6 +866,33 @@ fn build_with_operations(
     )
 }
 
+/// The physical `session-authority` name the mount fixture binds.
+const SESSION_TABLE: &str = "dev-eu-west-1-session-authority";
+
+/// A `DynamoDB` client whose transport refuses every request.
+///
+/// The mount assertions here exercise routing and the absence sweep, never a
+/// command's durable effect. A client that answers nothing keeps that honest:
+/// a test that started depending on a stored row would fail rather than pass
+/// against an invented one.
+fn offline_dynamodb() -> aws_sdk_dynamodb::Client {
+    let (http_client, _receiver) = aws_smithy_http_client::test_util::capture_request(None);
+    aws_sdk_dynamodb::Client::from_conf(
+        aws_sdk_dynamodb::Config::builder()
+            .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
+            .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
+            .credentials_provider(aws_sdk_dynamodb::config::Credentials::new(
+                "AKIDTESTTESTTESTTEST",
+                "test-secret",
+                None,
+                None,
+                "aex-tests",
+            ))
+            .http_client(http_client)
+            .build(),
+    )
+}
+
 fn build_with_authorities(
     custody: Arc<FakeCustody>,
     registry: Arc<FakeRegistry>,
@@ -868,6 +921,13 @@ fn shared_with(
         registry: registry as Arc<dyn RegistryStore>,
         sessions: sessions as Arc<dyn SessionQueries>,
         operations: operations as Arc<dyn OperationApiStore>,
+        commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(
+            offline_dynamodb(),
+            SESSION_TABLE,
+        ),
+        tables: aex_session_dynamodb::plan::RegionalTables::composed("dev", "eu-west-1"),
+        authority: offline_dynamodb(),
+        usage: Arc::new(FakeUsage::default()) as Arc<dyn UsageProjectionReads>,
         cursor_keys: Arc::new(cursor_keys()),
     })
 }
@@ -2097,13 +2157,42 @@ fn the_other_half_of_each_split_fragment_is_unreachable_here() {
 
 /// Every served route's declared success status is what the router actually
 /// answers, because the handler never names one.
+///
+/// The handler's *return type* is what the generated dispatcher maps onto a
+/// status — `Accepted` is the route's declared `202`, `Created` its `201`,
+/// `NoContent` its `204` — so a handler that wanted a different status would
+/// have to return a type its trait method does not declare. This asserts the
+/// declared status stays inside that closed set; it deliberately no longer
+/// asserts `200`, which was only ever true while every served route was a read.
 #[test]
 fn no_served_route_lets_a_handler_choose_a_status() {
     for id in Routes::served() {
+        let declared = route(id).success_status;
+        assert!(
+            matches!(declared, 200 | 201 | 202 | 204),
+            "`{id}` declares {declared}, which no handler return type can render"
+        );
+    }
+}
+
+/// The first mounted session mutations answer the durable-operation shape.
+///
+/// `202 Operation` for all three, and the response shape never varies with the
+/// runtime classification: an inline stop returns an already-terminal operation
+/// carrying its result, a paged one returns the same envelope with `status`
+/// still running. Only the `status` field differs (D-3).
+#[test]
+fn the_mounted_session_mutations_are_durable_operation_admissions() {
+    for id in [
+        RouteId::SessionStop,
+        RouteId::SessionTrash,
+        RouteId::SessionRestore,
+    ] {
+        assert!(Routes::served().contains(&id), "`{id}` must be mounted");
         assert_eq!(
             route(id).success_status,
-            200,
-            "`{id}` answers a status the handler cannot name"
+            202,
+            "`{id}` admits a durable operation rather than returning a resource"
         );
     }
 }
@@ -2413,4 +2502,252 @@ async fn an_unreadable_registry_fails_the_listing_rather_than_publishing_a_short
             .all(|code| !code.retryable()),
         "the listing declares no transient code, which is why the refusal is internal"
     );
+}
+
+// --- usage -----------------------------------------------------------------
+
+/// A usage projection that answers whatever the case needs.
+///
+/// `unavailable` is the interesting mode: it is how the "one failed partition
+/// fails the whole query" rule is proved without an engine.
+#[derive(Debug, Default)]
+struct FakeUsage {
+    /// Whether the generation pointer has ever been written.
+    generation: Option<Generation>,
+    /// Whether every read fails the way a throttled table fails.
+    unavailable: bool,
+}
+
+#[async_trait::async_trait]
+impl UsageProjectionReads for FakeUsage {
+    async fn current_generation(&self) -> Result<Option<Generation>, QueryError> {
+        if self.unavailable {
+            return Err(QueryError::Unavailable {
+                reason: "ThrottlingException".to_owned(),
+            });
+        }
+        Ok(self.generation)
+    }
+
+    async fn coverage(
+        &self,
+        _generation: Generation,
+        _workspace: &aex_usage_domain::wire_pending::WorkspaceId,
+        _category: aex_usage_domain::meter::PublicCategory,
+    ) -> Result<Option<CoverageRow>, QueryError> {
+        Ok(None)
+    }
+
+    async fn coverage_eventual(
+        &self,
+        _generation: Generation,
+        _workspace: &aex_usage_domain::wire_pending::WorkspaceId,
+        _category: aex_usage_domain::meter::PublicCategory,
+    ) -> Result<Option<CoverageRow>, QueryError> {
+        Ok(None)
+    }
+
+    async fn aggregates(
+        &self,
+        _request: &AggregateRequest<'_>,
+    ) -> Result<AggregatePageRows, QueryError> {
+        Ok(AggregatePageRows {
+            rows: Vec::new(),
+            next: None,
+        })
+    }
+
+    async fn coarse(&self, _request: &CoarseRequest<'_>) -> Result<CoarsePageRows, QueryError> {
+        Ok(CoarsePageRows {
+            rows: Vec::new(),
+            next: None,
+        })
+    }
+}
+
+fn usage_router(usage: Arc<FakeUsage>) -> axum::Router {
+    let shared = Arc::new(Shared {
+        custody: Arc::new(FakeCustody::default()) as Arc<dyn SecretCustodyStore>,
+        custody_table: CUSTODY_TABLE.to_owned(),
+        registry: Arc::new(FakeRegistry::default()) as Arc<dyn RegistryStore>,
+        sessions: Arc::new(FakeSessions::default()) as Arc<dyn SessionQueries>,
+        operations: Arc::new(FakeOperations::default()) as Arc<dyn OperationApiStore>,
+        commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(
+            offline_dynamodb(),
+            SESSION_TABLE,
+        ),
+        tables: aex_session_dynamodb::plan::RegionalTables::composed("dev", "eu-west-1"),
+        authority: offline_dynamodb(),
+        usage: usage as Arc<dyn UsageProjectionReads>,
+        cursor_keys: Arc::new(cursor_keys()),
+    });
+    mount_unary(
+        Arc::new(Dispatcher::new(shared)),
+        Arc::new(Admit),
+        aex_wire::dispatch::RequestLimits::DEFAULT,
+    )
+    .expect("the served set mounts")
+    .router
+}
+
+async fn usage_query(usage: Arc<FakeUsage>, body: serde_json::Value) -> (u16, serde_json::Value) {
+    let response = usage_router(usage)
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/billing/usage/query")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .expect("a request"),
+        )
+        .await
+        .expect("a response");
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("a body");
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+fn usage_body(limit: Option<u32>, bucket: &str, gte: &str, lt: &str) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "bucket": bucket,
+        "timeRange": { "gte": gte, "lt": lt }
+    });
+    if let Some(limit) = limit {
+        body["limit"] = serde_json::json!(limit);
+    }
+    body
+}
+
+#[tokio::test]
+async fn a_usage_page_above_the_item_ceiling_is_refused_rather_than_clamped() {
+    // A caller silently given fewer items than it asked for cannot tell a short
+    // page from the end of a collection, and this is a money read.
+    let (status, body) = usage_query(
+        Arc::new(FakeUsage::default()),
+        usage_body(
+            Some(101),
+            "day",
+            "2026-08-01T00:00:00.000Z",
+            "2026-08-02T00:00:00.000Z",
+        ),
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["error"]["code"], "invalid_request");
+    assert_eq!(body["error"]["message"], "page limit");
+
+    let (status, _) = usage_query(
+        Arc::new(FakeUsage {
+            generation: Some(Generation::FIRST),
+            unavailable: false,
+        }),
+        usage_body(
+            Some(100),
+            "day",
+            "2026-08-01T00:00:00.000Z",
+            "2026-08-02T00:00:00.000Z",
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "the ceiling itself is admissible");
+}
+
+#[tokio::test]
+async fn a_misaligned_or_over_wide_usage_range_is_refused_with_invalid_query() {
+    let cases = [
+        // A part-day at day grain: clamping would report a wider interval than
+        // was asked for.
+        (
+            "day",
+            "2026-08-01T06:00:00.000Z",
+            "2026-08-02T00:00:00.000Z",
+        ),
+        // Over the 400-day span cap.
+        (
+            "day",
+            "2025-01-01T00:00:00.000Z",
+            "2026-08-01T00:00:00.000Z",
+        ),
+        // An inverted range answers nothing rather than everything.
+        (
+            "day",
+            "2026-08-02T00:00:00.000Z",
+            "2026-08-01T00:00:00.000Z",
+        ),
+    ];
+    for (bucket, gte, lt) in cases {
+        let (status, body) = usage_query(
+            Arc::new(FakeUsage {
+                generation: Some(Generation::FIRST),
+                unavailable: false,
+            }),
+            usage_body(None, bucket, gte, lt),
+        )
+        .await;
+        assert_eq!(status, 400, "{gte}..{lt}: {body}");
+        assert_eq!(body["error"]["code"], "invalid_query", "{gte}..{lt}");
+    }
+}
+
+#[tokio::test]
+async fn a_failed_projection_read_fails_the_whole_usage_query() {
+    // No partial page and no per-category degradation: a page missing a
+    // category is a bill missing a line.
+    let (status, body) = usage_query(
+        Arc::new(FakeUsage {
+            generation: None,
+            unavailable: true,
+        }),
+        usage_body(
+            None,
+            "day",
+            "2026-08-01T00:00:00.000Z",
+            "2026-08-02T00:00:00.000Z",
+        ),
+    )
+    .await;
+    assert_eq!(status, 503, "{body}");
+    assert_eq!(body["error"]["code"], "usage_unavailable");
+}
+
+#[tokio::test]
+async fn a_usage_projection_that_was_never_cut_over_says_so_rather_than_answering_zero() {
+    // An absent generation pointer is not a synonym for the first generation.
+    // Answering an empty page would be a confidently wrong bill of zero.
+    let (status, body) = usage_query(
+        Arc::new(FakeUsage::default()),
+        usage_body(
+            None,
+            "day",
+            "2026-08-01T00:00:00.000Z",
+            "2026-08-02T00:00:00.000Z",
+        ),
+    )
+    .await;
+    assert_eq!(status, 503, "{body}");
+    assert_eq!(body["error"]["code"], "usage_unavailable");
+}
+
+#[tokio::test]
+async fn an_over_budget_usage_total_is_refused_rather_than_paged() {
+    // A partial total is a wrong number rather than a short answer, so there is
+    // no cursor that could continue it.
+    let (status, body) = usage_query(
+        Arc::new(FakeUsage {
+            generation: Some(Generation::FIRST),
+            unavailable: false,
+        }),
+        usage_body(
+            None,
+            "total",
+            "2026-01-01T06:00:00.000Z",
+            "2026-06-01T06:00:00.000Z",
+        ),
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["error"]["code"], "invalid_query");
 }

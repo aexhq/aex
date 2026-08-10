@@ -13,7 +13,7 @@ use aex_control_domain::epoch::Epoch;
 use aex_identity_domain::credential::{Pepper, PresentedDigest, verifier};
 use aex_internal_contracts::assertion::{AssertionAudience, AudienceSet};
 use aex_regional_http::authz::{
-    MAX_PARAMETER_BYTES, RegionalProjection, TrustError, parse_cursor_key_ring, parse_pepper_ring,
+    MAX_DOCUMENT_BYTES, RegionalProjection, TrustError, parse_cursor_key_ring, parse_pepper_ring,
 };
 use aex_regional_http::context::{AccountState, EffectiveLimits};
 use aex_regional_http::credential::{
@@ -44,7 +44,7 @@ use uuid::Uuid;
 
 // --- fixtures -------------------------------------------------------------------
 
-const PEPPER_PARAM: &str = "/aex/dev/credential-pepper/ring";
+const PEPPER_SECRET: &str = "aex/dev/central/token-pepper";
 const CURSOR_PARAM: &str = "/aex/dev/regional/cursor-signing-key";
 const NOW_MS: i64 = 1_754_051_698_000;
 
@@ -116,7 +116,7 @@ fn pepper_document(entries: &[(u16, [u8; 32])]) -> String {
 }
 
 fn ring() -> PepperRing {
-    parse_pepper_ring(PEPPER_PARAM, &pepper_document(&[(1, PEPPER)])).expect("a usable ring")
+    parse_pepper_ring(PEPPER_SECRET, &pepper_document(&[(1, PEPPER)])).expect("a usable ring")
 }
 
 /// The verifier the control plane stores for a token, under `pepper`.
@@ -215,9 +215,9 @@ fn a_cursor_document_with_an_unknown_member_is_refused() {
 
 #[test]
 fn a_parameter_past_the_decode_bound_is_refused_before_it_is_parsed() {
-    let document = " ".repeat(MAX_PARAMETER_BYTES + 1);
+    let document = " ".repeat(MAX_DOCUMENT_BYTES + 1);
     assert!(matches!(
-        parse_pepper_ring(PEPPER_PARAM, &document),
+        parse_pepper_ring(PEPPER_SECRET, &document),
         Err(TrustError::TooLarge { .. })
     ));
     assert!(matches!(
@@ -740,7 +740,7 @@ async fn a_rotation_does_not_invalidate_a_pre_rotation_credential() {
     // too. This is the case a ring that only held "the current pepper" would turn
     // into a total outage for every credential minted before the rotation.
     let rotated = parse_pepper_ring(
-        PEPPER_PARAM,
+        PEPPER_SECRET,
         &pepper_document(&[(1, PEPPER), (2, [22; 32])]),
     )
     .expect("a usable ring");

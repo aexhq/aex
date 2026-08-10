@@ -108,6 +108,8 @@ pub mod ceremony {
     pub const CREATE_ORGANIZATION: &str = "control.create_organization";
     /// `POST /api/organizations/{org}/invitations`.
     pub const CREATE_INVITATION: &str = "control.create_invitation";
+    /// `POST /api/invitations/acceptances`.
+    pub const ACCEPT_INVITATIONS: &str = "control.accept_invitations";
     /// `POST /api/workspaces`, first half.
     pub const BEGIN_WORKSPACE_PROVISION: &str = "control.begin_workspace_provision";
     /// `POST /api/workspaces`, second half.
@@ -422,12 +424,19 @@ impl CancelOperation {
     ///
     /// # Errors
     ///
-    /// Always returns [`ControlError::NotCancelable`] for an operation still
-    /// running, and [`ControlError::NotFound`] for one that does not exist.
-    /// Neither central operation kind is cancelable once accepted: by the time
-    /// deletion is accepted the keys are already revoked, and provisioning
-    /// returns a workspace rather than an operation. Saying so is honest;
-    /// pretending otherwise is what the system this replaces did by accident.
+    /// Always returns [`ControlError::NotCancelable`], and
+    /// [`ControlError::NotFound`] for an operation that does not exist. Neither
+    /// central operation kind is cancelable once accepted: by the time deletion
+    /// is accepted the keys are already revoked, and provisioning returns a
+    /// workspace rather than an operation. Saying so is honest; pretending
+    /// otherwise is what the system this replaces did by accident.
+    ///
+    /// **A terminal operation refuses too.** It used to answer `200` with the
+    /// row unchanged, which is the same response a cancellation that worked
+    /// would produce — so a caller could not tell "I cancelled it" from "I did
+    /// nothing." One refusal covers both states, and
+    /// `409 operation_not_cancelable` ("the operation has passed its
+    /// cancellation point") describes a finished operation exactly.
     pub async fn run(
         store: &dyn ControlStore,
         operation_id: Uuid,
@@ -438,7 +447,6 @@ impl CancelOperation {
         };
         match operation.cancel(now) {
             Ok(cancelled) => Ok(cancelled),
-            Err(aex_control_domain::OperationTransition::AlreadyTerminal) => Ok(operation),
             Err(_) => Err(ControlError::NotCancelable),
         }
     }

@@ -109,6 +109,7 @@
     "spend_reservation",
     "operation",
     "idempotency_receipt",
+    "outbox_event",
     "regional_workspace_control"
   ],
   "iam": [

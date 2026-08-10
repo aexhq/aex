@@ -31,8 +31,10 @@ pub struct ActivationResources {
     pub context_bytes: u64,
     /// Maximum provider stream buffer held by one activation.
     pub stream_buffer_bytes: u64,
-    /// Provider streams required by one provider/network dispatch.
+    /// Provider streams required by one provider dispatch.
     pub provider_streams: u64,
+    /// Network-lane units required by one unit of tool concurrency weight.
+    pub network_lane: u64,
     /// Hands RPC slots required by one Hands dispatch.
     pub hands_rpcs: u64,
 }
@@ -56,6 +58,9 @@ impl ActivationResources {
         }
         if self.provider_streams == 0 {
             return Err("the activation provider-stream reservation must be positive");
+        }
+        if self.network_lane == 0 {
+            return Err("the activation network-lane reservation must be positive");
         }
         if self.hands_rpcs == 0 {
             return Err("the activation Hands reservation must be positive");
@@ -319,6 +324,7 @@ mod tests {
             context_bytes,
             stream_buffer_bytes: 1,
             provider_streams: 1,
+            network_lane: 1,
             hands_rpcs: 1,
         }
     }
@@ -512,6 +518,7 @@ mod tests {
                 context_bytes: 64,
                 stream_buffer_bytes: 8,
                 provider_streams: 1,
+                network_lane: 1,
                 hands_rpcs: 1,
             },
         );

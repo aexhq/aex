@@ -1,0 +1,42 @@
+# The settlement backlog, at the scale where cross-organization contention
+# starts to matter.
+#
+# Fifty thousand queued facts across five hundred organizations is the shape
+# that separates "the settlement worker is slow" from "the settlement worker has
+# serialized every organization behind one another". Both look like a growing
+# queue; only one of them recovers when the queue stops growing.
+#
+# The starvation clause is the part that is about money rather than throughput.
+# Payment ingest and settlement share Aurora; a backlog that starves ingest
+# means a customer's top-up does not land while the platform is busy charging
+# them, and the first visible symptom is a paused account with money in flight.
+#
+# Open arrival, because facts arrive from the regional planes on their own
+# schedule; a closed profile would let the worker set its own input rate, which
+# is exactly the failure mode being measured.
+id = "finance-backlog"
+owner = "central-finance"
+target = "aex-live-finance-settlement-worker"
+tier = "t3"
+duration = "60m"
+ttl = "4h"
+
+[arrival]
+mode = "open"
+rate_per_s = 250.0
+mix = { settlement_fact = 0.8, payment_ingest = 0.15, reversal = 0.05 }
+
+[[gate]]
+id = "LOAD-FINANCE-BACKLOG"
+kind = "budget"
+blocking = true
+assert = "50000 queued facts across 500 orgs settle with bounded queueing && no cross-org serialization storm && no starvation of payment ingest && no unbounded Aurora growth"
+source = "03-central-finance-schema.md G9"
+
+[report]
+metrics = [
+  "completed_per_s", "queue_delay_ms", "time_to_first_token_ms", "end_to_end_ms",
+  "provider_wait_ms", "local_cpu_ms", "rss_peak_bytes", "open_fds", "tokio_tasks",
+  "sockets", "journal_bytes", "checkpoint_bytes", "affinity_hit_rate", "scale_event_s",
+  "recovery_s", "duplicate_effects", "gaps", "cost_micro_usd_per_completed_turn",
+]

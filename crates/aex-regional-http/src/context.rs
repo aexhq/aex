@@ -144,6 +144,10 @@ impl RequestContext {
             request_id: self.request_id.clone(),
             route: self.route,
             principal: self.auth.principal,
+            // No regional route admits a browser session: the regional edge
+            // resolves workspace keys and account assertions only, so there is
+            // never a session id to carry.
+            actor_session_id: None,
             granted_scopes: self.auth.scopes.clone(),
             idempotency_key: self
                 .idempotency

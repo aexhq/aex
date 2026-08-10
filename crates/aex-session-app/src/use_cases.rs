@@ -12,15 +12,16 @@
 use std::collections::BTreeSet;
 use std::num::NonZeroU64;
 
-use aex_operation_domain::operation::{OperationResult, OperationScope};
+use aex_operation_domain::cursor::{ContinuationCursor, CursorPosition};
+use aex_operation_domain::operation::{Execution, OperationResult, OperationScope, Progress};
 use aex_operation_domain::{AdmissionOutcome, AdmitRequest, DeletionState, OperationKind};
 use aex_secret_domain::{CustodyRejection, OwnerKeyEdgeId, SecretName, admit_custody, rebind};
 use aex_secret_domain::{SessionCustody, WorkspaceSecret};
 use aex_session_domain::{
     CancelCause, CommandClass, DeletionRejection, Message, MessageRole, MessageState, PurgeCascade,
-    QueueRun, Run, Session, SessionDomainRunError, SessionStatus, TerminalAttempt, WorkAdmission,
-    acquire_mutation_guard, cancel_session_work, claim_terminal, pause_gate, purge, queue, restore,
-    start as start_run_domain, trash,
+    QueueRun, Run, Session, SessionDomainRunError, SessionRevision, SessionStatus, TerminalAttempt,
+    WorkAdmission, acquire_mutation_guard, cancel_session_fence, claim_terminal, pause_gate, purge,
+    queue, restore, start as start_run_domain, trash,
 };
 use aex_wire::canonical::{CanonicalJson, to_jcs_string};
 use aex_wire::error::ErrorCode;
@@ -162,16 +163,21 @@ pub async fn admit_message(
     context: &AppContext<'_>,
     command: &SendMessage,
 ) -> Result<Planned<(Message, Run)>, AppError> {
-    let snapshot = context
+    let materialized = context
         .sessions
-        .load_session(command.workspace, command.session)
+        .load_snapshot(command.workspace, command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PausableMutation).await?;
+    gate(
+        context,
+        &materialized.session,
+        CommandClass::PausableMutation,
+    )
+    .await?;
 
     let grant = context
         .reservations
         .prepare(ReservationRequest {
-            organization: snapshot.session.organization,
+            organization: materialized.session.organization,
             workspace: command.workspace,
             max_spend_cents: command.max_spend_cents.get(),
         })
@@ -186,7 +192,7 @@ pub async fn admit_message(
             reservation: grant.reservation,
             deadline: command.deadline,
         },
-        &snapshot.session,
+        &materialized.session,
         now,
     )?;
 
@@ -194,7 +200,7 @@ pub async fn admit_message(
         id: command.message,
         session: command.session,
         run: Some(command.run),
-        agent: snapshot.root_agent.id,
+        agent: materialized.root_agent.id,
         role: MessageRole::User,
         // A user message is born sealed.
         state: MessageState::Sealed,
@@ -203,12 +209,12 @@ pub async fn admit_message(
         sealed_at: Some(now),
     };
 
-    let mut head = snapshot.session.clone();
+    let mut head = materialized.session.clone();
     head.status = SessionStatus::Running;
     head.active_run = Some(command.run);
-    head.revision = snapshot.session.revision.next();
+    head.revision = materialized.session.revision.next();
 
-    let mut conditions = live_conditions(&snapshot.session);
+    let mut conditions = live_conditions(&materialized.session);
     conditions.push(Condition::SessionActiveRun {
         session: command.session,
         expected: None,
@@ -222,7 +228,7 @@ pub async fn admit_message(
     });
     conditions.push(Condition::CancellationEpoch {
         session: command.session,
-        expected: snapshot.session.cancellation,
+        expected: materialized.session.cancellation,
     });
     conditions.push(Condition::ReservationOpen {
         reservation: grant.reservation,
@@ -237,7 +243,7 @@ pub async fn admit_message(
             Write::PutSessionHead(Box::new(head)),
         ],
         after_commit: vec![Hint::WakeAgent {
-            agent: snapshot.root_agent.id,
+            agent: materialized.root_agent.id,
             reason: aex_internal_contracts::wake::WakeHint::SessionWork {
                 session: command.session,
             },
@@ -265,21 +271,21 @@ pub async fn start_run(
         .sessions
         .load_session(command.workspace, command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PausableMutation).await?;
+    gate(context, &snapshot, CommandClass::PausableMutation).await?;
 
     let stored = context
         .sessions
         .load_run(command.session, command.run)
         .await?;
-    if snapshot.session.active_run != Some(command.run) {
+    if snapshot.active_run != Some(command.run) {
         return Err(AppError::Run(SessionDomainRunError::SessionBusy {
-            active: snapshot.session.active_run.unwrap_or(command.run),
+            active: snapshot.active_run.unwrap_or(command.run),
         }));
     }
 
-    let commit = start_run_domain(&stored, &snapshot.session, context.clock.now())?;
+    let commit = start_run_domain(&stored, &snapshot, context.clock.now())?;
 
-    let mut conditions = live_conditions(&snapshot.session);
+    let mut conditions = live_conditions(&snapshot);
     conditions.push(Condition::RunNonTerminal {
         session: command.session,
         run: command.run,
@@ -333,7 +339,7 @@ pub async fn commit_terminal(
 
     let commit = claim_terminal(
         &stored,
-        &snapshot.session,
+        &snapshot,
         agent.id,
         agent.fence(),
         &command.open_messages,
@@ -366,16 +372,16 @@ pub async fn commit_terminal(
             },
             Condition::SessionRevision {
                 session: command.session,
-                expected: snapshot.session.revision,
+                expected: snapshot.revision,
             },
             Condition::CancellationEpoch {
                 session: command.session,
-                expected: snapshot.session.cancellation,
+                expected: snapshot.cancellation,
             },
             Condition::DeletionState {
                 session: command.session,
-                expected: snapshot.session.deletion.state,
-                epoch: snapshot.session.deletion.epoch,
+                expected: snapshot.deletion.state,
+                epoch: snapshot.deletion.epoch,
             },
             Condition::AgentFence {
                 session: command.session,
@@ -394,10 +400,42 @@ pub async fn commit_terminal(
     })
 }
 
+/// The largest number of agent rows one stop step examines.
+///
+/// Derived from the transaction budget rather than chosen (D-4): a step also
+/// writes the operation row and the session head, so its agent batch may never
+/// exceed `MAX_ACTIONS - 2`. The landed use case read a flat 100 and could
+/// therefore build a 101-action plan that `validate` rejected as an internal
+/// fault.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "`MAX_ACTIONS` is `DynamoDB`'s hard ceiling of 100 and the static assertion below               refuses any value a `u16` could not hold"
+)]
+pub const STOP_BATCH_AGENTS: u16 = (crate::plan::MAX_ACTIONS as u16) - 2;
+
+const _: () = assert!(
+    crate::plan::MAX_ACTIONS > 2 && crate::plan::MAX_ACTIONS <= u16::MAX as usize,
+    "the stop batch is derived from the action budget and must fit a bounded page"
+);
+
+/// The customer-visible phase a paged stop reports while it settles agents.
+const STOP_PHASE: &str = "stopping";
+
 /// Stops a session's work.
 ///
 /// Pause exempt: stopping is exactly what a paused customer needs to be able to
 /// do.
+///
+/// # Paged, never truncated
+///
+/// The landed implementation read one 100-agent page, ignored `more`, and set
+/// the head to `Idle` regardless — so a session with more agents than one page
+/// kept spending after the customer was told it had stopped. This reads a
+/// bounded batch, and when more rows remain it admits the operation as
+/// [`Execution::Continued`] with a [`CursorPosition::Stop`] cursor. The fence
+/// that actually stops work — the closed `WorkAdmission` and the bumped
+/// `CancellationEpoch` — closes on this first step; only the **final** step
+/// moves the head to `Idle` and terminalizes the operation (D-2).
 ///
 /// # Errors
 ///
@@ -411,80 +449,399 @@ pub async fn stop_session(
         .sessions
         .load_session(command.workspace, command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PauseExempt).await?;
+    gate(context, &snapshot, CommandClass::PauseExempt).await?;
 
     let now = context.clock.now();
     let existing = context
         .sessions
         .load_operation(command.workspace, command.operation)
         .await?;
-    let request = AdmitRequest {
+    if let Some(stored) = existing.as_ref() {
+        // An exact replay returns the stored envelope and writes nothing. It
+        // must not re-read agents, re-bump the epoch or re-latch: the first
+        // admission already closed the fence.
+        let operation = admitted(
+            Some(stored),
+            Some(&snapshot.deletion),
+            &stop_request(command, None, None),
+            now,
+        )?;
+        let plan = empty_plan(TransactionIntent::StopSession);
+        plan.validate()?;
+        return Ok(Planned {
+            plan,
+            projected: operation,
+        });
+    }
+
+    let page = context
+        .sessions
+        .list_agent_cancel_targets(
+            command.session,
+            None,
+            crate::ports::PageBudget {
+                limit: STOP_BATCH_AGENTS,
+            },
+        )
+        .await?;
+    let step = StopBatch::of(&snapshot, &page);
+
+    let admit_request = stop_request(
+        command,
+        Some(step.execution),
+        step.inline_result(command.session)?,
+    );
+    let admitted_operation = admitted(None, Some(&snapshot.deletion), &admit_request, now)?;
+    let operation = step.shape_operation(&admitted_operation, now)?;
+
+    Ok(Planned {
+        plan: step.plan(command.session, &operation, None)?,
+        projected: operation,
+    })
+}
+
+/// Advances a continued stop by exactly one bounded batch.
+///
+/// The step is idempotent by construction: its plan names the cursor it
+/// advances **from** ([`Condition::OperationCursorAt`]), so a duplicate
+/// delivery fails its condition and writes nothing. `Succeeded` is written only
+/// by the step that consumes the final page — there is no partial-success
+/// status and no "completed with residue" flag (D-4).
+///
+/// # Errors
+///
+/// Returns [`AppError`] when a port read fails, the operation is absent, is not
+/// a paged stop, or has already terminalized.
+pub async fn continue_stop(
+    context: &AppContext<'_>,
+    command: &SessionCommand,
+) -> Result<Planned<aex_operation_domain::Operation>, AppError> {
+    let snapshot = context
+        .sessions
+        .load_session(command.workspace, command.session)
+        .await?;
+    let stored = context
+        .sessions
+        .load_operation(command.workspace, command.operation)
+        .await?
+        .ok_or(crate::ports::PortError::NotFound { kind: "operation" })?;
+    if stored.kind != OperationKind::SessionStop || stored.status.is_terminal() {
+        return Err(AppError::Transition(
+            aex_operation_domain::TransitionError::WrongStatus {
+                from: stored.status,
+                to: aex_operation_domain::operation::OperationStatus::Running,
+            },
+        ));
+    }
+    let from = stored.cursor.clone();
+    let next_agent = match from.as_ref().map(|cursor| &cursor.position) {
+        Some(CursorPosition::Stop { next_agent }) => *next_agent,
+        _ => {
+            return Err(AppError::Port(crate::ports::PortError::Corrupt {
+                kind: "operation",
+                reason: "a continued stop carries no stop cursor",
+            }));
+        }
+    };
+
+    let now = context.clock.now();
+    let page = context
+        .sessions
+        .list_agent_cancel_targets(
+            command.session,
+            Some(next_agent),
+            crate::ports::PageBudget {
+                limit: STOP_BATCH_AGENTS,
+            },
+        )
+        .await?;
+    let step = StopBatch::of(&snapshot, &page);
+    let operation = step.advance(&stored, command.session, now)?;
+
+    Ok(Planned {
+        plan: step.plan(command.session, &operation, from)?,
+        projected: operation,
+    })
+}
+
+/// What one stop step observed on the head it read.
+///
+/// Held rather than recomputed: every one of these values is re-asserted as a
+/// condition (D-11), and deriving them back out of the head the step *writes*
+/// would silently assert the value the step is establishing instead of the one
+/// it saw.
+#[derive(Debug, Clone, Copy)]
+struct ObservedHead {
+    revision: SessionRevision,
+    cancellation: aex_session_domain::CancellationEpoch,
+    deletion_state: DeletionState,
+    deletion_epoch: aex_operation_domain::DeletionEpoch,
+}
+
+/// One bounded stop batch, resolved against the session it read.
+struct StopBatch {
+    /// The agents this step settles, already filtered to the active ones.
+    settling: Vec<crate::ports::AgentCancelTarget>,
+    /// Where the next step resumes, when one is needed.
+    next: Option<AgentId>,
+    /// How many agent rows this step examined.
+    examined: u64,
+    /// What the step read.
+    observed: ObservedHead,
+    /// The head this step writes.
+    head: Session,
+    /// What the whole operation is, given what this step found.
+    execution: Execution,
+}
+
+impl StopBatch {
+    fn of(session: &Session, page: &crate::ports::AgentCancelPage) -> Self {
+        let settling: Vec<crate::ports::AgentCancelTarget> = page
+            .targets
+            .iter()
+            .filter(|target| target.active)
+            .copied()
+            .collect();
+        let fence = cancel_session_fence(session, CancelCause::StopRequested, !settling.is_empty());
+        let last = page.next.is_none();
+
+        let mut head = session.clone();
+        head.revision = session.revision.next();
+        head.cancellation = fence.cancellation;
+        head.work_admission = fence.admission;
+        if last {
+            head.active_run = None;
+            // A trashed or purging session keeps its lifecycle status: stopping
+            // its work must never resurrect it into the live projection. The
+            // landed implementation set `Idle` unconditionally.
+            if session.deletion.state == DeletionState::Live {
+                head.status = SessionStatus::Idle;
+            }
+        }
+
+        Self {
+            settling,
+            next: page.next,
+            examined: page.targets.len() as u64,
+            observed: ObservedHead {
+                revision: session.revision,
+                cancellation: session.cancellation,
+                deletion_state: session.deletion.state,
+                deletion_epoch: session.deletion.epoch,
+            },
+            head,
+            execution: if last {
+                Execution::Inline
+            } else {
+                Execution::Continued
+            },
+        }
+    }
+
+    /// The terminal result, present only when this step consumes the final page.
+    fn inline_result(&self, session: SessionId) -> Result<Option<OperationResult>, AppError> {
+        if self.execution != Execution::Inline {
+            return Ok(None);
+        }
+        Ok(Some(self.result(session, !self.settling.is_empty())?))
+    }
+
+    fn result(&self, session: SessionId, changed: bool) -> Result<OperationResult, AppError> {
+        let public = aex_wire::models::SessionStopResult {
+            changed,
+            session_id: session,
+            session_revision: self.head.revision.0,
+        };
+        Ok(OperationResult {
+            measurement: None,
+            content: Some(CanonicalJson::parse(&to_jcs_string(&public)?)?),
+        })
+    }
+
+    /// Shapes a freshly admitted operation for this step.
+    ///
+    /// An inline stop is already `Succeeded` and latched by `admit`. A continued
+    /// one is born `Queued`; this step starts it, **latches** it — the first
+    /// step that bumps the cancellation epoch and closes `WorkAdmission` is the
+    /// point of no return (D-2) — and parks it at its resume cursor.
+    fn shape_operation(
+        &self,
+        admitted_operation: &aex_operation_domain::Operation,
+        now: Timestamp,
+    ) -> Result<aex_operation_domain::Operation, AppError> {
+        if self.execution == Execution::Inline {
+            return Ok(admitted_operation.clone());
+        }
+        let started = aex_operation_domain::operation::start(admitted_operation, now)?.operation;
+        let mut latched =
+            aex_operation_domain::operation::commit_point(&started, None, now)?.operation;
+        self.park(&mut latched)?;
+        Ok(latched)
+    }
+
+    /// Advances an already-running continued stop.
+    fn advance(
+        &self,
+        stored: &aex_operation_domain::Operation,
+        session: SessionId,
+        now: Timestamp,
+    ) -> Result<aex_operation_domain::Operation, AppError> {
+        let carried = stored
+            .progress
+            .as_ref()
+            .map_or(0, |progress| progress.processed);
+        if self.execution == Execution::Inline {
+            let mut done =
+                aex_operation_domain::operation::succeed(stored, self.result(session, true)?, now)?
+                    .operation;
+            // The final step consumes the last page: the cursor is retired and
+            // progress is closed at the total it actually reached.
+            done.cursor = None;
+            done.progress = Some(Progress {
+                phase: STOP_PHASE.to_owned(),
+                processed: carried.saturating_add(self.examined),
+                total_hint: Some(carried.saturating_add(self.examined)),
+            });
+            return Ok(done);
+        }
+        let mut next = stored.clone();
+        next.updated_at = now;
+        self.park_from(&mut next, carried)?;
+        Ok(next)
+    }
+
+    fn park(&self, operation: &mut aex_operation_domain::Operation) -> Result<(), AppError> {
+        self.park_from(operation, 0)
+    }
+
+    fn park_from(
+        &self,
+        operation: &mut aex_operation_domain::Operation,
+        carried: u64,
+    ) -> Result<(), AppError> {
+        let next_agent = self
+            .next
+            .ok_or(AppError::Port(crate::ports::PortError::Corrupt {
+                kind: "agent page",
+                reason: "a continued stop step reported no resume position",
+            }))?;
+        let processed = carried.saturating_add(self.examined);
+        operation.cursor = Some(ContinuationCursor::new(
+            CursorPosition::Stop { next_agent },
+            processed,
+            None,
+        )?);
+        let reported = Progress {
+            phase: STOP_PHASE.to_owned(),
+            processed,
+            total_hint: None,
+        };
+        if let Some(current) = operation.progress.as_ref() {
+            current
+                .check_successor(&reported)
+                .map_err(aex_operation_domain::TransitionError::from)?;
+        } else {
+            reported
+                .validate()
+                .map_err(aex_operation_domain::TransitionError::from)?;
+        }
+        operation.progress = Some(reported);
+        Ok(())
+    }
+
+    /// The one transaction this step commits.
+    fn plan(
+        &self,
+        session: SessionId,
+        operation: &aex_operation_domain::Operation,
+        from_cursor: Option<ContinuationCursor>,
+    ) -> Result<SessionTransaction, AppError> {
+        let mut conditions = vec![
+            Condition::SessionRevision {
+                session,
+                expected: self.observed.revision,
+            },
+            Condition::CancellationEpoch {
+                session,
+                expected: self.observed.cancellation,
+            },
+            // D-12: every non-purge step commit carries the deletion state, so
+            // a continued stop whose session enters `Purging` fails its next
+            // step instead of writing against a session being destroyed.
+            Condition::DeletionState {
+                session,
+                expected: self.observed.deletion_state,
+                epoch: self.observed.deletion_epoch,
+            },
+        ];
+        if operation.cursor.is_some() || from_cursor.is_some() {
+            conditions.push(Condition::OperationCursorAt {
+                operation: operation.id,
+                expected: from_cursor.map(Box::new),
+            });
+        }
+        conditions.extend(self.settling.iter().map(|target| Condition::AgentRevision {
+            session,
+            agent: target.agent,
+            expected: target.revision,
+        }));
+
+        let mut writes = vec![
+            Write::PutOperation(Box::new(operation.clone())),
+            Write::PutSessionHead(Box::new(self.head.clone())),
+        ];
+        writes.extend(self.settling.iter().map(|target| Write::CancelAgent {
+            session,
+            agent: target.agent,
+            from_revision: target.revision,
+            to_revision: target.revision.next(),
+            at: operation.updated_at,
+        }));
+
+        let after_commit = if self.execution == Execution::Continued {
+            vec![Hint::OperationDue {
+                operation: operation.id,
+                due_at: operation.updated_at,
+            }]
+        } else {
+            Vec::new()
+        };
+
+        let plan = SessionTransaction {
+            intent: TransactionIntent::StopSession,
+            conditions,
+            writes,
+            after_commit,
+        };
+        plan.validate()?;
+        Ok(plan)
+    }
+}
+
+const fn stop_request(
+    command: &SessionCommand,
+    execution: Option<Execution>,
+    inline_result: Option<OperationResult>,
+) -> AdmitRequest {
+    AdmitRequest {
         id: command.operation,
         workspace: command.workspace,
         session: Some(command.session),
         kind: OperationKind::SessionStop,
         intent: command.intent,
         scope: OperationScope::Session(command.session),
-        inline_result: None,
-    };
-    let operation = admitted(
-        existing.as_ref(),
-        Some(&snapshot.session.deletion),
-        &request,
-        now,
-    )?;
+        inline_result,
+        execution,
+    }
+}
 
-    let page = context
-        .sessions
-        .list_agents(command.session, crate::ports::PageBudget { limit: 100 })
-        .await?;
-    let cancellation = cancel_session_work(
-        &snapshot.session,
-        &page.agents,
-        CancelCause::StopRequested,
-        None,
-        now,
-    );
-
-    let mut head = snapshot.session.clone();
-    head.revision = snapshot.session.revision.next();
-    head.cancellation = cancellation.cancellation;
-    head.work_admission = cancellation.admission;
-    head.active_run = None;
-    head.status = SessionStatus::Idle;
-
-    let mut writes = vec![
-        Write::PutOperation(Box::new(operation.clone())),
-        Write::PutSessionHead(Box::new(head)),
-    ];
-    writes.extend(
-        cancellation
-            .agents
-            .iter()
-            .map(|agent| Write::PutAgentControl(Box::new(agent.clone()))),
-    );
-
-    let plan = SessionTransaction {
-        intent: TransactionIntent::StopSession,
-        conditions: vec![
-            Condition::SessionRevision {
-                session: command.session,
-                expected: snapshot.session.revision,
-            },
-            Condition::CancellationEpoch {
-                session: command.session,
-                expected: snapshot.session.cancellation,
-            },
-        ],
-        writes,
+const fn empty_plan(intent: TransactionIntent) -> SessionTransaction {
+    SessionTransaction {
+        intent,
+        conditions: Vec::new(),
+        writes: Vec::new(),
         after_commit: Vec::new(),
-    };
-    plan.validate()?;
-
-    Ok(Planned {
-        plan,
-        projected: operation,
-    })
+    }
 }
 
 /// Rebinds a true-idle session to the current generations of an exact secret set.
@@ -505,7 +862,7 @@ pub async fn rebind_credentials(
         .sessions
         .load_session(command.command.workspace, command.command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PausableMutation).await?;
+    gate(context, &snapshot, CommandClass::PausableMutation).await?;
 
     let now = context.clock.now();
     let existing = context
@@ -515,7 +872,7 @@ pub async fn rebind_credentials(
     if existing.is_some() {
         let operation = admitted(
             existing.as_ref(),
-            Some(&snapshot.session.deletion),
+            Some(&snapshot.deletion),
             &rebind_request(command, None),
             now,
         )?;
@@ -527,7 +884,7 @@ pub async fn rebind_credentials(
         });
     }
 
-    let prepared = prepare_rebind(context, command, &snapshot.session, now).await?;
+    let prepared = prepare_rebind(context, command, &snapshot, now).await?;
     let public_result = CredentialRebindResult {
         session_id: command.command.session,
         custody_revision: prepared.custody.revision.0,
@@ -543,7 +900,7 @@ pub async fn rebind_credentials(
     let result_json = CanonicalJson::parse(&to_jcs_string(&public_result)?)?;
     let operation = admitted(
         None,
-        Some(&snapshot.session.deletion),
+        Some(&snapshot.deletion),
         &rebind_request(
             command,
             Some(OperationResult {
@@ -554,7 +911,7 @@ pub async fn rebind_credentials(
         now,
     )?;
 
-    let plan = build_rebind_plan(&snapshot.session, command, operation.clone(), prepared);
+    let plan = build_rebind_plan(&snapshot, command, operation.clone(), prepared);
     plan.validate()?;
 
     Ok(Planned {
@@ -572,6 +929,7 @@ const fn rebind_request(command: &Rebind, inline_result: Option<OperationResult>
         intent: command.command.intent,
         scope: OperationScope::Session(command.command.session),
         inline_result,
+        execution: None,
     }
 }
 
@@ -713,22 +1071,17 @@ pub async fn trash_session(
         .sessions
         .load_session(command.workspace, command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PauseExempt).await?;
+    gate(context, &snapshot, CommandClass::PauseExempt).await?;
 
     let now = context.clock.now();
-    let commit = trash(
-        &snapshot.session.deletion,
-        command.operation,
-        now,
-        RECOVERY_WINDOW,
-    )?;
+    let commit = trash(&snapshot.deletion, command.operation, now, RECOVERY_WINDOW)?;
     let existing = context
         .sessions
         .load_operation(command.workspace, command.operation)
         .await?;
     let operation = admitted(
         existing.as_ref(),
-        Some(&snapshot.session.deletion),
+        Some(&snapshot.deletion),
         &AdmitRequest {
             id: command.operation,
             workspace: command.workspace,
@@ -737,12 +1090,13 @@ pub async fn trash_session(
             intent: command.intent,
             scope: OperationScope::Session(command.session),
             inline_result: None,
+            execution: None,
         },
         now,
     )?;
 
-    let mut head = snapshot.session.clone();
-    head.revision = snapshot.session.revision.next();
+    let mut head = snapshot.clone();
+    head.revision = snapshot.revision.next();
     head.deletion = commit.guard;
     head.work_admission = commit.admission;
     head.status = SessionStatus::Trashed;
@@ -752,12 +1106,12 @@ pub async fn trash_session(
         conditions: vec![
             Condition::SessionRevision {
                 session: command.session,
-                expected: snapshot.session.revision,
+                expected: snapshot.revision,
             },
             Condition::DeletionState {
                 session: command.session,
-                expected: snapshot.session.deletion.state,
-                epoch: snapshot.session.deletion.epoch,
+                expected: snapshot.deletion.state,
+                epoch: snapshot.deletion.epoch,
             },
         ],
         writes: vec![
@@ -787,10 +1141,10 @@ pub async fn restore_session(
         .sessions
         .load_session(command.workspace, command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PausableMutation).await?;
+    gate(context, &snapshot, CommandClass::PausableMutation).await?;
 
     let now = context.clock.now();
-    let commit = restore(&snapshot.session.deletion, command.operation, now)?;
+    let commit = restore(&snapshot.deletion, command.operation, now)?;
     let existing = context
         .sessions
         .load_operation(command.workspace, command.operation)
@@ -806,12 +1160,13 @@ pub async fn restore_session(
             intent: command.intent,
             scope: OperationScope::Session(command.session),
             inline_result: None,
+            execution: None,
         },
         now,
     )?;
 
-    let mut head = snapshot.session.clone();
-    head.revision = snapshot.session.revision.next();
+    let mut head = snapshot.clone();
+    head.revision = snapshot.revision.next();
     head.deletion = commit.guard;
     head.work_admission = commit.admission;
     head.status = SessionStatus::Idle;
@@ -821,12 +1176,12 @@ pub async fn restore_session(
         conditions: vec![
             Condition::SessionRevision {
                 session: command.session,
-                expected: snapshot.session.revision,
+                expected: snapshot.revision,
             },
             Condition::DeletionState {
                 session: command.session,
                 expected: DeletionState::Trashed,
-                epoch: snapshot.session.deletion.epoch,
+                epoch: snapshot.deletion.epoch,
             },
         ],
         writes: vec![
@@ -857,11 +1212,11 @@ pub async fn purge_session(
         .sessions
         .load_session(command.command.workspace, command.command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PauseExempt).await?;
+    gate(context, &snapshot, CommandClass::PauseExempt).await?;
 
     let now = context.clock.now();
     let commit = purge(
-        &snapshot.session.deletion,
+        &snapshot.deletion,
         command.command.operation,
         command.cascade,
         &command.closure,
@@ -873,7 +1228,7 @@ pub async fn purge_session(
         .await?;
     let operation = admitted(
         existing.as_ref(),
-        Some(&snapshot.session.deletion),
+        Some(&snapshot.deletion),
         &AdmitRequest {
             id: command.command.operation,
             workspace: command.command.workspace,
@@ -882,12 +1237,13 @@ pub async fn purge_session(
             intent: command.command.intent,
             scope: OperationScope::Session(command.command.session),
             inline_result: None,
+            execution: None,
         },
         now,
     )?;
 
-    let mut head = snapshot.session.clone();
-    head.revision = snapshot.session.revision.next();
+    let mut head = snapshot.clone();
+    head.revision = snapshot.revision.next();
     head.deletion = commit.guard;
     head.work_admission = commit.admission;
     head.status = SessionStatus::Purging;
@@ -897,12 +1253,12 @@ pub async fn purge_session(
         conditions: vec![
             Condition::SessionRevision {
                 session: command.command.session,
-                expected: snapshot.session.revision,
+                expected: snapshot.revision,
             },
             Condition::DeletionState {
                 session: command.command.session,
-                expected: snapshot.session.deletion.state,
-                epoch: snapshot.session.deletion.epoch,
+                expected: snapshot.deletion.state,
+                epoch: snapshot.deletion.epoch,
             },
         ],
         writes: vec![

@@ -43,6 +43,9 @@ executable sources.
 | Public v1 architecture and repository boundary | [`architecture.md`](architecture.md) |
 | Generated TypeScript wire binding and consumer migration boundary | [`typescript-wire-binding.md`](typescript-wire-binding.md) |
 | Rust-native rewrite implementation handoffs — what each stream landed, deferred and owes | [`rewrite/README.md`](rewrite/README.md) |
+| Collapsing the central HTTP surface onto one Fargate service (2026-08-09) — accepted | [`central-api-fargate-consolidation-2026-08-09.md`](central-api-fargate-consolidation-2026-08-09.md) |
+| Where tool work executes, and how attribution survives leaving the Brain (2026-08-09) — accepted | [`tool-execution-placement-2026-08-09.md`](tool-execution-placement-2026-08-09.md) |
+| Identifying a sandbox to the platform for platform-paid tool calls (2026-08-09) — proposal | [`sandbox-platform-identity-2026-08-09.md`](sandbox-platform-identity-2026-08-09.md) |
 | Vocabulary the source uses without defining | [`glossary.md`](glossary.md) |
 
 Future repository-wide designs, decision records, curated release logs, and

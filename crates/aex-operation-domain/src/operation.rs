@@ -108,11 +108,38 @@ impl OperationKind {
 
     /// Whether a caller may still cancel the operation the instant it is
     /// accepted.
+    ///
+    /// `TelemetryExport` is **not** cancelable, and that is a correction rather
+    /// than a policy choice. This function used to say it was while
+    /// `aex_session_dynamodb`'s `operation_cancel_owned` said it was not, so
+    /// two shipped crates disagreed about a published capability. The store's
+    /// reasoning is the correct one and is repeated here so the two cannot
+    /// drift apart again: an export's effect fence is the observation export
+    /// row, and treating an operation-row update as its cancellation would
+    /// acknowledge a command that cannot stop the export launcher or the export
+    /// task. The capability is not lost, only relocated to the verb that owns
+    /// it — `telemetry_export_revoke`, already mounted, sets the row's
+    /// `cancelRequested` flag that both the launcher's claim condition and the
+    /// task's publication fence already honour.
+    ///
+    /// One consequence worth stating rather than leaving as an apparent gap:
+    /// [`OperationStatus::Running`] is **unreachable** for `TelemetryExport`.
+    /// The operation is queued at admission and the export task writes the
+    /// terminal status directly, in the same conditional transaction that
+    /// publishes the export row. Nothing publishes an intermediate transition,
+    /// because the only component positioned to do so is the launcher, whose
+    /// grant is exactly "launch export tasks" with no observation read of any
+    /// kind. A client that wants progress polls `telemetry_export_get`, where
+    /// the fine-grained state actually lives.
     #[must_use]
     pub const fn cancelable_on_accept(self) -> bool {
         !matches!(
             self,
-            Self::SessionStop | Self::SessionTrash | Self::SessionPurge | Self::WorkspaceDelete
+            Self::SessionStop
+                | Self::SessionTrash
+                | Self::SessionPurge
+                | Self::WorkspaceDelete
+                | Self::TelemetryExport
         )
     }
 

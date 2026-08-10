@@ -41,7 +41,7 @@ fn the_local_plan_emits_the_bound_lock_and_the_linear_head() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("utf8 receipt");
-    assert!(stdout.contains("\"bundleHead\":20260801001000"));
+    assert!(stdout.contains("\"bundleHead\":20260801001200"));
     assert!(stdout.contains("\"lockKey\":4703262552200136530"));
 }
 
@@ -55,7 +55,7 @@ fn a_stale_image_is_refused_by_the_expected_bundle_head_before_anything_else() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("20260801001000"), "{stderr}");
+    assert!(stderr.contains("20260801001200"), "{stderr}");
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn a_backfill_of_an_unbundled_migration_is_refused_before_a_session() {
 fn the_committed_bundle_declares_nothing_destructive() {
     // A destructive bundle needs recorded backup evidence; the baseline must not
     // silently require an operator to pass one.
-    let output = run(&["migrate", "--expect-head", "20260801001000"]);
+    let output = run(&["migrate", "--expect-head", "20260801001200"]);
     assert_ne!(
         output.status.code(),
         Some(15),
@@ -125,4 +125,56 @@ fn the_committed_bundle_holds_no_checksum_exception_mechanism() {
             "`{forbidden}` rewrites history and defeats the checksum"
         );
     }
+}
+
+#[test]
+fn a_pepper_seed_with_an_impossible_version_or_no_reference_never_opens_a_session() {
+    // Both are decided from argv, before a credential is resolved, so a
+    // malformed release argument costs no connection and no lock.
+    for arguments in [
+        vec![
+            "seed-pepper",
+            "--pepper",
+            "api-key",
+            "--version",
+            "0",
+            "--secret-ref",
+            "some-version-id",
+        ],
+        vec![
+            "seed-pepper",
+            "--pepper",
+            "api-key",
+            "--version",
+            "2",
+            "--secret-ref",
+            "   ",
+        ],
+    ] {
+        let output = run(&arguments);
+        assert_eq!(
+            output.status.code(),
+            Some(13),
+            "a refused precondition is exit 13: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn a_pepper_seed_can_only_name_one_of_the_four_rows_that_exist() {
+    // `--schema`/`--purpose` would admit `identity`/`api_key`, which no `CHECK`
+    // allows and which would fail at deploy time instead of at parse time.
+    let output = run(&[
+        "seed-pepper",
+        "--pepper",
+        "identity-api-key",
+        "--version",
+        "1",
+        "--secret-ref",
+        "some-version-id",
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("api-key"), "the four values are named: {stderr}");
 }

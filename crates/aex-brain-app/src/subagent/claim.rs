@@ -120,7 +120,11 @@ const fn permit_reason(full: &PermitSetFull) -> QueuedReason {
     match full.kind {
         PermitKind::ProviderStream => QueuedReason::ProviderPermits,
         PermitKind::HandsRpc => QueuedReason::HandsPermits,
+        // The network lane keeps the reason its shared-pool predecessor already
+        // reported. A vocabulary of its own would be a durable enum change for a
+        // deferral no child claim can produce today.
         PermitKind::Activation
+        | PermitKind::NetworkLane
         | PermitKind::ComputeLane
         | PermitKind::ContextBytes
         | PermitKind::StreamBufferBytes

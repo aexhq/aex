@@ -31,7 +31,7 @@ DynamoDB journal, lease/fence, effect, and receipt records remain decisive.
 | `crates/aex-brain-mcp/`, `crates/aex-brain-managed-web/` | Revision-keyed pools, per-effect network checks, bounded concurrency, deterministic result commit ordering, and unknown non-task mutations. |
 | `crates/aex-brain-hands/` | Durable materialization park/resume and generation/fence/revision/token-keyed guest lease cache; no shell fast path outside Hands. |
 | `runtimes/brain-mux/` | Wake intake, affinity routing, task drain, health, metrics, and composition of the owners above. It contains no durable transition policy. |
-| `services/regional-session-api/`, `services/regional-stream/` | Direct wake hints and bounded asynchronous preview consumption; neither becomes Brain authority. |
+| `services/session-stream-api/` | Direct wake hints and bounded asynchronous preview consumption; neither becomes Brain authority. The session and stream services were one task from 2026-08-09. |
 | `crates/aex-brain-test-support/`, `tests/` | Deterministic authorities/faults and cross-crate recovery, ambiguity, pressure, load, and task-loss scenarios. |
 | `infra/`, `release/` | ARM64-only task/artifact declarations, one-task launch defaults, architecture qualification receipts, and post-apply architecture checks. |
 
@@ -123,8 +123,8 @@ failure, and cache-hit performance does not waive cold/task-loss results.
    limits proven by the same evidence.
 4. Bind the passing evidence to an `arch-qualification` receipt and make its
    absence or artifact-identity mismatch fail release admission.
-5. Launch `regional-session-api`, `regional-stream`, and `brain-mux` at one warm
-   ARM task each. Record this as an accepted single-failure-domain launch mode;
+5. Launch `session-stream-api` and `brain-mux` at one warm ARM task each. Record
+   this as an accepted single-failure-domain launch mode;
    durable recovery is required, but uninterrupted availability is not claimed.
 6. After apply, verify both immutable identity and declared runtime
    architecture for every Lambda and ECS task definition, then run serving,

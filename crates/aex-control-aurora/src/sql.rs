@@ -204,8 +204,14 @@ pub const GET_CALLER_ROLE: &str = "\
 SELECT m.role FROM control.membership m \
  WHERE m.organization_id = :organization_id AND m.user_id = :user_id AND m.status = 'active'";
 
-/// Reads the identity-owned current email projection.
-pub const GET_USER_EMAIL: &str = "SELECT u.email FROM identity.user u WHERE u.id = :user_id";
+/// Reads the identity-owned current email projection and its verification.
+///
+/// `email_verified_at` is projected as a predicate rather than an instant: the
+/// address is the whole proof an invitation is redeemed against, and every
+/// caller here only ever asks whether that proof holds.
+pub const GET_USER_IDENTITY: &str = "\
+SELECT u.email, (u.email_verified_at IS NOT NULL) AS email_verified \
+  FROM identity.user u WHERE u.id = :user_id";
 
 /// Reads the tombstone instant needed by a successful public delete operation.
 pub const GET_WORKSPACE_DELETED_AT: &str = "\
@@ -342,6 +348,13 @@ SELECT i.id, i.organization_id, i.email, i.role, i.status, i.invited_by_user_id,
   FROM control.invitation i WHERE i.id = :invitation_id";
 
 /// Reads invitations that a verified address may accept, under lock.
+///
+/// The `LIMIT` is
+/// [`MAX_ACCEPTABLE_INVITATIONS`](aex_control_domain::MAX_ACCEPTABLE_INVITATIONS).
+/// `the_acceptance_limit_matches_the_domain_ceiling` in `tests/statements.rs`
+/// holds the two together, because SQL here is a string constant and a Rust
+/// `const` cannot be interpolated into one without assembling SQL at run time,
+/// which `no_statement_carries_a_format_placeholder` forbids.
 pub const FIND_ACCEPTABLE_INVITATIONS: &str = "\
 SELECT i.id, i.organization_id, i.email, i.role, i.status, i.invited_by_user_id, \
        i.accepted_user_id, \
@@ -521,6 +534,25 @@ SELECT o.id, o.kind, o.visibility, o.organization_id, o.workspace_id, o.principa
        (EXTRACT(EPOCH FROM o.due_at)*1000)::bigint AS due_at_ms \
   FROM control.durable_operation o WHERE o.id = :operation_id";
 
+/// Reads one **public** durable operation.
+///
+/// The public read surface is narrower than the store's own: a
+/// `workspace_provision` operation is `internal`, has no public `Operation`
+/// projection at all, and [`LIST_OPERATIONS`] already hides it. Reading one
+/// through the unfiltered [`GET_OPERATION`] and only then failing to project it
+/// is how `central_operation_get` answered `500` for a valid operation id.
+pub const GET_PUBLIC_OPERATION: &str = "\
+SELECT o.id, o.kind, o.visibility, o.organization_id, o.workspace_id, o.principal_id, o.scopes, \
+       o.status, o.intent_hash, o.fence, o.attempt, o.lease_owner, \
+       (EXTRACT(EPOCH FROM o.lease_expires_at)*1000)::bigint AS lease_expires_at_ms, \
+       (EXTRACT(EPOCH FROM o.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM o.started_at)*1000)::bigint AS started_at_ms, \
+       (EXTRACT(EPOCH FROM o.updated_at)*1000)::bigint AS updated_at_ms, \
+       (EXTRACT(EPOCH FROM o.terminal_at)*1000)::bigint AS terminal_at_ms, \
+       (EXTRACT(EPOCH FROM o.due_at)*1000)::bigint AS due_at_ms \
+  FROM control.durable_operation o \
+ WHERE o.id = :operation_id AND o.visibility = 'public'";
+
 /// Lists public operations in one organization.
 pub const LIST_OPERATIONS: &str = "\
 SELECT o.id, o.kind, o.visibility, o.organization_id, o.workspace_id, o.principal_id, o.scopes, \
@@ -625,7 +657,7 @@ pub const ALL: &[(&str, &str)] = &[
     ("GET_WORKSPACE_EPOCH", GET_WORKSPACE_EPOCH),
     ("GET_OPERATION_IDEMPOTENCY_ID", GET_OPERATION_IDEMPOTENCY_ID),
     ("GET_CALLER_ROLE", GET_CALLER_ROLE),
-    ("GET_USER_EMAIL", GET_USER_EMAIL),
+    ("GET_USER_IDENTITY", GET_USER_IDENTITY),
     ("GET_WORKSPACE_DELETED_AT", GET_WORKSPACE_DELETED_AT),
     ("READINESS_PROBE", READINESS_PROBE),
     ("AUTHZ_WRITE_PROBE", AUTHZ_WRITE_PROBE),
@@ -664,6 +696,7 @@ pub const ALL: &[(&str, &str)] = &[
     ("LIST_API_KEYS", LIST_API_KEYS),
     ("REVOKE_API_KEY", REVOKE_API_KEY),
     ("GET_OPERATION", GET_OPERATION),
+    ("GET_PUBLIC_OPERATION", GET_PUBLIC_OPERATION),
     ("LIST_OPERATIONS", LIST_OPERATIONS),
     ("CLAIM_DUE_OPERATIONS", CLAIM_DUE_OPERATIONS),
     ("CLAIM_OUTBOX", CLAIM_OUTBOX),

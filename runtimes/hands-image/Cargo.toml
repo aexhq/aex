@@ -31,7 +31,7 @@ name = "hands-image"
 path = "src/main.rs"
 
 [package.metadata.aex.not_applicable]
-targets = "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+inline_targets = "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
 
 [dependencies]
 aex-hands-agent = { path = "../../crates/aex-hands-agent" }

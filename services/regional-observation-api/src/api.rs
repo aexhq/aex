@@ -807,14 +807,11 @@ impl ObservationRequest {
         let mut item = std::collections::HashMap::new();
         item.insert(
             "pk".to_owned(),
-            aws_sdk_dynamodb::types::AttributeValue::S(keys::export_pk(
-                self.workspace(),
-                export_id,
-            )),
+            aws_sdk_dynamodb::types::AttributeValue::S(keys::export_pk(self.workspace())),
         );
         item.insert(
             "sk".to_owned(),
-            aws_sdk_dynamodb::types::AttributeValue::S("STATE".to_owned()),
+            aws_sdk_dynamodb::types::AttributeValue::S(keys::export_sk(export_id)),
         );
         for (name, value) in [
             ("itemType", "export".to_owned()),
@@ -887,7 +884,7 @@ impl ObservationRequest {
         let item = self
             .service
             .reader
-            .read_item(&keys::export_pk(self.workspace(), export), "STATE")
+            .read_item(&keys::export_pk(self.workspace()), &keys::export_sk(export))
             .await
             .map_err(|error| read_error(&error))?
             .ok_or_else(|| WireError::new(ErrorCode::NotFound))?;
@@ -911,8 +908,8 @@ impl ObservationRequest {
         self.service
             .reader
             .update_export_control(
-                &keys::export_pk(self.workspace(), export),
-                "STATE",
+                &keys::export_pk(self.workspace()),
+                &keys::export_sk(export),
                 &format!("SET {state} = {revoked}, {revoked_at} = {at}, {cancel} = {truth}"),
                 &format!("attribute_exists({existing})"),
                 builder.names(),
@@ -932,13 +929,17 @@ impl ObservationRequest {
         let record = self.export(session, export).await?;
         if record.status != ExportStatus::Ready {
             // A grant is mintable only in `ready`; reading an operation never
-            // mints a URL.
-            return Err(WireError::new(ErrorCode::PreconditionFailed));
+            // mints a URL. The registry has a word for exactly this state and
+            // nothing used to produce it, so callers could not tell "not
+            // finished yet, poll again" from "your precondition header did not
+            // hold". A declared error no code can produce is the same class of
+            // lie as an unserved route.
+            return Err(WireError::new(ErrorCode::ExportNotReady));
         }
         let item = self
             .service
             .reader
-            .read_item(&keys::export_pk(self.workspace(), export), "STATE")
+            .read_item(&keys::export_pk(self.workspace()), &keys::export_sk(export))
             .await
             .map_err(|error| read_error(&error))?
             .ok_or_else(|| WireError::new(ErrorCode::NotFound))?;
@@ -1495,6 +1496,12 @@ fn read_error(error: &ReadError) -> WireError {
         ReadError::Provider { .. } => WireError::new(ErrorCode::ObservabilityUnavailable)
             .with_retry_after(Duration::from_secs(1)),
         ReadError::InvalidResume => WireError::new(ErrorCode::InvalidCursor),
+        // The one export-control write path that carries a condition targets a
+        // single `EXPORT#{workspace}#{export}` / `STATE` row and asserts it
+        // exists, so a failed condition names exactly one fact: no such export.
+        // Both revoke routes declare `export_not_found`, and it is terminal —
+        // never a `Retry-After`.
+        ReadError::ExportAbsent { .. } => WireError::new(ErrorCode::ExportNotFound),
         ReadError::Malformed { .. } | ReadError::InvalidWriteTarget { .. } => {
             WireError::new(ErrorCode::InternalError)
         }
@@ -1606,7 +1613,7 @@ fn decode_export(
             .copied()
             .find(|candidate| candidate.as_str() == format)
             .unwrap_or(ExportFormat::Ndjson),
-        gap_ids: None,
+        gap_ids: gap_ids(item),
         id: export,
         manifest_hash: crate::reader::string(item, "manifestHash")
             .and_then(|text| aex_wire::ids::ContentHash::parse(&text).ok()),
@@ -1618,6 +1625,32 @@ fn decode_export(
         status: export_status(&crate::reader::string(item, "state").unwrap_or_default()),
         workspace_id: workspace,
     })
+}
+
+/// The gaps an `allow_gaps` export recorded inside its window.
+///
+/// Written by the export task alongside the manifest. `None` and an empty list
+/// mean different things and are kept apart: `None` is "this export has not
+/// reached a state where gaps are known", an empty list is "the window was
+/// walked and had none". Collapsing them would make a gapless export
+/// indistinguishable from an unfinished one.
+fn gap_ids(
+    item: &std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue>,
+) -> Option<Vec<aex_wire::ids::TelemetryGapId>> {
+    let stored = item.get("gapIds")?.as_l().ok()?;
+    let mut ids = Vec::with_capacity(stored.len());
+    for value in stored {
+        // A malformed member is dropped rather than failing the whole read: the
+        // gap list is advisory detail beside an artifact that already exists,
+        // and refusing the export record would hide a downloadable artifact
+        // behind a decode fault.
+        if let Ok(text) = value.as_s()
+            && let Ok(id) = aex_wire::ids::TelemetryGapId::parse(text)
+        {
+            ids.push(id);
+        }
+    }
+    Some(ids)
 }
 
 /// Maps the durable export state onto its public status.
@@ -1998,9 +2031,51 @@ mod tests {
 
     use super::{
         GRANT_LIFETIME, LISTEN_BUDGET, SocketLifetime, bind_metric_selection, export_status,
-        gap_to_wire, listen_window, unseen_gaps, window_for,
+        gap_to_wire, listen_window, read_error, unseen_gaps, window_for,
     };
     use crate::counters::{ReadCounter, ReadCounters};
+    use crate::reader::ReadError;
+
+    #[test]
+    fn an_absent_export_is_a_terminal_404_on_both_revoke_routes() {
+        // The defect this pins: `update_export_control` folded
+        // `ConditionalCheckFailedException` into a provider failure, so revoking
+        // an export that does not exist answered `503 observability_unavailable`
+        // with `Retry-After: 1`, telling the client the plane was down.
+        let failure = read_error(&ReadError::ExportAbsent {
+            operation: "UpdateItem",
+        });
+        assert_eq!(failure.code, aex_wire::error::ErrorCode::ExportNotFound);
+        assert_eq!(failure.code.http_status(), 404);
+        assert!(
+            failure.retry_after.is_none(),
+            "an export that does not exist never becomes one by retrying"
+        );
+        for id in [
+            aex_wire::routes::RouteId::TelemetryExportRevoke,
+            aex_wire::routes::RouteId::SessionTelemetryExportRevoke,
+        ] {
+            assert!(
+                aex_wire::routes::route(id).declares(failure.code),
+                "`{}` does not declare `{}`",
+                aex_wire::routes::route(id).operation_id,
+                failure.code.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn an_unreachable_authority_is_still_a_retryable_503() {
+        let failure = read_error(&ReadError::Provider {
+            operation: "UpdateItem",
+            reason: "fixture".to_owned(),
+        });
+        assert_eq!(
+            failure.code,
+            aex_wire::error::ErrorCode::ObservabilityUnavailable
+        );
+        assert!(failure.retry_after.is_some());
+    }
 
     #[test]
     fn a_producer_that_ends_for_any_reason_closes_exactly_one_socket() {

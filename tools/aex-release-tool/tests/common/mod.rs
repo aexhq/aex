@@ -186,7 +186,21 @@ pub struct Fixture {
     units: String,
     scenarios: String,
     path_map: String,
+    deferral_floor: String,
 }
+
+/// The deferral floor every fixture starts with: nothing deferred, nothing
+/// admitted. A fixture that defers anything therefore has to say so, which is
+/// what makes the ratchet's own failure fixture meaningful rather than a
+/// restatement of the default.
+pub const EMPTY_DEFERRAL_FLOOR: &str = r#"{
+  "schema": "aex.deferral-floor.v1",
+  "purpose": "fixture floor",
+  "regenerate": "hand-written by the fixture",
+  "routes": { "floor": 0, "deleting": {}, "deferred": [], "retired": [] },
+  "scenarios": { "floor": 0, "deleting": {}, "deferred": [], "retired": [] }
+}
+"#;
 
 /// The path map every fixture starts with. It classifies the synthesized
 /// metadata file so the fixture itself is never an orphan.
@@ -261,6 +275,7 @@ impl Fixture {
             units: "schema = \"aex.units.v1\"\n".to_owned(),
             scenarios: "schema = \"aex.scenario-ownership.v1\"\n".to_owned(),
             path_map: FIXTURE_PATH_MAP.to_owned(),
+            deferral_floor: EMPTY_DEFERRAL_FLOOR.to_owned(),
         }
     }
 
@@ -301,6 +316,12 @@ impl Fixture {
     #[must_use]
     pub fn path_map(mut self, toml: &str) -> Self {
         toml.clone_into(&mut self.path_map);
+        self
+    }
+
+    #[must_use]
+    pub fn deferral_floor(mut self, json: &str) -> Self {
+        json.clone_into(&mut self.deferral_floor);
         self
     }
 
@@ -370,6 +391,7 @@ impl Fixture {
         write(&root, "release/units.toml", &self.units);
         write(&root, "release/scenario-ownership.toml", &self.scenarios);
         write(&root, "release/path-map.toml", &self.path_map);
+        write(&root, "release/deferral-floor.json", &self.deferral_floor);
         for file in &self.files {
             write(&root, file, "// fixture\n");
         }

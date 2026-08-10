@@ -91,9 +91,7 @@ pub(super) fn model_tool_fields(
     } else {
         ToolChoice::Auto
     };
-    let parallel = !advertised.definitions.is_empty()
-        && advertised.parallel_safe
-        && model.capabilities().has(Capability::ParallelTools);
+    let parallel = advertised.allows_parallel_emission(model.capabilities());
     Ok(ModelToolFields {
         tools: advertised.definitions,
         choice,

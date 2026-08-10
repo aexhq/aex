@@ -1,0 +1,12 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UsageAuthority.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The three authorities that admit usage facts. There are three rather than\nfour because memory and compute are one contiguous fact sequence behind\none authority, so they share one frontier; publishing four frontiers with\ntwo of them always identical would claim an independence that does not\nexist.\n",
+  "enum": [
+    "storage",
+    "compute",
+    "transfer"
+  ],
+  "title": "UsageAuthority",
+  "type": "string"
+}

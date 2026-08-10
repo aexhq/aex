@@ -8,13 +8,13 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 45,
+    "awaiting_owner": 33,
     "capacity_gates": 19,
     "live_targets": 36,
-    "packages": 148,
+    "packages": 147,
     "seams_claimed": 33,
     "seams_declared": 35,
-    "workloads": 8
+    "workloads": 11
   },
   "packages": {
     "apps/dashboard": {
@@ -234,11 +234,11 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "the `brain-core` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+          "inline_targets": "the `brain-core` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-brain-managed-web": {
       "name": "aex-brain-managed-web",
@@ -443,12 +443,12 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "live_suite": "test-only crate; must be absent from every production link graph",
-          "targets": "brain-core owns no [[test]] target here: a test-support crate supplies inputs and teardown, and its own cases live in its #[cfg(test)] modules"
+          "inline_targets": "brain-core owns no [[test]] target here: a test-support crate supplies inputs and teardown, and its own cases live in its #[cfg(test)] modules",
+          "live_suite": "test-only crate; must be absent from every production link graph"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-brain-tool-catalog": {
       "name": "aex-brain-tool-catalog",
@@ -508,15 +508,16 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
+        "targets": {
+          "integration": "integration"
+        },
         "not_applicable": {
-          "integration": "the transaction request and ambiguity resolver use deterministic SDK replay; the workspace has no approved DynamoDB Local harness",
-          "live_suite": "the adapter is exercised through regional-capacity-controller's live companion",
-          "targets": "the `regional-stores` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+          "inline_targets": "the `regional-stores` stream places this crate's unit evidence in inline `#[cfg(test)]` modules, which the declared `unit` layer already collects; the only [[test]] target it owns is the engine-backed one",
+          "live_suite": "the adapter is exercised through regional-capacity-controller's live companion"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-central-aws": {
       "name": "aex-central-aws",
@@ -652,6 +653,7 @@
           "conformance": "unit",
           "faults": "unit",
           "integration": "integration",
+          "multipart": "unit",
           "properties": "unit",
           "security": "unit"
         },
@@ -855,42 +857,6 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-finance-aurora": {
-      "name": "aex-finance-aurora",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "adapter",
-        "artifact": "none",
-        "live_suite": "aex-live-finance-api",
-        "layers": [
-          "unit",
-          "integration"
-        ],
-        "concerns": [
-          "contract",
-          "property",
-          "fault",
-          "security"
-        ],
-        "seams": [
-          "aws.rds_data.transaction",
-          "aws.aurora.serverless_v2"
-        ],
-        "security_tier": "authority",
-        "risk": [
-          "money"
-        ],
-        "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "integration": "integration"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
     "crates/aex-finance-domain": {
       "name": "aex-finance-domain",
       "kind": "cargo",
@@ -981,11 +947,11 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+          "inline_targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-hands-protocol": {
       "name": "aex-hands-protocol",
@@ -1048,11 +1014,11 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+          "inline_targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-identity-app": {
       "name": "aex-identity-app",
@@ -1742,12 +1708,12 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam",
-          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+          "inline_targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map",
+          "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-runtime-control-aws": {
       "name": "aex-runtime-control-aws",
@@ -1778,11 +1744,11 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map. `tests/integration.rs` is written and PARKED, not forgotten: declaring it would exit this awaiting-owner state, and `aex-target-missing` would then demand a [[test]] target at layer `unit` for each of contract/property/fault/security - which inline modules can never satisfy, because `test_target_names` counts only `test` and `bench` targets. Wiring it needs one of: those four targets extracted from the inline modules, or a registry rule that lets a lib's own test binary cover layer `unit`."
+          "inline_targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map. `tests/integration.rs` is written and PARKED, not forgotten: declaring it would exit this awaiting-owner state, and `aex-target-missing` would then demand a [[test]] target at layer `unit` for each of contract/property/fault/security - which inline modules can never satisfy, because `test_target_names` counts only `test` and `bench` targets. Wiring it needs one of: those four targets extracted from the inline modules, or a registry rule that lets a lib's own test binary cover layer `unit`."
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "crates/aex-secret-aws": {
       "name": "aex-secret-aws",
@@ -2023,13 +1989,12 @@
         "targets": {
           "conformance": "unit",
           "faults": "unit",
+          "integration": "integration",
           "limit_projection": "unit",
           "properties": "unit",
           "security": "unit"
         },
-        "not_applicable": {
-          "integration": "blocked on a cross-stream gap: `data-image-literal` bans `GenericImage::new(` outside `tests/support/aex-test-harness`, and the harness exposes `images::reference` but no container-start helper, so no stream can start a pinned engine today. The DynamoDB Local cases are specified in plan 05 section 8.2 and land the moment the harness owns container bring-up."
-        }
+        "not_applicable": {}
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -2189,11 +2154,10 @@
         ],
         "scenarios": [],
         "targets": {
+          "integration": "integration",
           "write_incapability": "unit"
         },
-        "not_applicable": {
-          "integration": "DEFERRED, not inapplicable: the DynamoDB Local suite (keyset paging under a scan budget, cursor expiry across a generation flip) is unwritten. The key grammar and the write-incapability proofs are covered at the unit layer."
-        }
+        "not_applicable": {}
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -2364,12 +2328,11 @@
         "targets": {
           "conformance": "unit",
           "faults": "unit",
+          "integration": "integration",
           "properties": "unit",
           "security": "unit"
         },
-        "not_applicable": {
-          "integration": "blocked on a cross-stream gap: `data-image-literal` bans `GenericImage::new(` outside `tests/support/aex-test-harness`, and the harness exposes `images::reference` but no container-start helper, so no stream can start a pinned engine today. The DynamoDB Local cases are specified in plan 05 section 8.2 and land the moment the harness owns container bring-up."
-        }
+        "not_applicable": {}
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -2522,11 +2485,11 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "brain-core's composition, config and health cases live in the binary's #[cfg(test)] modules; the smoke, e2e and performance layers belong to the aex-live-brain-mux companion, which owns every created resource"
+          "inline_targets": "brain-core's composition, config and health cases live in the binary's #[cfg(test)] modules; the smoke, e2e and performance layers belong to the aex-live-brain-mux companion, which owns every created resource"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "runtimes/hands-agent": {
       "name": "hands-agent",
@@ -2558,11 +2521,11 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "the `hands` stream keeps this binary's evidence in inline unit modules, which the declared `unit` layer already collects; everything that needs a real MicroVM to boot into is declared in tests/live/aex-live-hands-agent instead"
+          "inline_targets": "the `hands` stream keeps this binary's evidence in inline unit modules, which the declared `unit` layer already collects; everything that needs a real MicroVM to boot into is declared in tests/live/aex-live-hands-agent instead"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "runtimes/hands-image": {
       "name": "hands-image",
@@ -2593,11 +2556,11 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+          "inline_targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "services/central-api": {
       "name": "central-api",
@@ -2713,6 +2676,7 @@
         "scenarios": [],
         "targets": {
           "faults": "unit",
+          "invitation_acceptance": "unit",
           "resource_envelope": "e2e"
         },
         "not_applicable": {}
@@ -4145,7 +4109,8 @@
           "SC-REGIONAL-ADMISSION"
         ],
         "targets": {
-          "e2e": "e2e"
+          "e2e": "e2e",
+          "load": "e2e"
         },
         "not_applicable": {}
       },
@@ -4657,6 +4622,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "faults": "unit",
           "resource_envelope": "e2e",
           "security": "unit"
@@ -4741,6 +4707,7 @@
         "targets": {
           "composition": "unit",
           "expiry": "unit",
+          "gc": "unit",
           "lifecycle": "unit",
           "performance_contract": "e2e"
         },
@@ -5065,11 +5032,11 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "regional-services keeps the direct-invoke configuration evidence in the composition-root unit target and the fencing evidence in the owning adapter unit target; there is no separate integration binary to map"
+          "inline_targets": "regional-services keeps the direct-invoke configuration evidence in the composition-root unit target and the fencing evidence in the owning adapter unit target; there is no separate integration binary to map"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/regional-secret-key-admin": {
       "name": "regional-secret-key-admin",
@@ -5143,11 +5110,11 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "the `regional-services` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+          "inline_targets": "the `regional-services` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "workers/session-operation-worker": {
       "name": "session-operation-worker",

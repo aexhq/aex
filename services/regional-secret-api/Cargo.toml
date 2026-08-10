@@ -40,7 +40,10 @@ path = "src/main.rs"
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-kms.workspace = true
-aws-sdk-ssm.workspace = true
+# Secrets Manager holds the credential pepper ring, read once at cold start from
+# the same id the issuing authority reads. This deployable serves no listing, so
+# it resolves no cursor signing ring and links no Parameter Store client at all.
+aws-sdk-secretsmanager.workspace = true
 lambda_http.workspace = true
 tokio.workspace = true
 aex-secret-aws = { path = "../../crates/aex-secret-aws" }

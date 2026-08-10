@@ -5,18 +5,19 @@ use std::sync::Arc;
 
 use aex_central_http::cursor::{PageBinding, next_cursor, page_request};
 use aex_control_app::ports::{
-    AccountProfile, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx, ControlStore,
-    ControlViewStore, CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx,
+    AcceptInvitationsTx, AccountProjection, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
+    ControlStore, ControlViewStore, CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx,
     IdempotencyRecordKey, ListApiKeys, ListOperations, ListOrganizations, ListWorkspaces,
     PageRequest, RegionalControlPort, RevokeApiKeyTx, StoreError,
 };
 use aex_control_app::{
-    CancelOperation, ControlError, CreateApiKey, CreateInvitation, CreateOrganization,
-    CreateWorkspace, DeleteWorkspace, RevokeApiKey,
+    AcceptInvitations, CancelOperation, ControlError, CreateApiKey, CreateInvitation,
+    CreateOrganization, CreateWorkspace, DeleteWorkspace, RevokeApiKey,
 };
 use aex_control_domain::{
-    AccountState, ActorKind, ApiKey as DomainApiKey, AuditEvent, AuditOutcome, CursorSecret,
-    IdempotencyKeyKind, IntentHash, Invitation as DomainInvitation,
+    AccountProjectionError, AccountState, ActorKind, ApiKey as DomainApiKey, AuditEvent,
+    AuditOutcome, CursorSecret, account_operational_state,
+    IdempotencyKeyKind, IntentHash, Invitation as DomainInvitation, MAX_ACCEPTABLE_INVITATIONS,
     InvitationStatus as DomainInvitationStatus, MembershipStatus as DomainMembershipStatus,
     OperationStatus as DomainOperationStatus, OrgRole, Organization as DomainOrganization,
     OutboxMessage, PrincipalKindTag, ResourceKind, ScopeKind, ScopeSet as DomainScopeSet, Slug,
@@ -34,12 +35,12 @@ use aex_wire::ids::{
     WorkspaceId,
 };
 use aex_wire::models::{
-    AccountActiveState, AccountOperationalState, AccountPauseReason, AccountPausedState, ApiKey,
+    AccountOperationalState, ApiKey,
     ApiKeyCreateRequest, ApiKeyPage, ApiKeysListQuery, CentralOperationsListQuery,
-    DashboardBootstrap, EmptyRequest, Invitation, InvitationCreateRequest, InvitationRole,
-    InvitationStatus, Membership, MembershipPage, MembershipStatus, MembershipsListQuery,
-    NewApiKey, Operation, OperationKind, OperationPage, OperationResult, OperationStatus,
-    OperationalStateSource, Organization, OrganizationAccount, OrganizationCreateRequest,
+    DashboardBootstrap, EmptyRequest, Invitation, InvitationAcceptResult, InvitationCreateRequest,
+    InvitationRole, InvitationStatus, Membership, MembershipPage, MembershipStatus,
+    MembershipsListQuery, NewApiKey, Operation, OperationKind, OperationPage, OperationResult,
+    OperationStatus, OperationalStateSource, Organization, OrganizationAccount, OrganizationCreateRequest,
     OrganizationPage, OrganizationRole, OrganizationsListQuery, Workspace, WorkspaceCreateRequest,
     WorkspaceDeleteRequest, WorkspaceOperationalState, WorkspacePage, WorkspaceStatus,
     WorkspaceTombstone, WorkspacesListQuery,
@@ -136,16 +137,48 @@ impl ControlService {
         }
     }
 
+    /// Whether this handler owns the account-state gate for `id`.
+    ///
+    /// The split is not a preference. `admit_request` runs the gate itself for
+    /// every route that is not `pause_exempt` **and resolves its organization
+    /// from the path**. A route whose organization arrives in a query parameter
+    /// or a body resolves [`ResourceClass::None`], which the edge treats as
+    /// exempt, so its handler owns the gate instead — `aex_control_domain`'s
+    /// `non_path_targets_defer_their_organization_gate_to_the_handler` pins
+    /// exactly that.
+    ///
+    /// Running the gate on the other side of the split is not a harmless second
+    /// read. `account_paused` and `account_state_unavailable` are the edge's
+    /// codes, and a route the edge already gates has no reason to declare them
+    /// — `memberships_list` does not — so the duplicate refusal reaches
+    /// [`aex_wire::dispatch::declared`] undeclared and is rendered
+    /// `500 internal_error` instead of the `402` the edge had already produced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorCode::InternalError`] when a regional route reached a
+    /// central handler, which means the router is composed wrong.
+    fn handler_owns_account_gate(id: aex_wire::routes::RouteId) -> WireResult<bool> {
+        let action = aex_control_domain::Action::central(id)
+            .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+        Ok(aex_control_domain::requirement(action).resource_class
+            == aex_control_domain::ResourceClass::None)
+    }
+
     async fn require_admin(&self, cx: &RequestContext, organization_id: Uuid) -> WireResult<()> {
-        let role = self.organization_access(cx, organization_id, true).await?;
+        let role = self.organization_access(cx, organization_id).await?;
         Self::admit_admin_role(role)
     }
 
+    /// Resolves the caller's role, gating the account state where this handler
+    /// owns that gate.
+    ///
+    /// Whether it does is derived from the route rather than passed in, so a
+    /// call site cannot re-gate a route the edge already gated.
     async fn organization_access(
         &self,
         cx: &RequestContext,
         organization_id: Uuid,
-        gate_account: bool,
     ) -> WireResult<OrgRole> {
         let user_id = Self::user(cx)?;
         let view = self
@@ -154,26 +187,21 @@ impl ControlService {
             .await
             .map_err(store_error)?
             .ok_or_else(|| WireError::new(ErrorCode::Forbidden))?;
-        if gate_account {
+        if Self::handler_owns_account_gate(cx.route)? {
             match self
                 .store
                 .account_profile(organization_id)
                 .await
                 .map_err(store_error)?
+                .map(|projection| projection.state())
             {
-                Some(AccountProfile {
-                    state: AccountState::Active,
-                    ..
-                }) => {}
-                Some(AccountProfile {
-                    state: AccountState::PausedTopUpRequired,
-                    ..
-                }) => return Err(WireError::new(ErrorCode::AccountPaused)),
-                Some(AccountProfile {
-                    state: AccountState::Unavailable,
-                    ..
-                })
-                | None => return Err(WireError::new(ErrorCode::AccountStateUnavailable)),
+                Some(AccountState::Active) => {}
+                Some(AccountState::PausedTopUpRequired) => {
+                    return Err(WireError::new(ErrorCode::AccountPaused));
+                }
+                Some(AccountState::Unavailable) | None => {
+                    return Err(WireError::new(ErrorCode::AccountStateUnavailable));
+                }
             }
         }
         Ok(view.caller_role)
@@ -424,7 +452,7 @@ impl OrganizationsApi for ControlService {
         query: MembershipsListQuery,
     ) -> WireResult<MembershipPage> {
         let organization_id = raw(organization_id);
-        self.organization_access(cx, organization_id, true).await?;
+        self.organization_access(cx, organization_id).await?;
         let user_id = Self::user(cx)?;
         let binding = self.page_binding(cx, user_id, organization_id, &[]);
         let page = self.page(&binding, query.cursor.as_ref(), query.limit)?;
@@ -450,7 +478,7 @@ impl OrganizationsApi for ControlService {
         body: InvitationCreateRequest,
     ) -> WireResult<Created<Invitation>> {
         let organization_id = raw(organization_id);
-        self.organization_access(cx, organization_id, true).await?;
+        self.organization_access(cx, organization_id).await?;
         let invitation_id = self.ids.next();
         let role = match body.role {
             InvitationRole::Admin => OrgRole::Admin,
@@ -508,6 +536,83 @@ impl OrganizationsApi for ControlService {
             .map_err(|error| control_error(cx, error))?;
         Ok(Created(invitation_wire(&invitation)?))
     }
+
+    /// Redeems every pending invitation addressed to the caller's own verified
+    /// email.
+    ///
+    /// # What identifies the invitation
+    ///
+    /// Nothing the caller sends. `control.invitation` has no token column
+    /// on purpose — acceptance is a verified-email match — so the body is
+    /// empty and the selection is the caller's own address. That also makes
+    /// the route naturally idempotent without a replay identity: the
+    /// selection reads `status = 'pending'`, so a second call finds nothing
+    /// and answers an empty list rather than a conflict.
+    ///
+    /// # Why it resolves no organization
+    ///
+    /// The person redeeming is not a member of the inviting organization yet,
+    /// so there is no membership to authorize against and no role floor that
+    /// would not refuse every legitimate request. Tenant isolation is kept by
+    /// the selection instead: the transaction reads only rows whose `email`
+    /// equals this caller's verified address and takes the organization from
+    /// the row.
+    ///
+    /// # The three refusals
+    ///
+    /// An unverified address is `403 forbidden` here rather than an empty
+    /// success. `AcceptInvitations::run` answers an empty vector for it, which
+    /// is the right shape for the use case and the wrong answer for a caller:
+    /// "you have no invitations" and "your address is not verified, so none of
+    /// them can be redeemed" are different instructions. Expired, revoked and
+    /// already-accepted invitations are not refusals at all — they are simply
+    /// not selected, which is what makes a retry safe.
+    async fn invitation_accept(
+        &self,
+        cx: &RequestContext,
+        _body: EmptyRequest,
+    ) -> WireResult<InvitationAcceptResult> {
+        let user_id = Self::user(cx)?;
+        let identity = self
+            .store
+            .user_identity(user_id)
+            .await
+            .map_err(identity_read_error)?
+            .ok_or_else(|| WireError::new(ErrorCode::Forbidden))?;
+        if !identity.email_verified {
+            return Err(WireError::new(ErrorCode::Forbidden)
+                .with_message("an unverified email address cannot accept an invitation"));
+        }
+        let command = AcceptInvitationsTx {
+            user_id,
+            email: identity.email.clone(),
+            email_verified: true,
+            // The transaction learns how many invitations are acceptable only
+            // under its own lock, so the ceiling is preassigned and a prefix is
+            // consumed. Unused ids are never written anywhere.
+            preassigned_membership_ids: (0..MAX_ACCEPTABLE_INVITATIONS)
+                .map(|_| self.ids.next())
+                .collect(),
+            now: self.now(),
+        };
+        let memberships = AcceptInvitations::run(self.store.as_ref(), &command)
+            .await
+            .map_err(|error| control_error(cx, error))?;
+        Ok(InvitationAcceptResult {
+            memberships: memberships
+                .iter()
+                .map(|membership| {
+                    membership_wire(&aex_control_app::ports::MembershipView {
+                        membership: membership.clone(),
+                        // Every membership this call produced belongs to the
+                        // caller, so the address is the one already read above
+                        // rather than a second read per row.
+                        email: identity.email.clone(),
+                    })
+                })
+                .collect::<WireResult<_>>()?,
+        })
+    }
 }
 
 impl WorkspacesApi for ControlService {
@@ -519,7 +624,7 @@ impl WorkspacesApi for ControlService {
         let user_id = Self::user(cx)?;
         let organization_id = query.organization_id.map(raw);
         if let Some(organization_id) = organization_id {
-            self.organization_access(cx, organization_id, true).await?;
+            self.organization_access(cx, organization_id).await?;
         }
         let scope_id = organization_id.unwrap_or(user_id);
         let organization_filter = query
@@ -904,7 +1009,7 @@ impl CentralOperationsApi for ControlService {
         query: CentralOperationsListQuery,
     ) -> WireResult<OperationPage> {
         let organization_id = raw(query.organization_id);
-        self.organization_access(cx, organization_id, true).await?;
+        self.organization_access(cx, organization_id).await?;
         let user_id = Self::user(cx)?;
         let kind = query.kind.map(|value| value.as_str().to_owned());
         let status = query.status.map(|value| value.as_str().to_owned());
@@ -997,10 +1102,11 @@ impl BootstrapApi for ControlService {
             .map_err(store_error)?;
         let email = self
             .store
-            .user_email(user_id)
+            .user_identity(user_id)
             .await
             .map_err(store_error)?
-            .ok_or_else(|| WireError::new(ErrorCode::Forbidden))?;
+            .ok_or_else(|| WireError::new(ErrorCode::Forbidden))?
+            .email;
         let mut accounts = Vec::with_capacity(organizations.items.len());
         for organization in &organizations.items {
             let profile = self
@@ -1125,32 +1231,20 @@ fn workspace_wire(
     })
 }
 
-fn account_wire(profile: &AccountProfile) -> WireResult<AccountOperationalState> {
-    let changed_at = timestamp(profile.changed_at)?;
-    match profile.state {
-        AccountState::Active => Ok(AccountOperationalState::Active(AccountActiveState {
-            changed_at,
-            revision: profile.revision,
-        })),
-        AccountState::PausedTopUpRequired => {
-            if profile
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason != "top_up_required")
-            {
-                return Err(WireError::new(ErrorCode::InternalError));
-            }
-            Ok(AccountOperationalState::Paused(AccountPausedState {
-                changed_at,
-                deletion_scheduled_at: None,
-                minimum_restore_cents: None,
-                reason: AccountPauseReason::TopUpRequired,
-                retention_funded_until: None,
-                revision: profile.revision,
-            }))
+/// Projects an account through the one shared mapping and maps its refusals.
+///
+/// There is no second derivation here and there must never be one: the mapping
+/// lives in `aex-control-domain` precisely so this plane and the region cannot
+/// answer the same question two ways.
+fn account_wire(projection: &AccountProjection) -> WireResult<AccountOperationalState> {
+    account_operational_state(&projection.profile).map_err(|error| match error {
+        AccountProjectionError::Unavailable => WireError::new(ErrorCode::AccountStateUnavailable),
+        AccountProjectionError::MissingPauseCause
+        | AccountProjectionError::UnknownPauseCause(_)
+        | AccountProjectionError::UnrepresentableInstant => {
+            WireError::new(ErrorCode::InternalError)
         }
-        AccountState::Unavailable => Err(WireError::new(ErrorCode::AccountStateUnavailable)),
-    }
+    })
 }
 
 fn operation_wire(view: &aex_control_app::ports::OperationView) -> WireResult<Operation> {
@@ -1224,6 +1318,31 @@ fn store_error(error: StoreError) -> WireError {
         StoreError::Decode(_) | StoreError::Fatal(_) | StoreError::PermissionDenied => {
             WireError::new(ErrorCode::InternalError)
         }
+    }
+}
+
+/// A failed read of `identity.user`, on a route that reads no account state.
+///
+/// [`store_error`] maps an unreachable store to `account_state_unavailable`,
+/// which is true for every route that resolves an organization and false for
+/// `invitation_accept`, which resolves none and never touches `finance`.
+/// Publishing that code here would name a stage the request never reached, so
+/// an unreachable identity authority is `upstream_error` — retryable, and
+/// accurate about what failed.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Result::map_err supplies an owned store error"
+)]
+fn identity_read_error(error: StoreError) -> WireError {
+    match error {
+        StoreError::Unavailable | StoreError::Unknown => {
+            WireError::new(ErrorCode::UpstreamError)
+        }
+        StoreError::Conflict { .. } => WireError::new(ErrorCode::ResourceConflict),
+        StoreError::NotFound
+        | StoreError::Decode(_)
+        | StoreError::Fatal(_)
+        | StoreError::PermissionDenied => WireError::new(ErrorCode::InternalError),
     }
 }
 
@@ -1334,5 +1453,58 @@ mod tests {
         assert_eq!(denied.code, ErrorCode::Forbidden);
         assert!(ControlService::admit_admin_role(OrgRole::Admin).is_ok());
         assert!(ControlService::admit_admin_role(OrgRole::Owner).is_ok());
+    }
+
+    #[test]
+    fn a_handler_gates_the_account_state_only_where_the_edge_could_not() {
+        use aex_wire::routes::{RouteId, route};
+
+        // The edge resolves these routes' organization from the path and gates
+        // the account state there. `memberships_list` re-read it anyway, and
+        // since the route declares neither of the gate's two codes, the refusal
+        // the edge had already made came back as `500 internal_error`.
+        for id in [RouteId::MembershipsList, RouteId::InvitationCreate] {
+            assert!(
+                !ControlService::handler_owns_account_gate(id).expect("a central route"),
+                "`{}` is gated at the edge",
+                route(id).operation_id
+            );
+            assert!(
+                !route(id).pause_exempt,
+                "`{}` would not be gated at all otherwise",
+                route(id).operation_id
+            );
+            for code in [ErrorCode::AccountPaused, ErrorCode::AccountStateUnavailable] {
+                assert!(
+                    !route(id).declares(code),
+                    "`{}` declares `{}`, so the handler could gate after all",
+                    route(id).operation_id,
+                    code.as_str()
+                );
+            }
+        }
+
+        // These take their organization from a query parameter or a body, so
+        // the edge cannot resolve it and defers the gate here. Each publishes
+        // both outcomes, which is what makes gating in the handler legal.
+        for id in [
+            RouteId::CentralOperationsList,
+            RouteId::ApiKeysList,
+            RouteId::ApiKeyCreate,
+        ] {
+            assert!(
+                ControlService::handler_owns_account_gate(id).expect("a central route"),
+                "`{}` has no edge gate to inherit",
+                route(id).operation_id
+            );
+            for code in [ErrorCode::AccountPaused, ErrorCode::AccountStateUnavailable] {
+                assert!(
+                    route(id).declares(code),
+                    "`{}` gates in the handler without declaring `{}`",
+                    route(id).operation_id,
+                    code.as_str()
+                );
+            }
+        }
     }
 }

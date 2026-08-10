@@ -160,6 +160,10 @@ fn complete() -> BTreeMap<&'static str, String> {
             config::IDENTITY_PEPPER_SECRET_ID,
             "aex/dev/identity-pepper/current".to_owned(),
         ),
+        (
+            config::SIGN_IN_EXCHANGE_SECRET_ID,
+            "aex/dev/sign-in-exchange/current".to_owned(),
+        ),
         (config::MAX_BODY_BYTES, "65536".to_owned()),
         (config::PAGE_LIMIT, "100".to_owned()),
         (config::PLANE, "dev".to_owned()),

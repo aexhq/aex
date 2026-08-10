@@ -529,6 +529,62 @@
           "altPrincipal": "anonymous",
           "bodyClass": "aex_json",
           "errors": [
+            "unauthenticated",
+            "forbidden",
+            "invalid_request",
+            "rate_limited",
+            "internal_error"
+          ],
+          "etag": "none",
+          "fragment": "auth",
+          "idempotency": "none",
+          "method": "POST",
+          "operationId": "dashboard_session_create",
+          "path": "/api/auth/sessions",
+          "pathParams": [],
+          "pauseExempt": true,
+          "plane": "central",
+          "queryParams": [],
+          "requestSchema": "DashboardSessionRequest",
+          "requiredScope": null,
+          "responseSchema": "DashboardSessionCredential",
+          "safeRetry": false,
+          "successStatus": 201,
+          "summary": "Exchange a completed first-party provider sign-in for a browser session.",
+          "transport": "unary"
+        },
+        {
+          "altPrincipal": "user_session",
+          "bodyClass": "none",
+          "errors": [
+            "unauthenticated",
+            "forbidden",
+            "insufficient_scope",
+            "rate_limited",
+            "internal_error"
+          ],
+          "etag": "none",
+          "fragment": "auth",
+          "idempotency": "none",
+          "method": "DELETE",
+          "operationId": "dashboard_session_delete",
+          "path": "/api/auth/sessions/current",
+          "pathParams": [],
+          "pauseExempt": true,
+          "plane": "central",
+          "queryParams": [],
+          "requestSchema": null,
+          "requiredScope": "account:write",
+          "responseSchema": null,
+          "safeRetry": false,
+          "successStatus": 204,
+          "summary": "Close the browser session the caller presented.",
+          "transport": "unary"
+        },
+        {
+          "altPrincipal": "anonymous",
+          "bodyClass": "aex_json",
+          "errors": [
             "invalid_request",
             "rate_limited",
             "internal_error"
@@ -549,6 +605,37 @@
           "safeRetry": false,
           "successStatus": 201,
           "summary": "Begin the CLI device-authorization flow.",
+          "transport": "unary"
+        },
+        {
+          "altPrincipal": "user_session",
+          "bodyClass": "aex_json",
+          "errors": [
+            "unauthenticated",
+            "forbidden",
+            "insufficient_scope",
+            "token_expired",
+            "not_found",
+            "invalid_request",
+            "rate_limited",
+            "internal_error"
+          ],
+          "etag": "none",
+          "fragment": "auth",
+          "idempotency": "none",
+          "method": "POST",
+          "operationId": "device_decision_create",
+          "path": "/api/auth/device/decisions",
+          "pathParams": [],
+          "pauseExempt": true,
+          "plane": "central",
+          "queryParams": [],
+          "requestSchema": "DeviceDecisionRequest",
+          "requiredScope": "account:write",
+          "responseSchema": "DeviceDecisionResult",
+          "safeRetry": false,
+          "successStatus": 200,
+          "summary": "Approve or deny a pending device authorization.",
           "transport": "unary"
         },
         {
@@ -578,6 +665,35 @@
           "safeRetry": true,
           "successStatus": 200,
           "summary": "Exchange an approved device code for an account token.",
+          "transport": "unary"
+        },
+        {
+          "altPrincipal": "user_session",
+          "bodyClass": "aex_json",
+          "errors": [
+            "unauthenticated",
+            "forbidden",
+            "insufficient_scope",
+            "resource_conflict",
+            "upstream_error",
+            "commit_outcome_unknown"
+          ],
+          "etag": "none",
+          "fragment": "organizations",
+          "idempotency": "none",
+          "method": "POST",
+          "operationId": "invitation_accept",
+          "path": "/api/invitations/acceptances",
+          "pathParams": [],
+          "pauseExempt": false,
+          "plane": "central",
+          "queryParams": [],
+          "requestSchema": "EmptyRequest",
+          "requiredScope": "memberships:accept",
+          "responseSchema": "InvitationAcceptResult",
+          "safeRetry": true,
+          "successStatus": 200,
+          "summary": "Redeem every pending invitation addressed to the caller's verified email.",
           "transport": "unary"
         },
         {
@@ -3923,7 +4039,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3934,8 +4049,7 @@
             "deletion_in_progress",
             "account_paused",
             "precondition_failed",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -4027,7 +4141,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -4035,8 +4148,7 @@
             "operation_idempotency_conflict",
             "session_deleting",
             "session_deleted",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -4269,7 +4381,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -4279,8 +4390,7 @@
             "session_deleting",
             "session_deleted",
             "deletion_in_progress",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -4698,7 +4808,6 @@
         {
           "altPrincipal": "account",
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -4707,7 +4816,7 @@
             "invalid_cursor",
             "invalid_query",
             "wrong_workspace_region",
-            "not_implemented"
+            "usage_unavailable"
           ],
           "etag": "none",
           "fragment": "usage",
@@ -5452,6 +5561,15 @@
           "status": 503
         },
         {
+          "class": "unavailable",
+          "code": "usage_unavailable",
+          "message": "the usage projection could not be read",
+          "precedenceStage": "domain_state",
+          "remedy": "retry the identical query",
+          "retryable": true,
+          "status": 503
+        },
+        {
           "class": "quota",
           "code": "rate_limited",
           "message": "too many requests",
@@ -5713,6 +5831,11 @@
           "description": "Per-tool byte, traversal and listing safety bounds.",
           "id": "tools.io_safety",
           "shape": "map"
+        },
+        {
+          "description": "Concurrent non-terminal telemetry exports per workspace, and the widest observation-time window one export may cover. A cost guard rather than a correctness guard: the active count is read eventually consistently, so a race may admit one or two over the cap, which is a better failure than the transactional counter that leaks and blocks a workspace permanently.",
+          "id": "telemetry.export",
+          "shape": "map"
         }
       ]
     },
@@ -5721,6 +5844,10 @@
         {
           "description": "Read the caller's account and operational state.",
           "scope": "account:read"
+        },
+        {
+          "description": "Decide the caller's own device authorizations and close their own browser session.",
+          "scope": "account:write"
         },
         {
           "description": "List and read organizations the caller belongs to.",
@@ -5737,6 +5864,10 @@
         {
           "description": "Invite people to an organization.",
           "scope": "memberships:write"
+        },
+        {
+          "description": "Redeem invitations addressed to the caller's own verified email.",
+          "scope": "memberships:accept"
         },
         {
           "description": "List and read workspaces.",
@@ -6650,6 +6781,86 @@
       ],
       "type": "object"
     },
+    "DashboardSessionCredential": {
+      "additionalProperties": false,
+      "properties": {
+        "expiresAt": {
+          "description": "When it stops verifying.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        },
+        "session": {
+          "description": "The bearer credential; hold it in a cookie the browser will not hand to script.",
+          "maxLength": 4096,
+          "minLength": 16,
+          "type": "string"
+        },
+        "userId": {
+          "description": "The person it authenticates.",
+          "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$",
+          "type": "string",
+          "x-aex-id": "user"
+        }
+      },
+      "required": [
+        "expiresAt",
+        "session",
+        "userId"
+      ],
+      "type": "object"
+    },
+    "DashboardSessionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "description": "The address the provider asserts.",
+          "maxLength": 254,
+          "minLength": 3,
+          "type": "string"
+        },
+        "emailVerified": {
+          "description": "Whether the provider asserts the address is verified.",
+          "type": "boolean"
+        },
+        "exchangeSecret": {
+          "description": "The first-party exchange secret; proves the caller is an AEX front end.",
+          "maxLength": 256,
+          "minLength": 32,
+          "type": "string"
+        },
+        "imageUrl": {
+          "description": "An avatar, when the provider supplied one.",
+          "format": "uri",
+          "maxLength": 2048,
+          "type": "string"
+        },
+        "name": {
+          "description": "A display name, when the provider supplied one.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "provider": {
+          "$ref": "aex:schema:IdentityProvider",
+          "description": "Which provider completed the sign-in."
+        },
+        "providerAccountId": {
+          "description": "The provider's own stable identifier for the person.",
+          "maxLength": 255,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "emailVerified",
+        "exchangeSecret",
+        "provider",
+        "providerAccountId"
+      ],
+      "type": "object"
+    },
     "DeletingSession": {
       "additionalProperties": false,
       "properties": {
@@ -6757,6 +6968,63 @@
       },
       "required": [
         "clientId",
+        "scopes"
+      ],
+      "type": "object"
+    },
+    "DeviceDecision": {
+      "enum": [
+        "approve",
+        "deny"
+      ],
+      "type": "string"
+    },
+    "DeviceDecisionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "$ref": "aex:schema:DeviceDecision",
+          "description": "What the person chose."
+        },
+        "userCode": {
+          "description": "The short code the device displayed.",
+          "maxLength": 16,
+          "minLength": 6,
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision",
+        "userCode"
+      ],
+      "type": "object"
+    },
+    "DeviceDecisionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "decidedAt": {
+          "description": "When the decision was written.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        },
+        "decision": {
+          "$ref": "aex:schema:DeviceDecision",
+          "description": "What was recorded; never differs from the request."
+        },
+        "scopes": {
+          "description": "The scopes the device asked for, so the page can name what it granted.",
+          "items": {
+            "type": "string",
+            "x-aex-registry": "scopes"
+          },
+          "maxItems": 64,
+          "type": "array"
+        }
+      },
+      "required": [
+        "decidedAt",
+        "decision",
         "scopes"
       ],
       "type": "object"
@@ -7143,10 +7411,35 @@
     "ExportFormat": {
       "enum": [
         "ndjson",
-        "parquet",
         "otlp_json"
       ],
       "type": "string"
+    },
+    "ExportQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "consistency": {
+          "$ref": "aex:schema:ObservationConsistency",
+          "description": "How much must be observed before the window is admissible."
+        },
+        "filter": {
+          "$ref": "aex:schema:ObservationFilter",
+          "description": "The bounded filter."
+        },
+        "signal": {
+          "$ref": "aex:schema:ObservationSignal",
+          "description": "Which signal."
+        },
+        "timeRange": {
+          "$ref": "aex:schema:TimeRange",
+          "description": "The observation-time window."
+        }
+      },
+      "required": [
+        "signal",
+        "timeRange"
+      ],
+      "type": "object"
     },
     "ExportStatus": {
       "enum": [
@@ -7358,6 +7651,35 @@
       ],
       "type": "object"
     },
+    "HttpHeader": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The header name.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "value": {
+          "description": "The exact value to send.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
+    "IdentityProvider": {
+      "enum": [
+        "github",
+        "google"
+      ],
+      "type": "string"
+    },
     "Invitation": {
       "additionalProperties": false,
       "properties": {
@@ -7414,6 +7736,23 @@
         "organizationId",
         "role",
         "status"
+      ],
+      "type": "object"
+    },
+    "InvitationAcceptResult": {
+      "additionalProperties": false,
+      "properties": {
+        "memberships": {
+          "description": "One membership per invitation redeemed by this call, created or raised to the invited role. Bounded by the same 100 the acceptance transaction reads.",
+          "items": {
+            "$ref": "aex:schema:Membership"
+          },
+          "maxItems": 100,
+          "type": "array"
+        }
+      },
+      "required": [
+        "memberships"
       ],
       "type": "object"
     },
@@ -11239,8 +11578,8 @@
           "description": "The artifact format."
         },
         "query": {
-          "$ref": "aex:schema:ObservationQuery",
-          "description": "What to export."
+          "$ref": "aex:schema:ExportQuery",
+          "description": "What to export. Normalized and pinned onto the export row at admission, so two runs of one export walk the same plan."
         }
       },
       "required": [
@@ -11713,6 +12052,14 @@
           "type": "string",
           "x-aex-time": "rfc3339-ms"
         },
+        "headers": {
+          "description": "Headers the caller must replay verbatim.",
+          "items": {
+            "$ref": "aex:schema:HttpHeader"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
         "partNumber": {
           "description": "Which part.",
           "maximum": 10000,
@@ -11728,6 +12075,7 @@
       },
       "required": [
         "expiresAt",
+        "headers",
         "partNumber",
         "url"
       ],
@@ -11757,22 +12105,47 @@
       ],
       "type": "object"
     },
+    "UploadPartRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "partNumber": {
+          "description": "Which part.",
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sha256": {
+          "description": "The part's own SHA-256.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "The exact Content-Length to be signed.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "partNumber",
+        "sha256",
+        "sizeBytes"
+      ],
+      "type": "object"
+    },
     "UploadPartsRequest": {
       "additionalProperties": false,
       "properties": {
-        "partNumbers": {
+        "parts": {
           "description": "The parts to grant.",
           "items": {
-            "maximum": 10000,
-            "minimum": 1,
-            "type": "integer"
+            "$ref": "aex:schema:UploadPartRequest"
           },
           "maxItems": 1000,
           "type": "array"
         }
       },
       "required": [
-        "partNumbers"
+        "parts"
       ],
       "type": "object"
     },
@@ -11808,7 +12181,7 @@
       "additionalProperties": false,
       "properties": {
         "operationId": {
-          "description": "The operation, when attributable.",
+          "description": "The operation, when attributable. Never populated by `usage_query`, as `sessionId`.",
           "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
           "type": "string",
           "x-aex-id": "operation"
@@ -11825,7 +12198,7 @@
           "type": "string"
         },
         "runId": {
-          "description": "The run, when attributable.",
+          "description": "The run, when attributable. Never populated by `usage_query`, as `sessionId`.",
           "pattern": "^run_[0-9a-hjkmnp-tv-z]{26}$",
           "type": "string",
           "x-aex-id": "run"
@@ -11835,13 +12208,13 @@
           "description": "The service-time interval."
         },
         "sessionId": {
-          "description": "The session, when attributable.",
+          "description": "The session, when attributable. Never populated by `usage_query`: that route answers from a coarse face that carries no session identity, and its absence is honest rather than an omission.",
           "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
           "type": "string",
           "x-aex-id": "session"
         },
         "source": {
-          "description": "Which authority produced the facts.",
+          "description": "Which authority produced the facts. One of the `UsageAuthority` identifiers, constant per partition.",
           "maxLength": 128,
           "minLength": 1,
           "type": "string"
@@ -11860,6 +12233,22 @@
         "workspaceId"
       ],
       "type": "object"
+    },
+    "UsageAuthority": {
+      "enum": [
+        "storage",
+        "compute",
+        "transfer"
+      ],
+      "type": "string"
+    },
+    "UsageBucket": {
+      "enum": [
+        "hour",
+        "day",
+        "total"
+      ],
+      "type": "string"
     },
     "UsageCategory": {
       "enum": [
@@ -11881,11 +12270,16 @@
           "description": "Millicpu-milliseconds.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
+        },
+        "settlement": {
+          "$ref": "aex:schema:UsageSettlement",
+          "description": "Whether this item is settled as of `completeThrough`."
         }
       },
       "required": [
         "attribution",
-        "millicpuMilliseconds"
+        "millicpuMilliseconds",
+        "settlement"
       ],
       "type": "object"
     },
@@ -11900,11 +12294,16 @@
           "description": "Measured egress bytes.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
+        },
+        "settlement": {
+          "$ref": "aex:schema:UsageSettlement",
+          "description": "Whether this item is settled as of `completeThrough`."
         }
       },
       "required": [
         "attribution",
-        "egressBytes"
+        "egressBytes",
+        "settlement"
       ],
       "type": "object"
     },
@@ -11917,8 +12316,18 @@
           "type": "string"
         },
         "category": {
-          "$ref": "aex:schema:UsageCategory",
-          "description": "The priced category."
+          "$ref": "aex:schema:UsageAuthority",
+          "description": "The authority whose contiguous fact sequence this frontier describes. Not a priced category: memory and compute share one."
+        },
+        "completeThrough": {
+          "description": "The answer contains every matching fact at or below this sequence. Pinned on the first page and reported unchanged on every later page.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        },
+        "includesThrough": {
+          "description": "No fact above this sequence is present in the answer. Per page.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
         },
         "projectedSequence": {
           "description": "Facts folded into the query projection.",
@@ -11952,6 +12361,21 @@
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
         },
+        "stallReason": {
+          "description": "Why the fold stopped, present exactly when `state` is `stalled`. A stalled frontier is the honest signal; a lag is not a stall.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "stalledAt": {
+          "description": "The sequence the fold stopped at, present exactly when `state` is `stalled`.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "aex:schema:UsageFrontierState",
+          "description": "Whether the fold is advancing or parked."
+        },
         "workspaceId": {
           "description": "The workspace.",
           "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
@@ -11962,22 +12386,29 @@
       "required": [
         "acceptedSequence",
         "category",
+        "completeThrough",
+        "includesThrough",
         "projectedSequence",
         "publishedSequence",
         "region",
         "settledSequence",
+        "state",
         "workspaceId"
       ],
       "type": "object"
+    },
+    "UsageFrontierState": {
+      "enum": [
+        "advancing",
+        "stalled"
+      ],
+      "type": "string"
     },
     "UsageGrouping": {
       "enum": [
         "category",
         "region",
-        "workspace",
-        "session",
-        "run",
-        "operation"
+        "workspace"
       ],
       "type": "string"
     },
@@ -11992,11 +12423,16 @@
           "description": "Byte-milliseconds.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
+        },
+        "settlement": {
+          "$ref": "aex:schema:UsageSettlement",
+          "description": "Whether this item is settled as of `completeThrough`."
         }
       },
       "required": [
         "attribution",
-        "byteMilliseconds"
+        "byteMilliseconds",
+        "settlement"
       ],
       "type": "object"
     },
@@ -12004,7 +12440,7 @@
       "additionalProperties": false,
       "properties": {
         "frontiers": {
-          "description": "Pipeline frontiers.",
+          "description": "Pipeline frontiers, one per authority the query touched.",
           "items": {
             "$ref": "aex:schema:UsageFrontier"
           },
@@ -12016,11 +12452,11 @@
           "items": {
             "$ref": "aex:schema:UsageAggregate"
           },
-          "maxItems": 1000,
+          "maxItems": 100,
           "type": "array"
         },
         "nextCursor": {
-          "description": "Continuation token.",
+          "description": "Continuation token. Never present for `bucket: total`: a partial total is a wrong number, so an over-budget total is refused instead of paged.",
           "maxLength": 4096,
           "type": "string",
           "x-aex-cursor": true
@@ -12035,6 +12471,10 @@
     "UsageQuery": {
       "additionalProperties": false,
       "properties": {
+        "bucket": {
+          "$ref": "aex:schema:UsageBucket",
+          "description": "The time grain to answer at."
+        },
         "categories": {
           "description": "Restrict to these categories.",
           "items": {
@@ -12054,24 +12494,32 @@
           "items": {
             "$ref": "aex:schema:UsageGrouping"
           },
-          "maxItems": 6,
+          "maxItems": 3,
           "type": "array"
         },
         "limit": {
-          "description": "Page size.",
-          "maximum": 1000,
+          "description": "Page size. Absent means 25. Above the maximum the request is refused, never clamped: a caller silently given fewer items than it asked for cannot tell a short page from the end of a collection.",
+          "maximum": 100,
           "minimum": 1,
           "type": "integer"
         },
         "timeRange": {
           "$ref": "aex:schema:TimeRange",
-          "description": "The service-time window."
+          "description": "The service-time window, aligned to whole `bucket` grains in UTC. A misaligned range is refused, never widened. A range longer than 400 days is refused."
         }
       },
       "required": [
+        "bucket",
         "timeRange"
       ],
       "type": "object"
+    },
+    "UsageSettlement": {
+      "enum": [
+        "settled",
+        "provisional"
+      ],
+      "type": "string"
     },
     "UsageStorageAggregate": {
       "additionalProperties": false,
@@ -12084,11 +12532,16 @@
           "description": "Byte-minutes of retained storage.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
+        },
+        "settlement": {
+          "$ref": "aex:schema:UsageSettlement",
+          "description": "Whether this item is settled as of `completeThrough`."
         }
       },
       "required": [
         "attribution",
-        "byteMinutes"
+        "byteMinutes",
+        "settlement"
       ],
       "type": "object"
     },

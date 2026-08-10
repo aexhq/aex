@@ -112,7 +112,7 @@ pub struct OrgMembership {
 /// The authenticated principal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Principal {
-    /// No credential at all. Only the two device-flow routes admit this.
+    /// No credential at all. Only the three anonymous ceremony routes admit this.
     Anonymous,
     /// A person, through either credential.
     AccountActor {
@@ -396,6 +396,26 @@ const RULES: &[Rule] = &[
         class: ResourceClass::None,
         min_role: None,
     },
+    // The three credential-ceremony routes are account-shaped, not
+    // organization-shaped: a person decides their own device authorization and
+    // closes their own browser session before any organization has been
+    // selected, so there is no resource to classify and no membership role a
+    // floor could require.
+    Rule {
+        route: RouteId::DeviceDecisionCreate,
+        class: ResourceClass::None,
+        min_role: None,
+    },
+    Rule {
+        route: RouteId::DashboardSessionCreate,
+        class: ResourceClass::None,
+        min_role: None,
+    },
+    Rule {
+        route: RouteId::DashboardSessionDelete,
+        class: ResourceClass::None,
+        min_role: None,
+    },
     Rule {
         route: RouteId::DashboardBootstrapGet,
         class: ResourceClass::None,
@@ -431,6 +451,18 @@ const RULES: &[Rule] = &[
         route: RouteId::InvitationCreate,
         class: ResourceClass::Organization,
         min_role: Some(OrgRole::Admin),
+    },
+    // Acceptance resolves no organization and therefore carries no role floor.
+    // It could not carry one: the caller is not yet a member of the
+    // organization that invited them, so any floor at all would refuse every
+    // legitimate request. What keeps this inside the tenant boundary is not a
+    // role but the selection — the transaction reads only invitation rows whose
+    // `email` equals the caller's own verified address, and takes the
+    // organization from the row rather than from the request.
+    Rule {
+        route: RouteId::InvitationAccept,
+        class: ResourceClass::None,
+        min_role: None,
     },
     // --- workspaces ----------------------------------------------------------
     Rule {
@@ -838,6 +870,12 @@ mod tests {
                 | RouteId::ApiKeysList
                 | RouteId::ApiKeyCreate
                 | RouteId::CentralOperationsList
+                // Acceptance's target is the caller's own verified address,
+                // which no path or query carries and the edge cannot resolve.
+                // The handler reads it from `identity.user` and the acceptance
+                // transaction selects on it, so the target is owned exactly
+                // where the other seven above own theirs.
+                | RouteId::InvitationAccept
         )
     }
 

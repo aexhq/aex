@@ -162,6 +162,25 @@ impl PrincipalScope {
     }
 }
 
+/// The `sha256` of a replay key, lowercase hex.
+///
+/// The raw key never enters a durable key template: it is caller-chosen text of
+/// up to [`IdempotencyKey::MAX_BYTES`], and hashing it bounds the width and
+/// removes any chance that a crafted key changes a key's shape. There is exactly
+/// one implementation because two spellings of "the hashed key" would file one
+/// request under two receipts.
+#[must_use]
+pub fn key_digest(key: &str) -> String {
+    use fmt::Write as _;
+    use sha2::Digest as _;
+    let digest: [u8; 32] = sha2::Sha256::digest(key.as_bytes()).into();
+    let mut text = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(text, "{byte:02x}").expect("writing hex into a String cannot fail");
+    }
+    text
+}
+
 /// The canonical digest of what a request actually asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IntentDigest([u8; 32]);

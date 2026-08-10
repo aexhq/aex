@@ -8,9 +8,11 @@
 
 use std::sync::Arc;
 
-use aex_finance_domain::billing_account::BillingAccountState;
+use aex_control_domain::{AccountProfile, AccountState};
 use aex_finance_domain::money::Microusd;
-use aex_payment_contracts::{CommandKind, EffectId, PaymentResult, ProviderCustomerRef};
+use aex_payment_contracts::{
+    CommandKind, EffectId, PaymentResult, ProviderCustomerRef, RedactedEmail,
+};
 use aex_rds_data::{
     CommitFailure, DataApiClient, DataApiError, DecodeError, Isolation, Record, Row, SqlValue,
     Statement,
@@ -31,6 +33,24 @@ pub mod sql {
 SELECT pg_has_role(current_user, :role, 'MEMBER'), \
        has_table_privilege(:role, 'finance.journal_transaction', 'UPDATE'), \
        has_table_privilege(:role, 'finance.account_balance', 'SELECT')";
+
+    /// The published account state of one organization.
+    ///
+    /// The same view, the same four columns and the same fail-closed `CASE` the
+    /// control plane reads at `aex_control_aurora::sql::GET_ACCOUNT_PROFILE`.
+    /// Finance reads the projection rather than its own `billing_account.state`
+    /// so that one account has one published state: deriving it here from the
+    /// durable column and the live balance is what let the same account read
+    /// active on one route and paused on another in the same second.
+    ///
+    /// The revocation epoch that statement also selects is deliberately absent.
+    /// It is a `control.authorization_epoch` row, no finance route publishes it,
+    /// and `aex_finance_api` holds no privilege on that table.
+    pub const READ_ACCOUNT_PROFILE: &str = "\
+SELECT a.status, a.reason, a.revision, \
+       (EXTRACT(EPOCH FROM a.changed_at)*1000)::bigint \
+  FROM finance.account_state_v1 a \
+ WHERE a.organization_id = :org_id";
 
     /// The prepaid position of one organization.
     ///
@@ -53,8 +73,7 @@ SELECT coalesce((SELECT -sum(b.balance_microusd) FROM finance.account_balance b 
        coalesce((SELECT (EXTRACT(EPOCH FROM max(b.updated_at))*1000)::bigint \
                    FROM finance.account_balance b \
                    JOIN finance.account a ON a.account_id = b.account_id \
-                  WHERE a.org_id = ba.org_id), 0)::bigint, \
-       ba.state, ba.state_reason \
+                  WHERE a.org_id = ba.org_id), 0)::bigint \
   FROM finance.billing_account ba \
  WHERE ba.org_id = :org_id";
 
@@ -107,6 +126,20 @@ SELECT i.category, coalesce(sum(i.rated_microusd), 0)::bigint \
     /// The provider customer record, which every hosted command needs.
     pub const READ_PROVIDER_CUSTOMER: &str = "\
 SELECT ba.provider_customer_id FROM finance.billing_account ba WHERE ba.org_id = :org_id";
+
+    /// The address a provider customer record is created against.
+    pub const READ_BILLING_CONTACT: &str = "SELECT finance.billing_contact_email(:org_id)";
+
+    /// Claims the provider customer record for an organization that has none.
+    ///
+    /// Guarded rather than blind. The column is `UNIQUE`, so a second concurrent
+    /// `EnsureCustomer` that overwrote the first would orphan a provider customer
+    /// together with every payment method saved against it, and the row that lost
+    /// would be a live Stripe customer nothing in AEX names.
+    pub const RECORD_PROVIDER_CUSTOMER: &str = "\
+UPDATE finance.billing_account \
+   SET provider_customer_id = :provider_customer_id \
+ WHERE org_id = :org_id AND provider_customer_id IS NULL";
 
     /// Commits a `prepared` effect. The unique intent claim is the fence: a
     /// replayed intent resolves the original effect instead of opening a second.
@@ -193,22 +226,39 @@ struct BalanceRow {
     pending: i64,
     revision: i64,
     updated_at_millis: i64,
-    state: String,
-    state_reason: Option<String>,
 }
 
 impl Row for BalanceRow {
     fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
-        record.expect_arity(7)?;
+        record.expect_arity(5)?;
         Ok(Self {
             available: record.i64(0)?,
             reserved: record.i64(1)?,
             pending: record.i64(2)?,
             revision: record.i64(3)?,
             updated_at_millis: record.i64(4)?,
-            state: record.text(5)?.to_owned(),
-            state_reason: record.opt(6, |r, i| r.text(i).map(str::to_owned))?,
         })
+    }
+}
+
+/// The published account-state row.
+#[derive(Debug)]
+struct AccountProfileRow(AccountProfile);
+
+impl Row for AccountProfileRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(4)?;
+        let state = AccountState::parse(record.text(0)?).ok_or(DecodeError::TypeMismatch {
+            index: 0,
+            expected: "an account state",
+        })?;
+        Ok(Self(AccountProfile {
+            state,
+            reason: record.opt(1, |row, index| row.text(index).map(str::to_owned))?,
+            revision: u64::try_from(record.i64(2)?)
+                .map_err(|_| DecodeError::Overflow { index: 2 })?,
+            changed_at: record.timestamp_millis(3)?,
+        }))
     }
 }
 
@@ -320,19 +370,6 @@ impl Row for GrantRow {
     }
 }
 
-/// Maps the durable state spelling onto the closed domain enum.
-fn parse_state(raw: &str) -> Result<BillingAccountState, AuthorityError> {
-    match raw {
-        "active" => Ok(BillingAccountState::Active),
-        "payment_hold" => Ok(BillingAccountState::PaymentHold),
-        "dispute_hold" => Ok(BillingAccountState::DisputeHold),
-        "closed" => Ok(BillingAccountState::Closed),
-        other => Err(AuthorityError::Decode(format!(
-            "unknown billing account state `{other}`"
-        ))),
-    }
-}
-
 /// Wraps a stored `bigint` as a bounded non-negative money amount.
 fn money(raw: i64, column: &'static str) -> Result<Microusd, AuthorityError> {
     Microusd::new(raw).map_err(|error| {
@@ -414,9 +451,23 @@ impl BillingAuthority for AuroraBillingAuthority {
             pending: money(row.pending, "pending_microusd")?,
             revision: u64::try_from(row.revision).unwrap_or(0),
             updated_at_millis: row.updated_at_millis,
-            state: parse_state(&row.state)?,
-            state_reason: row.state_reason,
         })
+    }
+
+    async fn account_profile(
+        &self,
+        organization: OrganizationId,
+    ) -> Result<AccountProfile, AuthorityError> {
+        let row: AccountProfileRow = self
+            .client
+            .query_opt(Statement::with(
+                sql::READ_ACCOUNT_PROFILE,
+                vec![("org_id", SqlValue::Uuid(org_uuid(organization)))],
+            ))
+            .await
+            .map_err(store)?
+            .ok_or(AuthorityError::UnknownOrganization)?;
+        Ok(row.0)
     }
 
     async fn policy(&self, organization: OrganizationId) -> Result<PolicyRecord, AuthorityError> {
@@ -590,21 +641,6 @@ impl BillingAuthority for AuroraBillingAuthority {
         deadline_millis: i64,
     ) -> Result<EffectPreparation, AuthorityError> {
         let organization_uuid = org_uuid(organization);
-        let customer: TextRow = self
-            .client
-            .query_opt(Statement::with(
-                sql::READ_PROVIDER_CUSTOMER,
-                vec![("org_id", SqlValue::Uuid(organization_uuid))],
-            ))
-            .await
-            .map_err(store)?
-            .ok_or(AuthorityError::UnknownOrganization)?;
-        let customer = ProviderCustomerRef(customer.0.ok_or_else(|| {
-            AuthorityError::Refused(
-                "the organization has no provider customer record yet".to_owned(),
-            )
-        })?);
-
         let intent_hash: [u8; 32] = blake3::hash(intent).into();
         let Some(durable_kind) = durable_effect_kind(kind) else {
             // A hosted portal session creates no money effect and the durable
@@ -614,7 +650,6 @@ impl BillingAuthority for AuroraBillingAuthority {
             return Ok(EffectPreparation {
                 effect: EffectId(mint_effect_id()),
                 organization,
-                customer,
                 intent_hash,
             });
         };
@@ -701,9 +736,106 @@ impl BillingAuthority for AuroraBillingAuthority {
                 AuthorityError::Decode(format!("effect id is not a UUIDv7: {error}"))
             })?),
             organization,
-            customer,
             intent_hash,
         })
+    }
+
+    async fn provider_customer(
+        &self,
+        organization: OrganizationId,
+    ) -> Result<Option<ProviderCustomerRef>, AuthorityError> {
+        let row: TextRow = self
+            .client
+            .query_opt(Statement::with(
+                sql::READ_PROVIDER_CUSTOMER,
+                vec![("org_id", SqlValue::Uuid(org_uuid(organization)))],
+            ))
+            .await
+            .map_err(store)?
+            .ok_or(AuthorityError::UnknownOrganization)?;
+        Ok(row.0.map(ProviderCustomerRef))
+    }
+
+    async fn billing_contact(
+        &self,
+        organization: OrganizationId,
+    ) -> Result<RedactedEmail, AuthorityError> {
+        let row: TextRow = self
+            .client
+            .query_one(Statement::with(
+                sql::READ_BILLING_CONTACT,
+                vec![("org_id", SqlValue::Uuid(org_uuid(organization)))],
+            ))
+            .await
+            .map_err(store)?;
+        row.0
+            .map(RedactedEmail::new)
+            .ok_or(AuthorityError::UnknownOrganization)
+    }
+
+    async fn settle_customer(
+        &self,
+        effect: EffectId,
+        organization: OrganizationId,
+        result: &PaymentResult,
+    ) -> Result<Option<ProviderCustomerRef>, AuthorityError> {
+        let organization_uuid = org_uuid(organization);
+        let mut transaction = self
+            .client
+            .begin(Isolation::Serializable)
+            .await
+            .map_err(store)?;
+        let finalized = finalize_in(&mut transaction, effect, result).await;
+        if let Err(error) = finalized {
+            let _ = transaction.rollback().await;
+            return Err(error);
+        }
+        let PaymentResult::Succeeded { provider_ref, .. } = result else {
+            transaction.commit().await.map_err(commit)?;
+            return Ok(None);
+        };
+        let recorded = transaction
+            .execute(Statement::with(
+                sql::RECORD_PROVIDER_CUSTOMER,
+                vec![
+                    (
+                        "provider_customer_id",
+                        SqlValue::Text(provider_ref.0.clone()),
+                    ),
+                    ("org_id", SqlValue::Uuid(organization_uuid)),
+                ],
+            ))
+            .await;
+        if let Err(error) = recorded {
+            let _ = transaction.rollback().await;
+            return Err(store(error));
+        }
+        // Read back rather than assume: a concurrent ensure may have claimed the
+        // column first, and the customer this organization *has* is the one every
+        // later command must act on — not the one this call created.
+        let effective: Result<TextRow, DataApiError> = transaction
+            .query_one(Statement::with(
+                sql::READ_PROVIDER_CUSTOMER,
+                vec![("org_id", SqlValue::Uuid(organization_uuid))],
+            ))
+            .await;
+        let effective = match effective {
+            Ok(row) => row,
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                return Err(store(error));
+            }
+        };
+        transaction.commit().await.map_err(commit)?;
+        effective
+            .0
+            .map(ProviderCustomerRef)
+            .map(Some)
+            .ok_or_else(|| {
+                AuthorityError::Refused(
+                    "the provider customer record was claimed and then vanished".to_owned(),
+                )
+            })
     }
 
     async fn bind_effect_command(
@@ -755,50 +887,62 @@ impl BillingAuthority for AuroraBillingAuthority {
         effect: EffectId,
         result: &PaymentResult,
     ) -> Result<(), AuthorityError> {
-        let (state, object_id, status, failure_code, decline_code) = finalize_columns(result);
         let mut transaction = self
             .client
             .begin(Isolation::Serializable)
             .await
             .map_err(store)?;
-        let updated = transaction
-            .execute(Statement::with(
-                sql::FINALIZE_EFFECT,
-                vec![
-                    ("state", SqlValue::Text(state.to_owned())),
-                    (
-                        "provider_object_id",
-                        object_id.map_or(SqlValue::Null, SqlValue::Text),
-                    ),
-                    ("provider_status", SqlValue::Text(status)),
-                    (
-                        "failure_code",
-                        failure_code.map_or(SqlValue::Null, SqlValue::Text),
-                    ),
-                    (
-                        "decline_code",
-                        decline_code.map_or(SqlValue::Null, SqlValue::Text),
-                    ),
-                    (
-                        "effect_id",
-                        SqlValue::Uuid(uuid::Uuid::from_bytes(*effect.0.as_bytes())),
-                    ),
-                ],
-            ))
-            .await;
-        let updated = match updated {
-            Ok(rows) => rows,
-            Err(error) => {
-                let _ = transaction.rollback().await;
-                return Err(store(error));
-            }
-        };
-        if updated == 0 {
+        if let Err(error) = finalize_in(&mut transaction, effect, result).await {
             let _ = transaction.rollback().await;
-            return Err(AuthorityError::NotFound("provider effect"));
+            return Err(error);
         }
         transaction.commit().await.map(|_| ()).map_err(commit)
     }
+}
+
+/// Records the provider's answer inside a transaction the caller owns.
+///
+/// Shared so that `settle_customer` writes the provider customer id and closes
+/// the effect that created it in **one** commit. Two commits would leave a window
+/// in which an effect reads `succeeded` and the column is still null — and the
+/// recovery from that window is a provider call whose answer no statement here
+/// would accept, because `FINALIZE_EFFECT` refuses a terminal row.
+async fn finalize_in(
+    transaction: &mut aex_rds_data::Transaction<'_>,
+    effect: EffectId,
+    result: &PaymentResult,
+) -> Result<(), AuthorityError> {
+    let (state, object_id, status, failure_code, decline_code) = finalize_columns(result);
+    let updated = transaction
+        .execute(Statement::with(
+            sql::FINALIZE_EFFECT,
+            vec![
+                ("state", SqlValue::Text(state.to_owned())),
+                (
+                    "provider_object_id",
+                    object_id.map_or(SqlValue::Null, SqlValue::Text),
+                ),
+                ("provider_status", SqlValue::Text(status)),
+                (
+                    "failure_code",
+                    failure_code.map_or(SqlValue::Null, SqlValue::Text),
+                ),
+                (
+                    "decline_code",
+                    decline_code.map_or(SqlValue::Null, SqlValue::Text),
+                ),
+                (
+                    "effect_id",
+                    SqlValue::Uuid(uuid::Uuid::from_bytes(*effect.0.as_bytes())),
+                ),
+            ],
+        ))
+        .await
+        .map_err(store)?;
+    if updated == 0 {
+        return Err(AuthorityError::NotFound("provider effect"));
+    }
+    Ok(())
 }
 
 /// One JSON document.
@@ -909,6 +1053,7 @@ mod tests {
     fn every_statement_binds_and_never_concatenates() {
         for statement in [
             sql::PROBE_ROLE,
+            sql::READ_ACCOUNT_PROFILE,
             sql::READ_BALANCE,
             sql::READ_POLICY,
             sql::REPLACE_POLICY,
@@ -916,6 +1061,8 @@ mod tests {
             sql::READ_STATEMENT,
             sql::READ_STATEMENT_LINES,
             sql::READ_PROVIDER_CUSTOMER,
+            sql::READ_BILLING_CONTACT,
+            sql::RECORD_PROVIDER_CUSTOMER,
             sql::PREPARE_EFFECT,
             sql::READ_EFFECT_BY_INTENT,
             sql::BIND_EFFECT_COMMAND,

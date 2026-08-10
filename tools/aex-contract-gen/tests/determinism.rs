@@ -196,20 +196,35 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
             .is_some_and(|reason| !reason.is_empty()),
         "an unmounted admission must carry its explicit architecture debt"
     );
-    // The unary half of the merged `session-stream-api`. The filter named
-    // `regional-session-api`, which no row has carried since the two regional
-    // deployables merged, so the assertion that would catch served/deferred
-    // drift on the largest deployable was comparing two empty sets.
-    let regional_session: BTreeSet<_> = rows
+    // The drift check is pinned to the deployable the registry actually names.
+    // It was pinned to `regional-session-api`, a name the registry stopped using
+    // when `session-stream-api` merged the two regional edges; the filter then
+    // selected nothing, so the largest deployable's mount set was unguarded.
+    // Pinning it here rather than deriving it is the point: the expected set and
+    // the registry must be written independently or the check compares the
+    // registry with itself. Every transport is covered, streaming included: a
+    // filter that excused the ndjson half would leave twenty-four routes
+    // unguarded for the same reason the retired name did.
+    let stream_api: BTreeSet<_> = rows
         .iter()
-        .filter(|route| {
-            route["servedArtifact"] == "session-stream-api" && route["transport"] != "ndjson"
-        })
+        .filter(|route| route["servedArtifact"] == "session-stream-api")
         .map(|route| route["operationId"].as_str().expect("operation id"))
         .collect();
     assert_eq!(
-        regional_session,
+        stream_api,
         BTreeSet::from([
+            "observations_events_listen",
+            "observations_events_stream",
+            "observations_logs_listen",
+            "observations_logs_stream",
+            "observations_metrics_listen",
+            "observations_metrics_stream",
+            "observations_spans_listen",
+            "observations_spans_stream",
+            "observations_telemetry_listen",
+            "observations_telemetry_stream",
+            "observations_traces_listen",
+            "observations_traces_stream",
             "provider_credential_get",
             "provider_credentials_list",
             "regional_operation_cancel",
@@ -222,9 +237,33 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
             "registry_tools_list",
             "secret_get",
             "secrets_list",
+            "session_observations_events_listen",
+            "session_observations_events_stream",
+            "session_observations_logs_listen",
+            "session_observations_logs_stream",
+            "session_observations_metrics_listen",
+            "session_observations_metrics_stream",
+            "session_observations_spans_listen",
+            "session_observations_spans_stream",
+            "session_observations_telemetry_listen",
+            "session_observations_telemetry_stream",
+            "session_observations_traces_listen",
+            "session_observations_traces_stream",
+            "session_restore",
             "session_run_get",
             "session_runs_list",
+            "session_stop",
+            "session_trash",
+            "usage_query",
         ]),
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|route| route["servedArtifact"] == "regional-session-api"),
+        "`regional-session-api` was merged into `session-stream-api`; a route \
+         reappearing under the retired name means this check has been silently \
+         emptied again"
     );
 
     let bundle: serde_json::Value =
@@ -371,8 +410,12 @@ fn cross_plane_actual_owners_are_rejected() {
     let temp = tempfile::tempdir().expect("temporary contract root");
     copy_authored_contract(temp.path());
     let path = temp.path().join("api/schemas/registries/routes-meta.yaml");
-    let text = std::fs::read_to_string(&path)
-        .expect("routes metadata")
+    let authored = std::fs::read_to_string(&path).expect("routes metadata");
+    // Re-pinned from `regional-session-api`, which the registry retired when the
+    // two regional edges merged. A mutation fixture whose anchor no longer
+    // occurs rewrites nothing and asserts against an unmutated document, so the
+    // rewrite is proved before the load is asked to refuse it.
+    let text = authored
         .replace(
             "  central-control-api:\n    - api_key_create\n",
             "  central-control-api:\n",
@@ -381,6 +424,7 @@ fn cross_plane_actual_owners_are_rejected() {
             "  session-stream-api:\n",
             "  session-stream-api:\n    - api_key_create\n",
         );
+    assert_ne!(text, authored, "the cross-plane mutation rewrote nothing");
     std::fs::write(path, text).expect("mutate fixture metadata");
     let error = load::load(temp.path()).expect_err("cross-plane actual owner must fail");
     assert!(error.to_string().contains("operation is on `central`"));

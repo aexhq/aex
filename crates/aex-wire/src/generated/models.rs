@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:faf31c134a0c550e88a72f530773003414bb2ef103878329da871af144e66617`.
+//! `sha256:5fe8da4b34a8c8a1bfbeafe3e2a8a2c456983a62f85fea9a66f579ef905b6f14`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -254,6 +254,41 @@ pub struct DashboardBootstrap {
     pub workspaces: Vec<Workspace>,
 }
 
+/// A minted browser session, returned exactly once.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DashboardSessionCredential {
+    /// When it stops verifying.
+    pub expires_at: Timestamp,
+    /// The bearer credential; hold it in a cookie the browser will not hand to script.
+    pub session: String,
+    /// The person it authenticates.
+    pub user_id: UserId,
+}
+
+/// Exchange a completed first-party provider sign-in for a browser session. The front end performs
+/// the provider handshake and asserts its result; this plane never dials a provider.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DashboardSessionRequest {
+    /// The address the provider asserts.
+    pub email: String,
+    /// Whether the provider asserts the address is verified.
+    pub email_verified: bool,
+    /// The first-party exchange secret; proves the caller is an AEX front end.
+    pub exchange_secret: String,
+    /// An avatar, when the provider supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<HttpsUrl>,
+    /// A display name, when the provider supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Which provider completed the sign-in.
+    pub provider: IdentityProvider,
+    /// The provider's own stable identifier for the person.
+    pub provider_account_id: String,
+}
+
 /// A pending device authorization the user must approve in a browser.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -282,6 +317,52 @@ pub struct DeviceAuthorizationRequest {
     pub scopes: Vec<ScopeId>,
 }
 
+/// What a person chose about a device authorization.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceDecision {
+    /// Let the device redeem an account token.
+    Approve,
+    /// Refuse the device; the code can never be redeemed.
+    Deny,
+}
+
+impl DeviceDecision {
+    /// Every value, in declared order.
+    pub const ALL: &'static [DeviceDecision] = &[DeviceDecision::Approve, DeviceDecision::Deny];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::Deny => "deny",
+        }
+    }
+}
+
+/// Approve or deny a pending device authorization by its user code.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeviceDecisionRequest {
+    /// What the person chose.
+    pub decision: DeviceDecision,
+    /// The short code the device displayed.
+    pub user_code: String,
+}
+
+/// The recorded outcome of a device decision.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeviceDecisionResult {
+    /// When the decision was written.
+    pub decided_at: Timestamp,
+    /// What was recorded; never differs from the request.
+    pub decision: DeviceDecision,
+    /// The scopes the device asked for, so the page can name what it granted.
+    pub scopes: Vec<ScopeId>,
+}
+
 /// An issued account token.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -302,6 +383,31 @@ pub struct DeviceTokenRequest {
     pub client_id: String,
     /// The polling secret.
     pub device_code: String,
+}
+
+/// An external sign-in provider AEX links a person to.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityProvider {
+    /// GitHub.
+    Github,
+    /// Google.
+    Google,
+}
+
+impl IdentityProvider {
+    /// Every value, in declared order.
+    pub const ALL: &'static [IdentityProvider] =
+        &[IdentityProvider::Github, IdentityProvider::Google];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Github => "github",
+            Self::Google => "google",
+        }
+    }
 }
 
 /// A pending invitation to join an organization.
@@ -325,6 +431,17 @@ pub struct Invitation {
     pub role: InvitationRole,
     /// Lifecycle position.
     pub status: InvitationStatus,
+}
+
+/// What one acceptance redeemed. An invitation carries no secret, so acceptance names nothing:
+/// every pending invitation addressed to the caller's verified email is redeemed in one
+/// transaction. The list is empty when nothing was pending, which is what a repeated call answers.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct InvitationAcceptResult {
+    /// One membership per invitation redeemed by this call, created or raised to the invited role.
+    /// Bounded by the same 100 the acceptance transaction reads.
+    pub memberships: Vec<Membership>,
 }
 
 /// Invite a person to an organization.
@@ -922,6 +1039,16 @@ pub struct HostedSession {
     pub url: HttpsUrl,
 }
 
+/// One request header a signed grant requires the caller to send verbatim.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HttpHeader {
+    /// The header name.
+    pub name: String,
+    /// The exact value to send.
+    pub value: String,
+}
+
 /// A durable operation record.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -1169,35 +1296,49 @@ impl ExportCompleteness {
     }
 }
 
-/// The three export formats.
+/// The two export formats. Parquet is deliberately absent: its encoder is a typed refusal pending a
+/// writer that can be pinned to byte-identical output, and admitting an operation guaranteed to
+/// fail is worse than refusing the request. Re-adding it is a wire change.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportFormat {
     /// Newline-delimited JSON.
     Ndjson,
-    /// Apache Parquet.
-    Parquet,
-    /// OTLP JSON.
+    /// OTLP JSON. Refuses `events` and trace summaries rather than coercing them.
     OtlpJson,
 }
 
 impl ExportFormat {
     /// Every value, in declared order.
-    pub const ALL: &'static [ExportFormat] = &[
-        ExportFormat::Ndjson,
-        ExportFormat::Parquet,
-        ExportFormat::OtlpJson,
-    ];
+    pub const ALL: &'static [ExportFormat] = &[ExportFormat::Ndjson, ExportFormat::OtlpJson];
 
     /// The wire spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ndjson => "ndjson",
-            Self::Parquet => "parquet",
             Self::OtlpJson => "otlp_json",
         }
     }
+}
+
+/// What one export walks. Deliberately not an `ObservationQuery`: an export has no caller-visible
+/// pagination, so a cursor, a limit and a walk direction are meaningless states rather than states
+/// to refuse at runtime. The partition list and the snapshot position are pinned at admission and
+/// live on the export row, which is the only channel the task has.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ExportQuery {
+    /// How much must be observed before the window is admissible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consistency: Option<ObservationConsistency>,
+    /// The bounded filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ObservationFilter>,
+    /// Which signal.
+    pub signal: ObservationSignal,
+    /// The observation-time window.
+    pub time_range: TimeRange,
 }
 
 /// Where an export is in its lifecycle.
@@ -1855,8 +1996,9 @@ pub struct TelemetryExportRequest {
     pub completeness: ExportCompleteness,
     /// The artifact format.
     pub format: ExportFormat,
-    /// What to export.
-    pub query: ObservationQuery,
+    /// What to export. Normalized and pinned onto the export row at admission, so two runs of one
+    /// export walk the same plan.
+    pub query: ExportQuery,
 }
 
 /// The result of a telemetry-export operation.
@@ -3936,12 +4078,15 @@ pub struct UploadPart {
     pub part_number: u32,
 }
 
-/// One presigned PUT grant.
+/// One presigned PUT grant. The headers must be sent verbatim: they carry the part checksum and
+/// length the signature covers, and a PUT without them is rejected by the object store.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UploadPartGrant {
     /// When the signature stops verifying.
     pub expires_at: Timestamp,
+    /// Headers the caller must replay verbatim.
+    pub headers: Vec<HttpHeader>,
     /// Which part.
     pub part_number: u32,
     /// The signed URL.
@@ -3958,12 +4103,27 @@ pub struct UploadPartGrants {
     pub upload_id: UploadId,
 }
 
-/// Mint presigned PUT grants for the named parts.
+/// One part to presign. The part's own SHA-256 is required because S3 verifies it on the way up and
+/// the completion manifest checks it again; the server never sees the bytes, so it cannot compute
+/// it.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct UploadPartRequest {
+    /// Which part.
+    pub part_number: u32,
+    /// The part's own SHA-256.
+    pub sha256: ContentHash,
+    /// The exact Content-Length to be signed.
+    pub size_bytes: DecimalU128,
+}
+
+/// Mint presigned PUT grants for the named parts. At most 1000 parts per call against the
+/// 10000-part ceiling, so a maximal upload needs at least ten calls.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UploadPartsRequest {
     /// The parts to grant.
-    pub part_numbers: Vec<u32>,
+    pub parts: Vec<UploadPartRequest>,
 }
 
 /// Where a staged upload is in its lifecycle.
@@ -4039,23 +4199,90 @@ pub enum UsageAggregate {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UsageAttribution {
-    /// The operation, when attributable.
+    /// The operation, when attributable. Never populated by `usage_query`, as `sessionId`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<OperationId>,
     /// Where the usage happened.
     pub region: Region,
-    /// The run, when attributable.
+    /// The run, when attributable. Never populated by `usage_query`, as `sessionId`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<RunId>,
     /// The service-time interval.
     pub service_time: TimeRange,
-    /// The session, when attributable.
+    /// The session, when attributable. Never populated by `usage_query`: that route answers from a
+    /// coarse face that carries no session identity, and its absence is honest rather than an
+    /// omission.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
-    /// Which authority produced the facts.
+    /// Which authority produced the facts. One of the `UsageAuthority` identifiers, constant per
+    /// partition.
     pub source: String,
     /// The workspace.
     pub workspace_id: WorkspaceId,
+}
+
+/// The three authorities that admit usage facts. There are three rather than four because memory
+/// and compute are one contiguous fact sequence behind one authority, so they share one frontier;
+/// publishing four frontiers with two of them always identical would claim an independence that
+/// does not exist.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageAuthority {
+    /// The storage authority.
+    Storage,
+    /// The compute authority, which admits both compute and memory facts.
+    Compute,
+    /// The data-transfer authority.
+    Transfer,
+}
+
+impl UsageAuthority {
+    /// Every value, in declared order.
+    pub const ALL: &'static [UsageAuthority] = &[
+        UsageAuthority::Storage,
+        UsageAuthority::Compute,
+        UsageAuthority::Transfer,
+    ];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Storage => "storage",
+            Self::Compute => "compute",
+            Self::Transfer => "transfer",
+        }
+    }
+}
+
+/// The time grain one usage query answers at. All bucketing is UTC and there is no timezone
+/// parameter; a range must be aligned to whole buckets of the requested grain and a misaligned
+/// range is refused rather than widened to the enclosing buckets.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageBucket {
+    /// One item per whole UTC hour.
+    Hour,
+    /// One item per whole UTC day.
+    Day,
+    /// One item for the whole range. Never paged: a partial total is a wrong number.
+    Total,
+}
+
+impl UsageBucket {
+    /// Every value, in declared order.
+    pub const ALL: &'static [UsageBucket] =
+        &[UsageBucket::Hour, UsageBucket::Day, UsageBucket::Total];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hour => "hour",
+            Self::Day => "day",
+            Self::Total => "total",
+        }
+    }
 }
 
 /// The four priced categories.
@@ -4101,6 +4328,8 @@ pub struct UsageComputeAggregate {
     pub attribution: UsageAttribution,
     /// Millicpu-milliseconds.
     pub millicpu_milliseconds: DecimalU128,
+    /// Whether this item is settled as of `completeThrough`.
+    pub settlement: UsageSettlement,
 }
 
 /// Measured outbound bytes.
@@ -4111,16 +4340,26 @@ pub struct UsageDataTransferAggregate {
     pub attribution: UsageAttribution,
     /// Measured egress bytes.
     pub egress_bytes: DecimalU128,
+    /// Whether this item is settled as of `completeThrough`.
+    pub settlement: UsageSettlement,
 }
 
-/// How far the pipeline has advanced for one workspace and category.
+/// How far the pipeline has advanced for one workspace and authority. The answer is exact at or
+/// below `completeThrough` and contains nothing above `includesThrough`; between the two it is
+/// partial, and saying so is the point. Both are monotone across repeated queries.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UsageFrontier {
     /// Facts accepted by the authority.
     pub accepted_sequence: DecimalU128,
-    /// The priced category.
-    pub category: UsageCategory,
+    /// The authority whose contiguous fact sequence this frontier describes. Not a priced category:
+    /// memory and compute share one.
+    pub category: UsageAuthority,
+    /// The answer contains every matching fact at or below this sequence. Pinned on the first page
+    /// and reported unchanged on every later page.
+    pub complete_through: DecimalU128,
+    /// No fact above this sequence is present in the answer. Per page.
+    pub includes_through: DecimalU128,
     /// Facts folded into the query projection.
     pub projected_sequence: DecimalU128,
     /// Facts delivered to central settlement.
@@ -4132,11 +4371,49 @@ pub struct UsageFrontier {
     pub service_through: Option<Timestamp>,
     /// Facts settled centrally.
     pub settled_sequence: DecimalU128,
+    /// Why the fold stopped, present exactly when `state` is `stalled`. A stalled frontier is the
+    /// honest signal; a lag is not a stall.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stall_reason: Option<String>,
+    /// The sequence the fold stopped at, present exactly when `state` is `stalled`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stalled_at: Option<DecimalU128>,
+    /// Whether the fold is advancing or parked.
+    pub state: UsageFrontierState,
     /// The workspace.
     pub workspace_id: WorkspaceId,
 }
 
-/// The axes a usage query may group by.
+/// Whether a fold is advancing or parked.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageFrontierState {
+    /// The fold is applying facts in sequence.
+    Advancing,
+    /// The fold is parked behind a record it refused, and nothing beyond it is in the answer.
+    Stalled,
+}
+
+impl UsageFrontierState {
+    /// Every value, in declared order.
+    pub const ALL: &'static [UsageFrontierState] =
+        &[UsageFrontierState::Advancing, UsageFrontierState::Stalled];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Advancing => "advancing",
+            Self::Stalled => "stalled",
+        }
+    }
+}
+
+/// The axes a usage query may group by. Session, run and operation are deliberately absent: every
+/// stored aggregate row is keyed by a hash of a seven-member dimension tuple that includes the
+/// session, so grouping by one of them would read hundreds of thousands of rows for a single
+/// monthly total. "How much did session X cost?" is not answerable by any route in v1, and
+/// publishing an axis that is always refused would be a false capability.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UsageGrouping {
@@ -4146,12 +4423,6 @@ pub enum UsageGrouping {
     Region,
     /// Workspace.
     Workspace,
-    /// Session.
-    Session,
-    /// Run.
-    Run,
-    /// Durable operation.
-    Operation,
 }
 
 impl UsageGrouping {
@@ -4160,9 +4431,6 @@ impl UsageGrouping {
         UsageGrouping::Category,
         UsageGrouping::Region,
         UsageGrouping::Workspace,
-        UsageGrouping::Session,
-        UsageGrouping::Run,
-        UsageGrouping::Operation,
     ];
 
     /// The wire spelling.
@@ -4172,9 +4440,6 @@ impl UsageGrouping {
             Self::Category => "category",
             Self::Region => "region",
             Self::Workspace => "workspace",
-            Self::Session => "session",
-            Self::Run => "run",
-            Self::Operation => "operation",
         }
     }
 }
@@ -4187,6 +4452,8 @@ pub struct UsageMemoryAggregate {
     pub attribution: UsageAttribution,
     /// Byte-milliseconds.
     pub byte_milliseconds: DecimalU128,
+    /// Whether this item is settled as of `completeThrough`.
+    pub settlement: UsageSettlement,
 }
 
 /// One page of usage quantities plus the frontiers that bound its completeness. Monetary statements
@@ -4194,11 +4461,12 @@ pub struct UsageMemoryAggregate {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UsagePage {
-    /// Pipeline frontiers.
+    /// Pipeline frontiers, one per authority the query touched.
     pub frontiers: Vec<UsageFrontier>,
     /// The page.
     pub items: Vec<UsageAggregate>,
-    /// Continuation token.
+    /// Continuation token. Never present for `bucket: total`: a partial total is a wrong number, so
+    /// an over-budget total is refused instead of paged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
 }
@@ -4207,6 +4475,8 @@ pub struct UsagePage {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UsageQuery {
+    /// The time grain to answer at.
+    pub bucket: UsageBucket,
     /// Restrict to these categories.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub categories: Option<Vec<UsageCategory>>,
@@ -4216,11 +4486,41 @@ pub struct UsageQuery {
     /// Grouping axes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_by: Option<Vec<UsageGrouping>>,
-    /// Page size.
+    /// Page size. Absent means 25. Above the maximum the request is refused, never clamped: a
+    /// caller silently given fewer items than it asked for cannot tell a short page from the end of
+    /// a collection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
-    /// The service-time window.
+    /// The service-time window, aligned to whole `bucket` grains in UTC. A misaligned range is
+    /// refused, never widened. A range longer than 400 days is refused.
     pub time_range: TimeRange,
+}
+
+/// Whether an item is covered by a committed settlement receipt as of `completeThrough`. Not
+/// permanently terminal: a correction or a void arrives as a new fact at a higher sequence and
+/// re-opens its bucket to `provisional`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageSettlement {
+    /// Settled as of `completeThrough`.
+    Settled,
+    /// Not yet covered by a settlement receipt.
+    Provisional,
+}
+
+impl UsageSettlement {
+    /// Every value, in declared order.
+    pub const ALL: &'static [UsageSettlement] =
+        &[UsageSettlement::Settled, UsageSettlement::Provisional];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Settled => "settled",
+            Self::Provisional => "provisional",
+        }
+    }
 }
 
 /// Retained bytes over time.
@@ -4231,6 +4531,8 @@ pub struct UsageStorageAggregate {
     pub attribution: UsageAttribution,
     /// Byte-minutes of retained storage.
     pub byte_minutes: DecimalU128,
+    /// Whether this item is settled as of `completeThrough`.
+    pub settlement: UsageSettlement,
 }
 
 // --- query parameters ------------------------------------------------------

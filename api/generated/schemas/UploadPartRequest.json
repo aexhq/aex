@@ -1,0 +1,31 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UploadPartRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One part to presign. The part's own SHA-256 is required because S3 verifies it on the way up and the completion manifest checks it again; the server never sees the bytes, so it cannot compute it.",
+  "properties": {
+    "partNumber": {
+      "description": "Which part.",
+      "maximum": 10000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "sha256": {
+      "description": "The part's own SHA-256.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "sizeBytes": {
+      "description": "The exact Content-Length to be signed.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "partNumber",
+    "sha256",
+    "sizeBytes"
+  ],
+  "title": "UploadPartRequest",
+  "type": "object"
+}

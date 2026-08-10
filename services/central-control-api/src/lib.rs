@@ -758,6 +758,14 @@ mod tests {
     }
 
     impl OrganizationsApi for Api {
+        async fn invitation_accept(
+            &self,
+            _cx: &RequestContext,
+            _body: aex_wire::models::EmptyRequest,
+        ) -> WireResult<aex_wire::models::InvitationAcceptResult> {
+            Self::refuse()
+        }
+
         async fn invitation_create(
             &self,
             _cx: &RequestContext,
@@ -981,7 +989,7 @@ mod tests {
     #[tokio::test]
     async fn the_mounted_set_is_exactly_the_declared_one() {
         let declared = DEPLOYABLE.routes();
-        assert_eq!(declared.len(), 16, "this deployable serves 16 routes");
+        assert_eq!(declared.len(), 17, "this deployable serves 17 routes");
         for id in declared {
             let descriptor = route(id);
             let mut request = Request::builder()

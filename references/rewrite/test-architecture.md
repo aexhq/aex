@@ -257,12 +257,25 @@ it must be *stated*, not inferred.
   `aex-not-applicable-unjustified`, because it does not name the owner.
 - **Both.** Declaring `not_applicable.targets` *and* targets fails
   `aex-not-applicable-unjustified`.
-- **Candidate phase.** `--phase candidate` turns every unearned row, including
-  every `awaiting_owner` row, into an `aex-unearned-evidence` failure. The
-  excuse is a bookmark, never a permanent state.
+- **Inline unit evidence.** A different key, `not_applicable.inline_targets`,
+  states a different fact: the package's unit evidence lives in inline
+  `#[cfg(test)]` modules that the declared `unit` layer already collects, so
+  there is no `[[test]]` target to map and there never will be. It records an
+  `inline_unit_evidence` row rather than an `awaiting_owner` one. Declaring both
+  keys, declaring it without a `unit` layer, or declaring it while mapping a
+  target to the `unit` layer each fail `aex-not-applicable-unjustified`.
+- **Candidate phase.** `--phase candidate` turns every unearned row into an
+  `aex-unearned-evidence` failure, with one exception: an `inline_unit_evidence`
+  row is accepted, because it is permanently true rather than a bookmark. Every
+  other excuse is a bookmark, never a permanent state.
+- **A live companion with no target** is recorded as `requires_deployment`
+  rather than `awaiting_owner`. It is not waiting for its owner to write
+  something; it is waiting for a plane, and filing it under the owner class made
+  "how much does a deployed plane retire" unanswerable from one column.
 
-Current ledger: 585 rows — 138 `awaiting_owner`, 295 `requires_live_seam`, 133
-`requires_deployment`, 15 `pending_workload`, 4 `pending_authority`.
+Current ledger: 525 rows — 325 `requires_live_seam`, 171 `requires_deployment`,
+12 `inline_unit_evidence`, 9 `awaiting_owner`, 7 `pending_workload`,
+1 `pending_authority`.
 
 ---
 
@@ -308,6 +321,7 @@ introduces no new exit code.
 | `aex-banned-feature` | ``​`runtimes/brain-mux` declares feature `chaos`; no package may carry a fault, test-hook, chaos, debug-endpoint or bypass feature`` |
 | `aex-workload-unowned` | ``workload `brain-500-offered` names owner package `brain-mux-load`, which does not exist`` |
 | `aex-workload-unowned` | ``workload `x` implements gate `Y`, which is not in release/policy/workload-registry.toml`` |
+| `aex-workload-unowned` | ``workload `stream-sockets` implements this gate, but `aex-live-session-stream-api` maps no `load` target, so the gate cannot run`` — recorded as a `pending_workload` row. A blocking gate whose descriptor exists and whose executor does not used to be reported as nothing at all, because the rule only asked whether a descriptor existed |
 | `data-image-literal` | ``​`crates/aex-content-aws/tests/integration.rs` names a container image directly; call aex_test_harness::images so the digest pin is the only reference`` |
 | `aex-unearned-evidence` | ``​`crates/aex-foo` still owes aex-empty-unit (awaiting the regional-domains stream); the candidate phase admits no unearned evidence`` |
 | `aex-registry-stale` | ``release/test-registry.json differ(s) from what `aex-workspace-check registry build` produces; regenerate rather than hand-merging`` |

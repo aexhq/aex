@@ -14,8 +14,8 @@ use central_schema_admin::grants::GrantSet;
 use central_schema_admin::migration;
 use central_schema_admin::migration::MigrationBundle;
 use central_schema_admin::runner::{
-    RunnerError, applied_head, apply_grants, backfill_cursor, check_conservation, diff_grants,
-    expect_applied_head, migrate,
+    PepperRow, RunnerError, applied_head, apply_grants, backfill_cursor, check_conservation,
+    diff_grants, expect_applied_head, migrate, seed_pepper,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -134,6 +134,46 @@ enum Command {
         #[arg(long)]
         confirm: String,
     },
+    /// Seed one active credential-pepper lifecycle row.
+    ///
+    /// Deployment data rather than schema: the reference is a Secrets Manager
+    /// version id the plane minted, so no migration can carry it. Nothing else
+    /// writes these rows, and `central-api` refuses to start without them.
+    SeedPepper {
+        /// Which of the four pepper rows.
+        #[arg(long, value_enum)]
+        pepper: Pepper,
+        /// The version the credential rows name.
+        #[arg(long)]
+        version: i16,
+        /// The Secrets Manager **version id** holding that version's material.
+        #[arg(long)]
+        secret_ref: String,
+    },
+}
+
+/// The four credential-pepper rows, as CLI values.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Pepper {
+    /// `identity.credential_pepper` / `identity`.
+    Identity,
+    /// `identity.credential_pepper` / `cursor`.
+    IdentityCursor,
+    /// `control.credential_pepper` / `api_key`.
+    ApiKey,
+    /// `control.credential_pepper` / `cursor`.
+    ControlCursor,
+}
+
+impl Pepper {
+    const fn row(self) -> PepperRow {
+        match self {
+            Self::Identity => PepperRow::Identity,
+            Self::IdentityCursor => PepperRow::IdentityCursor,
+            Self::ApiKey => PepperRow::ApiKey,
+            Self::ControlCursor => PepperRow::ControlCursor,
+        }
+    }
 }
 
 /// Stable process exit contract.
@@ -195,7 +235,13 @@ const fn runner_exit(error: &RunnerError) -> Exit {
     match error {
         RunnerError::ChecksumDrift(_) => Exit::ChecksumDrift,
         RunnerError::HeadMismatch { .. } => Exit::HeadMismatch,
-        RunnerError::PreconditionFailed(_) => Exit::PreconditionFailed,
+        // A pepper row that exists and disagrees is a precondition the release
+        // asserted and the database refutes, which is the same answer as a
+        // partial migration object: exit `13`. Sharing it keeps the exit
+        // contract at the ten codes a release script already knows.
+        RunnerError::PreconditionFailed(_) | RunnerError::PepperConflict(_) => {
+            Exit::PreconditionFailed
+        }
         RunnerError::GrantDrift(_) => Exit::GrantDrift,
         RunnerError::Conservation(_) => Exit::Conservation,
         RunnerError::Database(_) => Exit::Connection,
@@ -433,6 +479,36 @@ async fn run(cli: &Cli) -> Result<String, (Exit, String)> {
                 .map_err(|error| (runner_exit(&error), error.to_string()))?;
             render(&receipt(applied, applied, "not_requested"))
         }
+
+        Command::SeedPepper {
+            pepper,
+            version,
+            secret_ref,
+        } => {
+            // Both refusals are decided before a credential is resolved, so a
+            // malformed release argument never opens a session. A `smallint`
+            // primary key starts at 1; 0 and negatives are not versions.
+            if *version < 1 {
+                return Err((
+                    Exit::PreconditionFailed,
+                    format!("a pepper version starts at 1; `{version}` is not one"),
+                ));
+            }
+            if secret_ref.trim().is_empty() {
+                return Err((
+                    Exit::PreconditionFailed,
+                    "a pepper row must name the secret version holding its material".to_owned(),
+                ));
+            }
+            let mut connection = open(cli).await?;
+            seed_pepper(&mut connection, pepper.row(), *version, secret_ref)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            let applied = applied_head(&mut connection)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            render(&receipt(applied, applied, "not_requested"))
+        }
     }
 }
 
@@ -521,7 +597,7 @@ mod tests {
         let bundle = MigrationBundle::load(&path).expect("committed bundle is valid");
         let embedded =
             MigrationBundle::embedded().expect("the executable embeds the canonical lock");
-        assert_eq!(bundle.head(), 20_260_801_001_000);
+        assert_eq!(bundle.head(), 20_260_801_001_200);
         assert_eq!(
             bundle.versions(),
             vec![
@@ -536,6 +612,8 @@ mod tests {
                 20_260_801_000_800,
                 20_260_801_000_900,
                 20_260_801_001_000,
+                20_260_801_001_100,
+                20_260_801_001_200,
             ]
         );
         assert_eq!(embedded.versions(), bundle.versions());

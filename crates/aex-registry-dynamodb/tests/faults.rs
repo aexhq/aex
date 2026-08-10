@@ -40,7 +40,7 @@ fn a_revision_that_is_not_a_whole_number_is_refused_rather_than_truncated() {
 
 #[test]
 fn a_part_plan_that_is_not_the_declared_grammar_is_refused() {
-    let mut encoded = encode_upload(&upload());
+    let mut encoded = encode_upload(&upload()).head;
     encoded.insert(
         "parts".to_owned(),
         aex_session_dynamodb::attr::string_list(["not-a-part".to_owned()]),

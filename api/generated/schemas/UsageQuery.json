@@ -4,6 +4,10 @@
   "additionalProperties": false,
   "description": "A bounded query over authoritative regional usage quantities.",
   "properties": {
+    "bucket": {
+      "$ref": "aex:schema:UsageBucket",
+      "description": "The time grain to answer at."
+    },
     "categories": {
       "description": "Restrict to these categories.",
       "items": {
@@ -23,21 +27,22 @@
       "items": {
         "$ref": "aex:schema:UsageGrouping"
       },
-      "maxItems": 6,
+      "maxItems": 3,
       "type": "array"
     },
     "limit": {
-      "description": "Page size.",
-      "maximum": 1000,
+      "description": "Page size. Absent means 25. Above the maximum the request is refused, never clamped: a caller silently given fewer items than it asked for cannot tell a short page from the end of a collection.",
+      "maximum": 100,
       "minimum": 1,
       "type": "integer"
     },
     "timeRange": {
       "$ref": "aex:schema:TimeRange",
-      "description": "The service-time window."
+      "description": "The service-time window, aligned to whole `bucket` grains in UTC. A misaligned range is refused, never widened. A range longer than 400 days is refused."
     }
   },
   "required": [
+    "bucket",
     "timeRange"
   ],
   "title": "UsageQuery",

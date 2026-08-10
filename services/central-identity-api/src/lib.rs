@@ -1,16 +1,17 @@
 //! `central-identity-api`: the identity half of the central HTTP surface.
 //!
-//! The browser ceremony exchange and the identity lifecycle, plus the two public
-//! device-flow routes. It writes identity DML and holds exactly one control
-//! privilege — `control.bump_user_epoch` — so a disabled person's assertions
-//! stop verifying in the same transaction that disables them.
+//! The whole credential ceremony: the two public device-flow routes, the
+//! decision that moves a grant off `pending`, and the browser-session mint and
+//! close. It writes identity DML and holds exactly one control privilege —
+//! `control.bump_user_epoch` — so a disabled person's assertions stop verifying
+//! in the same transaction that disables them.
 //!
 //! The mounted public surface is `CentralServiceId::IdentityApi.routes()` and
 //! nothing else, which `the_mounted_set_is_exactly_the_declared_one` asserts.
 //!
 //! # Why this is a library and not only a binary
 //!
-//! `services/central-api` composes the two device-flow routes into one
+//! `services/central-api` composes the `central:auth` routes into one
 //! long-lived Fargate process alongside the control and billing groups. A
 //! deployable whose service type lives in a module private to its own `main.rs`
 //! cannot be composed into another binary at all, so [`api::AuthService`], the
@@ -63,10 +64,18 @@ pub mod keys {
     pub const REQUEST_DEADLINE_MS: &str = "AEX_CENTRAL_IDENTITY_REQUEST_DEADLINE_MS";
     /// The login role. Must be `aex_identity_api`.
     pub const ROLE: &str = "AEX_CENTRAL_IDENTITY_ROLE";
-    /// The dashboard BFF's expected `OIDC` subject.
-    pub const VERCEL_EXPECTED_SUBJECT: &str = "AEX_CENTRAL_IDENTITY_VERCEL_EXPECTED_SUBJECT";
-    /// The dashboard BFF's `OIDC` issuer.
-    pub const VERCEL_ISSUER: &str = "AEX_CENTRAL_IDENTITY_VERCEL_ISSUER";
+    /// The first-party sign-in exchange secret.
+    ///
+    /// This replaces `AEX_CENTRAL_IDENTITY_VERCEL_ISSUER` and
+    /// `..._VERCEL_EXPECTED_SUBJECT`, which were required at start-up and read
+    /// by nothing. They gated an `OIDC` verifier that was never written, and
+    /// writing one would mean fetching a `JWKS` over the public internet from a
+    /// plane whose Rust services reach AWS endpoints and nothing else — the same
+    /// reason `finance-api` hands Stripe commands to an edge rather than dialling
+    /// `api.stripe.com`. This is that trust boundary expressed as one shared
+    /// secret the plane already knows how to hold, and it is read on every
+    /// `dashboard_session_create`.
+    pub const SIGN_IN_EXCHANGE_SECRET_ID: &str = "AEX_CENTRAL_IDENTITY_SIGN_IN_EXCHANGE_SECRET_ID";
 
     /// Every key this binary reads, for the totality test.
     pub const ALL: &[&str] = &[
@@ -81,8 +90,7 @@ pub mod keys {
         REGION,
         REQUEST_DEADLINE_MS,
         ROLE,
-        VERCEL_EXPECTED_SUBJECT,
-        VERCEL_ISSUER,
+        SIGN_IN_EXCHANGE_SECRET_ID,
     ];
 }
 
@@ -121,10 +129,8 @@ pub struct Config {
     pub role: String,
     /// Where a person approves a device authorization.
     pub device_verification_uri: String,
-    /// The dashboard BFF's `OIDC` issuer.
-    pub vercel_issuer: String,
-    /// The dashboard BFF's expected `OIDC` subject.
-    pub vercel_expected_subject: String,
+    /// The secret holding the first-party sign-in exchange credential.
+    pub sign_in_exchange_secret_id: String,
 }
 
 impl Config {
@@ -176,8 +182,7 @@ impl Config {
             database: required(&lookup, keys::DATABASE)?,
             role,
             device_verification_uri: required(&lookup, keys::DEVICE_VERIFICATION_URI)?,
-            vercel_issuer: required(&lookup, keys::VERCEL_ISSUER)?,
-            vercel_expected_subject: required(&lookup, keys::VERCEL_EXPECTED_SUBJECT)?,
+            sign_in_exchange_secret_id: required(&lookup, keys::SIGN_IN_EXCHANGE_SECRET_ID)?,
         })
     }
 
@@ -197,6 +202,10 @@ impl Config {
                 (
                     keys::PEPPER_SECRET_ID.to_owned(),
                     self.pepper_secret_id.clone(),
+                ),
+                (
+                    keys::SIGN_IN_EXCHANGE_SECRET_ID.to_owned(),
+                    self.sign_in_exchange_secret_id.clone(),
                 ),
             ]),
         }
@@ -247,6 +256,7 @@ pub fn manifest() -> CompositionManifest {
         bindings: vec![
             CapabilityBinding::arn(keys::AURORA_CLUSTER_ARN, IdentityWrite::ID),
             CapabilityBinding::resource(keys::PEPPER_SECRET_ID, IdentityWrite::ID),
+            CapabilityBinding::resource(keys::SIGN_IN_EXCHANGE_SECRET_ID, IdentityWrite::ID),
         ],
     }
 }
@@ -267,6 +277,13 @@ pub struct Probes {
     pub aurora: bool,
     /// The active identity pepper loaded.
     pub pepper: bool,
+    /// The first-party sign-in exchange secret loaded.
+    ///
+    /// A process that cannot load it can never mint a browser session, and a
+    /// browser session is the only thing that can approve a device
+    /// authorization — so serving without it means the whole credential
+    /// ceremony fails at its second step rather than at start-up.
+    pub sign_in_exchange: bool,
 }
 
 impl Probes {
@@ -274,12 +291,14 @@ impl Probes {
     pub const NONE: Self = Self {
         aurora: false,
         pepper: false,
+        sign_in_exchange: false,
     };
 
     /// Every probe answered.
     pub const READY: Self = Self {
         aurora: true,
         pepper: true,
+        sign_in_exchange: true,
     };
 }
 
@@ -296,6 +315,10 @@ pub fn readiness(probes: Probes) -> Readiness {
             Dependency {
                 name: "identity-pepper",
                 resolved: probes.pepper,
+            },
+            Dependency {
+                name: "sign-in-exchange-secret",
+                resolved: probes.sign_in_exchange,
             },
         ],
     )
@@ -416,12 +439,8 @@ mod tests {
                 "https://aex.dev/device".to_owned(),
             ),
             (
-                keys::VERCEL_ISSUER,
-                "https://oidc.vercel.com/aexhq".to_owned(),
-            ),
-            (
-                keys::VERCEL_EXPECTED_SUBJECT,
-                "owner:aexhq:project:dashboard".to_owned(),
+                keys::SIGN_IN_EXCHANGE_SECRET_ID,
+                "aex/dev/sign-in-exchange/current".to_owned(),
             ),
             (keys::MAX_BODY_BYTES, "65536".to_owned()),
             (keys::REQUEST_DEADLINE_MS, "5000".to_owned()),
@@ -481,6 +500,29 @@ mod tests {
             _cx: &RequestContext,
             _body: aex_wire::models::DeviceTokenRequest,
         ) -> WireResult<aex_wire::models::DeviceToken> {
+            Err(WireError::new(ErrorCode::RateLimited))
+        }
+
+        async fn device_decision_create(
+            &self,
+            _cx: &RequestContext,
+            _body: aex_wire::models::DeviceDecisionRequest,
+        ) -> WireResult<aex_wire::models::DeviceDecisionResult> {
+            Err(WireError::new(ErrorCode::RateLimited))
+        }
+
+        async fn dashboard_session_create(
+            &self,
+            _cx: &RequestContext,
+            _body: aex_wire::models::DashboardSessionRequest,
+        ) -> WireResult<Created<aex_wire::models::DashboardSessionCredential>> {
+            Err(WireError::new(ErrorCode::RateLimited))
+        }
+
+        async fn dashboard_session_delete(
+            &self,
+            _cx: &RequestContext,
+        ) -> WireResult<aex_wire::server::NoContent> {
             Err(WireError::new(ErrorCode::RateLimited))
         }
     }
@@ -563,14 +605,47 @@ mod tests {
         }
     }
 
+    /// The authorizer context `central-authz` produces for a resolved browser
+    /// session, for the routes that need one to reach their handler at all.
+    fn admitted_session() -> aex_central_http::authorizer::CentralAuthorizerContext {
+        // The window is anchored to `FixedClock`, which the edge in this
+        // module's router reads. A context minted against the wall clock would
+        // be refused as not-yet-current, which is the correct behaviour and a
+        // confusing way to fail a mount assertion.
+        aex_central_http::authorizer::CentralAuthorizerContext {
+            request_id: aex_wire::types::RequestId::parse("req-mount").expect("a request id"),
+            kind: aex_central_http::authorizer::ContextPrincipalKind::UserSession,
+            principal_id: Uuid::now_v7(),
+            credential_id: Some(Uuid::now_v7()),
+            workspace_id: None,
+            organization_id: None,
+            region: None,
+            memberships: Vec::new(),
+            scopes: aex_control_domain::ScopeSet::from_strings(&["account:read", "account:write"])
+                .expect("known scopes"),
+            account_state: AccountState::Unavailable,
+            issued_at_ms: 0,
+            expires_at_ms: 30_000,
+        }
+    }
+
     #[tokio::test]
     async fn the_mounted_set_is_exactly_the_declared_one() {
-        assert_eq!(DEPLOYABLE.routes().len(), 2);
+        assert_eq!(DEPLOYABLE.routes().len(), 5);
         for id in DEPLOYABLE.routes() {
             let descriptor = route(id);
             let body = match id {
                 RouteId::DeviceAuthorizationCreate => "{\"clientId\":\"aex-cli\",\"scopes\":[]}",
-                _ => "{\"clientId\":\"aex-cli\",\"deviceCode\":\"dvc_fixture\"}",
+                RouteId::DeviceTokenCreate => {
+                    "{\"clientId\":\"aex-cli\",\"deviceCode\":\"dvc_fixture\"}"
+                }
+                RouteId::DeviceDecisionCreate => {
+                    "{\"userCode\":\"BCDFG-HJKLM\",\"decision\":\"approve\"}"
+                }
+                RouteId::DashboardSessionCreate => {
+                    "{\"exchangeSecret\":\"0000000000000000000000000000000000\",\"provider\":\"github\",\"providerAccountId\":\"gh-1\",\"email\":\"a@b.dev\",\"emailVerified\":true}"
+                }
+                _ => "",
             };
             let mut request = Request::builder()
                 .method(descriptor.method.as_str())
@@ -578,15 +653,24 @@ mod tests {
             if descriptor.idempotency == aex_wire::idempotency::IdempotencyKind::IdempotencyKey {
                 request = request.header("idempotency-key", "fixture");
             }
-            let response = router()
-                .oneshot(request.body(Body::from(body)).expect("a valid request"))
+            let mut request = request.body(Body::from(body)).expect("a valid request");
+            // A route whose alternative principal is a browser session is
+            // refused by the edge before any handler runs, so mounting can only
+            // be observed with a credential the edge admits.
+            if descriptor.alt_principal == Some(aex_wire::idempotency::PrincipalKind::UserSession) {
+                request.extensions_mut().insert(admitted_session());
+            }
+            let response = router().oneshot(request).await.expect("the router answers");
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
                 .await
-                .expect("the router answers");
+                .expect("a bounded body");
             assert_eq!(
-                response.status(),
+                status,
                 StatusCode::TOO_MANY_REQUESTS,
-                "`{}` is not mounted",
-                descriptor.operation_id
+                "`{}` is not mounted: {}",
+                descriptor.operation_id,
+                String::from_utf8_lossy(&bytes)
             );
         }
     }

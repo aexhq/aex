@@ -28,10 +28,12 @@
 //!   not from the environment. The one exception is [`FINANCE_ROLE`], which
 //!   `finance-api`'s authority passes to `pg_has_role` in its own start-up
 //!   probe, so it is a functional input rather than a tautology.
-//! * `central-identity-api`'s two `VERCEL_*` values. They configure the browser
-//!   ceremony exchange, which is not one of the two device-flow routes this
-//!   process mounts. Requiring a value nothing reads is a value that will
-//!   eventually be set wrong with no test to notice.
+//!   Two `VERCEL_*` values used to be excluded here on the grounds that the
+//!   browser ceremony exchange was not a route this process mounts. It is one
+//!   now, and the exchange proves its caller with
+//!   [`SIGN_IN_EXCHANGE_SECRET_ID`] rather than an `OIDC` verifier that never
+//!   existed — so this composition requires that secret and no longer excludes
+//!   anything on that ground.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -87,6 +89,12 @@ pub const REGION: &str = "AEX_CENTRAL_API_REGION";
 pub const REGIONAL_FUNCTION_ARNS: &str = "AEX_CENTRAL_API_REGIONAL_FUNCTION_ARNS";
 /// How long one request may take before the edge gives up.
 pub const REQUEST_DEADLINE_MS: &str = "AEX_CENTRAL_API_REQUEST_DEADLINE_MS";
+/// The first-party sign-in exchange secret.
+///
+/// Read on every `dashboard_session_create`: it is what proves the caller is an
+/// AEX front end that has already completed a provider handshake, which this
+/// plane cannot do itself.
+pub const SIGN_IN_EXCHANGE_SECRET_ID: &str = "AEX_CENTRAL_API_SIGN_IN_EXCHANGE_SECRET_ID";
 /// The bucket issued statement artifacts live in.
 pub const STATEMENT_BUCKET: &str = "AEX_CENTRAL_API_STATEMENT_BUCKET";
 /// The `stripe-command-edge` function this deployable may invoke.
@@ -115,6 +123,7 @@ pub const ALL: &[&str] = &[
     REGION,
     REGIONAL_FUNCTION_ARNS,
     REQUEST_DEADLINE_MS,
+    SIGN_IN_EXCHANGE_SECRET_ID,
     STATEMENT_BUCKET,
     STRIPE_COMMAND_EDGE_ARN,
 ];
@@ -157,6 +166,8 @@ pub struct Config {
     pub api_key_pepper_secret_id: String,
     /// The identity pepper secret.
     pub identity_pepper_secret_id: String,
+    /// The secret holding the first-party sign-in exchange credential.
+    pub sign_in_exchange_secret_id: String,
     /// The cursor signing secret.
     pub cursor_secret_id: String,
     /// Every configured region a workspace may be placed in.
@@ -272,6 +283,7 @@ impl Config {
             finance_role: required(&lookup, FINANCE_ROLE)?,
             api_key_pepper_secret_id: required(&lookup, API_KEY_PEPPER_SECRET_ID)?,
             identity_pepper_secret_id: required(&lookup, IDENTITY_PEPPER_SECRET_ID)?,
+            sign_in_exchange_secret_id: required(&lookup, SIGN_IN_EXCHANGE_SECRET_ID)?,
             cursor_secret_id: required(&lookup, CURSOR_SECRET_ID)?,
             regional_functions,
             api_urls,
@@ -309,6 +321,10 @@ impl Config {
                 (
                     API_KEY_PEPPER_SECRET_ID.to_owned(),
                     self.api_key_pepper_secret_id.clone(),
+                ),
+                (
+                    SIGN_IN_EXCHANGE_SECRET_ID.to_owned(),
+                    self.sign_in_exchange_secret_id.clone(),
                 ),
                 (
                     IDENTITY_PEPPER_SECRET_ID.to_owned(),

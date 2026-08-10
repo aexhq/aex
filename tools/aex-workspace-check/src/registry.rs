@@ -9,11 +9,25 @@
 //!
 //! Nothing is deployed in this rewrite (`OD-07`) and most packages are still
 //! skeletons, so most evidence genuinely cannot exist yet. That is not a reason
-//! to pass quietly. A package with no test target must say so with
-//! `not_applicable.targets` naming its owning stream, which lands it in
-//! `release/unearned-evidence.json` as an `awaiting_owner` row. A package that
-//! says nothing fails. *Awaiting owner* and *silently omitted* are different
-//! states and the registry keeps them different.
+//! to pass quietly. A package with no test target must say so, naming its owning
+//! stream, and it lands in `release/unearned-evidence.json`. A package that says
+//! nothing fails. *Awaiting owner* and *silently omitted* are different states
+//! and the registry keeps them different.
+//!
+//! Three ways of having no target are three different facts, so they are three
+//! different reason classes rather than one label over all of them:
+//!
+//! - `not_applicable.targets` on an ordinary package — `awaiting_owner`. The
+//!   suite is unwritten and someone owes it.
+//! - `not_applicable.targets` on a `live_companion` — `requires_deployment`. It
+//!   is not waiting for its owner; it is waiting for a plane, and filing it
+//!   under the owner class made "how much does a plane retire" unanswerable
+//!   from one column.
+//! - `not_applicable.inline_targets` — [`INLINE_UNIT_EVIDENCE`]. The unit
+//!   evidence lives in inline `#[cfg(test)]` modules the declared `unit` layer
+//!   already collects, so there is nothing to map and there never will be. It
+//!   is the one class the candidate phase accepts, because a launch gate that
+//!   fails on a permanently-true statement is a gate that gets turned off.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -194,6 +208,13 @@ pub struct RegistryReport {
     pub unearned: Vec<UnearnedRow>,
 }
 
+/// The reason class of a package whose unit evidence lives inline.
+///
+/// It is a *class*, not a state: unlike every other reason in the document,
+/// nothing will ever make it go away, so the candidate phase accepts it instead
+/// of failing on it.
+pub const INLINE_UNIT_EVIDENCE: &str = "inline_unit_evidence";
+
 /// Cargo feature names no package may declare.
 pub const BANNED_FEATURES: &[&str] = &[
     "fault",
@@ -251,6 +272,15 @@ pub fn check(input: &RegistryInput<'_>) -> RegistryReport {
 
     if input.phase == Phase::Candidate {
         for row in &unearned {
+            // `inline_unit_evidence` is not debt. It is a structural statement
+            // that is permanently true, and it is only in this document because
+            // the rule that records a missing target has to record *something*.
+            // Failing a candidate on it would make the launch gate unpassable by
+            // construction, and an unpassable gate is a gate that gets turned
+            // off.
+            if row.reason_class == INLINE_UNIT_EVIDENCE {
+                continue;
+            }
             violations.push(Violation {
                 rule: "aex-unearned-evidence",
                 detail: format!(
@@ -316,16 +346,18 @@ fn role_profiles(input: &RegistryInput<'_>, parsed: &BTreeMap<String, AexMeta>) 
                 ),
             });
         }
-        if let Some(reason) = meta.excused("targets")
-            && !reason.contains(&meta.owner)
-        {
-            violations.push(Violation {
-                rule: "aex-not-applicable-unjustified",
-                detail: format!(
-                    "`{path}` marks `targets` not-applicable without naming its owner `{}`; \"not yet written\" is not a structural reason",
-                    meta.owner
-                ),
-            });
+        for field in ["targets", crate::testmeta::INLINE_TARGETS] {
+            if let Some(reason) = meta.excused(field)
+                && !reason.contains(&meta.owner)
+            {
+                violations.push(Violation {
+                    rule: "aex-not-applicable-unjustified",
+                    detail: format!(
+                        "`{path}` marks `{field}` not-applicable without naming its owner `{}`; \"not yet written\" is not a structural reason",
+                        meta.owner
+                    ),
+                });
+            }
         }
     }
     violations
@@ -337,7 +369,12 @@ fn targets(input: &RegistryInput<'_>, parsed: &BTreeMap<String, AexMeta>) -> Vec
         let Some(meta) = parsed.get(&package.path) else {
             continue;
         };
-        let awaiting = meta.excused("targets").is_some();
+        let unwritten = meta.excused("targets").is_some();
+        // Inline unit evidence excuses the *absence of a target* for the same
+        // reasons an unwritten suite does, and for a permanently different
+        // reason. Both silence the "no targets row" rule; only one of them is
+        // debt, which is what `unearned_rows` separates.
+        let awaiting = unwritten || meta.declares_inline_unit_evidence();
 
         if meta.targets.is_empty() && !awaiting {
             violations.push(Violation {
@@ -348,7 +385,7 @@ fn targets(input: &RegistryInput<'_>, parsed: &BTreeMap<String, AexMeta>) -> Vec
                 ),
             });
         }
-        if awaiting && !meta.targets.is_empty() {
+        if unwritten && !meta.targets.is_empty() {
             violations.push(Violation {
                 rule: "aex-not-applicable-unjustified",
                 detail: format!(
@@ -780,7 +817,25 @@ fn unearned_rows(
         };
         if let Some(reason) = meta.excused("targets") {
             rows.push(UnearnedRow {
-                reason_class: "awaiting_owner".to_owned(),
+                // A live companion with no target is not waiting for its owner
+                // to write something: it is waiting for a plane. Filing it as
+                // `awaiting_owner` made "how much does a deployed plane retire"
+                // unanswerable from any one column, which is the whole point of
+                // the class.
+                reason_class: if meta.role == "live_companion" {
+                    "requires_deployment".to_owned()
+                } else {
+                    "awaiting_owner".to_owned()
+                },
+                subject: package.path.clone(),
+                owner: meta.owner.clone(),
+                blocking_rule: "aex-empty-unit".to_owned(),
+                detail: reason.to_owned(),
+            });
+        }
+        if let Some(reason) = meta.excused(crate::testmeta::INLINE_TARGETS) {
+            rows.push(UnearnedRow {
+                reason_class: INLINE_UNIT_EVIDENCE.to_owned(),
                 subject: package.path.clone(),
                 owner: meta.owner.clone(),
                 blocking_rule: "aex-empty-unit".to_owned(),
@@ -824,24 +879,7 @@ fn unearned_rows(
             }
         }
     }
-    for (id, gate) in &input.policy.gates {
-        if !input
-            .workloads
-            .iter()
-            .any(|workload| workload.gates.iter().any(|declared| declared == id))
-        {
-            rows.push(UnearnedRow {
-                reason_class: "pending_workload".to_owned(),
-                subject: id.clone(),
-                owner: gate.owner.clone(),
-                blocking_rule: "aex-workload-unowned".to_owned(),
-                detail: format!(
-                    "no descriptor under tests/load/workloads implements this gate on `{}`",
-                    gate.target
-                ),
-            });
-        }
-    }
+    rows.extend(pending_workloads(input, parsed));
     if input.authorities.routes.is_none() {
         rows.push(pending_authority(
             "api/generated/registries/routes.json",
@@ -869,6 +907,67 @@ fn unearned_rows(
             "test-architecture",
             "aex-empty-unit",
         ));
+    }
+    rows
+}
+
+/// Every blocking capacity gate that cannot run, and why.
+///
+/// Two shapes, not one. A gate with no descriptor has nothing written down at
+/// all. A gate whose descriptor exists but whose named package maps no `load`
+/// target has the obligation and no executor — it cannot run, and it used to be
+/// reported as nothing at all, because the rule only asked whether a descriptor
+/// existed. That was the one place in this apparatus where a blocking gate could
+/// be silently unrunnable.
+fn pending_workloads(
+    input: &RegistryInput<'_>,
+    parsed: &BTreeMap<String, AexMeta>,
+) -> Vec<UnearnedRow> {
+    let executors: BTreeSet<&str> = input
+        .packages
+        .iter()
+        .filter(|package| {
+            parsed
+                .get(&package.path)
+                .is_some_and(|meta| meta.targets.contains_key("load"))
+        })
+        .map(|package| package.name.as_str())
+        .collect();
+    let mut rows = Vec::new();
+    for (id, gate) in &input.policy.gates {
+        let implemented: Vec<&WorkloadRow> = input
+            .workloads
+            .iter()
+            .filter(|workload| workload.gates.iter().any(|declared| declared == id))
+            .collect();
+        if implemented.is_empty() {
+            rows.push(UnearnedRow {
+                reason_class: "pending_workload".to_owned(),
+                subject: id.clone(),
+                owner: gate.owner.clone(),
+                blocking_rule: "aex-workload-unowned".to_owned(),
+                detail: format!(
+                    "no descriptor under tests/load/workloads implements this gate on `{}`",
+                    gate.target
+                ),
+            });
+            continue;
+        }
+        for workload in implemented {
+            if executors.contains(workload.target.as_str()) {
+                continue;
+            }
+            rows.push(UnearnedRow {
+                reason_class: "pending_workload".to_owned(),
+                subject: id.clone(),
+                owner: gate.owner.clone(),
+                blocking_rule: "aex-workload-unowned".to_owned(),
+                detail: format!(
+                    "workload `{}` implements this gate, but `{}` maps no `load` target, so the gate cannot run",
+                    workload.id, workload.target
+                ),
+            });
+        }
     }
     rows
 }
@@ -1308,6 +1407,169 @@ mod tests {
             vec![
                 "workload `brain-500-offered` names owner package `brain-mux-load`, which does not exist"
             ]
+        );
+    }
+
+    /// The `regional-services` load companion, with and without its executor.
+    fn live_companion(with_load_target: bool) -> String {
+        let targets = if with_load_target {
+            r#""targets": { "load": "e2e" },"#
+        } else {
+            ""
+        };
+        format!(
+            r#"{{ "owner": "regional-services", "role": "live_companion", "artifact": "none",
+            "deployable": "session-stream-api", "layers": ["smoke", "e2e"],
+            "concerns": ["fault", "security", "performance"], "seams": [],
+            "security_tier": "public_edge", "risk": ["none"], "scenarios": [], {targets}
+            "not_applicable": {{ "targets": "awaiting the regional-services stream" }} }}"#
+        )
+    }
+
+    fn stream_sockets() -> WorkloadRow {
+        WorkloadRow {
+            path: "tests/load/workloads/regional-services/stream-sockets.toml".to_owned(),
+            id: "stream-sockets".to_owned(),
+            owner: "regional-services".to_owned(),
+            target: "aex-live-session-stream-api".to_owned(),
+            gates: vec!["LOAD-STREAM-SOCKETS".to_owned()],
+        }
+    }
+
+    /// The row for one gate, when the ledger holds one.
+    fn workload_row<'a>(
+        report: &'a super::RegistryReport,
+        gate: &str,
+    ) -> Option<&'a super::UnearnedRow> {
+        report
+            .unearned
+            .iter()
+            .find(|row| row.subject == gate && row.blocking_rule == "aex-workload-unowned")
+    }
+
+    #[test]
+    fn a_gate_whose_descriptor_has_no_load_executor_is_reported_as_pending() {
+        let policy = Policy::embedded();
+        let mut inputs = input(
+            vec![row(
+                "tests/live/aex-live-session-stream-api",
+                "aex-live-session-stream-api",
+                Some(&live_companion(false)),
+            )],
+            policy,
+        );
+        inputs.workloads = vec![stream_sockets()];
+        let report = check(&inputs);
+        let pending = workload_row(&report, "LOAD-STREAM-SOCKETS")
+            .expect("a blocking gate that cannot run is never silent");
+        assert_eq!(pending.reason_class, "pending_workload");
+        assert!(
+            pending.detail.contains("maps no `load` target"),
+            "{}",
+            pending.detail
+        );
+    }
+
+    #[test]
+    fn the_same_gate_stops_being_pending_once_the_package_maps_a_load_target() {
+        let policy = Policy::embedded();
+        let mut inputs = input(
+            vec![row(
+                "tests/live/aex-live-session-stream-api",
+                "aex-live-session-stream-api",
+                Some(&live_companion(true)),
+            )],
+            policy,
+        );
+        inputs.workloads = vec![stream_sockets()];
+        let report = check(&inputs);
+        assert!(
+            workload_row(&report, "LOAD-STREAM-SOCKETS").is_none(),
+            "a gate with both a descriptor and an executor owes nothing: {:?}",
+            report.unearned
+        );
+    }
+
+    #[test]
+    fn inline_unit_evidence_is_its_own_class_and_the_candidate_phase_accepts_it() {
+        let policy = Policy::embedded();
+        let inline = r#"{ "owner": "regional-domains", "role": "domain", "artifact": "none",
+            "layers": ["unit"], "concerns": ["property"], "seams": [],
+            "security_tier": "authority", "risk": ["none"], "scenarios": [],
+            "not_applicable": {
+                "inline_targets": "the regional-domains stream keeps this crate's evidence in inline #[cfg(test)] modules, which the declared unit layer already collects",
+                "live_suite": "pure domain crate; no deployed seam" } }"#;
+        let mut inputs = input(
+            vec![row("crates/aex-foo", "aex-foo", Some(inline))],
+            policy,
+        );
+        let report = check(&inputs);
+        assert!(
+            details(&report, "aex-empty-unit").is_empty(),
+            "{:?}",
+            report.violations
+        );
+        let recorded = report
+            .unearned
+            .iter()
+            .find(|row| row.subject == "crates/aex-foo")
+            .expect("the declaration is still recorded, never deleted");
+        assert_eq!(recorded.reason_class, super::INLINE_UNIT_EVIDENCE);
+
+        inputs.phase = Phase::Candidate;
+        let candidate = details(&check(&inputs), "aex-unearned-evidence");
+        assert!(
+            !candidate
+                .iter()
+                .any(|detail| detail.contains("crates/aex-foo")),
+            "a permanently-true statement must not fail the launch gate: {candidate:?}"
+        );
+    }
+
+    #[test]
+    fn a_live_companion_awaiting_a_plane_is_classified_as_requiring_deployment() {
+        let policy = Policy::embedded();
+        let report = check(&input(
+            vec![row(
+                "tests/live/aex-live-session-stream-api",
+                "aex-live-session-stream-api",
+                Some(&live_companion(false)),
+            )],
+            policy,
+        ));
+        let recorded = report
+            .unearned
+            .iter()
+            .find(|row| row.subject == "tests/live/aex-live-session-stream-api")
+            .expect("a companion with no target is recorded");
+        assert_eq!(
+            recorded.reason_class, "requires_deployment",
+            "a live companion is not waiting for its owner to write something, it is \
+             waiting for a plane; filing it as awaiting_owner made `how much does a \
+             plane retire` unanswerable from one column"
+        );
+    }
+
+    #[test]
+    fn claiming_both_an_unwritten_and_an_inline_reason_is_a_contradiction() {
+        let policy = Policy::embedded();
+        let both = r#"{ "owner": "regional-domains", "role": "domain", "artifact": "none",
+            "layers": ["unit"], "concerns": ["property"], "seams": [],
+            "security_tier": "authority", "risk": ["none"], "scenarios": [],
+            "not_applicable": {
+                "targets": "awaiting the regional-domains stream",
+                "inline_targets": "the regional-domains stream keeps this evidence inline",
+                "live_suite": "pure domain crate; no deployed seam" } }"#;
+        let report = check(&input(
+            vec![row("crates/aex-foo", "aex-foo", Some(both))],
+            policy,
+        ));
+        assert!(
+            details(&report, "aex-not-applicable-unjustified")
+                .iter()
+                .any(|detail| detail.contains("marks both `targets` and `inline_targets`")),
+            "{:?}",
+            details(&report, "aex-not-applicable-unjustified")
         );
     }
 

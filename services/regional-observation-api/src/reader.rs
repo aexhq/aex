@@ -82,6 +82,18 @@ pub enum ReadError {
         /// Which write path rejected the key.
         operation: &'static str,
     },
+    /// A conditioned export-control write found no row at the named key.
+    ///
+    /// `ConditionalCheckFailedException` is the authority answering "that
+    /// export is not here", which is a fact about the row and never about the
+    /// provider's health. Folding it into [`Self::Provider`] is what made every
+    /// revoke of an export that does not exist answer `503` and ask the client
+    /// to retry a call that can never succeed.
+    #[error("{operation} found no export-control row at the named key")]
+    ExportAbsent {
+        /// Which write path observed the failed condition.
+        operation: &'static str,
+    },
     /// A single page could make no progress at all.
     ///
     /// This is the only budget outcome that is an error. Every other exhausted
@@ -1705,8 +1717,10 @@ impl ObservationReader {
     ///
     /// # Errors
     ///
-    /// Returns [`ReadError::Provider`] when the update fails, including when the
-    /// condition did not hold.
+    /// Returns [`ReadError::ExportAbsent`] when the condition did not hold, and
+    /// [`ReadError::Provider`] for every other update failure. The two are kept
+    /// apart because they instruct the caller differently: an absent row is a
+    /// terminal `404`, an unreachable authority is a retryable `503`.
     pub(crate) async fn update_export_control(
         &self,
         pk: &str,
@@ -1732,7 +1746,21 @@ impl ObservationReader {
             .set_expression_attribute_values(Some(values))
             .send()
             .await
-            .map_err(|error| ReadError::provider("UpdateItem", error))?;
+            .map_err(|error| {
+                if matches!(
+                    error.as_service_error(),
+                    Some(
+                        aws_sdk_dynamodb::operation::update_item::UpdateItemError::ConditionalCheckFailedException(
+                            _
+                        )
+                    )
+                ) {
+                    return ReadError::ExportAbsent {
+                        operation: "UpdateItem",
+                    };
+                }
+                ReadError::provider("UpdateItem", error)
+            })?;
         Ok(())
     }
 
@@ -2169,8 +2197,16 @@ pub(crate) fn primary_key_pair(
 }
 
 /// The only key family the finite observation API may mutate.
+///
+/// The sort key is now the export identity rather than the constant `STATE`, so
+/// the guard is a prefix check on the partition plus a parse of the sort key:
+/// anything that is not a well-formed export id in a well-formed export
+/// partition is not a row this deployable may write. Keeping the check a parse
+/// rather than a pattern is what keeps the write surface proved rather than
+/// reviewed.
 fn is_export_control_key(pk: &str, sk: &str) -> bool {
-    pk.starts_with("EXPORT#") && sk == "STATE"
+    aex_observation_domain::keys::parse_export_pk(pk).is_some()
+        && <aex_wire::ids::ExportId as aex_wire::ids::PrefixedId>::parse(sk).is_ok()
 }
 
 /// Proves a new row is the exact export-control shape before any provider call.
@@ -2403,12 +2439,26 @@ mod tests {
 
     #[test]
     fn write_keys_are_confined_to_export_control_state() {
-        assert!(is_export_control_key("EXPORT#workspace#export", "STATE"));
-        assert!(!is_export_control_key("FRONTIER#workspace", "STATE"));
+        let workspace = other_workspace();
+        let export = aex_wire::ids::ExportId::from_uuid7(aex_wire::Uuid7::compose(9, [9; 10]));
+        let pk = aex_observation_domain::keys::export_pk(workspace);
+        assert!(is_export_control_key(&pk, &export.to_string()));
+        // The guard is a parse, not a pattern: anything that is not a
+        // well-formed export identity in a well-formed export partition is not
+        // a row this deployable may write.
+        assert!(
+            !is_export_control_key(&pk, "STATE"),
+            "the former constant sort key is not an export identity"
+        );
+        assert!(!is_export_control_key(&pk, "CHECKPOINT"));
         assert!(!is_export_control_key(
-            "EXPORT#workspace#export",
-            "CHECKPOINT"
+            "FRONTIER#scope",
+            &export.to_string()
         ));
+        assert!(
+            !is_export_control_key("EXPORT#a#b", &export.to_string()),
+            "the partition carries the workspace and nothing else"
+        );
     }
 
     #[test]
@@ -2417,6 +2467,7 @@ mod tests {
             ("OBS#scope#logs", "record", "observation"),
             ("FRONTIER#scope", "logs", "frontier"),
             ("EXPORT#workspace#export", "STATE", "frontier"),
+            ("EXPORT#workspace", "STATE", "export"),
         ] {
             let item = HashMap::from([
                 ("pk".to_owned(), AttributeValue::S(pk.to_owned())),
@@ -2433,6 +2484,116 @@ mod tests {
                 })
             ));
         }
+    }
+
+    /// A reader whose one provider call answers with a modelled service error.
+    fn refusing_reader(code: &'static str) -> ObservationReader {
+        let replay = StaticReplayClient::new(vec![ReplayEvent::new(
+            http::Request::builder()
+                .method("POST")
+                .uri("https://dynamodb.eu-west-1.amazonaws.com/")
+                .body(SdkBody::empty())
+                .expect("a request"),
+            http::Response::builder()
+                .status(400)
+                .header("x-amzn-errortype", code)
+                .body(SdkBody::from(
+                    serde_json::json!({
+                        "__type": format!("com.amazonaws.dynamodb.v20120810#{code}"),
+                        "message": "fixture"
+                    })
+                    .to_string(),
+                ))
+                .expect("a response"),
+        )]);
+        let dynamodb = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::Config::builder()
+                .behavior_version(BehaviorVersion::latest())
+                .region(Region::new("eu-west-1"))
+                .credentials_provider(Credentials::new(
+                    "AKIDTESTTESTTESTTEST",
+                    "test-secret",
+                    None,
+                    None,
+                    "aex-tests",
+                ))
+                .retry_config(aws_sdk_dynamodb::config::retry::RetryConfig::disabled())
+                .http_client(replay)
+                .build(),
+        );
+        let s3 = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+                .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+                .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                    "AKIDTESTTESTTESTTEST",
+                    "test-secret",
+                    None,
+                    None,
+                    "aex-tests",
+                ))
+                .build(),
+        );
+        ObservationReader::new(
+            dynamodb,
+            s3,
+            "observation-authority",
+            "session-authority",
+            "observations",
+            2_000,
+            std::sync::Arc::new(ReadCounters::default()),
+        )
+    }
+
+    /// Drives the revoke write against a reader that refuses it.
+    ///
+    /// The key is the re-keyed shape — `EXPORT#{workspace}` / `{export_id}` —
+    /// because `is_export_control_key` is a parse. Under the former
+    /// `EXPORT#{workspace}#export` / `STATE` shape these two cases never
+    /// reached the provider at all: the guard refused the target first, and
+    /// both assertions below would have been proving `InvalidWriteTarget`
+    /// rather than the error classification they name.
+    async fn revoke_write(reader: &ObservationReader) -> ReadError {
+        let export = aex_wire::ids::ExportId::from_uuid7(aex_wire::Uuid7::compose(9, [9; 10]));
+        reader
+            .update_export_control(
+                &aex_observation_domain::keys::export_pk(other_workspace()),
+                &export.to_string(),
+                "SET #n0 = :v0",
+                "attribute_exists(#n1)",
+                HashMap::from([
+                    ("#n0".to_owned(), "state".to_owned()),
+                    ("#n1".to_owned(), "pk".to_owned()),
+                ]),
+                HashMap::from([(":v0".to_owned(), AttributeValue::S("revoked".to_owned()))]),
+            )
+            .await
+            .expect_err("the fixture refuses the write")
+    }
+
+    #[tokio::test]
+    async fn a_failed_export_condition_is_an_absent_row_and_not_an_unhealthy_provider() {
+        // `telemetry_export_revoke` asserts `attribute_exists(pk)`, so the only
+        // way the condition fails is that the export is not there. Reporting
+        // that as a provider failure told every caller the observability plane
+        // was down and to keep retrying a call that can never succeed.
+        assert!(matches!(
+            revoke_write(&refusing_reader("ConditionalCheckFailedException")).await,
+            ReadError::ExportAbsent {
+                operation: "UpdateItem"
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_unhealthy_provider_is_still_reported_as_one() {
+        assert!(matches!(
+            revoke_write(&refusing_reader("ProvisionedThroughputExceededException")).await,
+            ReadError::Provider {
+                operation: "UpdateItem",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]

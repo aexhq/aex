@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UsageSettlement.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Whether an item is covered by a committed settlement receipt as of\n`completeThrough`. Not permanently terminal: a correction or a void\narrives as a new fact at a higher sequence and re-opens its bucket to\n`provisional`.\n",
+  "enum": [
+    "settled",
+    "provisional"
+  ],
+  "title": "UsageSettlement",
+  "type": "string"
+}

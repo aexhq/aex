@@ -50,6 +50,36 @@ pub struct AgentPage {
     pub more: bool,
 }
 
+/// Everything a session-wide cancellation needs to know about one agent.
+///
+/// Narrower than [`AgentControl`] on purpose. The physical `agent_control` row
+/// is owned by `aex-brain-store-dynamodb` and carries that crate's `AgentHead`
+/// schema; `AgentControl` is a third vocabulary that no adapter persists. These
+/// three facts are the ones a real row can answer without inventing anything,
+/// and they are exactly what [`crate::plan::Write::CancelAgent`] conditions on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AgentCancelTarget {
+    /// Which agent.
+    pub agent: AgentId,
+    /// Its optimistic revision.
+    pub revision: aex_session_domain::AgentRevision,
+    /// Whether it still admits work, i.e. it has not finished.
+    pub active: bool,
+}
+
+/// One bounded page of cancellation targets, in canonical agent order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentCancelPage {
+    /// The targets examined by this page, ordered.
+    pub targets: Vec<AgentCancelTarget>,
+    /// The first agent the next page starts at, when one remains.
+    ///
+    /// Carried rather than derived: a page whose last row is terminal still has
+    /// to advance the cursor, and deriving "next" from the last *cancelled*
+    /// agent would loop forever on a page of already-terminal agents.
+    pub next: Option<AgentId>,
+}
+
 /// Everything a command needs to know about a session in one read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSnapshot {
@@ -90,13 +120,40 @@ pub enum PortError {
         /// Why.
         reason: &'static str,
     },
+    /// No adapter in the tree can answer this read faithfully.
+    ///
+    /// Distinct from every other arm because it is a **composition** gap, not a
+    /// runtime condition: a retry cannot help, and the operator has to be told
+    /// which seam is open rather than shown a corrupt-row diagnostic for a row
+    /// that is not corrupt. A deployable must never mount a route that can
+    /// reach this (RS-18); it exists so that wiring one by mistake fails loudly
+    /// instead of returning invented data.
+    #[error("{kind} cannot be read: {seam}")]
+    Unowned {
+        /// What was being read.
+        kind: &'static str,
+        /// Which seam owns it.
+        seam: &'static str,
+    },
 }
 
 /// Reads the session authority.
 #[async_trait::async_trait]
 pub trait SessionReader: Send + Sync {
-    /// One session and the agents a command needs.
+    /// One session head.
+    ///
+    /// Split from [`SessionReader::load_snapshot`] on purpose: stop, trash and
+    /// restore need the head and nothing else (D-14), and bundling the agents
+    /// into every head read made all three depend on a decode that no adapter
+    /// in the tree can perform.
     async fn load_session(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+    ) -> Result<Session, PortError>;
+
+    /// One session together with the agents a command needs.
+    async fn load_snapshot(
         &self,
         workspace: WorkspaceId,
         session: SessionId,
@@ -118,6 +175,17 @@ pub trait SessionReader: Send + Sync {
         session: SessionId,
         budget: PageBudget,
     ) -> Result<AgentPage, PortError>;
+
+    /// A bounded, resumable page of session-wide cancellation targets.
+    ///
+    /// `from` is inclusive, so a step that fails its cursor guard re-reads
+    /// exactly the batch it was going to write and cannot skip an agent.
+    async fn list_agent_cancel_targets(
+        &self,
+        session: SessionId,
+        from: Option<AgentId>,
+        budget: PageBudget,
+    ) -> Result<AgentCancelPage, PortError>;
 
     /// A bounded page of one agent's journal.
     async fn load_journal_page(
@@ -304,6 +372,19 @@ pub enum CommitError {
     /// customer error.
     #[error(transparent)]
     PlanRejected(#[from] PlanError),
+    /// The provider's answer did not say whether the transaction landed.
+    ///
+    /// Rows 6, 7 and 8 of the unknown-outcome matrix (D-10) are exactly this
+    /// case, and without this arm they are *inexpressible*: a timeout, a reset
+    /// or a mixed `TransactionCanceled` would otherwise have to be reported as
+    /// a definite failure, which is the one thing it is not. `targets` names
+    /// every item the transaction would have written, so the resolver reads
+    /// them and never guesses.
+    #[error("commit outcome is unknown across {} target(s)", targets.len())]
+    Ambiguous {
+        /// Every item the plan would have written, in plan order.
+        targets: Vec<crate::plan::ItemKey>,
+    },
 }
 
 /// What a successful commit reports.

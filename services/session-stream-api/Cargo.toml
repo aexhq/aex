@@ -48,10 +48,11 @@ path = "src/main.rs"
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-dynamodbstreams.workspace = true
-# The client that invokes `central-authz`, not a hosting dependency: the
-# assertion exchange stays a direct Lambda invoke after this service moved off
-# Lambda hosting.
 aws-sdk-s3.workspace = true
+# The two cold-start reads, one store each: Secrets Manager holds the credential
+# pepper ring at the id the issuing authority also reads, and Parameter Store
+# holds the cursor signing ring both halves of this deployable share.
+aws-sdk-secretsmanager.workspace = true
 aws-sdk-ssm.workspace = true
 axum.workspace = true
 async-trait.workspace = true
@@ -60,6 +61,7 @@ futures.workspace = true
 tokio = { workspace = true, features = ["net"] }
 aex-content-domain = { path = "../../crates/aex-content-domain" }
 aex-operation-domain = { path = "../../crates/aex-operation-domain" }
+aex-content-aws = { path = "../../crates/aex-content-aws" }
 aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }
 aex-registry-dynamodb = { path = "../../crates/aex-registry-dynamodb" }
 aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
@@ -69,6 +71,15 @@ aex-observation-domain = { path = "../../crates/aex-observation-domain" }
 aex-observation-query = { path = "../../crates/aex-observation-query" }
 aex-observation-store-dynamodb = { path = "../../crates/aex-observation-store-dynamodb" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
+aex-secret-domain = { path = "../../crates/aex-secret-domain" }
+aex-session-app = { path = "../../crates/aex-session-app" }
+aex-session-domain = { path = "../../crates/aex-session-domain" }
+# The read-only usage projection adapter. It publishes no method that accepts
+# a row, so composing it cannot give this deployable write authority over the
+# billing projection.
+aex-usage-domain = { path = "../../crates/aex-usage-domain" }
+aex-usage-query-dynamodb = { path = "../../crates/aex-usage-query-dynamodb" }
+aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
 aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = [
     "authz-projection",
     "session-authority",
@@ -87,9 +98,6 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-aex-secret-domain = { path = "../../crates/aex-secret-domain" }
-aex-session-domain = { path = "../../crates/aex-session-domain" }
-aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
 aws-smithy-http-client.workspace = true
 aws-smithy-types.workspace = true
 axum.workspace = true

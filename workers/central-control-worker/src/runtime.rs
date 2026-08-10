@@ -24,19 +24,84 @@ use async_trait::async_trait;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+/// Everything the drain reads and writes in the control authority.
 pub trait Store: ControlStore + ControlViewStore + KeyMaterialReader {}
 impl<T: ControlStore + ControlViewStore + KeyMaterialReader> Store for T {}
 
+/// The invitation notification sender.
 #[async_trait]
 pub trait Mail: Send + Sync {
+    /// Sends one message.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted provider failure, which releases the outbox row for a
+    /// bounded retry rather than marking it delivered.
     async fn send(&self, to: &str, subject: &str, text: &str) -> Result<(), String>;
 }
 
+/// The assertion signing-key administrator.
 #[async_trait]
 pub trait SigningAdmin: Send + Sync {
+    /// Confirms one rotated key is readable at the reference the row named.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted failure when the reference is outside the configured
+    /// prefix or the secret cannot be described.
     async fn confirm_published(&self, secret_ref: &str) -> Result<(), String>;
 }
 
+/// The regional authorization projection this worker publishes into.
+///
+/// A port rather than the concrete [`ProjectionWriter`] for one reason: the
+/// **order** of a provision's regional writes is a contract, and an order is
+/// only assertable if a test can record it. Today the order is profile then
+/// placement, so that a profile row can never be missing behind an admitted
+/// placement; `tests/composition.rs` pins exactly that sequence, which is the
+/// seam a later capacity `Bootstrap` has to be inserted ahead of rather than
+/// beside.
+#[async_trait]
+pub trait RegionalProjection: Send + Sync {
+    /// Writes the descriptive workspace row.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted failure, which leaves the outbox row claimable.
+    async fn put_profile(&self, write: &ProfileWrite) -> Result<(), String>;
+
+    /// Writes the admission placement row, which is what makes a workspace
+    /// visible to the regional edge and is therefore written last.
+    ///
+    /// # Errors
+    ///
+    /// Identical to [`RegionalProjection::put_profile`].
+    async fn put_placement(&self, write: &PlacementWrite) -> Result<(), String>;
+
+    /// Writes one key's authorization row, on creation and again on revocation.
+    ///
+    /// # Errors
+    ///
+    /// Identical to [`RegionalProjection::put_profile`].
+    async fn put_key_authorization(&self, write: &KeyAuthorizationWrite) -> Result<(), String>;
+}
+
+#[async_trait]
+impl RegionalProjection for ProjectionWriter {
+    async fn put_profile(&self, write: &ProfileWrite) -> Result<(), String> {
+        Self::put_profile(self, write).await
+    }
+
+    async fn put_placement(&self, write: &PlacementWrite) -> Result<(), String> {
+        Self::put_placement(self, write).await
+    }
+
+    async fn put_key_authorization(&self, write: &KeyAuthorizationWrite) -> Result<(), String> {
+        Self::put_key_authorization(self, write).await
+    }
+}
+
+/// The production mailer, over one verified SES sender identity.
 #[derive(Debug, Clone)]
 pub struct SesMail {
     client: aws_sdk_sesv2::Client,
@@ -44,6 +109,7 @@ pub struct SesMail {
 }
 
 impl SesMail {
+    /// Binds the mailer to the one address the composition verified.
     #[must_use]
     pub fn new(client: aws_sdk_sesv2::Client, from: String) -> Self {
         Self { client, from }
@@ -81,6 +147,7 @@ impl Mail for SesMail {
     }
 }
 
+/// The production signing-key administrator, bound to one secret prefix.
 #[derive(Debug, Clone)]
 pub struct SecretsSigningAdmin {
     client: aws_sdk_secretsmanager::Client,
@@ -88,11 +155,18 @@ pub struct SecretsSigningAdmin {
 }
 
 impl SecretsSigningAdmin {
+    /// Binds the administrator to the prefix it may name.
     #[must_use]
     pub fn new(client: aws_sdk_secretsmanager::Client, prefix: String) -> Self {
         Self { client, prefix }
     }
 
+    /// The start-up probe: the configured prefix is listable.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted failure, which refuses start-up rather than reporting
+    /// ready with a duty that cannot run.
     pub async fn probe(&self) -> Result<(), String> {
         self.client
             .list_secrets()
@@ -126,10 +200,11 @@ impl SigningAdmin for SecretsSigningAdmin {
     }
 }
 
+/// The drain itself: one bounded unit of durable control-plane work.
 pub struct Worker {
     store: Arc<dyn Store>,
     regional: Arc<dyn RegionalControlPort>,
-    projections: BTreeMap<Region, ProjectionWriter>,
+    projections: BTreeMap<Region, Arc<dyn RegionalProjection>>,
     mail: Arc<dyn Mail>,
     signing: Arc<dyn SigningAdmin>,
     clock: Arc<dyn Clock>,
@@ -164,12 +239,13 @@ where
 }
 
 impl Worker {
+    /// Composes the drain over its authorities.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         store: Arc<dyn Store>,
         regional: Arc<dyn RegionalControlPort>,
-        projections: BTreeMap<Region, ProjectionWriter>,
+        projections: BTreeMap<Region, Arc<dyn RegionalProjection>>,
         mail: Arc<dyn Mail>,
         signing: Arc<dyn SigningAdmin>,
         clock: Arc<dyn Clock>,
@@ -192,6 +268,12 @@ impl Worker {
 
     /// Drains a bounded unit of durable work. Queue messages are wakeups; the
     /// Aurora claims remain the authority across duplicate deliveries.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted store failure, or `operation_recovery_failed` when at
+    /// least one claimed operation did not advance. A dispatch failure is not
+    /// an error here: it releases its own row for a bounded retry.
     pub async fn tick(&self) -> Result<(), String> {
         let now = self.clock.now();
         // Advancing operation fences before outbox dispatch makes every retry a
@@ -249,6 +331,12 @@ impl Worker {
         }
     }
 
+    /// Drains, then sweeps. What a schedule tick does and a queue wakeup does
+    /// not: the sweep is periodic maintenance, not a reaction to an event.
+    ///
+    /// # Errors
+    ///
+    /// Identical to [`Worker::tick`], plus the sweep's own store failure.
     pub async fn scheduled(&self) -> Result<(), String> {
         self.tick().await?;
         self.store
@@ -391,7 +479,7 @@ impl Worker {
         if view.workspace.organization_id != payload.organization_id
             || view.workspace.region != payload.region
             || view.account.epoch < payload.account_epoch
-            || view.account.revision < payload.account_revision
+            || view.account.revision() < payload.account_revision
         {
             return Err("account_state_payload_mismatch".to_owned());
         }
@@ -605,7 +693,7 @@ impl Worker {
             WorkspaceStatus::Provisioning => return Err("workspace_not_projectable_yet".to_owned()),
             WorkspaceStatus::Deleting | WorkspaceStatus::Deleted => "deleting",
             WorkspaceStatus::Active
-                if view.account.state == aex_control_domain::AccountState::PausedTopUpRequired =>
+                if view.account.state() == aex_control_domain::AccountState::PausedTopUpRequired =>
             {
                 "paused"
             }

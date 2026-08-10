@@ -24,6 +24,19 @@ not receipts and cannot satisfy artifact certification, environment admission,
 or promotion readiness; they let structural graph verification prove that no
 gap is accidental while the later evidence gates remain fail-closed.
 
+`deferral-floor.json` is the committed ceiling on that debt, and it is the one
+document here that is hand-edited rather than regenerated. Nothing previously
+stopped a stream from adding a deferral; 49 routes and 21 scenarios had been
+stable by convention alone. `graph verify` reads the floor and fails
+`route-deferral-regression` or `scenario-deferral-regression` on an id that is
+deferred and not named there, so adding a deferral needs an explicit bump in the
+same commit; `deferral-irreversible` fails an id the floor records as `retired`,
+so an id that has once left can never come back as architecture debt. The ratchet
+is monotone non-increasing rather than strictly decreasing, because requiring the
+number to fall every release manufactures pressure to mount a route badly to make
+a number move. An absent or unparseable floor is itself a violation: an
+unratcheted tree and a ratcheted one must not look the same.
+
 Release routing is stricter than structural PR/main routing. Running
 `graph verify --release` refuses to emit a release selection when every cross-service
 scenario is deferred. A dev verification statement likewise requires passing

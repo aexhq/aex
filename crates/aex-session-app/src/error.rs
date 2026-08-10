@@ -5,6 +5,7 @@
 //! rejection meant.
 
 use aex_operation_domain::TransitionError;
+use aex_operation_domain::cursor::CursorError;
 use aex_secret_domain::CustodyRejection;
 use aex_session_domain::{
     ApprovalRejection, DeletionRejection, PauseRejection, SessionDomainRunError, SessionError,
@@ -43,6 +44,11 @@ pub enum AppError {
     /// An operation transition was illegal.
     #[error(transparent)]
     Transition(#[from] TransitionError),
+    /// A continuation cursor could not be built. Always an internal fault: the
+    /// cursor fails rather than truncating, so this is a step that tried to
+    /// record a position the envelope cannot hold.
+    #[error(transparent)]
+    Cursor(#[from] CursorError),
     /// Credential custody refused an admission or rebind.
     #[error(transparent)]
     Custody(#[from] CustodyRejection),
@@ -70,6 +76,7 @@ impl AppError {
             | Self::Plan(_)
             | Self::Commit(_)
             | Self::Transition(_)
+            | Self::Cursor(_)
             | Self::Canonical(_) => ErrorCode::InternalError,
             Self::Paused(rejection) => rejection.code,
             Self::Session(SessionError::NotIdle { .. })

@@ -9,11 +9,11 @@
 //!
 //! # What is read when
 //!
-//! | Input | When | How often |
-//! | --- | --- | --- |
-//! | credential pepper ring ([`ParameterStore::pepper_ring`]) | cold start | once |
-//! | cursor signing ring ([`ParameterStore::cursor_key_ring`]) | cold start | once |
-//! | the admission snapshot ([`RegionalProjection`]) | per request | always |
+//! | Input | Store | When | How often |
+//! | --- | --- | --- | --- |
+//! | credential pepper ring ([`SecretStore::pepper_ring`]) | Secrets Manager | cold start | once |
+//! | cursor signing ring ([`ParameterStore::cursor_key_ring`]) | Parameter Store | cold start | once |
+//! | the admission snapshot ([`RegionalProjection`]) | `DynamoDB` | per request | always |
 //!
 //! The snapshot is the only per-request read — three concurrent point reads over
 //! the key authorization row, the placement and the hot limit ceilings,
@@ -22,6 +22,30 @@
 //! central assertion, no 30-second lifetime and nothing held between requests,
 //! so a revoked key or a paused account takes effect on the next request rather
 //! than within a window.
+//!
+//! # One pepper, two readers
+//!
+//! The ring is read from Secrets Manager because that is where the issuing
+//! authority reads it: `aex/<plane>/central/token-pepper` is one stored document
+//! with two readers rather than two copies that have to stay byte-identical. A
+//! copy in a second store fails in exactly one way, and it is the worst one — a
+//! rotation applied to one side leaves keys fingerprinted under the new version
+//! verifying in one plane and failing in the other, silently, for some keys and
+//! not others, with nothing in either log naming the cause.
+//!
+//! The cursor ring stays in Parameter Store because it has one reader and no
+//! second copy to disagree with.
+//!
+//! # A rotation is not seen until the process restarts
+//!
+//! Both rings are read once and held for the process lifetime. Nothing here
+//! re-reads, and that is deliberate: a periodic refresh would put a network call
+//! and a fresh failure mode behind an authorization decision that is otherwise a
+//! pure in-memory MAC. The consequence is stated rather than discovered — adding
+//! a pepper version is invisible to every process already running, so any
+//! credential minted under the new version is refused by those processes until
+//! they are rolled. Rotating the pepper is therefore incomplete until every
+//! holder has been redeployed.
 //!
 //! # There is no `central-authz` client here
 //!
@@ -51,8 +75,8 @@ use crate::credential::{PepperRing, ProjectedEpochs, RingError, StoredVerifier};
 use crate::cursor::{CursorError, CursorKey, CursorKeyRing};
 use crate::edge::{ProjectedState, ProjectionError, ProjectionReader};
 
-/// The largest parameter document this module will decode.
-pub const MAX_PARAMETER_BYTES: usize = 64 * 1_024;
+/// The largest key-material document this module will decode, from either store.
+pub const MAX_DOCUMENT_BYTES: usize = 64 * 1_024;
 
 /// Why start-up key material was refused.
 ///
@@ -60,34 +84,40 @@ pub const MAX_PARAMETER_BYTES: usize = 64 * 1_024;
 /// ring or a generated pepper: a regional edge that cannot check a credential
 /// must not start, because the alternative is a process that accepts nothing
 /// while reporting ready, or worse, one that accepts everything.
+///
+/// `name` is the reference as configured, which is also what tells the two
+/// stores apart: a Parameter Store name begins with `/` and a Secrets Manager id
+/// does not. The one arm where that matters operationally is
+/// [`TrustError::Unreadable`], whose `reason` carries the failing service's own
+/// error code.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TrustError {
-    /// The parameter could not be read.
-    #[error("parameter `{name}` could not be read: {reason}")]
+    /// The reference could not be read.
+    #[error("reference `{name}` could not be read: {reason}")]
     Unreadable {
-        /// Which parameter.
+        /// Which reference.
         name: String,
         /// What the service reported.
         reason: String,
     },
-    /// The parameter held no value.
-    #[error("parameter `{name}` holds no value")]
+    /// The reference held no value.
+    #[error("reference `{name}` holds no value")]
     Empty {
-        /// Which parameter.
+        /// Which reference.
         name: String,
     },
-    /// The parameter was larger than the decode bound.
-    #[error("parameter `{name}` is {found} bytes; at most {MAX_PARAMETER_BYTES} are decoded")]
+    /// The document was larger than the decode bound.
+    #[error("reference `{name}` is {found} bytes; at most {MAX_DOCUMENT_BYTES} are decoded")]
     TooLarge {
-        /// Which parameter.
+        /// Which reference.
         name: String,
         /// How large it was.
         found: usize,
     },
     /// The document did not decode.
-    #[error("parameter `{name}` is not a valid {kind} document: {reason}")]
+    #[error("reference `{name}` is not a valid {kind} document: {reason}")]
     Malformed {
-        /// Which parameter.
+        /// Which reference.
         name: String,
         /// Which document kind was expected.
         kind: &'static str,
@@ -95,47 +125,47 @@ pub enum TrustError {
         reason: String,
     },
     /// Two cursor keys claimed the same identity.
-    #[error("parameter `{name}` declares `{key_id}` twice")]
+    #[error("reference `{name}` declares `{key_id}` twice")]
     DuplicateKeyId {
-        /// Which parameter.
+        /// Which reference.
         name: String,
         /// The repeated identity.
         key_id: String,
     },
     /// Two peppers claimed the same version.
-    #[error("parameter `{name}` declares pepper version {version} twice")]
+    #[error("reference `{name}` declares pepper version {version} twice")]
     DuplicatePepperVersion {
-        /// Which parameter.
+        /// Which reference.
         name: String,
         /// The repeated version.
         version: u16,
     },
     /// A cursor key identity was empty, oversized or carried a control byte.
-    #[error("parameter `{name}` declares an unusable key identity")]
+    #[error("reference `{name}` declares an unusable key identity")]
     KeyIdentity {
-        /// Which parameter.
+        /// Which reference.
         name: String,
     },
     /// Key material was not the exact length its algorithm requires.
-    #[error("parameter `{name}` declares key `{key_id}` with unusable material")]
+    #[error("reference `{name}` declares key `{key_id}` with unusable material")]
     KeyMaterial {
-        /// Which parameter.
+        /// Which reference.
         name: String,
         /// Which key.
         key_id: String,
     },
     /// The pepper ring itself refused the entries.
-    #[error("parameter `{name}` does not describe a usable pepper ring: {source}")]
+    #[error("reference `{name}` does not describe a usable pepper ring: {source}")]
     PepperRing {
-        /// Which parameter.
+        /// Which reference.
         name: String,
         /// Why the ring refused them.
         source: RingError,
     },
     /// The cursor ring itself refused the keys.
-    #[error("parameter `{name}` does not describe a usable cursor ring: {source}")]
+    #[error("reference `{name}` does not describe a usable cursor ring: {source}")]
     CursorRing {
-        /// Which parameter.
+        /// Which reference.
         name: String,
         /// Why the ring refused them.
         source: CursorError,
@@ -166,10 +196,10 @@ struct PepperEntry {
 
 /// Decodes the credential pepper ring held at `AEX_CREDENTIAL_PEPPER_REF`.
 ///
-/// The reference is a Parameter Store name holding a `SecureString`. The
-/// document is byte-for-byte the one the issuing authority reads, because it is
-/// the same ring: a second spelling would be a second thing that can disagree
-/// about which pepper version `3` is.
+/// The reference is a Secrets Manager id — `aex/<plane>/central/token-pepper` —
+/// and the document is byte-for-byte the one the issuing authority reads,
+/// because it is the same stored secret. Not a copy of it: a copy is a second
+/// thing that can disagree about which pepper version `3` is.
 ///
 /// ```json
 /// { "schemaVersion": 1,
@@ -187,7 +217,7 @@ struct PepperEntry {
 /// ambiguous document, or one declaring material that is not exactly 32 bytes.
 /// Nothing here degrades: a document this function refuses stops the process.
 pub fn parse_pepper_ring(name: &str, document: &str) -> Result<PepperRing, TrustError> {
-    if document.len() > MAX_PARAMETER_BYTES {
+    if document.len() > MAX_DOCUMENT_BYTES {
         return Err(TrustError::TooLarge {
             name: name.to_owned(),
             found: document.len(),
@@ -274,7 +304,7 @@ struct CursorEntry {
 /// Returns [`TrustError`] for an oversized, malformed or ambiguous document, or
 /// one whose material is shorter than [`crate::cursor::MIN_KEY_BYTES`].
 pub fn parse_cursor_key_ring(name: &str, document: &str) -> Result<CursorKeyRing, TrustError> {
-    if document.len() > MAX_PARAMETER_BYTES {
+    if document.len() > MAX_DOCUMENT_BYTES {
         return Err(TrustError::TooLarge {
             name: name.to_owned(),
             found: document.len(),
@@ -322,10 +352,14 @@ fn cursor_key(name: &str, entry: &mut CursorEntry) -> Result<CursorKey, TrustErr
 // Parameter Store
 // ---------------------------------------------------------------------------
 
-/// The Parameter Store reader a composition root resolves key material through.
+/// The Parameter Store reader a composition root resolves the cursor signing
+/// ring through.
 ///
-/// Both reads happen once, at cold start, before the listener binds. A failure
+/// The read happens once, at cold start, before the listener binds. A failure
 /// stops the process rather than the request.
+///
+/// The credential pepper is **not** read here. It is read from Secrets Manager
+/// by [`SecretStore`], where the issuing authority already reads it.
 #[derive(Debug, Clone)]
 pub struct ParameterStore {
     client: aws_sdk_ssm::Client,
@@ -374,16 +408,6 @@ impl ParameterStore {
         Ok(Zeroizing::new(value))
     }
 
-    /// Reads and decodes the credential pepper ring.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TrustError`] for an unreadable or unusable document.
-    pub async fn pepper_ring(&self, reference: &str) -> Result<PepperRing, TrustError> {
-        let document = self.read(reference).await?;
-        parse_pepper_ring(reference, &document)
-    }
-
     /// Reads and decodes the cursor signing ring.
     ///
     /// # Errors
@@ -392,6 +416,78 @@ impl ParameterStore {
     pub async fn cursor_key_ring(&self, reference: &str) -> Result<CursorKeyRing, TrustError> {
         let document = self.read(reference).await?;
         parse_cursor_key_ring(reference, &document)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Secrets Manager
+// ---------------------------------------------------------------------------
+
+/// The Secrets Manager reader a composition root resolves the credential pepper
+/// ring through.
+///
+/// The read happens once, at cold start, before the listener binds. A failure
+/// stops the process rather than the request.
+///
+/// This is the same store, the same id and the same document the issuing
+/// authority reads. That is the whole point of it being here rather than in
+/// Parameter Store: the pepper has one home, so there is no second value for a
+/// rotation to leave behind.
+#[derive(Debug, Clone)]
+pub struct SecretStore {
+    client: aws_sdk_secretsmanager::Client,
+}
+
+impl SecretStore {
+    /// Binds the reader to a client.
+    #[must_use]
+    pub const fn new(client: aws_sdk_secretsmanager::Client) -> Self {
+        Self { client }
+    }
+
+    /// Reads one whole secret value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustError::Unreadable`] for any transport or permission
+    /// failure and [`TrustError::Empty`] when the secret carries no string
+    /// value. A binary-only secret takes the `Empty` arm rather than being
+    /// guessed at: this reader decodes a JSON document, and a secret that holds
+    /// bytes instead is a provisioning mistake, not a shape to accommodate.
+    pub async fn read(&self, id: &str) -> Result<Zeroizing<String>, TrustError> {
+        let output = self
+            .client
+            .get_secret_value()
+            .secret_id(id)
+            .send()
+            .await
+            .map_err(|error| TrustError::Unreadable {
+                name: id.to_owned(),
+                // As with the parameter reader: `SdkError`'s own `Display` is
+                // the bare words "service error" for every service failure, so
+                // a denied read, a throttle and an absent secret would read
+                // identically in the last line this process writes before it
+                // exits. `DisplayErrorContext` walks the source chain and names
+                // the code.
+                reason: aws_sdk_secretsmanager::error::DisplayErrorContext(&error).to_string(),
+            })?;
+        let value = output
+            .secret_string
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| TrustError::Empty {
+                name: id.to_owned(),
+            })?;
+        Ok(Zeroizing::new(value))
+    }
+
+    /// Reads and decodes the credential pepper ring.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustError`] for an unreadable or unusable document.
+    pub async fn pepper_ring(&self, reference: &str) -> Result<PepperRing, TrustError> {
+        let document = self.read(reference).await?;
+        parse_pepper_ring(reference, &document)
     }
 }
 

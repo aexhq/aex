@@ -423,6 +423,11 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
     // 7. Every public route has a scenario or contract owner.
     violations.extend(verify_route_coverage(inputs, &built, &scenario_claims));
 
+    // 8. Deferral is ratcheted against a committed floor: nothing may be
+    //    deferred that the floor does not already name, and nothing that has
+    //    once left the floor may come back.
+    violations.extend(verify_deferral_floor(inputs, &built));
+
     if violations.is_empty() {
         Ok(built)
     } else {
@@ -1628,6 +1633,165 @@ impl<'de> Visitor<'de> for StrictJsonVisitor {
 
 fn strict_json(text: &str) -> std::result::Result<serde_json::Value, serde_json::Error> {
     serde_json::from_str::<StrictJson>(text).map(|value| value.0)
+}
+
+/// The committed ceiling on explicit deferral.
+pub const DEFERRAL_FLOOR_PATH: &str = "release/deferral-floor.json";
+
+/// One half of the floor: routes or scenarios.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FloorSide {
+    /// The approved ceiling on this half's count.
+    floor: usize,
+    /// Why the ceiling is what it is.
+    #[serde(default)]
+    #[allow(dead_code, reason = "documentation carried in the authority itself")]
+    floor_note: String,
+    /// Ids the floor still admits although a landed change is deleting them.
+    #[serde(default)]
+    deleting: BTreeMap<String, String>,
+    /// Ids that may be deferred.
+    deferred: BTreeSet<String>,
+    /// Ids that have left the floor and may never come back.
+    retired: BTreeSet<String>,
+}
+
+impl FloorSide {
+    /// Every id the floor admits as deferred today.
+    fn admitted(&self) -> BTreeSet<&str> {
+        self.deferred
+            .iter()
+            .map(String::as_str)
+            .chain(self.deleting.keys().map(String::as_str))
+            .collect()
+    }
+}
+
+/// `release/deferral-floor.json`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeferralFloor {
+    /// Schema discriminator.
+    schema: String,
+    /// What the document is for.
+    #[allow(dead_code, reason = "documentation carried in the authority itself")]
+    purpose: String,
+    /// How it is maintained.
+    #[allow(dead_code, reason = "documentation carried in the authority itself")]
+    regenerate: String,
+    /// The route half.
+    routes: FloorSide,
+    /// The scenario half.
+    scenarios: FloorSide,
+}
+
+/// The deferral ratchet.
+///
+/// Three rules, all fail-closed:
+///
+/// - `route-deferral-regression` — an operation id carrying a `deferredReason`
+///   that the floor does not name. Adding a deferral therefore needs an explicit
+///   floor bump in the same commit, which makes it a reviewed decision rather
+///   than a diff nobody reads.
+/// - `scenario-deferral-regression` — the same for scenario ids.
+/// - `deferral-irreversible` — an id the floor lists as `retired` cannot be
+///   deferred again. A scenario that was runnable and is now deferred is a
+///   regression being laundered as architecture debt.
+///
+/// The counts are checked too, in the one direction that matters: the floor is
+/// a ceiling, so more deferrals than it declares is a failure and fewer is the
+/// point. An id set that fits inside the floor while the count exceeds it is
+/// impossible, but the count is asserted anyway, because the number is what the
+/// launch gate quotes and a number nobody checks drifts from the set it summarises.
+///
+/// A missing floor file is itself a violation. This authority is exactly the
+/// kind whose absence would otherwise read as "every rule passed".
+fn verify_deferral_floor(inputs: &GraphInputs, built: &BuiltGraph) -> Vec<Violation> {
+    let path = inputs.root.join(DEFERRAL_FLOOR_PATH);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) => {
+            return vec![Violation::new(
+                "deferral-floor-missing",
+                format!(
+                    "{DEFERRAL_FLOOR_PATH} could not be read ({error}); without it every \
+                     deferral is unratcheted and the check silently passes"
+                ),
+            )];
+        }
+    };
+    let floor: DeferralFloor = match strict_json(&text)
+        .map_err(|error| error.to_string())
+        .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()))
+    {
+        Ok(floor) => floor,
+        Err(detail) => {
+            return vec![Violation::new(
+                "deferral-floor-missing",
+                format!("{DEFERRAL_FLOOR_PATH} does not parse: {detail}; the schema is closed"),
+            )];
+        }
+    };
+    let mut violations = Vec::new();
+    if floor.schema != "aex.deferral-floor.v1" {
+        violations.push(Violation::new(
+            "deferral-floor-missing",
+            format!(
+                "{DEFERRAL_FLOOR_PATH} declares schema `{}`, not `aex.deferral-floor.v1`",
+                floor.schema
+            ),
+        ));
+    }
+    for (kind, side, rule) in [
+        ("route", &floor.routes, "route-deferral-regression"),
+        ("scenario", &floor.scenarios, "scenario-deferral-regression"),
+    ] {
+        let admitted = side.admitted();
+        let observed: BTreeSet<&str> = built
+            .deferred
+            .iter()
+            .filter(|entry| entry.kind == kind)
+            .map(|entry| entry.id.as_str())
+            .collect();
+        for id in &observed {
+            if side.retired.contains(*id) {
+                violations.push(Violation::new(
+                    "deferral-irreversible",
+                    format!(
+                        "{kind} `{id}` is recorded as retired in {DEFERRAL_FLOOR_PATH} and is \
+                         deferred again; an id that has once left the floor is a regression, \
+                         not architecture debt"
+                    ),
+                ));
+                continue;
+            }
+            if !admitted.contains(*id) {
+                violations.push(Violation::new(
+                    rule,
+                    format!(
+                        "{kind} `{id}` is deferred and is not named by {DEFERRAL_FLOOR_PATH}; \
+                         a new deferral needs an explicit floor bump in the same commit"
+                    ),
+                ));
+            }
+        }
+        let counted = observed
+            .iter()
+            .filter(|id| !side.deleting.contains_key(**id))
+            .count();
+        if counted > side.floor {
+            violations.push(Violation::new(
+                rule,
+                format!(
+                    "{counted} {kind} deferral(s) against a floor of {}; the floor is monotone \
+                     non-increasing and a rise needs an explicit bump",
+                    side.floor
+                ),
+            ));
+        }
+    }
+    violations
 }
 
 /// Summarize a built graph for `--json` output.

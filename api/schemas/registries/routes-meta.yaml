@@ -9,7 +9,7 @@
 # disagree about what `{sessionId}` is.
 contractVersion: v1
 expected:
-  central: 27
+  central: 31
   regional: 118
 pathParams:
   organizationId: { type: id, of: organization, doc: "The organization the request is scoped to." }
@@ -141,10 +141,7 @@ deferredOperations:
   session_messages_list: "The wire and domain message vocabularies and exact paged read authority are incomplete."
   session_persist: "The paged persist operation and commit latch are incomplete."
   session_purge: "The paged purge operation and commit latch are incomplete."
-  session_restore: "The complete session restore authority and command transaction are not implemented."
-  session_stop: "The complete session stop authority and command transaction are not implemented."
   session_telemetry_export_create: "The durable session export-admission composition is incomplete."
-  session_trash: "The complete session trash authority and command transaction are not implemented."
   session_workspace_discard: "The workspace-discard operation and commit latch are incomplete."
   sessions_list: "The sparse session head cannot yet produce the complete public collection item."
   telemetry_export_create: "The durable workspace export-admission composition is incomplete."
@@ -152,7 +149,6 @@ deferredOperations:
   upload_complete: "The staged-upload authority and durable completion transaction are incomplete."
   upload_create: "The staged-upload authority and multipart presigning composition are incomplete."
   upload_parts_grant: "The multipart grant and presigning composition is incomplete."
-  usage_query: "The store lacks the exact multi-category, arbitrary-range query planner and continuation contract."
   workspace_current_get: "The signed and projected facts do not supply the complete account operational state."
   workspace_limit_get: "No authoritative regional capacity default and override producer exists yet."
   workspace_limits_list: "No authoritative regional capacity default and override producer exists yet."
@@ -172,6 +168,7 @@ servedOperations:
     - central_operation_get
     - central_operations_list
     - dashboard_bootstrap_get
+    - invitation_accept
     - invitation_create
     - memberships_list
     - organization_create
@@ -182,7 +179,10 @@ servedOperations:
     - workspace_get
     - workspaces_list
   central-identity-api:
+    - dashboard_session_create
+    - dashboard_session_delete
     - device_authorization_create
+    - device_decision_create
     - device_token_create
   finance-api:
     - billing_auto_topup_policy_get
@@ -263,5 +263,9 @@ servedOperations:
     - session_observations_telemetry_stream
     - session_observations_traces_listen
     - session_observations_traces_stream
+    - session_restore
     - session_run_get
     - session_runs_list
+    - session_stop
+    - session_trash
+    - usage_query

@@ -22,7 +22,16 @@ pub const PLANE: &str = "AEX_PLANE";
 pub const REGION: &str = "AEX_REGION";
 /// The release digest reported by `/internal/readyz`.
 pub const RELEASE_DIGEST: &str = "AEX_RELEASE_DIGEST";
-/// The parameter holding the credential pepper ring this edge verifies against.
+/// The Secrets Manager id holding the credential pepper ring this edge verifies
+/// against.
+///
+/// It names the id the issuing authority also reads —
+/// `aex/<plane>/central/token-pepper` — and not a regional copy of it. One
+/// stored document with two readers cannot drift; two copies can, and a
+/// rotation that reached only one of them would leave keys minted under the new
+/// version verifying centrally and failing here, silently and only for some
+/// keys. Read once at cold start and held, so a version added afterwards is
+/// invisible here until this process restarts.
 ///
 /// This replaced `AEX_AUTHZ_FUNCTION_ARN` and `AEX_AUTHZ_VERIFY_KEYS_PARAM`
 /// together: there is no `central-authz` invoke to address and no assertion
@@ -97,7 +106,7 @@ pub struct Config {
     pub region: Region,
     /// Release digest reported by readiness.
     pub release_digest: String,
-    /// Credential pepper ring parameter name.
+    /// Credential pepper ring Secrets Manager id.
     pub credential_pepper_ref: String,
     /// Regional authorization projection table.
     pub authz_projection_table: String,

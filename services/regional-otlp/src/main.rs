@@ -144,8 +144,9 @@ pub async fn run(
     // The one shared edge. There is no exchange left to compose it over: a
     // presented key is checked against the verifier this region already reads
     // on every request, so nothing on this path leaves the region.
-    let parameters = aex_regional_http::authz::ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
-    let peppers = parameters
+    let secrets =
+        aex_regional_http::authz::SecretStore::new(aws_sdk_secretsmanager::Client::new(&aws));
+    let peppers = secrets
         .pepper_ring(&config.credential_pepper_ref)
         .await
         .map_err(|error| RegionalOtlpRunError::Edge {

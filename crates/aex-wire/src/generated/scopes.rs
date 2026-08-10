@@ -3,7 +3,7 @@
 //! The authorization scope registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:faf31c134a0c550e88a72f530773003414bb2ef103878329da871af144e66617`.
+//! `sha256:5fe8da4b34a8c8a1bfbeafe3e2a8a2c456983a62f85fea9a66f579ef905b6f14`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -20,6 +20,10 @@ pub enum ScopeId {
     /// `account:read` — Read the caller's account and operational state.
     #[serde(rename = "account:read")]
     AccountRead,
+    /// `account:write` — Decide the caller's own device authorizations and close their own browser
+    /// session.
+    #[serde(rename = "account:write")]
+    AccountWrite,
     /// `organizations:read` — List and read organizations the caller belongs to.
     #[serde(rename = "organizations:read")]
     OrganizationsRead,
@@ -32,6 +36,9 @@ pub enum ScopeId {
     /// `memberships:write` — Invite people to an organization.
     #[serde(rename = "memberships:write")]
     MembershipsWrite,
+    /// `memberships:accept` — Redeem invitations addressed to the caller's own verified email.
+    #[serde(rename = "memberships:accept")]
+    MembershipsAccept,
     /// `workspaces:read` — List and read workspaces.
     #[serde(rename = "workspaces:read")]
     WorkspacesRead,
@@ -107,10 +114,12 @@ impl ScopeId {
     /// Every scope, in registry order.
     pub const ALL: &'static [ScopeId] = &[
         ScopeId::AccountRead,
+        ScopeId::AccountWrite,
         ScopeId::OrganizationsRead,
         ScopeId::OrganizationsWrite,
         ScopeId::MembershipsRead,
         ScopeId::MembershipsWrite,
+        ScopeId::MembershipsAccept,
         ScopeId::WorkspacesRead,
         ScopeId::WorkspacesWrite,
         ScopeId::WorkspacesDelete,
@@ -141,10 +150,12 @@ impl ScopeId {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::AccountRead => "account:read",
+            Self::AccountWrite => "account:write",
             Self::OrganizationsRead => "organizations:read",
             Self::OrganizationsWrite => "organizations:write",
             Self::MembershipsRead => "memberships:read",
             Self::MembershipsWrite => "memberships:write",
+            Self::MembershipsAccept => "memberships:accept",
             Self::WorkspacesRead => "workspaces:read",
             Self::WorkspacesWrite => "workspaces:write",
             Self::WorkspacesDelete => "workspaces:delete",

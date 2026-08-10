@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:faf31c134a0c550e88a72f530773003414bb2ef103878329da871af144e66617`.
+//! `sha256:5fe8da4b34a8c8a1bfbeafe3e2a8a2c456983a62f85fea9a66f579ef905b6f14`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -66,8 +66,12 @@ use crate::models::BillingBalanceGetQuery;
 use crate::models::BillingStatementsListQuery;
 use crate::models::CentralOperationsListQuery;
 use crate::models::DashboardBootstrap;
+use crate::models::DashboardSessionCredential;
+use crate::models::DashboardSessionRequest;
 use crate::models::DeviceAuthorization;
 use crate::models::DeviceAuthorizationRequest;
+use crate::models::DeviceDecisionRequest;
+use crate::models::DeviceDecisionResult;
 use crate::models::DeviceToken;
 use crate::models::DeviceTokenRequest;
 use crate::models::DownloadGrant;
@@ -81,6 +85,7 @@ use crate::models::FileListRequest;
 use crate::models::FileStatRequest;
 use crate::models::HostedSession;
 use crate::models::Invitation;
+use crate::models::InvitationAcceptResult;
 use crate::models::InvitationCreateRequest;
 use crate::models::LiveDownloadGrant;
 use crate::models::LiveFileDownloadRequest;
@@ -392,7 +397,10 @@ pub const APPROVALS_ROUTES: &[RouteId] = &[
 
 /// Every route of `central:auth`, in `RouteId` order.
 pub const AUTH_ROUTES: &[RouteId] = &[
+    RouteId::DashboardSessionCreate,
+    RouteId::DashboardSessionDelete,
     RouteId::DeviceAuthorizationCreate,
+    RouteId::DeviceDecisionCreate,
     RouteId::DeviceTokenCreate,
 ];
 
@@ -476,6 +484,7 @@ pub const OBSERVATIONS_ROUTES: &[RouteId] = &[
 
 /// Every route of `central:organizations`, in `RouteId` order.
 pub const ORGANIZATIONS_ROUTES: &[RouteId] = &[
+    RouteId::InvitationAccept,
     RouteId::InvitationCreate,
     RouteId::MembershipsList,
     RouteId::OrganizationCreate,
@@ -610,7 +619,10 @@ impl RouteId {
             Self::SessionApprovalGet => RouteGroup::Approvals,
             Self::SessionApprovalRespond => RouteGroup::Approvals,
             Self::SessionApprovalsList => RouteGroup::Approvals,
+            Self::DashboardSessionCreate => RouteGroup::Auth,
+            Self::DashboardSessionDelete => RouteGroup::Auth,
             Self::DeviceAuthorizationCreate => RouteGroup::Auth,
+            Self::DeviceDecisionCreate => RouteGroup::Auth,
             Self::DeviceTokenCreate => RouteGroup::Auth,
             Self::BillingAutoTopupPolicyGet => RouteGroup::Billing,
             Self::BillingAutoTopupPolicyPut => RouteGroup::Billing,
@@ -670,6 +682,7 @@ impl RouteId {
             Self::SessionObservationsTracesListen => RouteGroup::Observations,
             Self::SessionObservationsTracesQuery => RouteGroup::Observations,
             Self::SessionObservationsTracesStream => RouteGroup::Observations,
+            Self::InvitationAccept => RouteGroup::Organizations,
             Self::InvitationCreate => RouteGroup::Organizations,
             Self::MembershipsList => RouteGroup::Organizations,
             Self::OrganizationCreate => RouteGroup::Organizations,
@@ -968,11 +981,26 @@ pub async fn dispatch_approvals<A: ApprovalsApi + ?Sized>(
 
 // --- central:auth ---------------------------------------------------------------
 
-/// The `auth` fragment of the central plane: 2 operations.
+/// The `auth` fragment of the central plane: 5 operations.
 /// Every method returns a future that is `Send`, so the composition crate can spawn it without
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
 pub trait AuthApi: Send + Sync + 'static {
+    /// `POST /api/auth/sessions`
+    /// Exchange a completed first-party provider sign-in for a browser session.
+    fn dashboard_session_create(
+        &self,
+        cx: &RequestContext,
+        body: DashboardSessionRequest,
+    ) -> impl Future<Output = WireResult<Created<DashboardSessionCredential>>> + Send;
+
+    /// `DELETE /api/auth/sessions/current`
+    /// Close the browser session the caller presented.
+    fn dashboard_session_delete(
+        &self,
+        cx: &RequestContext,
+    ) -> impl Future<Output = WireResult<NoContent>> + Send;
+
     /// `POST /api/auth/device/authorizations`
     /// Begin the CLI device-authorization flow.
     fn device_authorization_create(
@@ -980,6 +1008,14 @@ pub trait AuthApi: Send + Sync + 'static {
         cx: &RequestContext,
         body: DeviceAuthorizationRequest,
     ) -> impl Future<Output = WireResult<Created<DeviceAuthorization>>> + Send;
+
+    /// `POST /api/auth/device/decisions`
+    /// Approve or deny a pending device authorization.
+    fn device_decision_create(
+        &self,
+        cx: &RequestContext,
+        body: DeviceDecisionRequest,
+    ) -> impl Future<Output = WireResult<DeviceDecisionResult>> + Send;
 
     /// `POST /api/auth/device/tokens`
     /// Exchange an approved device code for an account token.
@@ -1004,11 +1040,29 @@ pub async fn dispatch_auth<A: AuthApi + ?Sized>(
 ) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
     let _reader = QueryReader::parse(raw.route, raw.query)?;
     match raw.route {
+        RouteId::DashboardSessionCreate => {
+            let body = decode_body::<DashboardSessionRequest>(&raw, limits)?;
+            let handled = api.dashboard_session_create(cx, body);
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::json(201, &answer.0)?))
+        }
+        RouteId::DashboardSessionDelete => {
+            expect_no_body(&raw)?;
+            let handled = api.dashboard_session_delete(cx);
+            let NoContent = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::no_content()))
+        }
         RouteId::DeviceAuthorizationCreate => {
             let body = decode_body::<DeviceAuthorizationRequest>(&raw, limits)?;
             let handled = api.device_authorization_create(cx, body);
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::json(201, &answer.0)?))
+        }
+        RouteId::DeviceDecisionCreate => {
+            let body = decode_body::<DeviceDecisionRequest>(&raw, limits)?;
+            let handled = api.device_decision_create(cx, body);
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
         }
         RouteId::DeviceTokenCreate => {
             let body = decode_body::<DeviceTokenRequest>(&raw, limits)?;
@@ -2088,11 +2142,19 @@ pub async fn dispatch_observations<A: ObservationsApi + ?Sized>(
 
 // --- central:organizations ---------------------------------------------------------------
 
-/// The `organizations` fragment of the central plane: 5 operations.
+/// The `organizations` fragment of the central plane: 6 operations.
 /// Every method returns a future that is `Send`, so the composition crate can spawn it without
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
 pub trait OrganizationsApi: Send + Sync + 'static {
+    /// `POST /api/invitations/acceptances`
+    /// Redeem every pending invitation addressed to the caller's verified email.
+    fn invitation_accept(
+        &self,
+        cx: &RequestContext,
+        body: EmptyRequest,
+    ) -> impl Future<Output = WireResult<InvitationAcceptResult>> + Send;
+
     /// `POST /api/organizations/{organizationId}/invitations`
     /// Invite a person to the organization.
     fn invitation_create(
@@ -2150,6 +2212,12 @@ pub async fn dispatch_organizations<A: OrganizationsApi + ?Sized>(
 ) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
     let reader = QueryReader::parse(raw.route, raw.query)?;
     match raw.route {
+        RouteId::InvitationAccept => {
+            let body = decode_body::<EmptyRequest>(&raw, limits)?;
+            let handled = api.invitation_accept(cx, body);
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
+        }
         RouteId::InvitationCreate => {
             let organization_id = path_param::<OrganizationId>(&raw, "organizationId")?;
             let body = decode_body::<InvitationCreateRequest>(&raw, limits)?;

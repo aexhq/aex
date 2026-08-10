@@ -41,6 +41,8 @@ pub const APPROVAL: &str = "approval";
 pub const OPERATION: &str = "operation";
 /// The `itemType` of an idempotency receipt.
 pub const IDEMPOTENCY_RECEIPT: &str = "idempotency_receipt";
+/// The `itemType` of a run's outbox event.
+pub const OUTBOX_EVENT: &str = "outbox_event";
 /// The `itemType` of an agent registry entry.
 pub const AGENT_INDEX: &str = "agent_index";
 /// The `itemType` of a spend reservation.
@@ -636,6 +638,36 @@ pub fn decode_operation(item: &Item, asserted: WorkspaceId) -> Result<StoredOper
     })
 }
 
+/// Encodes one run's outbox event.
+///
+/// The envelope's own fields are the row: a relay reads them without parsing a
+/// blob, and `outboxState` is the only attribute the relay writes back. The row
+/// is immutable in every other respect, which is why the terminal barrier writes
+/// it under `attribute_not_exists` rather than replacing it.
+#[must_use]
+pub fn encode_outbox_event(
+    workspace: WorkspaceId,
+    event: &aex_session_domain::OutboxEvent,
+) -> Item {
+    let key = keys::outbox(event.session, event.run);
+    ItemBuilder::new(OUTBOX_EVENT)
+        .set(crate::attr::PK, s(key.pk))
+        .set(crate::attr::SK, s(key.sk))
+        .set("workspaceId", s(workspace.to_string()))
+        .set("sessionId", s(event.session.to_string()))
+        .set("runId", s(event.run.to_string()))
+        .set("schemaVersion", n(u64::from(event.schema_version.0)))
+        .set(
+            "runStatus",
+            s(crate::authority_codec::run_status(event.status)),
+        )
+        .set("sessionRevision", n(event.session_revision.0))
+        .set("usageClosureId", s(event.usage_closure.0.to_string()))
+        .set("committedAt", stamp(event.at))
+        .set("outboxState", s(crate::keys::OUTBOX_STATES[0]))
+        .build()
+}
+
 /// Encodes one idempotency receipt.
 ///
 /// The receipt row shape is shared by every regional table that holds one, so
@@ -661,6 +693,56 @@ pub fn encode_receipt(
 /// [`CodecError`] as for every decode here.
 pub fn decode_receipt(item: &Item) -> Result<Receipt, CodecError> {
     crate::replay::decode_receipt_row(item)
+}
+
+/// Projects a planned domain receipt onto the stored row shape.
+///
+/// The domain owns the identity, the intent and the response bytes; the row adds
+/// only the retention window, which is [`crate::replay::RECEIPT_RETENTION`] and
+/// not a second policy. `expiresAt` is the reader's fence and the TTL attribute
+/// is only how the row is eventually reclaimed (D-24).
+///
+/// # Errors
+///
+/// [`aex_wire::types::ValueError`] only when the retention window pushes the
+/// expiry out of representable range.
+///
+/// # Panics
+///
+/// Never: [`crate::replay::RECEIPT_RETENTION`] is a compile-time constant of one
+/// day, which fits `i64` milliseconds with fifteen orders of magnitude to spare.
+pub fn receipt_of(
+    receipt: &aex_session_domain::IdempotencyReceipt,
+) -> Result<Receipt, aex_wire::types::ValueError> {
+    use aex_session_domain::{ReceiptOutcome, ResponseBody};
+    let (response_kind, response) = match &receipt.outcome {
+        ReceiptOutcome::Resource { kind, response, .. } => (
+            kind.as_str().to_owned(),
+            match response {
+                ResponseBody::Inline(bytes) => crate::replay::ReceiptBody::Inline(bytes.clone()),
+                ResponseBody::Digest(digest) => {
+                    crate::replay::ReceiptBody::Digest(digest.to_wire())
+                }
+            },
+        ),
+        ReceiptOutcome::Operation(operation) => (
+            "operation".to_owned(),
+            crate::replay::ReceiptBody::Inline(operation.to_string().into_bytes()),
+        ),
+    };
+    let retention_millis = i64::try_from(crate::replay::RECEIPT_RETENTION.as_millis())
+        .expect("a pinned retention of one day fits i64 milliseconds");
+    Ok(Receipt {
+        scope: receipt.key.scope().to_owned(),
+        key_sha256: receipt.key.key_sha256().to_owned(),
+        intent: receipt.intent,
+        response_kind,
+        response,
+        committed_at: receipt.created_at,
+        expires_at: aex_wire::types::Timestamp::from_unix_millis(
+            receipt.created_at.unix_millis() + retention_millis,
+        )?,
+    })
 }
 
 pub use crate::replay::receipt_is_live;

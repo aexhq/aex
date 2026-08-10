@@ -1,0 +1,12 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UsageBucket.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The time grain one usage query answers at. All bucketing is UTC and there\nis no timezone parameter; a range must be aligned to whole buckets of the\nrequested grain and a misaligned range is refused rather than widened to\nthe enclosing buckets.\n",
+  "enum": [
+    "hour",
+    "day",
+    "total"
+  ],
+  "title": "UsageBucket",
+  "type": "string"
+}

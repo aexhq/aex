@@ -20,7 +20,7 @@ fn complete() -> BTreeMap<&'static str, String> {
         (config::RELEASE_DIGEST, "sha256:deadbeef".to_owned()),
         (
             config::CREDENTIAL_PEPPER_REF,
-            "/aex/dev/credential-pepper/ring".to_owned(),
+            "aex/dev/central/token-pepper".to_owned(),
         ),
         (
             config::AUTHZ_PROJECTION_TABLE,

@@ -270,6 +270,18 @@ pub enum Condition {
         /// The expected fence.
         fence: Fence,
     },
+    /// The operation is still parked at exactly this cursor (D-4).
+    ///
+    /// This is what makes a step commit idempotent against a duplicate
+    /// delivery: the condition names the cursor the step advances *from*, so
+    /// the second delivery fails its condition and writes nothing.
+    OperationCursorAt {
+        /// Which operation.
+        operation: OperationId,
+        /// The cursor it must still carry; `None` means "no cursor yet", which
+        /// is the first step of a continued operation.
+        expected: Option<Box<aex_operation_domain::cursor::ContinuationCursor>>,
+    },
     /// The secret's revocation epoch is exactly this.
     SecretRevocationEpoch {
         /// Which workspace.
@@ -313,9 +325,9 @@ impl Condition {
             | Self::AuthorizationEpochAtLeast { .. }
             | Self::PersistRoot { .. } => TableFamily::SessionAuthority,
             Self::RegistryEtag { .. } | Self::UploadState { .. } => TableFamily::Registry,
-            Self::ReservationOpen { .. } | Self::OperationFence { .. } => {
-                TableFamily::WorkAuthority
-            }
+            Self::ReservationOpen { .. }
+            | Self::OperationFence { .. }
+            | Self::OperationCursorAt { .. } => TableFamily::WorkAuthority,
             Self::ContentOwned { .. }
             | Self::RootPinPresent { .. }
             | Self::GrantUnexpired { .. } => TableFamily::ContentAuthority,
@@ -373,7 +385,7 @@ impl Condition {
             }
             Self::RootPinPresent { root } => (format!("{:x?}", root.digest), "ROOT_PIN".to_owned()),
             Self::GrantUnexpired { grant, .. } => (grant.0.to_string(), "GRANT".to_owned()),
-            Self::OperationFence { operation, .. } => {
+            Self::OperationFence { operation, .. } | Self::OperationCursorAt { operation, .. } => {
                 (operation.to_string(), "OPERATION".to_owned())
             }
             Self::SecretRevocationEpoch {
@@ -404,6 +416,28 @@ pub enum Write {
     PutRun(Box<Run>),
     /// Replace an agent control record.
     PutAgentControl(Box<AgentControl>),
+    /// Settle exactly one agent under a session-wide cancellation.
+    ///
+    /// Deliberately narrower than [`Write::PutAgentControl`]. The physical
+    /// `agent_control` row is owned by `aex-brain-store-dynamodb` and its
+    /// schema is that crate's `AgentHead`; `aex_session_domain::AgentControl`
+    /// has **no** row codec anywhere in the tree, so a whole-record put from
+    /// this side would have to invent every attribute it cannot know and would
+    /// silently drop the ones it does not model. This arm names exactly the
+    /// facts the domain cancellation establishes, and the adapter renders it as
+    /// one conditional update that touches nothing else.
+    CancelAgent {
+        /// The owning session, required to locate the physical partition.
+        session: SessionId,
+        /// Which agent.
+        agent: AgentId,
+        /// The revision the row must still carry.
+        from_revision: AgentRevision,
+        /// The revision it moves to.
+        to_revision: AgentRevision,
+        /// When the settlement happened.
+        at: Timestamp,
+    },
     /// Append a journal page.
     AppendJournalPage {
         /// The owning session, required to locate the physical agent partition.
@@ -456,6 +490,7 @@ impl Write {
             | Self::PutAgentControl(_)
             | Self::AppendJournalPage { .. }
             | Self::PutApproval(_)
+            | Self::CancelAgent { .. }
             | Self::PutTombstone(_) => TableFamily::SessionAuthority,
             Self::PutIdempotencyReceipt(_) => TableFamily::Idempotency,
             Self::PutOperation(_) | Self::RedactOperationResult(_) | Self::PutWorkItem(_) => {
@@ -485,6 +520,9 @@ impl Write {
                 format!("{}#{}", agent.session, agent.id),
                 "CONTROL".to_owned(),
             ),
+            Self::CancelAgent { session, agent, .. } => {
+                (format!("{session}#{agent}"), "CONTROL".to_owned())
+            }
             Self::AppendJournalPage { session, page } => (
                 format!("{session}#{}", page.agent),
                 format!("JOURNAL#{}", page.first.0),
@@ -493,9 +531,16 @@ impl Write {
                 approval.binding.session.to_string(),
                 format!("APPROVAL#{}", approval.id),
             ),
-            Self::PutIdempotencyReceipt(receipt) => {
-                (receipt.intent.to_string(), "RECEIPT".to_owned())
-            }
+            // `(scope, key_sha256)` and never the intent digest. Keyed by the
+            // intent, two callers who asked for the same thing under different
+            // keys would collide on one item, and a replay could not find its
+            // own receipt without already knowing the value the receipt exists
+            // to compare against — which is what made `idempotency_conflict`
+            // unreachable.
+            Self::PutIdempotencyReceipt(receipt) => (
+                receipt.key.scope().to_owned(),
+                receipt.key.key_sha256().to_owned(),
+            ),
             Self::PutOperation(operation) => (operation.id.to_string(), "OPERATION".to_owned()),
             Self::RedactOperationResult(id) => (id.to_string(), "OPERATION".to_owned()),
             Self::PutWorkItem(item) => (item.operation.to_string(), format!("WORK#{}", item.id.0)),
@@ -546,6 +591,18 @@ impl Write {
                 })
                 .sum(),
             Self::PutMessage(message) => 256 + message.parts.len() * 256,
+            // A receipt carries the canonical response inline up to
+            // `ResponseBody::MAX_INLINE_BYTES`, so a flat estimate would let a
+            // transaction carrying several of them pass the 4 MiB envelope check
+            // and fail at the provider instead.
+            Self::PutIdempotencyReceipt(receipt) => {
+                512 + match &receipt.outcome {
+                    aex_session_domain::ReceiptOutcome::Resource { response, .. } => {
+                        response.inline().map_or(0, <[u8]>::len)
+                    }
+                    aex_session_domain::ReceiptOutcome::Operation(_) => 0,
+                }
+            }
             _ => 512,
         }
     }

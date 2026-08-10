@@ -36,9 +36,12 @@ conformance = "unit"
 properties = "unit"
 faults = "unit"
 security = "unit"
+integration = "integration"
 
-[package.metadata.aex.not_applicable]
-integration = "blocked on a cross-stream gap: `data-image-literal` bans `GenericImage::new(` outside `tests/support/aex-test-harness`, and the harness exposes `images::reference` but no container-start helper, so no stream can start a pinned engine today. The DynamoDB Local cases are specified in plan 05 section 8.2 and land the moment the harness owns container bring-up."
+[features]
+# Engine-backed targets. The unit lane neither builds nor links any of it, so
+# the per-stream gate still runs on a machine with no container runtime.
+integration-engines = ["aex-test-harness/containers"]
 
 [dependencies]
 async-trait.workspace = true
@@ -59,6 +62,7 @@ aws-config.workspace = true
 aws-smithy-http-client.workspace = true
 proptest.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
 
 [[test]]
 name = "conformance"
@@ -75,3 +79,8 @@ path = "tests/faults.rs"
 [[test]]
 name = "security"
 path = "tests/security.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["integration-engines"]

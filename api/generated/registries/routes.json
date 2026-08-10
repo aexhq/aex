@@ -592,6 +592,72 @@
       "altPrincipal": "anonymous",
       "bodyClass": "aex_json",
       "errors": [
+        "unauthenticated",
+        "forbidden",
+        "invalid_request",
+        "rate_limited",
+        "internal_error"
+      ],
+      "etag": "none",
+      "fragment": "auth",
+      "idempotency": "none",
+      "method": "POST",
+      "operationId": "dashboard_session_create",
+      "path": "/api/auth/sessions",
+      "pathParams": [],
+      "pauseExempt": true,
+      "plane": "central",
+      "queryParams": [],
+      "requestSchema": "DashboardSessionRequest",
+      "requiredScope": null,
+      "responseSchema": "DashboardSessionCredential",
+      "safeRetry": false,
+      "scenarios": [
+        "SC-IDENTITY-ACCOUNT"
+      ],
+      "servedArtifact": "central-identity-api",
+      "servingArtifact": "central-identity-api",
+      "successStatus": 201,
+      "summary": "Exchange a completed first-party provider sign-in for a browser session.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": "user_session",
+      "bodyClass": "none",
+      "errors": [
+        "unauthenticated",
+        "forbidden",
+        "insufficient_scope",
+        "rate_limited",
+        "internal_error"
+      ],
+      "etag": "none",
+      "fragment": "auth",
+      "idempotency": "none",
+      "method": "DELETE",
+      "operationId": "dashboard_session_delete",
+      "path": "/api/auth/sessions/current",
+      "pathParams": [],
+      "pauseExempt": true,
+      "plane": "central",
+      "queryParams": [],
+      "requestSchema": null,
+      "requiredScope": "account:write",
+      "responseSchema": null,
+      "safeRetry": false,
+      "scenarios": [
+        "SC-IDENTITY-ACCOUNT"
+      ],
+      "servedArtifact": "central-identity-api",
+      "servingArtifact": "central-identity-api",
+      "successStatus": 204,
+      "summary": "Close the browser session the caller presented.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": "anonymous",
+      "bodyClass": "aex_json",
+      "errors": [
         "invalid_request",
         "rate_limited",
         "internal_error"
@@ -617,6 +683,42 @@
       "servingArtifact": "central-identity-api",
       "successStatus": 201,
       "summary": "Begin the CLI device-authorization flow.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": "user_session",
+      "bodyClass": "aex_json",
+      "errors": [
+        "unauthenticated",
+        "forbidden",
+        "insufficient_scope",
+        "token_expired",
+        "not_found",
+        "invalid_request",
+        "rate_limited",
+        "internal_error"
+      ],
+      "etag": "none",
+      "fragment": "auth",
+      "idempotency": "none",
+      "method": "POST",
+      "operationId": "device_decision_create",
+      "path": "/api/auth/device/decisions",
+      "pathParams": [],
+      "pauseExempt": true,
+      "plane": "central",
+      "queryParams": [],
+      "requestSchema": "DeviceDecisionRequest",
+      "requiredScope": "account:write",
+      "responseSchema": "DeviceDecisionResult",
+      "safeRetry": false,
+      "scenarios": [
+        "SC-IDENTITY-ACCOUNT"
+      ],
+      "servedArtifact": "central-identity-api",
+      "servingArtifact": "central-identity-api",
+      "successStatus": 200,
+      "summary": "Approve or deny a pending device authorization.",
       "transport": "unary"
     },
     {
@@ -651,6 +753,40 @@
       "servingArtifact": "central-identity-api",
       "successStatus": 200,
       "summary": "Exchange an approved device code for an account token.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": "user_session",
+      "bodyClass": "aex_json",
+      "errors": [
+        "unauthenticated",
+        "forbidden",
+        "insufficient_scope",
+        "resource_conflict",
+        "upstream_error",
+        "commit_outcome_unknown"
+      ],
+      "etag": "none",
+      "fragment": "organizations",
+      "idempotency": "none",
+      "method": "POST",
+      "operationId": "invitation_accept",
+      "path": "/api/invitations/acceptances",
+      "pathParams": [],
+      "pauseExempt": false,
+      "plane": "central",
+      "queryParams": [],
+      "requestSchema": "EmptyRequest",
+      "requiredScope": "memberships:accept",
+      "responseSchema": "InvitationAcceptResult",
+      "safeRetry": true,
+      "scenarios": [
+        "SC-CONTROL-WORKSPACE"
+      ],
+      "servedArtifact": "central-control-api",
+      "servingArtifact": "central-control-api",
+      "successStatus": 200,
+      "summary": "Redeem every pending invitation addressed to the caller's verified email.",
       "transport": "unary"
     },
     {
@@ -4331,8 +4467,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The complete session restore authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4343,8 +4477,7 @@
         "deletion_in_progress",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4366,6 +4499,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable restore operation, which is legal only inside the recovery window.",
@@ -4453,8 +4587,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The complete session stop authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4462,8 +4594,7 @@
         "operation_idempotency_conflict",
         "session_deleting",
         "session_deleted",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4485,6 +4616,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable stop operation.",
@@ -4737,8 +4869,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The complete session trash authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4748,8 +4878,7 @@
         "session_deleting",
         "session_deleted",
         "deletion_in_progress",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4771,6 +4900,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable trash operation, which starts the recovery window.",
@@ -5240,8 +5370,6 @@
     {
       "altPrincipal": "account",
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The store lacks the exact multi-category, arbitrary-range query planner and continuation contract.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5250,7 +5378,7 @@
         "invalid_cursor",
         "invalid_query",
         "wrong_workspace_region",
-        "not_implemented"
+        "usage_unavailable"
       ],
       "etag": "none",
       "fragment": "usage",
@@ -5271,6 +5399,7 @@
       "scenarios": [
         "SC-USAGE-SETTLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Query rated usage for this workspace.",

@@ -33,9 +33,7 @@ properties = "unit"
 faults = "unit"
 security = "unit"
 limit_projection = "unit"
-
-[package.metadata.aex.not_applicable]
-integration = "blocked on a cross-stream gap: `data-image-literal` bans `GenericImage::new(` outside `tests/support/aex-test-harness`, and the harness exposes `images::reference` but no container-start helper, so no stream can start a pinned engine today. The DynamoDB Local cases are specified in plan 05 section 8.2 and land the moment the harness owns container bring-up."
+integration = "integration"
 
 [features]
 default = ["session-authority", "authz-projection"]
@@ -60,7 +58,7 @@ authz-projection-write = []
 capacity-limit-projection-write = []
 # Engine-backed targets. The unit lane does not build them, so a machine with no
 # container runtime still runs the per-stream gate.
-integration-engines = ["dep:tokio"]
+integration-engines = ["dep:tokio", "aex-test-harness/containers"]
 
 [dependencies]
 async-trait.workspace = true
@@ -96,6 +94,8 @@ http.workspace = true
 insta.workspace = true
 proptest.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+serde_json.workspace = true
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
 
 [[test]]
 name = "conformance"
@@ -121,3 +121,8 @@ required-features = ["session-authority"]
 name = "limit_projection"
 path = "tests/limit_projection.rs"
 required-features = ["capacity-limit-projection-write"]
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["integration-engines", "session-authority"]

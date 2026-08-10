@@ -18,11 +18,30 @@
 //!
 //! # Consistency
 //!
-//! Every read here is strongly consistent, including the page query. The coverage
-//! vector exists so a customer can tell "you used nothing" from "we have not
-//! folded your facts yet", and a coverage row read from a replica could name a
-//! frontier ahead of the very rows the same request returned — which is the one
-//! answer worse than an honestly incomplete one.
+//! The split here is load-bearing and is the one place this crate departs from
+//! "every read is strongly consistent".
+//!
+//! - **The rollup reads are strongly consistent.** These are the billed numbers.
+//!   A replica-stale rollup under-reports against the very watermark the same
+//!   response states, and nothing on the row lets the reader notice. The price
+//!   is two read units instead of one and leader routing instead of any
+//!   replica, at single-digit-millisecond latency either way — a cost trade,
+//!   not a speed trade, and correctness outranks cost.
+//! - **[`UsageProjectionReads::coverage_eventual`] is not.** It exists to be
+//!   read *first*, before the rollups. The fold applies facts in contiguous
+//!   sequence order behind the coverage fence and the sequence is monotone, so
+//!   an eventually-consistent coverage read yields a projected position no
+//!   greater than the true one, and strongly consistent rollup reads issued
+//!   afterwards reflect at least that much. The response can therefore claim
+//!   "complete through this sequence" and the claim is always true. Staleness
+//!   here can only understate completeness, never overstate it, which is the
+//!   safe direction and free.
+//!
+//! Reading coverage *after* the rows is the hazard this ordering exists to
+//! avoid: a coverage row observed later can name a frontier ahead of the rows
+//! the same request returned. [`UsageProjectionReads::coverage`] keeps the
+//! strong read for callers that need the frontier for its own sake rather than
+//! as a lower bound on an answer.
 
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr as _;
@@ -38,7 +57,8 @@ use aws_sdk_dynamodb::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_dynamodb::types::AttributeValue;
 
 use crate::expressions::{
-    AggregateRequest, AggregateRow, CoverageRow, ProjectionReads, QueryError,
+    AggregateRequest, AggregateRow, CoarseRequest, CoarseRow, CoverageRow, Grain, ProjectionReads,
+    QueryError,
 };
 
 /// One stored row, as the SDK hands it over.
@@ -51,8 +71,10 @@ pub const PARTITION: &str = "pk";
 /// The sort key attribute.
 pub const SORT: &str = "sk";
 
-/// The `itemType` of an hourly or daily rollup.
+/// The `itemType` of an hourly or daily per-tuple rollup.
 pub const AGGREGATE: &str = "usage_aggregate";
+/// The `itemType` of a coarse rollup: one row per category and bucket.
+pub const TOTAL: &str = "usage_total";
 /// The `itemType` of the copied frontier.
 pub const COVERAGE: &str = "usage_coverage";
 /// The `itemType` of the generation pointer.
@@ -73,6 +95,15 @@ pub const GENERATION: &str = "generation";
 pub struct AggregatePageRows {
     /// The rollups, in sort-key order.
     pub rows: Vec<AggregateRow>,
+    /// The sort key the next page resumes after, when there is one.
+    pub next: Option<String>,
+}
+
+/// One bounded page of coarse rollups plus its continuation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoarsePageRows {
+    /// The rollups, in sort-key order.
+    pub rows: Vec<CoarseRow>,
     /// The sort key the next page resumes after, when there is one.
     pub next: Option<String>,
 }
@@ -111,7 +142,24 @@ pub trait UsageProjectionReads: Send + Sync + 'static {
         category: PublicCategory,
     ) -> Result<Option<CoverageRow>, QueryError>;
 
-    /// Reads one bounded page of rollups.
+    /// Reads one workspace-and-authority coverage row from any replica.
+    ///
+    /// Read this **before** the rollups and never after. See the module's
+    /// consistency note: staleness here can only understate completeness, and
+    /// a coverage row observed after the rows can name a frontier ahead of
+    /// them.
+    ///
+    /// # Errors
+    ///
+    /// As [`UsageProjectionReads::coverage`].
+    async fn coverage_eventual(
+        &self,
+        generation: Generation,
+        workspace: &WorkspaceId,
+        category: PublicCategory,
+    ) -> Result<Option<CoverageRow>, QueryError>;
+
+    /// Reads one bounded page of per-tuple rollups.
     ///
     /// # Errors
     ///
@@ -122,6 +170,13 @@ pub trait UsageProjectionReads: Send + Sync + 'static {
         &self,
         request: &AggregateRequest<'_>,
     ) -> Result<AggregatePageRows, QueryError>;
+
+    /// Reads one bounded page of coarse rollups.
+    ///
+    /// # Errors
+    ///
+    /// As [`UsageProjectionReads::aggregates`].
+    async fn coarse(&self, request: &CoarseRequest<'_>) -> Result<CoarsePageRows, QueryError>;
 }
 
 /// The adapter.
@@ -148,7 +203,15 @@ impl UsageQueryStore {
     }
 
     /// Reads one fully-qualified row.
-    async fn read_one(&self, projection: &ProjectionKey) -> Result<Option<Row>, QueryError> {
+    ///
+    /// `consistent` is passed rather than fixed because the coverage row is the
+    /// one read on this table whose staleness is safe *and useful*: see the
+    /// module's consistency note.
+    async fn read_one(
+        &self,
+        projection: &ProjectionKey,
+        consistent: bool,
+    ) -> Result<Option<Row>, QueryError> {
         let sort = projection
             .sk
             .as_deref()
@@ -159,11 +222,26 @@ impl UsageQueryStore {
             .table_name(&self.table)
             .key(PARTITION, AttributeValue::S(projection.pk.clone()))
             .key(SORT, AttributeValue::S(sort.to_owned()))
-            .consistent_read(true)
+            .consistent_read(consistent)
             .send()
             .await
             .map_err(|error| self.classify(&error))?;
         Ok(output.item)
+    }
+
+    /// Reads one workspace-and-authority coverage row at a chosen consistency.
+    async fn coverage_at(
+        &self,
+        generation: Generation,
+        workspace: &WorkspaceId,
+        category: PublicCategory,
+        consistent: bool,
+    ) -> Result<Option<CoverageRow>, QueryError> {
+        let coverage = ProjectionReads::new().coverage(generation, workspace, category)?;
+        let Some(item) = self.read_one(&coverage, consistent).await? else {
+            return Ok(None);
+        };
+        Ok(Some(decode_coverage(&item)?))
     }
 
     /// Maps one SDK failure onto the query vocabulary.
@@ -202,7 +280,7 @@ impl UsageQueryStore {
 impl UsageProjectionReads for UsageQueryStore {
     async fn current_generation(&self) -> Result<Option<Generation>, QueryError> {
         let pointer = ProjectionReads::new().generation_pointer();
-        let Some(item) = self.read_one(&pointer).await? else {
+        let Some(item) = self.read_one(&pointer, true).await? else {
             return Ok(None);
         };
         Ok(Some(decode_generation(&item)?))
@@ -214,11 +292,18 @@ impl UsageProjectionReads for UsageQueryStore {
         workspace: &WorkspaceId,
         category: PublicCategory,
     ) -> Result<Option<CoverageRow>, QueryError> {
-        let coverage = ProjectionReads::new().coverage(generation, workspace, category)?;
-        let Some(item) = self.read_one(&coverage).await? else {
-            return Ok(None);
-        };
-        Ok(Some(decode_coverage(&item)?))
+        self.coverage_at(generation, workspace, category, true)
+            .await
+    }
+
+    async fn coverage_eventual(
+        &self,
+        generation: Generation,
+        workspace: &WorkspaceId,
+        category: PublicCategory,
+    ) -> Result<Option<CoverageRow>, QueryError> {
+        self.coverage_at(generation, workspace, category, false)
+            .await
     }
 
     async fn aggregates(
@@ -272,6 +357,84 @@ impl UsageProjectionReads for UsageQueryStore {
             .transpose()?;
         Ok(AggregatePageRows { rows, next })
     }
+
+    async fn coarse(&self, request: &CoarseRequest<'_>) -> Result<CoarsePageRows, QueryError> {
+        let page = ProjectionReads::new().coarse_page(request)?;
+        let limit = i32::try_from(page.limit).map_err(|_| QueryError::PageBudget {
+            requested: page.limit,
+        })?;
+        // Unlike the per-tuple face there is no dimension-hash suffix to make
+        // an inclusive `BETWEEN` behave as a half-open range: a stored coarse
+        // key is exactly `T#<grain>#<bucket>`, so the exclusive end bound is
+        // itself a storable key. It is stepped back to its immediate lexical
+        // predecessor instead.
+        let output = self
+            .client
+            .query()
+            .table_name(&self.table)
+            .key_condition_expression("#pk = :pk AND #sk BETWEEN :from AND :until")
+            .expression_attribute_names("#pk", PARTITION)
+            .expression_attribute_names("#sk", SORT)
+            .expression_attribute_values(":pk", AttributeValue::S(page.partition.clone()))
+            .expression_attribute_values(":from", AttributeValue::S(page.from.clone()))
+            .expression_attribute_values(":until", AttributeValue::S(exclusive_bound(&page.until)?))
+            .limit(limit)
+            .consistent_read(true)
+            .set_exclusive_start_key(page.after.as_ref().map(|after| {
+                HashMap::from([
+                    (
+                        PARTITION.to_owned(),
+                        AttributeValue::S(page.partition.clone()),
+                    ),
+                    (SORT.to_owned(), AttributeValue::S(after.clone())),
+                ])
+            }))
+            .send()
+            .await
+            .map_err(|error| self.classify(&error))?;
+
+        let mut rows = Vec::new();
+        for item in output.items.unwrap_or_default() {
+            rows.push(decode_coarse(&item)?);
+        }
+        let next = output
+            .last_evaluated_key
+            .as_ref()
+            .map(sort_key_of)
+            .transpose()?;
+        Ok(CoarsePageRows { rows, next })
+    }
+}
+
+/// The immediate lexical predecessor of `until` among keys of the same length.
+///
+/// Every coarse sort key in one partition and grain has the same length, so
+/// decrementing the final byte yields a bound that includes every key below
+/// `until` and excludes `until` itself — an exact half-open range through an
+/// inclusive `BETWEEN`. Bucket labels end in an ASCII digit, so the final byte
+/// is never zero and the decrement never underflows.
+///
+/// # Errors
+///
+/// Returns [`QueryError::MalformedAttribute`] for an empty bound or one whose
+/// final byte is zero, rather than issuing a read over a range nobody chose.
+fn exclusive_bound(until: &str) -> Result<String, QueryError> {
+    let mut bytes = until.as_bytes().to_vec();
+    let last = bytes.last_mut().ok_or(QueryError::MalformedAttribute {
+        attribute: "sk",
+        reason: "an empty range bound".to_owned(),
+    })?;
+    if *last == 0 {
+        return Err(QueryError::MalformedAttribute {
+            attribute: "sk",
+            reason: "a range bound with no predecessor".to_owned(),
+        });
+    }
+    *last -= 1;
+    String::from_utf8(bytes).map_err(|error| QueryError::MalformedAttribute {
+        attribute: "sk",
+        reason: error.to_string(),
+    })
 }
 
 /// The sort key a continuation resumes after.
@@ -403,6 +566,42 @@ pub fn decode_aggregate(item: &Row) -> Result<AggregateRow, QueryError> {
         quantity,
         fact_count: counter(item, "factCount")?,
         dimensions: dimensions(item)?,
+        highest_sequence: sequence(item, "highestSequence")?,
+    })
+}
+
+/// Decodes one stored coarse rollup.
+///
+/// # Errors
+///
+/// [`QueryError::ItemTypeMismatch`] for a row of another item type — in
+/// particular a per-tuple `usage_aggregate`, which shares this partition and
+/// would silently under-report the bucket if it were read as a total — and the
+/// missing- and malformed-attribute variants for anything the fold declares
+/// that the row does not carry usably.
+pub fn decode_coarse(item: &Row) -> Result<CoarseRow, QueryError> {
+    expect_item_type(item, TOTAL)?;
+    let quantity = Quantity::parse(number(item, "quantity")?).map_err(|error| {
+        QueryError::MalformedAttribute {
+            attribute: "quantity",
+            reason: error.to_string(),
+        }
+    })?;
+    let grain = match text(item, "grain")? {
+        "H" => Grain::Hourly,
+        "D" => Grain::Daily,
+        other => {
+            return Err(QueryError::MalformedAttribute {
+                attribute: "grain",
+                reason: format!("`{other}` is neither hourly nor daily"),
+            });
+        }
+    };
+    Ok(CoarseRow {
+        public_category: category(item)?,
+        grain,
+        bucket: text(item, "bucketStart")?.to_owned(),
+        quantity,
         highest_sequence: sequence(item, "highestSequence")?,
     })
 }

@@ -12,11 +12,16 @@
       "description": "Millicpu-milliseconds.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string"
+    },
+    "settlement": {
+      "$ref": "aex:schema:UsageSettlement",
+      "description": "Whether this item is settled as of `completeThrough`."
     }
   },
   "required": [
     "attribution",
-    "millicpuMilliseconds"
+    "millicpuMilliseconds",
+    "settlement"
   ],
   "title": "UsageComputeAggregate",
   "type": "object"

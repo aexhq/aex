@@ -9,7 +9,7 @@
 //!
 //! # Not this crate's job
 //!
-//! - AWS delivery, Stripe transport or SQL (`aex-finance-aurora`)
+//! - AWS delivery, Stripe transport or SQL (each finance deployable owns its own)
 //! - rate cards and rating arithmetic (`aex-usage-rating`)
 //! - reading the clock: settlement time arrives as a parameter
 

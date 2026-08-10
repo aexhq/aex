@@ -345,12 +345,29 @@ schemas:
       coverage: { type: ref, to: ObservationCoverage, doc: "What the assembly covers." }
 
   ExportFormat:
-    doc: The three export formats.
+    doc: |
+      The two export formats. Parquet is deliberately absent: its encoder is a
+      typed refusal pending a writer that can be pinned to byte-identical
+      output, and admitting an operation guaranteed to fail is worse than
+      refusing the request. Re-adding it is a wire change.
     type: enum
     values:
       - { value: ndjson, doc: "Newline-delimited JSON." }
-      - { value: parquet, doc: "Apache Parquet." }
-      - { value: otlp_json, doc: "OTLP JSON." }
+      - { value: otlp_json, doc: "OTLP JSON. Refuses `events` and trace summaries rather than coercing them." }
+
+  ExportQuery:
+    doc: |
+      What one export walks. Deliberately not an `ObservationQuery`: an export
+      has no caller-visible pagination, so a cursor, a limit and a walk
+      direction are meaningless states rather than states to refuse at runtime.
+      The partition list and the snapshot position are pinned at admission and
+      live on the export row, which is the only channel the task has.
+    type: object
+    fields:
+      signal: { type: ref, to: ObservationSignal, doc: "Which signal." }
+      timeRange: { type: ref, to: TimeRange, doc: "The observation-time window." }
+      filter: { type: ref, to: ObservationFilter, optional: true, doc: "The bounded filter." }
+      consistency: { type: ref, to: ObservationConsistency, optional: true, doc: "How much must be observed before the window is admissible." }
 
   ExportCompleteness:
     doc: What an export does when the window has recorded gaps.
@@ -372,7 +389,7 @@ schemas:
     doc: Admit a durable telemetry-export operation.
     type: object
     fields:
-      query: { type: ref, to: ObservationQuery, doc: "What to export." }
+      query: { type: ref, to: ExportQuery, doc: "What to export. Normalized and pinned onto the export row at admission, so two runs of one export walk the same plan." }
       format: { type: ref, to: ExportFormat, doc: "The artifact format." }
       completeness: { type: ref, to: ExportCompleteness, doc: "What to do about recorded gaps." }
 

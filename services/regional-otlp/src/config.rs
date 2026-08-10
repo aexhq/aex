@@ -31,12 +31,21 @@ pub const MEMORY_BUDGET_VAR: &str = "AEX_OTLP_MEMORY_BUDGET_BYTES";
 pub const RESERVE_WAIT_VAR: &str = "AEX_OTLP_RESERVE_WAIT_MS";
 /// Environment variable naming the reserved concurrency this function runs at.
 pub const RESERVED_CONCURRENCY_VAR: &str = "AEX_OTLP_RESERVED_CONCURRENCY";
-/// Environment variable naming the Parameter Store credential pepper ring.
+/// Environment variable naming the Secrets Manager credential pepper ring.
 ///
-/// The peppers are a `SecureString` document read once at cold start, not an
-/// inline environment value: a pepper rotation must not require a redeploy of
-/// every regional service, and a verifier names the version it was computed
-/// under so both halves of a rotation have to be resolvable at once.
+/// It names the id the issuing authority also reads —
+/// `aex/<plane>/central/token-pepper` — and not a regional copy of it. One
+/// stored document with two readers cannot drift; two copies can, and a
+/// rotation that reached only one of them would leave keys minted under the new
+/// version verifying centrally and failing here, silently and only for some
+/// keys.
+///
+/// The peppers are a document read once at cold start, not an inline
+/// environment value: the material never enters the environment, the task
+/// definition or Terraform state, and a verifier names the version it was
+/// computed under so a whole ring has to be resolvable at once. Held for the
+/// process lifetime and never re-read, so a version added afterwards is
+/// invisible here until this process restarts.
 ///
 /// This replaced `AEX_AUTHZ_FUNCTION_ARN` and `AEX_AUTHZ_VERIFY_KEYS_PARAM`
 /// together: there is no `central-authz` invoke to address and no assertion
@@ -108,7 +117,7 @@ pub struct Config {
     pub reserve_wait: Duration,
     /// The reserved concurrency this function is deployed at.
     pub reserved_concurrency: u32,
-    /// The Parameter Store name holding the credential pepper ring.
+    /// The Secrets Manager id holding the credential pepper ring.
     pub credential_pepper_ref: String,
     /// The read-only regional authorization projection table.
     pub authz_projection_table: String,
@@ -318,7 +327,7 @@ mod tests {
             (RESERVED_CONCURRENCY_VAR, "20".to_owned()),
             (
                 CREDENTIAL_PEPPER_REF_VAR,
-                "/aex/dev/credential-pepper/ring".to_owned(),
+                "aex/dev/central/token-pepper".to_owned(),
             ),
             (
                 AUTHZ_PROJECTION_TABLE_VAR,
@@ -341,7 +350,7 @@ mod tests {
         assert_eq!(config.limits.max_records, 2_000);
         assert_eq!(
             config.credential_pepper_ref,
-            "/aex/dev/credential-pepper/ring"
+            "aex/dev/central/token-pepper"
         );
         assert_eq!(
             config.regional_decode_ceiling_bytes(),
@@ -450,15 +459,27 @@ mod tests {
 
     #[test]
     fn this_deployable_names_its_key_material_and_never_carries_it() {
-        // The pepper ring is a Parameter Store `SecureString` read once at cold
-        // start, not an inline environment value: a pepper rotation must not
-        // require redeploying every regional service, and a secret is not
-        // something to paste into a task definition.
+        // The pepper ring is a document read once at cold start, not an inline
+        // environment value: a secret is not something to paste into a task
+        // definition, and the material must not reach Terraform state.
         let config = read(&complete()).expect("a complete environment starts");
-        assert!(config.credential_pepper_ref.starts_with('/'));
+        // A Secrets Manager id, which is what tells this apart from a Parameter
+        // Store name: the pepper is read from the one place the issuing
+        // authority reads it, so there is no regional copy for a rotation to
+        // leave stale. Parameter Store names begin with `/`; this must not.
+        assert!(
+            !config.credential_pepper_ref.starts_with('/'),
+            "{}",
+            config.credential_pepper_ref
+        );
+        assert!(
+            config.credential_pepper_ref.starts_with("aex/"),
+            "{}",
+            config.credential_pepper_ref
+        );
         assert!(!config.credential_pepper_ref.contains(':'));
-        // What is named is a parameter, not a function: this deployable holds no
-        // way to invoke anything for an authorization decision.
+        // What is named is a stored secret, not a function: this deployable
+        // holds no way to invoke anything for an authorization decision.
         assert!(
             !config.credential_pepper_ref.starts_with("arn:"),
             "{}",

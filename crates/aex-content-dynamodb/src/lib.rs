@@ -33,4 +33,4 @@ pub mod wire_pending;
 
 pub use codec::{ContentDescriptor, ContentPin, DownloadGrant, GcCandidate, GcEpoch, TreePage};
 pub use store::{ContentMetadataStore, ContentStore, Reachability};
-pub use wire_pending::{Blake3Digest, GcSweepPlan, GrantPlan, PinOwner, SealedBytes};
+pub use wire_pending::{Blake3Digest, GcSweepPlan, GrantPlan, InlineBody, PinOwner};

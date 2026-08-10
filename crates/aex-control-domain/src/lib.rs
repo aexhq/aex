@@ -20,6 +20,7 @@
 //! - HTTP, headers or status codes (`aex-central-http`)
 //! - reading a clock, an RNG or the environment: all three arrive as parameters
 
+pub mod account;
 pub mod api_key;
 pub mod audit;
 pub mod authz;
@@ -36,6 +37,9 @@ pub mod scope;
 pub mod slug;
 pub mod workspace;
 
+pub use account::{
+    AccountPauseCause, AccountProfile, AccountProjectionError, account_operational_state,
+};
 pub use api_key::{ApiKey, ApiKeyTransition};
 pub use audit::{ActorKind, AuditEvent, AuditOutcome, ResourceKind};
 pub use authz::{
@@ -50,7 +54,9 @@ pub use intent::{
     IdempotencyIdentity, IdempotencyKeyKind, IntentError, IntentHash, ScopeKind,
     canonical_intent_hash,
 };
-pub use invitation::{Invitation, InvitationStatus, InvitationTransition};
+pub use invitation::{
+    Invitation, InvitationStatus, InvitationTransition, MAX_ACCEPTABLE_INVITATIONS,
+};
 pub use membership::{Membership, MembershipStatus, MembershipTransition};
 pub use operation::{
     Fence, Lease, LeaseOwner, Operation, OperationKind, OperationStatus, OperationTransition,

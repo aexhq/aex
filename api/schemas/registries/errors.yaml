@@ -73,6 +73,7 @@ errors:
   - { code: precondition_failed, status: 412, retryable: false, class: precondition, stage: precondition, message: "the `If-Match` or generation precondition did not hold" }
   - { code: wrong_workspace_region, status: 409, retryable: false, class: conflict, stage: placement, message: "the workspace is placed in a different region", remedy: "reissue the request against the `apiUrl` in `details`" }
   - { code: observability_unavailable, status: 503, retryable: true, class: unavailable, stage: domain_state, message: "the observation authority could not be reached" }
+  - { code: usage_unavailable, status: 503, retryable: true, class: unavailable, stage: domain_state, message: "the usage projection could not be read", remedy: "retry the identical query" }
   - { code: rate_limited, status: 429, retryable: true, class: quota, stage: domain_state, message: "too many requests" }
   - { code: upstream_error, status: 502, retryable: true, class: unavailable, stage: commit, message: "a dependency failed" }
   - { code: workspace_provision_pending, status: 503, retryable: true, class: unavailable, stage: commit, message: "workspace provisioning may still be completing", remedy: "retry the identical request with the same Idempotency-Key" }

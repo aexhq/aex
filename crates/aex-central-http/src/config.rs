@@ -53,7 +53,7 @@ impl DeploymentPlane {
 /// the tests below prove this runtime map agrees with it exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CentralServiceId {
-    /// `central-identity-api`: the two public device-flow routes.
+    /// `central-identity-api`: the public credential ceremony.
     IdentityApi,
     /// `central-authz`: an authorizer and an internal command, no public route.
     Authz,
@@ -391,8 +391,8 @@ mod tests {
             actually_served,
             "runtime ownership must exactly equal generated actual mounts"
         );
-        assert_eq!(central.len(), 27);
-        assert_eq!(actually_served.len(), 26);
+        assert_eq!(central.len(), 31);
+        assert_eq!(actually_served.len(), 30);
         assert!(central.contains(&RouteId::AccountGet));
         assert!(!actually_served.contains(&RouteId::AccountGet));
         assert_eq!(
@@ -440,7 +440,7 @@ mod tests {
                 .filter(|group| *group != RouteGroup::Identity)
                 .collect::<BTreeSet<_>>()
         );
-        assert_eq!(CentralServiceId::CentralApi.routes().len(), 26);
+        assert_eq!(CentralServiceId::CentralApi.routes().len(), 30);
     }
 
     #[test]

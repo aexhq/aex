@@ -33,7 +33,7 @@ fn polling() -> BTreeMap<&'static str, String> {
         (config::DRAIN_DEADLINE_MS, "25000".to_owned()),
         (
             config::CREDENTIAL_PEPPER_REF,
-            "/aex/dev/credential-pepper/ring".to_owned(),
+            "aex/dev/central/token-pepper".to_owned(),
         ),
         (
             config::AUTHZ_PROJECTION_TABLE,
@@ -391,7 +391,7 @@ fn the_two_edges_are_two_audiences_and_no_process_wide_budget() {
     assert_eq!(EDGE_COUNT, 2);
     assert_eq!(
         config.credential_pepper_ref,
-        "/aex/dev/credential-pepper/ring"
+        "aex/dev/central/token-pepper"
     );
     // One ring, read once, shared by both edges: a second read could give one
     // half a pepper set the other does not hold mid-rotation.

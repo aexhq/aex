@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+# The one test target is declared explicitly, so it can carry `required-features`
+# without autodiscovery claiming the same name unconditionally.
+autotests = false
 
 [lints]
 workspace = true
@@ -23,10 +26,17 @@ security_tier = "authority"
 risk = ["concurrency", "iam"]
 scenarios = []
 
+[package.metadata.aex.targets]
+integration = "integration"
+
 [package.metadata.aex.not_applicable]
-targets = "the `regional-stores` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+inline_targets = "the `regional-stores` stream places this crate's unit evidence in inline `#[cfg(test)]` modules, which the declared `unit` layer already collects; the only [[test]] target it owns is the engine-backed one"
 live_suite = "the adapter is exercised through regional-capacity-controller's live companion"
-integration = "the transaction request and ambiguity resolver use deterministic SDK replay; the workspace has no approved DynamoDB Local harness"
+
+[features]
+# Engine-backed targets. The unit lane neither builds nor links any of it, so
+# the per-stream gate still runs on a machine with no container runtime.
+integration-engines = ["aex-test-harness/containers"]
 
 [dependencies]
 aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false, features = ["capacity-limit-projection-write"] }
@@ -43,3 +53,10 @@ aws-smithy-http-client.workspace = true
 aws-smithy-runtime-api.workspace = true
 aws-smithy-types.workspace = true
 http.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["integration-engines"]

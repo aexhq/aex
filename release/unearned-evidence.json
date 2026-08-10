@@ -1,45 +1,10 @@
 [
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-hands",
-    "owner": "brain-core",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "the `brain-core` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-brain-test-support",
-    "owner": "brain-core",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "brain-core owns no [[test]] target here: a test-support crate supplies inputs and teardown, and its own cases live in its #[cfg(test)] modules"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-capacity-dynamodb",
-    "owner": "regional-stores",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "the `regional-stores` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "crates/aex-central-test-support",
     "owner": "central-identity",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-hands-control-aws",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-hands-tools",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
   },
   {
     "reason_class": "awaiting_owner",
@@ -71,227 +36,10 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-runtime-control",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "crates/aex-runtime-control-aws",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map. `tests/integration.rs` is written and PARKED, not forgotten: declaring it would exit this awaiting-owner state, and `aex-target-missing` would then demand a [[test]] target at layer `unit` for each of contract/property/fault/security - which inline modules can never satisfy, because `test_target_names` counts only `test` and `bench` targets. Wiring it needs one of: those four targets extracted from the inline modules, or a registry rule that lets a lib's own test binary cover layer `unit`."
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "runtimes/brain-mux",
-    "owner": "brain-core",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "brain-core's composition, config and health cases live in the binary's #[cfg(test)] modules; the smoke, e2e and performance layers belong to the aex-live-brain-mux companion, which owns every created resource"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "runtimes/hands-agent",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "the `hands` stream keeps this binary's evidence in inline unit modules, which the declared `unit` layer already collects; everything that needs a real MicroVM to boot into is declared in tests/live/aex-live-hands-agent instead"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "runtimes/hands-image",
-    "owner": "hands",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-central-api",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream to deploy the merged edge behind its load balancer; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-central-schema-admin",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-content-lifecycle-worker",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-finance-api",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-finance-ingest",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-finance-reconcile",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-finance-settlement-worker",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-observation-export-launcher",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-observation-export-task",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-observation-reconciler",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-provider-cost-reconciler",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-regional-capacity-controller",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "regional-services owns this live companion; live evidence requires the private regional deployment composition"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-regional-control",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "regional-services owns this live companion; live evidence requires the private regional deployment composition"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-regional-observation-api",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-regional-otlp",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-regional-secret-key-admin",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-session-operation-worker",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-stripe-command-edge",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-stripe-webhook-edge",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-usage-compute-worker",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-usage-receipt-dispatcher",
-    "owner": "central-finance",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-usage-storage-worker",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-usage-transfer-worker",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tools/eslint-plugin-aex",
     "owner": "delivery",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the delivery stream; the rule fixtures land with the lint rules"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/regional-control",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "regional-services keeps the direct-invoke configuration evidence in the composition-root unit target and the fencing evidence in the owning adapter unit target; there is no separate integration binary to map"
-  },
-  {
-    "reason_class": "awaiting_owner",
-    "subject": "workers/runtime-control-worker",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "the `regional-services` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
   },
   {
     "reason_class": "awaiting_owner",
@@ -315,6 +63,90 @@
     "detail": "DEFERRED by observations-usage, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications, the partial-batch response contract and the sibling-authority link proofs are covered by this binary's own unit module. The smoke and e2e targets need a deployed function, a live stream and a live receipt queue, none of which exist yet; the DynamoDB and SQS ports beneath the handler are implemented and unit-covered in this worker's one adapter."
   },
   {
+    "reason_class": "inline_unit_evidence",
+    "subject": "crates/aex-brain-hands",
+    "owner": "brain-core",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "the `brain-core` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "crates/aex-brain-test-support",
+    "owner": "brain-core",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "brain-core owns no [[test]] target here: a test-support crate supplies inputs and teardown, and its own cases live in its #[cfg(test)] modules"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "crates/aex-capacity-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "the `regional-stores` stream places this crate's unit evidence in inline `#[cfg(test)]` modules, which the declared `unit` layer already collects; the only [[test]] target it owns is the engine-backed one"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "crates/aex-hands-control-aws",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "crates/aex-hands-tools",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "crates/aex-runtime-control",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "crates/aex-runtime-control-aws",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map. `tests/integration.rs` is written and PARKED, not forgotten: declaring it would exit this awaiting-owner state, and `aex-target-missing` would then demand a [[test]] target at layer `unit` for each of contract/property/fault/security - which inline modules can never satisfy, because `test_target_names` counts only `test` and `bench` targets. Wiring it needs one of: those four targets extracted from the inline modules, or a registry rule that lets a lib's own test binary cover layer `unit`."
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "runtimes/brain-mux",
+    "owner": "brain-core",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "brain-core's composition, config and health cases live in the binary's #[cfg(test)] modules; the smoke, e2e and performance layers belong to the aex-live-brain-mux companion, which owns every created resource"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "runtimes/hands-agent",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "the `hands` stream keeps this binary's evidence in inline unit modules, which the declared `unit` layer already collects; everything that needs a real MicroVM to boot into is declared in tests/live/aex-live-hands-agent instead"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "runtimes/hands-image",
+    "owner": "hands",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "workers/regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "regional-services keeps the direct-invoke configuration evidence in the composition-root unit target and the fencing evidence in the owning adapter unit target; there is no separate integration binary to map"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "workers/runtime-control-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "the `regional-services` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+  },
+  {
     "reason_class": "pending_authority",
     "subject": "cargo nextest list --message-format json",
     "owner": "test-architecture",
@@ -333,7 +165,7 @@
     "subject": "LOAD-FINANCE-BACKLOG",
     "owner": "central-finance",
     "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-finance-settlement-worker`"
+    "detail": "workload `finance-backlog` implements this gate, but `aex-live-finance-settlement-worker` maps no `load` target, so the gate cannot run"
   },
   {
     "reason_class": "pending_workload",
@@ -361,19 +193,12 @@
     "subject": "OTLP-STAGED-COMMIT",
     "owner": "observations-usage",
     "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-otlp`"
+    "detail": "workload `otlp-staged-commit` implements this gate, but `aex-live-regional-otlp` maps no `load` target, so the gate cannot run"
   },
   {
     "reason_class": "pending_workload",
     "subject": "PERF-BASELINE-CODECS",
     "owner": "contracts",
-    "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-session-stream-api`"
-  },
-  {
-    "reason_class": "pending_workload",
-    "subject": "PERF-BASELINE-JOURNAL-FOLD",
-    "owner": "regional-domains",
     "blocking_rule": "aex-workload-unowned",
     "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-session-stream-api`"
   },
@@ -668,6 +493,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-central-api",
     "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream to deploy the merged edge behind its load balancer; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-api",
+    "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -738,6 +570,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-central-schema-admin",
     "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-schema-admin",
+    "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -752,6 +591,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-content-lifecycle-worker",
     "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-content-lifecycle-worker",
+    "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -780,6 +626,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-finance-api",
     "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-api",
+    "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -794,6 +647,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-finance-ingest",
     "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-ingest",
+    "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -808,6 +668,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-finance-reconcile",
     "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-reconcile",
+    "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -822,6 +689,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-finance-settlement-worker",
     "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-finance-settlement-worker",
+    "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -878,6 +752,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-observation-export-launcher",
     "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-observation-export-launcher",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -892,6 +773,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-observation-export-task",
     "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-observation-export-task",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -906,6 +794,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-observation-reconciler",
     "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-observation-reconciler",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -920,6 +815,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-provider-cost-reconciler",
     "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-provider-cost-reconciler",
+    "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -934,6 +836,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-capacity-controller",
     "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "regional-services owns this live companion; live evidence requires the private regional deployment composition"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-capacity-controller",
+    "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -948,6 +857,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-control",
     "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "regional-services owns this live companion; live evidence requires the private regional deployment composition"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-control",
+    "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -962,6 +878,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-observation-api",
     "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-observation-api",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -976,6 +899,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-otlp",
     "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-otlp",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -990,6 +920,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-secret-api",
     "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-secret-api",
+    "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -1004,6 +941,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-secret-key-admin",
     "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-regional-secret-key-admin",
+    "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -1032,6 +976,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-session-operation-worker",
     "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-session-operation-worker",
+    "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -1074,6 +1025,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-stripe-command-edge",
     "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-stripe-command-edge",
+    "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -1088,6 +1046,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-stripe-webhook-edge",
     "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-stripe-webhook-edge",
+    "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -1102,6 +1067,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-usage-compute-worker",
     "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-compute-worker",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -1116,6 +1088,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-usage-receipt-dispatcher",
     "owner": "central-finance",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-receipt-dispatcher",
+    "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -1130,6 +1109,13 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-usage-storage-worker",
     "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-storage-worker",
+    "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
@@ -1139,6 +1125,13 @@
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-usage-transfer-worker",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
   },
   {
     "reason_class": "requires_deployment",
@@ -1620,20 +1613,6 @@
     "reason_class": "requires_live_seam",
     "subject": "crates/aex-control-aurora",
     "owner": "central-identity",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-finance-aurora",
-    "owner": "central-finance",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.aurora.serverless_v2` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-finance-aurora",
-    "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
   },

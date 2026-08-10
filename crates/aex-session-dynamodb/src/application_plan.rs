@@ -9,7 +9,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use aex_session_app::plan::{
-    Condition, ConditionId, Hint, ItemKey, SessionTransaction, TransactionIntent, Write,
+    Condition, ConditionId, Hint, ItemKey, SessionTransaction, TableFamily, TransactionIntent,
+    Write,
 };
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::types::builders::{ConditionCheckBuilder, PutBuilder};
@@ -29,11 +30,12 @@ pub struct LogicalAction<'a> {
     pub write: Option<&'a Write>,
 }
 
-/// Compiles item families owned by another regional adapter.
+/// Compiles item families the session adapter does not compile itself.
 ///
 /// One call must append exactly one action. The root compiler checks that
 /// contract, so a foreign adapter cannot silently drop a guard or split
-/// atomicity.
+/// atomicity. The asserted [`SessionBinding`] is handed over with the action so
+/// a foreign compiler can enforce the same tenant check the owned writes do.
 pub trait ExternalActionCompiler {
     /// Appends one conditional write or read-only condition check.
     ///
@@ -44,9 +46,165 @@ pub trait ExternalActionCompiler {
     fn compile_action(
         &self,
         tables: &RegionalTables,
+        binding: SessionBinding,
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError>;
+}
+
+/// Which adapter compiles each table family a plan may address.
+///
+/// A cross-family transaction is only atomic if every family in it renders, and
+/// the failure mode this replaces was silent: a write whose family had no
+/// compiler fell through to whatever single external compiler the caller
+/// happened to pass, which in practice was a refusing test double. Registration
+/// makes the gap a named composition error instead.
+///
+/// The session adapter owns `session-authority`, so it ships the compilers for
+/// the two families whose rows live there — [`TableFamily::Idempotency`] and
+/// [`TableFamily::Outbox`] — pre-registered. Every other family belongs to the
+/// adapter that owns its table and must be registered by the composition.
+pub struct FamilyCompilers<'a> {
+    owners: BTreeMap<TableFamily, &'a dyn ExternalActionCompiler>,
+}
+
+/// The receipt compiler, promoted so [`FamilyCompilers::new`] can register a
+/// reference to it without allocating.
+static IDEMPOTENCY: IdempotencyCompiler = IdempotencyCompiler;
+
+/// The outbox compiler, promoted for the same reason.
+static OUTBOX: OutboxCompiler = OutboxCompiler;
+
+impl<'a> FamilyCompilers<'a> {
+    /// The families the session adapter compiles on its own behalf.
+    #[must_use]
+    pub fn new() -> Self {
+        let mut owners = BTreeMap::<TableFamily, &'a dyn ExternalActionCompiler>::new();
+        owners.insert(TableFamily::Idempotency, &IDEMPOTENCY);
+        owners.insert(TableFamily::Outbox, &OUTBOX);
+        Self { owners }
+    }
+
+    /// Registers the adapter that owns `family`, replacing any earlier one.
+    #[must_use]
+    pub fn with(mut self, family: TableFamily, compiler: &'a dyn ExternalActionCompiler) -> Self {
+        self.owners.insert(family, compiler);
+        self
+    }
+}
+
+impl Default for FamilyCompilers<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ExternalActionCompiler for FamilyCompilers<'_> {
+    fn compile_action(
+        &self,
+        tables: &RegionalTables,
+        binding: SessionBinding,
+        action: &LogicalAction<'_>,
+        output: &mut TransactionPlan,
+    ) -> Result<(), StoreError> {
+        let family = action.target.family;
+        let Some(compiler) = self.owners.get(&family) else {
+            return Err(StoreError::Invalid {
+                detail: format!(
+                    "the {family:?} family has no registered compiler, so this logical item cannot \
+                     be rendered as a provider action"
+                ),
+            });
+        };
+        compiler.compile_action(tables, binding, action, output)
+    }
+}
+
+/// Compiles the `Idempotency` family onto `session-authority`.
+///
+/// The receipt row shape is the one in [`crate::replay`], shared by every
+/// regional table that holds a receipt, so a session transaction's receipt and a
+/// custody transaction's receipt are the same row read by the same reader.
+pub struct IdempotencyCompiler;
+
+impl ExternalActionCompiler for IdempotencyCompiler {
+    fn compile_action(
+        &self,
+        tables: &RegionalTables,
+        binding: SessionBinding,
+        action: &LogicalAction<'_>,
+        output: &mut TransactionPlan,
+    ) -> Result<(), StoreError> {
+        let Some(Write::PutIdempotencyReceipt(receipt)) = action.write else {
+            return Err(StoreError::Invalid {
+                detail: "the idempotency family carries receipt writes only".to_owned(),
+            });
+        };
+        let row = crate::codec::receipt_of(receipt).map_err(|error| StoreError::Invalid {
+            detail: format!("an idempotency receipt could not be projected: {error}"),
+        })?;
+        let item = crate::codec::encode_receipt(binding.workspace, &row).map_err(|error| {
+            StoreError::Invalid {
+                detail: format!("an idempotency receipt key is unusable: {error}"),
+            }
+        })?;
+        let mut expression = compile_conditions(&action.conditions)?;
+        // The conditional put *is* the concurrency election (A D-6): the loser
+        // of a race writes nothing at all, because `TransactWriteItems` is
+        // all-or-nothing. Applying it here rather than trusting the plan to
+        // carry `ItemAbsent` means a use case cannot forget the election.
+        if !action
+            .conditions
+            .iter()
+            .any(|(_, condition)| matches!(condition, Condition::ItemAbsent(_)))
+        {
+            expression.and_literal(IMMUTABLE);
+        }
+        output.put(
+            Participant::SESSION_IDEMPOTENCY,
+            conditional_put(&tables.session_authority, item, expression)?,
+        )?;
+        Ok(())
+    }
+}
+
+/// Compiles the `Outbox` family onto `session-authority`.
+pub struct OutboxCompiler;
+
+impl ExternalActionCompiler for OutboxCompiler {
+    fn compile_action(
+        &self,
+        tables: &RegionalTables,
+        binding: SessionBinding,
+        action: &LogicalAction<'_>,
+        output: &mut TransactionPlan,
+    ) -> Result<(), StoreError> {
+        let Some(Write::PutOutboxEvent(event)) = action.write else {
+            return Err(StoreError::Invalid {
+                detail: "the outbox family carries outbox-event writes only".to_owned(),
+            });
+        };
+        if event.session != binding.session {
+            return Err(cross_tenant());
+        }
+        let item = crate::codec::encode_outbox_event(binding.workspace, event);
+        let mut expression = compile_conditions(&action.conditions)?;
+        // A terminal barrier emits its outbox event exactly once; a replayed
+        // barrier must lose the row rather than rewrite it, or a delivered event
+        // could be resurrected as pending.
+        if !action
+            .conditions
+            .iter()
+            .any(|(_, condition)| matches!(condition, Condition::ItemAbsent(_)))
+        {
+            expression.and_literal(IMMUTABLE);
+        }
+        output.put(
+            Participant::SESSION_TERMINAL_EVENT,
+            conditional_put(&tables.session_authority, item, expression)?,
+        )?;
+        Ok(())
+    }
 }
 
 /// A compiled provider plan plus the logical guard ids represented by each
@@ -98,7 +256,7 @@ pub fn compile_application_transaction(
     for action in &actions {
         let before = output.len();
         if !compile_owned(tables, input.intent, action, binding, &mut output)? {
-            external.compile_action(tables, action, &mut output)?;
+            external.compile_action(tables, binding, action, &mut output)?;
         }
         if output.len() != before + 1 {
             return Err(StoreError::Invalid {
@@ -342,18 +500,18 @@ fn compile_run_check(
 }
 
 #[derive(Default)]
-struct Expression {
-    terms: Vec<String>,
-    names: HashMap<String, String>,
-    values: HashMap<String, AttributeValue>,
+pub(crate) struct Expression {
+    pub(crate) terms: Vec<String>,
+    pub(crate) names: HashMap<String, String>,
+    pub(crate) values: HashMap<String, AttributeValue>,
 }
 
 impl Expression {
-    fn and_literal(&mut self, value: &str) {
+    pub(crate) fn and_literal(&mut self, value: &str) {
         self.terms.push(value.to_owned());
     }
 
-    fn rendered(&self) -> Result<String, StoreError> {
+    pub(crate) fn rendered(&self) -> Result<String, StoreError> {
         if self.terms.is_empty() {
             return Err(StoreError::Invalid {
                 detail: "an authority action carries no condition".to_owned(),
@@ -491,7 +649,7 @@ fn compile_run_status(output: &mut Expression, prefix: &str) {
         .push(format!("{name} IN ({queued}, {running})"));
 }
 
-fn term_eq_u64(output: &mut Expression, prefix: &str, attribute: &str, value: u64) {
+pub(crate) fn term_eq_u64(output: &mut Expression, prefix: &str, attribute: &str, value: u64) {
     let name = format!("#{prefix}");
     let value_name = format!(":{prefix}");
     output.names.insert(name.clone(), attribute.to_owned());
@@ -499,7 +657,12 @@ fn term_eq_u64(output: &mut Expression, prefix: &str, attribute: &str, value: u6
     output.terms.push(format!("{name} = {value_name}"));
 }
 
-fn term_eq_string(output: &mut Expression, prefix: &str, attribute: &str, value: String) {
+pub(crate) fn term_eq_string(
+    output: &mut Expression,
+    prefix: &str,
+    attribute: &str,
+    value: String,
+) {
     let name = format!("#{prefix}");
     let value_name = format!(":{prefix}");
     output.names.insert(name.clone(), attribute.to_owned());
@@ -507,7 +670,7 @@ fn term_eq_string(output: &mut Expression, prefix: &str, attribute: &str, value:
     output.terms.push(format!("{name} = {value_name}"));
 }
 
-fn conditional_put(
+pub(crate) fn conditional_put(
     table: &str,
     item: crate::attr::Item,
     expression: Expression,
@@ -523,7 +686,7 @@ fn conditional_put(
         ))
 }
 
-fn conditional_check(
+pub(crate) fn conditional_check(
     table: &str,
     physical: &crate::keys::Key,
     expression: Expression,
@@ -604,7 +767,7 @@ const fn deletion_state(value: aex_operation_domain::DeletionState) -> &'static 
     }
 }
 
-fn cross_tenant() -> StoreError {
+pub(crate) fn cross_tenant() -> StoreError {
     StoreError::Invalid {
         detail: "a session authority write belongs to another tenant".to_owned(),
     }
@@ -616,7 +779,8 @@ mod tests {
     use aex_session_domain::testing::running_session;
 
     use super::{
-        ExternalActionCompiler, LogicalAction, SessionBinding, compile_application_transaction,
+        ExternalActionCompiler, FamilyCompilers, LogicalAction, SessionBinding,
+        compile_application_transaction,
     };
     use crate::error::StoreError;
     use crate::plan::{RegionalTables, TransactionPlan};
@@ -627,6 +791,7 @@ mod tests {
         fn compile_action(
             &self,
             _tables: &RegionalTables,
+            _binding: SessionBinding,
             _action: &LogicalAction<'_>,
             _output: &mut TransactionPlan,
         ) -> Result<(), StoreError> {
@@ -736,6 +901,194 @@ mod tests {
         assert!(
             matches!(error, Err(StoreError::Invalid { ref detail }) if detail == "session creation authority is incomplete"),
             "{error:?}"
+        );
+    }
+
+    /// A receipt filed under `scope` for the caller key `key`.
+    fn receipt(scope: &str, key: &str, intent: u8) -> aex_session_domain::IdempotencyReceipt {
+        use aex_session_domain::{
+            IdempotencyIdentity, IdempotencyReceipt, ReceiptKey, ReceiptOutcome, ResourceId,
+            ResourceKind, ResponseBody,
+        };
+        use aex_wire::idempotency::{IdempotencyKey, IntentDigest, ReplayIdentity};
+        let identity = IdempotencyIdentity::Key(Box::new(ReplayIdentity {
+            principal: aex_wire::idempotency::PrincipalScope::WorkspaceKey {
+                key: aex_session_domain::testing::id(1),
+                workspace: aex_session_domain::testing::id(2),
+                organization: aex_session_domain::testing::id(3),
+            },
+            route: aex_wire::routes::RouteId::SessionMessageSend,
+            key: IdempotencyKey::parse(key).expect("a key"),
+            intent: IntentDigest::from_bytes([intent; 32]),
+        }));
+        IdempotencyReceipt {
+            key: ReceiptKey::of(scope, &identity).expect("a usable receipt key"),
+            identity,
+            intent: IntentDigest::from_bytes([intent; 32]),
+            outcome: ReceiptOutcome::Resource {
+                kind: ResourceKind::Message,
+                id: ResourceId("msg_1".to_owned()),
+                response: ResponseBody::of(br#"{"id":"msg_1"}"#),
+            },
+            created_at: aex_session_domain::testing::moment(1),
+        }
+    }
+
+    #[test]
+    fn a_receipt_compiles_to_one_conditional_put_the_session_adapter_owns() {
+        let (session, _run, _agent, _message) = running_session();
+        let input = SessionTransaction {
+            intent: TransactionIntent::AdmitMessage,
+            conditions: Vec::new(),
+            writes: vec![Write::PutIdempotencyReceipt(Box::new(receipt(
+                "session.message:ses_1",
+                "k",
+                7,
+            )))],
+            after_commit: Vec::new(),
+        };
+        let compiled = compile_application_transaction(
+            &RegionalTables::composed("dev", "eu-west-1"),
+            &input,
+            SessionBinding {
+                workspace: session.workspace,
+                organization: session.organization,
+                session: session.id,
+            },
+            &FamilyCompilers::new(),
+        )
+        .expect("the idempotency family is registered");
+        assert_eq!(compiled.transaction.len(), 1);
+        assert_eq!(
+            compiled.transaction.participants(),
+            [crate::plan::Participant::SESSION_IDEMPOTENCY]
+        );
+        let put = compiled.transaction.actions()[0]
+            .put()
+            .expect("a receipt is one conditional put");
+        assert_eq!(
+            put.condition_expression(),
+            Some("(attribute_not_exists(pk))"),
+            "the conditional put is the concurrency election"
+        );
+        let expected = crate::keys::receipt(
+            session.workspace,
+            "session.message:ses_1",
+            receipt("session.message:ses_1", "k", 7).key.key_sha256(),
+        )
+        .expect("a receipt key");
+        assert_eq!(
+            put.item().get("pk").and_then(|value| value.as_s().ok()),
+            Some(&expected.pk)
+        );
+    }
+
+    #[test]
+    fn two_keys_with_one_intent_are_two_receipts_and_one_key_with_two_intents_is_one() {
+        // Keyed by the intent digest, the first pair collided on one item — one
+        // caller's receipt silently overwrote the other's — and the second pair
+        // addressed two different items, so a replay under a changed body found
+        // nothing and executed twice instead of conflicting.
+        let two_keys = SessionTransaction {
+            intent: TransactionIntent::AdmitMessage,
+            conditions: Vec::new(),
+            writes: vec![
+                Write::PutIdempotencyReceipt(Box::new(receipt("session.message:ses_1", "k1", 7))),
+                Write::PutIdempotencyReceipt(Box::new(receipt("session.message:ses_1", "k2", 7))),
+            ],
+            after_commit: Vec::new(),
+        };
+        assert_eq!(
+            two_keys.validate().expect("two distinct receipts").actions,
+            2
+        );
+
+        let two_intents = SessionTransaction {
+            writes: vec![
+                Write::PutIdempotencyReceipt(Box::new(receipt("session.message:ses_1", "k", 7))),
+                Write::PutIdempotencyReceipt(Box::new(receipt("session.message:ses_1", "k", 9))),
+            ],
+            ..two_keys
+        };
+        assert!(
+            matches!(
+                two_intents.validate(),
+                Err(aex_session_app::plan::PlanError::DuplicateWriteTarget(_))
+            ),
+            "one key addresses one receipt, which is what makes the conflict reachable"
+        );
+    }
+
+    #[test]
+    fn an_outbox_event_compiles_to_one_conditional_put() {
+        let (session, run, _agent, _message) = running_session();
+        let event = aex_session_domain::OutboxEvent {
+            schema_version: aex_internal_contracts::SchemaVersion::V1,
+            session: session.id,
+            run: run.id,
+            status: aex_session_domain::RunStatus::Succeeded,
+            session_revision: session.revision,
+            usage_closure: aex_session_domain::UsageClosureId(aex_wire::ids::Uuid7::compose(
+                1, [11; 10],
+            )),
+            at: aex_session_domain::testing::moment(9),
+        };
+        let input = SessionTransaction {
+            intent: TransactionIntent::CommitTerminal,
+            conditions: Vec::new(),
+            writes: vec![Write::PutOutboxEvent(Box::new(event))],
+            after_commit: Vec::new(),
+        };
+        let compiled = compile_application_transaction(
+            &RegionalTables::composed("dev", "eu-west-1"),
+            &input,
+            SessionBinding {
+                workspace: session.workspace,
+                organization: session.organization,
+                session: session.id,
+            },
+            &FamilyCompilers::new(),
+        )
+        .expect("the outbox family is registered");
+        assert_eq!(compiled.transaction.len(), 1);
+        assert_eq!(
+            compiled.transaction.participants(),
+            [crate::plan::Participant::SESSION_TERMINAL_EVENT]
+        );
+    }
+
+    #[test]
+    fn a_family_with_no_registered_owner_is_named_rather_than_silently_dropped() {
+        let (session, _run, _agent, _message) = running_session();
+        let pin = aex_content_domain::Pin::Root {
+            session: session.id,
+            kind: aex_content_domain::RootKind::Initial,
+            root: aex_content_domain::ContentRoot {
+                digest: [0; 32],
+                entries: 0,
+                logical_bytes: 0,
+            },
+        };
+        let input = SessionTransaction {
+            intent: TransactionIntent::AdmitMessage,
+            conditions: Vec::new(),
+            writes: vec![Write::PutPin(Box::new(pin))],
+            after_commit: Vec::new(),
+        };
+        let error = compile_application_transaction(
+            &RegionalTables::composed("dev", "eu-west-1"),
+            &input,
+            SessionBinding {
+                workspace: session.workspace,
+                organization: session.organization,
+                session: session.id,
+            },
+            &FamilyCompilers::new(),
+        )
+        .expect_err("no content adapter is composed in");
+        assert!(
+            matches!(error, StoreError::Invalid { ref detail } if detail.contains("ContentAuthority")),
+            "{error}"
         );
     }
 }

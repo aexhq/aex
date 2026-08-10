@@ -2,13 +2,21 @@
   "$id": "https://schemas.aex.dev/v1/UploadPartGrant.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One presigned PUT grant.",
+  "description": "One presigned PUT grant. The headers must be sent verbatim: they carry the part checksum and length the signature covers, and a PUT without them is rejected by the object store.",
   "properties": {
     "expiresAt": {
       "description": "When the signature stops verifying.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
+    },
+    "headers": {
+      "description": "Headers the caller must replay verbatim.",
+      "items": {
+        "$ref": "aex:schema:HttpHeader"
+      },
+      "maxItems": 32,
+      "type": "array"
     },
     "partNumber": {
       "description": "Which part.",
@@ -25,6 +33,7 @@
   },
   "required": [
     "expiresAt",
+    "headers",
     "partNumber",
     "url"
   ],

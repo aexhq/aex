@@ -253,6 +253,43 @@ pub struct ApprovalCommit {
     pub denial_result: Option<ErrorCode>,
 }
 
+/// What one response to an approval resolved to.
+///
+/// The distinction is a return type rather than a convention because
+/// [`ApprovalCommit::dispatch`] is not an imperative: a replayed `Approve` used
+/// to hand back `dispatch: true` a second time, so an application that acted on
+/// the flag would authorise and dispatch the bound call again on every retry.
+/// A replay carries the stored approval and no commit at all, which makes that
+/// double dispatch unrepresentable rather than merely discouraged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalOutcome {
+    /// This response decided the approval. The caller must persist the commit.
+    Committed(ApprovalCommit),
+    /// An earlier identical response already decided it. Nothing is written,
+    /// nothing is dispatched, and the stored approval is the answer.
+    Replayed(Approval),
+}
+
+impl ApprovalOutcome {
+    /// The approval as it now stands, however the outcome was reached.
+    #[must_use]
+    pub const fn approval(&self) -> &Approval {
+        match self {
+            Self::Committed(commit) => &commit.approval,
+            Self::Replayed(approval) => approval,
+        }
+    }
+
+    /// The commit to persist, and `None` for a replay.
+    #[must_use]
+    pub const fn commit(&self) -> Option<&ApprovalCommit> {
+        match self {
+            Self::Committed(commit) => Some(commit),
+            Self::Replayed(_) => None,
+        }
+    }
+}
+
 /// Why an approval transition was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ApprovalRejection {
@@ -381,13 +418,19 @@ fn cancelled(
 /// Returns [`ApprovalRejection::AlreadyResolved`] for the opposite decision on a
 /// settled approval, [`ApprovalRejection::ExpiryReached`] when the deadline won
 /// the race, and [`ApprovalRejection::BindingChanged`] on drift. An exact replay
-/// of the winning decision returns the stored commit.
+/// of the winning decision is [`ApprovalOutcome::Replayed`]: the stored approval,
+/// no commit and therefore no second dispatch.
+///
+/// The idempotency key is `(approvalId, decision)` — the wire body carries
+/// nothing else — and whether the **stored** status was `Pending` is the whole
+/// difference between a first decision and a replay. That difference is in the
+/// return type so a caller cannot lose it (I's D-8).
 pub fn respond(
     approval: &Approval,
     current: &ApprovalBinding,
     decision: ApprovalDecision,
     now: Timestamp,
-) -> Result<ApprovalCommit, ApprovalRejection> {
+) -> Result<ApprovalOutcome, ApprovalRejection> {
     if let Some(commit) = expire_pending(approval, now) {
         return Err(ApprovalRejection::ExpiryReached {
             commit: Box::new(commit),
@@ -395,12 +438,7 @@ pub fn respond(
     }
     if approval.status.is_resolved() {
         if approval.decision == Some(decision) {
-            return Ok(ApprovalCommit {
-                approval: approval.clone(),
-                dispatch: decision == ApprovalDecision::Approve,
-                denial_result: (decision == ApprovalDecision::Deny)
-                    .then_some(ErrorCode::PreconditionFailed),
-            });
+            return Ok(ApprovalOutcome::Replayed(approval.clone()));
         }
         return Err(ApprovalRejection::AlreadyResolved(approval.status));
     }
@@ -427,14 +465,14 @@ pub fn respond(
     };
     settled.decision = Some(decision);
     settled.resolved_at = Some(now);
-    Ok(ApprovalCommit {
+    Ok(ApprovalOutcome::Committed(ApprovalCommit {
         approval: settled,
         dispatch: decision == ApprovalDecision::Approve,
         // A denial records exactly one canonical tool result and does not
         // cancel the run: the model sees the denial and continues.
         denial_result: (decision == ApprovalDecision::Deny)
             .then_some(ErrorCode::PreconditionFailed),
-    })
+    }))
 }
 
 /// Terminalizes a pending approval once its explicit deadline is reached.
@@ -513,8 +551,9 @@ mod tests {
     use aex_wire::types::Timestamp;
 
     use super::{
-        ApprovalCancelCause, ApprovalDecision, ApprovalRejection, ApprovalStatus, BindingField,
-        CancelScope, binding_drift, cancel_pending, expire_pending, request_approval, respond,
+        ApprovalCancelCause, ApprovalDecision, ApprovalOutcome, ApprovalRejection, ApprovalStatus,
+        BindingField, CancelScope, binding_drift, cancel_pending, expire_pending, request_approval,
+        respond,
     };
     use crate::testing::{approval_binding, drift_field};
 
@@ -608,8 +647,11 @@ mod tests {
         )
         .expect("raises")
         .approval;
-        let denied =
-            respond(&pending, &binding, ApprovalDecision::Deny, moment(1)).expect("decides");
+        let ApprovalOutcome::Committed(denied) =
+            respond(&pending, &binding, ApprovalDecision::Deny, moment(1)).expect("decides")
+        else {
+            panic!("the first decision commits");
+        };
         assert_eq!(denied.approval.status, ApprovalStatus::Denied);
         assert!(!denied.dispatch);
         assert!(denied.denial_result.is_some());
@@ -622,9 +664,8 @@ mod tests {
                 ApprovalDecision::Deny,
                 moment(2)
             )
-            .expect("replays")
-            .approval,
-            denied.approval
+            .expect("replays"),
+            ApprovalOutcome::Replayed(denied.approval.clone())
         );
         assert_eq!(
             respond(
@@ -712,6 +753,42 @@ mod tests {
                 moment(1)
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn a_replayed_approve_can_never_re_assert_dispatch() {
+        let binding = approval_binding();
+        let pending = request_approval(
+            approval_id(1),
+            binding.clone(),
+            &binding,
+            None,
+            moment(0),
+            moment(100),
+        )
+        .expect("raises")
+        .approval;
+        let first = respond(&pending, &binding, ApprovalDecision::Approve, moment(1))
+            .expect("the first decision");
+        let commit = first.commit().expect("a first decision commits");
+        assert!(commit.dispatch, "the first approve authorises the call");
+
+        let replay = respond(
+            first.approval(),
+            &binding,
+            ApprovalDecision::Approve,
+            moment(2),
+        )
+        .expect("an exact replay is not an error");
+        assert_eq!(
+            replay,
+            ApprovalOutcome::Replayed(commit.approval.clone()),
+            "a replay carries the stored approval and no commit"
+        );
+        assert!(
+            replay.commit().is_none(),
+            "there is no `dispatch` flag on a replay to act on, which is the point"
         );
     }
 
