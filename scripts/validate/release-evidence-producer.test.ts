@@ -25,8 +25,12 @@ const {
   assertRunnableScenarioMatrix,
   capturedCommandOutput,
   assertUserJourneyInventory,
+  diagnoseAdmission,
   validateHygieneReport
 } = releaseEvidence;
+
+const admitted = { status: 200, items: [] as unknown[], requestId: undefined };
+const refusedAnonymously = { status: 401, items: undefined, requestId: "req-anon" };
 
 describe("release-bound public evidence producer", () => {
   it("accepts only one exact main release coordinate closure", () => {
@@ -205,6 +209,50 @@ describe("release-bound public evidence producer", () => {
         maximumBudgetMicroUsd: 1000
       })).toThrow();
     }
+  });
+
+  // The lane's whole receipt set rests on one request. Twelve consecutive runs
+  // failed on it and reported `left: 401, right: 200`, which does not say
+  // whether the key was wrong, the row was missing, or the route was absent.
+  // These pin the sentence each answer produces instead.
+  it("names each admission failure class rather than reporting a bare status", () => {
+    expect(diagnoseAdmission(admitted, refusedAnonymously)).toMatchObject({
+      schema: "aex.release-evidence-admission-preflight.v1",
+      admitted: true
+    });
+
+    expect(() => diagnoseAdmission({ status: 401, requestId: "req-1" }, refusedAnonymously))
+      .toThrow(/refused the protected credential/);
+    // The operator's next move is in the message, not in a runbook they have to
+    // find: the request id joins this failure to the plane's admission log.
+    expect(() => diagnoseAdmission({ status: 401, requestId: "req-1" }, refusedAnonymously))
+      .toThrow(/req-1/);
+    expect(() => diagnoseAdmission({ status: 401, requestId: "req-1" }, refusedAnonymously))
+      .toThrow(/aex\.regional\.admission/);
+
+    expect(() => diagnoseAdmission({ status: 404 }, { status: 404 }))
+      .toThrow(/is not mounted on this plane/);
+    expect(() => diagnoseAdmission({ status: 503 }, refusedAnonymously))
+      .toThrow(/retryable/);
+    expect(() => diagnoseAdmission(admitted, { status: 200, items: [] }))
+      .toThrow(/admitted an anonymous caller/);
+    expect(() => diagnoseAdmission({ status: 200, items: undefined }, refusedAnonymously))
+      .toThrow(/omitted its items array/);
+  });
+
+  it("preflights the credential before spending the run on suites that need it", () => {
+    const job = workflowJob(readWorkflow(".github/workflows/release-evidence.yml"), "evidence");
+    expect(stepIndex(job, "Verify the exact deployed release before evidence")).toBeLessThan(
+      stepIndex(job, "Verify the protected credential is admitted before evidence")
+    );
+    expect(stepIndex(job, "Verify the protected credential is admitted before evidence")).toBeLessThan(
+      stepIndex(job, "Run release-bound E2E and user suites")
+    );
+    // The preflight observes; it must never become a second place a receipt can
+    // claim a pass from. Only the suites produce evidence.
+    expect(
+      workflowStep(job, "Verify the protected credential is admitted before evidence").run
+    ).not.toMatch(/--out\b/);
   });
 
   it("uses protected dev inputs, exact bytes, real suites, and attested immutable receipts", () => {
