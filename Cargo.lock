@@ -1175,6 +1175,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "aex-scenarios"
+version = "0.1.0"
+dependencies = [
+ "aex-rds-data",
+ "aex-test-harness",
+ "async-trait",
+ "aws-sdk-rdsdata",
+ "aws-smithy-types",
+ "hex",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "aex-secret-aws"
 version = "0.1.0"
 dependencies = [

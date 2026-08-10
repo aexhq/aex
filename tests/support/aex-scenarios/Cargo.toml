@@ -1,0 +1,65 @@
+[package]
+name = "aex-scenarios"
+version = "0.1.0"
+description = "The cross-service scenario bodies, composed against digest-pinned engines so they execute before a plane exists and promote to the live layer unchanged."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+# Every test target is declared explicitly: a scenario body is named by
+# `release/scenario-ownership.toml`, so it can never be an autodiscovered file.
+autotests = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "test-architecture"
+role = "test_support"
+artifact = "none"
+layers = ["unit", "integration"]
+concerns = ["property"]
+seams = []
+security_tier = "diagnostic"
+risk = ["sql"]
+scenarios = []
+
+[package.metadata.aex.targets]
+properties = "unit"
+
+[package.metadata.aex.not_applicable]
+live_suite = "test-only crate; must be absent from every production link graph"
+
+[features]
+# Engine-backed targets. With the feature off this crate is the two pure
+# translation halves and nothing else, so the ordinary unit lane neither links
+# `sqlx` nor reaches for a container runtime.
+integration-engines = [
+  "dep:sqlx",
+  "dep:tokio",
+  "dep:uuid",
+  "dep:async-trait",
+  "aex-test-harness/containers",
+]
+
+[dependencies]
+aws-sdk-rdsdata.workspace = true
+aws-smithy-types.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+aex-rds-data = { path = "../../../crates/aex-rds-data" }
+
+async-trait = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
+[dev-dependencies]
+aex-test-harness = { path = "../aex-test-harness" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[[test]]
+name = "properties"
+path = "tests/properties.rs"
