@@ -1534,7 +1534,10 @@ async fn every_deferred_route_answers_the_published_refusal() {
             .expect("a body")
             .to_bytes();
         let envelope: serde_json::Value = serde_json::from_slice(&body).expect("an envelope");
-        assert_eq!(envelope["error"]["code"], ErrorCode::NotImplemented.as_str());
+        assert_eq!(
+            envelope["error"]["code"],
+            ErrorCode::NotImplemented.as_str()
+        );
         assert_eq!(envelope["error"]["retryable"], false);
         assert!(
             envelope["error"]["requestId"]
@@ -1983,7 +1986,10 @@ async fn approval_get_projects_the_complete_bound_call_and_decision() {
     assert_eq!(approval.session_id, session);
     assert_eq!(approval.bound_call.expected_custody_revision, 7);
     assert_eq!(approval.bound_call.expected_config_revision, 8);
-    assert_eq!(approval.bound_call.config_digest, ContentHash::of(b"config"));
+    assert_eq!(
+        approval.bound_call.config_digest,
+        ContentHash::of(b"config")
+    );
 }
 
 #[tokio::test]
@@ -2039,7 +2045,11 @@ async fn approval_list_publishes_expired_and_binds_continuation_to_the_session()
     );
     let restored_wire = wire_context(RouteId::SessionApprovalsList);
     let failure = restored
-        .session_approvals_list(&restored_wire, session, approvals_query(Some(cursor.clone())))
+        .session_approvals_list(
+            &restored_wire,
+            session,
+            approvals_query(Some(cursor.clone())),
+        )
         .await
         .expect_err("a cursor cannot survive a deletion-epoch change");
     assert_eq!(failure.code, ErrorCode::InvalidCursor);
