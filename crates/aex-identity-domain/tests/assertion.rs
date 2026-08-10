@@ -122,7 +122,23 @@ fn the_envelope_is_exactly_three_hundred_and_twenty_three_bytes() {
 ///
 /// A wire format's golden is a literal, not a snapshot: changing the layout must
 /// show up as a changed string in the diff rather than as an accepted snapshot.
-const SIGNED_GOLDEN: &str = "41455841010101923f2a1c00700080000000000000aa00eb0000019b76daa8000000019b76db1d300205010101923f2a1c00700080000000000000015a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a01923f2a1c007000800000000000000201923f2a1c0070008000000000000003050100000000000180000401923f2a1c007000800000000000000400000000000000030301923f2a1c007000800000000000000300000000000000010501923f2a1c007000800000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+///
+/// Re-derived 2026-08-10, and the two hex digits that moved are the whole of it.
+/// The scope field is a `ScopeSet` bitset over the generated `ScopeId` registry,
+/// and `claims()` sets `SessionsRead` and `SessionsWrite`. Mounting the fifteen
+/// registry pointer routes took that registry from 28 entries to 30 and the two
+/// new ids sort ahead of `sessions:*`, so the pair moved from bits 15 and 16 to
+/// bits 17 and 18 and the field went `0x18000` to `0x60000`.
+///
+/// The layout did **not** change: the signed prefix is still 259 bytes, every
+/// field offset below still holds, and exactly one field's value differs. What
+/// this records is that scope bit positions are not stable across a registry
+/// insertion — an assertion signed before that commit decodes to different
+/// scopes after it. That is a deliberate breaking change (`feat(registry)!`) and
+/// it is free only while nothing is deployed. Once a plane holds signed
+/// assertions, a new scope has to be appended rather than sorted in, exactly as
+/// `AssertionAudience` already requires of its own arms.
+const SIGNED_GOLDEN: &str = "41455841010101923f2a1c00700080000000000000aa00eb0000019b76daa8000000019b76db1d300205010101923f2a1c00700080000000000000015a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a01923f2a1c007000800000000000000201923f2a1c0070008000000000000003050100000000000600000401923f2a1c007000800000000000000400000000000000030301923f2a1c007000800000000000000300000000000000010501923f2a1c007000800000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
 
 #[test]
 fn the_signed_prefix_is_a_fixed_layout_golden() {
@@ -154,9 +170,12 @@ fn the_signed_prefix_is_a_fixed_layout_golden() {
         "01",
         "account state = active"
     );
+    // Bits 17 and 18, not 15 and 16: see `SIGNED_GOLDEN` for why the pair moved.
+    // Spelled as the shift rather than as a bare literal so the next registry
+    // insertion fails here with its cause visible instead of as a hex diff.
     assert_eq!(
         &SIGNED_GOLDEN[48 + 204..48 + 220],
-        "0000000000018000",
+        format!("{:016x}", 1u64 << 17 | 1u64 << 18),
         "sessions:read | sessions:write"
     );
 }
