@@ -357,16 +357,88 @@ impl Routes {
             self.now()?,
             ApiHintSink,
         );
-        committer
-            .commit(&planned.plan)
-            .await
-            .map_err(|error| commit_failure(&error))?;
-        let operation = planned
-            .projected
+        let projected = match committer.commit(&planned.plan).await {
+            Ok(_) => planned.projected,
+            Err(failure) => self.recover(&failure, &planned.projected).await?,
+        };
+        let operation = projected
             .public()
             .map_err(|_| WireError::new(ErrorCode::InternalError))?
             .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
         Ok(Accepted(operation))
+    }
+
+    /// Resolves a refused commit against the durable facts (D-10).
+    ///
+    /// Asserted on the rows, never on a status code. Rows 1-6 need no extra
+    /// read at all; only the two transport-ambiguous rows pay for the strongly
+    /// consistent point read below, and `OperationStore` is already the
+    /// strongly consistent operation authority, so there is no second reader to
+    /// keep in step.
+    async fn recover(
+        &self,
+        failure: &aex_session_app::CommitError,
+        attempted: &aex_operation_domain::Operation,
+    ) -> WireResult<aex_operation_domain::Operation> {
+        let answer = aex_session_app::ProviderAnswer::of(failure);
+        let needs_read = matches!(
+            answer,
+            aex_session_app::ProviderAnswer::Ambiguous(_)
+                | aex_session_app::ProviderAnswer::ConditionFailed(_)
+        );
+        let stored = if needs_read {
+            self.shared
+                .operations
+                .load(self.cx.auth.workspace_id, attempted.id)
+                .await
+                .map_err(|error| authority_failure(&error))?
+                .map(|stored| stored.record)
+        } else {
+            None
+        };
+        let resolution = aex_session_app::resolve(
+            &answer,
+            aex_session_app::Attempted {
+                workspace: self.cx.auth.workspace_id,
+                operation: attempted.id,
+                intent: attempted.intent,
+            },
+            &aex_session_app::Observed {
+                operation: stored,
+                // The command read the head before planning, so a session that
+                // was absent would have refused before any commit.
+                session_present: true,
+            },
+        );
+        match resolution {
+            // Rows 1, 3 and the unlatched half of 7: the write landed and the
+            // caller is shown the stored envelope, not a second write.
+            aex_session_app::Resolution::Replay(operation) => Ok(*operation),
+            aex_session_app::Resolution::NotFound => Err(WireError::new(ErrorCode::NotFound)),
+            aex_session_app::Resolution::IdempotencyConflict => {
+                Err(WireError::new(ErrorCode::OperationIdempotencyConflict))
+            }
+            aex_session_app::Resolution::GuardMoved(_) => {
+                Err(WireError::new(ErrorCode::PreconditionFailed))
+            }
+            // Row 7. The identity is stable, so re-submitting it unchanged is
+            // the caller's next step and the code says exactly that.
+            aex_session_app::Resolution::Resubmit => {
+                Err(WireError::new(ErrorCode::CommitOutcomeUnknown))
+            }
+            // Row 8. Latched and stuck. The operation may never become
+            // `Failed`, so the customer is told the outcome is unknown and the
+            // condition is made loud for an operator.
+            aex_session_app::Resolution::Quarantine => {
+                eprintln!(
+                    "session-stream-api: operation {} is latched and its commit outcome is \
+                     unknown; it is a manual-review candidate",
+                    attempted.id
+                );
+                Err(WireError::new(ErrorCode::CommitOutcomeUnknown))
+            }
+            aex_session_app::Resolution::Retry => Err(commit_failure(failure)),
+        }
     }
 }
 

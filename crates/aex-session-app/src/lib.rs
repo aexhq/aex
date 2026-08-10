@@ -20,12 +20,14 @@
 //! - `HTTP` routing or authentication.
 
 pub mod error;
+pub mod outcome;
 pub mod plan;
 pub mod ports;
 pub mod testing;
 pub mod use_cases;
 
 pub use error::AppError;
+pub use outcome::{Attempted, Observed, ProviderAnswer, Resolution, resolve};
 pub use plan::{
     Condition, ConditionId, Hint, ItemKey, MAX_ACTIONS, MAX_BYTES, PlanError, PlanShape, Planned,
     SessionTransaction, TableFamily, TransactionIntent, Write,
