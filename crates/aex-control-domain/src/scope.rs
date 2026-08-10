@@ -18,13 +18,13 @@ use aex_wire::scopes::ScopeId;
 pub type Scope = ScopeId;
 
 /// How many scopes the registry holds, as a shift width.
-const REGISTRY_LEN: u32 = 29;
+const REGISTRY_LEN: u32 = 30;
 
 /// The registry is a `u64` bitset, so it can never exceed 64 entries.
 const _: () = assert!(ScopeId::ALL.len() <= 64);
 const _: () = assert!(ScopeId::ALL.len() == REGISTRY_LEN as usize);
 /// The launch registry size, asserted so an added scope is a visible diff.
-const _: () = assert!(ScopeId::ALL.len() == 29);
+const _: () = assert!(ScopeId::ALL.len() == 30);
 
 /// Why a scope list was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

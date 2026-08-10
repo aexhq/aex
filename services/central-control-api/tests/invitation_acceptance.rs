@@ -24,7 +24,7 @@ use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use aex_control_app::ports::{
-    AcceptInvitationsTx, AccountProfile, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
+    AcceptInvitationsTx, AccountProjection, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
     ClaimDueOperations, ClaimOutbox, CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore,
     CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx, DeleteWorkspaceRequest,
     DeleteWorkspaceResponse, EffectError, FinishWorkspaceProvisionTx, GcExpired, GcReport,
@@ -415,7 +415,7 @@ impl ControlViewStore for Store {
     async fn account_profile(
         &self,
         _organization_id: Uuid,
-    ) -> Result<Option<AccountProfile>, StoreError> {
+    ) -> Result<Option<AccountProjection>, StoreError> {
         unreachable!("{UNDRIVEN}")
     }
 
@@ -513,6 +513,7 @@ fn context() -> RequestContext {
     RequestContext {
         request_id: RequestId::parse("req-accept").expect("a request id"),
         route: RouteId::InvitationAccept,
+        actor_session_id: None,
         principal: PrincipalScope::Account {
             user: UserId::from_uuid7(uuid7(USER)),
             organization: None,
