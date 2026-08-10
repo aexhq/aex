@@ -235,13 +235,15 @@ const fn runner_exit(error: &RunnerError) -> Exit {
     match error {
         RunnerError::ChecksumDrift(_) => Exit::ChecksumDrift,
         RunnerError::HeadMismatch { .. } => Exit::HeadMismatch,
-        RunnerError::PreconditionFailed(_) => Exit::PreconditionFailed,
+        // A pepper row that exists and disagrees is a precondition the release
+        // asserted and the database refutes, which is the same answer as a
+        // partial migration object: exit `13`. Sharing it keeps the exit
+        // contract at the ten codes a release script already knows.
+        RunnerError::PreconditionFailed(_) | RunnerError::PepperConflict(_) => {
+            Exit::PreconditionFailed
+        }
         RunnerError::GrantDrift(_) => Exit::GrantDrift,
         RunnerError::Conservation(_) => Exit::Conservation,
-        // A pepper row that exists and disagrees is a precondition the release
-        // asserted and the database refutes, which is exactly `13`. Reusing it
-        // keeps the exit contract at ten codes a release script already knows.
-        RunnerError::PepperConflict(_) => Exit::PreconditionFailed,
         RunnerError::Database(_) => Exit::Connection,
     }
 }
