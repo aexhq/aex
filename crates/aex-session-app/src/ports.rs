@@ -351,7 +351,81 @@ pub trait ContinuityReader: Send + Sync {
     async fn true_idle(&self, session: SessionId) -> Result<TrueIdle, PortError>;
 }
 
-/// Scans the live workspace of a running generation.
+/// What kind of thing a live path names.
+///
+/// The guest's own `lstat` vocabulary, carried through unchanged. A symlink is
+/// reported, never followed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LiveEntryKind {
+    /// A regular file.
+    File,
+    /// A directory.
+    Directory,
+    /// A symbolic link.
+    Symlink,
+    /// A socket, a fifo, a device.
+    Other,
+}
+
+/// One entry in a live workspace, exactly as the running `MicroVM` reports it.
+///
+/// **There is no digest here, and that is the point.** [`TreeView`] and the
+/// content-addressed page machinery belong to persistence, where hashing is
+/// what makes a snapshot restorable. Answering "what is in this directory"
+/// through them means hashing every file's bytes and building a Merkle tree to
+/// serve an `ls`. A live listing is one `lstat` per entry: mode, mtime, size,
+/// and for a symlink its target.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiveEntry {
+    /// The absolute path inside the guest root.
+    pub path: String,
+    /// What kind of thing it is.
+    pub kind: LiveEntryKind,
+    /// Size in bytes.
+    pub size_bytes: u64,
+    /// POSIX mode bits.
+    pub mode: u32,
+    /// Modification time.
+    pub mtime: Timestamp,
+    /// The link target, when the entry is a symlink.
+    pub target: Option<String>,
+}
+
+/// What a live listing asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveListQuery {
+    /// The subtree to list. Absent means the guest root.
+    pub path: Option<String>,
+    /// Whether to descend.
+    pub recursive: bool,
+    /// How many entries at most.
+    pub limit: u16,
+    /// Resume strictly after this path.
+    pub after: Option<String>,
+}
+
+/// One page of live entries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveListing {
+    /// The entries, ascending by path.
+    pub entries: Vec<LiveEntry>,
+    /// Where the next page resumes, when one remains.
+    ///
+    /// Carried rather than derived from the last entry: "this page is full" and
+    /// "there is more" are different facts, and only the reader knows the
+    /// second one.
+    pub next_after: Option<String>,
+}
+
+/// Reads the live workspace of a running generation.
+///
+/// [`LiveWorkspaceReader::scan`] and [`LiveWorkspaceReader::root`] are the
+/// **persistence** half: they exist to content-address a workspace so it can be
+/// restored, and a full hash is the correct price for that.
+/// [`LiveWorkspaceReader::list`] and [`LiveWorkspaceReader::stat`] are the
+/// **observation** half, and they must never route through the persistence
+/// half — a directory listing that hashes every file is doing a snapshot's work
+/// to answer a question one `lstat` settles.
 #[async_trait::async_trait]
 pub trait LiveWorkspaceReader: Send + Sync {
     /// The live tree of one generation.
@@ -367,6 +441,22 @@ pub trait LiveWorkspaceReader: Send + Sync {
         session: SessionId,
         generation: GenerationId,
     ) -> Result<ContentRoot, PortError>;
+
+    /// One page of a live directory listing. No file content is read.
+    async fn list(
+        &self,
+        session: SessionId,
+        generation: GenerationId,
+        query: &LiveListQuery,
+    ) -> Result<LiveListing, PortError>;
+
+    /// One live entry, without following a symlink. No file content is read.
+    async fn stat(
+        &self,
+        session: SessionId,
+        generation: GenerationId,
+        path: &str,
+    ) -> Result<LiveEntry, PortError>;
 }
 
 /// Why a commit failed.

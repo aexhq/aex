@@ -156,15 +156,94 @@ fn floor_char_boundary(text: &str, at: usize) -> usize {
     index
 }
 
+/// One entry a listing or a stat reports.
+///
+/// Everything here comes from one `lstat`. There is deliberately **no content
+/// digest**: answering "what is in this directory" by hashing every file's bytes
+/// is a persistence question wearing an observation question's clothes, and the
+/// caller that wants a content-addressed tree asks `Persist` for one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ListEntry {
+    /// The entry's absolute path inside the guest root.
+    ///
+    /// A path, not a bare name: a recursive listing that reports names alone
+    /// cannot say which directory an entry came from.
+    pub path: String,
+    /// What kind of thing it is.
+    pub kind: EntryKind,
+    /// Size in bytes.
+    pub size: u64,
+    /// Modification time in epoch milliseconds.
+    pub mtime_ms: i64,
+    /// POSIX mode bits.
+    pub mode: u32,
+    /// The link target, when the entry is a symlink.
+    pub target: Option<String>,
+}
+
+impl ListEntry {
+    /// The one canonical line rendering, shared by the list and stat tools.
+    ///
+    /// `<kind>,<size>,<mtimeMillis>,<octalMode>,<path>[,<target>]`. One format
+    /// and one parser: a caller that can read a stat answer can read a listing
+    /// row without knowing which tool produced it.
+    #[must_use]
+    pub fn render(&self) -> String {
+        let mut line = format!(
+            "{},{},{},{:o},{}",
+            self.kind.as_str(),
+            self.size,
+            self.mtime_ms,
+            self.mode,
+            self.path
+        );
+        if let Some(target) = &self.target {
+            line.push(',');
+            line.push_str(target);
+        }
+        line
+    }
+}
+
 /// What a list produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListOutcome {
-    /// One `"<type> <size> <name>[/]"` line per entry.
-    pub lines: Vec<String>,
-    /// How many entries were visited, whether returned or not.
+    /// The retained entries, ascending by path.
+    pub entries: Vec<ListEntry>,
+    /// How many entries were visited, whether retained or not.
     pub visited: usize,
-    /// Whether the listing was cut short.
+    /// Whether entries were dropped because the page filled.
+    ///
+    /// True means "there is more after [`ListOutcome::next_after`]", never "the
+    /// answer is unreliable".
     pub truncated: bool,
+}
+
+impl ListOutcome {
+    /// One rendered line per entry.
+    #[must_use]
+    pub fn lines(&self) -> Vec<String> {
+        self.entries.iter().map(ListEntry::render).collect()
+    }
+
+    /// The cursor that resumes this listing, when there is more to read.
+    ///
+    /// The last returned path. Paths are unique and the page is the
+    /// lexicographically smallest window, so resuming strictly after it can
+    /// neither repeat nor skip an entry that was present throughout the walk.
+    #[must_use]
+    pub fn next_after(&self) -> Option<&str> {
+        if self.truncated {
+            self.entries.last().map(|entry| entry.path.as_str())
+        } else {
+            None
+        }
+    }
+}
+
+/// Joins a directory and an entry name into an absolute guest path.
+fn child_path(directory: &GuestPath, name: &str) -> String {
+    format!("{}/{name}", directory.as_str().trim_end_matches('/'))
 }
 
 /// Lists a directory.
@@ -173,6 +252,15 @@ pub struct ListOutcome {
 /// a link inside the workspace pull an arbitrary path in the rest of the filesystem
 /// into a structured tool's answer. `.git` is listed but never descended, because
 /// walking an object store produces tens of thousands of useless entries.
+///
+/// `after` resumes a previous page: only paths strictly greater than it are
+/// retained. Retention is decided per entry, so a directory whose own path sorts
+/// at or before `after` is still descended into — otherwise resuming would drop
+/// the whole subtree under the entry the previous page ended on.
+///
+/// The page is the lexicographically smallest `limit` entries at or after the
+/// cursor, not the first `limit` the walk happened to reach. Sorting only what
+/// a traversal-order cap already kept would make page two overlap page one.
 ///
 /// # Errors
 ///
@@ -184,6 +272,7 @@ pub fn list_dir(
     recursive: bool,
     depth: u32,
     limit: usize,
+    after: Option<&str>,
 ) -> Result<ListOutcome, FsError> {
     let root_meta = fs.lstat(path)?;
     if root_meta.kind != EntryKind::Directory {
@@ -192,7 +281,7 @@ pub fn list_dir(
         });
     }
     let cap = limit.min(MAX_LIST_ENTRIES);
-    let mut lines = Vec::new();
+    let mut kept: std::collections::BTreeMap<String, ListEntry> = std::collections::BTreeMap::new();
     let mut visited = 0usize;
     let mut truncated = false;
     let mut frontier = vec![(path.clone(), 0u32)];
@@ -200,40 +289,46 @@ pub fn list_dir(
     while let Some((directory, level)) = frontier.pop() {
         for entry in fs.read_dir(&directory)? {
             visited += 1;
-            if lines.len() >= cap {
-                truncated = true;
-                continue;
-            }
-            let suffix = if entry.meta.kind == EntryKind::Directory {
-                "/"
-            } else {
-                ""
-            };
-            lines.push(format!(
-                "{} {} {}{suffix}",
-                entry.meta.kind.as_str(),
-                entry.meta.size,
-                entry.name
-            ));
+            let child = child_path(&directory, &entry.name);
             let descend = recursive
                 && entry.meta.kind == EntryKind::Directory
                 && entry.name != ".git"
                 && level + 1 < depth;
             if descend {
-                let child = format!(
-                    "{}/{}",
-                    directory.as_str().trim_end_matches('/'),
-                    entry.name
-                );
                 if let Ok(child) = GuestPath::parse(root, &child) {
                     frontier.push((child, level + 1));
                 }
             }
+            if after.is_some_and(|cursor| child.as_str() <= cursor) {
+                continue;
+            }
+            if cap == 0 {
+                truncated = true;
+                continue;
+            }
+            kept.insert(
+                child.clone(),
+                ListEntry {
+                    path: child,
+                    kind: entry.meta.kind,
+                    size: entry.meta.size,
+                    mtime_ms: entry.meta.mtime_ms,
+                    mode: entry.meta.mode,
+                    target: entry.meta.target,
+                },
+            );
+            // Keeping the smallest `cap` keys — rather than the first `cap`
+            // the walk reached — is what makes the cursor sound. A DFS reaches
+            // `/workspace/z` before `/workspace/a/b`, so a traversal-order cap
+            // would put `z` on page one and `a/b` on page two, after it.
+            if kept.len() > cap {
+                kept.pop_last();
+                truncated = true;
+            }
         }
     }
-    lines.sort();
     Ok(ListOutcome {
-        lines,
+        entries: kept.into_values().collect(),
         visited,
         truncated,
     })
@@ -244,21 +339,16 @@ pub fn list_dir(
 /// # Errors
 ///
 /// See [`FsError`].
-pub fn stat_path(fs: &dyn GuestFs, path: &GuestPath) -> Result<String, FsError> {
+pub fn stat_path(fs: &dyn GuestFs, path: &GuestPath) -> Result<ListEntry, FsError> {
     let meta = fs.lstat(path)?;
-    let mut line = format!(
-        "{},{},{},{:o},{}",
-        meta.kind.as_str(),
-        meta.size,
-        meta.mtime_ms,
-        meta.mode,
-        path.as_str()
-    );
-    if let Some(target) = &meta.target {
-        line.push(',');
-        line.push_str(target);
-    }
-    Ok(line)
+    Ok(ListEntry {
+        path: path.as_str().to_owned(),
+        kind: meta.kind,
+        size: meta.size,
+        mtime_ms: meta.mtime_ms,
+        mode: meta.mode,
+        target: meta.target,
+    })
 }
 
 /// Writes a file atomically.
@@ -483,6 +573,9 @@ mod tests {
         files: Mutex<BTreeMap<String, Vec<u8>>>,
         directories: Mutex<BTreeMap<String, Vec<DirEntry>>>,
         links: Mutex<BTreeMap<String, String>>,
+        /// Every path whose bytes were opened, so a test can assert that an
+        /// observation answered no content question.
+        reads: Mutex<Vec<String>>,
         full: bool,
     }
 
@@ -508,6 +601,10 @@ mod tests {
 
     impl GuestFs for MemoryFs {
         fn read(&self, path: &GuestPath) -> Result<Vec<u8>, FsError> {
+            self.reads
+                .lock()
+                .expect("the lock is uncontended")
+                .push(path.as_str().to_owned());
             self.files
                 .lock()
                 .expect("the lock is uncontended")
@@ -666,11 +763,202 @@ mod tests {
             .lock()
             .expect("the lock is uncontended")
             .insert("/workspace/link".to_owned(), "/etc/shadow".to_owned());
-        let line = stat_path(&fs, &path("/workspace/link")).expect("the stat succeeds");
+        let entry = stat_path(&fs, &path("/workspace/link")).expect("the stat succeeds");
+        assert_eq!(entry.kind, EntryKind::Symlink);
+        assert_eq!(entry.target.as_deref(), Some("/etc/shadow"));
+        let line = entry.render();
         assert!(line.starts_with("link,"));
         assert!(
             line.ends_with("/etc/shadow"),
             "the target is reported, not followed: {line}"
+        );
+    }
+
+    #[test]
+    fn a_listing_carries_mode_and_mtime_and_never_hashes_a_file() {
+        let fs = MemoryFs::default();
+        fs.directories.lock().expect("the lock is uncontended").insert(
+            "/workspace".to_owned(),
+            vec![DirEntry {
+                name: "a.txt".to_owned(),
+                meta: Meta {
+                    kind: EntryKind::File,
+                    size: 12,
+                    mtime_ms: 1_700_000_000_123,
+                    mode: 0o644,
+                    target: None,
+                },
+            }],
+        );
+        let outcome = list_dir(
+            &fs,
+            &GuestRoot::workspace(),
+            &path("/workspace"),
+            false,
+            1,
+            10,
+            None,
+        )
+        .expect("the list succeeds");
+        let entry = outcome.entries.first().expect("one entry");
+        assert_eq!(entry.path, "/workspace/a.txt", "the path, not the bare name");
+        assert_eq!(entry.mode, 0o644);
+        assert_eq!(entry.mtime_ms, 1_700_000_000_123);
+        assert_eq!(entry.size, 12);
+        assert_eq!(
+            entry.render(),
+            "file,12,1700000000123,644,/workspace/a.txt",
+            "one line format shared with stat, and no digest anywhere in it"
+        );
+        assert!(!outcome.truncated);
+        assert_eq!(outcome.next_after(), None, "a complete page has no cursor");
+        // The listing never read the file, so no content was hashed to answer it.
+        assert!(
+            fs.reads.lock().expect("the lock is uncontended").is_empty(),
+            "answering `ls` must not open a single file"
+        );
+    }
+
+    #[test]
+    fn paging_a_listing_returns_the_smallest_window_and_never_repeats_or_skips() {
+        let fs = MemoryFs::default();
+        {
+            let mut directories = fs.directories.lock().expect("the lock is uncontended");
+            // `z` sorts after `a`, but a depth-first walk pops it first: a
+            // traversal-order cap would put `z` on page one and `a/inner` on
+            // page two, strictly after the cursor page one ended on.
+            directories.insert(
+                "/workspace".to_owned(),
+                vec![
+                    DirEntry {
+                        name: "a".to_owned(),
+                        meta: Meta {
+                            kind: EntryKind::Directory,
+                            size: 0,
+                            mtime_ms: 1,
+                            mode: 0o755,
+                            target: None,
+                        },
+                    },
+                    DirEntry {
+                        name: "z.txt".to_owned(),
+                        meta: Meta {
+                            kind: EntryKind::File,
+                            size: 1,
+                            mtime_ms: 1,
+                            mode: 0o644,
+                            target: None,
+                        },
+                    },
+                ],
+            );
+            directories.insert(
+                "/workspace/a".to_owned(),
+                vec![DirEntry {
+                    name: "inner.txt".to_owned(),
+                    meta: Meta {
+                        kind: EntryKind::File,
+                        size: 1,
+                        mtime_ms: 1,
+                        mode: 0o644,
+                        target: None,
+                    },
+                }],
+            );
+        }
+        let page = |after: Option<&str>, limit: usize| {
+            list_dir(
+                &fs,
+                &GuestRoot::workspace(),
+                &path("/workspace"),
+                true,
+                5,
+                limit,
+                after,
+            )
+            .expect("the list succeeds")
+        };
+
+        let whole: Vec<String> = page(None, 100)
+            .entries
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+        assert_eq!(
+            whole,
+            vec![
+                "/workspace/a".to_owned(),
+                "/workspace/a/inner.txt".to_owned(),
+                "/workspace/z.txt".to_owned(),
+            ]
+        );
+
+        let mut walked = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let outcome = page(cursor.as_deref(), 1);
+            walked.extend(outcome.entries.iter().map(|entry| entry.path.clone()));
+            match outcome.next_after() {
+                Some(next) => cursor = Some(next.to_owned()),
+                None => break,
+            }
+        }
+        assert_eq!(
+            walked, whole,
+            "paging one entry at a time reproduces the whole listing exactly once"
+        );
+    }
+
+    #[test]
+    fn a_cursor_still_descends_the_directory_it_points_at() {
+        let fs = MemoryFs::default();
+        {
+            let mut directories = fs.directories.lock().expect("the lock is uncontended");
+            directories.insert(
+                "/workspace".to_owned(),
+                vec![DirEntry {
+                    name: "a".to_owned(),
+                    meta: Meta {
+                        kind: EntryKind::Directory,
+                        size: 0,
+                        mtime_ms: 1,
+                        mode: 0o755,
+                        target: None,
+                    },
+                }],
+            );
+            directories.insert(
+                "/workspace/a".to_owned(),
+                vec![DirEntry {
+                    name: "inner.txt".to_owned(),
+                    meta: Meta {
+                        kind: EntryKind::File,
+                        size: 1,
+                        mtime_ms: 1,
+                        mode: 0o644,
+                        target: None,
+                    },
+                }],
+            );
+        }
+        let resumed = list_dir(
+            &fs,
+            &GuestRoot::workspace(),
+            &path("/workspace"),
+            true,
+            5,
+            100,
+            Some("/workspace/a"),
+        )
+        .expect("the list succeeds");
+        assert_eq!(
+            resumed
+                .entries
+                .into_iter()
+                .map(|entry| entry.path)
+                .collect::<Vec<_>>(),
+            vec!["/workspace/a/inner.txt".to_owned()],
+            "the subtree under the cursor entry is not lost with it"
         );
     }
 
@@ -727,10 +1015,16 @@ mod tests {
             true,
             5,
             2_000,
+            None,
         )
         .expect("the list succeeds");
         assert_eq!(outcome.visited, 11, "`.git` is listed but never descended");
-        assert!(outcome.lines.iter().any(|line| line.ends_with(".git/")));
+        assert!(
+            outcome
+                .entries
+                .iter()
+                .any(|entry| entry.path == "/workspace/.git")
+        );
 
         let capped = list_dir(
             &fs,
@@ -739,10 +1033,13 @@ mod tests {
             false,
             1,
             3,
+            None,
         )
         .expect("the list succeeds");
-        assert_eq!(capped.lines.len(), 3);
+        assert_eq!(capped.entries.len(), 3);
+        assert_eq!(capped.lines().len(), 3);
         assert!(capped.truncated);
+        assert_eq!(capped.next_after(), Some("/workspace/f1"));
     }
 
     #[test]

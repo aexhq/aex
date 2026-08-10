@@ -40,8 +40,8 @@ pub use command::{
     is_inheritable, is_valid_env_name, strip_git_local_state,
 };
 pub use filesystem::{
-    EditError, EditOutcome, LineRange, ListOutcome, MatchMode, ReadOutcome, edit_file, list_dir,
-    read_file, stat_path, write_file,
+    EditError, EditOutcome, LineRange, ListEntry, ListOutcome, MatchMode, ReadOutcome, edit_file,
+    list_dir, read_file, stat_path, write_file,
 };
 pub use observation::{SearchOutcome, SkipReason, is_contained, search_tree};
 pub use port::{DirEntry, EntryKind, FsError, GuestFs, GuestProc, Meta, Pgid, ProcError, digest};
