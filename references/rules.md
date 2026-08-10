@@ -56,8 +56,6 @@ or docs.
 
 ## Git and release integrity
 
-- Never add AI attribution, generated-by notes, or AI co-author trailers to
-  commits, docs, comments, pull requests, or release text.
 - Preserve unrelated working-tree changes. Do not force-push `main`, discard
   work, stage, commit, or push unless the user requests it.
 - The public release workflow is the sole publisher of public npm packages.

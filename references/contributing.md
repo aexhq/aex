@@ -55,8 +55,6 @@ pack checks.
 - Use imperative mood and a short subject.
 - Conventional prefixes such as `feat:`, `fix:`, `chore:`, `refactor:`,
   `docs:`, `test:`, and `ci:` are encouraged.
-- Do not add AI-attribution or AI co-author trailers.
-
 ## CI and release ownership
 
 There are three lane classes. Every other workflow file is a reusable lane one of
