@@ -1203,6 +1203,7 @@ name = "aex-secret-custody-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-secret-domain",
+ "aex-session-app",
  "aex-session-dynamodb",
  "aex-test-harness",
  "aex-wire",

@@ -57,6 +57,8 @@ use aex_wire::server::{
     dispatch_regional_operations, dispatch_registry, dispatch_secrets, dispatch_sessions,
 };
 use aex_runtime_activity_dynamodb::RuntimeContinuity;
+use aex_secret_custody_dynamodb::SessionCustodyReads;
+use aex_secret_custody_dynamodb::store::CustodyStore;
 use aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore;
 use aex_wire::types::Timestamp;
 
@@ -71,6 +73,12 @@ pub struct Shared {
     /// Metadata only: this deployable holds no decrypt key, so the one thing it
     /// writes here is a revocation fence.
     pub custody: Arc<dyn SecretCustodyStore>,
+    /// The concrete custody store, for the two rows a custody read joins.
+    ///
+    /// Separate from `custody` above, which is the `dyn` metadata authority the
+    /// served secret routes use: reconstructing a `SessionCustody` needs the
+    /// binding listing, and that is an inherent method on the concrete store.
+    pub custody_reads: CustodyStore,
     /// The physical `regional-secret-custody` table name.
     ///
     /// Carried because a conditional expression names its own table, and the
@@ -95,6 +103,14 @@ pub struct Shared {
     pub authority: aws_sdk_dynamodb::Client,
     /// The signing ring every continuation is minted and verified under.
     pub cursor_keys: Arc<CursorKeyRing>,
+    /// The plane and region every encryption context is bound to.
+    ///
+    /// Carried rather than re-derived from a table name: the context digest a
+    /// custody read verifies against is a total function of these two plus the
+    /// tenant, and guessing either would make every verification fail.
+    pub plane: aex_secret_domain::context::Plane,
+    /// The region half of the same binding.
+    pub region: aex_wire::types::Region,
     /// The runtime-activity authority, which owns workspace continuity and the
     /// true-idle verdict.
     ///
@@ -332,7 +348,7 @@ impl Routes {
         })
     }
 
-    /// The five ports this deployable supplies, plus the six it refuses.
+    /// The six ports this deployable supplies, plus the five it refuses.
     fn bindings(&self) -> WireResult<CommandBindings> {
         let now = self.now()?;
         Ok(CommandBindings {
@@ -341,6 +357,13 @@ impl Routes {
             unowned: crate::session::app_ports::UnownedPorts,
             reads: self.shared.commands.clone(),
             continuity: RuntimeContinuity::new(self.shared.runtime_activity.clone(), now),
+            secrets: SessionCustodyReads::new(
+                self.shared.custody_reads.clone(),
+                self.shared.plane,
+                self.shared.region,
+                self.cx.auth.organization_id,
+                self.cx.auth.workspace_id,
+            ),
             accounts: AuthorizedAccount {
                 organization: self.cx.auth.organization_id,
                 revision: self.cx.auth.epochs.account,
@@ -461,6 +484,7 @@ struct CommandBindings {
     reads: SessionCommandReads,
     accounts: AuthorizedAccount,
     continuity: RuntimeContinuity,
+    secrets: SessionCustodyReads,
 }
 
 impl CommandBindings {
@@ -470,17 +494,19 @@ impl CommandBindings {
             ids: &self.ids,
             sessions: &self.reads,
             accounts: &self.accounts,
-            // Six ports another stream owns. Every one refuses rather than
+            // Five ports another stream owns. Every one refuses rather than
             // inventing an answer; see `crate::session::app_ports`.
             registry: &self.unowned,
             content: &self.unowned,
-            secrets: &self.unowned,
             limits: &self.unowned,
             reservations: &self.unowned,
             live: &self.unowned,
             // Owned, not refused: `aex-runtime-activity-dynamodb` is the
-            // authority for both continuity and true idle.
+            // authority for both continuity and true idle, and
+            // `aex-secret-custody-dynamodb` holds both rows a custody read has
+            // to join.
             continuity: &self.continuity,
+            secrets: &self.secrets,
         }
     }
 }

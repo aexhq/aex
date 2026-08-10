@@ -361,7 +361,13 @@ async fn run(
     // --- the session half's router -------------------------------------------
     let dispatcher = Dispatcher::new(Arc::new(Shared {
         custody: Arc::new(stores.custody.clone()),
+        custody_reads: stores.custody.clone(),
         custody_table: stores.custody.table().to_owned(),
+        plane: match config.plane {
+            aex_identity_domain::assertion::Plane::Dev => aex_secret_domain::context::Plane::Dev,
+            aex_identity_domain::assertion::Plane::Prd => aex_secret_domain::context::Plane::Prd,
+        },
+        region: config.region,
         registry: Arc::new(stores.registry.clone()),
         sessions: Arc::new(aex_session_dynamodb::store::SessionReads::new(
             dynamodb.clone(),

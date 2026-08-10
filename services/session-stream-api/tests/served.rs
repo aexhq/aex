@@ -876,7 +876,13 @@ fn build_with_authorities(
 ) -> ((axum::Router, Vec<RouteId>), Arc<FakeCustody>) {
     let shared = Arc::new(Shared {
         custody: Arc::clone(&custody) as Arc<dyn SecretCustodyStore>,
+        custody_reads: aex_secret_custody_dynamodb::store::CustodyStore::new(
+            offline_dynamodb(),
+            CUSTODY_TABLE,
+        ),
         custody_table: CUSTODY_TABLE.to_owned(),
+        plane: aex_secret_domain::context::Plane::Dev,
+        region: aex_wire::types::Region::EuWest1,
         registry: registry as Arc<dyn RegistryStore>,
         sessions: sessions as Arc<dyn SessionQueries>,
         operations: operations as Arc<dyn OperationApiStore>,
