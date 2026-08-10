@@ -52,9 +52,19 @@ describe("resource routing", () => {
     // The server is the only authority on what it serves, so the SDK never
     // refuses a call locally. What it does not do is offer a typed method that
     // could only ever return `501 not_implemented`.
+    //
+    // The deferred set is read from the route registry rather than listed
+    // here. A hand-typed list goes stale the moment a lane mounts one of its
+    // entries — `session_stop` and `session_trash` were both on this list and
+    // are both served now — and then it quietly asserts the opposite of what
+    // its name says.
     const sessions = aexSessionsSurface();
     expect(sessions).toContain("sessionRunGet");
-    for (const method of ["sessionCreate", "sessionGet", "sessionStop", "sessionTrash"]) {
+    const deferred = (Object.keys(ROUTES) as RouteId[])
+      .filter((id) => ROUTES[id].deferred)
+      .map(resourceMethodName);
+    expect(deferred.length).toBeGreaterThan(0);
+    for (const method of deferred) {
       expect({ method, published: sessions.includes(method) }).toEqual({ method, published: false });
     }
   });
@@ -71,6 +81,11 @@ describe("resource routing", () => {
     expect(transport.requests[0]?.routeId).toBe(id);
   });
 });
+
+/// The resource method a route id is published as, if it is published at all.
+function resourceMethodName(id: string): string {
+  return id.replace(/_([a-z0-9])/g, (_match, character: string) => character.toUpperCase());
+}
 
 function aexSessionsSurface(): string[] {
   const aex = new Aex({ apiKey: KEY, transport: new ScriptedTransport() });
