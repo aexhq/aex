@@ -32,8 +32,9 @@ pub mod upload;
 /// The registry name grammar, re-exported so a caller needs one import.
 pub use aex_content_domain::{RegisteredName, RegistryKind, Revision};
 pub use grant::{
-    ByteRange, ContentObjectLocation, DownloadGrant, GRANT_TTL, GrantPlacement, GrantRejection,
-    GrantSubject, MAX_SIGNED_RANGE_BYTES, mint_grant,
+    ByteRange, ContentObjectLocation, DownloadGrant, GRANT_TTL, GrantContentDescriptor,
+    GrantPlacement, GrantRejection, GrantSubject, MAX_SIGNED_RANGE_BYTES, ObjectChecksum,
+    mint_grant,
 };
 pub use persist::{
     PatternAtom, PersistError, PersistPlan, PersistReceipt, PersistSelection, PersistShape,

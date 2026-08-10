@@ -21,6 +21,7 @@
 //! - content storage (`aex-content-dynamodb`, `aex-content-aws`)
 //! - authorization, and the object-store side of a multipart completion
 
+pub mod application_plan;
 pub mod codec;
 pub mod expressions;
 pub mod keys;

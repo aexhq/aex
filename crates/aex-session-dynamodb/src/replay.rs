@@ -52,6 +52,7 @@ impl<'a> IdempotencyScope<'a> {
         "registry.set",
         "registry.delete",
         "registry.upload",
+        "registry.download",
     ];
 
     /// The bases that take no subject.

@@ -105,7 +105,6 @@ operationOwners:
 # unknown operation, an empty reason, or overlap with `servedOperations`.
 # Deferral is not mount evidence and is emitted only into the delivery registry.
 deferredOperations:
-  registry_files_download_create: "No composed content grant and presigning authority exists yet."
   session_approval_get: "Nothing composed into the platform raises an approval, so the point read can only report that no approval exists."
   session_approval_respond: "The atomic bound-call approval writer is not composed into the regional service."
   session_approvals_list: "Nothing composed into the platform raises an approval, so the collection can only report an empty page."
@@ -220,6 +219,7 @@ servedOperations:
     - regional_operation_get
     - regional_operations_list
     - registry_files_delete
+    - registry_files_download_create
     - registry_files_get
     - registry_files_list
     - registry_files_put

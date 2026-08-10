@@ -9,6 +9,7 @@ pub mod admission;
 pub mod app_ports;
 pub mod handlers;
 pub mod registry;
+pub mod registry_download;
 pub mod routes;
 pub mod stores;
 pub mod uploads;

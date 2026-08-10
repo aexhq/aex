@@ -46,8 +46,9 @@ use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
 
 use crate::application_plan::{
-    Expression, ExternalActionCompiler, LogicalAction, SessionBinding,
-    compile_application_transaction, conditional_check, conditional_put, cross_tenant, term_eq_u64,
+    AuthorityBinding, CompiledApplicationPlan, Expression, ExternalActionCompiler, LogicalAction,
+    SessionBinding, WorkspaceBinding, compile_application_transaction,
+    compile_workspace_transaction, conditional_check, conditional_put, cross_tenant, term_eq_u64,
 };
 use crate::attr::{Item, Row, b, s, stamp};
 use crate::error::StoreError;
@@ -110,7 +111,7 @@ impl SessionAuthorityExternal {
 
     fn operation_write(
         tables: &RegionalTables,
-        binding: SessionBinding,
+        binding: AuthorityBinding,
         action: &LogicalAction<'_>,
         operation: &Operation,
         output: &mut TransactionPlan,
@@ -118,7 +119,7 @@ impl SessionAuthorityExternal {
         if operation.workspace != binding.workspace
             || operation
                 .session
-                .is_some_and(|session| session != binding.session)
+                .is_some_and(|session| Some(session) != binding.session)
         {
             return Err(cross_tenant());
         }
@@ -203,7 +204,7 @@ impl SessionAuthorityExternal {
 
     fn agent_cancel(
         tables: &RegionalTables,
-        binding: SessionBinding,
+        binding: AuthorityBinding,
         action: &LogicalAction<'_>,
         settlement: AgentSettlement,
         output: &mut TransactionPlan,
@@ -215,7 +216,7 @@ impl SessionAuthorityExternal {
             to,
             at,
         } = settlement;
-        if session != binding.session {
+        if Some(session) != binding.session {
             return Err(cross_tenant());
         }
         let mut expression = Expression::default();
@@ -454,7 +455,7 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
     fn compile_action(
         &self,
         tables: &RegionalTables,
-        binding: SessionBinding,
+        binding: AuthorityBinding,
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
@@ -464,7 +465,7 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
         // would mean the tenant check below ran against a tenant the request
         // was not authorized for. Refusing is the only answer that cannot
         // silently pick the wrong one.
-        if binding != self.binding {
+        if binding != self.binding.into() {
             return Err(cross_tenant());
         }
         match action.write {
@@ -535,7 +536,7 @@ impl HintSink for ApiHintSink {
 pub struct DynamoAuthorityCommitter<S: HintSink> {
     client: Client,
     tables: RegionalTables,
-    binding: SessionBinding,
+    binding: AuthorityBinding,
     now: Timestamp,
     hints: S,
 }
@@ -566,9 +567,95 @@ impl<S: HintSink> DynamoAuthorityCommitter<S> {
         Self {
             client,
             tables,
-            binding,
+            binding: AuthorityBinding {
+                workspace: binding.workspace,
+                organization: binding.organization,
+                session: Some(binding.session),
+            },
             now,
             hints,
+        }
+    }
+
+    /// Binds a committer to a workspace-scoped authority request.
+    #[must_use]
+    pub const fn new_workspace(
+        client: Client,
+        tables: RegionalTables,
+        binding: WorkspaceBinding,
+        now: Timestamp,
+        hints: S,
+    ) -> Self {
+        Self {
+            client,
+            tables,
+            binding: AuthorityBinding {
+                workspace: binding.workspace,
+                organization: binding.organization,
+                session: None,
+            },
+            now,
+            hints,
+        }
+    }
+
+    fn compile_with(
+        &self,
+        plan: &SessionTransaction,
+        external: &impl ExternalActionCompiler,
+    ) -> Result<CompiledApplicationPlan, StoreError> {
+        match self.binding.session {
+            Some(session) => compile_application_transaction(
+                &self.tables,
+                plan,
+                SessionBinding {
+                    workspace: self.binding.workspace,
+                    organization: self.binding.organization,
+                    session,
+                },
+                external,
+            ),
+            None => compile_workspace_transaction(
+                &self.tables,
+                plan,
+                WorkspaceBinding {
+                    workspace: self.binding.workspace,
+                    organization: self.binding.organization,
+                },
+                external,
+            ),
+        }
+    }
+
+    /// Commits a replay-elected multi-family plan without erasing the
+    /// participant that lost its condition.
+    ///
+    /// The shared replay combinator needs that participant to distinguish a
+    /// receipt race from a grant collision. Transport ambiguity resolves only
+    /// through the receipt; this method never retries an unknown write.
+    pub async fn commit_replayable(
+        &self,
+        plan: &SessionTransaction,
+        external: &impl ExternalActionCompiler,
+    ) -> Result<(), StoreError> {
+        let compiled = self.compile_with(plan, external)?;
+        let request = compiled.transaction.compile(&self.client)?;
+        match request.send().await {
+            Ok(_) => {
+                for hint in &compiled.after_commit {
+                    self.hints.dispatch(hint);
+                }
+                Ok(())
+            }
+            Err(error) => Err(match error.as_service_error() {
+                Some(service) => {
+                    crate::error::decode_cancellation(service, compiled.transaction.participants())
+                }
+                None => crate::error::classify(
+                    &error,
+                    crate::error::Idempotence::Write(crate::error::Resolution::IdempotencyReceipt),
+                ),
+            }),
         }
     }
 }
@@ -587,13 +674,19 @@ impl<S: HintSink> AuthorityCommitter for DynamoAuthorityCommitter<S> {
                 committed_at: self.now,
             });
         }
-        let compiled = compile_application_transaction(
-            &self.tables,
-            plan,
-            self.binding,
-            &SessionAuthorityExternal::new(self.binding),
-        )
-        .map_err(|error| store_to_commit(&error, plan))?;
+        let session = self.binding.session.ok_or_else(|| {
+            CommitError::PlanRejected(aex_session_app::plan::PlanError::MissingRequiredCondition(
+                ConditionId(u16::MAX),
+            ))
+        })?;
+        let session_binding = SessionBinding {
+            workspace: self.binding.workspace,
+            organization: self.binding.organization,
+            session,
+        };
+        let compiled = self
+            .compile_with(plan, &SessionAuthorityExternal::new(session_binding))
+            .map_err(|error| store_to_commit(&error, plan))?;
 
         let request = compiled
             .transaction

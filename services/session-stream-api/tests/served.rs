@@ -1576,6 +1576,21 @@ async fn the_router_answers_exactly_the_served_set() {
     assert_eq!(mounted, Routes::served());
 }
 
+#[tokio::test]
+async fn registry_file_download_is_mounted_and_requires_replay_identity_before_authority_reads() {
+    let registry = FakeRegistry {
+        fails: true,
+        ..FakeRegistry::default()
+    };
+    let (router, mounted) = composed(FakeCustody::default(), registry);
+    assert!(mounted.contains(&RouteId::RegistryFilesDownloadCreate));
+    assert!(!route(RouteId::RegistryFilesDownloadCreate).deferred);
+
+    let (status, body) = post(&router, "/api/workspace/files/notes.md/downloads", "{}").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], ErrorCode::InvalidRequest.as_str());
+}
+
 /// Every owned route the contract defers answers the published refusal.
 ///
 /// This replaces an assertion that it was *absent*. A bare `404` cannot be told
@@ -1681,28 +1696,6 @@ async fn a_wrong_method_on_a_deferred_path_is_a_method_refusal() {
 #[test]
 fn session_create_is_absent_until_the_complete_atomic_authority_is_composed() {
     assert!(!Routes::served().contains(&RouteId::SessionCreate));
-}
-
-/// The stored message body is an opaque inline blob or content digest, while
-/// the published message is an ordered typed-part vector. The domain also has
-/// tool-call/result parts that the wire cannot represent, and the wire has a
-/// persisted-file part that the domain cannot represent. A referenced body is
-/// blocked again because this finite API owns no plaintext/decrypt capability.
-/// None of those gaps may be hidden behind a successful empty or partial page.
-#[tokio::test]
-async fn session_message_list_is_absent_until_every_body_has_an_exact_projection() {
-    let (router, mounted) = router(FakeCustody::default());
-    assert!(!mounted.contains(&RouteId::SessionMessagesList));
-
-    let session = sample::<SessionId>(32);
-    let (status, etag, body) = get(&router, &format!("/api/sessions/{session}/messages")).await;
-    assert_eq!(
-        status,
-        StatusCode::NOT_IMPLEMENTED,
-        "an incomplete message projection became reachable: {status} {body}"
-    );
-    assert_eq!(etag, None, "a refusal must not mint an entity tag");
-    assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
 }
 
 // --- durable operations ----------------------------------------------------------

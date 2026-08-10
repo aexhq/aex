@@ -71,6 +71,8 @@ pub enum TransactionIntent {
     RespondApproval,
     /// Advance a continued operation.
     ContinueOperation,
+    /// Mint a registry-file download grant and its replay receipt.
+    RegistryDownload,
 }
 
 /// The identity of one item a write targets.
@@ -753,6 +755,12 @@ pub enum PlanError {
         /// Which part of the membership rule failed.
         detail: &'static str,
     },
+    /// A registry download omitted or mixed one of its three atomic writes.
+    #[error("registry download authority is wrong: {detail}")]
+    RegistryDownloadAuthority {
+        /// Which membership rule failed.
+        detail: &'static str,
+    },
     /// The plan carries too many actions.
     #[error("plan carries {actions} actions, above the maximum of {max}")]
     TooManyActions {
@@ -792,6 +800,9 @@ impl SessionTransaction {
     pub fn validate(&self) -> Result<PlanShape, PlanError> {
         if self.intent == TransactionIntent::CreateSession {
             self.check_create_participants()?;
+        }
+        if self.intent == TransactionIntent::RegistryDownload {
+            self.check_registry_download_participants()?;
         }
         let mut action_targets = BTreeSet::new();
         action_targets.extend(self.conditions.iter().map(Condition::target));
@@ -918,6 +929,110 @@ impl SessionTransaction {
         (0..self.conditions.len())
             .map(|index| ConditionId(u16::try_from(index).unwrap_or(u16::MAX)))
             .collect()
+    }
+
+    fn check_registry_download_participants(&self) -> Result<(), PlanError> {
+        if !self.after_commit.is_empty() {
+            return Err(PlanError::RegistryDownloadAuthority {
+                detail: "a registry download has no after-commit side channel",
+            });
+        }
+        let mut pointer = None;
+        let mut content = None;
+        for condition in &self.conditions {
+            match condition {
+                Condition::RegistryEtag { selector, .. } if pointer.is_none() => {
+                    pointer = Some(selector);
+                }
+                Condition::ContentOwned { workspace, digest } if content.is_none() => {
+                    content = Some((*workspace, *digest));
+                }
+                _ => {
+                    return Err(PlanError::RegistryDownloadAuthority {
+                        detail: "a registry download requires exactly one file-pointer ETag guard and one content-ownership guard",
+                    });
+                }
+            }
+        }
+        let mut grant = None;
+        let mut pin = None;
+        let mut receipt = None;
+        for write in &self.writes {
+            match write {
+                Write::PutGrant(value) if grant.is_none() => grant = Some(value.as_ref()),
+                Write::PutPin(value)
+                    if pin.is_none()
+                        && matches!(value.as_ref(), aex_content_domain::Pin::Grant { .. }) =>
+                {
+                    pin = Some(value.as_ref());
+                }
+                Write::PutIdempotencyReceipt(value) if receipt.is_none() => {
+                    receipt = Some(value.as_ref());
+                }
+                _ => {
+                    return Err(PlanError::RegistryDownloadAuthority {
+                        detail: "a registry download writes only one grant, its matching grant pin, and one receipt",
+                    });
+                }
+            }
+        }
+        let (
+            Some(grant),
+            Some(aex_content_domain::Pin::Grant {
+                grant: pin_grant,
+                digest,
+                expires_at,
+            }),
+        ) = (grant, pin)
+        else {
+            return Err(PlanError::RegistryDownloadAuthority {
+                detail: "a registry download requires one grant and one grant pin",
+            });
+        };
+        let Some(receipt) = receipt else {
+            return Err(PlanError::RegistryDownloadAuthority {
+                detail: "a registry download requires exactly one replay receipt",
+            });
+        };
+        if *pin_grant != grant.id
+            || *digest != grant.whole_sha256
+            || *expires_at != grant.expires_at
+        {
+            return Err(PlanError::RegistryDownloadAuthority {
+                detail: "the grant pin must match the grant id, digest, and expiry",
+            });
+        }
+        let (Some(pointer), Some((content_workspace, content_digest))) = (pointer, content) else {
+            return Err(PlanError::RegistryDownloadAuthority {
+                detail: "a registry download requires exactly one file-pointer ETag guard and one content-ownership guard",
+            });
+        };
+        if grant.subject.session.is_some()
+            || pointer.kind != RegistryKind::File
+            || pointer.workspace != grant.subject.workspace
+            || content_workspace != grant.subject.workspace
+            || content_digest != grant.whole_sha256
+        {
+            return Err(PlanError::RegistryDownloadAuthority {
+                detail: "the file pointer, owned content, and workspace grant authority must match",
+            });
+        }
+        let aex_session_domain::ReceiptOutcome::Resource { kind, id, response } = &receipt.outcome
+        else {
+            return Err(PlanError::RegistryDownloadAuthority {
+                detail: "a registry download receipt must reproduce its grant",
+            });
+        };
+        if *kind != aex_session_domain::ResourceKind::Grant
+            || id.0 != grant.id.0.to_string()
+            || !matches!(response, aex_session_domain::ResponseBody::Inline(_))
+            || receipt.expires_at != Some(grant.expires_at)
+        {
+            return Err(PlanError::RegistryDownloadAuthority {
+                detail: "a registry download receipt must reproduce its grant id, response, and expiry",
+            });
+        }
+        Ok(())
     }
 }
 

@@ -857,6 +857,7 @@ pub fn create_receipt(session: &Session) -> aex_session_domain::IdempotencyRecei
             ),
         },
         created_at: session.created_at,
+        expires_at: None,
     }
 }
 

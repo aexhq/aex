@@ -25,7 +25,7 @@
 use core::fmt;
 
 use aex_content_domain::{
-    ContentDescriptor, ContentDigest, ContentObjectKey, Crc32c, GrantId, Pin,
+    ContentDescriptor, ContentDigest, ContentObjectKey, Crc32c, GrantId, MediaType, Pin,
 };
 use aex_wire::ids::{MeasurementId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
@@ -33,6 +33,33 @@ use time::Duration;
 
 /// How long a grant is valid.
 pub const GRANT_TTL: Duration = Duration::minutes(5);
+
+/// The descriptor facts grant planning is allowed to decide on.
+///
+/// Adapters need not fabricate ciphertext or placement details merely to mint
+/// a range over an already-resolved immutable object.
+pub trait GrantContentDescriptor {
+    /// Whole-object digest.
+    fn digest(&self) -> ContentDigest;
+    /// Whole-object plaintext size.
+    fn size_bytes(&self) -> u64;
+    /// Declared media type, when one was recorded.
+    fn media_type(&self) -> Option<MediaType>;
+}
+
+impl GrantContentDescriptor for ContentDescriptor {
+    fn digest(&self) -> ContentDigest {
+        self.digest
+    }
+
+    fn size_bytes(&self) -> u64 {
+        self.size_bytes
+    }
+
+    fn media_type(&self) -> Option<MediaType> {
+        self.media_type.clone()
+    }
+}
 
 /// Largest range a single grant may authorize.
 pub const MAX_SIGNED_RANGE_BYTES: u64 = 5_000_000_000_000;
@@ -78,7 +105,23 @@ pub struct ContentObjectLocation {
     /// The exact unversioned key.
     pub key: ContentObjectKey,
     /// The checksum the object store recorded.
-    pub checksum: Crc32c,
+    pub checksum: ObjectChecksum,
+}
+
+/// A full-object checksum recorded by the configured object store.
+///
+/// The pure content model predates the production S3 adapter and carried only
+/// CRC32C. S3 records a full-object CRC64NVME for multipart bodies, so grant
+/// planning accepts either exact authority fact rather than fabricating a
+/// CRC32C value the adapter never observed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObjectChecksum {
+    /// CRC32C, when that is what the object store recorded.
+    Crc32c(Crc32c),
+    /// Base64 SHA-256, as S3 returned it.
+    Sha256(String),
+    /// Base64 full-object CRC64NVME, as S3 returned it.
+    Crc64Nvme(String),
 }
 
 /// Where a grant reads from.
@@ -89,7 +132,7 @@ pub enum GrantPlacement {
         /// The exact unversioned key.
         key: ContentObjectKey,
         /// The checksum the object store recorded.
-        checksum: Crc32c,
+        checksum: ObjectChecksum,
     },
 }
 
@@ -109,6 +152,8 @@ pub struct DownloadGrant {
     pub authorized_bytes: u64,
     /// The immutable whole-object digest.
     pub whole_sha256: ContentDigest,
+    /// The object's declared media type, when one was recorded.
+    pub media_type: Option<MediaType>,
     /// Where a redemption reads from.
     pub placement: GrantPlacement,
     /// The measurement the download is recorded under.
@@ -176,7 +221,7 @@ pub enum GrantRejection {
 /// [`MAX_SIGNED_RANGE_BYTES`].
 pub fn mint_grant(
     subject: GrantSubject,
-    descriptor: &ContentDescriptor,
+    descriptor: &impl GrantContentDescriptor,
     location: &ContentObjectLocation,
     requested: Option<ByteRange>,
     id: GrantId,
@@ -185,13 +230,13 @@ pub fn mint_grant(
 ) -> Result<(DownloadGrant, Pin), GrantRejection> {
     let whole = ByteRange {
         start: 0,
-        end_exclusive: descriptor.size_bytes,
+        end_exclusive: descriptor.size_bytes(),
     };
     let range = requested.unwrap_or(whole);
-    if range.start > range.end_exclusive || range.end_exclusive > descriptor.size_bytes {
+    if range.start > range.end_exclusive || range.end_exclusive > descriptor.size_bytes() {
         return Err(GrantRejection::InvalidRange {
             requested: range,
-            size: descriptor.size_bytes,
+            size: descriptor.size_bytes(),
         });
     }
     if range.len() > MAX_SIGNED_RANGE_BYTES {
@@ -203,7 +248,7 @@ pub fn mint_grant(
 
     let placement = GrantPlacement::ObjectRange {
         key: location.key.clone(),
-        checksum: location.checksum,
+        checksum: location.checksum.clone(),
     };
 
     let expires_at = advance(now, GRANT_TTL);
@@ -212,14 +257,15 @@ pub fn mint_grant(
         subject,
         range,
         authorized_bytes: range.len(),
-        whole_sha256: descriptor.digest,
+        whole_sha256: descriptor.digest(),
+        media_type: descriptor.media_type(),
         placement,
         measurement,
         expires_at,
     };
     let pin = Pin::Grant {
         grant: id,
-        digest: descriptor.digest,
+        digest: descriptor.digest(),
         expires_at,
     };
     Ok((grant, pin))
@@ -244,7 +290,7 @@ mod tests {
 
     use super::{
         ByteRange, ContentObjectLocation, GrantPlacement, GrantRejection, GrantSubject,
-        MAX_SIGNED_RANGE_BYTES, mint_grant,
+        MAX_SIGNED_RANGE_BYTES, ObjectChecksum, mint_grant,
     };
 
     fn moment(millis: i64) -> Timestamp {
@@ -284,7 +330,7 @@ mod tests {
     fn location() -> ContentObjectLocation {
         ContentObjectLocation {
             key: ContentObjectKey::parse("wks/abc").expect("valid"),
-            checksum: Crc32c(7),
+            checksum: ObjectChecksum::Crc32c(Crc32c(7)),
         }
     }
 

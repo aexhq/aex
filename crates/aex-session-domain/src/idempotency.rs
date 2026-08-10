@@ -267,6 +267,13 @@ pub struct IdempotencyReceipt {
     pub outcome: ReceiptOutcome,
     /// When it was written.
     pub created_at: Timestamp,
+    /// An authority-specific replay fence.
+    ///
+    /// Most receipts use the adapter's standard retention window. A receipt
+    /// whose exact response contains a short-lived bearer credential sets this
+    /// to that credential's expiry, so an exact replay can never publish an
+    /// already-expired capability.
+    pub expires_at: Option<Timestamp>,
 }
 
 /// What a replay attempt resolves to.
@@ -344,6 +351,7 @@ mod tests {
                 response: ResponseBody::of(RESPONSE),
             },
             created_at: Timestamp::from_unix_millis(0).expect("in range"),
+            expires_at: None,
         }
     }
 

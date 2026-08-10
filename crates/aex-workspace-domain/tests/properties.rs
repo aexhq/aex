@@ -397,7 +397,7 @@ fn mint(
         &descriptor(size, object),
         &ContentObjectLocation {
             key: ContentObjectKey::parse("wks/abc").expect("valid"),
-            checksum: Crc32c(7),
+            checksum: aex_workspace_domain::ObjectChecksum::Crc32c(Crc32c(7)),
         },
         range,
         GrantId(Uuid7::compose(1, [2; 10])),

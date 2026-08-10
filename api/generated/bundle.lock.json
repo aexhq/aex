@@ -1,5 +1,5 @@
 {
-  "contractDigest": "sha256:b35ee328612c409fd77678e0b7c74f4756f57d4190fc724df00a4cef727f7e75",
+  "contractDigest": "sha256:20d11fdca3dff3d75d7502a60456949b23e16df9094593f0c3f619368ab2218e",
   "generator": {
     "formatter": "aex-contract-gen internal renderer (rustfmt fixed point)",
     "name": "aex-contract-gen",
@@ -41,7 +41,7 @@
     "api/schemas/registries/evolution.yaml": "sha256:d744c5441ff29e0b96b72dd0397362db1c9ac4c3afa6275843240455f8da02e0",
     "api/schemas/registries/ids.yaml": "sha256:c1a62bd2a71d7cc81e65450c5816e71a3fc1535256e9492c49d6cce8e7d054e2",
     "api/schemas/registries/limits.yaml": "sha256:7ac0759abbec38cebf1ae57c8c0d42b256a9e813167d8a2689c7dadad273573a",
-    "api/schemas/registries/routes-meta.yaml": "sha256:79d0b49562ba6cd8efd2c55886cd07a10318ed7aa575ed91e7c52548773bb2b8",
+    "api/schemas/registries/routes-meta.yaml": "sha256:cd465391197b37350572e67e96f331f304f0dcab9b23d2b6d6cf8486a092ccaf",
     "api/schemas/registries/scopes.yaml": "sha256:131eaaff29a75d5e5a8f8b18d05142504f0f4c218c80a95c9ce8c9569968bbdb",
     "api/schemas/usage/usage.yaml": "sha256:60a81ac8720786336f9c89490327c4e3b70d137e4c58ffb124d28321efe69c5a",
     "rust-toolchain.toml": "sha256:4ebecf0dfad52e2954fd762b8ff09925e8c35f6909d360327c71518b4d853670"

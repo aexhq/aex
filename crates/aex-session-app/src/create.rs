@@ -179,6 +179,7 @@ pub async fn create_session(
             response: ResponseBody::of(&crate::projection::canonical_session_bytes(&session)?),
         },
         created_at: now,
+        expires_at: None,
     };
 
     let plan = build_plan(&session, root_agent_record(&session, now), receipt, custody);

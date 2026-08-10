@@ -47,11 +47,12 @@ hex.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 aex-content-domain = { path = "../aex-content-domain" }
+aex-session-app = { path = "../aex-session-app" }
 aex-wire = { path = "../aex-wire" }
 aex-workspace-domain = { path = "../aex-workspace-domain" }
-# The shared regional store machinery only. `default-features = false` keeps the
-# session-authority row codec and the projection reader out of the link graph.
-aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false }
+# The application-plan compiler is feature-owned beside session authority; the
+# registry adapter implements only its own table family's action renderer.
+aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false, features = ["session-authority"] }
 
 tokio = { workspace = true, optional = true }
 

@@ -36,7 +36,7 @@ pub struct LogicalAction<'a> {
 /// contract, so a foreign adapter cannot silently drop a guard or split
 /// atomicity. The asserted [`SessionBinding`] is handed over with the action so
 /// a foreign compiler can enforce the same tenant check the owned writes do.
-pub trait ExternalActionCompiler {
+pub trait ExternalActionCompiler: Sync {
     /// Appends one conditional write or read-only condition check.
     ///
     /// # Errors
@@ -46,7 +46,7 @@ pub trait ExternalActionCompiler {
     fn compile_action(
         &self,
         tables: &RegionalTables,
-        binding: SessionBinding,
+        binding: AuthorityBinding,
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError>;
@@ -70,7 +70,7 @@ pub struct FamilyCompilers<'a> {
 
 /// The receipt compiler, promoted so [`FamilyCompilers::new`] can register a
 /// reference to it without allocating.
-static IDEMPOTENCY: IdempotencyCompiler = IdempotencyCompiler;
+static IDEMPOTENCY: IdempotencyCompiler = IdempotencyCompiler::session();
 
 /// The outbox compiler, promoted for the same reason.
 static OUTBOX: OutboxCompiler = OutboxCompiler;
@@ -103,7 +103,7 @@ impl ExternalActionCompiler for FamilyCompilers<'_> {
     fn compile_action(
         &self,
         tables: &RegionalTables,
-        binding: SessionBinding,
+        binding: AuthorityBinding,
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
@@ -125,13 +125,40 @@ impl ExternalActionCompiler for FamilyCompilers<'_> {
 /// The receipt row shape is the one in [`crate::replay`], shared by every
 /// regional table that holds a receipt, so a session transaction's receipt and a
 /// custody transaction's receipt are the same row read by the same reader.
-pub struct IdempotencyCompiler;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdempotencyCompiler {
+    authority: ReceiptAuthority,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReceiptAuthority {
+    Session,
+    Registry,
+}
+
+impl IdempotencyCompiler {
+    /// Stores receipts beside the session authority.
+    #[must_use]
+    pub const fn session() -> Self {
+        Self {
+            authority: ReceiptAuthority::Session,
+        }
+    }
+
+    /// Stores receipts beside the named-registry authority.
+    #[must_use]
+    pub const fn registry() -> Self {
+        Self {
+            authority: ReceiptAuthority::Registry,
+        }
+    }
+}
 
 impl ExternalActionCompiler for IdempotencyCompiler {
     fn compile_action(
         &self,
         tables: &RegionalTables,
-        binding: SessionBinding,
+        binding: AuthorityBinding,
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
@@ -140,6 +167,7 @@ impl ExternalActionCompiler for IdempotencyCompiler {
                 detail: "the idempotency family carries receipt writes only".to_owned(),
             });
         };
+        validate_receipt_binding(binding, receipt)?;
         let row = crate::codec::receipt_of(receipt).map_err(|error| StoreError::Invalid {
             detail: format!("an idempotency receipt could not be projected: {error}"),
         })?;
@@ -158,14 +186,66 @@ impl ExternalActionCompiler for IdempotencyCompiler {
             .iter()
             .any(|(_, condition)| matches!(condition, Condition::ItemAbsent(_)))
         {
-            expression.and_literal(IMMUTABLE);
+            if receipt.expires_at.is_some() {
+                // A short-lived bearer response may be replayed only while its
+                // signature is live. Once its explicit fence passes, the old
+                // row is still present until asynchronous TTL reclamation; the
+                // next elected request replaces it atomically instead of
+                // becoming permanently ambiguous behind a stale row.
+                expression
+                    .and_literal("attribute_not_exists(pk) OR #receiptExpiresAt <= :receiptNow");
+                expression
+                    .names
+                    .insert("#receiptExpiresAt".to_owned(), "expiresAt".to_owned());
+                expression.values.insert(
+                    ":receiptNow".to_owned(),
+                    crate::attr::stamp(receipt.created_at),
+                );
+            } else {
+                expression.and_literal(IMMUTABLE);
+            }
         }
-        output.put(
-            Participant::SESSION_IDEMPOTENCY,
-            conditional_put(&tables.session_authority, item, expression)?,
-        )?;
+        let (participant, table) = match self.authority {
+            ReceiptAuthority::Session => {
+                (Participant::SESSION_IDEMPOTENCY, &tables.session_authority)
+            }
+            ReceiptAuthority::Registry => {
+                (Participant::REGISTRY_IDEMPOTENCY, &tables.regional_registry)
+            }
+        };
+        output.put(participant, conditional_put(table, item, expression)?)?;
         Ok(())
     }
+}
+
+fn validate_receipt_binding(
+    binding: AuthorityBinding,
+    receipt: &aex_session_domain::IdempotencyReceipt,
+) -> Result<(), StoreError> {
+    let expected_key = aex_session_domain::ReceiptKey::of(receipt.key.scope(), &receipt.identity)
+        .map_err(|error| StoreError::Invalid {
+        detail: format!("an idempotency receipt key is invalid: {error}"),
+    })?;
+    if receipt.key != expected_key || receipt.intent != receipt.identity.intent() {
+        return Err(StoreError::Invalid {
+            detail: "an idempotency receipt drifted from its replay key or canonical intent"
+                .to_owned(),
+        });
+    }
+    let principal = match &receipt.identity {
+        aex_session_domain::IdempotencyIdentity::Key(identity) => &identity.principal,
+        aex_session_domain::IdempotencyIdentity::Operation(identity) => &identity.principal,
+    };
+    if principal.organization() != Some(binding.organization)
+        || principal
+            .workspace()
+            .is_some_and(|workspace| workspace != binding.workspace)
+    {
+        return Err(StoreError::Invalid {
+            detail: "an idempotency receipt crosses its authenticated tenant binding".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// Compiles the `Outbox` family onto `session-authority`.
@@ -175,7 +255,7 @@ impl ExternalActionCompiler for OutboxCompiler {
     fn compile_action(
         &self,
         tables: &RegionalTables,
-        binding: SessionBinding,
+        binding: AuthorityBinding,
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
@@ -184,7 +264,7 @@ impl ExternalActionCompiler for OutboxCompiler {
                 detail: "the outbox family carries outbox-event writes only".to_owned(),
             });
         };
-        if event.session != binding.session {
+        if Some(event.session) != binding.session {
             return Err(cross_tenant());
         }
         let item = crate::codec::encode_outbox_event(binding.workspace, event);
@@ -230,6 +310,51 @@ pub struct SessionBinding {
     pub session: aex_wire::ids::SessionId,
 }
 
+/// Tenant identity for an authority transaction that is not session-scoped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceBinding {
+    /// Owning workspace.
+    pub workspace: aex_wire::ids::WorkspaceId,
+    /// Owning organization.
+    pub organization: aex_wire::ids::OrganizationId,
+}
+
+/// The authenticated tenant and optional resource path carried to every
+/// family compiler.
+///
+/// A workspace route must not invent a session merely to enter the shared
+/// transaction compiler. Session-owned actions require `session`; content and
+/// registry actions bind only the tenant facts they actually own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthorityBinding {
+    /// Owning workspace.
+    pub workspace: aex_wire::ids::WorkspaceId,
+    /// Owning organization.
+    pub organization: aex_wire::ids::OrganizationId,
+    /// Exact session path, only for a session-scoped transaction.
+    pub session: Option<aex_wire::ids::SessionId>,
+}
+
+impl From<SessionBinding> for AuthorityBinding {
+    fn from(binding: SessionBinding) -> Self {
+        Self {
+            workspace: binding.workspace,
+            organization: binding.organization,
+            session: Some(binding.session),
+        }
+    }
+}
+
+impl From<WorkspaceBinding> for AuthorityBinding {
+    fn from(binding: WorkspaceBinding) -> Self {
+        Self {
+            workspace: binding.workspace,
+            organization: binding.organization,
+            session: None,
+        }
+    }
+}
+
 /// Compiles every logical item exactly once.
 ///
 /// Session, message and run rows use the canonical v1 codec here. Every other
@@ -245,6 +370,30 @@ pub fn compile_application_transaction(
     tables: &RegionalTables,
     input: &SessionTransaction,
     binding: SessionBinding,
+    external: &impl ExternalActionCompiler,
+) -> Result<CompiledApplicationPlan, StoreError> {
+    compile_bound_transaction(tables, input, binding.into(), external)
+}
+
+/// Compiles an application transaction authorized at workspace scope.
+///
+/// # Errors
+///
+/// As [`compile_application_transaction`]. A session-owned action is rejected
+/// because this binding deliberately carries no session identity.
+pub fn compile_workspace_transaction(
+    tables: &RegionalTables,
+    input: &SessionTransaction,
+    binding: WorkspaceBinding,
+    external: &impl ExternalActionCompiler,
+) -> Result<CompiledApplicationPlan, StoreError> {
+    compile_bound_transaction(tables, input, binding.into(), external)
+}
+
+fn compile_bound_transaction(
+    tables: &RegionalTables,
+    input: &SessionTransaction,
+    binding: AuthorityBinding,
     external: &impl ExternalActionCompiler,
 ) -> Result<CompiledApplicationPlan, StoreError> {
     input.validate().map_err(|error| StoreError::Invalid {
@@ -311,7 +460,7 @@ fn compile_owned(
     tables: &RegionalTables,
     intent: TransactionIntent,
     action: &LogicalAction<'_>,
-    binding: SessionBinding,
+    binding: AuthorityBinding,
     output: &mut TransactionPlan,
 ) -> Result<bool, StoreError> {
     let Some(write) = action.write else {
@@ -343,10 +492,10 @@ fn compile_session_write(
     intent: TransactionIntent,
     action: &LogicalAction<'_>,
     session: &aex_session_domain::Session,
-    binding: SessionBinding,
+    binding: AuthorityBinding,
     output: &mut TransactionPlan,
 ) -> Result<(), StoreError> {
-    if session.id != binding.session
+    if Some(session.id) != binding.session
         || session.workspace != binding.workspace
         || session.organization != binding.organization
     {
@@ -369,10 +518,10 @@ fn compile_message_write(
     intent: TransactionIntent,
     action: &LogicalAction<'_>,
     message: &aex_session_domain::Message,
-    binding: SessionBinding,
+    binding: AuthorityBinding,
     output: &mut TransactionPlan,
 ) -> Result<(), StoreError> {
-    if message.session != binding.session {
+    if Some(message.session) != binding.session {
         return Err(cross_tenant());
     }
     let item = crate::authority_codec::encode_domain_message(
@@ -412,10 +561,10 @@ fn compile_sealed_message_write(
     intent: TransactionIntent,
     action: &LogicalAction<'_>,
     message: &aex_session_domain::Message,
-    binding: SessionBinding,
+    binding: AuthorityBinding,
     output: &mut TransactionPlan,
 ) -> Result<(), StoreError> {
-    if message.session != binding.session {
+    if Some(message.session) != binding.session {
         return Err(cross_tenant());
     }
     if !matches!(
@@ -447,10 +596,10 @@ fn compile_run_write(
     intent: TransactionIntent,
     action: &LogicalAction<'_>,
     run: &aex_session_domain::Run,
-    binding: SessionBinding,
+    binding: AuthorityBinding,
     output: &mut TransactionPlan,
 ) -> Result<(), StoreError> {
-    if run.session != binding.session {
+    if Some(run.session) != binding.session {
         return Err(cross_tenant());
     }
     let item =
@@ -469,7 +618,7 @@ fn compile_run_write(
 fn compile_owned_check(
     tables: &RegionalTables,
     action: &LogicalAction<'_>,
-    binding: SessionBinding,
+    binding: AuthorityBinding,
     output: &mut TransactionPlan,
 ) -> Result<bool, StoreError> {
     if action
@@ -484,7 +633,7 @@ fn compile_owned_check(
             .ok_or_else(|| StoreError::Invalid {
                 detail: "a session-head guard group has no session identity".to_owned(),
             })?;
-        if session != binding.session {
+        if Some(session) != binding.session {
             return Err(cross_tenant());
         }
         output.condition_check(
@@ -511,7 +660,7 @@ fn compile_owned_check(
 fn compile_run_check(
     tables: &RegionalTables,
     action: &LogicalAction<'_>,
-    binding: SessionBinding,
+    binding: AuthorityBinding,
     output: &mut TransactionPlan,
 ) -> Result<(), StoreError> {
     let (session, run) = action
@@ -524,7 +673,7 @@ fn compile_run_check(
         .ok_or_else(|| StoreError::Invalid {
             detail: "a run guard group has no physical identity".to_owned(),
         })?;
-    if session != binding.session {
+    if Some(session) != binding.session {
         return Err(cross_tenant());
     }
     output.condition_check(
@@ -818,7 +967,7 @@ mod tests {
     use aex_session_domain::testing::running_session;
 
     use super::{
-        ExternalActionCompiler, FamilyCompilers, LogicalAction, SessionBinding,
+        AuthorityBinding, ExternalActionCompiler, FamilyCompilers, LogicalAction, SessionBinding,
         compile_application_transaction,
     };
     use crate::error::StoreError;
@@ -830,7 +979,7 @@ mod tests {
         fn compile_action(
             &self,
             _tables: &RegionalTables,
-            _binding: SessionBinding,
+            _binding: AuthorityBinding,
             _action: &LogicalAction<'_>,
             _output: &mut TransactionPlan,
         ) -> Result<(), StoreError> {
@@ -970,6 +1119,7 @@ mod tests {
                 response: ResponseBody::of(br#"{"id":"msg_1"}"#),
             },
             created_at: aex_session_domain::testing::moment(1),
+            expires_at: None,
         }
     }
 
@@ -1020,6 +1170,66 @@ mod tests {
             put.item().get("pk").and_then(|value| value.as_s().ok()),
             Some(&expected.pk)
         );
+    }
+
+    fn rejected_receipt(
+        receipt: aex_session_domain::IdempotencyReceipt,
+    ) -> crate::error::StoreError {
+        let (session, _run, _agent, _message) = running_session();
+        let input = SessionTransaction {
+            intent: TransactionIntent::AdmitMessage,
+            conditions: Vec::new(),
+            writes: vec![Write::PutIdempotencyReceipt(Box::new(receipt))],
+            after_commit: Vec::new(),
+        };
+        compile_application_transaction(
+            &RegionalTables::composed("dev", "eu-west-1"),
+            &input,
+            SessionBinding {
+                workspace: session.workspace,
+                organization: session.organization,
+                session: session.id,
+            },
+            &FamilyCompilers::new(),
+        )
+        .expect_err("the forged receipt is rejected before request construction")
+    }
+
+    #[test]
+    fn a_receipt_key_must_be_derived_from_its_own_replay_identity() {
+        let mut forged = receipt("session.message:ses_1", "k1", 7);
+        forged.key = receipt("session.message:ses_1", "k2", 7).key;
+        assert!(matches!(
+            rejected_receipt(forged),
+            StoreError::Invalid { .. }
+        ));
+    }
+
+    #[test]
+    fn a_receipt_intent_must_equal_its_one_canonical_identity_intent() {
+        let mut forged = receipt("session.message:ses_1", "k", 7);
+        forged.intent = aex_wire::idempotency::IntentDigest::from_bytes([9; 32]);
+        assert!(matches!(
+            rejected_receipt(forged),
+            StoreError::Invalid { .. }
+        ));
+    }
+
+    #[test]
+    fn a_receipt_principal_cannot_cross_the_authenticated_workspace() {
+        let mut forged = receipt("session.message:ses_1", "k", 7);
+        let aex_session_domain::IdempotencyIdentity::Key(identity) = &mut forged.identity else {
+            panic!("the fixture is key-based");
+        };
+        identity.principal = aex_wire::idempotency::PrincipalScope::WorkspaceKey {
+            key: aex_session_domain::testing::id(1),
+            workspace: aex_session_domain::testing::id(99),
+            organization: aex_session_domain::testing::id(3),
+        };
+        assert!(matches!(
+            rejected_receipt(forged),
+            StoreError::Invalid { .. }
+        ));
     }
 
     #[test]

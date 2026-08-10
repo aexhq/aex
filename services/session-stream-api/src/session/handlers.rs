@@ -1777,10 +1777,12 @@ impl RegistryApi for Routes {
     async fn registry_files_download_create(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
-        _body: models::RegistryDownloadRequest,
+        name: ResourceName,
+        body: models::RegistryDownloadRequest,
     ) -> WireResult<Created<models::DownloadGrant>> {
-        Err(not_served(RouteId::RegistryFilesDownloadCreate))
+        self.registry_file_download_create(&name, &body)
+            .await
+            .map(Created)
     }
 }
 

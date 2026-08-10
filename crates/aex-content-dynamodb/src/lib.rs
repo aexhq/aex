@@ -25,6 +25,7 @@
 //! - the ownership-closure and Merkle model (`aex-content-domain`)
 //! - lifecycle scheduling or deletion policy (`content-lifecycle-worker`)
 
+pub mod application_plan;
 pub mod codec;
 pub mod expressions;
 pub mod keys;

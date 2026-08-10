@@ -732,6 +732,9 @@ pub fn receipt_of(
     };
     let retention_millis = i64::try_from(crate::replay::RECEIPT_RETENTION.as_millis())
         .expect("a pinned retention of one day fits i64 milliseconds");
+    let default_expiry = aex_wire::types::Timestamp::from_unix_millis(
+        receipt.created_at.unix_millis() + retention_millis,
+    )?;
     Ok(Receipt {
         scope: receipt.key.scope().to_owned(),
         key_sha256: receipt.key.key_sha256().to_owned(),
@@ -739,9 +742,7 @@ pub fn receipt_of(
         response_kind,
         response,
         committed_at: receipt.created_at,
-        expires_at: aex_wire::types::Timestamp::from_unix_millis(
-            receipt.created_at.unix_millis() + retention_millis,
-        )?,
+        expires_at: receipt.expires_at.unwrap_or(default_expiry),
     })
 }
 

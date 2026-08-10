@@ -365,9 +365,12 @@ name = "aex-content-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-content-domain",
+ "aex-session-app",
+ "aex-session-domain",
  "aex-session-dynamodb",
  "aex-test-harness",
  "aex-wire",
+ "aex-workspace-domain",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
@@ -1069,6 +1072,7 @@ name = "aex-registry-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-content-domain",
+ "aex-session-app",
  "aex-session-dynamodb",
  "aex-test-harness",
  "aex-wire",
