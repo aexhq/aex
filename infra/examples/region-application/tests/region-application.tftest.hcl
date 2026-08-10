@@ -10,6 +10,7 @@ variables {
   kms_key_arn                     = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
   session_journal_stream_arn      = "arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-journal/stream/2026-08-01T00:00:00.000"
   cluster_name                    = "aex-dev-euw1"
+  internal_namespace              = "aex-dev.internal"
 
   # No group ids: every group is created by the module that owns the resource
   # it protects. What the foundation still has to hand over is what the task
@@ -80,6 +81,32 @@ variables {
     autoscaling_metrics = []
   }
 
+  # The executor is addressed only through the private Cloud Map namespace. It
+  # has no public target group, and the empty client list is intentional until
+  # brain-mux has an owning Terraform composition and a task security group to
+  # name here.
+  tool_executor = {
+    name               = "tool-executor"
+    image              = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/tool-executor@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    cpu                = 1024
+    memory             = 2048
+    desired_count      = 1
+    stop_timeout       = 30
+    container_port     = 8080
+    log_group_name     = "/aex/dev/tool-executor"
+    log_retention_days = 30
+    execution_role_arn = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
+    env = {
+      AEX_TOOL_EXECUTOR_PLANE                = "dev"
+      AEX_TOOL_EXECUTOR_REGION               = "eu-west-1"
+      AEX_TOOL_EXECUTOR_PORT                 = "8080"
+      AEX_TOOL_EXECUTOR_CEILING_TABLE        = "aex-dev-euw1-tool-executor-ceiling"
+      AEX_TOOL_EXECUTOR_CREDENTIAL_SECRET_ID = "aex/dev/tool-executor/web-search"
+      AEX_TOOL_EXECUTOR_VERIFICATION_KEYS    = "00000000-0000-4000-8000-000000000000:0000000000000000000000000000000000000000000000000000000000000000:4102444800000"
+    }
+    client_security_group_ids = []
+  }
+
   operation_queue = {
     name                      = "session-operation"
     visibility_timeout        = 300
@@ -128,6 +155,32 @@ variables {
         },
       ]
     }
+
+    "tool-executor" = {
+      assume_principal = {
+        type        = "Service"
+        identifiers = ["ecs-tasks.amazonaws.com"]
+      }
+      wildcard_resource_allowlist = []
+      action_grants = [
+        {
+          sid              = "OrganizationCeiling"
+          actions          = ["dynamodb:TransactWriteItems"]
+          resources        = ["arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-tool-executor-ceiling"]
+          scopable         = true
+          condition_key    = "aws:ResourceTag/aex:plane"
+          condition_values = ["dev"]
+        },
+        {
+          sid              = "PlatformCredential"
+          actions          = ["secretsmanager:GetSecretValue"]
+          resources        = ["arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex/dev/tool-executor/web-search-*"]
+          scopable         = true
+          condition_key    = "aws:ResourceTag/aex:plane"
+          condition_values = ["dev"]
+        },
+      ]
+    }
   }
 }
 
@@ -135,17 +188,25 @@ run "the_region_application_plans" {
   command = plan
 
   assert {
-    condition     = length(module.role) == 1
-    error_message = "One execution role must be created per deployable, and `regional-session-api` and `regional-stream` are one deployable now."
+    condition     = length(module.role) == 2
+    error_message = "One execution role must be created for session-stream-api and one for tool-executor; the latter may not inherit the public request path's authority."
   }
 
   assert {
     condition     = jsondecode(module.role["session-stream-api"].inline_policy_json).Statement[1].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"] == ["SESSION#*"]
     error_message = "The region wrapper must preserve reviewed set-qualified conditions."
   }
+
+  assert {
+    condition = (
+      contains(var.deployable_grants["tool-executor"].assume_principal.identifiers, "ecs-tasks.amazonaws.com")
+      && !contains(var.deployable_grants["tool-executor"].assume_principal.identifiers, "lambda.amazonaws.com")
+    )
+    error_message = "The tool executor is a Fargate service and its role must be assumable only by ECS tasks."
+  }
 }
 
-run "the_cluster_and_the_log_group_are_created_by_this_root" {
+run "the_cluster_and_both_log_groups_are_created_by_this_root" {
   command = plan
 
   assert {
@@ -156,6 +217,54 @@ run "the_cluster_and_the_log_group_are_created_by_this_root" {
   assert {
     condition     = module.session_stream_log_group.name == var.session_stream_api.log_group_name
     error_message = "The service log group must be created by this root, not assumed to exist. A Fargate service has no managed group waiting for it the way a Lambda did."
+  }
+
+  assert {
+    condition     = module.tool_executor_log_group.name == var.tool_executor.log_group_name
+    error_message = "The private executor must have its own log group; sharing the public request-path group would erase the deployable boundary in operations."
+  }
+}
+
+run "the_tool_executor_is_private_named_and_fixed_count" {
+  command = plan
+
+  assert {
+    condition     = module.internal_names.namespace_name == var.internal_namespace
+    error_message = "The executor's Cloud Map namespace must be the private namespace selected by the regional composition."
+  }
+
+  assert {
+    condition     = module.internal_names.hostnames["tool-executor"] == "tool-executor.${var.internal_namespace}"
+    error_message = "The executor must have one stable private name; a Fargate task address changes on every deployment."
+  }
+
+  assert {
+    condition = (
+      can(regex("@sha256:[0-9a-f]{64}$", var.tool_executor.image))
+      && var.tool_executor.cpu == 1024
+      && var.tool_executor.memory == 2048
+      && var.tool_executor.desired_count == 1
+      && var.tool_executor.stop_timeout == 30
+      && var.tool_executor.container_port == 8080
+    )
+    error_message = "The executor must carry the digest-pinned 1024/2048 single-task shape and 30-second deadline bound declared in release/units.toml."
+  }
+
+  assert {
+    condition     = length(var.tool_executor.client_security_group_ids) == 0
+    error_message = "Until brain-mux has an owning Terraform task group, the executor must admit no caller instead of widening ingress to a CIDR or the VPC."
+  }
+
+  assert {
+    condition = toset(keys(var.tool_executor.env)) == toset([
+      "AEX_TOOL_EXECUTOR_PLANE",
+      "AEX_TOOL_EXECUTOR_REGION",
+      "AEX_TOOL_EXECUTOR_PORT",
+      "AEX_TOOL_EXECUTOR_CEILING_TABLE",
+      "AEX_TOOL_EXECUTOR_CREDENTIAL_SECRET_ID",
+      "AEX_TOOL_EXECUTOR_VERIFICATION_KEYS",
+    ])
+    error_message = "The example must supply exactly the required tool-executor startup environment; the binary has no defaults and refuses partial configuration."
   }
 }
 

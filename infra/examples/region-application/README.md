@@ -1,8 +1,9 @@
 # `region-application`
 
-The releasable half of one region: one Fargate request-path service -
-`session-stream-api` - the operation queue and its stream pipe, and the one
-public load balancer it sits behind.
+The releasable half of one region: the public Fargate request-path service
+`session-stream-api`, the private Fargate `tool-executor`, the operation queue
+and its stream pipe, and the one public load balancer used only by the request
+path.
 
 Everything here is replaced on a deployment. Nothing here holds state, which is
 what makes it safe to plan and apply separately from `region-foundation`.
@@ -22,8 +23,11 @@ publishes `deregistration_delay` and the service behind it consumes that same
 value, so the load balancer and the task cannot disagree about how long a
 deregistering target keeps serving.
 
-The ECS cluster and both service log groups are created here rather than assumed
-to exist, so a fresh region plans from an empty account.
+The ECS cluster, both service log groups, and the private Cloud Map namespace
+are created here rather than assumed to exist, so a fresh region plans from an
+empty account. The executor has no public listener or target group. Until the
+Brain has an owning Terraform task security group to name as its client, the
+executor's empty client list deliberately admits no ingress.
 
 ## Every security group is created by the module that owns what it protects
 
@@ -141,10 +145,11 @@ in any `.tf` file here.
 | `sqs-queue` | Session operation queue and its dead-letter queue. |
 | `dynamodb-stream-pipe` | Journal mutations to operation hints. |
 | `ecs-cluster` | The cluster both services run in. |
-| `log-group` | One group for the one service; both halves write to it. |
+| `log-group` | One group per service; both request-path halves share the session-stream group. |
 | `alb-public` | Public edge: load balancer, listeners, fixed 404 default. |
 | `alb-service-target` | One target group, with its listener rules. |
-| `ecs-service` | `session-stream-api`. |
+| `service-discovery-private` | Private Cloud Map name for `tool-executor`. |
+| `ecs-service` | `session-stream-api` behind the public target and `tool-executor` by private name. |
 
 ## Outputs
 
@@ -154,11 +159,12 @@ in any `.tf` file here.
 ## Test
 
 `tests/region-application.tftest.hcl` plans the root against a mock AWS
-provider. It asserts one role per deployable, that the cluster and both log
-groups are created here, that each service's drain window is the one its own
-target group publishes, that both services' forwarded patterns are `/api/` paths
-that do not collide, that the two services occupy disjoint listener priorities,
-that no first path segment is claimed by both services and no pattern wildcards
-its own first segment, that the stream service's whole surface is the single
-rule `/api/streams/*`, that the session API carries the reviewed Fargate shape,
-and that its role is assumed by `ecs-tasks.amazonaws.com` rather than by Lambda.
+provider. It asserts one role per deployable; that the cluster, both log groups,
+and the executor's private name are created here; that the executor carries its
+reviewed fixed-count shape and complete startup environment while admitting no
+undeclared client; that the request-path service's drain window is the one its
+target group publishes; that its forwarded patterns are `/api/` paths that do
+not collide; that no pattern wildcards its own first segment; that the stream
+half's whole surface is the single rule `/api/streams/*`; that the session API
+carries the reviewed Fargate shape; and that both roles are assumed by
+`ecs-tasks.amazonaws.com` rather than by Lambda.
