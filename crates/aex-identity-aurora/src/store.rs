@@ -43,6 +43,21 @@ macro_rules! tx_try {
     };
 }
 
+/// Ends the transaction and reports the domain guard that refused.
+///
+/// The rollback is the point: a ceremony that returns early without ending its
+/// transaction strands it on the service until the idle timeout, and a guard
+/// that refuses is the most common early return there is. Spelling it once
+/// means no site can forget the half that has no compiler to remind it.
+macro_rules! tx_conflict {
+    ($transaction:ident, $constraint:expr) => {{
+        let _ = $transaction.rollback().await;
+        return Err(StoreError::Conflict {
+            constraint: $constraint,
+        });
+    }};
+}
+
 /// The identity repository over the one Data API transport.
 #[derive(Clone)]
 pub struct AuroraIdentityStore {
@@ -225,6 +240,21 @@ impl AuroraIdentityStore {
         )))
     }
 
+    /// Mints the account token a redemption produces.
+    ///
+    /// Runs **before** `CONSUME_DEVICE_AUTHORIZATION`, never after.
+    /// `identity.device_authorization.account_token_id` references
+    /// `identity.account_token(id)` and that constraint is not `DEFERRABLE` —
+    /// the only deferred constraints in the bundle are the control and finance
+    /// constraint triggers — so `PostgreSQL` checks it while the `UPDATE` runs
+    /// rather than at `COMMIT`. Consuming first raised 23503 on every single
+    /// redemption, which is why no device code had ever been redeemed outside
+    /// CI's raw-SQL bypass.
+    ///
+    /// The order is safe in this direction because both statements share one
+    /// serializable transaction: a token whose consumption then loses the race
+    /// is rolled back with it, so no orphan token survives, and the conditional
+    /// `UPDATE` remains the sole arbiter of who redeems.
     async fn insert_device_account_token(
         transaction: &mut Transaction<'_>,
         command: &ConsumeDeviceAuthorizationCommand,
@@ -266,19 +296,24 @@ impl AuroraIdentityStore {
     reason = "transport contract tests stay next to the store helpers they exercise"
 )]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
+    use aex_control_domain::{Scope, ScopeSet};
     use aex_identity_app::ports::{
-        IdentityStore, IssueEmailChallengeCommand, PepperKeystore, PepperPurpose, StoreError,
-        TxOutcome,
+        ConsumeDeviceAuthorizationCommand, IdentityStore, IssueEmailChallengeCommand,
+        PepperKeystore, PepperPurpose, StoreError, TxOutcome,
     };
-    use aex_identity_domain::{NormalizedEmail, Pepper, PepperVersion, Verifier};
+    use aex_identity_domain::{
+        NormalizedEmail, Pepper, PepperVersion, PresentedDigest, Verifier, verifier,
+    };
     use aex_rds_data::{
         DataApiClient, DataApiConfig, DatabaseName, ExecuteResponse, ResourceArn, SecretArn,
         TransactionId, Transport, TransportError,
     };
     use async_trait::async_trait;
-    use aws_sdk_rdsdata::types::SqlParameter;
+    use aws_sdk_rdsdata::primitives::Blob;
+    use aws_sdk_rdsdata::types::{ArrayValue, Field, SqlParameter};
     use time::{Duration, OffsetDateTime};
     use uuid::Uuid;
 
@@ -289,6 +324,22 @@ mod tests {
     struct ScriptedTransport {
         statements: Mutex<Vec<String>>,
         commit_is_unknown: bool,
+        /// What a read answers, keyed by the statement's own text.
+        ///
+        /// Empty for the ceremonies that only need the ledger. A ceremony that
+        /// resolves before it writes has to be handed the row it resolves, or
+        /// it takes the not-found branch and never reaches the write under
+        /// test — which is exactly how the redemption order went unexamined.
+        records: HashMap<&'static str, Vec<Vec<Field>>>,
+    }
+
+    /// The statements this fixture reports one affected row for.
+    ///
+    /// A conditional `UPDATE` that reports zero is a lost race, and every
+    /// ceremony here branches on that, so the fixture has to state which
+    /// statements won rather than answer zero for all of them.
+    fn affects_one_row(statement: &str) -> bool {
+        statement == sql::INSERT_EMAIL_CHALLENGE || statement == sql::CONSUME_DEVICE_AUTHORIZATION
     }
 
     #[async_trait]
@@ -304,8 +355,8 @@ mod tests {
                 .expect("statement ledger")
                 .push(statement.to_owned());
             Ok(ExecuteResponse {
-                records: Vec::new(),
-                rows_affected: u64::from(statement == sql::INSERT_EMAIL_CHALLENGE),
+                records: self.records.get(statement).cloned().unwrap_or_default(),
+                rows_affected: u64::from(affects_one_row(statement)),
             })
         }
 
@@ -350,9 +401,17 @@ mod tests {
     }
 
     fn store(commit_is_unknown: bool) -> (AuroraIdentityStore, Arc<ScriptedTransport>) {
+        store_answering(HashMap::new(), commit_is_unknown)
+    }
+
+    fn store_answering(
+        records: HashMap<&'static str, Vec<Vec<Field>>>,
+        commit_is_unknown: bool,
+    ) -> (AuroraIdentityStore, Arc<ScriptedTransport>) {
         let transport = Arc::new(ScriptedTransport {
             statements: Mutex::new(Vec::new()),
             commit_is_unknown,
+            records,
         });
         let config = DataApiConfig::new(
             ResourceArn::parse("arn:aws:rds:eu-west-1:000000000000:cluster:aex").expect("arn"),
@@ -391,6 +450,90 @@ mod tests {
         assert_eq!(
             transport.statements.lock().expect("ledger").as_slice(),
             [sql::RESOLVE_EMAIL_CHALLENGE, sql::INSERT_EMAIL_CHALLENGE]
+        );
+    }
+
+    /// The digest the scripted device presents, and the verifier stored for it.
+    fn device_digest() -> PresentedDigest {
+        PresentedDigest::from_bytes([3; 32])
+    }
+
+    /// One `RESOLVE_DEVICE_AUTHORIZATION` record for a live, approved grant.
+    ///
+    /// The column order is `RESOLVE_DEVICE_AUTHORIZATION`'s own projection; a
+    /// record built in any other order fails `expect_arity` or decodes into the
+    /// wrong field, so this doubles as a check that the two stay in step.
+    fn approved_device_record(user_id: Uuid, now: OffsetDateTime) -> Vec<Field> {
+        let stored = verifier(&Pepper::new([7; 32]), &device_digest());
+        let scopes = AuroraIdentityStore::scope_values(ScopeSet::of(&[Scope::SessionsRead]));
+        vec![
+            Field::StringValue(Uuid::from_u128(11).to_string()),
+            Field::BlobValue(Blob::new(stored.as_bytes().to_vec())),
+            Field::LongValue(1),
+            Field::StringValue("approved".to_owned()),
+            Field::ArrayValue(ArrayValue::StringValues(
+                scopes.into_iter().map(Some).collect(),
+            )),
+            Field::StringValue(user_id.to_string()),
+            Field::LongValue(AuroraIdentityStore::millis(now)),
+            Field::IsNull(true),
+            Field::IsNull(true),
+            Field::LongValue(AuroraIdentityStore::millis(now)),
+            Field::LongValue(AuroraIdentityStore::millis(now + Duration::minutes(15))),
+            Field::LongValue(5_000),
+            Field::IsNull(true),
+        ]
+    }
+
+    /// Redeeming a device grant must insert the token before it is referenced.
+    ///
+    /// `identity.device_authorization.account_token_id` references
+    /// `identity.account_token(id)` and the constraint is not `DEFERRABLE`, so
+    /// the reverse order answers 23503 on every single redemption — which it
+    /// did, unnoticed, because the only other way to reach an account token is
+    /// CI's raw-SQL bypass. The ledger is the cheapest place to state the
+    /// order, and it states it without a container.
+    #[tokio::test]
+    async fn a_redemption_inserts_the_token_before_the_grant_points_at_it() {
+        let now = OffsetDateTime::UNIX_EPOCH + Duration::hours(1);
+        let user_id = Uuid::from_u128(23);
+        let records = HashMap::from([(
+            sql::RESOLVE_DEVICE_AUTHORIZATION,
+            vec![approved_device_record(user_id, now)],
+        )]);
+        let (store, transport) = store_answering(records, false);
+
+        let outcome = store
+            .consume_device_authorization(&ConsumeDeviceAuthorizationCommand {
+                device_id: Uuid::from_u128(11),
+                digest: device_digest(),
+                preassigned_token_id: Uuid::from_u128(31),
+                token_verifier: Verifier::from_bytes([5; 32]),
+                token_pepper_version: PepperVersion::new(1),
+                token_name: "scripted device".to_owned(),
+                token_expires_at: now + Duration::days(30),
+                now,
+            })
+            .await
+            .expect("an approved grant redeems");
+
+        let TxOutcome::Committed(redeemed) = outcome else {
+            panic!("a scripted commit is committed");
+        };
+        assert_eq!(redeemed.token.id, Uuid::from_u128(31));
+        assert_eq!(redeemed.grant.account_token_id, Some(Uuid::from_u128(31)));
+        assert_eq!(
+            transport.statements.lock().expect("ledger").as_slice(),
+            [
+                // `Isolation::Serializable` is issued as a statement of its
+                // own, so the ledger opens with it; redemption arbitrates a
+                // race and must not run at a weaker level.
+                "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE",
+                sql::RESOLVE_DEVICE_AUTHORIZATION,
+                sql::INSERT_ACCOUNT_TOKEN,
+                sql::CONSUME_DEVICE_AUTHORIZATION,
+            ],
+            "the token row has to exist before `account_token_id` names it"
         );
     }
 
@@ -605,10 +748,7 @@ impl IdentityStore for AuroraIdentityStore {
                 )
             );
             if affected != 1 {
-                let _ = transaction.rollback().await;
-                return Err(StoreError::Conflict {
-                    constraint: "email_challenge_open".to_owned(),
-                });
+                tx_conflict!(transaction, "email_challenge_open".to_owned());
             }
         }
         let user = tx_try!(
@@ -699,10 +839,7 @@ impl IdentityStore for AuroraIdentityStore {
             )
         );
         if affected != 1 {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::Conflict {
-                constraint: "dashboard_session_active_user".to_owned(),
-            });
+            tx_conflict!(transaction, "dashboard_session_active_user".to_owned());
         }
         let session = DashboardSession {
             id: command.preassigned_id,
@@ -863,10 +1000,7 @@ impl IdentityStore for AuroraIdentityStore {
             )
         );
         if affected == 0 {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::Conflict {
-                constraint: "external_identity_last_credential".to_owned(),
-            });
+            tx_conflict!(transaction, "external_identity_last_credential".to_owned());
         }
         Self::commit(transaction, "unlink_external_identity", command.user_id, ()).await
     }
@@ -1078,11 +1212,20 @@ impl IdentityStore for AuroraIdentityStore {
             }));
         }
         let Some(user_id) = row.value.approved_by else {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::Conflict {
-                constraint: "device_authorization_approved".to_owned(),
-            });
+            tx_conflict!(transaction, "device_authorization_approved".to_owned());
         };
+        // Mint first, then point the grant at it: the foreign key is not
+        // deferrable. See `insert_device_account_token` for why the order is
+        // load bearing and why it is safe this way round.
+        tx_try!(
+            transaction,
+            Self::insert_device_account_token(
+                &mut transaction,
+                command,
+                user_id,
+                row.value.requested_scopes,
+            )
+        );
         let affected = tx_try!(
             transaction,
             transaction.execute(
@@ -1096,26 +1239,17 @@ impl IdentityStore for AuroraIdentityStore {
             )
         );
         if affected != 1 {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::Conflict {
-                constraint: "device_authorization_approved".to_owned(),
-            });
+            tx_conflict!(transaction, "device_authorization_approved".to_owned());
         }
-        tx_try!(
-            transaction,
-            Self::insert_device_account_token(
-                &mut transaction,
-                command,
-                user_id,
-                row.value.requested_scopes,
-            )
-        );
-        let grant = row
-            .value
-            .consume(command.preassigned_token_id, command.now)
-            .map_err(|error| StoreError::Conflict {
-                constraint: error.to_string(),
-            })?;
+        // Rolled back explicitly rather than with `?`: an early return that
+        // leaves the transaction open strands it on the service until the idle
+        // timeout, and every other exit from this ceremony ends it.
+        let grant = match row.value.consume(command.preassigned_token_id, command.now) {
+            Ok(grant) => grant,
+            Err(error) => {
+                tx_conflict!(transaction, error.to_string());
+            }
+        };
         let token = AccountToken {
             id: command.preassigned_token_id,
             user_id,
@@ -1176,10 +1310,7 @@ impl IdentityStore for AuroraIdentityStore {
             )
         );
         if affected != 1 {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::Conflict {
-                constraint: "account_token_live".to_owned(),
-            });
+            tx_conflict!(transaction, "account_token_live".to_owned());
         }
         let remaining = tx_try!(
             transaction,

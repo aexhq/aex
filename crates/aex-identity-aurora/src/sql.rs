@@ -221,6 +221,12 @@ UPDATE identity.device_authorization d \
 /// Runs in the same transaction as the account-token insert. A grant consumed
 /// without a token is a credential the caller can never obtain; a token without
 /// a consumed grant is one they could obtain twice.
+///
+/// It runs **after** [`INSERT_ACCOUNT_TOKEN`], never before. `:token_id` lands
+/// in `account_token_id`, whose foreign key is not `DEFERRABLE`, so the row it
+/// names has to exist by the time this statement runs or `PostgreSQL` answers
+/// 23503. `store::consume_device_authorization` owns that order and
+/// `a_redemption_inserts_the_token_before_the_grant_points_at_it` pins it.
 pub const CONSUME_DEVICE_AUTHORIZATION: &str = "\
 UPDATE identity.device_authorization \
    SET status = 'consumed', \
