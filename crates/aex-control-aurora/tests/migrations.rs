@@ -44,11 +44,13 @@ CREATE ROLE aex_authz_login          LOGIN PASSWORD 'fixture'; \
 CREATE ROLE aex_control_api_login    LOGIN PASSWORD 'fixture'; \
 CREATE ROLE aex_control_worker_login LOGIN PASSWORD 'fixture'; \
 CREATE ROLE aex_finance_api_login    LOGIN PASSWORD 'fixture'; \
+CREATE ROLE aex_finance_ingest_login LOGIN PASSWORD 'fixture'; \
 GRANT aex_identity_api   TO aex_identity_api_login; \
 GRANT aex_authz          TO aex_authz_login; \
 GRANT aex_control_api    TO aex_control_api_login; \
 GRANT aex_control_worker TO aex_control_worker_login; \
-GRANT aex_finance_api    TO aex_finance_api_login;";
+GRANT aex_finance_api    TO aex_finance_api_login; \
+GRANT aex_finance_ingest TO aex_finance_ingest_login;";
 
 /// The committed privilege model, parsed once.
 fn grants() -> &'static GrantSet {
@@ -1227,5 +1229,54 @@ async fn finance_reads_one_identity_column_and_only_through_its_wrapper() {
     assert!(
         direct.is_err(),
         "aex_finance_api must hold no privilege in identity"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_pause_crosses_a_privilege_boundary_the_balance_writer_does_not_hold() {
+    let fixture = Fixture::start().await;
+    let mut superuser = fixture.superuser().await;
+    let (organization, workspace) = organization_with_workspace(
+        &mut superuser,
+        0x0192_3f2a_1c00_7000_8000_0000_0000_0090,
+        "ingest-pause",
+        "ingest-pause@b.test",
+    )
+    .await;
+
+    // This is the whole justification for putting the rule on the row. The role
+    // that applies a settled top-up holds `finance` and nothing else: no `control`
+    // schema, no `control.outbox_message`, no epoch wrapper. It cannot write the
+    // pause, cannot bump the epoch and cannot enqueue the projection — and all
+    // three still happen, in its own transaction, because the chain is
+    // `SECURITY DEFINER` from the balance row down.
+    let mut ingest = fixture.as_role("aex_finance_ingest_login").await;
+    assert!(
+        sqlx::query("SELECT 1 FROM control.outbox_message LIMIT 1")
+            .fetch_optional(&mut ingest)
+            .await
+            .is_err(),
+        "the balance writer must hold nothing in control"
+    );
+
+    set_available(&mut ingest, organization, 3_000_000).await;
+    set_available(&mut ingest, organization, 0).await;
+
+    assert_eq!(
+        account_state(&mut superuser, organization).await,
+        ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
+        "a role that cannot write the column still stops the account"
+    );
+    let messages: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM control.outbox_message \
+          WHERE topic = 'account.state.changed' AND payload->>'workspaceId' = $1",
+    )
+    .bind(workspace.to_string())
+    .fetch_one(&mut superuser)
+    .await
+    .expect("the projection messages count");
+    assert_eq!(
+        messages, 1,
+        "the pause reached the region through a role that cannot reach control"
     );
 }
