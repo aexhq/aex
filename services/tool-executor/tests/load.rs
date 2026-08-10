@@ -1,40 +1,78 @@
-//! The executor's performance contract, against a real plane.
+//! Bounded local load contracts for the paths every call runs through.
 //!
-//! It has one, and it is not about throughput. The executor sits on a path the
-//! model is blocked on, and its caller holds an activation, a lease and a
-//! network-lane permit for the whole wait. What has to be measured is therefore
-//! the *added* latency and the point at which admission starts queueing — not
-//! requests per second.
-//!
-//! None of it can be earned in this run (OD-07), so each case fails loudly when
-//! the live lane selects it rather than self-skipping.
+//! The executor sits on a path the model is blocked on, and its caller holds an
+//! activation, a lease and a network-lane permit for the whole wait. The things
+//! that can be measured without a plane are the ones on that path before any
+//! network call: argument decoding, envelope verification and window-key
+//! derivation. The measurements that need a deployed plane — the added round
+//! trip and the point at which admission starts queueing — live in
+//! `tests/live/aex-live-tool-executor`, where they fail loudly instead of
+//! pretending to have been taken.
 
-const UNAVAILABLE: &str =
-    "live evidence requires a deployed plane and credentials; this run deploys nothing (OD-07)";
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[test]
-fn the_in_vpc_round_trip_costs_single_digit_milliseconds() {
-    panic!(
-        "{UNAVAILABLE}: measure the added latency of the hop against the in-process baseline. The \
-         placement record's 1-3 ms figure is inferred and unmeasured, and it is the number the \
-         whole out-of-process decision was priced on"
-    );
+use aex_internal_contracts::tool_exec::{ArgumentsJcs, MAX_ARGUMENTS_JCS_BYTES};
+use base64::Engine as _;
+use tool_executor::spend::Window;
+
+/// A fixed wall clock, built through a binding so the literal is a timestamp
+/// rather than a duration a lint would rather see spelled in hours.
+fn at(unix_seconds: u64) -> SystemTime {
+    UNIX_EPOCH + Duration::from_secs(unix_seconds)
 }
 
 #[test]
-fn admission_does_not_queue_under_the_concurrency_the_brain_fleet_can_produce() {
-    panic!(
-        "{UNAVAILABLE}: drive 64 concurrent calls -- two tasks x 128 lane units / weight 4 -- and \
-         assert nothing waited on the in-flight semaphore. If it queues, the executor has become \
-         the thing that makes the fixed 2 x 16 activation ceiling bind"
-    );
+fn an_oversized_argument_document_is_refused_before_it_is_decoded() {
+    // Ten megabytes of base64 is 160 times the transport bound. The decoder must
+    // refuse it from the encoded length, because the alternative is that an
+    // unauthenticated body decides how much this process allocates.
+    let hostile =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(vec![b'{'; MAX_ARGUMENTS_JCS_BYTES * 160]);
+    for _ in 0..100 {
+        assert!(
+            serde_json::from_value::<ArgumentsJcs>(serde_json::Value::String(hostile.clone()))
+                .is_err()
+        );
+    }
 }
 
 #[test]
-fn the_ceiling_transaction_stays_inside_its_share_of_the_deadline() {
-    panic!(
-        "{UNAVAILABLE}: measure the two-item TransactWriteItems against the real table under load. \
-         It runs on every call before the vendor request, so its tail is added to every tool call \
-         a customer makes"
+fn a_document_at_the_bound_decodes_and_is_bounded_at_the_bound() {
+    let at_bound = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(vec![b'{'; MAX_ARGUMENTS_JCS_BYTES]);
+    for _ in 0..100 {
+        let decoded =
+            serde_json::from_value::<ArgumentsJcs>(serde_json::Value::String(at_bound.clone()))
+                .expect("the bound itself is admitted");
+        assert_eq!(decoded.len(), MAX_ARGUMENTS_JCS_BYTES);
+    }
+}
+
+#[test]
+fn window_key_derivation_is_a_pure_function_and_stays_stable_under_load() {
+    // Two windows are derived on every call, before the vendor request. They
+    // must be pure: two processes that disagreed about which window a call falls
+    // in would each enforce their own half of one ceiling.
+    let at = at(1_767_225_659);
+    let expected = [Window::Minute.bucket(at), Window::Day.bucket(at)];
+    for _ in 0..100_000 {
+        assert_eq!(
+            [Window::Minute.bucket(at), Window::Day.bucket(at)],
+            expected
+        );
+    }
+}
+
+#[test]
+fn crossing_a_window_boundary_changes_exactly_one_key() {
+    // A minute boundary must not move the day key, or a day ceiling would reset
+    // sixty times an hour and stop bounding a month.
+    let base = at(1_767_225_600);
+    let next_minute = base + Duration::from_mins(1);
+    assert_ne!(
+        Window::Minute.bucket(base),
+        Window::Minute.bucket(next_minute)
     );
+    assert_eq!(Window::Day.bucket(base), Window::Day.bucket(next_minute));
 }

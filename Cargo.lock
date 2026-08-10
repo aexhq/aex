@@ -8177,6 +8177,7 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws-sdk-secretsmanager",
  "axum",
+ "base64 0.23.0",
  "blake3",
  "serde",
  "serde_json",

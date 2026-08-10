@@ -65,6 +65,20 @@ fn the_task_role_is_denied_every_store_it_does_not_need() {
 }
 
 #[test]
+fn the_in_vpc_round_trip_costs_single_digit_milliseconds() {
+    panic!(
+        "{UNAVAILABLE}: measure the added latency of the hop against the in-process baseline. The          placement record's 1-3 ms figure is inferred and unmeasured, and it is the number the          whole out-of-process decision was priced on"
+    );
+}
+
+#[test]
+fn admission_does_not_queue_under_the_concurrency_the_brain_fleet_can_produce() {
+    panic!(
+        "{UNAVAILABLE}: drive 64 concurrent calls -- two tasks x 128 lane units / weight 4 -- and          assert nothing waited on the in-flight semaphore. If it queues, the executor has become          the thing that makes the fixed 2 x 16 activation ceiling bind"
+    );
+}
+
+#[test]
 fn a_deploy_stalls_no_in_flight_call_for_longer_than_one_deadline() {
     panic!(
         "{UNAVAILABLE}: hold a call open, roll the service, and measure how long the caller's \
