@@ -36,7 +36,7 @@ use async_trait::async_trait;
 use aws_sdk_rdsdata::types::{Field, SqlParameter};
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::{PgPoolOptions, PgRow};
-use sqlx::{Column, Executor, PgConnection, PgPool, Postgres, Row as _, TypeInfo as _};
+use sqlx::{AssertSqlSafe, Column, Executor, PgConnection, PgPool, Postgres, Row as _, TypeInfo as _};
 
 use aex_rds_data::client::{ExecuteResponse, Transport, TransportError};
 use aex_rds_data::error::ExceptionKind;
@@ -145,7 +145,7 @@ impl Transport for PostgresDataApi {
             Some(id) => {
                 let session = self.session(id)?;
                 let mut guard = session.lock().await;
-                run(&mut *guard, &rendered).await
+                run(&mut **guard, &rendered).await
             }
         }
     }
@@ -197,7 +197,7 @@ async fn run<'connection, E>(
 where
     E: Executor<'connection, Database = Postgres>,
 {
-    let mut query = sqlx::query(&rendered.sql);
+    let mut query = sqlx::query(AssertSqlSafe(rendered.sql.clone()));
     for bound in &rendered.binds {
         query = match bound {
             Bound::Bool(value) => query.bind(*value),

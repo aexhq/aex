@@ -77,7 +77,7 @@ fn rust_string(body: &str) -> (String, usize) {
                     b'\n' => {
                         while bytes
                             .get(index)
-                            .is_some_and(|byte| byte.is_ascii_whitespace())
+                            .is_some_and(u8::is_ascii_whitespace)
                         {
                             index += 1;
                         }

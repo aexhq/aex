@@ -43,7 +43,7 @@
 
 pub mod data_api;
 
-pub use data_api::literal::{RecordError, parse_array_literal, parse_row_literal};
+pub use data_api::literal::{RowTextError, parse_array_literal, parse_row_literal};
 pub use data_api::render::{Bound, RenderError, Rendered, Shape, render};
 #[cfg(feature = "integration-engines")]
 pub use data_api::transport::PostgresDataApi;

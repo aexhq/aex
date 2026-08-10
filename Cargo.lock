@@ -1178,14 +1178,24 @@ dependencies = [
 name = "aex-scenarios"
 version = "0.1.0"
 dependencies = [
+ "aex-control-app",
+ "aex-control-aurora",
+ "aex-control-domain",
+ "aex-identity-app",
+ "aex-identity-aurora",
+ "aex-identity-domain",
  "aex-rds-data",
  "aex-test-harness",
+ "aex-wire",
  "async-trait",
  "aws-sdk-rdsdata",
  "aws-smithy-types",
+ "central-schema-admin",
  "hex",
+ "serde_json",
  "sqlx",
  "thiserror",
+ "time",
  "tokio",
  "uuid",
 ]

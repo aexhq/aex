@@ -26,7 +26,7 @@ use aws_smithy_types::Blob;
 
 /// Why a rendered row could not be read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum RecordError {
+pub enum RowTextError {
     /// The row text was not a composite literal.
     #[error("row text `{text}` is not a parenthesised composite literal")]
     NotARow {
@@ -122,14 +122,14 @@ pub fn projection_of(postgres_type: &str) -> Projection {
 ///
 /// # Errors
 ///
-/// Returns [`RecordError`] when the engine's own output does not parse as the
+/// Returns [`RowTextError`] when the engine's own output does not parse as the
 /// type the column claims, which is a defect in this module rather than in the
 /// statement, and must therefore be loud.
 pub fn field(
     index: usize,
     postgres_type: &str,
     text: Option<&str>,
-) -> Result<Field, RecordError> {
+) -> Result<Field, RowTextError> {
     let Some(text) = text else {
         return Ok(Field::IsNull(true));
     };
@@ -138,14 +138,14 @@ pub fn field(
             "t" | "true" => Field::BooleanValue(true),
             "f" | "false" => Field::BooleanValue(false),
             other => {
-                return Err(RecordError::NotABoolean {
+                return Err(RowTextError::NotABoolean {
                     index,
                     postgres_type: postgres_type.to_owned(),
                     text: other.to_owned(),
                 });
             }
         },
-        Projection::Long => Field::LongValue(text.parse().map_err(|_| RecordError::NotANumber {
+        Projection::Long => Field::LongValue(text.parse().map_err(|_| RowTextError::NotANumber {
             index,
             postgres_type: postgres_type.to_owned(),
             text: text.to_owned(),
@@ -153,12 +153,12 @@ pub fn field(
         Projection::Blob => {
             let hex = text
                 .strip_prefix("\\x")
-                .ok_or_else(|| RecordError::NotBytea {
+                .ok_or_else(|| RowTextError::NotBytea {
                     index,
                     text: text.to_owned(),
                 })?;
             Field::BlobValue(Blob::new(hex::decode(hex).map_err(|_| {
-                RecordError::NotBytea {
+                RowTextError::NotBytea {
                     index,
                     text: text.to_owned(),
                 }
@@ -168,7 +168,7 @@ pub fn field(
             text,
         )?)),
         Projection::Double => {
-            Field::DoubleValue(text.parse().map_err(|_| RecordError::NotANumber {
+            Field::DoubleValue(text.parse().map_err(|_| RowTextError::NotANumber {
                 index,
                 postgres_type: postgres_type.to_owned(),
                 text: text.to_owned(),
@@ -185,13 +185,13 @@ pub fn field(
 ///
 /// # Errors
 ///
-/// Returns [`RecordError`] when the text is not a composite literal or a quoted
+/// Returns [`RowTextError`] when the text is not a composite literal or a quoted
 /// field never closes.
-pub fn parse_row_literal(text: &str) -> Result<Vec<Option<String>>, RecordError> {
+pub fn parse_row_literal(text: &str) -> Result<Vec<Option<String>>, RowTextError> {
     let inner = text
         .strip_prefix('(')
         .and_then(|rest| rest.strip_suffix(')'))
-        .ok_or_else(|| RecordError::NotARow {
+        .ok_or_else(|| RowTextError::NotARow {
             text: text.to_owned(),
         })?;
     // `()` is a one-column row holding NULL, not a zero-column row: `record_out`
@@ -220,7 +220,7 @@ pub fn parse_row_literal(text: &str) -> Result<Vec<Option<String>>, RecordError>
                 }
             }
             b'\\' if quoted => {
-                let escaped = bytes.get(index + 1).ok_or_else(|| RecordError::Unterminated {
+                let escaped = bytes.get(index + 1).ok_or_else(|| RowTextError::Unterminated {
                     text: text.to_owned(),
                 })?;
                 current.push(char::from(*escaped));
@@ -240,7 +240,7 @@ pub fn parse_row_literal(text: &str) -> Result<Vec<Option<String>>, RecordError>
         }
     }
     if quoted {
-        return Err(RecordError::Unterminated {
+        return Err(RowTextError::Unterminated {
             text: text.to_owned(),
         });
     }
@@ -252,13 +252,13 @@ pub fn parse_row_literal(text: &str) -> Result<Vec<Option<String>>, RecordError>
 ///
 /// # Errors
 ///
-/// Returns [`RecordError`] when the text is not an array literal or a quoted
+/// Returns [`RowTextError`] when the text is not an array literal or a quoted
 /// element never closes.
-pub fn parse_array_literal(text: &str) -> Result<Vec<Option<String>>, RecordError> {
+pub fn parse_array_literal(text: &str) -> Result<Vec<Option<String>>, RowTextError> {
     let inner = text
         .strip_prefix('{')
         .and_then(|rest| rest.strip_suffix('}'))
-        .ok_or_else(|| RecordError::NotARow {
+        .ok_or_else(|| RowTextError::NotARow {
             text: text.to_owned(),
         })?;
     let mut elements = Vec::new();
@@ -278,7 +278,7 @@ pub fn parse_array_literal(text: &str) -> Result<Vec<Option<String>>, RecordErro
                 index += 1;
             }
             b'\\' if quoted => {
-                let escaped = bytes.get(index + 1).ok_or_else(|| RecordError::Unterminated {
+                let escaped = bytes.get(index + 1).ok_or_else(|| RowTextError::Unterminated {
                     text: text.to_owned(),
                 })?;
                 current.push(char::from(*escaped));
@@ -298,7 +298,7 @@ pub fn parse_array_literal(text: &str) -> Result<Vec<Option<String>>, RecordErro
         }
     }
     if quoted {
-        return Err(RecordError::Unterminated {
+        return Err(RowTextError::Unterminated {
             text: text.to_owned(),
         });
     }

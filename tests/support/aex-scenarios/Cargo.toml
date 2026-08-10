@@ -1,7 +1,7 @@
 [package]
 name = "aex-scenarios"
 version = "0.1.0"
-description = "The cross-service scenario bodies, composed against digest-pinned engines so they execute before a plane exists and promote to the live layer unchanged."
+description = "The cross-service scenario bodies, written against the engine-backed integration lane rather than against a plane that does not exist yet."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -28,6 +28,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 properties = "unit"
+control_workspace = "integration"
 
 [package.metadata.aex.not_applicable]
 live_suite = "test-only crate; must be absent from every production link graph"
@@ -57,9 +58,27 @@ tokio = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
-aex-test-harness = { path = "../aex-test-harness" }
+async-trait.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+time.workspace = true
+uuid.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+aex-control-app = { path = "../../../crates/aex-control-app" }
+aex-control-aurora = { path = "../../../crates/aex-control-aurora" }
+aex-control-domain = { path = "../../../crates/aex-control-domain" }
+aex-identity-domain = { path = "../../../crates/aex-identity-domain" }
+aex-test-harness = { path = "../aex-test-harness" }
+aex-wire = { path = "../../../crates/aex-wire" }
+# The migration bundle and the privilege renderer a plane applies, so the schema
+# a scenario runs against is the schema a plane receives.
+central-schema-admin = { path = "../../../workers/central-schema-admin" }
 
 [[test]]
 name = "properties"
 path = "tests/properties.rs"
+
+[[test]]
+name = "control_workspace"
+path = "tests/control_workspace.rs"
+required-features = ["integration-engines"]

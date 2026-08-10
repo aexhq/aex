@@ -330,9 +330,9 @@ fn scan(sql: &str, parameters: &[SqlParameter]) -> Result<Scan, RenderError> {
                 out.push_str("::");
                 index += 2;
             }
-            b':' if bytes.get(index + 1).is_some_and(is_name_byte) => {
+            b':' if bytes.get(index + 1).is_some_and(|byte| is_name_byte(*byte)) => {
                 let mut cursor = index + 1;
-                while bytes.get(cursor).is_some_and(is_name_byte) {
+                while bytes.get(cursor).is_some_and(|byte| is_name_byte(*byte)) {
                     cursor += 1;
                 }
                 let name = &sql[index + 1..cursor];
@@ -351,7 +351,7 @@ fn scan(sql: &str, parameters: &[SqlParameter]) -> Result<Scan, RenderError> {
             b'$' => return Err(RenderError::ReservedDollar),
             _ if byte.is_ascii_alphabetic() || byte == b'_' => {
                 let mut cursor = index;
-                while bytes.get(cursor).is_some_and(is_name_byte) {
+                while bytes.get(cursor).is_some_and(|byte| is_name_byte(*byte)) {
                     cursor += 1;
                 }
                 let word = &sql[index..cursor];
@@ -377,8 +377,8 @@ fn scan(sql: &str, parameters: &[SqlParameter]) -> Result<Scan, RenderError> {
 }
 
 /// Whether a byte may continue an unquoted SQL name.
-fn is_name_byte(byte: &u8) -> bool {
-    byte.is_ascii_alphanumeric() || *byte == b'_'
+const fn is_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 /// Emits the placeholder for one parameter, reusing the slot of a repeat.
