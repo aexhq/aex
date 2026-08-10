@@ -285,16 +285,15 @@ impl IdentityStore for MemoryIdentity {
         &self,
         command: &DecideDeviceAuthorizationCommand,
     ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
-        // `DENY_DEVICE_AUTHORIZATION` carries no approver-currency `EXISTS`,
-        // unlike its approving twin, and this mirrors that faithfully rather
-        // than tidying it: refusing a device is the safe direction, and a
-        // fixture that were stricter than the statement would hide the day the
-        // statement needs to change.
-        self.decide(
-            command,
-            &[DeviceState::Pending, DeviceState::Approved],
-            DeviceState::Denied,
-        )
+        // The same predicate as its approving twin, because the statement now
+        // carries the same one. Until 2026-08-10 it carried neither the actor
+        // `EXISTS` nor a single-state guard, and this fixture mirrored that
+        // faithfully; refusing a device is not the safe direction, because a
+        // refusal ends a sign-in that belongs to somebody else.
+        if !self.actor_is_current(command.actor_session_id, command.actor_user_id, command.now) {
+            return Err(StoreError::NotFound);
+        }
+        self.decide(command, &[DeviceState::Pending], DeviceState::Denied)
     }
 
     async fn resolve_or_create_by_external_identity(

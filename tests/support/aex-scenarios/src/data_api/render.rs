@@ -164,13 +164,19 @@ const COMMANDS: [&str; 6] = ["SELECT", "INSERT", "UPDATE", "DELETE", "VALUES", "
 /// Returns [`RenderError`] for a parameter this transport cannot bind, a
 /// parameter mismatch in either direction, or an unterminated literal.
 /// A supplied parameter the statement never references is **not** an error, and
-/// that tolerance is deliberate rather than lax. `aex-identity-aurora`'s
-/// `decide_device` binds the same four parameters for approve and deny, and
-/// `DENY_DEVICE_AUTHORIZATION` references only two of them. Refusing that here
-/// would make this transport stricter than the service the statement is written
-/// for, and would fail a committed production path for a reason production does
-/// not have. The mistake this check would have caught — a misspelled name — is
-/// caught from the other direction by [`RenderError::MissingParameter`].
+/// that tolerance is deliberate rather than lax: the Data `API` itself ignores
+/// one, so refusing it here would make this transport stricter than the service
+/// the statements are written for and would fail a committed path for a reason
+/// production does not have. The mistake this check would have caught — a
+/// misspelled name — is caught from the other direction by
+/// [`RenderError::MissingParameter`].
+///
+/// The case that motivated it was `DENY_DEVICE_AUTHORIZATION`, which took the
+/// four parameters `decide_device` binds for both decisions and referenced only
+/// two. That turned out to be the defect it looks like rather than a shape
+/// worth accommodating, and the statement now references all four. The
+/// tolerance stays, because it describes the service rather than that
+/// statement.
 pub fn render(sql: &str, parameters: &[SqlParameter]) -> Result<Rendered, RenderError> {
     let scan = scan(sql, parameters)?;
     let (shape, sql, dml) = wrap(&scan)?;

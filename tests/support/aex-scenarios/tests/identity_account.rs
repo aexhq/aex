@@ -36,7 +36,7 @@ use aex_identity_app::use_cases::{
 };
 use aex_identity_aurora::AuroraIdentityStore;
 use aex_identity_domain::{
-    CredentialKind, Pepper, PepperVersion, PresentedDigest, SecretRng, User, parse,
+    CredentialKind, DeviceState, Pepper, PepperVersion, PresentedDigest, SecretRng, User, parse,
 };
 use sqlx::Executor as _;
 use time::OffsetDateTime;
@@ -349,19 +349,30 @@ async fn a_redeemed_grant_cannot_be_redeemed_a_second_time_into_a_second_token()
 }
 
 #[tokio::test]
-async fn one_person_cannot_deny_another_persons_device_grant() {
+async fn a_device_decision_needs_the_live_session_the_actor_claims_to_hold() {
     // Tenant isolation on the identity plane, which the priority order counts as
-    // correctness rather than security: a denial by a stranger is a denial of
-    // sign-in, and the user code is the only thing they would need to know.
+    // correctness rather than security: a refusal ends somebody else's sign-in.
     //
-    // `APPROVE_DEVICE_AUTHORIZATION` makes the approver's currency part of the
-    // predicate with an `EXISTS` over a live session belonging to an active
-    // person. `DENY_DEVICE_AUTHORIZATION` has no such clause and binds
-    // `:actor_user_id` and `:actor_session_id` without referencing either.
+    // `APPROVE_DEVICE_AUTHORIZATION` made the actor's currency part of the
+    // predicate from the start, with an `EXISTS` over a live session belonging
+    // to an active person. Until 2026-08-10 `DENY_DEVICE_AUTHORIZATION` had no
+    // such clause: `decide_device` bound `:actor_user_id` and
+    // `:actor_session_id` for both paths and deny referenced neither, so a
+    // caller holding no session at all could refuse a grant they had nothing
+    // but the user code for.
+    //
+    // What the ceremony deliberately does **not** promise, and what this case
+    // therefore does not assert: a pending grant has no owner to compare an
+    // actor against, so any current actor holding the user code may refuse it,
+    // exactly as any current actor may approve it and bind their own account to
+    // the device. The user code is the capability — RFC 8628 — and its entropy
+    // and its fifteen minutes are what protect it. The predicate's job is to
+    // establish that there is a current actor at all, and that the session
+    // presented belongs to the person presenting it.
     let plane = support::CentralPlane::start().await;
     let world = World::start(&plane).await;
     let (owner, owner_session, _owner_secret) = world.sign_in("founder").await;
-    let (stranger, stranger_session, _stranger_secret) = world.sign_in("stranger").await;
+    let (stranger, _stranger_session, _stranger_secret) = world.sign_in("stranger").await;
     assert_ne!(owner.id, stranger.id);
 
     let started = StartDeviceAuthorization::run(
@@ -372,26 +383,83 @@ async fn one_person_cannot_deny_another_persons_device_grant() {
     .await
     .expect("the device authorization ceremony commits");
 
-    let refused = DenyDevice::run(
+    // A live session, but somebody else's. `s.user_id = :actor_user_id` is the
+    // conjunct that refuses it; without that pairing the `EXISTS` would admit
+    // any session that happened to be current.
+    let borrowed = DenyDevice::run(
         &world.deps(),
-        &world.context("device-deny"),
+        &world.context("deny-borrowed-session"),
         &started.user_code,
         stranger.id,
-        stranger_session,
+        owner_session,
     )
     .await;
     assert!(
         matches!(
-            refused,
+            borrowed,
             Err(IdentityError::NotFound | IdentityError::AccessDenied)
         ),
-        "a person with no relationship to a device grant must not be able to refuse it, \
-         but the deny statement answered {refused:?}"
+        "a session belonging to another person must not authorize a decision, \
+         but the deny statement answered {borrowed:?}"
     );
 
-    // And the owner's own approval still works afterwards, so the case above
-    // cannot pass by having broken the grant for everybody.
-    let approved = ApproveDevice::run(
+    // And a caller holding no session whatsoever, which is what the statement
+    // admitted before it carried the clause at all.
+    let sessionless = DenyDevice::run(
+        &world.deps(),
+        &world.context("deny-without-a-session"),
+        &started.user_code,
+        stranger.id,
+        Uuid::now_v7(),
+    )
+    .await;
+    assert!(
+        matches!(
+            sessionless,
+            Err(IdentityError::NotFound | IdentityError::AccessDenied)
+        ),
+        "a caller holding no browser session must not be able to refuse a grant, \
+         but the deny statement answered {sessionless:?}"
+    );
+
+    // Neither refusal touched the grant, and refusal still works for an actor
+    // who really does hold the session they claim — so this case cannot pass by
+    // having broken the deny path for everybody.
+    let refused = DenyDevice::run(
+        &world.deps(),
+        &world.context("deny-by-a-current-actor"),
+        &started.user_code,
+        owner.id,
+        owner_session,
+    )
+    .await
+    .expect("a current actor holding the user code may refuse the grant");
+    assert_eq!(refused.state, DeviceState::Denied);
+}
+
+#[tokio::test]
+async fn an_approved_grant_cannot_be_retracted_by_a_later_denial() {
+    // `DENY_DEVICE_AUTHORIZATION` used to admit `status IN ('pending','approved')`.
+    // Retracting an approved grant is not a capability this platform offers, and
+    // it never was one: `dev_approved_ck` asserts that
+    // `(status IN ('approved','consumed')) = (approved_by_user_id IS NOT NULL)`,
+    // so writing `denied` over an approved row while leaving the approver in
+    // place raises 23514. The wider status set could only ever have produced a
+    // check violation, never a retraction. The remedy for a grant somebody
+    // regrets is revoking the token it minted, which names the token and matches
+    // its owner — something a decision keyed by user code cannot do.
+    let plane = support::CentralPlane::start().await;
+    let world = World::start(&plane).await;
+    let (owner, owner_session, _owner_secret) = world.sign_in("founder").await;
+
+    let started = StartDeviceAuthorization::run(
+        &world.deps(),
+        &world.context("device-start"),
+        ScopeSet::of(&[Scope::SessionsRead]),
+    )
+    .await
+    .expect("the device authorization ceremony commits");
+    ApproveDevice::run(
         &world.deps(),
         &world.context("device-approve"),
         &started.user_code,
@@ -399,6 +467,37 @@ async fn one_person_cannot_deny_another_persons_device_grant() {
         owner_session,
     )
     .await
-    .expect("the grant is still approvable by the person it belongs to");
-    assert_eq!(approved.approved_by, Some(owner.id));
+    .expect("the person approves their own device");
+
+    let retracted = DenyDevice::run(
+        &world.deps(),
+        &world.context("device-retract"),
+        &started.user_code,
+        owner.id,
+        owner_session,
+    )
+    .await;
+    assert!(
+        matches!(
+            retracted,
+            Err(IdentityError::NotFound | IdentityError::AccessDenied)
+        ),
+        "an approved grant must not be retractable, but the deny statement answered {retracted:?}"
+    );
+
+    // The approval the denial could not retract still redeems, so the narrowed
+    // status set refuses the retraction rather than breaking the grant.
+    let digest = parse(CredentialKind::DeviceCode, started.device_code.expose())
+        .expect("the device code parses")
+        .digest;
+    let redeemed = PollDevice::run(
+        &world.deps(),
+        &world.context("device-poll"),
+        started.grant.id,
+        digest,
+    )
+    .await
+    .expect("the grant the denial could not retract still redeems");
+    assert!(redeemed.secret.expose().starts_with("aex_at_"));
+    assert_eq!(redeemed.record.token.user_id, owner.id);
 }

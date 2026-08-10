@@ -380,11 +380,12 @@ fn a_statement_binding_a_name_nobody_supplies_is_refused() {
 
 #[test]
 fn a_supplied_parameter_the_statement_ignores_is_tolerated() {
-    // Not laxity: `aex-identity-aurora`'s `decide_device` binds four parameters
-    // for both the approve and the deny path, and `DENY_DEVICE_AUTHORIZATION`
-    // references only two of them. Refusing that here would make this transport
-    // stricter than the service the statement was written for, and would fail a
-    // committed production path for a reason production does not have.
+    // Not laxity: the Data API ignores a parameter the statement does not
+    // reference, so refusing one here would make this transport stricter than
+    // the service the statements were written for. The case that motivated it
+    // was `DENY_DEVICE_AUTHORIZATION` referencing two of the four parameters
+    // `decide_device` binds, which was a defect and is now fixed; the tolerance
+    // outlives it because it describes the service, not that statement.
     let rendered = render("SELECT 1", &[text("spare", "v")]).expect("renders");
     assert!(rendered.binds.is_empty());
 }
