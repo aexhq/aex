@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
+//! `sha256:22950d21b0f690b202384e2951498e7c72806885c4cc2803cd56edfc5b6f96c0`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -254,6 +254,41 @@ pub struct DashboardBootstrap {
     pub workspaces: Vec<Workspace>,
 }
 
+/// A minted browser session, returned exactly once.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DashboardSessionCredential {
+    /// When it stops verifying.
+    pub expires_at: Timestamp,
+    /// The bearer credential; hold it in an HttpOnly cookie, never in script-readable storage.
+    pub session: String,
+    /// The person it authenticates.
+    pub user_id: UserId,
+}
+
+/// Exchange a completed first-party provider sign-in for a browser session. The front end performs
+/// the provider handshake and asserts its result; this plane never dials a provider.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DashboardSessionRequest {
+    /// The address the provider asserts.
+    pub email: String,
+    /// Whether the provider asserts the address is verified.
+    pub email_verified: bool,
+    /// The first-party exchange secret; proves the caller is an AEX front end.
+    pub exchange_secret: String,
+    /// An avatar, when the provider supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<HttpsUrl>,
+    /// A display name, when the provider supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Which provider completed the sign-in.
+    pub provider: IdentityProvider,
+    /// The provider's own stable identifier for the person.
+    pub provider_account_id: String,
+}
+
 /// A pending device authorization the user must approve in a browser.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -282,6 +317,52 @@ pub struct DeviceAuthorizationRequest {
     pub scopes: Vec<ScopeId>,
 }
 
+/// What a person chose about a device authorization.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceDecision {
+    /// Let the device redeem an account token.
+    Approve,
+    /// Refuse the device; the code can never be redeemed.
+    Deny,
+}
+
+impl DeviceDecision {
+    /// Every value, in declared order.
+    pub const ALL: &'static [DeviceDecision] = &[DeviceDecision::Approve, DeviceDecision::Deny];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::Deny => "deny",
+        }
+    }
+}
+
+/// Approve or deny a pending device authorization by its user code.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeviceDecisionRequest {
+    /// What the person chose.
+    pub decision: DeviceDecision,
+    /// The short code the device displayed.
+    pub user_code: String,
+}
+
+/// The recorded outcome of a device decision.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DeviceDecisionResult {
+    /// When the decision was written.
+    pub decided_at: Timestamp,
+    /// What was recorded; never differs from the request.
+    pub decision: DeviceDecision,
+    /// The scopes the device asked for, so the page can name what it granted.
+    pub scopes: Vec<ScopeId>,
+}
+
 /// An issued account token.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -302,6 +383,31 @@ pub struct DeviceTokenRequest {
     pub client_id: String,
     /// The polling secret.
     pub device_code: String,
+}
+
+/// An external sign-in provider AEX links a person to.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityProvider {
+    /// GitHub.
+    Github,
+    /// Google.
+    Google,
+}
+
+impl IdentityProvider {
+    /// Every value, in declared order.
+    pub const ALL: &'static [IdentityProvider] =
+        &[IdentityProvider::Github, IdentityProvider::Google];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Github => "github",
+            Self::Google => "google",
+        }
+    }
 }
 
 /// A pending invitation to join an organization.

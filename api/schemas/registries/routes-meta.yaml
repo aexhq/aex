@@ -9,7 +9,7 @@
 # disagree about what `{sessionId}` is.
 contractVersion: v1
 expected:
-  central: 27
+  central: 30
   regional: 119
 pathParams:
   organizationId: { type: id, of: organization, doc: "The organization the request is scoped to." }
@@ -180,7 +180,10 @@ servedOperations:
     - workspace_get
     - workspaces_list
   central-identity-api:
+    - dashboard_session_create
+    - dashboard_session_delete
     - device_authorization_create
+    - device_decision_create
     - device_token_create
   finance-api:
     - billing_auto_topup_policy_get

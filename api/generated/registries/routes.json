@@ -590,6 +590,72 @@
       "altPrincipal": "anonymous",
       "bodyClass": "aex_json",
       "errors": [
+        "unauthenticated",
+        "forbidden",
+        "invalid_request",
+        "rate_limited",
+        "internal_error"
+      ],
+      "etag": "none",
+      "fragment": "auth",
+      "idempotency": "none",
+      "method": "POST",
+      "operationId": "dashboard_session_create",
+      "path": "/api/auth/sessions",
+      "pathParams": [],
+      "pauseExempt": true,
+      "plane": "central",
+      "queryParams": [],
+      "requestSchema": "DashboardSessionRequest",
+      "requiredScope": null,
+      "responseSchema": "DashboardSessionCredential",
+      "safeRetry": false,
+      "scenarios": [
+        "SC-IDENTITY-ACCOUNT"
+      ],
+      "servedArtifact": "central-identity-api",
+      "servingArtifact": "central-identity-api",
+      "successStatus": 201,
+      "summary": "Exchange a completed first-party provider sign-in for a browser session.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": "user_session",
+      "bodyClass": "none",
+      "errors": [
+        "unauthenticated",
+        "forbidden",
+        "insufficient_scope",
+        "rate_limited",
+        "internal_error"
+      ],
+      "etag": "none",
+      "fragment": "auth",
+      "idempotency": "none",
+      "method": "DELETE",
+      "operationId": "dashboard_session_delete",
+      "path": "/api/auth/sessions/current",
+      "pathParams": [],
+      "pauseExempt": true,
+      "plane": "central",
+      "queryParams": [],
+      "requestSchema": null,
+      "requiredScope": "account:write",
+      "responseSchema": null,
+      "safeRetry": false,
+      "scenarios": [
+        "SC-IDENTITY-ACCOUNT"
+      ],
+      "servedArtifact": "central-identity-api",
+      "servingArtifact": "central-identity-api",
+      "successStatus": 204,
+      "summary": "Close the browser session the caller presented.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": "anonymous",
+      "bodyClass": "aex_json",
+      "errors": [
         "invalid_request",
         "rate_limited",
         "internal_error"
@@ -615,6 +681,42 @@
       "servingArtifact": "central-identity-api",
       "successStatus": 201,
       "summary": "Begin the CLI device-authorization flow.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": "user_session",
+      "bodyClass": "aex_json",
+      "errors": [
+        "unauthenticated",
+        "forbidden",
+        "insufficient_scope",
+        "token_expired",
+        "not_found",
+        "invalid_request",
+        "rate_limited",
+        "internal_error"
+      ],
+      "etag": "none",
+      "fragment": "auth",
+      "idempotency": "none",
+      "method": "POST",
+      "operationId": "device_decision_create",
+      "path": "/api/auth/device/decisions",
+      "pathParams": [],
+      "pauseExempt": true,
+      "plane": "central",
+      "queryParams": [],
+      "requestSchema": "DeviceDecisionRequest",
+      "requiredScope": "account:write",
+      "responseSchema": "DeviceDecisionResult",
+      "safeRetry": false,
+      "scenarios": [
+        "SC-IDENTITY-ACCOUNT"
+      ],
+      "servedArtifact": "central-identity-api",
+      "servingArtifact": "central-identity-api",
+      "successStatus": 200,
+      "summary": "Approve or deny a pending device authorization.",
       "transport": "unary"
     },
     {

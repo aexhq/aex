@@ -63,10 +63,18 @@ pub mod keys {
     pub const REQUEST_DEADLINE_MS: &str = "AEX_CENTRAL_IDENTITY_REQUEST_DEADLINE_MS";
     /// The login role. Must be `aex_identity_api`.
     pub const ROLE: &str = "AEX_CENTRAL_IDENTITY_ROLE";
-    /// The dashboard BFF's expected `OIDC` subject.
-    pub const VERCEL_EXPECTED_SUBJECT: &str = "AEX_CENTRAL_IDENTITY_VERCEL_EXPECTED_SUBJECT";
-    /// The dashboard BFF's `OIDC` issuer.
-    pub const VERCEL_ISSUER: &str = "AEX_CENTRAL_IDENTITY_VERCEL_ISSUER";
+    /// The first-party sign-in exchange secret.
+    ///
+    /// This replaces `AEX_CENTRAL_IDENTITY_VERCEL_ISSUER` and
+    /// `..._VERCEL_EXPECTED_SUBJECT`, which were required at start-up and read
+    /// by nothing. They gated an `OIDC` verifier that was never written, and
+    /// writing one would mean fetching a `JWKS` over the public internet from a
+    /// plane whose Rust services reach AWS endpoints and nothing else — the same
+    /// reason `finance-api` hands Stripe commands to an edge rather than dialling
+    /// `api.stripe.com`. This is that trust boundary expressed as one shared
+    /// secret the plane already knows how to hold, and it is read on every
+    /// `dashboard_session_create`.
+    pub const SIGN_IN_EXCHANGE_SECRET_ID: &str = "AEX_CENTRAL_IDENTITY_SIGN_IN_EXCHANGE_SECRET_ID";
 
     /// Every key this binary reads, for the totality test.
     pub const ALL: &[&str] = &[
@@ -81,8 +89,7 @@ pub mod keys {
         REGION,
         REQUEST_DEADLINE_MS,
         ROLE,
-        VERCEL_EXPECTED_SUBJECT,
-        VERCEL_ISSUER,
+        SIGN_IN_EXCHANGE_SECRET_ID,
     ];
 }
 
@@ -121,10 +128,8 @@ pub struct Config {
     pub role: String,
     /// Where a person approves a device authorization.
     pub device_verification_uri: String,
-    /// The dashboard BFF's `OIDC` issuer.
-    pub vercel_issuer: String,
-    /// The dashboard BFF's expected `OIDC` subject.
-    pub vercel_expected_subject: String,
+    /// The secret holding the first-party sign-in exchange credential.
+    pub sign_in_exchange_secret_id: String,
 }
 
 impl Config {
@@ -176,8 +181,7 @@ impl Config {
             database: required(&lookup, keys::DATABASE)?,
             role,
             device_verification_uri: required(&lookup, keys::DEVICE_VERIFICATION_URI)?,
-            vercel_issuer: required(&lookup, keys::VERCEL_ISSUER)?,
-            vercel_expected_subject: required(&lookup, keys::VERCEL_EXPECTED_SUBJECT)?,
+            sign_in_exchange_secret_id: required(&lookup, keys::SIGN_IN_EXCHANGE_SECRET_ID)?,
         })
     }
 
@@ -197,6 +201,10 @@ impl Config {
                 (
                     keys::PEPPER_SECRET_ID.to_owned(),
                     self.pepper_secret_id.clone(),
+                ),
+                (
+                    keys::SIGN_IN_EXCHANGE_SECRET_ID.to_owned(),
+                    self.sign_in_exchange_secret_id.clone(),
                 ),
             ]),
         }
@@ -247,6 +255,7 @@ pub fn manifest() -> CompositionManifest {
         bindings: vec![
             CapabilityBinding::arn(keys::AURORA_CLUSTER_ARN, IdentityWrite::ID),
             CapabilityBinding::resource(keys::PEPPER_SECRET_ID, IdentityWrite::ID),
+            CapabilityBinding::resource(keys::SIGN_IN_EXCHANGE_SECRET_ID, IdentityWrite::ID),
         ],
     }
 }
@@ -267,6 +276,13 @@ pub struct Probes {
     pub aurora: bool,
     /// The active identity pepper loaded.
     pub pepper: bool,
+    /// The first-party sign-in exchange secret loaded.
+    ///
+    /// A process that cannot load it can never mint a browser session, and a
+    /// browser session is the only thing that can approve a device
+    /// authorization — so serving without it means the whole credential
+    /// ceremony fails at its second step rather than at start-up.
+    pub sign_in_exchange: bool,
 }
 
 impl Probes {
@@ -274,12 +290,14 @@ impl Probes {
     pub const NONE: Self = Self {
         aurora: false,
         pepper: false,
+        sign_in_exchange: false,
     };
 
     /// Every probe answered.
     pub const READY: Self = Self {
         aurora: true,
         pepper: true,
+        sign_in_exchange: true,
     };
 }
 
@@ -296,6 +314,10 @@ pub fn readiness(probes: Probes) -> Readiness {
             Dependency {
                 name: "identity-pepper",
                 resolved: probes.pepper,
+            },
+            Dependency {
+                name: "sign-in-exchange-secret",
+                resolved: probes.sign_in_exchange,
             },
         ],
     )

@@ -14,7 +14,10 @@
 {"bindings":{"operationId":"op_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"central_operation_get","path":"/api/operations/op_01kyw2qa4ne00r40r40m30e209","plane":"central"}
 {"bindings":{},"method":"GET","operationId":"central_operations_list","path":"/api/operations","plane":"central"}
 {"bindings":{},"method":"GET","operationId":"dashboard_bootstrap_get","path":"/api/bootstrap","plane":"central"}
+{"bindings":{},"method":"POST","operationId":"dashboard_session_create","path":"/api/auth/sessions","plane":"central"}
+{"bindings":{},"method":"DELETE","operationId":"dashboard_session_delete","path":"/api/auth/sessions/current","plane":"central"}
 {"bindings":{},"method":"POST","operationId":"device_authorization_create","path":"/api/auth/device/authorizations","plane":"central"}
+{"bindings":{},"method":"POST","operationId":"device_decision_create","path":"/api/auth/device/decisions","plane":"central"}
 {"bindings":{},"method":"POST","operationId":"device_token_create","path":"/api/auth/device/tokens","plane":"central"}
 {"bindings":{"organizationId":"org_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"invitation_create","path":"/api/organizations/org_01kyw2qa4ne00r40r40m30e209/invitations","plane":"central"}
 {"bindings":{"organizationId":"org_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"memberships_list","path":"/api/organizations/org_01kyw2qa4ne00r40r40m30e209/memberships","plane":"central"}

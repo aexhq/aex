@@ -261,6 +261,58 @@ schemas:
       expiresAt: { type: timestamp, doc: "When the token stops verifying." }
       scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes it carries." }
 
+  DeviceDecision:
+    doc: What a person chose about a device authorization.
+    type: enum
+    values:
+      - { value: approve, doc: "Let the device redeem an account token." }
+      - { value: deny, doc: "Refuse the device; the code can never be redeemed." }
+
+  DeviceDecisionRequest:
+    doc: Approve or deny a pending device authorization by its user code.
+    type: object
+    fields:
+      userCode: { type: string, min: 6, max: 16, doc: "The short code the device displayed." }
+      decision: { type: ref, to: DeviceDecision, doc: "What the person chose." }
+
+  DeviceDecisionResult:
+    doc: The recorded outcome of a device decision.
+    type: object
+    fields:
+      decision: { type: ref, to: DeviceDecision, doc: "What was recorded; never differs from the request." }
+      decidedAt: { type: timestamp, doc: "When the decision was written." }
+      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes the device asked for, so the page can name what it granted." }
+
+  IdentityProvider:
+    doc: An external sign-in provider AEX links a person to.
+    type: enum
+    values:
+      - { value: github, doc: "GitHub." }
+      - { value: google, doc: "Google." }
+
+  DashboardSessionRequest:
+    doc: >-
+      Exchange a completed first-party provider sign-in for a browser session.
+      The front end performs the provider handshake and asserts its result; this
+      plane never dials a provider.
+    type: object
+    fields:
+      exchangeSecret: { type: string, min: 32, max: 256, doc: "The first-party exchange secret; proves the caller is an AEX front end." }
+      provider: { type: ref, to: IdentityProvider, doc: "Which provider completed the sign-in." }
+      providerAccountId: { type: string, min: 1, max: 255, doc: "The provider's own stable identifier for the person." }
+      email: { type: string, min: 3, max: 254, doc: "The address the provider asserts." }
+      emailVerified: { type: boolean, doc: "Whether the provider asserts the address is verified." }
+      name: { type: string, min: 1, max: 128, optional: true, doc: "A display name, when the provider supplied one." }
+      imageUrl: { type: https_url, optional: true, doc: "An avatar, when the provider supplied one." }
+
+  DashboardSessionCredential:
+    doc: A minted browser session, returned exactly once.
+    type: object
+    fields:
+      session: { type: string, min: 16, max: 4096, doc: "The bearer credential; hold it in an HttpOnly cookie, never in script-readable storage." }
+      userId: { type: id, of: user, doc: "The person it authenticates." }
+      expiresAt: { type: timestamp, doc: "When it stops verifying." }
+
   OrganizationAccount:
     doc: One organization's operational state in a multi-organization dashboard snapshot.
     type: object

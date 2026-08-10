@@ -3,7 +3,7 @@
 //! The low-level client: one request builder and one method per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
+//! `sha256:22950d21b0f690b202384e2951498e7c72806885c4cc2803cd56edfc5b6f96c0`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -65,8 +65,12 @@ use crate::models::BillingBalanceGetQuery;
 use crate::models::BillingStatementsListQuery;
 use crate::models::CentralOperationsListQuery;
 use crate::models::DashboardBootstrap;
+use crate::models::DashboardSessionCredential;
+use crate::models::DashboardSessionRequest;
 use crate::models::DeviceAuthorization;
 use crate::models::DeviceAuthorizationRequest;
+use crate::models::DeviceDecisionRequest;
+use crate::models::DeviceDecisionResult;
 use crate::models::DeviceToken;
 use crate::models::DeviceTokenRequest;
 use crate::models::DownloadGrant;
@@ -643,6 +647,50 @@ pub fn dashboard_bootstrap_get_request() -> Result<WireRequest, ClientError> {
     })
 }
 
+/// `POST /api/auth/sessions`
+/// Exchange a completed first-party provider sign-in for a browser session.
+///
+/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
+/// a recorded fixture — can take the request and run it.
+///
+/// # Errors
+/// Returns [`ClientError::Encode`] when the request cannot be rendered.
+pub fn dashboard_session_create_request(
+    body: &DashboardSessionRequest,
+) -> Result<WireRequest, ClientError> {
+    let route = RouteId::DashboardSessionCreate;
+    let path = PathWriter::new(route);
+    Ok(WireRequest {
+        route,
+        method: HttpMethod::Post,
+        path: path.finish()?,
+        query: String::new(),
+        headers: request_headers(route, None, None, None),
+        body: Some(encode_body(route, body)?),
+    })
+}
+
+/// `DELETE /api/auth/sessions/current`
+/// Close the browser session the caller presented.
+///
+/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
+/// a recorded fixture — can take the request and run it.
+///
+/// # Errors
+/// Returns [`ClientError::Encode`] when the request cannot be rendered.
+pub fn dashboard_session_delete_request() -> Result<WireRequest, ClientError> {
+    let route = RouteId::DashboardSessionDelete;
+    let path = PathWriter::new(route);
+    Ok(WireRequest {
+        route,
+        method: HttpMethod::Delete,
+        path: path.finish()?,
+        query: String::new(),
+        headers: request_headers(route, None, None, None),
+        body: None,
+    })
+}
+
 /// `POST /api/auth/device/authorizations`
 /// Begin the CLI device-authorization flow.
 ///
@@ -663,6 +711,29 @@ pub fn device_authorization_create_request(
         path: path.finish()?,
         query: String::new(),
         headers: request_headers(route, Some(idempotency_key), None, None),
+        body: Some(encode_body(route, body)?),
+    })
+}
+
+/// `POST /api/auth/device/decisions`
+/// Approve or deny a pending device authorization.
+///
+/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
+/// a recorded fixture — can take the request and run it.
+///
+/// # Errors
+/// Returns [`ClientError::Encode`] when the request cannot be rendered.
+pub fn device_decision_create_request(
+    body: &DeviceDecisionRequest,
+) -> Result<WireRequest, ClientError> {
+    let route = RouteId::DeviceDecisionCreate;
+    let path = PathWriter::new(route);
+    Ok(WireRequest {
+        route,
+        method: HttpMethod::Post,
+        path: path.finish()?,
+        query: String::new(),
+        headers: request_headers(route, None, None, None),
         body: Some(encode_body(route, body)?),
     })
 }
@@ -4147,6 +4218,35 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::DashboardBootstrapGet, &response)
     }
 
+    /// `POST /api/auth/sessions`
+    /// Exchange a completed first-party provider sign-in for a browser session.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
+    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
+    /// not match the contract.
+    pub async fn dashboard_session_create(
+        &self,
+        body: &DashboardSessionRequest,
+    ) -> Result<DashboardSessionCredential, ClientError> {
+        let request = dashboard_session_create_request(body)?;
+        let response = self.send(request).await?;
+        decode_response(RouteId::DashboardSessionCreate, &response)
+    }
+
+    /// `DELETE /api/auth/sessions/current`
+    /// Close the browser session the caller presented.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
+    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
+    /// not match the contract.
+    pub async fn dashboard_session_delete(&self) -> Result<(), ClientError> {
+        let request = dashboard_session_delete_request()?;
+        let response = self.send(request).await?;
+        decode_no_content(RouteId::DashboardSessionDelete, &response)
+    }
+
     /// `POST /api/auth/device/authorizations`
     /// Begin the CLI device-authorization flow.
     ///
@@ -4162,6 +4262,22 @@ impl<T: Transport> WireClient<T> {
         let request = device_authorization_create_request(body, idempotency_key)?;
         let response = self.send(request).await?;
         decode_response(RouteId::DeviceAuthorizationCreate, &response)
+    }
+
+    /// `POST /api/auth/device/decisions`
+    /// Approve or deny a pending device authorization.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
+    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
+    /// not match the contract.
+    pub async fn device_decision_create(
+        &self,
+        body: &DeviceDecisionRequest,
+    ) -> Result<DeviceDecisionResult, ClientError> {
+        let request = device_decision_create_request(body)?;
+        let response = self.send(request).await?;
+        decode_response(RouteId::DeviceDecisionCreate, &response)
     }
 
     /// `POST /api/auth/device/tokens`

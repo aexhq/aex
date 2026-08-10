@@ -1,6 +1,6 @@
 //! The one scope vocabulary.
 //!
-//! [`Scope`] is `aex_wire::scopes::ScopeId` — the generated 28-entry registry —
+//! [`Scope`] is `aex_wire::scopes::ScopeId` — the generated 29-entry registry —
 //! re-exported rather than redefined. This module adds the *set* algebra the
 //! authorization decision needs: a `u64` bitset whose bit `n` is
 //! `ScopeId::ALL[n]`, which makes an intersection one instruction and makes the
@@ -18,13 +18,13 @@ use aex_wire::scopes::ScopeId;
 pub type Scope = ScopeId;
 
 /// How many scopes the registry holds, as a shift width.
-const REGISTRY_LEN: u32 = 28;
+const REGISTRY_LEN: u32 = 29;
 
 /// The registry is a `u64` bitset, so it can never exceed 64 entries.
 const _: () = assert!(ScopeId::ALL.len() <= 64);
 const _: () = assert!(ScopeId::ALL.len() == REGISTRY_LEN as usize);
 /// The launch registry size, asserted so an added scope is a visible diff.
-const _: () = assert!(ScopeId::ALL.len() == 28);
+const _: () = assert!(ScopeId::ALL.len() == 29);
 
 /// Why a scope list was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

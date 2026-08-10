@@ -10,7 +10,7 @@ pub use crate::generated::server::{RouteGroup, *};
 use crate::cursor::Cursor;
 use crate::error::ApiError;
 use crate::idempotency::{IdempotencyKey, PrincipalScope};
-use crate::ids::{OperationId, SessionId};
+use crate::ids::{OperationId, SessionId, Uuid7};
 use crate::models::{DeletingSession, Operation, Session, SessionTombstone};
 use crate::routes::RouteId;
 use crate::scopes::ScopeSet;
@@ -41,6 +41,20 @@ pub struct RequestContext {
     pub route: RouteId,
     /// Who is asking.
     pub principal: PrincipalScope,
+    /// The browser session the actor presented, when the credential was one.
+    ///
+    /// [`PrincipalScope`] deliberately narrows an actor to *who* they are,
+    /// because that is all replay identity may depend on — two credentials of
+    /// one person must share a replay scope. A handful of ceremonies need
+    /// *which credential* as well: approving a device authorization records the
+    /// live session that proved the approver was current, and closing a session
+    /// closes the one that was presented. Neither can be re-derived, because a
+    /// person may hold several sessions at once.
+    ///
+    /// `None` for an account token, a workspace key and an anonymous caller —
+    /// so a handler that requires a browser session must refuse `None` rather
+    /// than substitute anything for it.
+    pub actor_session_id: Option<Uuid7>,
     /// What the credential actually carries.
     pub granted_scopes: ScopeSet,
     /// The replay key, when the route requires one.

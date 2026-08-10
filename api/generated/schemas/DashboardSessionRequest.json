@@ -1,0 +1,55 @@
+{
+  "$id": "https://schemas.aex.dev/v1/DashboardSessionRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Exchange a completed first-party provider sign-in for a browser session. The front end performs the provider handshake and asserts its result; this plane never dials a provider.",
+  "properties": {
+    "email": {
+      "description": "The address the provider asserts.",
+      "maxLength": 254,
+      "minLength": 3,
+      "type": "string"
+    },
+    "emailVerified": {
+      "description": "Whether the provider asserts the address is verified.",
+      "type": "boolean"
+    },
+    "exchangeSecret": {
+      "description": "The first-party exchange secret; proves the caller is an AEX front end.",
+      "maxLength": 256,
+      "minLength": 32,
+      "type": "string"
+    },
+    "imageUrl": {
+      "description": "An avatar, when the provider supplied one.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    },
+    "name": {
+      "description": "A display name, when the provider supplied one.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "provider": {
+      "$ref": "aex:schema:IdentityProvider",
+      "description": "Which provider completed the sign-in."
+    },
+    "providerAccountId": {
+      "description": "The provider's own stable identifier for the person.",
+      "maxLength": 255,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "email",
+    "emailVerified",
+    "exchangeSecret",
+    "provider",
+    "providerAccountId"
+  ],
+  "title": "DashboardSessionRequest",
+  "type": "object"
+}

@@ -3,7 +3,7 @@
 //! The authorization scope registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
+//! `sha256:22950d21b0f690b202384e2951498e7c72806885c4cc2803cd56edfc5b6f96c0`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -20,6 +20,10 @@ pub enum ScopeId {
     /// `account:read` — Read the caller's account and operational state.
     #[serde(rename = "account:read")]
     AccountRead,
+    /// `account:write` — Decide the caller's own device authorizations and close their own browser
+    /// session.
+    #[serde(rename = "account:write")]
+    AccountWrite,
     /// `organizations:read` — List and read organizations the caller belongs to.
     #[serde(rename = "organizations:read")]
     OrganizationsRead,
@@ -107,6 +111,7 @@ impl ScopeId {
     /// Every scope, in registry order.
     pub const ALL: &'static [ScopeId] = &[
         ScopeId::AccountRead,
+        ScopeId::AccountWrite,
         ScopeId::OrganizationsRead,
         ScopeId::OrganizationsWrite,
         ScopeId::MembershipsRead,
@@ -141,6 +146,7 @@ impl ScopeId {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::AccountRead => "account:read",
+            Self::AccountWrite => "account:write",
             Self::OrganizationsRead => "organizations:read",
             Self::OrganizationsWrite => "organizations:write",
             Self::MembershipsRead => "memberships:read",

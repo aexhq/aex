@@ -51,8 +51,9 @@ async fn compose(
         .await
         .map_err(|error| CentralIdentityApiRunError::Dependency("aurora", error.to_string()))?;
 
+    let secrets = aws_sdk_secretsmanager::Client::new(&aws);
     let peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
-        aws_sdk_secretsmanager::Client::new(&aws),
+        secrets.clone(),
         config.pepper_secret_id.clone(),
         Arc::new(aex_central_aws::DataApiPepperDirectory::new(
             client.clone(),
@@ -73,6 +74,14 @@ async fn compose(
             CentralIdentityApiRunError::Dependency("identity-pepper", error.to_string())
         })?;
 
+    // Probe three: the first-party sign-in exchange secret loads and is long
+    // enough to be one. Without it `dashboard_session_create` can mint nothing,
+    // and a browser session is the only thing that can approve a device
+    // authorization — so a process that serves without this secret answers the
+    // whole credential ceremony's second step with a `500` for its entire life.
+    // Refusing here turns that into one start-up line naming the dependency.
+    let exchange_secret = load_exchange_secret(&secrets, &config.sign_in_exchange_secret_id).await?;
+
     let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
     let store = Arc::new(aex_identity_aurora::AuroraIdentityStore::new(
         client,
@@ -89,6 +98,7 @@ async fn compose(
         Arc::new(aex_central_aws::Uuid7Factory),
         Arc::new(aex_central_aws::OsSecretRng),
         verification_uri,
+        exchange_secret,
     ));
 
     // The cursor secret is per-process and never leaves it: this deployable
@@ -105,6 +115,28 @@ async fn compose(
     );
 
     run(config, api, edge, Probes::READY, telemetry).await
+}
+
+/// Reads and validates the first-party sign-in exchange secret.
+///
+/// The secret's whole value is the credential — no JSON envelope and no key
+/// name — because a wrapper would be one more thing a rotation could get wrong
+/// for no reader. A binary secret is refused rather than lossily decoded.
+async fn load_exchange_secret(
+    secrets: &aws_sdk_secretsmanager::Client,
+    secret_id: &str,
+) -> Result<api::ExchangeSecret, CentralIdentityApiRunError> {
+    let named = |reason: String| CentralIdentityApiRunError::Dependency("sign-in-exchange", reason);
+    let value = secrets
+        .get_secret_value()
+        .secret_id(secret_id)
+        .send()
+        .await
+        .map_err(|error| named(error.to_string()))?;
+    let plaintext = value
+        .secret_string()
+        .ok_or_else(|| named("the secret holds no string value".to_owned()))?;
+    api::ExchangeSecret::new(plaintext.trim()).map_err(|error| named(error.to_string()))
 }
 
 /// The one-column `SELECT 1` the readiness probe issues.
