@@ -15,7 +15,7 @@ use central_schema_admin::migration;
 use central_schema_admin::migration::MigrationBundle;
 use central_schema_admin::runner::{
     PepperRow, RunnerError, applied_head, apply_grants, backfill_cursor, check_conservation,
-    diff_grants, expect_applied_head, migrate, seed_pepper,
+    diff_grants, expect_applied_head, migrate, seed_pepper, seed_signing_key,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -150,6 +150,28 @@ enum Command {
         #[arg(long)]
         secret_ref: String,
     },
+    /// Seed the one active Ed25519 assertion signing-key row.
+    ///
+    /// Deployment data rather than schema: the public key and lifecycle belong
+    /// to exact plane material. The secret reference is the Secrets Manager
+    /// **name**, not a version id.
+    SeedSigningKey {
+        /// Stable public key identity.
+        #[arg(long)]
+        kid: uuid::Uuid,
+        /// Exactly 32 public-key bytes as 64 lowercase hexadecimal digits.
+        #[arg(long)]
+        public_key_hex: String,
+        /// Exact plane-scoped Secrets Manager name holding the private seed.
+        #[arg(long)]
+        secret_ref: String,
+        /// Inclusive activation instant in Unix epoch milliseconds.
+        #[arg(long)]
+        activates_at_ms: i64,
+        /// Exclusive retirement instant in Unix epoch milliseconds.
+        #[arg(long)]
+        retires_at_ms: i64,
+    },
 }
 
 /// The four credential-pepper rows, as CLI values.
@@ -239,9 +261,9 @@ const fn runner_exit(error: &RunnerError) -> Exit {
         // asserted and the database refutes, which is the same answer as a
         // partial migration object: exit `13`. Sharing it keeps the exit
         // contract at the ten codes a release script already knows.
-        RunnerError::PreconditionFailed(_) | RunnerError::PepperConflict(_) => {
-            Exit::PreconditionFailed
-        }
+        RunnerError::PreconditionFailed(_)
+        | RunnerError::PepperConflict(_)
+        | RunnerError::SigningKeyConflict(_) => Exit::PreconditionFailed,
         RunnerError::GrantDrift(_) => Exit::GrantDrift,
         RunnerError::Conservation(_) => Exit::Conservation,
         RunnerError::Database(_) => Exit::Connection,
@@ -504,6 +526,58 @@ async fn run(cli: &Cli) -> Result<String, (Exit, String)> {
             seed_pepper(&mut connection, pepper.row(), *version, secret_ref)
                 .await
                 .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            let applied = applied_head(&mut connection)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            render(&receipt(applied, applied, "not_requested"))
+        }
+        Command::SeedSigningKey {
+            kid,
+            public_key_hex,
+            secret_ref,
+            activates_at_ms,
+            retires_at_ms,
+        } => {
+            let expected_ref = format!("aex/{plane}/central/assertion-signing-key");
+            if secret_ref != &expected_ref {
+                return Err((
+                    Exit::PreconditionFailed,
+                    format!(
+                        "the signing key must name `{expected_ref}`; a version id, ARN or other plane is refused"
+                    ),
+                ));
+            }
+            let mut public_key = [0_u8; 32];
+            if public_key_hex.len() != 64
+                || public_key_hex
+                    .bytes()
+                    .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
+                || hex::decode_to_slice(public_key_hex, &mut public_key).is_err()
+            {
+                return Err((
+                    Exit::PreconditionFailed,
+                    "the signing public key must be exactly 64 lowercase hexadecimal digits"
+                        .to_owned(),
+                ));
+            }
+            if *activates_at_ms < 1 || *retires_at_ms <= *activates_at_ms {
+                return Err((
+                    Exit::PreconditionFailed,
+                    "the signing-key lifecycle must start after the epoch and retire after activation"
+                        .to_owned(),
+                ));
+            }
+            let mut connection = open(cli).await?;
+            seed_signing_key(
+                &mut connection,
+                *kid,
+                public_key,
+                secret_ref,
+                *activates_at_ms,
+                *retires_at_ms,
+            )
+            .await
+            .map_err(|error| (runner_exit(&error), error.to_string()))?;
             let applied = applied_head(&mut connection)
                 .await
                 .map_err(|error| (runner_exit(&error), error.to_string()))?;

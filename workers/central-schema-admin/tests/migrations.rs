@@ -14,8 +14,8 @@ use central_schema_admin::connect::ADVISORY_LOCK_KEY;
 use central_schema_admin::grants::GrantSet;
 use central_schema_admin::migration::{MigrationBundle, native_migrator};
 use central_schema_admin::runner::{
-    PepperRow, PepperSeeded, RunnerError, applied_head, apply_grants, check_conservation,
-    diff_grants, expect_applied_head, seed_pepper,
+    PepperRow, PepperSeeded, RunnerError, SigningKeySeeded, applied_head, apply_grants,
+    check_conservation, diff_grants, expect_applied_head, seed_pepper, seed_signing_key,
 };
 use sqlx::{Connection as _, Executor as _, PgConnection};
 
@@ -554,4 +554,117 @@ async fn re_pointing_a_seeded_version_at_other_material_is_refused() {
         format!("{error}").contains("rotation"),
         "the refusal names what it is not: {error}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_signing_key_seeds_once_and_an_exact_replay_is_a_no_op() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.connect().await;
+    native_migrator()
+        .run(&mut connection)
+        .await
+        .expect("the bundle applies");
+    let kid = uuid::Uuid::parse_str("00000000-0000-7000-8000-0000000000d1")
+        .expect("the fixture kid parses");
+    let public_key = [0x5a; 32];
+    let secret_ref = "aex/dev/central/assertion-signing-key";
+
+    assert_eq!(
+        seed_signing_key(
+            &mut connection,
+            kid,
+            public_key,
+            secret_ref,
+            1_786_320_000_000,
+            1_801_872_000_000,
+        )
+        .await
+        .expect("a clean table accepts the signing key"),
+        SigningKeySeeded::Inserted,
+    );
+    assert_eq!(
+        seed_signing_key(
+            &mut connection,
+            kid,
+            public_key,
+            secret_ref,
+            1_786_320_000_000,
+            1_801_872_000_000,
+        )
+        .await
+        .expect("the exact arguments are a replay"),
+        SigningKeySeeded::AlreadyExact,
+    );
+
+    let stored: (String, Vec<u8>, String, String, i64, i64, Option<String>) = sqlx::query_as(
+        "SELECT alg, public_key, secret_ref, state, \
+                    (extract(epoch FROM activates_at) * 1000)::bigint, \
+                    (extract(epoch FROM retires_at) * 1000)::bigint, retired_at::text \
+               FROM control.signing_key WHERE kid = $1",
+    )
+    .bind(kid)
+    .fetch_one(&mut connection)
+    .await
+    .expect("the seeded key reads");
+    assert_eq!(stored.0, "ed25519");
+    assert_eq!(stored.1, public_key);
+    assert_eq!(stored.2, secret_ref);
+    assert_eq!(stored.3, "active");
+    assert_eq!(stored.4, 1_786_320_000_000);
+    assert_eq!(stored.5, 1_801_872_000_000);
+    assert!(stored.6.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_signing_key_seed_refuses_drift_and_a_second_active_key() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.connect().await;
+    native_migrator()
+        .run(&mut connection)
+        .await
+        .expect("the bundle applies");
+    let first = uuid::Uuid::parse_str("00000000-0000-7000-8000-0000000000d1")
+        .expect("the first kid parses");
+    seed_signing_key(
+        &mut connection,
+        first,
+        [0x5a; 32],
+        "aex/dev/central/assertion-signing-key",
+        1_786_320_000_000,
+        1_801_872_000_000,
+    )
+    .await
+    .expect("the first seed lands");
+
+    let drift = seed_signing_key(
+        &mut connection,
+        first,
+        [0x6b; 32],
+        "aex/dev/central/assertion-signing-key",
+        1_786_320_000_000,
+        1_801_872_000_000,
+    )
+    .await
+    .expect_err("a kid cannot be re-pointed at another public key");
+    assert!(
+        matches!(drift, RunnerError::SigningKeyConflict(_)),
+        "{drift}"
+    );
+
+    let second = seed_signing_key(
+        &mut connection,
+        uuid::Uuid::parse_str("00000000-0000-7000-8000-0000000000d2")
+            .expect("the second kid parses"),
+        [0x7c; 32],
+        "aex/dev/central/assertion-signing-key",
+        1_786_320_000_000,
+        1_801_872_000_000,
+    )
+    .await
+    .expect_err("a second active key is a rotation, not a seed");
+    assert!(
+        matches!(second, RunnerError::SigningKeyConflict(_)),
+        "{second}"
+    );
+    assert!(second.to_string().contains("rotation"));
 }

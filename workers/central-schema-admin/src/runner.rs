@@ -43,6 +43,9 @@ pub enum RunnerError {
     /// The pepper row a seed named exists and says something else.
     #[error("the pepper row cannot be seeded: {0}")]
     PepperConflict(String),
+    /// The assertion signing-key row exists, or another key is already active.
+    #[error("the signing key cannot be seeded: {0}")]
+    SigningKeyConflict(String),
     /// The database refused a statement.
     #[error("the database refused the operation: {0}")]
     Database(String),
@@ -597,6 +600,113 @@ pub async fn seed_pepper(
     .await
     .map_err(|error| RunnerError::Database(error.to_string()))?;
     Ok(PepperSeeded::Inserted)
+}
+
+/// What an assertion signing-key seed found or did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SigningKeySeeded {
+    /// The row did not exist and now does.
+    Inserted,
+    /// The row already existed and already says exactly this.
+    AlreadyExact,
+}
+
+#[derive(sqlx::FromRow)]
+struct StoredSigningKey {
+    alg: String,
+    public_key: Vec<u8>,
+    secret_ref: String,
+    state: String,
+    activates_at_ms: i64,
+    retires_at_ms: i64,
+    retired_at: Option<String>,
+}
+
+/// Seeds the one active Ed25519 signing-key lifecycle row.
+///
+/// # Why this is not a migration
+///
+/// The public half, key id, lifecycle window and Secrets Manager name are
+/// properties of plane material created outside the source bundle. A migration
+/// cannot carry one plane's key, and the release must not write this authority
+/// through raw SQL. `secret_ref` is deliberately the secret **name**: the
+/// authorizer compares it with its configured secret id before reading the
+/// private seed. It is not the version id used by credential-pepper rows.
+///
+/// # Idempotence and its limit
+///
+/// Replaying the exact row is a no-op. Any disagreement under the same `kid`,
+/// or another active key, is refused. Introducing a successor while the first
+/// remains active is rotation and needs its own overlap ceremony.
+///
+/// # Errors
+///
+/// Returns [`RunnerError::SigningKeyConflict`] for drift or a second active
+/// key, and [`RunnerError::Database`] when `PostgreSQL` refuses a statement.
+pub async fn seed_signing_key(
+    connection: &mut PgConnection,
+    kid: uuid::Uuid,
+    public_key: [u8; 32],
+    secret_ref: &str,
+    activates_at_ms: i64,
+    retires_at_ms: i64,
+) -> Result<SigningKeySeeded, RunnerError> {
+    let existing: Option<StoredSigningKey> = sqlx::query_as(
+        "SELECT alg, public_key, secret_ref, state, \
+                    (extract(epoch FROM activates_at) * 1000)::bigint AS activates_at_ms, \
+                    (extract(epoch FROM retires_at) * 1000)::bigint AS retires_at_ms, \
+                    retired_at::text AS retired_at \
+               FROM control.signing_key WHERE kid = $1",
+    )
+    .bind(kid)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| RunnerError::Database(error.to_string()))?;
+    if let Some(stored) = existing {
+        return if stored.alg == "ed25519"
+            && stored.public_key == public_key
+            && stored.secret_ref == secret_ref
+            && stored.state == "active"
+            && stored.activates_at_ms == activates_at_ms
+            && stored.retires_at_ms == retires_at_ms
+            && stored.retired_at.is_none()
+        {
+            Ok(SigningKeySeeded::AlreadyExact)
+        } else {
+            Err(RunnerError::SigningKeyConflict(format!(
+                "kid {kid} already exists as `{}`/`{}` and does not match the admitted active key",
+                stored.alg, stored.state,
+            )))
+        };
+    }
+
+    let active: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT kid FROM control.signing_key WHERE state = 'active'")
+            .fetch_optional(&mut *connection)
+            .await
+            .map_err(|error| RunnerError::Database(error.to_string()))?;
+    if let Some(occupant) = active {
+        return Err(RunnerError::SigningKeyConflict(format!(
+            "kid {occupant} is already active; introducing {kid} is a rotation, not a seed"
+        )));
+    }
+
+    sqlx::query(
+        "INSERT INTO control.signing_key \
+           (kid, alg, public_key, secret_ref, state, created_at, activates_at, retires_at) \
+         VALUES ($1, 'ed25519', $2, $3, 'active', now(), \
+                 TIMESTAMPTZ 'epoch' + $4 * INTERVAL '1 millisecond', \
+                 TIMESTAMPTZ 'epoch' + $5 * INTERVAL '1 millisecond')",
+    )
+    .bind(kid)
+    .bind(public_key.as_slice())
+    .bind(secret_ref)
+    .bind(activates_at_ms)
+    .bind(retires_at_ms)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| RunnerError::Database(error.to_string()))?;
+    Ok(SigningKeySeeded::Inserted)
 }
 
 #[cfg(test)]

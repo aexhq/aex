@@ -3264,6 +3264,7 @@ dependencies = [
  "aws-sdk-secretsmanager",
  "blake3",
  "clap",
+ "hex",
  "serde",
  "serde_json",
  "sha2 0.11.0",

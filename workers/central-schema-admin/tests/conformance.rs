@@ -181,3 +181,76 @@ fn a_pepper_seed_can_only_name_one_of_the_four_rows_that_exist() {
         "the four values are named: {stderr}"
     );
 }
+
+#[test]
+fn a_signing_key_seed_refuses_malformed_material_before_opening_a_session() {
+    let valid = [
+        "seed-signing-key",
+        "--kid",
+        "00000000-0000-7000-8000-000000000001",
+        "--public-key-hex",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "--secret-ref",
+        "aex/dev/central/assertion-signing-key",
+        "--activates-at-ms",
+        "1786320000000",
+        "--retires-at-ms",
+        "1801872000000",
+    ];
+    for replacements in [
+        [
+            ("--public-key-hex", "00"),
+            ("--secret-ref", "aex/dev/central/assertion-signing-key"),
+        ],
+        [
+            (
+                "--public-key-hex",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            ("--secret-ref", "019fd38e-3265-775a-8b2c-1a1a336f447f"),
+        ],
+        [
+            (
+                "--public-key-hex",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            ("--secret-ref", "aex/prd/central/assertion-signing-key"),
+        ],
+    ] {
+        let mut arguments = valid.to_vec();
+        for (flag, replacement) in replacements {
+            let index = arguments
+                .iter()
+                .position(|value| value == &flag)
+                .expect("the fixture carries the flag");
+            arguments[index + 1] = replacement;
+        }
+        let output = run(&arguments);
+        assert_eq!(
+            output.status.code(),
+            Some(13),
+            "malformed signing material is a precondition refusal: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn a_signing_key_seed_refuses_an_empty_or_inverted_lifecycle_before_connecting() {
+    for (activates, retires) in [("0", "1801872000000"), ("1801872000000", "1786320000000")] {
+        let output = run(&[
+            "seed-signing-key",
+            "--kid",
+            "00000000-0000-7000-8000-000000000001",
+            "--public-key-hex",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "--secret-ref",
+            "aex/dev/central/assertion-signing-key",
+            "--activates-at-ms",
+            activates,
+            "--retires-at-ms",
+            retires,
+        ]);
+        assert_eq!(output.status.code(), Some(13));
+    }
+}

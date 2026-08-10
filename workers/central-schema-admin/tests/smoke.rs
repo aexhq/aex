@@ -10,7 +10,16 @@ fn artifact_exposes_the_exact_one_shot_command_tree() {
         .expect("schema admin starts");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 help");
-    for command in ["plan", "migrate", "verify", "grants", "backfill", "repair"] {
+    for command in [
+        "plan",
+        "migrate",
+        "verify",
+        "grants",
+        "backfill",
+        "repair",
+        "seed-pepper",
+        "seed-signing-key",
+    ] {
         assert!(stdout.contains(command), "missing command {command}");
     }
 }
