@@ -36,11 +36,14 @@ live_suite = "application crate; its ports are exercised through its deployable'
 aex-content-domain = { path = "../aex-content-domain" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-operation-domain = { path = "../aex-operation-domain" }
+aex-runtime-control = { path = "../aex-runtime-control" }
 aex-secret-domain = { path = "../aex-secret-domain" }
 aex-session-domain = { path = "../aex-session-domain" }
 aex-wire = { path = "../aex-wire" }
 aex-workspace-domain = { path = "../aex-workspace-domain" }
 async-trait.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
 

@@ -139,6 +139,12 @@ pub struct ScriptedPorts {
     true_idle: TrueIdle,
     account: AccountProjection,
     limits: EffectiveLimits,
+    limits_revision: u64,
+    credential: Option<crate::ports::ProviderCredentialBinding>,
+    pointers: Vec<aex_workspace_domain::RegistryPointer>,
+    sealed_root: aex_content_domain::ContentRoot,
+    deployment: crate::ports::DeploymentFacts,
+    qualification: Result<crate::ports::QualifiedModel, crate::ports::QualificationRefusal>,
     cancel_targets: Vec<AgentCancelTarget>,
     live_entries: Vec<LiveEntry>,
     generation: Option<GenerationId>,
@@ -178,6 +184,28 @@ impl ScriptedPorts {
             limits: [(LimitId::SessionMaterializedAgents, 8)]
                 .into_iter()
                 .collect(),
+            limits_revision: 4,
+            credential: Some(crate::ports::ProviderCredentialBinding {
+                credential: aex_wire::ids::PrefixedId::from_uuid7(Uuid7::compose(1, [11; 10])),
+                provider: aex_wire::provider::ProviderId::Openai,
+                secret_name: aex_secret_domain::SecretName::parse("openai-key")
+                    .expect("a fixture secret name is valid"),
+                source_generation: 1,
+                revision: 1,
+                state: crate::ports::CredentialState::Ready,
+            }),
+            pointers: Vec::new(),
+            sealed_root: aex_content_domain::ContentRoot {
+                digest: [9; 32],
+                entries: 3,
+                logical_bytes: 300,
+            },
+            deployment: deployment_facts(),
+            qualification: Ok(crate::ports::QualifiedModel {
+                provider: aex_wire::provider::ProviderId::Openai,
+                model: "gpt-test".to_owned(),
+                catalog_revision: FIXTURE_CATALOG_REVISION.to_owned(),
+            }),
             cancel_targets: Vec::new(),
             live_entries: Vec::new(),
             generation: None,
@@ -199,6 +227,67 @@ impl ScriptedPorts {
     pub fn with_live_entries(mut self, entries: impl IntoIterator<Item = LiveEntry>) -> Self {
         self.live_entries = entries.into_iter().collect();
         self.live_entries.sort();
+        self
+    }
+
+    /// Scripts the workspace as having no such provider-credential binding.
+    #[must_use]
+    pub fn without_provider_credential(mut self) -> Self {
+        self.credential = None;
+        self
+    }
+
+    /// Scripts the named binding as revoked.
+    #[must_use]
+    pub fn with_revoked_provider_credential(mut self) -> Self {
+        if let Some(credential) = self.credential.as_mut() {
+            credential.state = crate::ports::CredentialState::Revoked;
+        }
+        self
+    }
+
+    /// Scripts the registry as holding exactly these pointers.
+    #[must_use]
+    pub fn with_registry_pointers(
+        mut self,
+        pointers: Vec<aex_workspace_domain::RegistryPointer>,
+    ) -> Self {
+        self.pointers = pointers;
+        self
+    }
+
+    /// Scripts the seal as retaining nothing.
+    #[must_use]
+    pub const fn with_empty_seal(mut self) -> Self {
+        self.sealed_root = aex_content_domain::ContentRoot {
+            digest: [0; 32],
+            entries: 0,
+            logical_bytes: 0,
+        };
+        self
+    }
+
+    /// Scripts this plane as having no managed egress connector.
+    #[must_use]
+    pub const fn without_public_internet_egress(mut self) -> Self {
+        self.deployment.public_internet_egress = false;
+        self
+    }
+
+    /// Scripts the catalog as refusing the pair.
+    #[must_use]
+    pub fn with_qualification_refusal(
+        mut self,
+        refusal: crate::ports::QualificationRefusal,
+    ) -> Self {
+        self.qualification = Err(refusal);
+        self
+    }
+
+    /// Scripts the workspace's effective limits.
+    #[must_use]
+    pub fn with_limits(mut self, limits: EffectiveLimits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -349,7 +438,10 @@ impl ScriptedPorts {
             sessions: self,
             registry: self,
             content: self,
+            content_writer: self,
             secrets: self,
+            catalog: self,
+            deployment: &self.deployment,
             limits: self,
             accounts: self,
             reservations: self,
@@ -470,7 +562,7 @@ impl RegistryReader for ScriptedPorts {
         _selectors: &[RegistrySelector],
     ) -> Result<Vec<RegistryPointer>, PortError> {
         self.log.record(PortCall::Read("read_many"));
-        Ok(Vec::new())
+        Ok(self.pointers.clone())
     }
 
     async fn read_upload(
@@ -524,6 +616,15 @@ impl SecretCustodyReader for ScriptedPorts {
         self.log.record(PortCall::Read("read_custody"));
         Ok(self.custody.clone())
     }
+
+    async fn read_provider_credential(
+        &self,
+        _workspace: WorkspaceId,
+        _credential: aex_wire::ids::ProviderCredentialId,
+    ) -> Result<Option<crate::ports::ProviderCredentialBinding>, PortError> {
+        self.log.record(PortCall::Read("read_provider_credential"));
+        Ok(self.credential.clone())
+    }
 }
 
 #[async_trait::async_trait]
@@ -535,6 +636,17 @@ impl LimitsReader for ScriptedPorts {
     ) -> Result<EffectiveLimits, PortError> {
         self.log.record(PortCall::Read("effective"));
         Ok(self.limits.clone())
+    }
+
+    async fn bundle(
+        &self,
+        _workspace: WorkspaceId,
+    ) -> Result<crate::ports::LimitsBundle, PortError> {
+        self.log.record(PortCall::Read("limits_bundle"));
+        Ok(crate::ports::LimitsBundle {
+            revision: self.limits_revision,
+            limits: self.limits.clone(),
+        })
     }
 }
 
@@ -664,4 +776,156 @@ impl LiveWorkspaceReader for ScriptedPorts {
 #[must_use]
 pub fn fixture_spend() -> NonZeroU64 {
     NonZeroU64::new(500).unwrap_or_else(|| unreachable!("500 is non-zero"))
+}
+
+/// The `mc1_<hex>` rendering every fixture qualifies under.
+pub const FIXTURE_CATALOG_REVISION: &str =
+    "mc1_0000000000000000000000000000000000000000000000000000000000000000";
+
+/// A deployment that has egress and every published ecosystem.
+///
+/// # Panics
+///
+/// Panics only if the compiled catalog literal below is not a valid catalog,
+/// which is a broken fixture rather than a reachable condition.
+#[must_use]
+pub fn deployment_facts() -> crate::ports::DeploymentFacts {
+    use aex_runtime_control::catalog::{HandsImageCatalog, HandsImageCatalogEntry};
+    use aex_runtime_control::generation::{ImageIdentifier, ImageVersion};
+    use aex_runtime_control::shape::ShapeCapacity as _;
+
+    let entries = aex_wire::types::ComputeSize::ALL
+        .into_iter()
+        .map(|size| {
+            (
+                size.as_str().to_owned(),
+                HandsImageCatalogEntry {
+                    image_arn: ImageIdentifier(format!("aex-hands-{}", size.as_str())),
+                    image_version: ImageVersion("1".to_owned()),
+                    artifact_digest: aex_wire::ids::ContentHash::from_bytes([7; 32]),
+                    minimum_memory_mib: size.minimum_memory_mib(),
+                    browser: false,
+                },
+            )
+        })
+        .collect();
+    crate::ports::DeploymentFacts {
+        public_internet_egress: true,
+        images: HandsImageCatalog::from_entries(entries).expect("a fixture catalog is complete"),
+        package_ecosystems: [
+            aex_wire::models::PackageEcosystem::Apt,
+            aex_wire::models::PackageEcosystem::Pip,
+            aex_wire::models::PackageEcosystem::Npm,
+        ]
+        .into_iter()
+        .collect(),
+    }
+}
+
+/// The root agent a create writes for `session`.
+#[must_use]
+pub fn root_agent_of(session: &Session) -> aex_session_domain::AgentControl {
+    aex_session_domain::AgentControl {
+        id: session.root_agent,
+        session: session.id,
+        kind: aex_session_domain::AgentKind::Root,
+        parent: None,
+        depth: 0,
+        status: aex_session_domain::AgentStatus::Idle,
+        revision: aex_session_domain::AgentRevision::INITIAL,
+        journal_tail: aex_session_domain::JournalSeq::INITIAL,
+        last_entry: None,
+        claim: None,
+        join: None,
+        budget: None,
+        open_effects: aex_session_domain::OpenEffectSet::default(),
+        pending_approval: None,
+        queue_reason: None,
+        generation: Some(session.pinned_runtime.generation()),
+        terminal: None,
+        created_at: session.created_at,
+    }
+}
+
+/// The create receipt for `session`, under a fixed caller key.
+///
+/// # Panics
+///
+/// Panics only if a fixture literal is not a usable idempotency key or scope.
+#[must_use]
+pub fn create_receipt(session: &Session) -> aex_session_domain::IdempotencyReceipt {
+    let identity = create_identity(session);
+    aex_session_domain::IdempotencyReceipt {
+        key: aex_session_domain::ReceiptKey::of(crate::CREATE_SCOPE, &identity)
+            .expect("the create scope is usable"),
+        intent: identity.intent(),
+        identity,
+        outcome: aex_session_domain::ReceiptOutcome::Resource {
+            kind: aex_session_domain::ResourceKind::Session,
+            id: aex_session_domain::ResourceId(session.id.to_string()),
+            response: aex_session_domain::ResponseBody::of(
+                &crate::projection::canonical_session_bytes(session)
+                    .expect("a fixture session projects"),
+            ),
+        },
+        created_at: session.created_at,
+    }
+}
+
+/// The replay envelope a fixture create arrives under.
+///
+/// # Panics
+///
+/// Panics only if the fixture key literal is not a valid `Idempotency-Key`.
+#[must_use]
+pub fn create_identity(session: &Session) -> aex_session_domain::IdempotencyIdentity {
+    create_identity_under("fixture-create-key", session)
+}
+
+/// The same envelope under an exact caller key.
+///
+/// # Panics
+///
+/// Panics only if `key` is not a valid `Idempotency-Key`.
+#[must_use]
+pub fn create_identity_under(
+    key: &str,
+    session: &Session,
+) -> aex_session_domain::IdempotencyIdentity {
+    aex_session_domain::IdempotencyIdentity::Key(Box::new(aex_wire::idempotency::ReplayIdentity {
+        principal: aex_wire::idempotency::PrincipalScope::WorkspaceKey {
+            key: aex_wire::ids::PrefixedId::from_uuid7(Uuid7::compose(1, [12; 10])),
+            workspace: session.workspace,
+            organization: session.organization,
+        },
+        route: aex_wire::routes::route(aex_wire::routes::RouteId::SessionCreate).id,
+        key: aex_wire::idempotency::IdempotencyKey::parse(key).expect("a fixture key is valid"),
+        intent: aex_wire::canonical::intent_digest(
+            aex_wire::routes::route(aex_wire::routes::RouteId::SessionCreate).id,
+            &aex_wire::routes::PathBinding::default(),
+            None,
+        ),
+    }))
+}
+
+#[async_trait::async_trait]
+impl crate::ports::ContentWriter for ScriptedPorts {
+    async fn seal_registry_manifest(
+        &self,
+        _workspace: WorkspaceId,
+        _entries: &[crate::ports::SealedRegistryEntry],
+    ) -> Result<ContentRoot, PortError> {
+        self.log.record(PortCall::Write("seal_registry_manifest"));
+        Ok(self.sealed_root)
+    }
+}
+
+impl crate::ports::ModelQualifier for ScriptedPorts {
+    fn admit(
+        &self,
+        _provider: aex_wire::provider::ProviderId,
+        _model: &str,
+    ) -> Result<crate::ports::QualifiedModel, crate::ports::QualificationRefusal> {
+        self.qualification.clone()
+    }
 }

@@ -19,13 +19,16 @@
 //! - the session fold itself (`aex-session-domain`);
 //! - `HTTP` routing or authentication.
 
+pub mod create;
 pub mod error;
 pub mod outcome;
 pub mod plan;
 pub mod ports;
+pub mod projection;
 pub mod testing;
 pub mod use_cases;
 
+pub use create::{CREATE_SCOPE, CreateSession, create_session};
 pub use error::AppError;
 pub use outcome::{Attempted, Observed, ProviderAnswer, Resolution, resolve};
 pub use plan::{
@@ -34,12 +37,15 @@ pub use plan::{
 };
 pub use ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext,
-    AuthorityCommitter, Clock, CommitError, CommitOutcome, ContentReader, ContinuityReader,
-    IdFactory, LimitsReader, LiveEntry, LiveEntryKind, LiveListQuery, LiveListing,
-    LiveWorkspaceReader, PageBudget, PortError, RegistryReader, ReservationAuthority,
-    ReservationGrant, ReservationRequest, SecretCustodyReader, SessionReader, SessionSnapshot,
-    VersionedOperation, WorkspaceContinuity,
+    AuthorityCommitter, Clock, CommitError, CommitOutcome, ContentReader, ContentWriter,
+    ContinuityReader, CredentialState, DeploymentFacts, IdFactory, LimitsBundle, LimitsReader,
+    LiveEntry, LiveEntryKind, LiveListQuery, LiveListing, LiveWorkspaceReader, ModelQualifier,
+    PageBudget, PortError, ProviderCredentialBinding, QualificationRefusal, QualifiedModel,
+    RegistryReader, ReservationAuthority, ReservationGrant, ReservationRequest,
+    SealedRegistryEntry, SecretCustodyReader, SessionReader, SessionSnapshot, VersionedOperation,
+    WorkspaceContinuity,
 };
+pub use projection::{canonical_session_bytes, public_session, public_status};
 pub use use_cases::{
     CommitTerminal, LiveRead, Purge, RECOVERY_WINDOW, Rebind, Resume, STOP_BATCH_AGENTS,
     SendMessage, SessionCommand, StartRun, admit_message, commit_terminal, continue_operation,

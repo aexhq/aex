@@ -5,6 +5,8 @@
 //! clock and the id factory live here and only here (D-01), so every domain
 //! function stays trivially deterministic.
 
+use std::collections::BTreeSet;
+
 use aex_content_domain::{ContentOutcome, ContentRoot, PageDigest, TreeNode, TreeView};
 use aex_operation_domain::Operation;
 use aex_operation_domain::operation::OperationVersion;
@@ -262,6 +264,77 @@ pub trait ContentReader: Send + Sync {
     ) -> Result<TreeNode, PortError>;
 }
 
+/// Whether a provider-credential binding may still be selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CredentialState {
+    /// Selectable.
+    Ready,
+    /// Revoked; a session holding it fails closed at first send.
+    Revoked,
+}
+
+/// The facts a session admission decides on about one provider credential.
+///
+/// Deliberately narrower than the stored binding, which also carries a label, a
+/// fingerprint and two lifecycle instants. Those are `provider_credential_get`'s
+/// business; an admission that could read them would be able to decide on them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderCredentialBinding {
+    /// Its identity.
+    pub credential: aex_wire::ids::ProviderCredentialId,
+    /// Which provider it is for.
+    pub provider: aex_wire::provider::ProviderId,
+    /// The workspace secret holding the key.
+    pub secret_name: SecretName,
+    /// The secret generation bound at registration.
+    pub source_generation: u64,
+    /// The binding's monotone concurrency token.
+    pub revision: u64,
+    /// Whether it may still be selected.
+    pub state: CredentialState,
+}
+
+/// One entry of the registry resolution a session seals at create.
+///
+/// The tuple is exactly what the seal has to reproduce: which registry, which
+/// name, which revision was in force, and which body that revision named. It
+/// carries no value document, because the leaves the seal points at are the
+/// deduplicated bodies the workspace already owns.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SealedRegistryEntry {
+    /// Which registry.
+    pub kind: aex_content_domain::RegistryKind,
+    /// Which name.
+    pub name: aex_wire::ids::ResourceName,
+    /// The revision the pointer was at when it was read.
+    pub revision: aex_content_domain::identity::Revision,
+    /// The body that revision names.
+    pub digest: aex_content_domain::ContentDigest,
+}
+
+/// Writes content that must exist **before** a transaction commits.
+///
+/// Split from [`ContentReader`] rather than added to it so a read-only caller
+/// cannot acquire a writer by holding the reader it already had.
+///
+/// Everything written here is content-addressed and therefore idempotent, which
+/// is what makes a pre-transaction write safe: a crash between the write and
+/// the commit leaves an unreferenced body that the staged-orphan grace sweeps.
+/// Nothing written here is a transaction participant.
+#[async_trait::async_trait]
+pub trait ContentWriter: Send + Sync {
+    /// Seals one registry resolution into a content root.
+    ///
+    /// The entries are the exact tuples read from the registry pointers. The
+    /// returned root is the session's `initial_root`, and one root pin plus one
+    /// owner edge retains the whole selection however large it is.
+    async fn seal_registry_manifest(
+        &self,
+        workspace: WorkspaceId,
+        entries: &[SealedRegistryEntry],
+    ) -> Result<ContentRoot, PortError>;
+}
+
 /// Reads secret custody.
 #[async_trait::async_trait]
 pub trait SecretCustodyReader: Send + Sync {
@@ -274,6 +347,38 @@ pub trait SecretCustodyReader: Send + Sync {
 
     /// One session's custody, when it has any.
     async fn read_custody(&self, session: SessionId) -> Result<Option<SessionCustody>, PortError>;
+
+    /// One provider-credential binding, when the workspace has it.
+    ///
+    /// `Ok(None)` is "this workspace has no such binding" and becomes
+    /// `provider_credential_not_found`; a revoked binding is found and refused
+    /// separately, because "you never registered this" and "you revoked this"
+    /// are different things for a caller to fix.
+    async fn read_provider_credential(
+        &self,
+        workspace: WorkspaceId,
+        credential: aex_wire::ids::ProviderCredentialId,
+    ) -> Result<Option<ProviderCredentialBinding>, PortError>;
+}
+
+/// One revision-bound read of every effective limit a workspace has.
+///
+/// The revision travels with the values because a session pins it into its
+/// immutable generation definition: a generation is defined by, among other
+/// things, the limits policy in force when it was allocated, so reading the
+/// values without the revision they came from would leave the pin naming a
+/// policy nothing observed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LimitsBundle {
+    /// The capacity authority's revision for the whole projection.
+    pub revision: u64,
+    /// Every scalar limit resolved for the workspace.
+    ///
+    /// Map-shaped limits are absent by construction: `EffectiveLimits` holds
+    /// `u64` values only, and [`EffectiveLimits::require`] answers
+    /// `LimitUnresolved` for anything it does not hold, which is the loud
+    /// outcome rather than a silent zero.
+    pub limits: EffectiveLimits,
 }
 
 /// Reads the workspace's effective limits.
@@ -285,6 +390,13 @@ pub trait LimitsReader: Send + Sync {
         workspace: WorkspaceId,
         ids: &[LimitId],
     ) -> Result<EffectiveLimits, PortError>;
+
+    /// Every effective limit plus the revision they were all read at.
+    ///
+    /// One read rather than "read the values, then read the revision": two
+    /// reads could straddle a capacity change and pin a revision that never
+    /// produced the values beside it.
+    async fn bundle(&self, workspace: WorkspaceId) -> Result<LimitsBundle, PortError>;
 }
 
 /// Reads the organization's account projection.
@@ -510,6 +622,106 @@ pub trait AuthorityCommitter: Send + Sync {
     async fn commit(&self, plan: &SessionTransaction) -> Result<CommitOutcome, CommitError>;
 }
 
+/// A provider and model pair a signed catalog qualified, and the release that
+/// qualified it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QualifiedModel {
+    /// The qualified provider.
+    pub provider: aex_wire::provider::ProviderId,
+    /// The qualified provider-native model id.
+    pub model: String,
+    /// The `mc1_<hex>` rendering of the catalog release, pinned into the
+    /// session's resolved-configuration document so the session records exactly
+    /// which catalog admitted it.
+    pub catalog_revision: String,
+}
+
+/// Why a catalog refused a pair.
+///
+/// Three arms because the route declares exactly three codes for it, and each
+/// tells the caller a different thing to fix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum QualificationRefusal {
+    /// The catalog has no such provider.
+    #[error("the catalog has no such provider")]
+    UnknownProvider,
+    /// The catalog has the provider but not the model.
+    #[error("the catalog has no such model for this provider")]
+    UnknownModel,
+    /// The pair exists but is not admissible for new work.
+    #[error("the provider and model pair has no live conformance receipt")]
+    Unqualified,
+}
+
+impl QualificationRefusal {
+    /// The stable public code.
+    #[must_use]
+    pub const fn code(self) -> aex_wire::error::ErrorCode {
+        match self {
+            Self::UnknownProvider => aex_wire::error::ErrorCode::UnknownProvider,
+            Self::UnknownModel => aex_wire::error::ErrorCode::UnknownModel,
+            Self::Unqualified => aex_wire::error::ErrorCode::UnqualifiedProviderModel,
+        }
+    }
+}
+
+/// Qualifies a provider and model pair against the signed model catalog.
+///
+/// **Synchronous, and that is the point** (A D-11). The catalog is loaded and
+/// verified once at process start and is a pure deterministic input, so an
+/// `async fn` would add a `.await` and a failure mode to what is a function
+/// call, and a per-request read would put a network dependency on the admission
+/// path. A process that cannot verify its catalog fails to start; it never
+/// serves creates against an unverified one.
+///
+/// A trait rather than `aex_model_catalog::Catalog` held by value, which is
+/// what A D-11 proposed on the stated grounds that `aex-model-catalog` is a
+/// pure crate. **It is not**: it links `aws-lc-rs`, a native crypto library
+/// with a C and assembler build, so depending on it here would make this pure
+/// application crate's build require a C toolchain. The substance of D-11 — no
+/// await, no I/O, no per-request read, the three codes straight from the
+/// catalog — is unchanged; only the seam moved to where the crypto already is.
+pub trait ModelQualifier: Send + Sync {
+    /// Resolves a pair for a **new** session: every catalog gate applies.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QualificationRefusal`] for an unknown provider, an unknown
+    /// model, or a pair with no live conformance receipt.
+    fn admit(
+        &self,
+        provider: aex_wire::provider::ProviderId,
+        model: &str,
+    ) -> Result<QualifiedModel, QualificationRefusal>;
+}
+
+/// The deployment facts a session create decides `invalid_network_policy` and
+/// `unsupported_package_ecosystem` from (A D-12).
+///
+/// Values, not ports. Both are properties of the plane the process is running
+/// on, asserted once at start-up, and a per-request read of either would be a
+/// network call whose failure mode is a silent default. A process whose
+/// configuration cannot answer these **fails to start**.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeploymentFacts {
+    /// Whether this plane has a managed `INTERNET_EGRESS` connector at all.
+    ///
+    /// The only way a network policy is *invalid* is that the caller asked for
+    /// egress a deployment cannot give. Accepting the request and quietly
+    /// giving the guest no egress is the silent fallback the standing policy
+    /// forbids outright.
+    pub public_internet_egress: bool,
+    /// The validated closed image catalog every generation is pinned from.
+    pub images: aex_runtime_control::catalog::HandsImageCatalog,
+    /// The package ecosystems every published image variant carries.
+    ///
+    /// A set rather than a per-variant capability because the check a create
+    /// runs is "can the image this session pinned pre-install this?", and the
+    /// answer is only honest if it was asserted against the published images at
+    /// boot.
+    pub package_ecosystems: BTreeSet<aex_wire::models::PackageEcosystem>,
+}
+
 /// Everything a use case reads through.
 ///
 /// The committer is deliberately **absent**: a use case cannot commit even by
@@ -525,8 +737,14 @@ pub struct AppContext<'a> {
     pub registry: &'a dyn RegistryReader,
     /// Content.
     pub content: &'a dyn ContentReader,
+    /// The content writer, for what must exist before a commit.
+    pub content_writer: &'a dyn ContentWriter,
     /// Secret custody.
     pub secrets: &'a dyn SecretCustodyReader,
+    /// The signed model catalog, behind a synchronous seam.
+    pub catalog: &'a dyn ModelQualifier,
+    /// The plane's own deployment facts.
+    pub deployment: &'a DeploymentFacts,
     /// Effective limits.
     pub limits: &'a dyn LimitsReader,
     /// The account projection.

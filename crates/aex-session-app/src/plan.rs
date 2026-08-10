@@ -667,6 +667,10 @@ const fn registry_kind_tag(kind: RegistryKind) -> u8 {
     kind.discriminant()
 }
 
+const fn create_error(detail: &'static str) -> PlanError {
+    PlanError::CreateAuthority { detail }
+}
+
 /// One after-commit notification.
 ///
 /// A hint is never truth and never a condition. It says "there may be work", and
@@ -725,15 +729,19 @@ pub struct PlanShape {
 /// Why a plan is not submittable.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlanError {
-    /// A create plan omitted authorities that must be born atomically with the
-    /// session head.
+    /// A create plan does not carry exactly the participants a create must.
     ///
-    /// The current closed write vocabulary cannot yet express the sealed
-    /// registry manifest, native creation event, or exact Hands generation and
-    /// current pointer. Refusing the intent here prevents an adapter from
-    /// treating the already-supported head write as a complete session create.
-    #[error("session creation authority is incomplete")]
-    IncompleteCreateAuthority,
+    /// The membership rule is A D-1 and it is total: five items always, plus
+    /// custody only when the request named secrets, plus the root pin and its
+    /// owner edge only when the sealed root retains something. A create that
+    /// carries fewer orphans the session from an authority a caller can already
+    /// observe; a create that carries more is writing something the create was
+    /// not asked to write.
+    #[error("session creation authority is wrong: {detail}")]
+    CreateAuthority {
+        /// Which part of the membership rule failed.
+        detail: &'static str,
+    },
     /// The plan carries too many actions.
     #[error("plan carries {actions} actions, above the maximum of {max}")]
     TooManyActions {
@@ -772,7 +780,7 @@ impl SessionTransaction {
     /// Returns [`PlanError`] for an over-large plan or a duplicate write target.
     pub fn validate(&self) -> Result<PlanShape, PlanError> {
         if self.intent == TransactionIntent::CreateSession {
-            return Err(PlanError::IncompleteCreateAuthority);
+            self.check_create_participants()?;
         }
         let mut action_targets = BTreeSet::new();
         action_targets.extend(self.conditions.iter().map(Condition::target));
@@ -799,6 +807,97 @@ impl SessionTransaction {
             }
         }
         Ok(PlanShape { actions, bytes })
+    }
+
+    /// The largest number of items a create transaction may ever carry.
+    ///
+    /// Five always, plus custody when the request named secrets. This is a
+    /// **constant**, not a bound to grow into: a create whose action count grew
+    /// with request size would be a create whose tail latency and
+    /// `TransactionConflictException` rate grew with request size, which the
+    /// performance-first ordering forbids (A D-5).
+    pub const CREATE_MAX_ACTIONS: usize = 6;
+
+    /// Enforces A D-1's create membership rule.
+    ///
+    /// Written as an exhaustive match over the write vocabulary rather than a
+    /// set of `contains` checks, so a new `Write` arm has to be classified here
+    /// instead of silently becoming a legal create participant.
+    fn check_create_participants(&self) -> Result<(), PlanError> {
+        let mut head: Option<&Session> = None;
+        let mut root_agent = 0_usize;
+        let mut receipts = 0_usize;
+        let mut pins = 0_usize;
+        let mut edges = 0_usize;
+        let mut custody = 0_usize;
+        for write in &self.writes {
+            match write {
+                Write::PutSessionHead(session) => {
+                    if head.is_some() {
+                        return Err(create_error("a create writes exactly one session head"));
+                    }
+                    head = Some(session);
+                }
+                Write::PutAgentControl(_) => root_agent += 1,
+                Write::PutIdempotencyReceipt(_) => receipts += 1,
+                Write::PutPin(_) => pins += 1,
+                Write::PutOwnerEdge(_) => edges += 1,
+                Write::PutCustody(_) => custody += 1,
+                Write::PutMessage(_)
+                | Write::PutRun(_)
+                | Write::CancelAgent { .. }
+                | Write::AppendJournalPage { .. }
+                | Write::PutApproval(_)
+                | Write::PutOperation(_)
+                | Write::RedactOperationResult(_)
+                | Write::PutWorkItem(_)
+                | Write::PutOutboxEvent(_)
+                | Write::DeletePin(_)
+                | Write::PutRegistryPointer(_)
+                | Write::PutUpload(_)
+                | Write::PutGrant(_)
+                | Write::PutSecret(_)
+                | Write::PutTombstone(_)
+                | Write::PutPersistReceipt(_)
+                | Write::PutTreePage { .. }
+                | Write::DeleteItem(_) => {
+                    return Err(create_error(
+                        "a create writes only the head, its root agent, its receipt, its initial \
+                         root pin and owner edge, and its first custody",
+                    ));
+                }
+            }
+        }
+        let Some(head) = head else {
+            return Err(create_error("a create writes exactly one session head"));
+        };
+        if root_agent != 1 {
+            return Err(create_error(
+                "a create writes exactly one root agent control record; a head whose root agent \
+                 does not exist answers 404 to the reader the 201 just invited",
+            ));
+        }
+        if receipts != 1 {
+            return Err(create_error(
+                "a create writes exactly one idempotency receipt; the receipt's conditional put \
+                 is the concurrency election, so a create without one can mint two sessions for \
+                 one key",
+            ));
+        }
+        // A pin on an empty root retains nothing, so an empty seal omits both
+        // content items. The branch is a total function of the sealed root and
+        // is decided here rather than trusted from the caller.
+        let retains = head.initial_root.entries > 0;
+        if pins != usize::from(retains) || edges != usize::from(retains) {
+            return Err(create_error(
+                "a create writes one root pin and one owner edge exactly when its sealed initial \
+                 root retains something",
+            ));
+        }
+        if custody > 1 {
+            return Err(create_error("a create writes at most one custody record"));
+        }
+        Ok(())
     }
 
     /// The stable identity of each condition, in plan order.
@@ -889,20 +988,85 @@ mod tests {
         assert_eq!(ids, value.condition_ids());
     }
 
+    /// A create plan over the domain fixture, with an empty sealed root.
+    fn create_plan(session: aex_session_domain::Session) -> SessionTransaction {
+        let root_agent = crate::testing::root_agent_of(&session);
+        let receipt = crate::testing::create_receipt(&session);
+        SessionTransaction {
+            intent: TransactionIntent::CreateSession,
+            conditions: Vec::new(),
+            writes: vec![
+                Write::PutSessionHead(Box::new(session)),
+                Write::PutAgentControl(Box::new(root_agent)),
+                Write::PutIdempotencyReceipt(Box::new(receipt)),
+            ],
+            after_commit: Vec::new(),
+        }
+    }
+
+    fn empty_root_session() -> aex_session_domain::Session {
+        let mut session = aex_session_domain::testing::session_fixture();
+        session.initial_root = aex_content_domain::ContentRoot {
+            digest: [0; 32],
+            entries: 0,
+            logical_bytes: 0,
+        };
+        session
+    }
+
     #[test]
-    fn session_create_fails_closed_until_every_authority_participant_is_expressible() {
-        let session = aex_session_domain::testing::session_fixture();
+    fn a_head_only_create_is_still_refused_by_the_participant_rule() {
+        let session = empty_root_session();
         let value = SessionTransaction {
             intent: TransactionIntent::CreateSession,
             conditions: Vec::new(),
             writes: vec![Write::PutSessionHead(Box::new(session))],
             after_commit: Vec::new(),
         };
-        assert_eq!(
-            value.validate(),
-            Err(PlanError::IncompleteCreateAuthority),
-            "a head-only transaction would orphan the session from its root agent, registry, custody, runtime generation, replay receipt and event"
+        assert!(
+            matches!(value.validate(), Err(PlanError::CreateAuthority { .. })),
+            "a head-only transaction orphans the session from its root agent and its replay receipt"
         );
+    }
+
+    #[test]
+    fn a_create_with_no_selection_and_no_secrets_is_three_items_in_one_table() {
+        let shape = create_plan(empty_root_session())
+            .validate()
+            .expect("the minimal create is complete");
+        assert_eq!(shape.actions, 3);
+    }
+
+    #[test]
+    fn a_create_whose_seal_retains_something_must_carry_the_pin_and_its_edge() {
+        // The fixture's initial root has entries, so omitting the pin leaves
+        // `initial_root` naming content nothing retains.
+        let plan = create_plan(aex_session_domain::testing::session_fixture());
+        assert!(matches!(
+            plan.validate(),
+            Err(PlanError::CreateAuthority { .. })
+        ));
+    }
+
+    #[test]
+    fn a_create_may_not_smuggle_a_write_a_create_was_not_asked_for() {
+        let mut plan = create_plan(empty_root_session());
+        plan.writes.push(Write::DeleteItem(key("SOMETHING")));
+        assert!(matches!(
+            plan.validate(),
+            Err(PlanError::CreateAuthority { .. })
+        ));
+    }
+
+    #[test]
+    fn a_create_without_its_receipt_cannot_elect_a_winner() {
+        let mut plan = create_plan(empty_root_session());
+        plan.writes
+            .retain(|write| !matches!(write, Write::PutIdempotencyReceipt(_)));
+        assert!(matches!(
+            plan.validate(),
+            Err(PlanError::CreateAuthority { .. })
+        ));
     }
 
     #[test]
