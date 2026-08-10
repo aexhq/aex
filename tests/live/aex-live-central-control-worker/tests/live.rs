@@ -14,23 +14,23 @@ const UNAVAILABLE: &str =
     "live evidence requires a deployed plane and credentials; this run deploys nothing (OD-07)";
 
 #[test]
-fn a_redelivered_fifo_message_reconciles_rather_than_dispatching_twice() {
-    panic!("{UNAVAILABLE}: redeliver a settled provisioning message against a live region");
+fn a_duplicate_async_wake_reconciles_rather_than_dispatching_twice() {
+    panic!("{UNAVAILABLE}: redeliver a settled transaction wake against a live region");
 }
 
 #[test]
-fn a_partial_batch_names_only_the_items_that_did_not_commit() {
-    panic!("{UNAVAILABLE}: fail one item of a real batch and inspect the response");
+fn a_precommit_wake_is_retried_after_the_transaction_commits() {
+    panic!("{UNAVAILABLE}: hold the producer transaction open through the first async delivery");
 }
 
 #[test]
-fn a_poison_intent_conflict_quarantines_to_the_dead_letter_queue() {
-    panic!("{UNAVAILABLE}: replay a changed intent under a live operation id");
+fn an_exhausted_async_failure_lands_in_the_unconsumed_alarmed_queue() {
+    panic!("{UNAVAILABLE}: force a durable effect failure through the configured retry policy");
 }
 
 #[test]
-fn a_scheduled_due_scan_recovers_an_operation_whose_queue_hint_was_lost() {
-    panic!("{UNAVAILABLE}: delete the queue message and wait for the schedule");
+fn a_fanout_larger_than_one_batch_self_continues_until_quiescent() {
+    panic!("{UNAVAILABLE}: insert more workspace projections than one configured worker batch");
 }
 
 #[test]

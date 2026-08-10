@@ -12,8 +12,8 @@
     "capacity_gates": 19,
     "live_targets": 37,
     "packages": 150,
-    "seams_claimed": 33,
-    "seams_declared": 35,
+    "seams_claimed": 34,
+    "seams_declared": 36,
     "workloads": 11
   },
   "packages": {
@@ -1920,6 +1920,7 @@
         "targets": {
           "continuations": "unit",
           "faults": "unit",
+          "live_files": "unit",
           "properties": "unit"
         },
         "not_applicable": {
@@ -3278,8 +3279,8 @@
         ],
         "seams": [
           "aws.iam.denial",
-          "aws.rds_data.transaction",
-          "aws.sqs.fifo"
+          "aws.lambda.async_delivery",
+          "aws.rds_data.transaction"
         ],
         "security_tier": "internal",
         "risk": [
@@ -4727,7 +4728,7 @@
         ],
         "seams": [
           "aws.rds_data.transaction",
-          "aws.sqs.fifo",
+          "aws.lambda.async_delivery",
           "aws.iam.denial"
         ],
         "security_tier": "internal",
@@ -5576,6 +5577,9 @@
       "aex-live-regional-secret-api",
       "aex-live-session-stream-api"
     ],
+    "aws.lambda.async_delivery": [
+      "aex-live-central-control-worker"
+    ],
     "aws.lambda.microvm": [
       "aex-live-brain-mux",
       "aex-live-hands-image",
@@ -5622,7 +5626,6 @@
     "aws.sqs.fifo": [
       "aex-live-brain-mux",
       "aex-live-central-control-api",
-      "aex-live-central-control-worker",
       "aex-live-finance-ingest",
       "aex-live-finance-settlement-worker",
       "aex-live-session-operation-worker",

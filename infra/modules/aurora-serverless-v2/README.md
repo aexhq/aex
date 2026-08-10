@@ -33,6 +33,7 @@ The module does not accept a second caller-supplied secret identity.
 | `vpc_security_group_ids` | `list(string)` | Security groups. |
 | `region` | `string` | AWS region. |
 | `kms_key_arn` | `string` | Customer-managed key for storage and the managed secret. |
+| `lambda_invoke_role_arn` | `string` | Optional role associated with the cluster's `Lambda` feature; its policy is composed outside this module. |
 | `preferred_backup_window` | `string` | Daily backup window in UTC. |
 | `tags` | `map(string)` | Tags. |
 
@@ -64,8 +65,12 @@ The module does not accept a second caller-supplied secret identity.
 - Storage is encrypted with the supplied customer-managed key.
 - The master password is RDS-managed and never appears in configuration.
 - The engine version must be pinned to a minor.
+- When a Lambda invocation role is supplied, it is associated through the
+  cluster's exact `Lambda` feature rather than attached as an application role.
 
 ## Not asserted here
 
 ACU scaling, cold resume, failover, Data API statement and result limits, and
-commit ambiguity are the `aws.rds_data.transaction` seam.
+commit ambiguity are the `aws.rds_data.transaction` seam. Network reachability
+to the regional Lambda API and the role's exact invoke policy belong to the
+composing plane.

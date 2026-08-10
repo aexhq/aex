@@ -78,6 +78,11 @@ capability!(
     "Receiving from and deleting on the central control FIFO queue."
 );
 capability!(
+    ControlWakeInvoke,
+    "control.wake_invoke",
+    "Asynchronously invoking the central control worker's live alias for bounded outbox continuation."
+);
+capability!(
     MailSend,
     "mail.send",
     "Sending an invitation notification from the configured identity."

@@ -41,7 +41,7 @@ use aex_wire::ids::PrefixedId as _;
 use aex_wire::types::Region;
 use async_trait::async_trait;
 use central_control_worker::runtime::{
-    Mail, RegionalCapacity, RegionalProjection, SigningAdmin, Worker,
+    Mail, OutboxWake, RegionalCapacity, RegionalProjection, SigningAdmin, WakeInvoker, Worker,
 };
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -258,6 +258,7 @@ struct FakeStore {
     workspace_status: WorkspaceStatus,
     operation_status: OperationStatus,
     key_material: Option<WorkspaceKeyMaterial>,
+    wake_transaction: aex_control_aurora::OutboxWakeTransactionStatus,
 }
 
 impl FakeStore {
@@ -276,6 +277,7 @@ impl FakeStore {
                 pepper_version: 1,
                 scopes: ScopeSet::EMPTY,
             }),
+            wake_transaction: aex_control_aurora::OutboxWakeTransactionStatus::Committed,
         }
     }
 }
@@ -298,12 +300,14 @@ impl ControlStore for FakeStore {
     async fn claim_outbox(&self, command: &ClaimOutbox) -> Result<Vec<OutboxMessage>, StoreError> {
         self.journal
             .record(format!("claim_outbox:{}", command.batch));
-        Ok(std::mem::take(
-            &mut *self
-                .outbox
-                .lock()
-                .expect("the outbox lock is never poisoned"),
-        ))
+        let mut outbox = self
+            .outbox
+            .lock()
+            .expect("the outbox lock is never poisoned");
+        let count = outbox
+            .len()
+            .min(usize::try_from(command.batch).unwrap_or(usize::MAX));
+        Ok(outbox.drain(..count).collect())
     }
 
     async fn mark_outbox_dispatched(
@@ -513,6 +517,34 @@ impl KeyMaterialReader for FakeStore {
     }
 }
 
+#[async_trait]
+impl central_control_worker::runtime::Store for FakeStore {
+    async fn outbox_wake_state(
+        &self,
+        anchor_id: Uuid,
+        _transaction_id: &str,
+    ) -> Result<aex_control_aurora::OutboxWakeState, StoreError> {
+        Ok(aex_control_aurora::OutboxWakeState {
+            transaction: self.wake_transaction,
+            anchor_exists: true,
+            anchor_dispatched: self
+                .journal
+                .entries()
+                .contains(&format!("dispatched:{anchor_id}")),
+        })
+    }
+}
+
+struct FakeWakeInvoker(Arc<Journal>);
+
+#[async_trait]
+impl WakeInvoker for FakeWakeInvoker {
+    async fn invoke(&self, wake: &OutboxWake) -> Result<(), String> {
+        self.0.record(format!("continue:{}", wake.anchor_id));
+        Ok(())
+    }
+}
+
 /// The regional control authority, reached by direct invoke.
 struct FakeRegional {
     journal: Arc<Journal>,
@@ -665,13 +697,23 @@ impl Harness {
 
     /// A worker in which exactly the listed authorities refuse.
     fn build(outbox: Vec<OutboxMessage>, down: &[Authority]) -> Self {
+        Self::build_with_transaction(
+            outbox,
+            down,
+            aex_control_aurora::OutboxWakeTransactionStatus::Committed,
+        )
+    }
+
+    fn build_with_transaction(
+        outbox: Vec<OutboxMessage>,
+        down: &[Authority],
+        wake_transaction: aex_control_aurora::OutboxWakeTransactionStatus,
+    ) -> Self {
         let answers = |authority: Authority| !down.contains(&authority);
         let journal = Arc::new(Journal::default());
-        let store = Arc::new(FakeStore::new(
-            Arc::clone(&journal),
-            outbox,
-            answers(Authority::Store),
-        ));
+        let mut store = FakeStore::new(Arc::clone(&journal), outbox, answers(Authority::Store));
+        store.wake_transaction = wake_transaction;
+        let store = Arc::new(store);
         let projections: BTreeMap<Region, Arc<dyn RegionalProjection>> = BTreeMap::from([(
             REGION,
             Arc::new(FakeProjection {
@@ -680,6 +722,7 @@ impl Harness {
         )]);
         let worker = Worker::new(
             store as Arc<dyn central_control_worker::runtime::Store>,
+            Arc::new(FakeWakeInvoker(Arc::clone(&journal))),
             Arc::new(FakeRegional {
                 journal: Arc::clone(&journal),
                 available: answers(Authority::Regional),
@@ -715,9 +758,18 @@ fn the_three_routes_outbox() -> Vec<OutboxMessage> {
 }
 
 #[tokio::test]
-async fn a_schedule_tick_drains_every_row_the_three_shipped_routes_commit() {
+async fn a_transaction_wake_drains_every_row_the_three_shipped_routes_commit() {
     let harness = Harness::with(the_three_routes_outbox());
-    harness.worker.scheduled().await.expect("the drain runs");
+    central_control_worker::handle_event(
+        &harness.worker,
+        serde_json::json!({
+            "schema": OutboxWake::SCHEMA,
+            "anchorId": api_key_created().id,
+            "transactionId": "42"
+        }),
+    )
+    .await
+    .expect("the drain runs");
 
     let journal = harness.journal.entries();
     for (route, message) in [
@@ -741,37 +793,70 @@ async fn a_schedule_tick_drains_every_row_the_three_shipped_routes_commit() {
 }
 
 #[tokio::test]
-async fn a_scheduled_invocation_carries_no_records_and_still_reaches_the_drain() {
+async fn an_aurora_wake_carries_the_exact_anchor_and_transaction() {
     let harness = Harness::with(the_three_routes_outbox());
-    // The exact envelope an `EventBridge` schedule delivers.
     let answer = central_control_worker::handle_event(
         &harness.worker,
         serde_json::json!({
-            "source": "aex.scheduler",
-            "detail-type": "aex.control_drain",
-            "detail": {},
+            "schema": OutboxWake::SCHEMA,
+            "anchorId": api_key_created().id,
+            "transactionId": "42"
         }),
     )
     .await
-    .expect("a scheduled invocation succeeds");
+    .expect("an Aurora wake succeeds");
 
     assert_eq!(answer, serde_json::json!({}));
     assert_eq!(harness.journal.count("dispatched:"), 3);
     assert_eq!(
         harness.journal.count("gc"),
         1,
-        "a scheduled invocation drains and then sweeps"
+        "a completed wake opportunistically sweeps"
     );
 }
 
 #[tokio::test]
-async fn a_queue_wakeup_drains_the_outbox_without_reading_the_message_body() {
+async fn a_statement_larger_than_one_batch_always_accepts_a_continuation() {
+    let rows = (30_u8..41)
+        .map(|n| {
+            message(
+                n,
+                Topic::InvitationEmailRequested,
+                serde_json::json!({
+                    "invitationId": id(n + 50),
+                    "organizationId": organization_id(),
+                    "email": "invitee@example.test",
+                    "role": "member",
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+    let anchor = rows[0].id;
+    let harness = Harness::with(rows);
+    let wake = serde_json::json!({
+        "schema": OutboxWake::SCHEMA,
+        "anchorId": anchor,
+        "transactionId": "43"
+    });
+
+    central_control_worker::handle_event(&harness.worker, wake.clone())
+        .await
+        .expect("the full first page accepts continuation");
+    assert_eq!(harness.journal.count("dispatched:"), 10);
+    assert_eq!(harness.journal.count("continue:"), 1);
+    assert_eq!(harness.journal.count("gc"), 0);
+
+    central_control_worker::handle_event(&harness.worker, wake)
+        .await
+        .expect("the continuation drains the short final page");
+    assert_eq!(harness.journal.count("dispatched:"), 11);
+    assert_eq!(harness.journal.count("gc"), 1);
+}
+
+#[tokio::test]
+async fn a_queue_or_schedule_envelope_is_rejected() {
     let harness = Harness::with(the_three_routes_outbox());
-    // The body is deliberately not any topic's payload. The authority for what
-    // to do is `control.outbox_message`, claimed under a lease; the queue only
-    // says "look". A publisher that stopped sending would cost latency, not
-    // correctness, which is why the schedule is the trigger that had to exist.
-    let answer = central_control_worker::handle_event(
+    let error = central_control_worker::handle_event(
         &harness.worker,
         serde_json::json!({
             "Records": [{
@@ -786,19 +871,52 @@ async fn a_queue_wakeup_drains_the_outbox_without_reading_the_message_body() {
         }),
     )
     .await
-    .expect("a queue invocation answers");
+    .expect_err("there is no polled queue recovery path");
 
-    assert_eq!(
-        answer["batchItemFailures"].as_array().map(Vec::len),
-        Some(0),
-        "an unparsed body is not a batch-item failure: {answer}"
+    assert_eq!(error, "invalid_outbox_wake");
+    assert_eq!(harness.journal.count("dispatched:"), 0);
+}
+
+#[tokio::test]
+async fn an_aborted_transaction_wake_is_a_safe_no_op() {
+    let harness = Harness::build_with_transaction(
+        the_three_routes_outbox(),
+        &[],
+        aex_control_aurora::OutboxWakeTransactionStatus::Aborted,
     );
-    assert_eq!(harness.journal.count("dispatched:"), 3);
-    assert_eq!(
-        harness.journal.count("gc"),
-        0,
-        "a queue wakeup drains; only the schedule sweeps"
+    central_control_worker::handle_event(
+        &harness.worker,
+        serde_json::json!({
+            "schema": OutboxWake::SCHEMA,
+            "anchorId": api_key_created().id,
+            "transactionId": "44"
+        }),
+    )
+    .await
+    .expect("rollback has no durable work");
+    assert_eq!(harness.journal.count("dispatched:"), 0);
+    assert_eq!(harness.journal.count("gc"), 0);
+}
+
+#[tokio::test]
+async fn a_precommit_race_returns_an_error_for_lambda_retry() {
+    let harness = Harness::build_with_transaction(
+        the_three_routes_outbox(),
+        &[],
+        aex_control_aurora::OutboxWakeTransactionStatus::InProgress,
     );
+    let error = central_control_worker::handle_event(
+        &harness.worker,
+        serde_json::json!({
+            "schema": OutboxWake::SCHEMA,
+            "anchorId": api_key_created().id,
+            "transactionId": "45"
+        }),
+    )
+    .await
+    .expect_err("the accepted event must be retried after commit");
+    assert_eq!(error, "outbox_wake_transaction_in_progress");
+    assert_eq!(harness.journal.count("dispatched:"), 0);
 }
 
 fn provision_outbox() -> Vec<OutboxMessage> {
@@ -873,7 +991,7 @@ async fn a_placement_is_never_written_when_the_capacity_bootstrap_did_not_apply(
         .worker
         .tick()
         .await
-        .expect("a released row is not a drain failure");
+        .expect_err("a failed effect must reach Lambda's async retry");
 
     assert_eq!(
         regional_effects(&harness),
@@ -901,7 +1019,7 @@ async fn a_duty_that_fails_is_released_with_a_backoff_and_never_marked_dispatche
         .worker
         .tick()
         .await
-        .expect("a released row is not a drain failure");
+        .expect_err("a failed effect must reach Lambda's async retry");
 
     let journal = harness.journal.entries();
     assert!(
@@ -919,17 +1037,18 @@ async fn a_duty_that_fails_is_released_with_a_backoff_and_never_marked_dispatche
 }
 
 #[tokio::test]
-async fn a_scheduled_invocation_that_cannot_drain_fails_loudly_rather_than_answering_success() {
-    // A schedule tick that answers `{}` is indistinguishable from one that
-    // worked, so the retry and dead-letter path never sees it and the outbox
-    // stops draining silently. The invocation has to fail.
+async fn an_aurora_wake_that_cannot_drain_fails_loudly_rather_than_answering_success() {
     let harness = Harness::build(the_three_routes_outbox(), &[Authority::Store]);
     let error = central_control_worker::handle_event(
         &harness.worker,
-        serde_json::json!({ "source": "aex.scheduler", "detail": {} }),
+        serde_json::json!({
+            "schema": OutboxWake::SCHEMA,
+            "anchorId": api_key_created().id,
+            "transactionId": "42"
+        }),
     )
     .await
-    .expect_err("an undrainable schedule tick is a failed invocation");
+    .expect_err("an undrainable wake is a failed invocation");
 
     assert_eq!(error, "store_unavailable");
     assert_eq!(harness.journal.count("dispatched:"), 0);

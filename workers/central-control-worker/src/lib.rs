@@ -1,6 +1,6 @@
 //! `central-control-worker` composition (Rust Lambda ZIP).
 //!
-//! Queue- and schedule-driven reconciliation for the central control plane. It
+//! Transaction-wake-driven reconciliation for the central control plane. It
 //! is the only role that reclaims expired rows, the only one that administers
 //! assertion signing keys, and the only one that sends mail.
 //!
@@ -9,8 +9,8 @@
 //! * every duty is named in [`Handler::ALL`] and [`Handler::for_topic`] is total
 //!   over [`Topic`], so an outbox topic nobody wrote a duty for is a compile
 //!   error rather than a message that is quietly deleted;
-//! * a partial-batch response names only the items that did **not** commit, so
-//!   a failure inside one batch never re-runs an item that already landed.
+//! * every accepted wake names an exact Aurora transaction and anchor, so a
+//!   pre-commit race, rollback and duplicate delivery have distinct outcomes.
 //!
 //! # Why this is a library with a short binary
 //!
@@ -24,7 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use aex_central_http::capability::{
-    Capability as _, CapabilityBinding, CompositionError, CompositionManifest, ControlQueueConsume,
+    Capability as _, CapabilityBinding, CompositionError, CompositionManifest, ControlWakeInvoke,
     ControlWrite, Declares, MailSend, RegionalControlInvoke, SigningKeyAdminister,
 };
 use aex_central_http::config::{CentralServiceId, DeploymentPlane};
@@ -50,10 +50,8 @@ pub mod keys {
     pub const AURORA_SECRET_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_AURORA_SECRET_ARN";
     /// How many messages one batch claims.
     pub const BATCH_SIZE: &str = "AEX_CENTRAL_CONTROL_WORKER_BATCH_SIZE";
-    /// The control FIFO queue.
-    pub const CONTROL_QUEUE_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_CONTROL_QUEUE_ARN";
-    /// Queue URL used only for the startup reachability probe.
-    pub const CONTROL_QUEUE_URL: &str = "AEX_CENTRAL_CONTROL_WORKER_CONTROL_QUEUE_URL";
+    /// This worker's exact live alias ARN, used for bounded continuation.
+    pub const FUNCTION_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_FUNCTION_ARN";
     /// The database name.
     pub const DATABASE: &str = "AEX_CENTRAL_CONTROL_WORKER_DATABASE";
     /// How long a claim lease lasts.
@@ -89,8 +87,7 @@ pub mod keys {
         AURORA_CLUSTER_ARN,
         AURORA_SECRET_ARN,
         BATCH_SIZE,
-        CONTROL_QUEUE_ARN,
-        CONTROL_QUEUE_URL,
+        FUNCTION_ARN,
         DATABASE,
         LEASE_MS,
         PLANE,
@@ -139,10 +136,8 @@ pub struct Config {
     pub aurora_cluster_arn: String,
     /// The Aurora credentials secret.
     pub aurora_secret_arn: String,
-    /// The control FIFO queue.
-    pub control_queue_arn: String,
-    /// The control queue URL for startup probing.
-    pub control_queue_url: String,
+    /// This worker's exact live alias ARN.
+    pub function_arn: String,
     /// The sender identity bound to the mail capability.
     pub ses_identity_arn: String,
     /// Verified sender address.
@@ -276,8 +271,11 @@ impl Config {
             account_id: required(&lookup, keys::ACCOUNT_ID)?,
             aurora_cluster_arn: required(&lookup, keys::AURORA_CLUSTER_ARN)?,
             aurora_secret_arn: required(&lookup, keys::AURORA_SECRET_ARN)?,
-            control_queue_arn: required(&lookup, keys::CONTROL_QUEUE_ARN)?,
-            control_queue_url: required(&lookup, keys::CONTROL_QUEUE_URL)?,
+            function_arn: lambda_alias_arn(
+                keys::FUNCTION_ARN,
+                &required(&lookup, keys::FUNCTION_ARN)?,
+                &region,
+            )?,
             ses_identity_arn: required(&lookup, keys::SES_IDENTITY_ARN)?,
             mail_from: mail_from(&required(&lookup, keys::MAIL_FROM)?)?,
             signing_secret_prefix: required(&lookup, keys::SIGNING_SECRET_PREFIX)?,
@@ -304,10 +302,7 @@ impl Config {
                     keys::AURORA_CLUSTER_ARN.to_owned(),
                     self.aurora_cluster_arn.clone(),
                 ),
-                (
-                    keys::CONTROL_QUEUE_ARN.to_owned(),
-                    self.control_queue_arn.clone(),
-                ),
+                (keys::FUNCTION_ARN.to_owned(), self.function_arn.clone()),
                 (
                     keys::SES_IDENTITY_ARN.to_owned(),
                     self.ses_identity_arn.clone(),
@@ -470,7 +465,24 @@ fn mail_from(raw: &str) -> Result<String, CentralControlWorkerConfigError> {
     }
 }
 
-/// Every scheduled or queue-driven duty this worker performs.
+fn lambda_alias_arn(
+    name: &'static str,
+    raw: &str,
+    region: &Region,
+) -> Result<String, CentralControlWorkerConfigError> {
+    let expected = format!("arn:aws:lambda:{}:", region.as_str());
+    let suffix = raw.split(":function:").nth(1).unwrap_or_default();
+    if raw.starts_with(&expected) && suffix.split(':').count() == 2 {
+        Ok(raw.to_owned())
+    } else {
+        Err(CentralControlWorkerConfigError::Invalid {
+            name,
+            reason: "expected a qualified Lambda alias ARN in the worker region".to_owned(),
+        })
+    }
+}
+
+/// Every event-wake-driven duty this worker performs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Handler {
     /// Finish a workspace whose regional half may already exist.
@@ -560,7 +572,7 @@ impl Handler {
 struct Composition;
 
 impl Declares<ControlWrite> for Composition {}
-impl Declares<ControlQueueConsume> for Composition {}
+impl Declares<ControlWakeInvoke> for Composition {}
 impl Declares<RegionalControlInvoke> for Composition {}
 impl Declares<MailSend> for Composition {}
 impl Declares<SigningKeyAdminister> for Composition {}
@@ -572,14 +584,14 @@ pub fn manifest() -> CompositionManifest {
         deployable: DEPLOYABLE,
         capabilities: BTreeSet::from([
             ControlWrite::ID,
-            ControlQueueConsume::ID,
+            ControlWakeInvoke::ID,
             RegionalControlInvoke::ID,
             MailSend::ID,
             SigningKeyAdminister::ID,
         ]),
         bindings: vec![
             CapabilityBinding::arn(keys::AURORA_CLUSTER_ARN, ControlWrite::ID),
-            CapabilityBinding::arn(keys::CONTROL_QUEUE_ARN, ControlQueueConsume::ID),
+            CapabilityBinding::arn(keys::FUNCTION_ARN, ControlWakeInvoke::ID),
             CapabilityBinding::arn(keys::SES_IDENTITY_ARN, MailSend::ID),
             CapabilityBinding::resource(keys::SIGNING_SECRET_PREFIX, SigningKeyAdminister::ID),
             CapabilityBinding::resource(keys::REGIONAL_FUNCTIONS, RegionalControlInvoke::ID),
@@ -603,10 +615,9 @@ pub const PERMISSIONS: &[&str] = &[
     "rds-data:RollbackTransaction",
     "dynamodb:GetItem",
     "dynamodb:PutItem",
-    "sqs:ChangeMessageVisibility",
-    "sqs:DeleteMessage",
-    "sqs:ReceiveMessage",
-    "sqs:GetQueueAttributes",
+    // Lambda's async on-failure delivery assumes this execution role. There is
+    // no consumer permission and no event-source mapping for this queue.
+    "sqs:SendMessage",
     "secretsmanager:CreateSecret",
     "secretsmanager:DeleteSecret",
     "secretsmanager:GetSecretValue",
@@ -626,8 +637,8 @@ pub const PERMISSIONS: &[&str] = &[
 pub struct Probes {
     /// `SELECT 1` as `aex_control_worker` succeeded.
     pub aurora: bool,
-    /// The control queue is reachable.
-    pub queue: bool,
+    /// The exact worker alias is configured for continuation.
+    pub wake: bool,
     /// Every direct regional function is configured.
     pub functions: bool,
     /// Every regional capacity controller is configured.
@@ -642,7 +653,7 @@ impl Probes {
     /// No probe has answered yet.
     pub const NONE: Self = Self {
         aurora: false,
-        queue: false,
+        wake: false,
         functions: false,
         capacity: false,
         projections: false,
@@ -661,8 +672,8 @@ pub fn readiness(probes: Probes) -> Readiness {
                 resolved: probes.aurora,
             },
             Dependency {
-                name: "control-queue",
-                resolved: probes.queue,
+                name: "control-wake-function",
+                resolved: probes.wake,
             },
             Dependency {
                 name: "regional-function-map",
@@ -684,29 +695,6 @@ pub fn readiness(probes: Probes) -> Readiness {
     )
 }
 
-/// One batch item's outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ItemOutcome {
-    /// The queue message identifier.
-    pub message_id: String,
-    /// Whether the item committed.
-    pub committed: bool,
-}
-
-/// The partial-batch response the queue expects.
-///
-/// Only uncommitted items are named. Reporting a committed item would re-run
-/// work that already landed, which for a fenced regional effect means a second
-/// dispatch under a stale fence.
-#[must_use]
-pub fn partial_batch_failures(outcomes: &[ItemOutcome]) -> Vec<String> {
-    outcomes
-        .iter()
-        .filter(|outcome| !outcome.committed)
-        .map(|outcome| outcome.message_id.clone())
-        .collect()
-}
-
 /// Why `central-control-worker` stopped.
 #[derive(Debug, thiserror::Error)]
 pub enum CentralControlWorkerRunError {
@@ -726,7 +714,7 @@ pub enum CentralControlWorkerRunError {
 
 /// Builds the router this binary serves.
 ///
-/// A queue worker has no public surface; the two internal probes are the whole
+/// This worker has no public surface; the two internal probes are the whole
 /// mounted set, and they are what the deployment health check polls.
 pub fn app(readiness: Readiness) -> axum::Router {
     aex_central_http::health::router(readiness)
@@ -781,15 +769,6 @@ pub async fn run(
     .await
     .map_err(|error| CentralControlWorkerRunError::Dependency("aurora", error.to_string()))?;
 
-    aws_sdk_sqs::Client::new(&aws)
-        .get_queue_attributes()
-        .queue_url(&config.control_queue_url)
-        .attribute_names(aws_sdk_sqs::types::QueueAttributeName::QueueArn)
-        .send()
-        .await
-        .map_err(|error| {
-            CentralControlWorkerRunError::Dependency("control-queue", error.to_string())
-        })?;
     let ses = aws_sdk_sesv2::Client::new(&aws);
 
     let signing = std::sync::Arc::new(runtime::SecretsSigningAdmin::new(
@@ -832,6 +811,10 @@ pub async fn run(
         ));
     let worker = std::sync::Arc::new(runtime::Worker::new(
         store,
+        std::sync::Arc::new(runtime::LambdaWakeInvoker::new(
+            aws_sdk_lambda::Client::new(&aws),
+            config.function_arn.clone(),
+        )),
         regional,
         capacity,
         projections,
@@ -859,54 +842,19 @@ async fn run_lambda(
     .map_err(|error| CentralControlWorkerRunError::Runtime(error.to_string()))
 }
 
-/// Routes one invocation to the drain, whichever trigger produced it.
-///
-/// Two triggers exist and they are not alternatives. The control FIFO queue
-/// delivers a **wakeup**: the worker never reads a message body, because the
-/// authority for what to do is `control.outbox_message` in Aurora, claimed
-/// under a lease. An `EventBridge` schedule delivers no body at all, and is
-/// what makes the drain independent of whether any particular wakeup was ever
-/// sent — a post-commit publish is outside the transaction that wrote the row,
-/// so a lost send would otherwise strand it permanently.
-///
-/// A scheduled invocation therefore does strictly more than a queue one: it
-/// drains and then sweeps.
+/// Routes one exact Aurora transaction wake to the bounded drain.
 ///
 /// # Errors
 ///
-/// Returns the drain's message when a **scheduled** invocation fails, so the
-/// schedule's retry and dead-letter path sees a failed invocation rather than a
-/// success. A queue invocation never fails as a whole; it answers a
-/// partial-batch response naming the records that did not commit.
+/// Returns an error for malformed events, a pre-commit race, or any failed
+/// effect so Lambda's asynchronous retry and on-failure destination observe it.
 pub async fn handle_event(
     worker: &runtime::Worker,
     value: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use aws_lambda_events::event::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent};
-
-    if value.get("Records").is_some() {
-        let Ok(event) = serde_json::from_value::<SqsEvent>(value) else {
-            return Ok(serde_json::json!({
-                "batchItemFailures": [{ "itemIdentifier": "malformed-sqs-event" }]
-            }));
-        };
-        let mut response = SqsBatchResponse::default();
-        for record in event.records {
-            if worker.tick().await.is_err() {
-                let mut failure = BatchItemFailure::default();
-                failure.item_identifier = record
-                    .message_id
-                    .unwrap_or_else(|| "missing-message-id".to_owned());
-                response.batch_item_failures.push(failure);
-            }
-        }
-        return Ok(serde_json::to_value(response).unwrap_or_else(|_| {
-            serde_json::json!({
-                "batchItemFailures": [{ "itemIdentifier": "response-encode-failed" }]
-            })
-        }));
-    }
-    worker.scheduled().await?;
+    let wake = serde_json::from_value::<runtime::OutboxWake>(value)
+        .map_err(|_| "invalid_outbox_wake".to_owned())?;
+    worker.wake(&wake).await?;
     Ok(serde_json::json!({}))
 }
 
@@ -923,8 +871,8 @@ impl aex_rds_data::Row for Ok1 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CentralControlWorkerConfigError, Config, Handler, ItemOutcome, PERMISSIONS, Probes, app,
-        keys, manifest, partial_batch_failures, readiness,
+        CentralControlWorkerConfigError, Config, Handler, PERMISSIONS, Probes, app, keys, manifest,
+        readiness,
     };
     use aex_central_http::capability::{
         AssertionSign, Capability as _, CapabilityBinding, CompositionError,
@@ -987,12 +935,9 @@ mod tests {
                 "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-worker".to_owned(),
             ),
             (
-                keys::CONTROL_QUEUE_ARN,
-                "arn:aws:sqs:eu-west-1:000000000000:aex-control.fifo".to_owned(),
-            ),
-            (
-                keys::CONTROL_QUEUE_URL,
-                "https://sqs.eu-west-1.amazonaws.com/000000000000/aex-control.fifo".to_owned(),
+                keys::FUNCTION_ARN,
+                "arn:aws:lambda:eu-west-1:000000000000:function:aex-prd-central-control-worker:live"
+                    .to_owned(),
             ),
             (
                 keys::SES_IDENTITY_ARN,
@@ -1194,28 +1139,12 @@ mod tests {
             assert!(!permission.starts_with("s3:"), "{permission}");
             assert!(!permission.contains("stripe"), "{permission}");
         }
-        assert!(PERMISSIONS.contains(&"sqs:ReceiveMessage"));
+        assert!(PERMISSIONS.contains(&"sqs:SendMessage"));
+        assert!(!PERMISSIONS.contains(&"sqs:ReceiveMessage"));
+        assert!(!PERMISSIONS.contains(&"sqs:DeleteMessage"));
+        assert!(!PERMISSIONS.contains(&"sqs:ChangeMessageVisibility"));
+        assert!(PERMISSIONS.contains(&"lambda:InvokeFunction"));
         assert!(PERMISSIONS.contains(&"ses:SendEmail"));
-    }
-
-    #[test]
-    fn a_partial_batch_names_only_the_items_that_did_not_commit() {
-        let outcomes = vec![
-            ItemOutcome {
-                message_id: "a".to_owned(),
-                committed: true,
-            },
-            ItemOutcome {
-                message_id: "b".to_owned(),
-                committed: false,
-            },
-            ItemOutcome {
-                message_id: "c".to_owned(),
-                committed: true,
-            },
-        ];
-        assert_eq!(partial_batch_failures(&outcomes), vec!["b".to_owned()]);
-        assert!(partial_batch_failures(&[]).is_empty());
     }
 
     #[tokio::test]
@@ -1237,7 +1166,7 @@ mod tests {
         assert!(
             !readiness(Probes {
                 aurora: true,
-                queue: true,
+                wake: true,
                 functions: true,
                 capacity: true,
                 projections: false,

@@ -182,6 +182,17 @@ variable "kms_key_arn" {
   }
 }
 
+variable "lambda_invoke_role_arn" {
+  type        = string
+  default     = null
+  description = "Optional IAM role Aurora assumes for aws_lambda.invoke. The role policy must name only the central control worker's live alias ARN."
+
+  validation {
+    condition     = var.lambda_invoke_role_arn == null || can(regex("^arn:aws[a-z-]*:iam::[0-9A-Za-z-]{1,64}:role/[A-Za-z0-9+=,.@_/-]+$", coalesce(var.lambda_invoke_role_arn, "none")))
+    error_message = "When set, the Lambda invocation role must be an IAM role ARN."
+  }
+}
+
 variable "preferred_backup_window" {
   type        = string
   default     = "02:00-03:00"

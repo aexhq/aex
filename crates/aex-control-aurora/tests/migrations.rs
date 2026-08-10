@@ -1433,3 +1433,59 @@ async fn the_pause_crosses_a_privilege_boundary_the_balance_writer_does_not_hold
         "the pause reached the region through a role that cannot reach control"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn localhost_installs_the_statement_wake_without_requiring_aws_lambda() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.superuser().await;
+
+    let targets: i64 = sqlx::query_scalar("SELECT count(*) FROM control.outbox_wake_target")
+        .fetch_one(&mut connection)
+        .await
+        .expect("the optional hosted target exists and starts disabled");
+    assert_eq!(
+        targets, 0,
+        "localhost must not require the Aurora extension"
+    );
+
+    let trigger: (String, String) = sqlx::query_as(
+        "SELECT pg_get_triggerdef(oid), pg_get_functiondef(tgfoid) \
+           FROM pg_trigger \
+          WHERE tgrelid = 'control.outbox_message'::regclass \
+            AND tgname = 'outbox_message_event_wake'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("the outbox statement trigger is installed");
+    assert!(
+        trigger
+            .0
+            .contains("REFERENCING NEW TABLE AS inserted_outbox")
+    );
+    assert!(trigger.0.contains("FOR EACH STATEMENT"));
+    assert!(trigger.1.contains("pg_current_xact_id()"));
+    assert!(trigger.1.contains("'Event'"));
+
+    // The extension owns this schema on Aurora. Creating only the namespace is
+    // enough to exercise the hosted branch without installing an AWS-only
+    // extension in the portable PostgreSQL fixture.
+    sqlx::query("CREATE SCHEMA aws_lambda")
+        .execute(&mut connection)
+        .await
+        .expect("the fixture can model extension presence");
+    let rejected = sqlx::query(
+        "INSERT INTO control.outbox_message \
+           (id, topic, dedupe_key, group_key, payload, available_at, created_at) \
+         VALUES ($1, 'invitation.email.requested', 'missing-target', 'fixture', '{}', now(), now())",
+    )
+    .bind(uuid::Uuid::new_v4())
+    .execute(&mut connection)
+    .await
+    .expect_err("an extension-enabled database may not run without its exact target");
+    assert!(
+        rejected
+            .to_string()
+            .contains("central control wake target is not configured"),
+        "the producer transaction failed for the wrong reason: {rejected}"
+    );
+}

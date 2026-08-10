@@ -119,6 +119,48 @@ pub async fn migrate(
     })
 }
 
+/// Seeds or reconciles the exact qualified Lambda alias Aurora invokes.
+///
+/// This is deployment data, not migration data: the physical function name is
+/// plane-owned. It runs in the same locked schema-admin task immediately after
+/// migration, before that task can report the plane ready.
+///
+/// # Errors
+///
+/// Returns [`RunnerError::Database`] when PostgreSQL refuses the binding.
+pub async fn configure_outbox_wake(
+    connection: &mut PgConnection,
+    lambda_arn: &str,
+) -> Result<(), RunnerError> {
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS aws_lambda CASCADE")
+        .execute(&mut *connection)
+        .await
+        .map_err(|error| RunnerError::Database(error.to_string()))?;
+    let dry_run: i32 = sqlx::query_scalar(
+        "SELECT status_code \
+           FROM aws_lambda.invoke($1::text, '{}'::json, NULL::text, 'DryRun'::text)",
+    )
+    .bind(lambda_arn)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|error| RunnerError::Database(error.to_string()))?;
+    if dry_run != 204 {
+        return Err(RunnerError::Database(format!(
+            "the outbox wake Lambda dry-run returned {dry_run}, not 204"
+        )));
+    }
+    sqlx::query(
+        "INSERT INTO control.outbox_wake_target (singleton, lambda_arn) \
+         VALUES (true, $1) \
+         ON CONFLICT (singleton) DO UPDATE SET lambda_arn = EXCLUDED.lambda_arn",
+    )
+    .bind(lambda_arn)
+    .execute(&mut *connection)
+    .await
+    .map(|_| ())
+    .map_err(|error| RunnerError::Database(error.to_string()))
+}
+
 /// The two conservation laws, read-only.
 ///
 /// # Errors

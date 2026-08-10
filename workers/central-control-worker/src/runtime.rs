@@ -1,4 +1,4 @@
-//! Queue/schedule worker behavior and real external adapters.
+//! Transaction-wake worker behavior and real external adapters.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -25,8 +25,104 @@ use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 /// Everything the drain reads and writes in the control authority.
-pub trait Store: ControlStore + ControlViewStore + KeyMaterialReader {}
-impl<T: ControlStore + ControlViewStore + KeyMaterialReader> Store for T {}
+#[async_trait]
+pub trait Store: ControlStore + ControlViewStore + KeyMaterialReader {
+    /// Resolves the pre-commit race and reads the exact anchor named by a wake.
+    async fn outbox_wake_state(
+        &self,
+        anchor_id: Uuid,
+        transaction_id: &str,
+    ) -> Result<aex_control_aurora::OutboxWakeState, StoreError>;
+}
+
+#[async_trait]
+impl Store for aex_control_aurora::AuroraControlStore {
+    async fn outbox_wake_state(
+        &self,
+        anchor_id: Uuid,
+        transaction_id: &str,
+    ) -> Result<aex_control_aurora::OutboxWakeState, StoreError> {
+        Self::outbox_wake_state(self, anchor_id, transaction_id).await
+    }
+}
+
+/// The transaction-scoped wake accepted by Aurora before commit.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OutboxWake {
+    /// Exact protocol marker.
+    pub schema: String,
+    /// One row inserted by the statement that emitted this wake.
+    pub anchor_id: Uuid,
+    /// Full transaction id returned by `pg_current_xact_id()`.
+    pub transaction_id: String,
+}
+
+impl OutboxWake {
+    /// The only accepted protocol marker.
+    pub const SCHEMA: &'static str = "aex.control-outbox-wake.v1";
+
+    fn validate(&self) -> Result<(), String> {
+        if self.schema != Self::SCHEMA {
+            return Err("unsupported_outbox_wake_schema".to_owned());
+        }
+        if self.transaction_id.is_empty()
+            || !self
+                .transaction_id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit())
+        {
+            return Err("invalid_outbox_wake_transaction_id".to_owned());
+        }
+        Ok(())
+    }
+}
+
+/// Accepted asynchronous continuation invocation.
+#[async_trait]
+pub trait WakeInvoker: Send + Sync {
+    /// Asynchronously invokes this worker with the same durable anchor.
+    async fn invoke(&self, wake: &OutboxWake) -> Result<(), String>;
+}
+
+/// Production continuation adapter, bound to the worker's live alias ARN.
+#[derive(Debug, Clone)]
+pub struct LambdaWakeInvoker {
+    client: aws_sdk_lambda::Client,
+    function_arn: String,
+}
+
+impl LambdaWakeInvoker {
+    /// Binds continuation calls to the exact deployed alias.
+    #[must_use]
+    pub fn new(client: aws_sdk_lambda::Client, function_arn: String) -> Self {
+        Self {
+            client,
+            function_arn,
+        }
+    }
+}
+
+#[async_trait]
+impl WakeInvoker for LambdaWakeInvoker {
+    async fn invoke(&self, wake: &OutboxWake) -> Result<(), String> {
+        let payload = serde_json::to_vec(wake).map_err(|_| "wake_encode_failed".to_owned())?;
+        let response = self
+            .client
+            .invoke()
+            .function_name(&self.function_arn)
+            .invocation_type(aws_sdk_lambda::types::InvocationType::Event)
+            .payload(aws_smithy_types::Blob::new(payload))
+            .send()
+            .await
+            .map_err(|_| "wake_continuation_rejected".to_owned())?;
+        if response.status_code() == 202 {
+            Ok(())
+        } else {
+            Err("wake_continuation_rejected".to_owned())
+        }
+    }
+}
 
 /// The invitation notification sender.
 #[async_trait]
@@ -236,6 +332,7 @@ impl SigningAdmin for SecretsSigningAdmin {
 /// The drain itself: one bounded unit of durable control-plane work.
 pub struct Worker {
     store: Arc<dyn Store>,
+    wake_invoker: Arc<dyn WakeInvoker>,
     regional: Arc<dyn RegionalControlPort>,
     capacity: Arc<dyn RegionalCapacity>,
     projections: BTreeMap<Region, Arc<dyn RegionalProjection>>,
@@ -254,6 +351,13 @@ enum DispatchDisposition {
         available_at: OffsetDateTime,
         error: String,
     },
+}
+
+/// One bounded drain page, used to decide whether continuation is required.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrainReport {
+    /// Outbox rows claimed by this invocation.
+    pub claimed: usize,
 }
 
 fn dispatch_disposition<F>(result: Result<(), String>, attempts: u32, now: F) -> DispatchDisposition
@@ -278,6 +382,7 @@ impl Worker {
     #[must_use]
     pub fn new(
         store: Arc<dyn Store>,
+        wake_invoker: Arc<dyn WakeInvoker>,
         regional: Arc<dyn RegionalControlPort>,
         capacity: Arc<dyn RegionalCapacity>,
         projections: BTreeMap<Region, Arc<dyn RegionalProjection>>,
@@ -290,6 +395,7 @@ impl Worker {
     ) -> Self {
         Self {
             store,
+            wake_invoker,
             regional,
             capacity,
             projections,
@@ -302,15 +408,15 @@ impl Worker {
         }
     }
 
-    /// Drains a bounded unit of durable work. Queue messages are wakeups; the
-    /// Aurora claims remain the authority across duplicate deliveries.
+    /// Drains a bounded unit of durable work. Aurora claims remain the
+    /// authority across duplicate asynchronous deliveries.
     ///
     /// # Errors
     ///
-    /// Returns a redacted store failure, or `operation_recovery_failed` when at
-    /// least one claimed operation did not advance. A dispatch failure is not
-    /// an error here: it releases its own row for a bounded retry.
-    pub async fn tick(&self) -> Result<(), String> {
+    /// Returns a redacted store failure, `operation_recovery_failed` when at
+    /// least one claimed operation did not advance, or
+    /// `outbox_dispatch_failed` after releasing a failed effect for retry.
+    pub async fn tick(&self) -> Result<DrainReport, String> {
         let now = self.clock.now();
         // Advancing operation fences before outbox dispatch makes every retry a
         // fresh fenced attempt while retaining the same workspace identity.
@@ -340,6 +446,8 @@ impl Worker {
             })
             .await
             .map_err(redacted_store)?;
+        let claimed = messages.len();
+        let mut dispatch_failed = false;
         for message in messages {
             match dispatch_disposition(self.dispatch(&message).await, message.attempts, || {
                 self.clock.now()
@@ -353,6 +461,7 @@ impl Worker {
                     available_at,
                     error,
                 } => {
+                    dispatch_failed = true;
                     self.store
                         .release_outbox(message.id, available_at, &error)
                         .await
@@ -362,19 +471,56 @@ impl Worker {
         }
         if operation_failed {
             Err("operation_recovery_failed".to_owned())
+        } else if dispatch_failed {
+            Err("outbox_dispatch_failed".to_owned())
         } else {
-            Ok(())
+            Ok(DrainReport { claimed })
         }
     }
 
-    /// Drains, then sweeps. What a schedule tick does and a queue wakeup does
-    /// not: the sweep is periodic maintenance, not a reaction to an event.
+    /// Resolves a transaction-scoped wake, drains one bounded page, and either
+    /// completes the anchor or accepts an asynchronous continuation.
     ///
     /// # Errors
     ///
     /// Identical to [`Worker::tick`], plus the sweep's own store failure.
-    pub async fn scheduled(&self) -> Result<(), String> {
-        self.tick().await?;
+    pub async fn wake(&self, wake: &OutboxWake) -> Result<(), String> {
+        wake.validate()?;
+        let before = self
+            .store
+            .outbox_wake_state(wake.anchor_id, &wake.transaction_id)
+            .await
+            .map_err(redacted_store)?;
+        use aex_control_aurora::OutboxWakeTransactionStatus as Transaction;
+        match before.transaction {
+            Transaction::Aborted => return Ok(()),
+            Transaction::InProgress => return Err("outbox_wake_transaction_in_progress".to_owned()),
+            Transaction::Unknown => return Err("outbox_wake_transaction_unknown".to_owned()),
+            Transaction::Committed => {}
+        }
+        if !before.anchor_exists {
+            return Err("outbox_wake_anchor_missing".to_owned());
+        }
+
+        // Even an already-dispatched anchor drains a page. A statement may
+        // insert more than one page (finance fans out to every workspace), and
+        // its one continuation necessarily carries the same exact anchor.
+        let report = self.tick().await?;
+        let after = self
+            .store
+            .outbox_wake_state(wake.anchor_id, &wake.transaction_id)
+            .await
+            .map_err(redacted_store)?;
+        if report.claimed == usize::try_from(self.batch).unwrap_or(usize::MAX) {
+            self.wake_invoker.invoke(wake).await?;
+            return Ok(());
+        }
+        if !after.anchor_dispatched {
+            return Err("outbox_wake_anchor_pending".to_owned());
+        }
+
+        // No timer owns maintenance now. Sweep only after the durable anchor
+        // completed; failures are observable and retried by Lambda.
         self.store
             .gc_expired(&GcExpired {
                 now: self.clock.now(),

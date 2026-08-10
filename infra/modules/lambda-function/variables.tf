@@ -189,6 +189,39 @@ variable "alias_name" {
   }
 }
 
+variable "async_failure_destination_arn" {
+  type        = string
+  default     = null
+  description = "Optional unconsumed, alarmed SQS DLQ ARN for failed asynchronous invocations. Setting it enables the alias-qualified async invocation policy."
+
+  validation {
+    condition     = var.async_failure_destination_arn == null || can(regex("^arn:aws[a-z-]*:sqs:[a-z0-9-]+:[0-9A-Za-z-]{1,64}:[A-Za-z0-9_-]+$", coalesce(var.async_failure_destination_arn, "none")))
+    error_message = "When set, the asynchronous failure destination must be an SQS queue ARN."
+  }
+}
+
+variable "async_max_event_age_seconds" {
+  type        = number
+  default     = 21600
+  description = "Maximum age of an asynchronous event before it is sent to the failure destination."
+
+  validation {
+    condition     = var.async_max_event_age_seconds >= 60 && var.async_max_event_age_seconds <= 21600
+    error_message = "Asynchronous event age must be between 60 seconds and 6 hours."
+  }
+}
+
+variable "async_max_retry_attempts" {
+  type        = number
+  default     = 2
+  description = "Function-error retries for asynchronous invocation. Lambda permits zero through two."
+
+  validation {
+    condition     = var.async_max_retry_attempts >= 0 && var.async_max_retry_attempts <= 2
+    error_message = "Asynchronous retry attempts must be between zero and two."
+  }
+}
+
 variable "tags" {
   type        = map(string)
   default     = {}

@@ -149,6 +149,12 @@ requires_live = true
 local = ""
 live_only = "MicroVM launch/suspend/resume/terminate timings, the regional pool, and the per-second API rate limits"
 
+[seam."aws.lambda.async_delivery"]
+proves_locally = "partial"
+requires_live = true
+local = "exact event shape, transaction-status branches, idempotent anchor handling and bounded continuation"
+live_only = "Event acceptance, system/function retries, maximum event age and the on-failure destination"
+
 [seam."aws.iam.denial"]
 proves_locally = "none"
 requires_live = true

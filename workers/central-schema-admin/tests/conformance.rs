@@ -41,13 +41,19 @@ fn the_local_plan_emits_the_bound_lock_and_the_linear_head() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("utf8 receipt");
-    assert!(stdout.contains("\"bundleHead\":20260801001300"));
+    assert!(stdout.contains("\"bundleHead\":20260801001400"));
     assert!(stdout.contains("\"lockKey\":4703262552200136530"));
 }
 
 #[test]
 fn a_stale_image_is_refused_by_the_expected_bundle_head_before_anything_else() {
-    let output = run(&["migrate", "--expect-head", "20260801000400"]);
+    let output = run(&[
+        "migrate",
+        "--expect-head",
+        "20260801000400",
+        "--outbox-wake-lambda-arn",
+        "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-central-control-worker:live",
+    ]);
     assert_eq!(
         output.status.code(),
         Some(12),
@@ -55,7 +61,7 @@ fn a_stale_image_is_refused_by_the_expected_bundle_head_before_anything_else() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("20260801001300"), "{stderr}");
+    assert!(stderr.contains("20260801001400"), "{stderr}");
 }
 
 #[test]
@@ -70,7 +76,15 @@ fn the_exit_contract_is_observable_from_outside_the_process() {
     // script depends on must be observable from outside the process.
     assert_eq!(run(&["plan"]).status.code(), Some(0));
     assert_eq!(
-        run(&["migrate", "--expect-head", "1"]).status.code(),
+        run(&[
+            "migrate",
+            "--expect-head",
+            "1",
+            "--outbox-wake-lambda-arn",
+            "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-central-control-worker:live",
+        ])
+        .status
+        .code(),
         Some(12)
     );
     assert_eq!(
@@ -103,7 +117,13 @@ fn a_backfill_of_an_unbundled_migration_is_refused_before_a_session() {
 fn the_committed_bundle_declares_nothing_destructive() {
     // A destructive bundle needs recorded backup evidence; the baseline must not
     // silently require an operator to pass one.
-    let output = run(&["migrate", "--expect-head", "20260801001300"]);
+    let output = run(&[
+        "migrate",
+        "--expect-head",
+        "20260801001400",
+        "--outbox-wake-lambda-arn",
+        "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-central-control-worker:live",
+    ]);
     assert_ne!(
         output.status.code(),
         Some(15),

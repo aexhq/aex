@@ -29,6 +29,9 @@ the bytes S3 is holding are not the bytes the release manifest pins.
 | `log_kms_key_arn` | `string` | Optional log-group key. |
 | `code_signing_config_arn` | `string` | Optional code-signing configuration. |
 | `alias_name` | `string` | Alias every caller targets; defaults to `live`. |
+| `async_failure_destination_arn` | `string` | Optional unconsumed SQS failure destination; setting it enables the alias-qualified async policy. |
+| `async_max_event_age_seconds` | `number` | Async event age, 60-21600; defaults to 21600. |
+| `async_max_retry_attempts` | `number` | Function-error retries, 0-2; defaults to 2. |
 | `tags` | `map(string)` | Tags. |
 
 The `artifact_sha256` value is the same digest the artifact envelope records,
@@ -57,6 +60,8 @@ expressed the way S3 returns it. The envelope carries `sha256:<hex>`; S3
 - The artifact key must be digest-addressed; a mutable key such as `latest.zip`
   is rejected.
 - The alias is never `$LATEST`.
+- When an asynchronous failure destination is supplied, its retry/age policy
+  qualifies the immutable alias and sends exhausted events to that SQS queue.
 
 ## Not asserted here
 

@@ -24,7 +24,7 @@ pub mod store;
 pub use authz::AuroraAuthorizationReader;
 pub use error::{map_commit_failure, map_store_error};
 pub use rows::{AccountActorRow, AccountStateRow, CentralActorRow, SigningKeyRow, WorkspaceKeyRow};
-pub use store::AuroraControlStore;
+pub use store::{AuroraControlStore, OutboxWakeState, OutboxWakeTransactionStatus};
 
 #[cfg(test)]
 mod store_contract {

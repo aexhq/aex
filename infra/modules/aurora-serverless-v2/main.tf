@@ -56,6 +56,17 @@ resource "aws_rds_cluster_instance" "writer" {
   tags                = var.tags
 }
 
+# Aurora assumes this role only for aws_lambda.invoke. Keeping the association
+# in the cluster module makes the `Lambda` feature visible in every plan; the
+# composing plane still owns the narrowly scoped IAM role and policy.
+resource "aws_rds_cluster_role_association" "lambda_invoke" {
+  count = var.lambda_invoke_role_arn == null ? 0 : 1
+
+  db_cluster_identifier = aws_rds_cluster.this.id
+  feature_name          = "Lambda"
+  role_arn              = var.lambda_invoke_role_arn
+}
+
 # Dev may omit the reader. Production may create one warm failover target; no
 # application read path is directed at the reader endpoint.
 resource "aws_rds_cluster_instance" "reader" {

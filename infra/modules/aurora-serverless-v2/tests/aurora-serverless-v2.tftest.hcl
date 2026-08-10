@@ -82,6 +82,19 @@ run "serverless_scaling_is_bounded" {
   }
 }
 
+run "the_optional_lambda_role_enables_the_exact_aurora_feature" {
+  command = plan
+
+  variables {
+    lambda_invoke_role_arn = "arn:aws:iam::000000000000:role/aex-dev-aurora-control-wake"
+  }
+
+  assert {
+    condition     = one(aws_rds_cluster_role_association.lambda_invoke).feature_name == "Lambda"
+    error_message = "Aurora Lambda invocation must use the RDS Lambda feature association."
+  }
+}
+
 run "the_master_password_is_managed_and_never_configured" {
   command = plan
 

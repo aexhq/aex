@@ -19,7 +19,9 @@ use aex_control_domain::{
     Organization, OrganizationStatus, OutboxMessage, Revision, ScopeSet, Workspace,
     WorkspaceStatus,
 };
-use aex_rds_data::{DataApiClient, Isolation, SqlValue, Statement, Transaction};
+use aex_rds_data::{
+    DataApiClient, DecodeError, Isolation, Record, Row, SqlValue, Statement, Transaction,
+};
 
 use crate::error::{map_commit_failure, map_store_error};
 use crate::rows::{
@@ -46,6 +48,49 @@ macro_rules! tx_try {
 #[derive(Debug, Clone)]
 pub struct AuroraControlStore {
     client: DataApiClient,
+}
+
+/// PostgreSQL's durable answer for the transaction that emitted a wake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutboxWakeTransactionStatus {
+    /// The trigger ran before commit and the transaction is still open.
+    InProgress,
+    /// Every row from the transaction is visible.
+    Committed,
+    /// The transaction rolled back, so the accepted wake has no work.
+    Aborted,
+    /// PostgreSQL no longer retains commit-status metadata for this xid.
+    Unknown,
+}
+
+/// The transaction and exact-anchor proof read in one statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutboxWakeState {
+    /// Transaction outcome reported by `pg_xact_status`.
+    pub transaction: OutboxWakeTransactionStatus,
+    /// Whether the exact anchor is still retained.
+    pub anchor_exists: bool,
+    /// Whether the exact anchor was dispatched already.
+    pub anchor_dispatched: bool,
+}
+
+struct OutboxWakeStateRow(OutboxWakeState);
+
+impl Row for OutboxWakeStateRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(3)?;
+        let transaction = match record.opt(0, Record::text)? {
+            Some("in progress") => OutboxWakeTransactionStatus::InProgress,
+            Some("committed") => OutboxWakeTransactionStatus::Committed,
+            Some("aborted") => OutboxWakeTransactionStatus::Aborted,
+            Some(_) | None => OutboxWakeTransactionStatus::Unknown,
+        };
+        Ok(Self(OutboxWakeState {
+            transaction,
+            anchor_exists: record.bool(1)?,
+            anchor_dispatched: record.bool(2)?,
+        }))
+    }
 }
 
 enum Replay {
@@ -75,6 +120,27 @@ impl AuroraControlStore {
     #[must_use]
     pub const fn new(client: DataApiClient) -> Self {
         Self { client }
+    }
+
+    /// Reads the pre-commit race outcome and exact outbox anchor atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport, decode, privilege, or malformed-xid failure.
+    pub async fn outbox_wake_state(
+        &self,
+        anchor_id: Uuid,
+        transaction_id: &str,
+    ) -> Result<OutboxWakeState, StoreError> {
+        self.client
+            .query_one::<OutboxWakeStateRow>(
+                Statement::new(sql::OUTBOX_WAKE_STATE)
+                    .bind("transaction_id", SqlValue::Text(transaction_id.to_owned()))
+                    .bind("anchor_id", SqlValue::Uuid(anchor_id)),
+            )
+            .await
+            .map(|row| row.0)
+            .map_err(map_store_error)
     }
 
     async fn workspace_epoch(&self, workspace_id: Uuid) -> Result<u64, StoreError> {
@@ -1843,6 +1909,15 @@ impl ControlStore for AuroraControlStore {
             transaction,
             transaction.execute(
                 Statement::new(sql::GC_OUTBOX)
+                    // Lambda keeps asynchronous events for at most six hours.
+                    // A full day makes duplicate deliveries provably idempotent
+                    // while keeping garbage collection opportunistic.
+                    .bind(
+                        "retain_after_ms",
+                        SqlValue::TimestampMillis(Self::millis(
+                            command.now - time::Duration::hours(24),
+                        )),
+                    )
                     .bind("batch", SqlValue::I64(i64::from(command.batch))),
             )
         );

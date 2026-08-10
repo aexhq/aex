@@ -15,7 +15,7 @@ use central_schema_admin::migration;
 use central_schema_admin::migration::MigrationBundle;
 use central_schema_admin::runner::{
     PepperRow, RunnerError, applied_head, apply_grants, backfill_cursor, check_conservation,
-    diff_grants, expect_applied_head, migrate, seed_pepper, seed_signing_key,
+    configure_outbox_wake, diff_grants, expect_applied_head, migrate, seed_pepper, seed_signing_key,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -94,6 +94,9 @@ enum Command {
         /// PITR/backup evidence identity.
         #[arg(long, requires = "allow_destructive")]
         backup_evidence: Option<String>,
+        /// Exact central-control-worker alias Aurora invokes asynchronously.
+        #[arg(long)]
+        outbox_wake_lambda_arn: String,
     },
     /// Verify the applied schema and conservation laws.
     Verify {
@@ -351,6 +354,7 @@ async fn run(cli: &Cli) -> Result<String, (Exit, String)> {
             statement_timeout_ms,
             allow_destructive,
             backup_evidence,
+            outbox_wake_lambda_arn,
         } => {
             if *expect_head != bundle.head() {
                 return Err((
@@ -375,6 +379,12 @@ async fn run(cli: &Cli) -> Result<String, (Exit, String)> {
                         .to_owned(),
                 ));
             }
+            if !qualified_lambda_alias_arn(outbox_wake_lambda_arn) {
+                return Err((
+                    Exit::PreconditionFailed,
+                    "--outbox-wake-lambda-arn must be a qualified Lambda alias ARN".to_owned(),
+                ));
+            }
             let mut connection = open(cli).await?;
             apply_timeouts(&mut connection, *lock_timeout_ms, *statement_timeout_ms)
                 .await
@@ -388,6 +398,9 @@ async fn run(cli: &Cli) -> Result<String, (Exit, String)> {
                 .await
                 .map_err(|error| (runner_exit(&error), error.to_string()))?;
             migrate(&mut connection, &migrator)
+                .await
+                .map_err(|error| (runner_exit(&error), error.to_string()))?;
+            configure_outbox_wake(&mut connection, outbox_wake_lambda_arn)
                 .await
                 .map_err(|error| (runner_exit(&error), error.to_string()))?;
             let after = applied_head(&mut connection)
@@ -586,6 +599,23 @@ async fn run(cli: &Cli) -> Result<String, (Exit, String)> {
     }
 }
 
+fn qualified_lambda_alias_arn(value: &str) -> bool {
+    let mut fields = value.split(':');
+    matches!(fields.next(), Some("arn"))
+        && fields
+            .next()
+            .is_some_and(|partition| partition.starts_with("aws"))
+        && matches!(fields.next(), Some("lambda"))
+        && fields.next().is_some_and(|region| !region.is_empty())
+        && fields.next().is_some_and(|account| {
+            account.len() == 12 && account.bytes().all(|byte| byte.is_ascii_digit())
+        })
+        && matches!(fields.next(), Some("function"))
+        && fields.next().is_some_and(|function| !function.is_empty())
+        && fields.next().is_some_and(|alias| !alias.is_empty())
+        && fields.next().is_none()
+}
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
@@ -739,7 +769,7 @@ mod tests {
         let bundle = MigrationBundle::load(&path).expect("committed bundle is valid");
         let embedded =
             MigrationBundle::embedded().expect("the executable embeds the canonical lock");
-        assert_eq!(bundle.head(), 20_260_801_001_300);
+        assert_eq!(bundle.head(), 20_260_801_001_400);
         assert_eq!(
             bundle.versions(),
             vec![
@@ -757,6 +787,7 @@ mod tests {
                 20_260_801_001_100,
                 20_260_801_001_200,
                 20_260_801_001_300,
+                20_260_801_001_400,
             ]
         );
         assert_eq!(embedded.versions(), bundle.versions());

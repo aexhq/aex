@@ -2559,14 +2559,14 @@
     "subject": "tests/live/aex-live-central-control-worker",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+    "detail": "seam `aws.lambda.async_delivery` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-central-control-worker",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
@@ -3378,14 +3378,14 @@
     "subject": "workers/central-control-worker",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+    "detail": "seam `aws.lambda.async_delivery` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
     "subject": "workers/central-control-worker",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

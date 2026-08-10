@@ -68,3 +68,18 @@ resource "aws_lambda_alias" "this" {
   function_name    = aws_lambda_function.this.function_name
   function_version = aws_lambda_function.this.version
 }
+
+resource "aws_lambda_function_event_invoke_config" "this" {
+  count = var.async_failure_destination_arn == null ? 0 : 1
+
+  function_name                = aws_lambda_function.this.function_name
+  qualifier                    = aws_lambda_alias.this.name
+  maximum_event_age_in_seconds = var.async_max_event_age_seconds
+  maximum_retry_attempts       = var.async_max_retry_attempts
+
+  destination_config {
+    on_failure {
+      destination = var.async_failure_destination_arn
+    }
+  }
+}

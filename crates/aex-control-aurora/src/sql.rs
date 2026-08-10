@@ -619,6 +619,12 @@ UPDATE control.outbox_message SET available_at = TIMESTAMPTZ 'epoch' + :availabl
        claimed_by = NULL, claimed_until = NULL, last_error = :last_error \
  WHERE id = :id AND dispatched_at IS NULL";
 
+/// Reads the transaction outcome and the exact anchor row named by a wake.
+pub const OUTBOX_WAKE_STATE: &str = "\
+SELECT pg_xact_status(CAST(:transaction_id AS xid8)), \
+       EXISTS (SELECT 1 FROM control.outbox_message WHERE id = :anchor_id), \
+       EXISTS (SELECT 1 FROM control.outbox_message WHERE id = :anchor_id AND dispatched_at IS NOT NULL)";
+
 /// Sweeps bounded expired replay rows.
 pub const GC_IDEMPOTENCY: &str = "\
 DELETE FROM control.idempotency_record WHERE id IN \
@@ -630,6 +636,7 @@ DELETE FROM control.idempotency_record WHERE id IN \
 pub const GC_OUTBOX: &str = "\
 DELETE FROM control.outbox_message WHERE id IN \
  (SELECT id FROM control.outbox_message WHERE dispatched_at IS NOT NULL \
+   AND dispatched_at <= TIMESTAMPTZ 'epoch' + :retain_after_ms * INTERVAL '1 millisecond' \
    ORDER BY dispatched_at, id LIMIT :batch)";
 
 /// Every statement this crate issues, for the discipline scan.
@@ -700,6 +707,7 @@ pub const ALL: &[(&str, &str)] = &[
     ("LIST_OPERATIONS", LIST_OPERATIONS),
     ("CLAIM_DUE_OPERATIONS", CLAIM_DUE_OPERATIONS),
     ("CLAIM_OUTBOX", CLAIM_OUTBOX),
+    ("OUTBOX_WAKE_STATE", OUTBOX_WAKE_STATE),
     ("MARK_OUTBOX_DISPATCHED", MARK_OUTBOX_DISPATCHED),
     ("RELEASE_OUTBOX", RELEASE_OUTBOX),
     ("GC_IDEMPOTENCY", GC_IDEMPOTENCY),

@@ -87,6 +87,24 @@ run "the_alias_targets_the_published_version" {
   }
 }
 
+run "async_failures_use_the_alias_policy_and_unconsumed_dlq" {
+  command = plan
+
+  variables {
+    async_failure_destination_arn = "arn:aws:sqs:eu-west-1:000000000000:aex-dev-control-wake-dlq"
+  }
+
+  assert {
+    condition     = one(aws_lambda_function_event_invoke_config.this).qualifier == aws_lambda_alias.this.name
+    error_message = "The asynchronous policy must follow the immutable live alias."
+  }
+
+  assert {
+    condition     = one(one(aws_lambda_function_event_invoke_config.this).destination_config).on_failure[0].destination == var.async_failure_destination_arn
+    error_message = "Failed asynchronous invocations must land in the configured alarmed DLQ."
+  }
+}
+
 run "rejects_an_environment_key_outside_the_aex_namespace" {
   command = plan
 
