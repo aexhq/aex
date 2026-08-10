@@ -110,7 +110,10 @@ async fn an_identical_set_replay_inside_the_transport_window_is_successful() {
     seed_secret(&store).await;
 
     store
-        .commit(&expressions::set(TABLE, &generation(), &metadata(), None).expect("compiles"))
+        .commit(
+            &expressions::set(TABLE, &generation(), &metadata(), None, None, None)
+                .expect("compiles"),
+        )
         .await
         .expect("an identical replay is idempotent");
 
@@ -136,8 +139,15 @@ async fn a_distinct_set_at_the_revision_nobody_read_is_refused_atomically() {
     next.generation = SourceGeneration(2);
     let stale = store
         .commit(
-            &expressions::set(TABLE, &next, &replacement, Some(SecretRevision(7)))
-                .expect("compiles"),
+            &expressions::set(
+                TABLE,
+                &next,
+                &replacement,
+                Some(SecretRevision(7)),
+                None,
+                None,
+            )
+            .expect("compiles"),
         )
         .await
         .expect_err("a revision nobody observed");
