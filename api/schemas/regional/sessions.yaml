@@ -115,14 +115,14 @@ schemas:
     fields:
       provider: { type: provider_id, doc: "The direct BYOK provider." }
       model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
-      providerCredentialId: { type: id, of: provider_credential, optional: true, doc: "Which BYOK binding to use." }
+      providerCredentialId: { type: id, of: provider_credential, doc: "Which BYOK binding to use. Required: a workspace may hold several bindings for one provider, and this route declares no ambiguity error, so an absent value could only be resolved by guessing." }
       registered: { type: ref, to: SessionRegisteredSelection, optional: true, doc: "Registered resources to mount." }
       credentials: { type: ref, to: SessionCredentials, optional: true, doc: "Secrets to take custody of." }
       compute: { type: ref, to: SessionComputeRequest, optional: true, doc: "The baseline compute shape." }
       network: { type: ref, to: SessionNetworkRequest, optional: true, doc: "The guest network policy." }
       packages: { type: array, max: 64, optional: true, items: { type: ref, to: PackageRequest }, doc: "Packages to pre-install." }
       approvalPolicy: { type: ref, to: ApprovalPolicy, optional: true, doc: "When to ask for a decision." }
-      metadata: { type: map, optional: true, items: { type: metadata_value }, doc: "Caller-defined labels." }
+      metadata: { type: map, max: 64, optional: true, items: { type: metadata_value }, doc: "Caller-defined labels." }
 
   ComputeShape:
     doc: One resolved compute dimension.
@@ -154,7 +154,8 @@ schemas:
     fields:
       provider: { type: provider_id, doc: "The provider." }
       model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
-      providerCredentialId: { type: id, of: provider_credential, optional: true, doc: "The BYOK binding in use." }
+      providerCredentialId: { type: id, of: provider_credential, doc: "The BYOK binding in use. Non-optional from create onward, so nothing downstream has to model an unpinned session." }
+      catalogRevision: { type: string, min: 68, max: 68, pattern: "^mc1_[0-9a-f]{64}$", doc: "The signed model-catalog release that qualified this provider and model pair." }
       compute: { type: ref, to: ResolvedCompute, doc: "Resolved capacity." }
       network: { type: ref, to: ResolvedNetwork, doc: "Resolved network policy." }
       registered: { type: ref, to: SessionRegisteredSelection, doc: "Resolved registered selection." }
@@ -189,7 +190,7 @@ schemas:
       continuity: { type: ref, to: WorkspaceContinuity, doc: "What survives between runs." }
       lineage: { type: ref, to: SessionLineage, doc: "Immutable provenance." }
       resolvedConfig: { type: ref, to: ResolvedConfig, doc: "Everything the platform resolved." }
-      metadata: { type: map, optional: true, items: { type: metadata_value }, doc: "Caller-defined labels." }
+      metadata: { type: map, max: 64, optional: true, items: { type: metadata_value }, doc: "Caller-defined labels." }
       createdAt: { type: timestamp, doc: "When it was created." }
       updatedAt: { type: timestamp, doc: "When it last changed." }
 

@@ -228,8 +228,13 @@ pub enum FieldType {
     Ref(String),
     /// A homogeneous list.
     Array(Box<FieldType>, u32),
-    /// A string-keyed map.
-    Map(Box<FieldType>),
+    /// A string-keyed map, with a mandatory bound on its entry count.
+    ///
+    /// The bound is mandatory for the same reason an array's is: an unbounded
+    /// collection makes every response that echoes it unbounded, so a stored
+    /// replay body's inline-or-digest threshold becomes a hot path rather than
+    /// a rare one, and the 400 KB item ceiling becomes reachable.
+    Map(Box<FieldType>, u32),
     /// An AWS region.
     Region,
     /// A compute shape token.
@@ -274,7 +279,7 @@ impl FieldType {
     pub fn referenced_schema(&self) -> Option<&str> {
         match self {
             Self::Ref(id) => Some(id),
-            Self::Array(inner, _) | Self::Map(inner) => inner.referenced_schema(),
+            Self::Array(inner, _) | Self::Map(inner, _) => inner.referenced_schema(),
             _ => None,
         }
     }

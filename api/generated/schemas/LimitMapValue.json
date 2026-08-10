@@ -10,6 +10,7 @@
         "type": "string"
       },
       "description": "The effective value per dimension.",
+      "maxProperties": 16,
       "type": "object"
     }
   },

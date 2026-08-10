@@ -760,7 +760,17 @@ fn build_field_type(
                 id: id.to_owned(),
                 detail: format!("{}: `map` needs `items`", where_()),
             })?;
-            FieldType::Map(Box::new(build_field_type(path, id, wire, items, id_keys)?))
+            let max = field.max.ok_or_else(|| GenError::Schema {
+                id: id.to_owned(),
+                detail: format!("{}: `map` needs an explicit `max`", where_()),
+            })?;
+            FieldType::Map(
+                Box::new(build_field_type(path, id, wire, items, id_keys)?),
+                u32::try_from(max).map_err(|_| GenError::Schema {
+                    id: id.to_owned(),
+                    detail: format!("{}: `max` is not a positive entry count", where_()),
+                })?,
+            )
         }
         "timestamp" => FieldType::Timestamp,
         "decimal" => FieldType::Decimal,

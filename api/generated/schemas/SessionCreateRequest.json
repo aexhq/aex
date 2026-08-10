@@ -27,6 +27,7 @@
         "x-aex-float": true
       },
       "description": "Caller-defined labels.",
+      "maxProperties": 64,
       "type": "object"
     },
     "model": {
@@ -52,7 +53,7 @@
       "description": "The direct BYOK provider."
     },
     "providerCredentialId": {
-      "description": "Which BYOK binding to use.",
+      "description": "Which BYOK binding to use. Required: a workspace may hold several bindings for one provider, and this route declares no ambiguity error, so an absent value could only be resolved by guessing.",
       "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "provider_credential"
@@ -64,7 +65,8 @@
   },
   "required": [
     "model",
-    "provider"
+    "provider",
+    "providerCredentialId"
   ],
   "title": "SessionCreateRequest",
   "type": "object"

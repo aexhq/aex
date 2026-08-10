@@ -11,6 +11,7 @@
         "type": "string"
       },
       "description": "The grouping attributes.",
+      "maxProperties": 8,
       "type": "object"
     },
     "sampleCount": {

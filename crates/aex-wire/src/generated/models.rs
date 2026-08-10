@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:1f778bdb0c16820c3ab2228484dcaff60fbc9870c1f636942bd6e589a8d46f0f`.
+//! `sha256:1d6d54b62df61c8244b5cb84c52fcbfab1a8f47680c90a71f6b1c04faef12f6e`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -3695,6 +3695,8 @@ pub struct ResolvedCompute {
 pub struct ResolvedConfig {
     /// Resolved approval policy.
     pub approval_policy: ApprovalPolicy,
+    /// The signed model-catalog release that qualified this provider and model pair.
+    pub catalog_revision: String,
     /// Resolved capacity.
     pub compute: ResolvedCompute,
     /// The exact provider-native model id.
@@ -3705,9 +3707,9 @@ pub struct ResolvedConfig {
     pub packages: Vec<PackageRequest>,
     /// The provider.
     pub provider: ProviderId,
-    /// The BYOK binding in use.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_credential_id: Option<ProviderCredentialId>,
+    /// The BYOK binding in use. Non-optional from create onward, so nothing downstream has to model
+    /// an unpinned session.
+    pub provider_credential_id: ProviderCredentialId,
     /// Resolved registered selection.
     pub registered: SessionRegisteredSelection,
 }
@@ -3973,9 +3975,10 @@ pub struct SessionCreateRequest {
     pub packages: Option<Vec<PackageRequest>>,
     /// The direct BYOK provider.
     pub provider: ProviderId,
-    /// Which BYOK binding to use.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_credential_id: Option<ProviderCredentialId>,
+    /// Which BYOK binding to use. Required: a workspace may hold several bindings for one provider,
+    /// and this route declares no ambiguity error, so an absent value could only be resolved by
+    /// guessing.
+    pub provider_credential_id: ProviderCredentialId,
     /// Registered resources to mount.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered: Option<SessionRegisteredSelection>,

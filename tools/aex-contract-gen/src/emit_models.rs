@@ -215,7 +215,7 @@ pub fn rust_type(ir: &ContractIr, ty: &FieldType, imports: &mut BTreeSet<String>
         FieldType::Bool => "bool".to_owned(),
         FieldType::Ref(id) => id.clone(),
         FieldType::Array(inner, _) => format!("Vec<{}>", rust_type(ir, inner, imports)),
-        FieldType::Map(inner) => {
+        FieldType::Map(inner, _) => {
             let rendered = rust_type(ir, inner, imports);
             imports.insert("std::collections::BTreeMap".to_owned());
             format!("BTreeMap<String, {rendered}>")

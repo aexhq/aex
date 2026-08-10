@@ -3,7 +3,7 @@
 //! The identifier registry and its newtypes.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:1f778bdb0c16820c3ab2228484dcaff60fbc9870c1f636942bd6e589a8d46f0f`.
+//! `sha256:1d6d54b62df61c8244b5cb84c52fcbfab1a8f47680c90a71f6b1c04faef12f6e`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]

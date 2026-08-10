@@ -313,7 +313,7 @@ schemas:
     doc: One aggregated group.
     type: object
     fields:
-      key: { type: map, items: { type: string, max: 256 }, doc: "The grouping attributes." }
+      key: { type: map, max: 8, items: { type: string, max: 256 }, doc: "The grouping attributes." }
       value: { type: float, doc: "The computed value." }
       sampleCount: { type: decimal, doc: "How many points contributed." }
 

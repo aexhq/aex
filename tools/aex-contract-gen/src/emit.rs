@@ -231,8 +231,9 @@ fn type_schema(ir: &ContractIr, ty: &FieldType) -> Value {
             "maxItems": max,
             "items": type_schema(ir, inner),
         }),
-        FieldType::Map(inner) => json!({
+        FieldType::Map(inner, max) => json!({
             "type": "object",
+            "maxProperties": max,
             "additionalProperties": type_schema(ir, inner),
         }),
         FieldType::Region => json!({
@@ -542,7 +543,7 @@ fn collect_reachable(ir: &ContractIr, id: &str, into: &mut BTreeSet<String>) {
 fn collect_type_reachable(ir: &ContractIr, ty: &FieldType, into: &mut BTreeSet<String>) {
     match ty {
         FieldType::Ref(target) => collect_reachable(ir, target, into),
-        FieldType::Array(inner, _) | FieldType::Map(inner) => {
+        FieldType::Array(inner, _) | FieldType::Map(inner, _) => {
             collect_type_reachable(ir, inner, into);
         }
         FieldType::ByteRange => collect_reachable(ir, "ByteRange", into),

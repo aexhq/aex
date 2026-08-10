@@ -35,6 +35,7 @@
         "x-aex-float": true
       },
       "description": "Caller-defined labels.",
+      "maxProperties": 64,
       "type": "object"
     },
     "resolvedConfig": {

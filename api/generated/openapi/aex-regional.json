@@ -1113,6 +1113,7 @@
               "type": "string"
             },
             "description": "The effective value per dimension.",
+            "maxProperties": 16,
             "type": "object"
           }
         },
@@ -1596,6 +1597,7 @@
               "type": "string"
             },
             "description": "The grouping attributes.",
+            "maxProperties": 8,
             "type": "object"
           },
           "sampleCount": {
@@ -3726,6 +3728,13 @@
             "$ref": "aex:schema:ApprovalPolicy",
             "description": "Resolved approval policy."
           },
+          "catalogRevision": {
+            "description": "The signed model-catalog release that qualified this provider and model pair.",
+            "maxLength": 68,
+            "minLength": 68,
+            "pattern": "^mc1_[0-9a-f]{64}$",
+            "type": "string"
+          },
           "compute": {
             "$ref": "aex:schema:ResolvedCompute",
             "description": "Resolved capacity."
@@ -3753,7 +3762,7 @@
             "description": "The provider."
           },
           "providerCredentialId": {
-            "description": "The BYOK binding in use.",
+            "description": "The BYOK binding in use. Non-optional from create onward, so nothing downstream has to model an unpinned session.",
             "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
             "x-aex-id": "provider_credential"
@@ -3765,11 +3774,13 @@
         },
         "required": [
           "approvalPolicy",
+          "catalogRevision",
           "compute",
           "model",
           "network",
           "packages",
           "provider",
+          "providerCredentialId",
           "registered"
         ],
         "type": "object"
@@ -4117,6 +4128,7 @@
               "x-aex-float": true
             },
             "description": "Caller-defined labels.",
+            "maxProperties": 64,
             "type": "object"
           },
           "resolvedConfig": {
@@ -4203,6 +4215,7 @@
               "x-aex-float": true
             },
             "description": "Caller-defined labels.",
+            "maxProperties": 64,
             "type": "object"
           },
           "model": {
@@ -4228,7 +4241,7 @@
             "description": "The direct BYOK provider."
           },
           "providerCredentialId": {
-            "description": "Which BYOK binding to use.",
+            "description": "Which BYOK binding to use. Required: a workspace may hold several bindings for one provider, and this route declares no ambiguity error, so an absent value could only be resolved by guessing.",
             "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
             "x-aex-id": "provider_credential"
@@ -4240,7 +4253,8 @@
         },
         "required": [
           "model",
-          "provider"
+          "provider",
+          "providerCredentialId"
         ],
         "type": "object"
       },
@@ -10885,6 +10899,16 @@
               }
             },
             "description": "Error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
           }
         },
         "summary": "Create a session.",
@@ -10910,6 +10934,7 @@
           "provider_credential_revoked",
           "account_paused",
           "wrong_workspace_region",
+          "commit_outcome_unknown",
           "not_implemented"
         ],
         "x-aex-etag": "none",

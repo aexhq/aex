@@ -8,6 +8,13 @@
       "$ref": "aex:schema:ApprovalPolicy",
       "description": "Resolved approval policy."
     },
+    "catalogRevision": {
+      "description": "The signed model-catalog release that qualified this provider and model pair.",
+      "maxLength": 68,
+      "minLength": 68,
+      "pattern": "^mc1_[0-9a-f]{64}$",
+      "type": "string"
+    },
     "compute": {
       "$ref": "aex:schema:ResolvedCompute",
       "description": "Resolved capacity."
@@ -35,7 +42,7 @@
       "description": "The provider."
     },
     "providerCredentialId": {
-      "description": "The BYOK binding in use.",
+      "description": "The BYOK binding in use. Non-optional from create onward, so nothing downstream has to model an unpinned session.",
       "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "provider_credential"
@@ -47,11 +54,13 @@
   },
   "required": [
     "approvalPolicy",
+    "catalogRevision",
     "compute",
     "model",
     "network",
     "packages",
     "provider",
+    "providerCredentialId",
     "registered"
   ],
   "title": "ResolvedConfig",

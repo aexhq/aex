@@ -309,7 +309,7 @@ fn typescript_type(ir: &ContractIr, ty: &FieldType) -> String {
         FieldType::Bool => "boolean".to_owned(),
         FieldType::Ref(id) => id.clone(),
         FieldType::Array(inner, _) => format!("{}[]", typescript_type(ir, inner)),
-        FieldType::Map(inner) => format!("Record<string, {}>", typescript_type(ir, inner)),
+        FieldType::Map(inner, _) => format!("Record<string, {}>", typescript_type(ir, inner)),
         FieldType::Region => {
             "\"us-east-1\" | \"us-east-2\" | \"us-west-2\" | \"ap-northeast-1\" | \"eu-west-1\""
                 .to_owned()
@@ -354,9 +354,14 @@ fn zod_type(ir: &ContractIr, owner: &str, ty: &FieldType) -> String {
         FieldType::Array(inner, max) => {
             format!("z.array({}).max({max})", zod_type(ir, owner, inner))
         }
-        FieldType::Map(inner) => {
-            format!("z.record(z.string(), {})", zod_type(ir, owner, inner))
-        }
+        // Zod's record has no `.max()`, so the entry bound is a refinement.
+        // Emitted rather than omitted: an unbounded map on the wire is exactly
+        // the omission `FieldType::Map`'s mandatory bound exists to close.
+        FieldType::Map(inner, max) => format!(
+            "z.record(z.string(), {}).refine((value) => Object.keys(value).length <= {max}, {{ \
+             message: \"must have at most {max} entries\" }})",
+            zod_type(ir, owner, inner)
+        ),
         FieldType::Region => "region".to_owned(),
         FieldType::ComputeSize => "computeSize".to_owned(),
         FieldType::ContentHash => "contentHash".to_owned(),

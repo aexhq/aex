@@ -674,7 +674,7 @@ schemas:
     doc: A limit whose effective value is a map of named dimensions.
     type: object
     fields:
-      values: { type: map, items: { type: decimal }, doc: "The effective value per dimension." }
+      values: { type: map, max: 16, items: { type: decimal }, doc: "The effective value per dimension." }
 
   LimitValue:
     doc: The effective value of a limit, discriminated by shape.
