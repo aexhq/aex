@@ -108,6 +108,8 @@ pub mod ceremony {
     pub const CREATE_ORGANIZATION: &str = "control.create_organization";
     /// `POST /api/organizations/{org}/invitations`.
     pub const CREATE_INVITATION: &str = "control.create_invitation";
+    /// `POST /api/invitations/acceptances`.
+    pub const ACCEPT_INVITATIONS: &str = "control.accept_invitations";
     /// `POST /api/workspaces`, first half.
     pub const BEGIN_WORKSPACE_PROVISION: &str = "control.begin_workspace_provision";
     /// `POST /api/workspaces`, second half.

@@ -284,7 +284,7 @@ mod tests {
     fn the_merged_deployable_declares_every_group_it_must_serve() {
         assert_eq!(DEPLOYABLE, CentralServiceId::CentralApi);
         assert_eq!(DEPLOYABLE.groups().len(), 7);
-        assert_eq!(DEPLOYABLE.routes().len(), 29);
+        assert_eq!(DEPLOYABLE.routes().len(), 30);
     }
 
     #[test]

@@ -5,8 +5,8 @@
 //! zone or `DateStyle`.
 
 use aex_control_app::ports::{
-    AccountActorState, AccountProjection, CentralActorState, SigningKeyRecord, WorkspaceKeyMaterial,
-    WorkspaceKeyState,
+    AccountActorState, AccountProjection, CentralActorState, SigningKeyRecord, UserIdentity,
+    WorkspaceKeyMaterial, WorkspaceKeyState,
 };
 use aex_control_domain::{
     AccountProfile, AccountState, ApiKey, Epoch, Fence, IntentHash, Invitation, InvitationStatus,
@@ -360,14 +360,17 @@ impl Row for OrgRoleRow {
     }
 }
 
-/// One text projection.
+/// One person's email and whether it is verified.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TextRow(pub String);
+pub struct UserIdentityRow(pub UserIdentity);
 
-impl Row for TextRow {
+impl Row for UserIdentityRow {
     fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
-        record.expect_arity(1)?;
-        Ok(Self(record.text(0)?.to_owned()))
+        record.expect_arity(2)?;
+        Ok(Self(UserIdentity {
+            email: record.text(0)?.to_owned(),
+            email_verified: record.bool(1)?,
+        }))
     }
 }
 

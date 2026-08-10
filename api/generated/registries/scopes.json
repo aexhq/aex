@@ -25,6 +25,10 @@
       "scope": "memberships:write"
     },
     {
+      "description": "Redeem invitations addressed to the caller's own verified email.",
+      "scope": "memberships:accept"
+    },
+    {
       "description": "List and read workspaces.",
       "scope": "workspaces:read"
     },

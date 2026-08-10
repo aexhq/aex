@@ -54,7 +54,9 @@ pub use intent::{
     IdempotencyIdentity, IdempotencyKeyKind, IntentError, IntentHash, ScopeKind,
     canonical_intent_hash,
 };
-pub use invitation::{Invitation, InvitationStatus, InvitationTransition};
+pub use invitation::{
+    Invitation, InvitationStatus, InvitationTransition, MAX_ACCEPTABLE_INVITATIONS,
+};
 pub use membership::{Membership, MembershipStatus, MembershipTransition};
 pub use operation::{
     Fence, Lease, LeaseOwner, Operation, OperationKind, OperationStatus, OperationTransition,

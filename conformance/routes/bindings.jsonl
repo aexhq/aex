@@ -19,6 +19,7 @@
 {"bindings":{},"method":"POST","operationId":"device_authorization_create","path":"/api/auth/device/authorizations","plane":"central"}
 {"bindings":{},"method":"POST","operationId":"device_decision_create","path":"/api/auth/device/decisions","plane":"central"}
 {"bindings":{},"method":"POST","operationId":"device_token_create","path":"/api/auth/device/tokens","plane":"central"}
+{"bindings":{},"method":"POST","operationId":"invitation_accept","path":"/api/invitations/acceptances","plane":"central"}
 {"bindings":{"organizationId":"org_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"invitation_create","path":"/api/organizations/org_01kyw2qa4ne00r40r40m30e209/invitations","plane":"central"}
 {"bindings":{"organizationId":"org_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"memberships_list","path":"/api/organizations/org_01kyw2qa4ne00r40r40m30e209/memberships","plane":"central"}
 {"bindings":{},"method":"POST","operationId":"observations_events_listen","path":"/api/streams/events/listen","plane":"regional"}

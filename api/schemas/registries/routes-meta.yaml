@@ -9,7 +9,7 @@
 # disagree about what `{sessionId}` is.
 contractVersion: v1
 expected:
-  central: 30
+  central: 31
   regional: 119
 pathParams:
   organizationId: { type: id, of: organization, doc: "The organization the request is scoped to." }
@@ -166,6 +166,7 @@ servedOperations:
     - central_operation_get
     - central_operations_list
     - dashboard_bootstrap_get
+    - invitation_accept
     - invitation_create
     - memberships_list
     - organization_create

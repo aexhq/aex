@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:13ff89d3e0f73ee4f62c48556767322fb3e12f9057fe8b4f2364cc1c0464f68b`.
+//! `sha256:2318795adfacfa7a5080a1f3e77967265cf088b3bad74d98571e377eabbdee88`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -431,6 +431,17 @@ pub struct Invitation {
     pub role: InvitationRole,
     /// Lifecycle position.
     pub status: InvitationStatus,
+}
+
+/// What one acceptance redeemed. An invitation carries no secret, so acceptance names nothing:
+/// every pending invitation addressed to the caller's verified email is redeemed in one
+/// transaction. The list is empty when nothing was pending, which is what a repeated call answers.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct InvitationAcceptResult {
+    /// One membership per invitation redeemed by this call, created or raised to the invited role.
+    /// Bounded by the same 100 the acceptance transaction reads.
+    pub memberships: Vec<Membership>,
 }
 
 /// Invite a person to an organization.

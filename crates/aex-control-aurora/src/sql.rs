@@ -204,8 +204,14 @@ pub const GET_CALLER_ROLE: &str = "\
 SELECT m.role FROM control.membership m \
  WHERE m.organization_id = :organization_id AND m.user_id = :user_id AND m.status = 'active'";
 
-/// Reads the identity-owned current email projection.
-pub const GET_USER_EMAIL: &str = "SELECT u.email FROM identity.user u WHERE u.id = :user_id";
+/// Reads the identity-owned current email projection and its verification.
+///
+/// `email_verified_at` is projected as a predicate rather than an instant: the
+/// address is the whole proof an invitation is redeemed against, and every
+/// caller here only ever asks whether that proof holds.
+pub const GET_USER_IDENTITY: &str = "\
+SELECT u.email, (u.email_verified_at IS NOT NULL) AS email_verified \
+  FROM identity.user u WHERE u.id = :user_id";
 
 /// Reads the tombstone instant needed by a successful public delete operation.
 pub const GET_WORKSPACE_DELETED_AT: &str = "\
@@ -342,6 +348,13 @@ SELECT i.id, i.organization_id, i.email, i.role, i.status, i.invited_by_user_id,
   FROM control.invitation i WHERE i.id = :invitation_id";
 
 /// Reads invitations that a verified address may accept, under lock.
+///
+/// The `LIMIT` is
+/// [`MAX_ACCEPTABLE_INVITATIONS`](aex_control_domain::MAX_ACCEPTABLE_INVITATIONS).
+/// `the_acceptance_limit_matches_the_domain_ceiling` in `tests/statements.rs`
+/// holds the two together, because SQL here is a string constant and a Rust
+/// `const` cannot be interpolated into one without assembling SQL at run time,
+/// which `no_statement_carries_a_format_placeholder` forbids.
 pub const FIND_ACCEPTABLE_INVITATIONS: &str = "\
 SELECT i.id, i.organization_id, i.email, i.role, i.status, i.invited_by_user_id, \
        i.accepted_user_id, \
@@ -644,7 +657,7 @@ pub const ALL: &[(&str, &str)] = &[
     ("GET_WORKSPACE_EPOCH", GET_WORKSPACE_EPOCH),
     ("GET_OPERATION_IDEMPOTENCY_ID", GET_OPERATION_IDEMPOTENCY_ID),
     ("GET_CALLER_ROLE", GET_CALLER_ROLE),
-    ("GET_USER_EMAIL", GET_USER_EMAIL),
+    ("GET_USER_IDENTITY", GET_USER_IDENTITY),
     ("GET_WORKSPACE_DELETED_AT", GET_WORKSPACE_DELETED_AT),
     ("READINESS_PROBE", READINESS_PROBE),
     ("AUTHZ_WRITE_PROBE", AUTHZ_WRITE_PROBE),

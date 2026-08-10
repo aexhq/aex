@@ -27,6 +27,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 faults = "unit"
+invitation_acceptance = "unit"
 resource_envelope = "e2e"
 
 [[bin]]

@@ -82,6 +82,7 @@ impl ScopeSet {
         Scope::OrganizationsWrite,
         Scope::MembershipsRead,
         Scope::MembershipsWrite,
+        Scope::MembershipsAccept,
         Scope::WorkspacesRead,
         Scope::WorkspacesWrite,
         Scope::WorkspacesDelete,
@@ -136,6 +137,11 @@ impl ScopeSet {
     pub const ADMIN: Self = Self(Self::CENTRAL.0 & !bit(Scope::WorkspacesDelete));
 
     /// The read-mostly member role.
+    ///
+    /// `memberships:accept` is here and not in the write group above: it acts
+    /// only on invitations already addressed to the caller's own verified
+    /// email, so the weakest role must carry it — the person redeeming an
+    /// invitation is not yet a member of the inviting organization at all.
     pub const MEMBER: Self = Self::of(&[
         Scope::AccountRead,
         // Deciding your own device login and closing your own browser session
@@ -145,11 +151,37 @@ impl ScopeSet {
         Scope::AccountWrite,
         Scope::OrganizationsRead,
         Scope::MembershipsRead,
+        Scope::MembershipsAccept,
         Scope::WorkspacesRead,
         Scope::BillingRead,
         Scope::OperationsRead,
         Scope::OperationsWrite,
     ]);
+
+    /// Every scope a browser session may exercise, **derived from the
+    /// contract**.
+    ///
+    /// A dashboard session is not a general-purpose token: it carries exactly
+    /// the scopes of the routes that declare `altPrincipal: user_session`, and
+    /// nothing else. That set is folded out of the generated route table rather
+    /// than written here, because a hand-written copy goes stale in the one
+    /// direction that matters — a route gaining the alternative principal
+    /// without the credential gaining its scope is a `403` nobody can explain,
+    /// and a route losing it while the scope stays is a credential wider than
+    /// the contract says.
+    #[must_use]
+    pub fn dashboard_session() -> Self {
+        static SCOPES: std::sync::OnceLock<ScopeSet> = std::sync::OnceLock::new();
+        *SCOPES.get_or_init(|| {
+            aex_wire::routes::ROUTES
+                .iter()
+                .filter(|route| {
+                    route.alt_principal == Some(aex_wire::idempotency::PrincipalKind::UserSession)
+                })
+                .filter_map(|route| route.required_scope)
+                .fold(Self::EMPTY, Self::insert)
+        })
+    }
 
     /// Builds a set from a slice, at compile time.
     #[must_use]
@@ -332,6 +364,7 @@ mod tests {
             Scope::OrganizationsWrite,
             Scope::MembershipsRead,
             Scope::MembershipsWrite,
+            Scope::MembershipsAccept,
             Scope::ApiKeysRead,
             Scope::ApiKeysWrite,
             Scope::WorkspacesWrite,

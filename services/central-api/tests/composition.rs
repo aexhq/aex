@@ -252,6 +252,14 @@ impl CentralOperationsApi for Api {
 }
 
 impl OrganizationsApi for Api {
+    async fn invitation_accept(
+        &self,
+        _cx: &RequestContext,
+        _body: aex_wire::models::EmptyRequest,
+    ) -> WireResult<aex_wire::models::InvitationAcceptResult> {
+        Self::refuse()
+    }
+
     async fn invitation_create(
         &self,
         _cx: &RequestContext,
@@ -581,7 +589,7 @@ async fn status_of(router: axum::Router, request: Request<Body>) -> StatusCode {
 #[tokio::test]
 async fn the_mounted_set_is_exactly_the_declared_one() {
     let declared = CentralServiceId::CentralApi.routes();
-    assert_eq!(declared.len(), 29, "the merged deployable serves 29 routes");
+    assert_eq!(declared.len(), 30, "the merged deployable serves 30 routes");
     for id in declared {
         let descriptor = route(id);
         let credential = if descriptor.plane == aex_wire::routes::Plane::Central {

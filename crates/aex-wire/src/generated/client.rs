@@ -3,7 +3,7 @@
 //! The low-level client: one request builder and one method per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:13ff89d3e0f73ee4f62c48556767322fb3e12f9057fe8b4f2364cc1c0464f68b`.
+//! `sha256:2318795adfacfa7a5080a1f3e77967265cf088b3bad74d98571e377eabbdee88`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -84,6 +84,7 @@ use crate::models::FileListRequest;
 use crate::models::FileStatRequest;
 use crate::models::HostedSession;
 use crate::models::Invitation;
+use crate::models::InvitationAcceptResult;
 use crate::models::InvitationCreateRequest;
 use crate::models::LiveDownloadGrant;
 use crate::models::LiveFileDownloadRequest;
@@ -748,6 +749,27 @@ pub fn device_decision_create_request(
 /// Returns [`ClientError::Encode`] when the request cannot be rendered.
 pub fn device_token_create_request(body: &DeviceTokenRequest) -> Result<WireRequest, ClientError> {
     let route = RouteId::DeviceTokenCreate;
+    let path = PathWriter::new(route);
+    Ok(WireRequest {
+        route,
+        method: HttpMethod::Post,
+        path: path.finish()?,
+        query: String::new(),
+        headers: request_headers(route, None, None, None),
+        body: Some(encode_body(route, body)?),
+    })
+}
+
+/// `POST /api/invitations/acceptances`
+/// Redeem every pending invitation addressed to the caller's verified email.
+///
+/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
+/// a recorded fixture — can take the request and run it.
+///
+/// # Errors
+/// Returns [`ClientError::Encode`] when the request cannot be rendered.
+pub fn invitation_accept_request(body: &EmptyRequest) -> Result<WireRequest, ClientError> {
+    let route = RouteId::InvitationAccept;
     let path = PathWriter::new(route);
     Ok(WireRequest {
         route,
@@ -4294,6 +4316,22 @@ impl<T: Transport> WireClient<T> {
         let request = device_token_create_request(body)?;
         let response = self.send(request).await?;
         decode_response(RouteId::DeviceTokenCreate, &response)
+    }
+
+    /// `POST /api/invitations/acceptances`
+    /// Redeem every pending invitation addressed to the caller's verified email.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
+    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
+    /// not match the contract.
+    pub async fn invitation_accept(
+        &self,
+        body: &EmptyRequest,
+    ) -> Result<InvitationAcceptResult, ClientError> {
+        let request = invitation_accept_request(body)?;
+        let response = self.send(request).await?;
+        decode_response(RouteId::InvitationAccept, &response)
     }
 
     /// `POST /api/organizations/{organizationId}/invitations`

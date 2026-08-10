@@ -12,7 +12,7 @@ use aex_control_app::ports::{
     AccountActorState, AuthorizationReader, CentralActorState, SigningKeyRecord, StoreError,
     WorkspaceKeyState,
 };
-use aex_control_domain::{Scope, ScopeSet};
+use aex_control_domain::ScopeSet;
 use aex_rds_data::{DataApiClient, SqlValue, Statement};
 
 use crate::error::map_store_error;
@@ -83,9 +83,11 @@ impl AuroraAuthorizationReader {
             let mut state = row.0;
             if dashboard_session {
                 // The generated contract admits a browser session only on the
-                // bootstrap route. Keep that credential at the exact route
-                // scope rather than treating it as an unrestricted token.
-                state.scopes = ScopeSet::of(&[Scope::AccountRead]);
+                // routes that declare it. Keep that credential at exactly those
+                // route scopes rather than treating it as an unrestricted
+                // token; the set is derived from the route table, so it cannot
+                // drift from what the contract publishes.
+                state.scopes = ScopeSet::dashboard_session();
             }
             state
         }))

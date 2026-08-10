@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:13ff89d3e0f73ee4f62c48556767322fb3e12f9057fe8b4f2364cc1c0464f68b`.
+//! `sha256:2318795adfacfa7a5080a1f3e77967265cf088b3bad74d98571e377eabbdee88`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -85,6 +85,7 @@ use crate::models::FileListRequest;
 use crate::models::FileStatRequest;
 use crate::models::HostedSession;
 use crate::models::Invitation;
+use crate::models::InvitationAcceptResult;
 use crate::models::InvitationCreateRequest;
 use crate::models::LiveDownloadGrant;
 use crate::models::LiveFileDownloadRequest;
@@ -484,6 +485,7 @@ pub const OBSERVATIONS_ROUTES: &[RouteId] = &[
 
 /// Every route of `central:organizations`, in `RouteId` order.
 pub const ORGANIZATIONS_ROUTES: &[RouteId] = &[
+    RouteId::InvitationAccept,
     RouteId::InvitationCreate,
     RouteId::MembershipsList,
     RouteId::OrganizationCreate,
@@ -682,6 +684,7 @@ impl RouteId {
             Self::SessionObservationsTracesListen => RouteGroup::Observations,
             Self::SessionObservationsTracesQuery => RouteGroup::Observations,
             Self::SessionObservationsTracesStream => RouteGroup::Observations,
+            Self::InvitationAccept => RouteGroup::Organizations,
             Self::InvitationCreate => RouteGroup::Organizations,
             Self::MembershipsList => RouteGroup::Organizations,
             Self::OrganizationCreate => RouteGroup::Organizations,
@@ -2142,11 +2145,19 @@ pub async fn dispatch_observations<A: ObservationsApi + ?Sized>(
 
 // --- central:organizations ---------------------------------------------------------------
 
-/// The `organizations` fragment of the central plane: 5 operations.
+/// The `organizations` fragment of the central plane: 6 operations.
 /// Every method returns a future that is `Send`, so the composition crate can spawn it without
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
 pub trait OrganizationsApi: Send + Sync + 'static {
+    /// `POST /api/invitations/acceptances`
+    /// Redeem every pending invitation addressed to the caller's verified email.
+    fn invitation_accept(
+        &self,
+        cx: &RequestContext,
+        body: EmptyRequest,
+    ) -> impl Future<Output = WireResult<InvitationAcceptResult>> + Send;
+
     /// `POST /api/organizations/{organizationId}/invitations`
     /// Invite a person to the organization.
     fn invitation_create(
@@ -2204,6 +2215,12 @@ pub async fn dispatch_organizations<A: OrganizationsApi + ?Sized>(
 ) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
     let reader = QueryReader::parse(raw.route, raw.query)?;
     match raw.route {
+        RouteId::InvitationAccept => {
+            let body = decode_body::<EmptyRequest>(&raw, limits)?;
+            let handled = api.invitation_accept(cx, body);
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
+        }
         RouteId::InvitationCreate => {
             let organization_id = path_param::<OrganizationId>(&raw, "organizationId")?;
             let body = decode_body::<InvitationCreateRequest>(&raw, limits)?;

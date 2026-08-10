@@ -1,5 +1,5 @@
 {
-  "contractDigest": "sha256:13ff89d3e0f73ee4f62c48556767322fb3e12f9057fe8b4f2364cc1c0464f68b",
+  "contractDigest": "sha256:2318795adfacfa7a5080a1f3e77967265cf088b3bad74d98571e377eabbdee88",
   "generator": {
     "formatter": "aex-contract-gen internal renderer (rustfmt fixed point)",
     "name": "aex-contract-gen",
@@ -13,7 +13,7 @@
     "api/openapi/central/bootstrap.yaml": "sha256:7da7fcb45cf7186e5380e2ec5a9705addc69c3de8a7ec4dfb98b835763e059f6",
     "api/openapi/central/identity.yaml": "sha256:d6b68caec66748ee4e7bc3ee026d24fd93687d07661e6b5208d347e3ce04692f",
     "api/openapi/central/operations.yaml": "sha256:6fca9ff64de00f3ce8f9d96b6b37266c12f09e91174da86c363c76c9a738b9f9",
-    "api/openapi/central/organizations.yaml": "sha256:d7e90976d58aeb7a4157716de4dd3855fc5f5f2924c392fbeda0d15c45a3f903",
+    "api/openapi/central/organizations.yaml": "sha256:0fb147a7ead9f653880bb6d351fd67f98badaa08e505eb47a2955ae2db376922",
     "api/openapi/central/workspaces.yaml": "sha256:64d1c13fe986e018e931627999b436fd979b2caad4095ee8a0880210f6f646f7",
     "api/openapi/plane.central.yaml": "sha256:775e81fb6830790a757fca049bdeef76f6c07a372c0ab6fb84a8f99231ea2c51",
     "api/openapi/plane.regional.yaml": "sha256:7a8b8d2ea049bdba1fc279e629ab12d76291f978cb2eaab736ea890140ce3a53",
@@ -31,7 +31,7 @@
     "api/openapi/regional/usage.yaml": "sha256:67ad0a6c523831aa8d00e62e4b891734697535c57292b44565be0f1bf21ebb1d",
     "api/openapi/regional/workspace.yaml": "sha256:84ca0f318402dda99648a6b52c466732d4a898938e7e5cbe9552850cc9c9b4e9",
     "api/schemas/central/billing.yaml": "sha256:b0394a3ee5f1b06fb113a68f57a11be1663e40e9ec55ed3cf9ecb3eca696ad61",
-    "api/schemas/central/identity.yaml": "sha256:e26fa23e9e81b29e215ff26211dd36b041a713e145454def1e7465e33d8aa0d1",
+    "api/schemas/central/identity.yaml": "sha256:47fad86c37756fd0afb71fad7c123633c60fcedf73c410e5fe80e077e3a01af4",
     "api/schemas/common/core.yaml": "sha256:83732111417b6a67cb2417907e8a704573151e52615adab7e59ecda2de6a3457",
     "api/schemas/observation/observation.yaml": "sha256:072ab3237f5803cb3746bf77a9fda303020d425ff04631febc22810477ce686b",
     "api/schemas/provider/provider.yaml": "sha256:4f98083e209d7e309c89cd001acd96095ca27898e97cc995b0fc7cf477d9447a",
@@ -41,8 +41,8 @@
     "api/schemas/registries/evolution.yaml": "sha256:d744c5441ff29e0b96b72dd0397362db1c9ac4c3afa6275843240455f8da02e0",
     "api/schemas/registries/ids.yaml": "sha256:c1a62bd2a71d7cc81e65450c5816e71a3fc1535256e9492c49d6cce8e7d054e2",
     "api/schemas/registries/limits.yaml": "sha256:2f0e74e5b3323c98f1d3819a9d66c813d98f1480c7cb9afb8f7fbef22bd67bce",
-    "api/schemas/registries/routes-meta.yaml": "sha256:a6c32293e7efe667b822057262d2e2f66d0d5ad532fd06bf3e6d3b888cab97a4",
-    "api/schemas/registries/scopes.yaml": "sha256:9a56d41e899da71b13a3aab6c72221d0cfae7f2507f56723f97d7c090f61b068",
+    "api/schemas/registries/routes-meta.yaml": "sha256:406405804d4ef6ba1ec1772752e95376715fd35af94d60a4ca2d58fd7d8e60d7",
+    "api/schemas/registries/scopes.yaml": "sha256:131eaaff29a75d5e5a8f8b18d05142504f0f4c218c80a95c9ce8c9569968bbdb",
     "api/schemas/usage/usage.yaml": "sha256:60a81ac8720786336f9c89490327c4e3b70d137e4c58ffb124d28321efe69c5a",
     "rust-toolchain.toml": "sha256:4ebecf0dfad52e2954fd762b8ff09925e8c35f6909d360327c71518b4d853670"
   }

@@ -391,8 +391,8 @@ mod tests {
             actually_served,
             "runtime ownership must exactly equal generated actual mounts"
         );
-        assert_eq!(central.len(), 30);
-        assert_eq!(actually_served.len(), 29);
+        assert_eq!(central.len(), 31);
+        assert_eq!(actually_served.len(), 30);
         assert!(central.contains(&RouteId::AccountGet));
         assert!(!actually_served.contains(&RouteId::AccountGet));
         assert_eq!(
@@ -440,7 +440,7 @@ mod tests {
                 .filter(|group| *group != RouteGroup::Identity)
                 .collect::<BTreeSet<_>>()
         );
-        assert_eq!(CentralServiceId::CentralApi.routes().len(), 29);
+        assert_eq!(CentralServiceId::CentralApi.routes().len(), 30);
     }
 
     #[test]
