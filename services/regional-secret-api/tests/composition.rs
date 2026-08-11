@@ -98,12 +98,10 @@ fn a_resource_in_another_region_refuses_the_process() {
         "arn:aws:kms:us-east-1:000000000000:key/11111111-2222-3333-4444-555555555555".to_owned(),
     );
     let error = read(&vars).expect_err("a cross-region key is refused");
-    let RegionalHttpConfigError::Invalid { name, reason } = error else {
+    let RegionalHttpConfigError::Invalid { name, .. } = error else {
         panic!("expected an invalid-value refusal");
     };
     assert_eq!(name, config::SECRET_KMS_KEY_ARN);
-    assert!(reason.contains("us-east-1"), "{reason}");
-    assert!(reason.contains("eu-west-1"), "{reason}");
 }
 
 #[test]

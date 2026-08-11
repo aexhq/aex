@@ -460,14 +460,12 @@ fn one_operation_cannot_be_both_served_and_deferred() {
     copy_authored_contract(temp.path());
     let path = temp.path().join("api/schemas/registries/routes-meta.yaml");
     let authored = std::fs::read_to_string(&path).expect("routes metadata");
-    let text = authored.replace(
-        "deferredOperations: {}",
-        "deferredOperations:\n  api_key_create: \"contradictory state\"",
-    );
-    assert_ne!(
-        text, authored,
-        "the served+deferred mutation rewrote nothing"
-    );
+    let mut document: serde_json::Value =
+        serde_norway::from_str(&authored).expect("routes metadata parses");
+    document["deferredOperations"] = serde_json::json!({
+        "api_key_create": "contradictory state"
+    });
+    let text = serde_norway::to_string(&document).expect("mutated routes metadata encodes");
     std::fs::write(path, text).expect("mutate fixture metadata");
     let error = load::load(temp.path()).expect_err("conflicting route state must fail");
     assert!(

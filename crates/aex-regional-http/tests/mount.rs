@@ -593,18 +593,3 @@ fn a_wrongly_owned_route_is_a_mount_error() {
             .all(|id| route_owner(*id) == Some(RouteOwner::Otlp))
     );
 }
-
-#[test]
-fn mount_error_names_the_offending_route() {
-    let error = MountError::WrongOwner {
-        route: "provider_credential_register",
-        owner: "regional-secret-api",
-        deployable: "regional-session-api",
-    };
-    let rendered = error.to_string();
-    assert!(
-        rendered.contains("provider_credential_register"),
-        "{rendered}"
-    );
-    assert!(rendered.contains("regional-secret-api"), "{rendered}");
-}

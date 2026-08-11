@@ -80,14 +80,15 @@ describe("resource routing", () => {
     }
   });
 
-  test("execute stays total over every route id, deferred operations included", async () => {
+  test("execute stays total over every route id", async () => {
     const transport = new ScriptedTransport();
     const aex = new Aex({ apiKey: KEY, transport });
-    const deferred = (Object.keys(ROUTES) as RouteId[]).filter((id) => ROUTES[id].deferred);
-    const id = deferred[0] ?? "account_get";
-    const bindings = Object.fromEntries(ROUTES[id].pathParams.map((name) => [name, "fixture"]));
-    await aex.execute(id, bindings);
-    expect(transport.requests[0]?.routeId).toBe(id);
+    const routeIds = Object.keys(ROUTES) as RouteId[];
+    for (const id of routeIds) {
+      const bindings = Object.fromEntries(ROUTES[id].pathParams.map((name) => [name, "fixture"]));
+      await aex.execute(id, bindings);
+    }
+    expect(transport.requests.map(({ routeId }) => routeId)).toEqual(routeIds);
   });
 });
 

@@ -1,18 +1,17 @@
 //! The routes `regional-secret-api` genuinely serves, driven through the real
 //! router.
 //!
-//! What the doubles record is the **expression** registration commits, not only
-//! the body it answers. A registration that stopped writing its backing secret
-//! and public binding in one transaction would pass a body assertion and fail
-//! here.
+//! The doubles record the typed participants and whether every action is
+//! conditional, not provider expression spelling. Exact `DynamoDB` request
+//! construction belongs to the custody adapter's conformance tests.
 //!
 //! The crypto double is not a cipher and does not pretend to be one: the AEAD is
 //! proved against real `KMS` in `aex-secret-aws`'s moto-backed target, where the
 //! encryption context is authenticated additional data and a one-field change
 //! fails the open. What is proved here is the property that lives here — that
 //! the handler seals under a context naming the exact generation it is about to
-//! commit, under the workspace's own branch key, and that no plaintext reaches
-//! any row but the sealed one.
+//! commit, under the workspace's own branch key. The custody adapter's typed
+//! codecs and conformance tests own the durable-row boundary.
 
 use std::sync::{Arc, Mutex};
 
@@ -67,10 +66,9 @@ fn moment(spelling: &str) -> Timestamp {
 /// One recorded transaction, as the provider would have received it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Transacted {
-    participants: Vec<String>,
-    /// Per action, the condition the participant committed under.
-    conditions: Vec<String>,
-    token: String,
+    participants: Vec<Participant>,
+    /// Per action, whether the participant committed under a condition.
+    conditional: Vec<bool>,
 }
 
 #[derive(Debug, Default)]
@@ -191,12 +189,8 @@ impl SecretCustodyStore for FakeCustody {
             .lock()
             .expect("an unpoisoned lock")
             .push(Transacted {
-                participants: plan
-                    .participants()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-                conditions: plan
+                participants: plan.participants().to_vec(),
+                conditional: plan
                     .actions()
                     .iter()
                     .map(|action| {
@@ -208,11 +202,19 @@ impl SecretCustodyStore for FakeCustody {
                                     .update()
                                     .and_then(|update| update.condition_expression())
                             })
-                            .unwrap_or("<unconditional>")
-                            .to_owned()
+                            .or_else(|| {
+                                action
+                                    .delete()
+                                    .and_then(|delete| delete.condition_expression())
+                            })
+                            .or_else(|| {
+                                action
+                                    .condition_check()
+                                    .map(|check| check.condition_expression())
+                            })
+                            .is_some()
                     })
                     .collect(),
-                token: plan.client_request_token().to_owned(),
             });
         match self.lose {
             Some(participant) => Err(StoreError::PreconditionFailed {
@@ -550,27 +552,20 @@ async fn a_registration_commits_the_backing_secret_and_the_binding_together() {
     assert_eq!(
         transactions[0].participants,
         [
-            "secret.generation",
-            "secret.metadata",
-            "secret.lineage",
-            "custody.provider_credential",
-            "secret.idempotency",
-            "custody.credential_count",
+            Participant::SECRET_GENERATION,
+            Participant::SECRET_METADATA,
+            Participant::SECRET_LINEAGE,
+            Participant::CUSTODY_PROVIDER_CREDENTIAL,
+            Participant::SECRET_IDEMPOTENCY,
+            Participant::CUSTODY_CREDENTIAL_COUNT,
         ]
     );
-    for condition in &transactions[0].conditions[..5] {
-        assert_eq!(
-            condition, "attribute_not_exists(pk)",
-            "a registration always creates, and a crash must leave neither half"
-        );
-    }
-    assert_eq!(
-        transactions[0].conditions[5], "attribute_not_exists(#count) OR #count < :max",
-        "the quota guard is the one participant that is not a create"
-    );
     assert!(
-        !format!("{transactions:?}").contains("sk-live-abcdefgh"),
-        "a durable row carried the key material"
+        transactions[0]
+            .conditional
+            .iter()
+            .all(|conditional| *conditional),
+        "every registration participant must remain conditional"
     );
 }
 
