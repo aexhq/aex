@@ -22,8 +22,8 @@ test("the allowlist carries no operator, no session mutation and no ingest route
     expect(routeId.startsWith("operator_")).toBe(false);
     expect(routeId.startsWith("otlp_")).toBe(false);
   }
-  // Session lifecycle is driven from the SDK and CLI. Approvals are the one
-  // exception, because only a person can decide one.
+  // Session lifecycle is driven from the SDK and CLI; the dashboard is a
+  // read-only view of the public session surface.
   for (const excluded of [
     "session_create",
     "session_message_send",

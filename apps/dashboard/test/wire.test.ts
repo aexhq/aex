@@ -18,7 +18,6 @@ const SCHEMA_FOR: Readonly<Record<string, string>> = {
   SessionListItem: "SessionListItem",
   Session: "Session",
   Message: "Message",
-  Approval: "Approval",
   MissingInterval: "MissingInterval",
   ObservationCoverage: "ObservationCoverage",
   Observation: "Observation",

@@ -1,6 +1,5 @@
 import { requireWorkspace } from "../../../../../../src/server/context";
 import {
-  ApprovalsPanel,
   LiveFilesPanel,
   MessagesPanel,
   SessionEventsPanel,
@@ -11,12 +10,11 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Session — AEX" };
 
 /**
- * Five panels, five independent requests, five independent failures.
+ * Four panels, four independent requests, four independent failures.
  *
  * Nothing here waits on anything else: the events query may take the full analytics
- * deadline and the approvals control stays usable throughout. There is deliberately
- * Messages are the durable conversation surface; internal execution identities
- * are deliberately absent.
+ * deadline while the other panels remain usable. Messages are the durable
+ * conversation surface; internal execution identities are deliberately absent.
  */
 export default async function SessionPage({
   params,
@@ -36,7 +34,6 @@ export default async function SessionPage({
       </div>
       <SessionHeader {...scope} />
       <MessagesPanel {...scope} />
-      <ApprovalsPanel {...scope} />
       <SessionEventsPanel {...scope} />
       <LiveFilesPanel {...scope} />
     </div>
