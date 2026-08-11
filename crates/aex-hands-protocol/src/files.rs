@@ -4,7 +4,7 @@
 //! therefore carry only the file intent and its bounded bytes; accepting one
 //! through an unbound or stale guest is impossible before this enum is decoded.
 
-use aex_wire::ids::{ContentHash, UploadId, Uuid7};
+use aex_wire::ids::{ContentHash, Uuid7};
 use serde::{Deserialize, Serialize};
 
 use crate::operation::{ByteRangeRequest, FileMode, GuestPath};
@@ -13,15 +13,39 @@ use crate::operation::{ByteRangeRequest, FileMode, GuestPath};
 ///
 /// Base64 expands by four thirds. Seven hundred thousand bytes plus the closed
 /// JSON envelope stays below the one-MiB Hands frame ceiling.
-pub const FILE_PART_BYTES: u32 = 700_000;
+pub const FILE_FRAME_BYTES: u32 = 700_000;
+
+/// Fixed public multipart part size, except for the final part.
+///
+/// Four MiB remains within a six-MiB synchronous Lambda payload even when an
+/// HTTP adapter base64-encodes the request. The trusted service decomposes it
+/// into [`FILE_FRAME_BYTES`] guest calls.
+pub const FILE_TRANSFER_PART_BYTES: u32 = 4 * 1024 * 1024;
 
 /// Largest complete live file admitted by this protocol.
 pub const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024 * 1024;
+
+/// One caller-minted, generation-local upload identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FileUploadId(pub Uuid7);
+
+impl std::fmt::Display for FileUploadId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
 
 /// One caller-minted, generation-local download identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FileDownloadId(pub Uuid7);
+
+impl std::fmt::Display for FileDownloadId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
 
 /// One completed upload part.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,7 +66,7 @@ pub struct FilePartReceipt {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FileUploadState {
     /// Caller-minted upload identity.
-    pub upload: UploadId,
+    pub upload: FileUploadId,
     /// Final workspace path.
     pub path: GuestPath,
     /// Declared complete length.
@@ -102,7 +126,7 @@ pub enum FileRequest {
     /// Create or reopen a generation-local multipart upload.
     UploadOpen {
         /// Caller-minted upload identity.
-        upload: UploadId,
+        upload: FileUploadId,
         /// Final workspace path.
         path: GuestPath,
         /// Complete length.
@@ -115,31 +139,51 @@ pub enum FileRequest {
     /// Read the durably retained parts of an upload.
     UploadStatus {
         /// Upload identity.
-        upload: UploadId,
+        upload: FileUploadId,
     },
-    /// Put one whole upload part atomically.
-    UploadPart {
+    /// Create or reopen one logical public upload part.
+    UploadPartOpen {
         /// Upload identity.
-        upload: UploadId,
+        upload: FileUploadId,
         /// One-based part number.
         part_number: u32,
         /// First byte in the complete file.
         offset: u64,
+        /// Exact size of this logical part.
+        size_bytes: u32,
+        /// SHA-256 of the complete logical part.
+        sha256: ContentHash,
+    },
+    /// Put one bounded frame of an open logical part atomically.
+    UploadPartChunk {
+        /// Upload identity.
+        upload: FileUploadId,
+        /// One-based logical part number.
+        part_number: u32,
+        /// Offset within the logical part.
+        chunk_offset: u32,
         /// SHA-256 of `bytes`.
         sha256: ContentHash,
-        /// Binary bytes, base64 on the JSON wire.
+        /// Binary bytes, base64 on the authenticated JSON wire.
         #[serde(with = "base64_bytes")]
         bytes: Vec<u8>,
+    },
+    /// Verify and publish one logical part into the resumable upload.
+    UploadPartComplete {
+        /// Upload identity.
+        upload: FileUploadId,
+        /// One-based logical part number.
+        part_number: u32,
     },
     /// Verify every part and publish the final file by one atomic rename.
     UploadComplete {
         /// Upload identity.
-        upload: UploadId,
+        upload: FileUploadId,
     },
     /// Forget a partial upload and its temporary bytes.
     UploadAbort {
         /// Upload identity.
-        upload: UploadId,
+        upload: FileUploadId,
     },
     /// Open one regular file without following a symlink.
     DownloadOpen {
@@ -156,7 +200,7 @@ pub enum FileRequest {
         download: FileDownloadId,
         /// Absolute file offset expected next.
         offset: u64,
-        /// Requested bytes, at most [`FILE_PART_BYTES`].
+        /// Requested bytes, at most [`FILE_FRAME_BYTES`].
         max_bytes: u32,
     },
     /// Close the descriptor early.
@@ -187,7 +231,7 @@ pub enum FileResponse {
     /// Partial state was removed.
     UploadAborted {
         /// Removed upload identity.
-        upload: UploadId,
+        upload: FileUploadId,
     },
     /// Download descriptor opened.
     DownloadOpened {
@@ -252,18 +296,18 @@ mod base64_bytes {
 
 #[cfg(test)]
 mod tests {
-    use super::{FILE_PART_BYTES, FileDownloadId, FileRequest};
+    use super::{FILE_FRAME_BYTES, FileDownloadId, FileRequest, FileUploadId};
     use crate::operation::GuestRoot;
-    use aex_wire::ids::{ContentHash, PrefixedId as _, UploadId, Uuid7};
+    use aex_wire::ids::{ContentHash, Uuid7};
 
     #[test]
     fn the_largest_part_stays_inside_the_authenticated_frame() {
-        let request = FileRequest::UploadPart {
-            upload: UploadId::from_uuid7(Uuid7::compose(1, [1; 10])),
+        let request = FileRequest::UploadPartChunk {
+            upload: FileUploadId(Uuid7::compose(1, [1; 10])),
             part_number: 1,
-            offset: 0,
+            chunk_offset: 0,
             sha256: ContentHash::from_bytes([2; 32]),
-            bytes: vec![3; FILE_PART_BYTES as usize],
+            bytes: vec![3; FILE_FRAME_BYTES as usize],
         };
         let encoded = serde_json::to_vec(&request).expect("file request encodes");
         assert!(encoded.len() < 1_048_576, "encoded {} bytes", encoded.len());

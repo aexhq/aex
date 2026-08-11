@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use aex_hands_protocol::files::{
-    FILE_PART_BYTES, FileDownloadChunk, FileDownloadId, FileDownloadState, FileFailureCode,
-    FilePartReceipt, FileRequest, FileResponse, FileUploadState, MAX_FILE_BYTES,
+    FILE_FRAME_BYTES, FILE_TRANSFER_PART_BYTES, FileDownloadChunk, FileDownloadId,
+    FileDownloadState, FileFailureCode, FilePartReceipt, FileRequest, FileResponse, FileUploadId,
+    FileUploadState, MAX_FILE_BYTES,
 };
 use aex_hands_protocol::operation::{FileMode, GuestPath, GuestRoot};
-use aex_wire::ids::{ContentHash, UploadId};
+use aex_wire::ids::ContentHash;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 
@@ -38,6 +39,21 @@ struct OpenDownload {
 struct UploadManifest {
     state: FileUploadState,
     mode: FileMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PartManifest {
+    receipt: FilePartReceipt,
+    chunks: Vec<ChunkReceipt>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ChunkReceipt {
+    offset: u32,
+    size_bytes: u32,
+    sha256: ContentHash,
 }
 
 impl FileService {
@@ -78,13 +94,24 @@ impl FileService {
                 mode,
             } => self.upload_open(upload, path, size_bytes, sha256, mode),
             FileRequest::UploadStatus { upload } => self.upload_status(upload),
-            FileRequest::UploadPart {
+            FileRequest::UploadPartOpen {
                 upload,
                 part_number,
                 offset,
+                size_bytes,
+                sha256,
+            } => self.upload_part_open(upload, part_number, offset, size_bytes, sha256),
+            FileRequest::UploadPartChunk {
+                upload,
+                part_number,
+                chunk_offset,
                 sha256,
                 bytes,
-            } => self.upload_part(upload, part_number, offset, sha256, &bytes),
+            } => self.upload_part_chunk(upload, part_number, chunk_offset, sha256, &bytes),
+            FileRequest::UploadPartComplete {
+                upload,
+                part_number,
+            } => self.upload_part_complete(upload, part_number),
             FileRequest::UploadComplete { upload } => self.upload_complete(upload),
             FileRequest::UploadAbort { upload } => self.upload_abort(upload),
             FileRequest::DownloadOpen {
@@ -103,7 +130,7 @@ impl FileService {
 
     fn upload_open(
         &self,
-        upload: UploadId,
+        upload: FileUploadId,
         path: GuestPath,
         size_bytes: u64,
         sha256: ContentHash,
@@ -145,44 +172,43 @@ impl FileService {
         })
     }
 
-    fn upload_status(&self, upload: UploadId) -> Result<FileResponse, FileFailureCode> {
+    fn upload_status(&self, upload: FileUploadId) -> Result<FileResponse, FileFailureCode> {
         Ok(FileResponse::Upload {
             state: self.read_manifest(upload)?.state,
         })
     }
 
-    fn upload_part(
+    fn upload_part_open(
         &self,
-        upload: UploadId,
+        upload: FileUploadId,
         part_number: u32,
         offset: u64,
+        size_bytes: u32,
         sha256: ContentHash,
-        bytes: &[u8],
     ) -> Result<FileResponse, FileFailureCode> {
-        let mut manifest = self.read_manifest(upload)?;
+        let manifest = self.read_manifest(upload)?;
         if manifest.state.complete {
             return Err(FileFailureCode::Conflict);
         }
         let expected_offset = u64::from(part_number.saturating_sub(1))
-            .checked_mul(u64::from(FILE_PART_BYTES))
+            .checked_mul(u64::from(FILE_TRANSFER_PART_BYTES))
             .ok_or(FileFailureCode::InvalidRequest)?;
         if part_number == 0
             || part_number > MAX_PARTS
             || offset != expected_offset
             || offset >= manifest.state.size_bytes
-            || bytes.is_empty()
-            || bytes.len() > FILE_PART_BYTES as usize
         {
             return Err(FileFailureCode::InvalidRequest);
         }
-        let expected_size = (manifest.state.size_bytes - offset).min(u64::from(FILE_PART_BYTES));
-        if bytes.len() as u64 != expected_size || ContentHash::of(bytes) != sha256 {
+        let expected_size =
+            (manifest.state.size_bytes - offset).min(u64::from(FILE_TRANSFER_PART_BYTES));
+        if u64::from(size_bytes) != expected_size {
             return Err(FileFailureCode::InvalidRequest);
         }
         let receipt = FilePartReceipt {
             part_number,
             offset,
-            size_bytes: u32::try_from(bytes.len()).map_err(|_| FileFailureCode::InvalidRequest)?,
+            size_bytes,
             sha256,
         };
         if let Some(existing) = manifest
@@ -191,27 +217,179 @@ impl FileService {
             .iter()
             .find(|part| part.part_number == part_number)
         {
-            if existing != &receipt
-                || std::fs::read(self.part_path(upload, part_number))
-                    .map_err(|error| map_io(&error))?
-                    != bytes
-            {
+            if existing != &receipt {
                 return Err(FileFailureCode::Conflict);
             }
             return Ok(FileResponse::Upload {
                 state: manifest.state,
             });
         }
-        write_atomic(&self.part_path(upload, part_number), bytes)?;
-        manifest.state.parts.push(receipt);
-        manifest.state.parts.sort_by_key(|part| part.part_number);
-        self.write_manifest(&manifest)?;
+        let part_manifest = PartManifest {
+            receipt,
+            chunks: Vec::new(),
+        };
+        match self.read_part_manifest(upload, part_number) {
+            Ok(existing) if existing == part_manifest => {}
+            Ok(_) => return Err(FileFailureCode::Conflict),
+            Err(FileFailureCode::NotFound) => self.write_part_manifest(upload, &part_manifest)?,
+            Err(error) => return Err(error),
+        }
         Ok(FileResponse::Upload {
             state: manifest.state,
         })
     }
 
-    fn upload_complete(&self, upload: UploadId) -> Result<FileResponse, FileFailureCode> {
+    fn upload_part_chunk(
+        &self,
+        upload: FileUploadId,
+        part_number: u32,
+        chunk_offset: u32,
+        sha256: ContentHash,
+        bytes: &[u8],
+    ) -> Result<FileResponse, FileFailureCode> {
+        let upload_manifest = self.read_manifest(upload)?;
+        if upload_manifest.state.complete
+            || upload_manifest
+                .state
+                .parts
+                .iter()
+                .any(|part| part.part_number == part_number)
+        {
+            return Err(FileFailureCode::Conflict);
+        }
+        let mut part = self.read_part_manifest(upload, part_number)?;
+        let chunk_end = chunk_offset
+            .checked_add(u32::try_from(bytes.len()).map_err(|_| FileFailureCode::InvalidRequest)?)
+            .ok_or(FileFailureCode::InvalidRequest)?;
+        let expected_size = part
+            .receipt
+            .size_bytes
+            .saturating_sub(chunk_offset)
+            .min(FILE_FRAME_BYTES);
+        if bytes.is_empty()
+            || bytes.len() > FILE_FRAME_BYTES as usize
+            || chunk_offset >= part.receipt.size_bytes
+            || chunk_offset % FILE_FRAME_BYTES != 0
+            || bytes.len() as u32 != expected_size
+            || chunk_end > part.receipt.size_bytes
+            || ContentHash::of(bytes) != sha256
+        {
+            return Err(FileFailureCode::InvalidRequest);
+        }
+        let receipt = ChunkReceipt {
+            offset: chunk_offset,
+            size_bytes: bytes.len() as u32,
+            sha256,
+        };
+        if let Some(existing) = part
+            .chunks
+            .iter()
+            .find(|chunk| chunk.offset == chunk_offset)
+        {
+            if existing != &receipt
+                || std::fs::read(self.chunk_path(upload, part_number, chunk_offset))
+                    .map_err(|error| map_io(&error))?
+                    != bytes
+            {
+                return Err(FileFailureCode::Conflict);
+            }
+            return Ok(FileResponse::Upload {
+                state: upload_manifest.state,
+            });
+        }
+        write_atomic(&self.chunk_path(upload, part_number, chunk_offset), bytes)?;
+        part.chunks.push(receipt);
+        part.chunks.sort_by_key(|chunk| chunk.offset);
+        self.write_part_manifest(upload, &part)?;
+        Ok(FileResponse::Upload {
+            state: upload_manifest.state,
+        })
+    }
+
+    fn upload_part_complete(
+        &self,
+        upload: FileUploadId,
+        part_number: u32,
+    ) -> Result<FileResponse, FileFailureCode> {
+        let mut upload_manifest = self.read_manifest(upload)?;
+        if upload_manifest.state.complete {
+            return Err(FileFailureCode::Conflict);
+        }
+        if upload_manifest
+            .state
+            .parts
+            .iter()
+            .any(|part| part.part_number == part_number)
+        {
+            return Ok(FileResponse::Upload {
+                state: upload_manifest.state,
+            });
+        }
+        let part = self.read_part_manifest(upload, part_number)?;
+        let expected_chunks = part.receipt.size_bytes.div_ceil(FILE_FRAME_BYTES);
+        if part.chunks.len() as u32 != expected_chunks {
+            return Err(FileFailureCode::InvalidRequest);
+        }
+        for (index, chunk) in part.chunks.iter().enumerate() {
+            let offset = u32::try_from(index)
+                .map_err(|_| FileFailureCode::InvalidRequest)?
+                .checked_mul(FILE_FRAME_BYTES)
+                .ok_or(FileFailureCode::InvalidRequest)?;
+            if chunk.offset != offset {
+                return Err(FileFailureCode::InvalidRequest);
+            }
+        }
+
+        let target = self.part_path(upload, part_number);
+        let temporary = target.with_extension("aex-part-new");
+        let mut output = open_new_truncated(&temporary).map_err(|error| map_io(&error))?;
+        let mut hash = sha2::Sha256::new();
+        let mut assembled = 0u64;
+        for chunk in &part.chunks {
+            let bytes = std::fs::read(self.chunk_path(upload, part_number, chunk.offset))
+                .map_err(|error| map_io(&error))?;
+            if bytes.len() as u32 != chunk.size_bytes || ContentHash::of(&bytes) != chunk.sha256 {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(FileFailureCode::Conflict);
+            }
+            output
+                .write_all(&bytes)
+                .map_err(|error| map_io(&error))?;
+            hash.update(&bytes);
+            assembled = assembled.saturating_add(bytes.len() as u64);
+        }
+        if assembled != u64::from(part.receipt.size_bytes)
+            || ContentHash::from_bytes(hash.finalize().into()) != part.receipt.sha256
+        {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(FileFailureCode::InvalidRequest);
+        }
+        output.sync_all().map_err(|error| map_io(&error))?;
+        drop(output);
+        std::fs::rename(&temporary, &target).map_err(|error| {
+            let _ = std::fs::remove_file(&temporary);
+            map_io(&error)
+        })?;
+        #[cfg(unix)]
+        sync_directory(self.upload_directory(upload).as_path())?;
+        #[cfg(not(unix))]
+        sync_directory(self.upload_directory(upload).as_path());
+        upload_manifest.state.parts.push(part.receipt);
+        upload_manifest
+            .state
+            .parts
+            .sort_by_key(|receipt| receipt.part_number);
+        self.write_manifest(&upload_manifest)?;
+        let _ = std::fs::remove_file(self.part_manifest_path(upload, part_number));
+        for chunk in &part.chunks {
+            let _ = std::fs::remove_file(self.chunk_path(upload, part_number, chunk.offset));
+        }
+        Ok(FileResponse::Upload {
+            state: upload_manifest.state,
+        })
+    }
+
+    fn upload_complete(&self, upload: FileUploadId) -> Result<FileResponse, FileFailureCode> {
         let mut manifest = self.read_manifest(upload)?;
         if manifest.state.complete {
             return Ok(FileResponse::UploadComplete {
@@ -224,7 +402,7 @@ impl FileService {
             manifest
                 .state
                 .size_bytes
-                .div_ceil(u64::from(FILE_PART_BYTES))
+                .div_ceil(u64::from(FILE_TRANSFER_PART_BYTES))
         };
         if manifest.state.parts.len() as u64 != expected_parts {
             return Err(FileFailureCode::InvalidRequest);
@@ -232,7 +410,7 @@ impl FileService {
         for (index, part) in manifest.state.parts.iter().enumerate() {
             let number = u32::try_from(index + 1).map_err(|_| FileFailureCode::InvalidRequest)?;
             if part.part_number != number
-                || part.offset != u64::from(number - 1) * u64::from(FILE_PART_BYTES)
+                || part.offset != u64::from(number - 1) * u64::from(FILE_TRANSFER_PART_BYTES)
             {
                 return Err(FileFailureCode::InvalidRequest);
             }
@@ -302,7 +480,7 @@ impl FileService {
         })
     }
 
-    fn upload_abort(&self, upload: UploadId) -> Result<FileResponse, FileFailureCode> {
+    fn upload_abort(&self, upload: FileUploadId) -> Result<FileResponse, FileFailureCode> {
         if self.read_manifest(upload)?.state.complete {
             return Err(FileFailureCode::Conflict);
         }
@@ -376,7 +554,7 @@ impl FileService {
         offset: u64,
         max_bytes: u32,
     ) -> Result<FileResponse, FileFailureCode> {
-        if max_bytes == 0 || max_bytes > FILE_PART_BYTES {
+        if max_bytes == 0 || max_bytes > FILE_FRAME_BYTES {
             return Err(FileFailureCode::InvalidRequest);
         }
         let mut open = self
@@ -492,23 +670,52 @@ impl FileService {
         self.workspace.join(relative)
     }
 
-    fn upload_directory(&self, upload: UploadId) -> PathBuf {
+    fn upload_directory(&self, upload: FileUploadId) -> PathBuf {
         self.uploads.join(upload.to_string())
     }
-    fn manifest_path(&self, upload: UploadId) -> PathBuf {
+    fn manifest_path(&self, upload: FileUploadId) -> PathBuf {
         self.upload_directory(upload).join("manifest.json")
     }
-    fn part_path(&self, upload: UploadId, number: u32) -> PathBuf {
+    fn part_path(&self, upload: FileUploadId, number: u32) -> PathBuf {
         self.upload_directory(upload)
-            .join(format!("part-{number:05}"))
+            .join(format!("part-{number:05}.body"))
     }
-    fn read_manifest(&self, upload: UploadId) -> Result<UploadManifest, FileFailureCode> {
-        let bytes = std::fs::read(self.manifest_path(upload)).map_err(|error| map_io(&error))?;
+    fn part_manifest_path(&self, upload: FileUploadId, number: u32) -> PathBuf {
+        self.upload_directory(upload)
+            .join(format!("part-{number:05}.json"))
+    }
+    fn chunk_path(&self, upload: FileUploadId, number: u32, offset: u32) -> PathBuf {
+        self.upload_directory(upload)
+            .join(format!("part-{number:05}-chunk-{offset:010}.body"))
+    }
+    fn read_manifest(&self, upload: FileUploadId) -> Result<UploadManifest, FileFailureCode> {
+        let bytes = std::fs::read(self.manifest_path(upload))
+            .map_err(|error| map_io(&error))?;
         serde_json::from_slice(&bytes).map_err(|_| FileFailureCode::Conflict)
     }
     fn write_manifest(&self, manifest: &UploadManifest) -> Result<(), FileFailureCode> {
         let bytes = serde_json::to_vec(manifest).map_err(|_| FileFailureCode::Unavailable)?;
         write_atomic(&self.manifest_path(manifest.state.upload), &bytes)
+    }
+    fn read_part_manifest(
+        &self,
+        upload: FileUploadId,
+        number: u32,
+    ) -> Result<PartManifest, FileFailureCode> {
+        let bytes = std::fs::read(self.part_manifest_path(upload, number))
+            .map_err(|error| map_io(&error))?;
+        serde_json::from_slice(&bytes).map_err(|_| FileFailureCode::Conflict)
+    }
+    fn write_part_manifest(
+        &self,
+        upload: FileUploadId,
+        manifest: &PartManifest,
+    ) -> Result<(), FileFailureCode> {
+        let bytes = serde_json::to_vec(manifest).map_err(|_| FileFailureCode::Unavailable)?;
+        write_atomic(
+            &self.part_manifest_path(upload, manifest.receipt.part_number),
+            &bytes,
+        )
     }
 }
 
@@ -631,12 +838,15 @@ fn map_io(error: &std::io::Error) -> FileFailureCode {
 #[cfg(test)]
 mod tests {
     use super::FileService;
-    use aex_hands_protocol::files::{FILE_PART_BYTES, FileDownloadId, FileRequest, FileResponse};
+    use aex_hands_protocol::files::{
+        FILE_FRAME_BYTES, FILE_TRANSFER_PART_BYTES, FileDownloadId, FileRequest, FileResponse,
+        FileUploadId,
+    };
     use aex_hands_protocol::operation::{FileMode, GuestPath, GuestRoot};
-    use aex_wire::ids::{ContentHash, PrefixedId as _, UploadId, Uuid7};
+    use aex_wire::ids::{ContentHash, Uuid7};
 
-    fn upload(seed: u8) -> UploadId {
-        UploadId::from_uuid7(Uuid7::compose(1, [seed; 10]))
+    fn upload(seed: u8) -> FileUploadId {
+        FileUploadId(Uuid7::compose(1, [seed; 10]))
     }
     fn path(root: &GuestRoot, value: &str) -> GuestPath {
         GuestPath::parse(root, &format!("{}/{value}", root.0)).expect("contained path")
@@ -650,7 +860,7 @@ mod tests {
         std::fs::create_dir_all(&workspace).expect("workspace");
         let root = GuestRoot::workspace();
         let service = FileService::open(root.clone(), &workspace, &journal).expect("service");
-        let mut bytes = vec![b'a'; FILE_PART_BYTES as usize];
+        let mut bytes = vec![b'a'; FILE_TRANSFER_PART_BYTES as usize];
         bytes.extend_from_slice(b"tail");
         let identity = upload(1);
         let destination = path(&root, "artifact.bin");
@@ -665,21 +875,83 @@ mod tests {
             FileResponse::Upload { .. }
         ));
         assert!(!workspace.join("artifact.bin").exists());
-        let first = FileRequest::UploadPart {
+        let first_part = &bytes[..FILE_TRANSFER_PART_BYTES as usize];
+        assert!(matches!(
+            service.answer(FileRequest::UploadPartOpen {
+                upload: identity,
+                part_number: 1,
+                offset: 0,
+                size_bytes: FILE_TRANSFER_PART_BYTES,
+                sha256: ContentHash::of(first_part),
+            }),
+            FileResponse::Upload { .. }
+        ));
+        let first_frame = FileRequest::UploadPartChunk {
             upload: identity,
             part_number: 1,
-            offset: 0,
-            sha256: ContentHash::of(&bytes[..FILE_PART_BYTES as usize]),
-            bytes: bytes[..FILE_PART_BYTES as usize].to_vec(),
+            chunk_offset: 0,
+            sha256: ContentHash::of(&first_part[..FILE_FRAME_BYTES as usize]),
+            bytes: first_part[..FILE_FRAME_BYTES as usize].to_vec(),
         };
-        assert_eq!(service.answer(first.clone()), service.answer(first));
+        assert_eq!(
+            service.answer(first_frame.clone()),
+            service.answer(first_frame.clone())
+        );
+        drop(service);
+
+        let service = FileService::open(root.clone(), &workspace, &journal).expect("resume");
         assert!(matches!(
-            service.answer(FileRequest::UploadPart {
+            service.answer(first_frame),
+            FileResponse::Upload { .. }
+        ));
+        for (index, frame) in first_part[FILE_FRAME_BYTES as usize..]
+            .chunks(FILE_FRAME_BYTES as usize)
+            .enumerate()
+        {
+            let offset =
+                FILE_FRAME_BYTES + u32::try_from(index).expect("bounded frames") * FILE_FRAME_BYTES;
+            assert!(matches!(
+                service.answer(FileRequest::UploadPartChunk {
+                    upload: identity,
+                    part_number: 1,
+                    chunk_offset: offset,
+                    sha256: ContentHash::of(frame),
+                    bytes: frame.to_vec(),
+                }),
+                FileResponse::Upload { .. }
+            ));
+        }
+        assert!(matches!(
+            service.answer(FileRequest::UploadPartComplete {
+                upload: identity,
+                part_number: 1,
+            }),
+            FileResponse::Upload { .. }
+        ));
+        assert!(matches!(
+            service.answer(FileRequest::UploadPartOpen {
                 upload: identity,
                 part_number: 2,
-                offset: u64::from(FILE_PART_BYTES),
+                offset: u64::from(FILE_TRANSFER_PART_BYTES),
+                size_bytes: 4,
+                sha256: ContentHash::of(b"tail"),
+            }),
+            FileResponse::Upload { .. }
+        ));
+        assert!(matches!(
+            service.answer(FileRequest::UploadPartChunk {
+                upload: identity,
+                part_number: 2,
+                chunk_offset: 0,
                 sha256: ContentHash::of(b"tail"),
                 bytes: b"tail".to_vec(),
+            }),
+            FileResponse::Upload { .. }
+        ));
+        assert!(matches!(
+            service.answer(FileRequest::UploadPartComplete {
+                upload: identity,
+                part_number: 2,
             }),
             FileResponse::Upload { .. }
         ));

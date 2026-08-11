@@ -37,8 +37,9 @@ pub mod operation;
 pub mod rpc;
 
 pub use files::{
-    FILE_PART_BYTES, FileDownloadChunk, FileDownloadId, FileDownloadState, FileFailureCode,
-    FilePartReceipt, FileRequest, FileResponse, FileUploadState, MAX_FILE_BYTES,
+    FILE_FRAME_BYTES, FILE_TRANSFER_PART_BYTES, FileDownloadChunk, FileDownloadId,
+    FileDownloadState, FileFailureCode, FilePartReceipt, FileRequest, FileResponse, FileUploadId,
+    FileUploadState, MAX_FILE_BYTES,
 };
 pub use lifecycle::{
     KeepaliveLease, LifecycleIntent, LifecycleOutcome, ProviderFailure, ProviderReceiptId,
