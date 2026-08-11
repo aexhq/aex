@@ -1550,15 +1550,17 @@ fn valid_lower_hex(value: &str, digits: usize) -> bool {
 }
 
 fn is_exact_public_asset_uri(text: &str, path: &str) -> bool {
+    let unit_location = path.starts_with(".units.") && path.ends_with(".location.uri");
     let host = text
         .strip_prefix("https://")
         .or_else(|| text.strip_prefix("http://"))
         .map_or("", |rest| rest.split('/').next().unwrap_or(""));
-    host == "github.com"
+    (host == "github.com"
         && (matches!(
             path,
             ".releaseTool.uri" | ".infra.moduleBundleUri" | ".migrations.regional.bundleUri"
-        ) || (path.starts_with(".units.") && path.ends_with(".location.uri")))
+        ) || unit_location))
+        || (unit_location && crate::publication::npm_tarball_identity(text).is_ok())
 }
 
 fn is_manifest_cryptographic_identity(text: &str, path: &str, exact_public_asset: bool) -> bool {
@@ -1901,6 +1903,28 @@ alarm_spec = "regional-otlp"
         assert!(scan_environment(&json!({ "definitionsDigest": blake3 })).is_empty());
         assert!(scan_environment(&json!({ "commitSha": commit })).is_empty());
         assert!(scan_environment(&json!({ "releaseTool": { "uri": uri } })).is_empty());
+    }
+
+    #[test]
+    fn an_exact_npm_tarball_is_a_plane_neutral_public_asset() {
+        let uri = crate::publication::npm_tarball_uri("@aexhq/sdk", "0.50.0").unwrap();
+        let exact = json!({ "units": { "sdk": { "location": { "uri": uri } } } });
+        assert!(scan_environment(&exact).is_empty());
+
+        let mutable = json!({
+            "units": {
+                "sdk": {
+                    "location": {
+                        "uri": "https://registry.npmjs.org/@aexhq/sdk/-/sdk-latest.tgz"
+                    }
+                }
+            }
+        });
+        assert!(
+            scan_environment(&mutable)
+                .iter()
+                .any(|violation| violation.rule == "manifest-environment-identity")
+        );
     }
 
     #[test]
