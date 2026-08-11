@@ -2092,10 +2092,10 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
+            "not_found",
             "idempotency_conflict",
             "invalid_request",
             "limit_exceeded",
@@ -2109,8 +2109,7 @@
             "provider_credential_revoked",
             "account_paused",
             "wrong_workspace_region",
-            "commit_outcome_unknown",
-            "not_implemented"
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -2635,7 +2634,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2651,8 +2649,7 @@
             "provider_credential_revoked",
             "account_paused",
             "wrong_workspace_region",
-            "commit_outcome_unknown",
-            "not_implemented"
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -5057,6 +5054,16 @@
           "description": "Largest number of registered workspace files selected for synchronous session creation.",
           "id": "session.initial_files_count",
           "shape": "scalar"
+        },
+        {
+          "description": "Revisioned Brain planner and structural ceilings pinned when a session is created.",
+          "id": "session.agent_execution",
+          "shape": "map"
+        },
+        {
+          "description": "Revisioned per-message duration and Brain budget ceilings pinned when a session is created.",
+          "id": "session.run_budget",
+          "shape": "map"
         },
         {
           "description": "Largest accepted encoded JSON request body.",

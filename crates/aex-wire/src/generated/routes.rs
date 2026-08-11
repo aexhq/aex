@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:b65e5107513c7e4bc4d522ce2557e476c61a8a6602270b5ea0c6e6b78dae12db`.
+//! `sha256:c74b728e361ca151f7d1db58d802e04b88cbd663dc2e03f9ab6d4c27f300b3b8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -2582,7 +2582,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         plane: Plane::Regional,
         fragment: "sessions",
         serving_artifact: "session-stream-api",
-        deferred: true,
+        deferred: false,
         method: HttpMethod::Post,
         template: "/api/sessions",
         path_params: &[],
@@ -2597,6 +2597,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         errors: &[
             ErrorCode::Unauthenticated,
             ErrorCode::InsufficientScope,
+            ErrorCode::NotFound,
             ErrorCode::IdempotencyConflict,
             ErrorCode::InvalidRequest,
             ErrorCode::LimitExceeded,
@@ -2611,7 +2612,6 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::AccountPaused,
             ErrorCode::WrongWorkspaceRegion,
             ErrorCode::CommitOutcomeUnknown,
-            ErrorCode::NotImplemented,
         ],
         request_schema: Some("SessionCreateRequest"),
         response_schema: Some("Session"),
@@ -3113,7 +3113,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         plane: Plane::Regional,
         fragment: "sessions",
         serving_artifact: "session-stream-api",
-        deferred: true,
+        deferred: false,
         method: HttpMethod::Post,
         template: "/api/sessions/{sessionId}/messages",
         path_params: &["sessionId"],
@@ -3141,7 +3141,6 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::AccountPaused,
             ErrorCode::WrongWorkspaceRegion,
             ErrorCode::CommitOutcomeUnknown,
-            ErrorCode::NotImplemented,
         ],
         request_schema: Some("MessageSendRequest"),
         response_schema: Some("MessageSendResult"),

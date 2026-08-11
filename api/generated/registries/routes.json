@@ -2236,11 +2236,10 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The complete session authority and create use case are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
+        "not_found",
         "idempotency_conflict",
         "invalid_request",
         "limit_exceeded",
@@ -2254,8 +2253,7 @@
         "provider_credential_revoked",
         "account_paused",
         "wrong_workspace_region",
-        "commit_outcome_unknown",
-        "not_implemented"
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -2275,6 +2273,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Create an eight-hour multi-turn session.",
@@ -2852,8 +2851,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The wire and domain message vocabularies and durable command path are not reconciled.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2869,8 +2866,7 @@
         "provider_credential_revoked",
         "account_paused",
         "wrong_workspace_region",
-        "commit_outcome_unknown",
-        "not_implemented"
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -2892,6 +2888,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Send text and start the session's next work, automatically resuming the same suspended generation.",

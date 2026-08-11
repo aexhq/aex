@@ -54,7 +54,6 @@ aex-runtime-control-aws = { path = "../../crates/aex-runtime-control-aws" }
 aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
 aex-observation-store-dynamodb = { path = "../../crates/aex-observation-store-dynamodb" }
 aex-operation-domain = { path = "../../crates/aex-operation-domain" }
-aex-observation-store-dynamodb = { path = "../../crates/aex-observation-store-dynamodb" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-wire = { path = "../../crates/aex-wire" }

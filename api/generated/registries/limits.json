@@ -21,6 +21,16 @@
       "shape": "scalar"
     },
     {
+      "description": "Revisioned Brain planner and structural ceilings pinned when a session is created.",
+      "id": "session.agent_execution",
+      "shape": "map"
+    },
+    {
+      "description": "Revisioned per-message duration and Brain budget ceilings pinned when a session is created.",
+      "id": "session.run_budget",
+      "shape": "map"
+    },
+    {
       "description": "Largest accepted encoded JSON request body.",
       "id": "api.json_body",
       "shape": "scalar"

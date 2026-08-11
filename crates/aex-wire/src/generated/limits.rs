@@ -3,7 +3,7 @@
 //! The effective-limit registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:b65e5107513c7e4bc4d522ce2557e476c61a8a6602270b5ea0c6e6b78dae12db`.
+//! `sha256:c74b728e361ca151f7d1db58d802e04b88cbd663dc2e03f9ab6d4c27f300b3b8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -42,6 +42,14 @@ pub enum LimitId {
     /// synchronous session creation.
     #[serde(rename = "session.initial_files_count")]
     SessionInitialFilesCount,
+    /// `session.agent_execution` — Revisioned Brain planner and structural ceilings pinned when a
+    /// session is created.
+    #[serde(rename = "session.agent_execution")]
+    SessionAgentExecution,
+    /// `session.run_budget` — Revisioned per-message duration and Brain budget ceilings pinned when
+    /// a session is created.
+    #[serde(rename = "session.run_budget")]
+    SessionRunBudget,
     /// `api.json_body` — Largest accepted encoded JSON request body.
     #[serde(rename = "api.json_body")]
     ApiJsonBody,
@@ -88,6 +96,8 @@ impl LimitId {
         LimitId::SessionMaterializedAgents,
         LimitId::SessionInitialFilesBytes,
         LimitId::SessionInitialFilesCount,
+        LimitId::SessionAgentExecution,
+        LimitId::SessionRunBudget,
         LimitId::ApiJsonBody,
         LimitId::TelemetryBatch,
         LimitId::TelemetryIngestRate,
@@ -109,6 +119,8 @@ impl LimitId {
             Self::SessionMaterializedAgents => "session.materialized_agents",
             Self::SessionInitialFilesBytes => "session.initial_files_bytes",
             Self::SessionInitialFilesCount => "session.initial_files_count",
+            Self::SessionAgentExecution => "session.agent_execution",
+            Self::SessionRunBudget => "session.run_budget",
             Self::ApiJsonBody => "api.json_body",
             Self::TelemetryBatch => "telemetry.batch",
             Self::TelemetryIngestRate => "telemetry.ingest_rate",
@@ -131,6 +143,8 @@ impl LimitId {
             Self::SessionMaterializedAgents => LimitShape::Scalar,
             Self::SessionInitialFilesBytes => LimitShape::Scalar,
             Self::SessionInitialFilesCount => LimitShape::Scalar,
+            Self::SessionAgentExecution => LimitShape::Map,
+            Self::SessionRunBudget => LimitShape::Map,
             Self::ApiJsonBody => LimitShape::Scalar,
             Self::TelemetryBatch => LimitShape::Map,
             Self::TelemetryIngestRate => LimitShape::Map,
@@ -153,6 +167,21 @@ impl LimitId {
             Self::SessionMaterializedAgents => &[],
             Self::SessionInitialFilesBytes => &[],
             Self::SessionInitialFilesCount => &[],
+            Self::SessionAgentExecution => &[
+                "max_turns",
+                "max_steps_per_turn",
+                "turn_deadline_ms",
+                "max_depth",
+                "max_fanout",
+            ],
+            Self::SessionRunBudget => &[
+                "max_run_duration_ms",
+                "total_children_created",
+                "provider_calls",
+                "hands_calls",
+                "queued_children",
+                "retained_result_bytes",
+            ],
             Self::ApiJsonBody => &[],
             Self::TelemetryBatch => &[
                 "encoded_bytes",
