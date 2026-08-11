@@ -62,6 +62,35 @@ fn the_change_feed_carries_an_image_because_the_table_holds_no_customer_content(
     assert_eq!(stream["viewType"].as_str(), Some("NEW_IMAGE"));
 }
 
+#[test]
+fn the_session_edge_can_atomically_admit_native_activity() {
+    let definition = definition();
+    let grant = definition["iam"]
+        .as_array()
+        .expect("IAM grants")
+        .iter()
+        .find(|grant| grant["role"].as_str() == Some("regional-session-api"))
+        .expect("regional session grant");
+    let actions = strings(&grant["actions"]);
+    for required in [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:TransactWriteItems",
+    ] {
+        assert!(
+            actions.iter().any(|action| action == required),
+            "native activity requires {required}"
+        );
+    }
+    assert_eq!(
+        strings(&grant["resources"]),
+        ["table"],
+        "the session edge never scans the runtime due index"
+    );
+}
+
 #[tokio::test]
 async fn a_transition_is_conditional_on_the_exact_fence_and_revision() {
     let (client, receiver) = capturing_client();
