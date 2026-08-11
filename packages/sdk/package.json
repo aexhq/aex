@@ -64,6 +64,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./node/session-files": {
+      "types": "./dist/node/session-files.d.ts",
+      "import": "./dist/node/session-files.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

@@ -7,15 +7,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   AexConfigError,
-  LIVE_FILE_PART_BYTES,
-  SessionFiles,
   type ExecuteOptions,
-  type LiveFileDownload,
-  type LiveFilePart,
-  type LiveFileUpload,
   type ResourceExecutor,
   type RouteId,
 } from "../../src/index.js";
+import {
+  LIVE_FILE_PART_BYTES,
+  SessionFiles,
+  type LiveFileDownload,
+  type LiveFilePart,
+  type LiveFileUpload,
+} from "../../src/node/session-files.js";
 
 const roots: string[] = [];
 const SESSION = "ses_0100000000e008000000000001";
