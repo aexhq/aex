@@ -3,7 +3,7 @@
 use aex_hands_protocol::files::{
     FILE_FRAME_BYTES, FILE_TRANSFER_PART_BYTES, FileDownloadId as GuestDownloadId,
     FileDownloadState, FilePartReceipt, FileRequest, FileResponse, FileUploadId as GuestUploadId,
-    FileUploadState, LiveFileEntryKind, MAX_FILE_BYTES,
+    FileUploadState, LiveFileEntryKind, MAX_FILE_BYTES, live_file_size_is_admitted,
 };
 use aex_hands_protocol::operation::{FileMode, GuestPath, GuestRoot};
 use aex_hands_protocol::rpc::HandsOperationId;
@@ -433,7 +433,7 @@ fn require_download_state(record: &DownloadTransfer, state: &FileDownloadState) 
     if state.download != GuestDownloadId(record.id.uuid7())
         || state.start != 0
         || state.length_bytes != state.file_size_bytes
-        || state.file_size_bytes > MAX_FILE_BYTES
+        || !live_file_size_is_admitted(state.file_size_bytes)
         || state.parts.len()
             != usize::try_from(part_count(state.file_size_bytes)).unwrap_or(usize::MAX)
     {
@@ -988,7 +988,7 @@ impl FilesApi for Routes {
     ) -> WireResult<Created<models::LiveFileUpload>> {
         let size_bytes = u64::try_from(body.size_bytes.get())
             .map_err(|_| WireError::new(ErrorCode::LimitExceeded))?;
-        if size_bytes > MAX_FILE_BYTES {
+        if !live_file_size_is_admitted(size_bytes) {
             return Err(WireError::new(ErrorCode::LimitExceeded));
         }
         let pointer = self
@@ -1313,6 +1313,8 @@ mod tests {
 
     #[test]
     fn five_gibibytes_is_exactly_1280_public_parts() {
+        assert!(live_file_size_is_admitted(MAX_FILE_BYTES));
+        assert!(!live_file_size_is_admitted(MAX_FILE_BYTES + 1));
         assert_eq!(part_count(MAX_FILE_BYTES), 1_280);
         assert_eq!(
             part_shape(MAX_FILE_BYTES, 1_280).expect("the final maximum part"),

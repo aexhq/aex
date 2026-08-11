@@ -10,7 +10,7 @@ use aex_hands_protocol::files::{
     FILE_FRAME_BYTES, FILE_TRANSFER_PART_BYTES, FileDownloadChunk, FileDownloadId,
     FileDownloadState, FileFailureCode, FilePartReceipt, FileRequest, FileResponse, FileUploadId,
     FileUploadState, LiveFileEntry, LiveFileEntryKind, LiveFileListing, MAX_FILE_BYTES,
-    MAX_FILE_LIST_ENTRIES,
+    MAX_FILE_LIST_ENTRIES, live_file_size_is_admitted,
 };
 use aex_hands_protocol::operation::{FileMode, GuestPath, GuestRoot};
 use aex_hands_tools::{EntryKind, FsError, GuestFs, ListEntry};
@@ -258,7 +258,7 @@ impl FileService {
         sha256: ContentHash,
         mode: FileMode,
     ) -> Result<FileResponse, FileFailureCode> {
-        if size_bytes > MAX_FILE_BYTES || path.as_str() == self.root.0 {
+        if !live_file_size_is_admitted(size_bytes) || path.as_str() == self.root.0 {
             return Err(FileFailureCode::LimitExceeded);
         }
         if self.aborted_upload_path(upload).exists() {
@@ -638,7 +638,7 @@ impl FileService {
             return Err(FileFailureCode::InvalidPath);
         }
         let file_size_bytes = metadata.len();
-        if file_size_bytes > MAX_FILE_BYTES {
+        if !live_file_size_is_admitted(file_size_bytes) {
             return Err(FileFailureCode::LimitExceeded);
         }
         let (sha256, parts) = hash_file_parts(&mut file)?;

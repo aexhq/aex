@@ -5176,6 +5176,11 @@
           "shape": "scalar"
         },
         {
+          "description": "Largest number of registered workspace files selected for synchronous session creation.",
+          "id": "session.initial_files_count",
+          "shape": "scalar"
+        },
+        {
           "description": "Largest accepted encoded JSON request body.",
           "id": "api.json_body",
           "shape": "scalar"

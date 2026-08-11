@@ -15,6 +15,10 @@
       "value": 536870912
     },
     {
+      "id": "session.initial_files_count",
+      "value": 256
+    },
+    {
       "id": "api.json_body",
       "value": 65536
     },

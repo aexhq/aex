@@ -38,7 +38,6 @@ fn minimal_request() -> models::SessionCreateRequest {
     let _ = &session;
     models::SessionCreateRequest {
         compute: None,
-        credentials: None,
         metadata: None,
         model: "gpt-test".to_owned(),
         network: None,
@@ -116,10 +115,6 @@ async fn a_selection_is_validated_without_copying_or_pinning_session_content() {
         files: Some(vec![
             aex_wire::ids::ResourceName::parse("readme").expect("within the grammar"),
         ]),
-        instructions: None,
-        mcp_servers: None,
-        skills: None,
-        tools: None,
     });
     let ports = ScriptedPorts::idle().with_registry_pointers(pointers_for(&request));
     let plan = plan_of(&ports, &command(request))
@@ -352,9 +347,13 @@ async fn a_workspace_with_no_materialized_limit_row_refuses_rather_than_defaulti
 #[tokio::test]
 async fn a_ceiling_below_the_root_agent_refuses_with_limit_exceeded() {
     let ports = ScriptedPorts::idle().with_limits(
-        [(LimitId::SessionMaterializedAgents, 0)]
-            .into_iter()
-            .collect(),
+        [
+            (LimitId::SessionMaterializedAgents, 0),
+            (LimitId::SessionInitialFilesBytes, 536_870_912),
+            (LimitId::SessionInitialFilesCount, 256),
+        ]
+        .into_iter()
+        .collect(),
     );
     assert_eq!(
         plan_of(&ports, &command(minimal_request()))
@@ -365,20 +364,62 @@ async fn a_ceiling_below_the_root_agent_refuses_with_limit_exceeded() {
     );
 }
 
+#[tokio::test]
+async fn initial_files_at_the_exact_aggregate_byte_ceiling_are_admitted() {
+    let (request, pointers) = request_and_file_pointers(&[536_870_912]);
+    let ports = ScriptedPorts::idle().with_registry_pointers(pointers);
+
+    plan_of(&ports, &command(request))
+        .await
+        .expect("the exact selected-revision byte ceiling is admissible");
+}
+
+#[tokio::test]
+async fn one_byte_above_the_initial_file_aggregate_ceiling_is_refused() {
+    let (request, pointers) = request_and_file_pointers(&[536_870_913]);
+    let ports = ScriptedPorts::idle().with_registry_pointers(pointers);
+
+    assert_eq!(
+        plan_of(&ports, &command(request))
+            .await
+            .expect_err("selected revision metadata exceeds the aggregate ceiling")
+            .code(),
+        ErrorCode::LimitExceeded
+    );
+}
+
+#[tokio::test]
+async fn exactly_256_initial_files_are_admitted() {
+    let sizes = vec![1; 256];
+    let (request, pointers) = request_and_file_pointers(&sizes);
+    let ports = ScriptedPorts::idle().with_registry_pointers(pointers);
+
+    plan_of(&ports, &command(request))
+        .await
+        .expect("the exact selected-file count ceiling is admissible");
+}
+
+#[tokio::test]
+async fn the_257th_initial_file_is_refused() {
+    let sizes = vec![1; 257];
+    let (request, pointers) = request_and_file_pointers(&sizes);
+    let ports = ScriptedPorts::idle().with_registry_pointers(pointers);
+
+    assert_eq!(
+        plan_of(&ports, &command(request))
+            .await
+            .expect_err("one file above the selected-file count ceiling")
+            .code(),
+        ErrorCode::LimitExceeded
+    );
+}
+
 // ---------------------------------------------------------------------------
 // A D-5: the action count is a constant, not a bound
 // ---------------------------------------------------------------------------
 
 /// A request at every schema ceiling the create can reach.
-fn maximal_request(
-    files: usize,
-    skills: usize,
-    tools: usize,
-    instructions: usize,
-    mcp: usize,
-    packages: usize,
-    metadata: usize,
-) -> models::SessionCreateRequest {
+fn maximal_request(files: usize, packages: usize, metadata: usize) -> models::SessionCreateRequest {
     let names = |count: usize, prefix: &str| -> Option<Vec<aex_wire::ids::ResourceName>> {
         (count > 0).then(|| {
             (0..count)
@@ -392,10 +433,6 @@ fn maximal_request(
     let mut request = minimal_request();
     request.registered = Some(models::SessionRegisteredSelection {
         files: names(files, "file"),
-        skills: names(skills, "skill"),
-        tools: names(tools, "tool"),
-        instructions: names(instructions, "instruction"),
-        mcp_servers: names(mcp, "mcp"),
     });
     request.packages = Some(
         (0..packages)
@@ -423,54 +460,89 @@ fn maximal_request(
 fn pointers_for(
     request: &models::SessionCreateRequest,
 ) -> Vec<aex_workspace_domain::RegistryPointer> {
+    let count = request
+        .registered
+        .as_ref()
+        .and_then(|registered| registered.files.as_ref())
+        .map_or(0, Vec::len);
+    pointers_for_sizes(request, &vec![1; count])
+}
+
+fn pointers_for_sizes(
+    request: &models::SessionCreateRequest,
+    sizes: &[u64],
+) -> Vec<aex_workspace_domain::RegistryPointer> {
     let session = session_fixture();
     let Some(registered) = request.registered.as_ref() else {
         return Vec::new();
     };
-    let mut pointers = Vec::new();
-    let mut push = |kind: aex_content_domain::RegistryKind,
-                    names: Option<&Vec<aex_wire::ids::ResourceName>>| {
-        for name in names.into_iter().flatten() {
-            pointers.push(aex_workspace_domain::RegistryPointer {
+    registered
+        .files
+        .iter()
+        .flatten()
+        .zip(sizes)
+        .map(|(name, size_bytes)| {
+            let value = models::RegisteredFileRead {
+                content: models::ContentRef {
+                    sha256: aex_wire::ids::ContentHash::of(name.as_str().as_bytes()),
+                    size_bytes: aex_wire::types::DecimalU128::new(u128::from(*size_bytes)),
+                },
+                media_type: "application/octet-stream".to_owned(),
+                mode: models::RegisteredFileMode::V0644,
+                mount_path: aex_wire::ids::FilePath::parse(&format!("/workspace/{name}"))
+                    .expect("fixture paths are normalized"),
+            };
+            let canonical = aex_wire::canonical::CanonicalJson::parse(
+                &aex_wire::canonical::to_jcs_string(&value)
+                    .expect("a registered file fixture serializes"),
+            )
+            .expect("a registered file fixture is canonical");
+            let value_doc = aex_workspace_domain::ValueDocument::new(canonical);
+            let digest = value_doc.digest();
+            let revision = aex_content_domain::identity::Revision::FIRST;
+            aex_workspace_domain::RegistryPointer {
                 row: aex_workspace_domain::RegistryRow {
                     workspace: session.workspace,
-                    kind,
+                    kind: aex_content_domain::RegistryKind::File,
                     name: name.clone(),
-                    revision: aex_content_domain::identity::Revision::FIRST,
-                    etag: aex_wire::types::ETag::parse("\"1\"").expect("a fixture tag is valid"),
-                    sha256: aex_content_domain::ContentDigest::of(name.as_str().as_bytes()),
-                    size_bytes: 16,
+                    revision,
+                    etag: aex_workspace_domain::etag_of(
+                        aex_content_domain::RegistryKind::File,
+                        revision,
+                        &digest,
+                    ),
+                    sha256: digest,
+                    size_bytes: value_doc.size_bytes(),
                     created_at: moment(0),
                     updated_at: moment(0),
                 },
-                value_doc: aex_workspace_domain::ValueDocument::new(
-                    aex_wire::canonical::CanonicalJson::parse("{}")
-                        .expect("an empty object is canonical"),
-                ),
-            });
-        }
-    };
-    push(
-        aex_content_domain::RegistryKind::File,
-        registered.files.as_ref(),
-    );
-    push(
-        aex_content_domain::RegistryKind::Skill,
-        registered.skills.as_ref(),
-    );
-    push(
-        aex_content_domain::RegistryKind::Tool,
-        registered.tools.as_ref(),
-    );
-    push(
-        aex_content_domain::RegistryKind::Instruction,
-        registered.instructions.as_ref(),
-    );
-    push(
-        aex_content_domain::RegistryKind::McpServer,
-        registered.mcp_servers.as_ref(),
-    );
-    pointers
+                value_doc,
+            }
+        })
+        .collect()
+}
+
+fn request_and_file_pointers(
+    sizes: &[u64],
+) -> (
+    models::SessionCreateRequest,
+    Vec<aex_workspace_domain::RegistryPointer>,
+) {
+    let mut request = minimal_request();
+    request.registered = Some(models::SessionRegisteredSelection {
+        files: Some(
+            sizes
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    aex_wire::ids::ResourceName::parse(&format!("file-{index}"))
+                        .expect("fixture names are valid")
+                })
+                .collect(),
+        ),
+    });
+    let pointers = pointers_for_sizes(&request, sizes);
+    (request, pointers)
 }
 
 proptest! {
@@ -484,14 +556,10 @@ proptest! {
     #[test]
     fn the_create_action_count_never_varies_with_request_size(
         files in 0_usize..=256,
-        skills in 0_usize..=256,
-        tools in 0_usize..=256,
-        instructions in 0_usize..=256,
-        mcp in 0_usize..=64,
         packages in 0_usize..=64,
         metadata in 0_usize..=64,
     ) {
-        let request = maximal_request(files, skills, tools, instructions, mcp, packages, metadata);
+        let request = maximal_request(files, packages, metadata);
         let ports = ScriptedPorts::idle().with_registry_pointers(pointers_for(&request));
 
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -515,13 +583,7 @@ proptest! {
 #[tokio::test]
 async fn a_selection_object_that_names_nothing_writes_no_session_content() {
     let mut request = minimal_request();
-    request.registered = Some(models::SessionRegisteredSelection {
-        files: None,
-        instructions: None,
-        mcp_servers: None,
-        skills: None,
-        tools: None,
-    });
+    request.registered = Some(models::SessionRegisteredSelection { files: None });
     let ports = ScriptedPorts::idle();
     let plan = plan_of(&ports, &command(request))
         .await

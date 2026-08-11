@@ -107,6 +107,12 @@ mod tests {
                 .and_then(|row| row["value"].as_u64()),
             Some(536_870_912)
         );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row["id"] == "session.initial_files_count")
+                .and_then(|row| row["value"].as_u64()),
+            Some(256)
+        );
         assert_eq!(rows.len(), LimitId::ALL.len());
 
         let mut seen = BTreeSet::new();

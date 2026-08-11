@@ -435,6 +435,10 @@ async fn prepare_create<'a>(
         .limits
         .require(LimitId::SessionMaterializedAgents)
         .map_err(|_| AppError::Port(crate::ports::PortError::NotFound { kind: "limit" }))?;
+    let initial_files_count_ceiling = bundle
+        .limits
+        .require(LimitId::SessionInitialFilesCount)
+        .map_err(|_| AppError::Port(crate::ports::PortError::NotFound { kind: "limit" }))?;
     // The create materializes exactly one agent: the root. There is no
     // registered per-workspace session-count limit anywhere in the registry, so
     // this is the whole of `limit_exceeded` at create — which is also why A
@@ -464,8 +468,14 @@ async fn prepare_create<'a>(
     }
 
     let selectors = selectors_of(command);
-    let initial_files =
-        resolve_initial_files(context, command, &selectors, initial_file_ceiling).await?;
+    let initial_files = resolve_initial_files(
+        context,
+        command,
+        &selectors,
+        initial_files_count_ceiling,
+        initial_file_ceiling,
+    )
+    .await?;
 
     Ok(PreparedCreate {
         deployment,
@@ -585,7 +595,7 @@ fn selectors_of(command: &CreateSession) -> Vec<RegistrySelector> {
         .collect()
 }
 
-/// Proves every registered name in the request exists in this workspace.
+/// Proves every selected file exists at one exact registry revision and fits.
 ///
 /// Session content is not copied, pinned, or sealed into an S3-backed filesystem root. The
 /// resolved configuration retains the requested registry names and the registry/content
@@ -594,8 +604,12 @@ async fn resolve_initial_files(
     context: &AppContext<'_>,
     command: &CreateSession,
     selectors: &[RegistrySelector],
-    ceiling: u64,
+    count_ceiling: u64,
+    bytes_ceiling: u64,
 ) -> Result<Vec<ResolvedInitialFile>, AppError> {
+    if u64::try_from(selectors.len()).unwrap_or(u64::MAX) > count_ceiling {
+        return Err(AppError::Conflict(ErrorCode::LimitExceeded));
+    }
     if selectors.is_empty() {
         return Ok(Vec::new());
     }
@@ -604,8 +618,6 @@ async fn resolve_initial_files(
         .read_many(command.workspace, selectors)
         .await?;
     if pointers.len() != selectors.len() {
-        // A name the workspace does not have is not a session that mounts
-        // fewer things than it asked for.
         return Err(AppError::Port(crate::ports::PortError::NotFound {
             kind: "registered resource",
         }));
@@ -616,6 +628,17 @@ async fn resolve_initial_files(
             return Err(AppError::Port(crate::ports::PortError::Corrupt {
                 kind: "registered file",
                 reason: "the registry reader returned a foreign selector",
+            }));
+        }
+        let digest = pointer.value_doc.digest();
+        if pointer.row.sha256 != digest
+            || pointer.row.size_bytes != pointer.value_doc.size_bytes()
+            || pointer.row.etag
+                != aex_workspace_domain::etag_of(pointer.row.kind, pointer.row.revision, &digest)
+        {
+            return Err(AppError::Port(crate::ports::PortError::Corrupt {
+                kind: "registered file pointer",
+                reason: "row metadata does not identify its exact value document revision",
             }));
         }
         let name = pointer.row.name.clone();
@@ -650,7 +673,7 @@ async fn resolve_initial_files(
         total = total
             .checked_add(file.size_bytes()?)
             .ok_or(AppError::Conflict(ErrorCode::LimitExceeded))?;
-        if total > ceiling {
+        if total > bytes_ceiling {
             return Err(AppError::Conflict(ErrorCode::LimitExceeded));
         }
         resolved.push(file);

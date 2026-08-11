@@ -39,6 +39,15 @@ impl std::fmt::Display for FileUploadId {
     }
 }
 
+/// Whether one complete live file fits the protocol ceiling.
+///
+/// Kept beside [`MAX_FILE_BYTES`] so every Rust-side admission path shares the
+/// same inclusive boundary.
+#[must_use]
+pub const fn live_file_size_is_admitted(size_bytes: u64) -> bool {
+    size_bytes <= MAX_FILE_BYTES
+}
+
 /// One caller-minted, generation-local download identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -377,7 +386,10 @@ mod base64_bytes {
 
 #[cfg(test)]
 mod tests {
-    use super::{FILE_FRAME_BYTES, FileDownloadId, FileRequest, FileUploadId};
+    use super::{
+        FILE_FRAME_BYTES, FileDownloadId, FileRequest, FileUploadId, MAX_FILE_BYTES,
+        live_file_size_is_admitted,
+    };
     use crate::operation::{GuestPath, GuestRoot};
     use aex_wire::ids::{ContentHash, Uuid7};
 
@@ -418,5 +430,12 @@ mod tests {
             serde_json::from_slice::<FileRequest>(&encoded).expect("strict decode"),
             request
         );
+    }
+
+    #[test]
+    fn the_live_file_ceiling_is_inclusive_at_exactly_five_gibibytes() {
+        assert_eq!(MAX_FILE_BYTES, 5_368_709_120);
+        assert!(live_file_size_is_admitted(MAX_FILE_BYTES));
+        assert!(!live_file_size_is_admitted(MAX_FILE_BYTES + 1));
     }
 }

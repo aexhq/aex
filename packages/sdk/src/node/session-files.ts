@@ -4,9 +4,13 @@ import { basename, dirname, join } from "node:path";
 
 import type { ResourceExecutor } from "../generated/resources.js";
 import { AexConfigError } from "../transport/errors.js";
+import {
+  MAX_LIVE_FILE_BYTES,
+  liveFileSizeIsAdmitted,
+} from "./session-file-limits.js";
 
 export const LIVE_FILE_PART_BYTES = 4_194_304;
-export const MAX_LIVE_FILE_BYTES = 5_368_709_120;
+export { MAX_LIVE_FILE_BYTES } from "./session-file-limits.js";
 export const DEFAULT_LIVE_FILE_CONCURRENCY = 4;
 export const MAX_LIVE_FILE_CONCURRENCY = 8;
 
@@ -98,7 +102,7 @@ export class SessionFiles {
     try {
       const before = await handle.stat();
       if (!before.isFile()) throw new AexConfigError("live upload source must be a regular file");
-      if (!Number.isSafeInteger(before.size) || before.size > MAX_LIVE_FILE_BYTES) {
+      if (!liveFileSizeIsAdmitted(before.size)) {
         throw new AexConfigError("live upload exceeds the five GiB limit");
       }
       const digest = await hashHandle(handle, before.size);
@@ -329,7 +333,7 @@ function validateUpload(
 function validateDownload(download: LiveFileDownload, options: DownloadLiveFileOptions): number {
   const size = decimal(download.sizeBytes);
   if (download.sessionId !== options.sessionId || download.path !== options.path
-    || download.state !== "open" || size > MAX_LIVE_FILE_BYTES
+    || download.state !== "open" || !liveFileSizeIsAdmitted(size)
     || download.partSizeBytes !== LIVE_FILE_PART_BYTES
     || download.partCount !== Math.ceil(size / LIVE_FILE_PART_BYTES)) {
     throw new AexConfigError("invalid live download descriptor");

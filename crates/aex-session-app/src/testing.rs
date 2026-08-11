@@ -176,9 +176,13 @@ impl ScriptedPorts {
             operation: None,
             run: None,
             receipt: None,
-            limits: [(LimitId::SessionMaterializedAgents, 8)]
-                .into_iter()
-                .collect(),
+            limits: [
+                (LimitId::SessionMaterializedAgents, 8),
+                (LimitId::SessionInitialFilesBytes, 536_870_912),
+                (LimitId::SessionInitialFilesCount, 256),
+            ]
+            .into_iter()
+            .collect(),
             limits_revision: 4,
             credential: Some(crate::ports::ProviderCredentialBinding {
                 credential: session.provider_credential.credential,

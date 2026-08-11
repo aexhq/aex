@@ -13,11 +13,13 @@ import {
 } from "../../src/index.js";
 import {
   LIVE_FILE_PART_BYTES,
+  MAX_LIVE_FILE_BYTES,
   SessionFiles,
   type LiveFileDownload,
   type LiveFilePart,
   type LiveFileUpload,
 } from "../../src/node/session-files.js";
+import { liveFileSizeIsAdmitted } from "../../src/node/session-file-limits.js";
 
 const roots: string[] = [];
 const SESSION = "ses_0100000000e008000000000001";
@@ -119,6 +121,12 @@ class LiveFileExecutor implements ResourceExecutor {
 }
 
 describe("direct live session files", () => {
+  test("admits exactly five GiB and refuses one byte more without allocating either", () => {
+    expect(MAX_LIVE_FILE_BYTES).toBe(5_368_709_120);
+    expect(liveFileSizeIsAdmitted(MAX_LIVE_FILE_BYTES)).toBe(true);
+    expect(liveFileSizeIsAdmitted(MAX_LIVE_FILE_BYTES + 1)).toBe(false);
+  });
+
   test("resumes verified upload parts and completes without whole-file buffering", async () => {
     const root = await temporaryRoot();
     const source = join(root, "source.bin");
