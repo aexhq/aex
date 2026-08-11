@@ -121,13 +121,14 @@ async fn a_part_grant_returns_every_header_the_client_has_to_replay() {
     // This is the whole of defect 19: the wire `UploadPartGrant` used to carry a
     // URL and nothing else, and a PUT of that URL without these headers is
     // rejected by S3. The grant is only usable because it hands them back.
-    assert!(
-        names.contains("x-amz-checksum-sha256"),
-        "the part checksum is signed, so it must be replayed: {names:?}"
-    );
-    assert!(
-        names.contains("content-length"),
-        "the exact length is signed, so it must be replayed: {names:?}"
+    assert_eq!(
+        names,
+        BTreeSet::from([
+            "content-length".to_owned(),
+            "x-amz-checksum-sha256".to_owned(),
+            "x-amz-expected-bucket-owner".to_owned(),
+        ]),
+        "this exact set must stay aligned with content-bucket browser CORS"
     );
     assert_eq!(
         grant

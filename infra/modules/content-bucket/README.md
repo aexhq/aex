@@ -53,10 +53,10 @@ plane-qualified prefix every other resource in a plane carries.
   - `s3:DeleteObject` and `s3:DeleteObjectVersion` by every principal except the
     lifecycle role, expressed with `NotPrincipal`.
 - Incomplete multipart uploads are aborted after 24 hours.
-- Browser reads are disabled by default. A composition may opt one store into
-  exact-origin presigned `GET`/`HEAD` access with `Range`; the response exposes
-  only the range, length, and immutable-object ETag metadata a download client
-  needs.
+- Browser access is disabled by default. A composition may opt one store into
+  exact-origin presigned `GET`/`HEAD` access with `Range` and multipart-part
+  `PUT` access with the exact signed length and SHA-256 headers. Responses
+  expose only range, length, ETag, and SHA-256 metadata.
 
 ## Not asserted here
 

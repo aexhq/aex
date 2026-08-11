@@ -82,53 +82,55 @@ run "bucket_key_is_on_with_the_customer_managed_key" {
   }
 }
 
-run "browser_read_cors_is_off_by_default" {
+run "browser_cors_is_off_by_default" {
   command = plan
 
   assert {
-    condition     = length(aws_s3_bucket_cors_configuration.browser_read) == 0
-    error_message = "A store must not accept browser cross-origin reads unless its owning composition opts in."
+    condition     = length(aws_s3_bucket_cors_configuration.browser) == 0
+    error_message = "A store must not accept browser cross-origin traffic unless its owning composition opts in."
   }
 }
 
-run "browser_read_cors_is_exact_and_range_aware" {
+run "browser_cors_is_exact_for_reads_and_multipart_parts" {
   command = plan
 
   variables {
-    browser_read_cors_origins = ["https://dev.aex.dev"]
+    browser_cors_origins = ["https://dev.aex.dev"]
   }
 
   assert {
-    condition     = one(one(aws_s3_bucket_cors_configuration.browser_read).cors_rule).allowed_origins == toset(["https://dev.aex.dev"])
-    error_message = "Browser reads must be limited to the exact configured dashboard origin."
+    condition     = one(one(aws_s3_bucket_cors_configuration.browser).cors_rule).allowed_origins == toset(["https://dev.aex.dev"])
+    error_message = "Browser content traffic must be limited to the exact configured dashboard origin."
   }
 
   assert {
-    condition     = one(one(aws_s3_bucket_cors_configuration.browser_read).cors_rule).allowed_methods == toset(["GET", "HEAD"])
-    error_message = "Browser reads may use only GET and HEAD."
+    condition     = one(one(aws_s3_bucket_cors_configuration.browser).cors_rule).allowed_methods == toset(["GET", "HEAD", "PUT"])
+    error_message = "Browser content traffic needs GET/HEAD downloads and multipart part PUTs only."
   }
 
   assert {
-    condition     = one(one(aws_s3_bucket_cors_configuration.browser_read).cors_rule).allowed_headers == toset(["Range"])
-    error_message = "Browser download preflights must allow the Range request header and no wildcard header."
+    condition = one(one(aws_s3_bucket_cors_configuration.browser).cors_rule).allowed_headers == toset([
+      "Content-Length", "Range", "x-amz-checksum-sha256", "x-amz-expected-bucket-owner"
+    ])
+    error_message = "CORS must admit the download range and exact signed multipart request headers, with no wildcard."
   }
 
   assert {
-    condition = one(one(aws_s3_bucket_cors_configuration.browser_read).cors_rule).expose_headers == toset([
-      "Accept-Ranges", "Content-Length", "Content-Range", "ETag"
+    condition = one(one(aws_s3_bucket_cors_configuration.browser).cors_rule).expose_headers == toset([
+      "Accept-Ranges", "Content-Length", "Content-Range", "ETag", "x-amz-checksum-sha256"
     ])
     error_message = "Browser clients must be able to observe immutable-object and byte-range response metadata."
   }
 }
 
-run "rejects_a_browser_read_origin_with_a_path" {
+run "rejects_a_browser_origin_with_a_path" {
   command = plan
 
   variables {
-    browser_read_cors_origins = ["https://dev.aex.dev/downloads"]
+    browser_cors_origins = ["https://dev.aex.dev/downloads"]
   }
 
-  expect_failures = [var.browser_read_cors_origins]
+  expect_failures = [var.browser_cors_origins]
 }
 
 run "incomplete_multipart_uploads_are_aborted_after_twenty_four_hours" {

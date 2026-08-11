@@ -92,16 +92,16 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
   }
 }
 
-resource "aws_s3_bucket_cors_configuration" "browser_read" {
-  count = length(var.browser_read_cors_origins) == 0 ? 0 : 1
+resource "aws_s3_bucket_cors_configuration" "browser" {
+  count = length(var.browser_cors_origins) == 0 ? 0 : 1
 
   bucket = aws_s3_bucket.this.id
 
   cors_rule {
-    allowed_headers = ["Range"]
-    allowed_methods = ["GET", "HEAD"]
-    allowed_origins = var.browser_read_cors_origins
-    expose_headers  = ["Accept-Ranges", "Content-Length", "Content-Range", "ETag"]
+    allowed_headers = ["Content-Length", "Range", "x-amz-checksum-sha256", "x-amz-expected-bucket-owner"]
+    allowed_methods = ["GET", "HEAD", "PUT"]
+    allowed_origins = var.browser_cors_origins
+    expose_headers  = ["Accept-Ranges", "Content-Length", "Content-Range", "ETag", "x-amz-checksum-sha256"]
     max_age_seconds = 300
   }
 }
