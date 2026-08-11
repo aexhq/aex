@@ -19,10 +19,10 @@ artifact = "none"
 deployable = "session-stream-api"
 layers = ["smoke", "e2e"]
 concerns = ["fault", "security", "performance"]
-seams = ["aws.alb.framing", "aws.dynamodb.condition", "aws.dynamodb.streams", "aws.dynamodb.throughput", "aws.dynamodb.transact_write", "aws.dynamodb.ttl", "aws.iam.denial", "aws.kms.encryption_context", "aws.s3.bounded_get", "aws.s3.conditional_put", "aws.s3.multipart", "aws.s3.presigned_expiry", "aws.s3.sse_kms", "aws.s3.unversioned_delete"]
+seams = ["aws.alb.framing", "aws.dynamodb.condition", "aws.dynamodb.streams", "aws.dynamodb.throughput", "aws.dynamodb.transact_write", "aws.dynamodb.ttl", "aws.iam.denial", "aws.kms.encryption_context", "aws.lambda.microvm", "aws.s3.bounded_get", "aws.s3.conditional_put", "aws.s3.multipart", "aws.s3.presigned_expiry", "aws.s3.sse_kms", "aws.s3.unversioned_delete"]
 security_tier = "public_edge"
 risk = ["iam"]
-scenarios = ["SC-REGIONAL-ADMISSION", "SC-REGISTRY-RESOURCES"]
+scenarios = ["SC-REGIONAL-ADMISSION", "SC-REGISTRY-RESOURCES", "SC-SESSION-LIVE-FILES"]
 
 [package.metadata.aex.targets]
 e2e = "e2e"
@@ -34,6 +34,7 @@ live = []
 [dev-dependencies]
 aex-load-harness = { path = "../../load/aex-load-harness" }
 aex-test-harness = { path = "../../support/aex-test-harness" }
+aex-wire = { path = "../../../crates/aex-wire" }
 reqwest.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -43,6 +44,11 @@ toml.workspace = true
 [[test]]
 name = "e2e"
 path = "tests/e2e.rs"
+required-features = ["live"]
+
+[[test]]
+name = "live-files"
+path = "tests/live_files.rs"
 required-features = ["live"]
 
 # `LOAD-STREAM-SOCKETS` and `PERF-BASELINE-JOURNAL-FOLD` are blocking gates whose

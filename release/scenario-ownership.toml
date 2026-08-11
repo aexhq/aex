@@ -186,6 +186,13 @@ deferred = "Session admission is not mounted by the production composition and h
 observes = ["artifact:session-stream-api"]
 
 [[scenario]]
+id = "SC-SESSION-LIVE-FILES"
+owner = "regional-services"
+package = "cargo:aex-live-session-stream-api"
+target = "live-files"
+observes = ["artifact:session-stream-api", "artifact:session-operation-worker"]
+
+[[scenario]]
 id = "SC-SESSION-TERMINAL"
 owner = "regional-services"
 deferred = "The complete session terminal-operation lifecycle has no executable live target yet."
