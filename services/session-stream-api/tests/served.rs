@@ -1564,9 +1564,9 @@ fn the_served_set_exactly_matches_the_generated_actual_mount_authority() {
         .iter()
         .find(|route| route["operationId"] == "session_telemetry_export_create")
         .expect("session telemetry export route");
-    assert!(
-        session_export.get("servedArtifact").is_none(),
-        "session telemetry export admission is owned but not mounted"
+    assert_eq!(
+        session_export["servedArtifact"], "regional-observation-api",
+        "session telemetry export admission is mounted by its observation owner"
     );
 }
 
