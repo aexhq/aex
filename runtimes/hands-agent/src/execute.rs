@@ -21,7 +21,7 @@ use aex_hands_protocol::rpc::{HandsOperationId, OutputStream};
 use aex_hands_tools::command::{build_env, build_spawn};
 use aex_hands_tools::filesystem;
 use aex_hands_tools::observation;
-use aex_hands_tools::port::Pgid;
+use aex_hands_tools::port::{Pgid, digest};
 use aex_wire::ids::ContentHash;
 use aex_wire::types::Timestamp;
 
@@ -390,23 +390,23 @@ impl Executor {
                 )))),
             },
             OperationRequest::Search { .. }
+            | OperationRequest::WriteFile { .. }
+            | OperationRequest::EditFile { .. }
             | OperationRequest::Materialize { .. }
             | OperationRequest::Browser { .. }
             | OperationRequest::RegisteredTool { .. } => {
-                self.dispatch_search_or_refuse(journal, meta, now)
+                self.dispatch_workspace_effect(journal, meta, now)
             }
             OperationRequest::Exec { .. }
             | OperationRequest::ProcessStop { .. }
-            | OperationRequest::ProcessStatus { .. }
-            | OperationRequest::WriteFile { .. }
-            | OperationRequest::EditFile { .. } => {
+            | OperationRequest::ProcessStatus { .. } => {
                 unreachable!("dispatch routes those arms elsewhere")
             }
         }
     }
 
-    /// The search executor, and the arms this guest deliberately refuses.
-    fn dispatch_search_or_refuse(
+    /// Workspace effects that write, search, or fail closed on absent capabilities.
+    fn dispatch_workspace_effect(
         &self,
         journal: &Journal,
         meta: &OperationMeta,
@@ -465,7 +465,7 @@ impl Executor {
                             "bytes": bytes,
                             "created": created,
                             "path": path.as_str(),
-                            "revision": filesystem::digest(content).to_string(),
+                            "revision": digest(content).to_string(),
                         });
                         Self::text_terminal(journal, meta, now, &result.to_string())
                     }
@@ -528,7 +528,7 @@ impl Executor {
                  resolves no tool manifest of its own; the built-in catalogue is mapped onto the \
                  structured operations before dispatch",
             )))),
-            _ => unreachable!("dispatch routes the structured file arms elsewhere"),
+            _ => unreachable!("dispatch routes the remaining workspace arms elsewhere"),
         }
     }
 

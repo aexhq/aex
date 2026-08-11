@@ -537,14 +537,14 @@ mod tests {
         router
             .install_catalog(pin, digest, &entries, &advertised)
             .expect("catalog install");
-        let name = ToolName::parse("web_fetch").expect("tool name");
+        let name = ToolName::parse("read_file").expect("tool name");
         let route = router.route(&pin, &name).expect("active route");
         assert_eq!(route.name, name);
         assert_eq!(route.manifest_digest, digest);
         assert!(matches!(
             router.route(
                 &CatalogPin(Blake3Digest::from_bytes([8; 32])),
-                &ToolName::parse("web_fetch").expect("tool name")
+                &ToolName::parse("read_file").expect("tool name")
             ),
             Err(ToolRoutingError::UnknownPin { .. })
         ));
@@ -553,11 +553,11 @@ mod tests {
     #[test]
     fn active_rows_require_exact_executor_coverage_before_install() {
         #[derive(Debug)]
-        struct MissingTodoWrite;
+        struct MissingReadFile;
 
-        impl ToolExecutor for MissingTodoWrite {
+        impl ToolExecutor for MissingReadFile {
             fn supports(&self, tool: &ToolName) -> bool {
-                tool.as_str() != "todo_write"
+                tool.as_str() != "read_file"
             }
 
             fn invoke<'a>(
@@ -587,13 +587,13 @@ mod tests {
 
         let mut router = CompositeToolRouter::new();
         router
-            .register_executor(ExecutorRoute::BrainInline, Arc::new(MissingTodoWrite))
-            .expect("inline executor");
+            .register_executor(ExecutorRoute::Hands, Arc::new(MissingReadFile))
+            .expect("Hands executor");
         for route in [
+            ExecutorRoute::BrainInline,
             ExecutorRoute::ManagedWeb,
             ExecutorRoute::ToolExec,
             ExecutorRoute::Mcp,
-            ExecutorRoute::Hands,
         ] {
             router
                 .register_executor(route, Arc::new(RecordingExecutor::new(route)))
@@ -609,7 +609,7 @@ mod tests {
                 &advertised,
             ),
             Err(super::RouterBuildError::UnsupportedTool { name, route })
-                if name == "todo_write" && route == ExecutorRoute::BrainInline
+                if name == "read_file" && route == ExecutorRoute::Hands
         ));
     }
 
