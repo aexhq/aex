@@ -176,6 +176,10 @@ pub async fn admit_message(
     context: &AppContext<'_>,
     command: &SendMessage,
 ) -> Result<MessageAdmissionOutcome, AppError> {
+    if command.request.text.is_empty() || command.request.text.len() > MESSAGE_TEXT_MAX_BYTES {
+        return Err(AppError::Conflict(ErrorCode::InvalidRequest));
+    }
+
     let receipt_scope = format!("session.message:{}", command.session);
     let now = context.clock.now();
     if let Some(stored) = context
@@ -218,9 +222,6 @@ pub async fn admit_message(
                 reason: "the stored receipt does not name a message resource",
             })),
         };
-    }
-    if command.request.text.len() > MESSAGE_TEXT_MAX_BYTES {
-        return Err(AppError::Conflict(ErrorCode::InvalidRequest));
     }
     let materialized = context
         .sessions

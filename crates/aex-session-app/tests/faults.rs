@@ -7,7 +7,8 @@
 
 use aex_session_app::testing::{CountingIds, FixedClock, ScriptedPorts, message_identity_under};
 use aex_session_app::{
-    AppError, CommitError, PortError, SendMessage, SessionCommand, admit_message, stop_session,
+    AppError, CommitError, MESSAGE_TEXT_MAX_BYTES, PortError, SendMessage, SessionCommand,
+    admit_message, stop_session,
 };
 use aex_session_domain::WorkAdmission;
 use aex_session_domain::testing::{id, moment, session_fixture};
@@ -102,6 +103,61 @@ async fn a_refused_command_leaves_no_partial_plan() {
     // There is no partial plan to submit: the use case returns a plan or an
     // error, never both and never half of one.
     assert!(!ports.recorded_a_write());
+}
+
+#[tokio::test]
+async fn message_text_accepts_exact_utf8_byte_ceiling() {
+    for text in [
+        "a".repeat(MESSAGE_TEXT_MAX_BYTES),
+        "🦀".repeat(MESSAGE_TEXT_MAX_BYTES / 4),
+    ] {
+        assert_eq!(text.len(), MESSAGE_TEXT_MAX_BYTES);
+        let ports = ScriptedPorts::idle();
+        let clock = clock();
+        let ids = CountingIds::default();
+        let context = ports.context(&clock, &ids);
+        let mut command = send_message();
+        command.request.text = text;
+        command.identity = message_identity_under(
+            "message-text-at-ceiling",
+            &session_fixture(),
+            &command.request,
+        );
+
+        admit_message(&context, &command)
+            .await
+            .expect("the exact UTF-8 byte ceiling is admitted");
+    }
+}
+
+#[tokio::test]
+async fn message_text_rejects_one_byte_over_before_any_port_read() {
+    for text in [
+        "a".repeat(MESSAGE_TEXT_MAX_BYTES + 1),
+        format!("{}a", "🦀".repeat(MESSAGE_TEXT_MAX_BYTES / 4)),
+    ] {
+        assert_eq!(text.len(), MESSAGE_TEXT_MAX_BYTES + 1);
+        let ports = ScriptedPorts::idle();
+        let clock = clock();
+        let ids = CountingIds::default();
+        let context = ports.context(&clock, &ids);
+        let mut command = send_message();
+        command.request.text = text;
+        command.identity = message_identity_under(
+            "message-text-over-ceiling",
+            &session_fixture(),
+            &command.request,
+        );
+
+        let error = admit_message(&context, &command)
+            .await
+            .expect_err("one byte over the ceiling is refused");
+        assert_eq!(error.code(), ErrorCode::InvalidRequest);
+        assert!(
+            ports.calls().is_empty(),
+            "request-shape admission precedes session, account, spend, and provider work"
+        );
+    }
 }
 
 #[tokio::test]

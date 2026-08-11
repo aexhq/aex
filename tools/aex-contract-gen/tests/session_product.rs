@@ -133,6 +133,11 @@ fn message_admission_is_text_only_and_returns_the_session() {
         BTreeSet::from(["deadline", "maxSpendCents", "text"])
     );
     assert_eq!(request["required"], serde_json::json!(["text"]));
+    assert_eq!(
+        properties["text"]["maxLength"],
+        serde_json::json!(24_576),
+        "the authored message ceiling must reach generated JSON Schema"
+    );
     assert!(
         request["description"]
             .as_str()
@@ -162,6 +167,15 @@ fn message_admission_is_text_only_and_returns_the_session() {
 
     let tree = generate_to_memory(&repo_root()).expect("contract generation");
     assert!(tree.bytes("api/generated/schemas/Run.json").is_none());
+    let typescript = std::str::from_utf8(
+        tree.bytes("packages/wire/src/generated/models.ts")
+            .expect("generated TypeScript wire models"),
+    )
+    .expect("generated TypeScript is UTF-8");
+    assert!(
+        typescript.contains("\"text\": boundedText(1, 24576, undefined)"),
+        "the generated client validator must count UTF-8 bytes at the same ceiling"
+    );
 }
 
 #[test]

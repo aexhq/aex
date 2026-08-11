@@ -275,7 +275,7 @@ schemas:
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
   MessageSendRequest:
-    doc: Admit one text message. Omitting `maxSpendCents` selects the 1000-cent default; an explicit positive value may be higher or lower. Omitting `deadline` uses the session's remaining lifetime/drain fence; an explicit deadline may only shorten it.
+    doc: Admit one text message of at most 24,576 UTF-8 bytes. Omitting `maxSpendCents` selects the 1000-cent default; an explicit positive value may be higher or lower. Omitting `deadline` uses the session's remaining lifetime/drain fence; an explicit deadline may only shorten it.
     type: object
     fields:
       text: { type: string, min: 1, max: 24576, doc: "The complete user text. The MVP bound keeps Brain's canonical admission record below its 32,768-byte inline journal ceiling with envelope overhead; staged message bodies are deferred." }
