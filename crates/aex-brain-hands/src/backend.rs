@@ -834,6 +834,9 @@ impl ProductionHandsBackend {
                     ..
                 },
             ) => {
+                if admitted.native_resume {
+                    self.reconcile_native_resume(&admitted.view).await?;
+                }
                 self.settle_operation(generation, activity).await?;
                 return Err(error);
             }
@@ -845,6 +848,67 @@ impl ProductionHandsBackend {
         }
         self.settle_operation(generation, activity).await?;
         Ok((reply, admitted.native_resume))
+    }
+
+    /// Executes one ordered bounded guest batch as one durable HTTP activity.
+    ///
+    /// Live multipart transfer may require several guest frames, but its
+    /// public request still owns exactly one [`HandsOperationId`]. This method
+    /// admits that identity once, reuses one exact-generation lease, observes
+    /// every authenticated reply, and settles runtime activity/accounting only
+    /// after the complete batch succeeds. A failure after any dispatched frame
+    /// deliberately leaves the activity open so an exact retry can reconcile
+    /// the guest's idempotent transfer manifest under the same identity.
+    pub(crate) async fn call_native_activity_batch<Request, Response>(
+        &self,
+        session: SessionId,
+        generation: GenerationId,
+        activity: HandsOperationId,
+        verb: Verb,
+        requests: &[Request],
+        timeout: Duration,
+    ) -> Result<(Vec<GuestReply<Response>>, bool), HandsError>
+    where
+        Request: serde::Serialize,
+        Response: serde::de::DeserializeOwned,
+    {
+        if requests.is_empty() {
+            return Err(pre_dispatch(
+                ProviderFailureKind::InvalidRequest,
+                "a native guest activity batch must contain at least one frame",
+            ));
+        }
+        let prepared = self.prepare_generation(session, generation).await?;
+        let admitted = self.admit_operation(generation, activity, prepared).await?;
+        let mut replies = Vec::with_capacity(requests.len());
+        for request in requests {
+            let reply = match self
+                .call_guest(&admitted.endpoint, verb, request, timeout)
+                .await
+            {
+                Ok(reply) => reply,
+                Err(
+                    error @ HandsError::Transport {
+                        proof: DispatchProof::NotSent,
+                        ..
+                    },
+                ) if replies.is_empty() => {
+                    if admitted.native_resume {
+                        self.reconcile_native_resume(&admitted.view).await?;
+                    }
+                    self.settle_operation(generation, activity).await?;
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
+            self.observe_guest(&admitted.endpoint, &reply).await?;
+            replies.push(reply);
+        }
+        if admitted.native_resume {
+            self.settle_native_activity(&admitted.view).await?;
+        }
+        self.settle_operation(generation, activity).await?;
+        Ok((replies, admitted.native_resume))
     }
 
     async fn endpoint_for(
