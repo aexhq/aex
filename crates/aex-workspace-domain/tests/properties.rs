@@ -1,24 +1,18 @@
 //! Property catalogue for `aex-workspace-domain`: plan 04 items 56-69.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use aex_content_domain::{
-    CiphertextIdentity, ContentDescriptor, ContentDigest, ContentObjectKey, Crc32c, EntryNode,
-    FileMode, GrantId, NormalizedPath, Pin, Placement, RegisteredName, RegistryKind, Revision,
-    TreeEntry, TreeView,
+    CiphertextIdentity, ContentDescriptor, ContentDigest, ContentObjectKey, Crc32c, GrantId, Pin,
+    Placement, RegisteredName, RegistryKind, Revision,
 };
-use aex_wire::ids::{
-    MeasurementId, OperationId, PrefixedId as _, SessionId, UploadId, Uuid7, WorkspaceId,
-};
+use aex_wire::ids::{MeasurementId, PrefixedId as _, SessionId, UploadId, Uuid7, WorkspaceId};
 use aex_wire::types::{ETag, Timestamp};
 use aex_workspace_domain::{
     ByteRange, CompletionEvidence, ContentObjectLocation, DownloadGrant, ExpiryOutcome,
     GrantPlacement, GrantRejection, GrantSubject, MAX_SIGNED_RANGE_BYTES, PART_MAX_BYTES,
-    PART_MAX_COUNT, PART_MIN_BYTES, PartGrantRequest, PartReceipt, PersistReceipt,
-    PersistSelection, ProposedValue, RegisteredValueRef, RegistryPointer, RegistryRejection,
-    RegistrySelector, SelectorError, SetOutcome, Upload, UploadError, UploadState, ValueDocument,
-    VerifiedObject, abort, begin_complete, consume, delete, etag_of, expire, finish_complete,
-    grant_parts, mint_grant, plan_parts, plan_persist, replay_receipt, set,
+    PART_MAX_COUNT, PART_MIN_BYTES, PartGrantRequest, PartReceipt, ProposedValue,
+    RegisteredValueRef, RegistryPointer, RegistryRejection, RegistrySelector, SetOutcome, Upload,
+    UploadError, UploadState, ValueDocument, VerifiedObject, abort, begin_complete, consume,
+    delete, etag_of, expire, finish_complete, grant_parts, mint_grant, plan_parts, set,
 };
 use proptest::prelude::*;
 
@@ -28,10 +22,6 @@ fn workspace() -> WorkspaceId {
 
 fn moment(millis: i64) -> Timestamp {
     Timestamp::from_unix_millis(millis).expect("in range")
-}
-
-fn path(text: &str) -> NormalizedPath {
-    NormalizedPath::parse(text).expect("valid")
 }
 
 fn value_document(body: &[u8]) -> ValueDocument {
@@ -455,240 +445,4 @@ fn grant_no_body_copy() {
     let rendered = format!("{grant:?}");
     assert!(!rendered.contains("token_hash"));
     assert!(!rendered.contains("wks/abc"));
-}
-
-// ---------------------------------------------------------------------------
-// 65-69 — persist
-// ---------------------------------------------------------------------------
-
-fn file(seed: u64, size: u64) -> EntryNode {
-    EntryNode::File {
-        body: ContentDigest::of(&seed.to_le_bytes()),
-        size_bytes: size,
-        mode: FileMode::FILE,
-        mtime: moment(0),
-        media_type: None,
-    }
-}
-
-fn view(entries: &[(&str, EntryNode)]) -> TreeView {
-    let built: Vec<TreeEntry> = entries
-        .iter()
-        .map(|(text, node)| TreeEntry {
-            path: path(text),
-            node: node.clone(),
-        })
-        .collect();
-    TreeView::build(workspace(), &built).expect("builds")
-}
-
-#[test]
-fn persist_mirror_semantics() {
-    // 65 `persist_mirror`.
-    let durable = view(&[
-        ("src/keep.rs", file(1, 10)),
-        ("src/gone.rs", file(2, 20)),
-        ("docs/untouched.md", file(3, 30)),
-    ]);
-    let live = view(&[
-        ("src/keep.rs", file(9, 11)),
-        ("src/new.rs", file(4, 40)),
-        ("docs/untouched.md", file(3, 30)),
-    ]);
-    let selection =
-        PersistSelection::parse(Some(vec!["src/**".to_owned()]), Vec::new()).expect("valid");
-
-    let plan = plan_persist(&durable, &live, &selection).expect("plans");
-    assert_eq!(plan.added, vec![path("src/new.rs")]);
-    assert_eq!(plan.updated, vec![path("src/keep.rs")]);
-    assert_eq!(plan.deleted, vec![path("src/gone.rs")]);
-    assert!(plan.changed);
-
-    // An unselected durable path is untouched.
-    assert!(!plan.added.contains(&path("docs/untouched.md")));
-    assert!(!plan.updated.contains(&path("docs/untouched.md")));
-    assert!(!plan.deleted.contains(&path("docs/untouched.md")));
-}
-
-#[test]
-fn an_exclusion_wins_and_an_exact_include_never_prefix_matches() {
-    // 65, exclusion and exactness halves.
-    let durable = view(&[("src/a.rs", file(1, 10)), ("src/gen/b.rs", file(2, 20))]);
-    let live = view(&[]);
-    let selection = PersistSelection::parse(
-        Some(vec!["src/**".to_owned()]),
-        vec!["src/gen/**".to_owned()],
-    )
-    .expect("valid");
-    let plan = plan_persist(&durable, &live, &selection).expect("plans");
-    assert_eq!(plan.deleted, vec![path("src/a.rs")]);
-
-    let exact =
-        PersistSelection::parse(Some(vec!["src/a.rs".to_owned()]), Vec::new()).expect("valid");
-    assert!(exact.selects(&path("src/a.rs")));
-    assert!(!exact.selects(&path("src/a.rs.bak")));
-    assert!(!exact.selects(&path("src/a.rsx")));
-}
-
-#[test]
-fn persist_noop_is_stable() {
-    // 66 `persist_noop_stable`.
-    let entries = [("src/a.rs", file(1, 10)), ("src/b.rs", file(2, 20))];
-    let durable = view(&entries);
-    let live = view(&entries);
-    let selection = PersistSelection::parse(None, Vec::new()).expect("valid");
-
-    let plan = plan_persist(&durable, &live, &selection).expect("plans");
-    assert!(!plan.changed);
-    assert!(plan.added.is_empty());
-    assert!(plan.updated.is_empty());
-    assert!(plan.deleted.is_empty());
-    assert_eq!(plan.bytes_moved, 0);
-    assert_eq!(plan.next_root, durable.root());
-    assert_eq!(plan.shape.changed_leaves, 0);
-}
-
-#[test]
-fn a_metadata_only_change_is_updated_with_no_bytes_moved() {
-    // 67 `persist_counters`.
-    let body = ContentDigest::of(&1_u64.to_le_bytes());
-    let durable = view(&[(
-        "src/a.rs",
-        EntryNode::File {
-            body,
-            size_bytes: 10,
-            mode: FileMode::FILE,
-            mtime: moment(0),
-            media_type: None,
-        },
-    )]);
-    let live = view(&[(
-        "src/a.rs",
-        EntryNode::File {
-            body,
-            size_bytes: 10,
-            mode: FileMode::new(0o0755).expect("in range"),
-            mtime: moment(5),
-            media_type: None,
-        },
-    )]);
-    let selection = PersistSelection::parse(None, Vec::new()).expect("valid");
-    let plan = plan_persist(&durable, &live, &selection).expect("plans");
-    assert_eq!(plan.updated, vec![path("src/a.rs")]);
-    assert_eq!(plan.bytes_moved, 0, "a metadata-only change moves no bytes");
-    assert!(plan.changed);
-}
-
-#[test]
-fn persist_replay_requires_the_session_and_the_fingerprint() {
-    // 68 `persist_replay`.
-    let selection =
-        PersistSelection::parse(Some(vec!["src/**".to_owned()]), Vec::new()).expect("valid");
-    let other =
-        PersistSelection::parse(Some(vec!["docs/**".to_owned()]), Vec::new()).expect("valid");
-    let session = SessionId::from_uuid7(Uuid7::compose(1, [5; 10]));
-    let receipt = PersistReceipt {
-        operation: OperationId::from_uuid7(Uuid7::compose(1, [6; 10])),
-        session,
-        root: view(&[]).root(),
-        changed: true,
-        persist_revision: 3,
-        added: 1,
-        updated: 0,
-        deleted: 0,
-        bytes_moved: 10,
-        last_persisted_at: moment(1),
-        selector_fingerprint: selection.fingerprint(),
-    };
-
-    assert!(replay_receipt(&receipt, session, &selection.fingerprint()).is_ok());
-    assert!(replay_receipt(&receipt, session, &other.fingerprint()).is_err());
-    assert!(
-        replay_receipt(
-            &receipt,
-            SessionId::from_uuid7(Uuid7::compose(1, [7; 10])),
-            &selection.fingerprint()
-        )
-        .is_err()
-    );
-}
-
-proptest! {
-    #![proptest_config(ProptestConfig { cases: 192, ..ProptestConfig::default() })]
-
-    /// 69 `selector_parse_total`.
-    #[test]
-    fn selector_parse_total(raw in "[a-z*?/.]{0,24}") {
-        let outcome = aex_workspace_domain::Selector::parse(&raw);
-        let rejected = raw.is_empty()
-            || raw.starts_with('/')
-            || raw.ends_with('/')
-            || raw.contains("//")
-            || raw.split('/').any(|part| part.contains("**") && part != "**");
-        prop_assert_eq!(outcome.is_err(), rejected);
-        if let Ok(selector) = outcome {
-            // Accepted selectors round-trip exactly.
-            prop_assert_eq!(selector.as_str(), raw.as_str());
-        }
-    }
-
-    /// 69, the rejected syntax classes.
-    #[test]
-    fn selector_rejects_classes_and_negation(raw in "[a-z]{0,4}[\\[\\]!{}][a-z]{0,4}") {
-        prop_assert!(
-            matches!(
-                aex_workspace_domain::Selector::parse(&raw),
-                Err(SelectorError::UnsupportedSyntax { .. })
-            ),
-            "class and negation syntax never parses"
-        );
-    }
-
-    /// 65, generated trees and selections.
-    #[test]
-    fn persist_mirror_over_generated_trees(
-        durable_paths in prop::collection::vec(prop::sample::select(vec![
-            "src/a.rs", "src/b.rs", "src/gen/c.rs", "docs/d.md", "top.txt",
-        ]), 0..6),
-        live_paths in prop::collection::vec(prop::sample::select(vec![
-            "src/a.rs", "src/b.rs", "src/gen/c.rs", "docs/d.md", "top.txt",
-        ]), 0..6),
-    ) {
-        let build = |names: &[&str], seed: u64| {
-            let mut unique: BTreeMap<String, EntryNode> = BTreeMap::new();
-            for name in names {
-                unique.insert((*name).to_owned(), file(seed, 10));
-            }
-            let entries: Vec<TreeEntry> = unique
-                .into_iter()
-                .map(|(text, node)| TreeEntry { path: path(&text), node })
-                .collect();
-            TreeView::build(workspace(), &entries).expect("builds")
-        };
-        let durable = build(&durable_paths, 1);
-        let live = build(&live_paths, 2);
-        let selection =
-            PersistSelection::parse(Some(vec!["src/**".to_owned()]), vec!["src/gen/**".to_owned()])
-                .expect("valid");
-
-        let plan = plan_persist(&durable, &live, &selection).expect("plans");
-        let durable_names: BTreeSet<&NormalizedPath> = durable.entries().keys().collect();
-        let live_names: BTreeSet<&NormalizedPath> = live.entries().keys().collect();
-
-        for added in &plan.added {
-            prop_assert!(selection.selects(added));
-            prop_assert!(live_names.contains(added));
-            prop_assert!(!durable_names.contains(added));
-        }
-        for deleted in &plan.deleted {
-            prop_assert!(selection.selects(deleted));
-            prop_assert!(durable_names.contains(deleted));
-            prop_assert!(!live_names.contains(deleted));
-        }
-        for touched in plan.added.iter().chain(&plan.updated).chain(&plan.deleted) {
-            // Nothing unselected or excluded is ever touched.
-            prop_assert!(selection.selects(touched));
-            prop_assert!(!touched.as_str().starts_with("src/gen/"));
-        }
-    }
 }

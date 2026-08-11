@@ -17,7 +17,7 @@ use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::types::AttributeValue;
 
 use crate::keys;
-use crate::wire_pending::{Blake3Digest, DigestError, InlineBody, PinOwner, body_hex};
+use crate::wire_pending::{InlineBody, PinOwner, body_hex};
 
 /// The `itemType` of a body descriptor.
 pub const CONTENT_DESCRIPTOR: &str = "content_descriptor";
@@ -27,10 +27,6 @@ pub const CONTENT_BODY: &str = "content_body";
 pub const CONTENT_PIN: &str = "content_pin";
 /// The `itemType` of a download grant.
 pub const DOWNLOAD_GRANT: &str = "download_grant";
-/// The `itemType` of a root descriptor.
-pub const ROOT_DESCRIPTOR: &str = "root_descriptor";
-/// The `itemType` of a Merkle tree page.
-pub const TREE_PAGE: &str = "tree_page";
 /// The `itemType` of a garbage-collection epoch.
 pub const GC_EPOCH: &str = "gc_epoch";
 /// The `itemType` of a garbage-collection candidate.
@@ -229,9 +225,6 @@ pub enum EncodeError {
     /// A key component was unusable.
     #[error(transparent)]
     Key(#[from] KeyError),
-    /// A digest was not the family its position requires.
-    #[error(transparent)]
-    Digest(#[from] DigestError),
     /// The encoded row exceeded its ceiling.
     #[error("the row measures {measured} bytes; the ceiling is {ceiling}")]
     TooLarge {
@@ -430,9 +423,8 @@ pub struct ContentPin {
 
 /// Encodes one pin item body, without its key.
 ///
-/// The key is chosen by the caller — [`keys::pin`] for a loose body,
-/// [`keys::root_pin`] for a root — because that choice is the D-10 decision and
-/// belongs at the call site rather than inside the codec.
+/// The key is chosen by the caller through [`keys::pin`], because persisted key
+/// identity belongs at the call site rather than inside the codec.
 #[must_use]
 pub fn pin_attributes(pin: &ContentPin) -> Item {
     ItemBuilder::new(CONTENT_PIN)
@@ -476,16 +468,7 @@ pub fn grant_pin_attributes(
 pub const GRANT_PIN_KIND: &str = "grant";
 
 /// The pin kinds a stored `content_pin` row may declare.
-pub const STORED_PIN_KINDS: &[&str] = &[
-    "session",
-    "registry",
-    "operation",
-    "export",
-    "cursor",
-    "gc",
-    "message",
-    GRANT_PIN_KIND,
-];
+pub const STORED_PIN_KINDS: &[&str] = &["registry", GRANT_PIN_KIND];
 
 /// One download grant.
 ///
@@ -565,132 +548,6 @@ pub fn decode_grant(item: &Item) -> Result<DownloadGrant, CodecError> {
         measurement: row.id::<MeasurementId>("measurementId")?,
         media_type: row.string("mediaType")?.to_owned(),
         expires_at: row.timestamp("expiresAt")?,
-    })
-}
-
-/// One root descriptor.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RootDescriptor {
-    /// The workspace.
-    pub workspace: WorkspaceId,
-    /// The root digest.
-    pub root: Blake3Digest,
-    /// The page the root points at.
-    pub tree_page: Blake3Digest,
-    /// The logical size of everything under the root.
-    pub logical_bytes: u64,
-    /// How many entries the root names.
-    pub entry_count: u64,
-    /// When the root was written.
-    pub created_at: Timestamp,
-}
-
-/// Encodes one root descriptor.
-#[must_use]
-pub fn encode_root(root: &RootDescriptor) -> Item {
-    let key = keys::root_descriptor(root.workspace, root.root);
-    ItemBuilder::new(ROOT_DESCRIPTOR)
-        .set(PK, s(key.pk))
-        .set(SK, s(key.sk))
-        .set("workspaceId", s(root.workspace.to_string()))
-        .set("rootDigest", s(root.root.to_wire()))
-        .set("treePageDigest", s(root.tree_page.to_wire()))
-        .set("logicalBytes", n(root.logical_bytes))
-        .set("entryCount", n(root.entry_count))
-        .set("createdAt", stamp(root.created_at))
-        .build()
-}
-
-/// Decodes one root descriptor.
-///
-/// # Errors
-///
-/// [`CodecError`] as for every decode here.
-pub fn decode_root(item: &Item, asserted: WorkspaceId) -> Result<RootDescriptor, CodecError> {
-    let row = Row::bind(item, ROOT_DESCRIPTOR)?;
-    row.owned_by("workspaceId", &asserted.to_string())?;
-    Ok(RootDescriptor {
-        workspace: asserted,
-        root: blake3(&row, "rootDigest")?,
-        tree_page: blake3(&row, "treePageDigest")?,
-        logical_bytes: row.u64("logicalBytes")?,
-        entry_count: row.u64("entryCount")?,
-        created_at: row.timestamp("createdAt")?,
-    })
-}
-
-/// One Merkle tree page.
-///
-/// The page body is stored **unsealed** (E D-13, owner decision D5=A). A page
-/// carries file metadata — paths, sizes, modes, mtimes and body digests — and
-/// never file content, and the table is already encrypted at rest under its own
-/// customer-managed key. Unsealing turns a persisted list or stat into a bounded
-/// `Query` plus a decode with no key material on the path, which is what removed
-/// the "plaintext content projection" blocker on four file routes rather than
-/// working around it. Tenant isolation is untouched: the workspace is in the
-/// partition key and `owned_by` is checked on every decode.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TreePage {
-    /// The workspace.
-    pub workspace: WorkspaceId,
-    /// The page digest.
-    pub page: Blake3Digest,
-    /// How far above the leaves the page sits.
-    pub level: u64,
-    /// How many entries it carries.
-    pub entry_count: u64,
-    /// The encoded page body.
-    pub body: Vec<u8>,
-    /// When the page was written.
-    pub created_at: Timestamp,
-}
-
-/// Encodes one Merkle tree page.
-///
-/// # Errors
-///
-/// [`EncodeError::TooLarge`] above the 192 KiB page target, which is checked
-/// here rather than left to a provider `400`.
-pub fn encode_tree_page(page: &TreePage) -> Result<Item, EncodeError> {
-    let key = keys::tree_page(page.workspace, page.page);
-    let digest_hex = page.page.to_hex();
-    let bucket = keys::bucket_of(&digest_hex)?;
-    let item = ItemBuilder::new(TREE_PAGE)
-        .set(PK, s(key.pk))
-        .set(SK, s(key.sk))
-        .set("workspaceId", s(page.workspace.to_string()))
-        .set("pageDigest", s(page.page.to_wire()))
-        .set("level", n(page.level))
-        .set("entryCount", n(page.entry_count))
-        .set("pageBody", b(page.body.clone()))
-        .set("createdAt", stamp(page.created_at))
-        .set(
-            keys::GC_PK,
-            s(keys::gc_scan_partition(page.workspace, bucket)),
-        )
-        .set(
-            keys::GC_SK,
-            s(keys::gc_scan_sort(page.created_at, &digest_hex)?),
-        )
-        .build();
-    measured(item, measure::PAGE_TARGET_BYTES)
-}
-
-/// Decodes one Merkle tree page.
-///
-/// # Errors
-///
-/// [`CodecError`] as for every decode here.
-pub fn decode_tree_page(item: &Item, asserted: WorkspaceId) -> Result<TreePage, CodecError> {
-    let row = Row::bind(item, TREE_PAGE)?;
-    row.owned_by("workspaceId", &asserted.to_string())?;
-    Ok(TreePage {
-        workspace: asserted,
-        page: blake3(&row, "pageDigest")?,
-        level: row.u64("level")?,
-        entry_count: row.u64("entryCount")?,
-        body: row.bytes("pageBody")?.to_vec(),
-        created_at: row.timestamp("createdAt")?,
     })
 }
 
@@ -880,15 +737,6 @@ fn content_hash(row: &Row<'_>, attribute: &'static str) -> Result<ContentHash, C
     })
 }
 
-fn blake3(row: &Row<'_>, attribute: &'static str) -> Result<Blake3Digest, CodecError> {
-    let text = row.string(attribute)?;
-    Blake3Digest::parse(text).map_err(|error| CodecError::Malformed {
-        item_type: TREE_PAGE,
-        attribute,
-        reason: error.to_string(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use aex_session_dynamodb::attr::CodecError;
@@ -900,13 +748,13 @@ mod tests {
     use aws_sdk_dynamodb::types::AttributeValue;
 
     use super::{
-        ContentDescriptor, DownloadGrant, EncodeError, GcCandidate, GrantExpiryCursor,
-        GrantExpiryPosition, ObjectLocation, TreePage, decode_descriptor, decode_grant,
-        decode_grant_expiry_cursor, decode_tree_page, encode_descriptor, encode_gc_candidate,
-        encode_grant, encode_grant_expiry_cursor, encode_inline_body, encode_tree_page,
+        ContentDescriptor, DownloadGrant, GcCandidate, GrantExpiryCursor, GrantExpiryPosition,
+        ObjectLocation, decode_descriptor, decode_grant, decode_grant_expiry_cursor,
+        encode_descriptor, encode_gc_candidate, encode_grant, encode_grant_expiry_cursor,
+        encode_inline_body,
     };
     use crate::keys;
-    use crate::wire_pending::{Blake3Digest, InlineBody};
+    use crate::wire_pending::InlineBody;
 
     fn workspace(byte: u8) -> WorkspaceId {
         WorkspaceId::from_uuid7(Uuid7::compose(1_754_051_696_789, [byte; 10]))
@@ -1018,38 +866,13 @@ mod tests {
     }
 
     #[test]
-    fn the_body_digest_is_sha256_and_the_page_digest_is_blake3() {
+    fn the_body_digest_is_sha256() {
         let encoded = encode_descriptor(&descriptor()).expect("encodes");
         let stored = encoded
             .get("digestSha256")
             .and_then(|value| value.as_s().ok())
             .expect("a digest");
         assert!(stored.starts_with("sha256:"), "{stored}");
-
-        let page = TreePage {
-            workspace: workspace(1),
-            page: Blake3Digest::of(b"page"),
-            level: 0,
-            entry_count: 2,
-            body: vec![7u8; 16],
-            created_at: now(),
-        };
-        let encoded = encode_tree_page(&page).expect("encodes");
-        let stored = encoded
-            .get("pageDigest")
-            .and_then(|value| value.as_s().ok())
-            .expect("a digest");
-        assert!(stored.starts_with("b3:"), "{stored}");
-        assert_eq!(
-            decode_tree_page(&encoded, workspace(1)).expect("decodes"),
-            page
-        );
-    }
-
-    #[test]
-    fn a_page_digest_never_decodes_as_a_body_digest() {
-        assert!(Blake3Digest::parse(&ContentHash::from_bytes([1; 32]).to_wire()).is_err());
-        assert!(ContentHash::parse(&Blake3Digest::from_bytes([1; 32]).to_wire()).is_err());
     }
 
     #[test]
@@ -1114,20 +937,6 @@ mod tests {
                 .expect("encodes");
         assert!(!encoded.contains_key(keys::GC_PK));
         assert!(!encoded.contains_key(keys::GC_SK));
-    }
-
-    #[test]
-    fn a_tree_page_over_the_page_target_is_refused_with_its_measurement() {
-        let page = TreePage {
-            workspace: workspace(1),
-            page: Blake3Digest::of(b"big"),
-            level: 0,
-            entry_count: 1,
-            body: vec![7u8; measure::PAGE_TARGET_BYTES + 1],
-            created_at: now(),
-        };
-        let error = encode_tree_page(&page).expect_err("over the page target");
-        assert!(matches!(error, EncodeError::TooLarge { .. }), "{error}");
     }
 
     #[test]

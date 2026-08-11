@@ -349,27 +349,6 @@ pub fn mailbox_prefix() -> &'static str {
     "MBOX#"
 }
 
-/// The selected fold-snapshot pointer for one agent.
-///
-/// The pointer is Brain-owned derived state, so it lives in the reserved Brain per-agent
-/// partition rather than extending the shared session-store item collection.
-///
-/// # Errors
-///
-/// As [`brain_agent_partition`].
-pub fn fold_snapshot(key: &AgentKey) -> Result<Key, BrainKeyError> {
-    Ok(Key {
-        pk: brain_agent_partition(key)?,
-        sk: fold_snapshot_sort_key().to_owned(),
-    })
-}
-
-/// The singleton fold-snapshot pointer sort key.
-#[must_use]
-pub const fn fold_snapshot_sort_key() -> &'static str {
-    "SNAPSHOT#FOLD"
-}
-
 /// One paged fanout intent's sort key under the spawning parent.
 #[must_use]
 pub fn fanout_intent_sort_key(intent: FanoutIntentId) -> String {
@@ -410,9 +389,9 @@ mod tests {
     use super::{
         BRAIN_AGENT_PARTITION_PREFIX, BRAIN_PREFIX, HEALTH_PROBE_WORK_ID, agent_partition,
         brain_agent_partition, child_index_sort_key, control, control_sort_key, effect,
-        effect_sort_key, fanout_intent_sort_key, fold_snapshot, fold_snapshot_sort_key,
-        health_probe_agent, join_shard, join_shard_for, join_sort_key, journal, journal_sort_key,
-        mailbox_sort_key, queued_index_sort_key, session_budget_sort_key, session_partition,
+        effect_sort_key, fanout_intent_sort_key, health_probe_agent, join_shard, join_shard_for,
+        join_sort_key, journal, journal_sort_key, mailbox_sort_key, queued_index_sort_key,
+        session_budget_sort_key, session_partition,
     };
     use aex_brain_domain::ids::{
         AgentId, AgentKey, EffectId, FanoutIntentId, JoinId, JournalSeq, SessionId,
@@ -522,20 +501,12 @@ mod tests {
             child_index_sort_key(0, AgentId(v7(1_767_225_600_003, 5))),
             join_sort_key(JoinId(v7(1_767_225_600_004, 6))),
             mailbox_sort_key(1),
-            fold_snapshot_sort_key().to_owned(),
         ] {
             assert!(
                 !sort_key.starts_with(BRAIN_PREFIX),
                 "a per-agent item must not claim the session-level prefix: {sort_key}"
             );
         }
-    }
-
-    #[test]
-    fn the_fold_snapshot_pointer_is_a_single_brain_owned_agent_row() {
-        let pointer = fold_snapshot(&key()).expect("v7");
-        assert_eq!(pointer.pk, brain_agent_partition(&key()).expect("v7"));
-        assert_eq!(pointer.sk, "SNAPSHOT#FOLD");
     }
 
     #[test]

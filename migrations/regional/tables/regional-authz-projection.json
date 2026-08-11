@@ -82,16 +82,6 @@
       "role": "regional-otlp",
       "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:Query"],
       "resources": ["table"]
-    },
-    {
-      "role": "brain-mux",
-      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
-      "resources": ["table"]
-    },
-    {
-      "role": "session-operation-worker",
-      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
-      "resources": ["table"]
     }
   ],
   "tags": { "aex:plane": "regional", "aex:component": "authz-projection", "aex:data-class": "projection" }

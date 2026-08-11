@@ -78,12 +78,6 @@ counter!(
     AuthorizationEpoch,
     0
 );
-counter!(
-    /// How many times the session's durable root has advanced.
-    PersistRevision,
-    0
-);
-
 /// The content-derived identity of one journal entry.
 ///
 /// A duplicate identity collapses to the first occurrence, which is what makes a

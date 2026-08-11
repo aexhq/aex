@@ -565,7 +565,7 @@ const fn step_seam(kind: OperationKind) -> &'static str {
             "the discard step needs `aex-runtime-control` to accept termination of an exact              generation, and no seam dispatches that from a continuation yet"
         }
         OperationKind::SessionPersist => {
-            "persist needs `LiveWorkspaceReader`, which nothing in the tree implements: no              producer of a live `TreeView` exists and the guest refuses `PersistPhase::Survey`"
+            "session filesystem persistence is retired; no worker or guest operation owns this legacy kind"
         }
         OperationKind::TelemetryExport => "telemetry export is the observation stream's",
         OperationKind::ContentGc => "content collection is the content stream's",
@@ -1439,8 +1439,6 @@ pub struct LiveRead<T> {
     pub observed: T,
     /// The generation that answered.
     pub generation: GenerationId,
-    /// Whether the session's continuity was intact when it answered.
-    pub intact: bool,
 }
 
 /// Resolves the exact generation a live read must be answered by.
@@ -1449,13 +1447,11 @@ pub struct LiveRead<T> {
 /// than the one in force, the read fails rather than silently answering from a
 /// successor. A successor is a *different filesystem*, so answering from it
 /// would return a confident wrong answer to the question that was asked.
-async fn live_generation(
-    context: &AppContext<'_>,
+fn live_generation(
     session: &Session,
     pinned: Option<GenerationId>,
-) -> Result<(GenerationId, bool), AppError> {
-    let continuity = context.continuity.continuity(session.id).await?;
-    let Some(generation) = continuity.generation else {
+) -> Result<GenerationId, AppError> {
+    let Some(generation) = session.generation else {
         // No generation is in force, so there is no live filesystem to read.
         // Reporting an empty listing here would be indistinguishable from an
         // empty workspace, which is the one answer that must never be invented.
@@ -1468,16 +1464,14 @@ async fn live_generation(
             kind: "the pinned live workspace generation",
         }));
     }
-    Ok((generation, continuity.intact))
+    Ok(generation)
 }
 
 /// Lists one page of a live workspace directory.
 ///
 /// A pass-through observation: the running `MicroVM` answers it from `lstat`,
 /// and nothing here hashes a file, builds a Merkle page, or consults the
-/// content authority. The persistence machinery — `TreeView`, `ContentDigest`
-/// and the page store — is correct for `session_persist` and is deliberately
-/// not on this path.
+/// content authority. No filesystem snapshot or persisted root exists on this path.
 ///
 /// # Errors
 ///
@@ -1493,12 +1487,11 @@ pub async fn list_live_files(
 ) -> Result<LiveRead<crate::ports::LiveListing>, AppError> {
     let session = context.sessions.load_session(workspace, session).await?;
     gate(context, &session, CommandClass::PausableRead).await?;
-    let (generation, intact) = live_generation(context, &session, pinned).await?;
+    let generation = live_generation(&session, pinned)?;
     let observed = context.live.list(session.id, generation, query).await?;
     Ok(LiveRead {
         observed,
         generation,
-        intact,
     })
 }
 
@@ -1521,11 +1514,10 @@ pub async fn stat_live_file(
 ) -> Result<LiveRead<crate::ports::LiveEntry>, AppError> {
     let session = context.sessions.load_session(workspace, session).await?;
     gate(context, &session, CommandClass::PausableRead).await?;
-    let (generation, intact) = live_generation(context, &session, pinned).await?;
+    let generation = live_generation(&session, pinned)?;
     let observed = context.live.stat(session.id, generation, path).await?;
     Ok(LiveRead {
         observed,
         generation,
-        intact,
     })
 }

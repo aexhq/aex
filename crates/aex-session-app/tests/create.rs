@@ -79,7 +79,7 @@ async fn plan_of(
 
 #[tokio::test]
 async fn a_create_with_nothing_selected_is_three_items_in_one_table() {
-    let ports = ScriptedPorts::idle().with_empty_seal();
+    let ports = ScriptedPorts::idle();
     let plan = plan_of(&ports, &command(minimal_request()))
         .await
         .expect("the minimal create is admissible");
@@ -102,7 +102,7 @@ async fn a_create_with_nothing_selected_is_three_items_in_one_table() {
 async fn a_create_carries_no_read_only_condition_check() {
     // A D-7: every guard rides a write, so the plan's action count is its write
     // count and the create contends on no row it does not write.
-    let ports = ScriptedPorts::idle().with_empty_seal();
+    let ports = ScriptedPorts::idle();
     let plan = plan_of(&ports, &command(minimal_request()))
         .await
         .expect("admissible");
@@ -111,7 +111,7 @@ async fn a_create_carries_no_read_only_condition_check() {
 }
 
 #[tokio::test]
-async fn a_selection_adds_the_root_pin_and_its_owner_edge_and_nothing_else() {
+async fn a_selection_is_validated_without_copying_or_pinning_session_content() {
     let mut request = minimal_request();
     request.registered = Some(models::SessionRegisteredSelection {
         files: Some(vec![
@@ -126,20 +126,11 @@ async fn a_selection_adds_the_root_pin_and_its_owner_edge_and_nothing_else() {
     let plan = plan_of(&ports, &command(request))
         .await
         .expect("admissible");
-    assert_eq!(plan.validate().expect("valid").actions, 5);
-    assert_eq!(
+    assert_eq!(plan.validate().expect("valid").actions, 3);
+    assert!(
         plan.writes
             .iter()
-            .filter(|write| matches!(write, Write::PutPin(_)))
-            .count(),
-        1
-    );
-    assert_eq!(
-        plan.writes
-            .iter()
-            .filter(|write| matches!(write, Write::PutOwnerEdge(_)))
-            .count(),
-        1
+            .all(|write| !matches!(write, Write::PutPin(_)))
     );
 }
 
@@ -148,7 +139,7 @@ async fn the_head_pins_a_generation_and_reports_none_live() {
     // A D-2: the create decides the whole immutable definition and writes no
     // `runtime-activity` row. `generation` is the *live* one and stays absent,
     // because H-LAZY means nothing has started.
-    let ports = ScriptedPorts::idle().with_empty_seal();
+    let ports = ScriptedPorts::idle();
     let clock = clock();
     let ids = CountingIds::default();
     let planned = create_session(&ports.context(&clock, &ids), &command(minimal_request()))
@@ -176,7 +167,7 @@ async fn the_head_pins_a_generation_and_reports_none_live() {
 
 #[tokio::test]
 async fn the_pinned_limits_revision_is_the_one_the_create_read() {
-    let ports = ScriptedPorts::idle().with_empty_seal();
+    let ports = ScriptedPorts::idle();
     let clock = clock();
     let ids = CountingIds::default();
     let planned = create_session(&ports.context(&clock, &ids), &command(minimal_request()))
@@ -196,7 +187,7 @@ async fn the_pinned_limits_revision_is_the_one_the_create_read() {
 #[tokio::test]
 async fn the_receipt_carries_the_exact_bytes_the_caller_is_sent() {
     // A D-6: a replay reproduces bytes, never a second rendering.
-    let ports = ScriptedPorts::idle().with_empty_seal();
+    let ports = ScriptedPorts::idle();
     let clock = clock();
     let ids = CountingIds::default();
     let planned = create_session(&ports.context(&clock, &ids), &command(minimal_request()))
@@ -227,7 +218,7 @@ async fn the_receipt_carries_the_exact_bytes_the_caller_is_sent() {
 
 #[tokio::test]
 async fn two_callers_under_different_keys_address_different_receipts() {
-    let ports = ScriptedPorts::idle().with_empty_seal();
+    let ports = ScriptedPorts::idle();
     let session = session_fixture();
     let mut first = command(minimal_request());
     first.identity = create_identity_under("k-1", &session);
@@ -266,9 +257,7 @@ async fn a_paused_account_is_refused_before_any_other_read() {
 
 #[tokio::test]
 async fn an_absent_provider_credential_is_not_a_revoked_one() {
-    let ports = ScriptedPorts::idle()
-        .with_empty_seal()
-        .without_provider_credential();
+    let ports = ScriptedPorts::idle().without_provider_credential();
     assert_eq!(
         plan_of(&ports, &command(minimal_request()))
             .await
@@ -277,9 +266,7 @@ async fn an_absent_provider_credential_is_not_a_revoked_one() {
         ErrorCode::ProviderCredentialNotFound
     );
 
-    let ports = ScriptedPorts::idle()
-        .with_empty_seal()
-        .with_revoked_provider_credential();
+    let ports = ScriptedPorts::idle().with_revoked_provider_credential();
     assert_eq!(
         plan_of(&ports, &command(minimal_request()))
             .await
@@ -302,9 +289,7 @@ async fn each_catalog_refusal_keeps_its_own_code() {
             ErrorCode::UnqualifiedProviderModel,
         ),
     ] {
-        let ports = ScriptedPorts::idle()
-            .with_empty_seal()
-            .with_qualification_refusal(refusal);
+        let ports = ScriptedPorts::idle().with_qualification_refusal(refusal);
         assert_eq!(
             plan_of(&ports, &command(minimal_request()))
                 .await
@@ -317,9 +302,7 @@ async fn each_catalog_refusal_keeps_its_own_code() {
 
 #[tokio::test]
 async fn egress_this_plane_cannot_supply_is_refused_rather_than_silently_dropped() {
-    let ports = ScriptedPorts::idle()
-        .with_empty_seal()
-        .without_public_internet_egress();
+    let ports = ScriptedPorts::idle().without_public_internet_egress();
     let mut request = minimal_request();
     request.network = Some(models::SessionNetworkRequest {
         hands: models::HandsNetworkRequest {
@@ -344,7 +327,7 @@ async fn an_ecosystem_no_published_image_carries_is_refused() {
         .remove(&models::PackageEcosystem::Npm);
     // The scripted deployment is replaced wholesale so the refusal is decided
     // from the plane's own asserted facts, not from a per-request read.
-    let ports = ScriptedPorts::idle().with_empty_seal();
+    let ports = ScriptedPorts::idle();
     let mut request = minimal_request();
     request.packages = Some(vec![models::PackageRequest {
         ecosystem: models::PackageEcosystem::Npm,
@@ -360,9 +343,7 @@ async fn an_ecosystem_no_published_image_carries_is_refused() {
 
 #[tokio::test]
 async fn a_workspace_with_no_materialized_limit_row_refuses_rather_than_defaulting() {
-    let ports = ScriptedPorts::idle()
-        .with_empty_seal()
-        .with_limits(aex_session_domain::EffectiveLimits::new());
+    let ports = ScriptedPorts::idle().with_limits(aex_session_domain::EffectiveLimits::new());
     let error = plan_of(&ports, &command(minimal_request()))
         .await
         .expect_err("an unbootstrapped workspace has no ceiling");
@@ -371,7 +352,7 @@ async fn a_workspace_with_no_materialized_limit_row_refuses_rather_than_defaulti
 
 #[tokio::test]
 async fn a_ceiling_below_the_root_agent_refuses_with_limit_exceeded() {
-    let ports = ScriptedPorts::idle().with_empty_seal().with_limits(
+    let ports = ScriptedPorts::idle().with_limits(
         [(LimitId::SessionMaterializedAgents, 0)]
             .into_iter()
             .collect(),
@@ -439,7 +420,7 @@ fn maximal_request(
     request
 }
 
-/// One registry pointer per selector, so the seal has something to seal.
+/// One registry pointer per selector, so admission can prove every name exists.
 fn pointers_for(
     request: &models::SessionCreateRequest,
 ) -> Vec<aex_workspace_domain::RegistryPointer> {
@@ -512,11 +493,7 @@ proptest! {
         metadata in 0_usize..=64,
     ) {
         let request = maximal_request(files, skills, tools, instructions, mcp, packages, metadata);
-        let selected = files + skills + tools + instructions + mcp;
         let ports = ScriptedPorts::idle().with_registry_pointers(pointers_for(&request));
-        // The seal is a total function of the selection: an empty selection
-        // retains nothing and writes neither content item.
-        let ports = if selected == 0 { ports.with_empty_seal() } else { ports };
 
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -526,10 +503,9 @@ proptest! {
         }).expect("every maximal request the schema admits is admissible");
         let shape = plan.validate().expect("a create plan validates");
 
-        let expected = if selected == 0 { 3 } else { 5 };
         prop_assert_eq!(
             shape.actions,
-            expected,
+            3,
             "1088 names, 64 packages and 64 labels all collapse into values that ride existing \
              items; the transaction never grows"
         );
@@ -538,10 +514,7 @@ proptest! {
 }
 
 #[tokio::test]
-async fn a_selection_object_that_names_nothing_still_seals_nothing() {
-    // The omission is a total function of the *selection*, not of whatever the
-    // content adapter happens to return: a pin on an empty root retains
-    // nothing, so neither content item is written and the seal is never called.
+async fn a_selection_object_that_names_nothing_writes_no_session_content() {
     let mut request = minimal_request();
     request.registered = Some(models::SessionRegisteredSelection {
         files: None,
@@ -555,11 +528,5 @@ async fn a_selection_object_that_names_nothing_still_seals_nothing() {
         .await
         .expect("admissible");
     assert_eq!(plan.validate().expect("valid").actions, 3);
-    assert!(
-        !ports.calls().iter().any(
-            |call| matches!(call, aex_session_app::testing::PortCall::Write(name)
-                if *name == "seal_registry_manifest")
-        ),
-        "an empty selection never reaches the content writer at all"
-    );
+    assert!(!ports.calls().iter().any(|call| call.is_write()));
 }

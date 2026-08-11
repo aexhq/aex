@@ -1,9 +1,9 @@
 //! The application context this deployable can honestly supply.
 //!
-//! `aex_session_app::AppContext` names eleven ports. This deployable owns six
+//! `aex_session_app::AppContext` names nine ports. This deployable owns six
 //! of them — the clock, the identifier source, the session authority, the
 //! account projection, runtime continuity and secret custody — and the
-//! remaining five belong to streams that have not produced an adapter.
+//! remaining three belong to streams that have not produced an adapter.
 //!
 //! Two ports left this file rather than gaining a local implementation, and
 //! both for the same reason: the authority already existed elsewhere.
@@ -22,7 +22,7 @@
 //! invention is silent and wrong.
 //!
 //! The three routes this deployable mounts — `session_stop`, `session_trash`
-//! and `session_restore` — touch none of the five, which is what makes mounting
+//! and `session_restore` — touch none of the three, which is what makes mounting
 //! them compatible with RS-18.
 //!
 //! `session_credential_rebind` can now **read** everything it needs and still
@@ -34,12 +34,9 @@
 //! That is a custody-write question and it belongs to whoever owns the custody
 //! transaction, not to the session command path.
 
-use aex_content_domain::{
-    ContentDigest, ContentOutcome, ContentRoot, PageDigest, TreeNode, TreeView,
-};
 use aex_session_app::ports::{
-    ContentReader, ContentWriter, IdFactory, LimitsBundle, LimitsReader, LiveEntry, LiveListQuery,
-    LiveListing, LiveWorkspaceReader, PortError, RegistryReader, SealedRegistryEntry,
+    IdFactory, LimitsBundle, LimitsReader, LiveEntry, LiveListQuery, LiveListing,
+    LiveWorkspaceReader, PortError, RegistryReader,
 };
 use aex_session_domain::EffectiveLimits;
 use aex_wire::ids::{GenerationId, SessionId, UploadId, Uuid7, WorkspaceId};
@@ -72,17 +69,9 @@ pub struct UnownedPorts;
 /// The seam each refusal names.
 const REGISTRY_SEAM: &str = "the named-registry adapter publishes `RegistryStore`, not \
                              `aex_session_app::ports::RegistryReader`";
-const CONTENT_SEAM: &str = "content descriptors and Merkle pages are `aex-content-dynamodb`'s";
 const LIMITS_SEAM: &str = "no authoritative regional capacity default and override producer \
                            exists yet";
-const LIVE_SEAM: &str = "the persist survey manifest and the live workspace scan are Hands': \
-                         nothing in the tree produces a live `TreeView`, and the guest refuses \
-                         `PersistPhase::Survey` for want of a TLS client";
-
-/// Why the two **observation** methods are refused, which is a different reason
-/// from [`LIVE_SEAM`].
-///
-/// Not hashing, and not the guest. The guest already answers a listing and a
+/// The guest already answers a listing and a
 /// stat from `lstat` alone — `aex_hands_tools::filesystem::list_dir` and
 /// `stat_path`, dispatched by `runtimes/hands-agent/src/execute.rs` — with no
 /// digest, no Merkle build and no TLS. What is missing is entirely on this
@@ -121,45 +110,6 @@ impl RegistryReader for UnownedPorts {
 }
 
 #[async_trait::async_trait]
-impl ContentReader for UnownedPorts {
-    async fn describe(
-        &self,
-        _workspace: WorkspaceId,
-        _digest: ContentDigest,
-    ) -> Result<ContentOutcome, PortError> {
-        Err(PortError::Unowned {
-            kind: "content descriptor",
-            seam: CONTENT_SEAM,
-        })
-    }
-
-    async fn load_page(
-        &self,
-        _workspace: WorkspaceId,
-        _page: PageDigest,
-    ) -> Result<TreeNode, PortError> {
-        Err(PortError::Unowned {
-            kind: "content page",
-            seam: CONTENT_SEAM,
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl ContentWriter for UnownedPorts {
-    async fn seal_registry_manifest(
-        &self,
-        _workspace: WorkspaceId,
-        _entries: &[SealedRegistryEntry],
-    ) -> Result<ContentRoot, PortError> {
-        Err(PortError::Unowned {
-            kind: "registry manifest seal",
-            seam: CONTENT_SEAM,
-        })
-    }
-}
-
-#[async_trait::async_trait]
 impl LimitsReader for UnownedPorts {
     async fn effective(
         &self,
@@ -182,28 +132,6 @@ impl LimitsReader for UnownedPorts {
 
 #[async_trait::async_trait]
 impl LiveWorkspaceReader for UnownedPorts {
-    async fn scan(
-        &self,
-        _session: SessionId,
-        _generation: GenerationId,
-    ) -> Result<TreeView, PortError> {
-        Err(PortError::Unowned {
-            kind: "live workspace tree",
-            seam: LIVE_SEAM,
-        })
-    }
-
-    async fn root(
-        &self,
-        _session: SessionId,
-        _generation: GenerationId,
-    ) -> Result<ContentRoot, PortError> {
-        Err(PortError::Unowned {
-            kind: "live workspace root",
-            seam: LIVE_SEAM,
-        })
-    }
-
     async fn list(
         &self,
         _session: SessionId,

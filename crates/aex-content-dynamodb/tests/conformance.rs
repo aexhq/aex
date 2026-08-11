@@ -13,8 +13,8 @@ use aex_content_dynamodb::wire_pending::GcSweepPlan;
 use aex_session_dynamodb::paging::PageBudget;
 
 use support::{
-    Answer, DEFINITION, TABLE, captured_body, capturing_client, digest, gc_epoch, grant, later,
-    now, organization, scripted_client, workspace,
+    DEFINITION, TABLE, captured_body, capturing_client, digest, gc_epoch, grant, later, now,
+    organization, workspace,
 };
 
 fn definition() -> serde_json::Value {
@@ -369,10 +369,10 @@ async fn every_fence_point_read_is_strongly_consistent() {
 
 #[tokio::test]
 async fn immutable_content_addressed_reads_accept_replica_lag() {
-    // A descriptor, an inline body or a tree page is content addressed: a
+    // A descriptor or inline body is content addressed: a
     // present row already holds the only bytes its digest can name, so the
     // only fact replica lag can change is presence moments after a write.
-    for read in ["descriptor", "body", "tree_page"] {
+    for read in ["descriptor", "body"] {
         let (client, receiver) = capturing_client();
         let store = ContentStore::new(client, TABLE);
         match read {
@@ -382,14 +382,7 @@ async fn immutable_content_addressed_reads_accept_replica_lag() {
             "body" => {
                 let _ignored = store.read_inline_body(workspace(), &digest(1)).await;
             }
-            _ => {
-                let _ignored = store
-                    .read_tree_page(
-                        workspace(),
-                        aex_content_dynamodb::Blake3Digest::from_bytes([7_u8; 32]),
-                    )
-                    .await;
-            }
+            _ => unreachable!("the read list is closed"),
         }
         let body = captured_body(receiver);
         assert_eq!(
@@ -398,72 +391,6 @@ async fn immutable_content_addressed_reads_accept_replica_lag() {
             "`{read}` is immutable and must take the cheap read path"
         );
     }
-}
-
-#[tokio::test]
-async fn a_tree_page_wave_treats_a_lost_condition_as_replay_and_a_hard_failure_as_refusal() {
-    let page = |byte: u8| codec::TreePage {
-        workspace: workspace(),
-        page: aex_content_dynamodb::Blake3Digest::of(&[byte]),
-        level: 0,
-        entry_count: 1,
-        body: vec![7u8; 16],
-        created_at: now(),
-    };
-    let conditional = serde_json::json!({
-        "__type": "com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException",
-        "message": "the page already exists"
-    })
-    .to_string();
-    // The three puts are driven concurrently; whichever of them the scripted
-    // transport answers with the lost condition, the wave is an idempotent
-    // success, because a content-addressed page that already exists holds the
-    // identical bytes.
-    let (client, replay) = scripted_client(vec![
-        Answer {
-            status: 200,
-            body: "{}".to_owned(),
-        },
-        Answer {
-            status: 400,
-            body: conditional,
-        },
-        Answer {
-            status: 200,
-            body: "{}".to_owned(),
-        },
-    ]);
-    let store = ContentStore::new(client, TABLE);
-    store
-        .put_tree_pages(&[page(1), page(2), page(3)])
-        .await
-        .expect("a lost condition is a replayed page, never a failure");
-    assert_eq!(replay.actual_requests().count(), 3);
-
-    let denied = serde_json::json!({
-        "__type": "com.amazonaws.dynamodb.v20120810#AccessDeniedException",
-        "message": "no"
-    })
-    .to_string();
-    let (client, _replay) = scripted_client(vec![
-        Answer {
-            status: 200,
-            body: "{}".to_owned(),
-        },
-        Answer {
-            status: 400,
-            body: denied,
-        },
-        Answer {
-            status: 200,
-            body: "{}".to_owned(),
-        },
-    ]);
-    let store = ContentStore::new(client, TABLE);
-    store
-        .put_tree_pages(&[page(1), page(2), page(3)])
-        .await
-        .expect_err("a hard provider failure refuses the whole wave");
 }
 
 #[test]

@@ -51,12 +51,6 @@ pub struct Config {
     pub secret_custody_table: String,
     /// The exact KMS root key ARN wrapping workspace branch keys.
     pub secret_kms_key_arn: String,
-    /// Regional content bucket holding immutable fold snapshots.
-    pub content_bucket: String,
-    /// Account that must own the regional content bucket.
-    pub content_expected_owner: String,
-    /// Exact KMS key ARN used by the regional content bucket.
-    pub content_kms_key_arn: String,
     /// Runtime-activity table used by Hands.
     pub runtime_activity_table: String,
     /// Compute-authority usage ingress used by runtime-control.
@@ -142,12 +136,6 @@ pub const WORK_TABLE_VAR: &str = "AEX_WORK_TABLE";
 pub const SECRET_CUSTODY_TABLE_VAR: &str = "AEX_SECRET_CUSTODY_TABLE";
 /// Environment variable naming the root KMS key for workspace branch keys.
 pub const SECRET_KMS_KEY_ARN_VAR: &str = "AEX_SECRET_KMS_KEY_ARN";
-/// Environment variable naming the regional content bucket.
-pub const CONTENT_BUCKET_VAR: &str = "AEX_CONTENT_BUCKET";
-/// Environment variable naming the account that must own the content bucket.
-pub const CONTENT_EXPECTED_OWNER_VAR: &str = "AEX_CONTENT_EXPECTED_OWNER";
-/// Environment variable naming the regional content KMS key.
-pub const CONTENT_KMS_KEY_ARN_VAR: &str = "AEX_CONTENT_KMS_KEY_ARN";
 /// Environment variable naming the runtime-activity table.
 pub const RUNTIME_ACTIVITY_TABLE_VAR: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
 /// Environment variable naming the compute usage ingress.
@@ -220,11 +208,6 @@ impl Config {
         let secret_custody_table = required(&lookup, SECRET_CUSTODY_TABLE_VAR)?;
         let secret_kms_key_arn = required(&lookup, SECRET_KMS_KEY_ARN_VAR)?;
         validate_kms_arn(SECRET_KMS_KEY_ARN_VAR, &secret_kms_key_arn, &region)?;
-        let content_bucket = required(&lookup, CONTENT_BUCKET_VAR)?;
-        let content_expected_owner = required(&lookup, CONTENT_EXPECTED_OWNER_VAR)?;
-        validate_account_id(CONTENT_EXPECTED_OWNER_VAR, &content_expected_owner)?;
-        let content_kms_key_arn = required(&lookup, CONTENT_KMS_KEY_ARN_VAR)?;
-        validate_kms_arn(CONTENT_KMS_KEY_ARN_VAR, &content_kms_key_arn, &region)?;
         let runtime_activity_table = required(&lookup, RUNTIME_ACTIVITY_TABLE_VAR)?;
         let usage_compute_queue_url = endpoint(&lookup, USAGE_COMPUTE_QUEUE_VAR, &region)?;
         let usage_storage_queue_url = endpoint(&lookup, USAGE_STORAGE_QUEUE_VAR, &region)?;
@@ -266,9 +249,6 @@ impl Config {
             work_table,
             secret_custody_table,
             secret_kms_key_arn,
-            content_bucket,
-            content_expected_owner,
-            content_kms_key_arn,
             runtime_activity_table,
             usage_compute_queue_url,
             usage_storage_queue_url,
@@ -343,17 +323,6 @@ fn validate_kms_arn(
     }
 }
 
-fn validate_account_id(name: &'static str, value: &str) -> Result<(), BrainMuxConfigError> {
-    if value.len() == 12 && value.bytes().all(|byte| byte.is_ascii_digit()) {
-        Ok(())
-    } else {
-        Err(BrainMuxConfigError::Invalid {
-            name,
-            reason: "expected a 12-digit AWS account id".to_owned(),
-        })
-    }
-}
-
 fn endpoint<F>(lookup: &F, name: &'static str, region: &str) -> Result<String, BrainMuxConfigError>
 where
     F: Fn(&str) -> Option<String>,
@@ -423,7 +392,7 @@ pub fn compose(config: &Config) -> Result<compose::Composition, BrainMuxRunError
         compose::Envelope::candidate_launch(),
         // Replay-body bytes are not an exact resident-size measurement for `FoldState`.
         // Keep the production accelerator off until every retained heap byte can own a
-        // `WarmCacheBytes` reservation; authority always falls back to snapshot + journal.
+        // `WarmCacheBytes` reservation; authority always falls back to the complete journal.
         cache::CachePolicy::disabled(),
         scale::ScaleBounds {
             min_tasks: 1,
@@ -582,23 +551,6 @@ fn resolve_production_ports(
         &config.credential_cache_partition(),
     );
     let catalog = bind_release_catalog()?;
-    let snapshots = wake::snapshot_binding(
-        &aws.sdk,
-        aex_brain_store_dynamodb::BrainTables {
-            session_authority: config.resource.clone(),
-            regional_work: config.work_table.clone(),
-        },
-        wake::SnapshotBinding {
-            bucket: config.content_bucket.clone(),
-            expected_owner: config.content_expected_owner.clone(),
-            kms_key_arn: config.content_kms_key_arn.clone(),
-            plane: config.plane.clone(),
-            region: config.region.clone(),
-        },
-    )
-    .map_err(|error| BrainMuxRunError::Runtime {
-        reason: format!("production fold-snapshot binding failed: {error}"),
-    })?;
     let hands = wake::hands_binding(
         &aws.sdk,
         wake::HandsBinding {
@@ -632,7 +584,6 @@ fn resolve_production_ports(
         tools,
         hands.backend,
         std::sync::Arc::clone(&catalog) as std::sync::Arc<_>,
-        snapshots,
     );
     // Cloned before the adapters are handed to the activation ports: the probe addresses the
     // same two clients the serving path uses, so what it proves is what the pump needs.
@@ -1092,12 +1043,11 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        BUDGET_VAR, BrainMuxConfigError, CONTENT_BUCKET_VAR, CONTENT_EXPECTED_OWNER_VAR,
-        CONTENT_KMS_KEY_ARN_VAR, Config, PLANE_VAR, PRICING_VERSION_VAR, REGION_VAR, RESOURCE_VAR,
-        RUNTIME_ACTIVITY_TABLE_VAR, RUNTIME_DUE_PAGE_ITEMS_VAR, RUNTIME_DUE_PAGE_READS_VAR,
-        RUNTIME_DUE_SHARDS_VAR, SECRET_CUSTODY_TABLE_VAR, SECRET_KMS_KEY_ARN_VAR,
-        USAGE_COMPUTE_QUEUE_VAR, USAGE_STORAGE_QUEUE_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose,
-        emit_due_isolations,
+        BUDGET_VAR, BrainMuxConfigError, Config, PLANE_VAR, PRICING_VERSION_VAR, REGION_VAR,
+        RESOURCE_VAR, RUNTIME_ACTIVITY_TABLE_VAR, RUNTIME_DUE_PAGE_ITEMS_VAR,
+        RUNTIME_DUE_PAGE_READS_VAR, RUNTIME_DUE_SHARDS_VAR, SECRET_CUSTODY_TABLE_VAR,
+        SECRET_KMS_KEY_ARN_VAR, USAGE_COMPUTE_QUEUE_VAR, USAGE_STORAGE_QUEUE_VAR, WAKE_QUEUE_VAR,
+        WORK_TABLE_VAR, compose, emit_due_isolations,
     };
     use aex_brain_app::activation::PollReport;
     use aex_brain_app::kernel::PermitKind;
@@ -1122,12 +1072,6 @@ mod tests {
             (
                 SECRET_KMS_KEY_ARN_VAR,
                 "arn:aws:kms:eu-west-1:123456789012:key/fixture".to_owned(),
-            ),
-            (CONTENT_BUCKET_VAR, "aex-dev-content-fixture".to_owned()),
-            (CONTENT_EXPECTED_OWNER_VAR, "123456789012".to_owned()),
-            (
-                CONTENT_KMS_KEY_ARN_VAR,
-                "arn:aws:kms:eu-west-1:123456789012:key/content".to_owned(),
             ),
             (
                 RUNTIME_ACTIVITY_TABLE_VAR,
@@ -1244,9 +1188,6 @@ mod tests {
             WORK_TABLE_VAR,
             SECRET_CUSTODY_TABLE_VAR,
             SECRET_KMS_KEY_ARN_VAR,
-            CONTENT_BUCKET_VAR,
-            CONTENT_EXPECTED_OWNER_VAR,
-            CONTENT_KMS_KEY_ARN_VAR,
             RUNTIME_ACTIVITY_TABLE_VAR,
             USAGE_COMPUTE_QUEUE_VAR,
             USAGE_STORAGE_QUEUE_VAR,

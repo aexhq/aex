@@ -539,11 +539,9 @@ impl CommandBindings {
             ids: &self.ids,
             sessions: &self.reads,
             accounts: &self.accounts,
-            // Five ports another stream owns. Every one refuses rather than
+            // Three ports another stream owns. Every one refuses rather than
             // inventing an answer; see `crate::session::app_ports`.
             registry: &self.unowned,
-            content: &self.unowned,
-            content_writer: &self.unowned,
             catalog: None,
             deployment: None,
             limits: &self.unowned,

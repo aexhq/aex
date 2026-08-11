@@ -23,16 +23,6 @@ pub const OPERATION_DLQ_URL: &str = "AEX_OPERATION_DLQ_URL";
 pub const WORK_TABLE: &str = "AEX_WORK_TABLE";
 /// The `session-authority` table.
 pub const SESSION_TABLE: &str = "AEX_SESSION_TABLE";
-/// The `regional-content` table.
-pub const CONTENT_TABLE: &str = "AEX_CONTENT_TABLE";
-/// The `regional-registry` table.
-pub const REGISTRY_TABLE: &str = "AEX_REGISTRY_TABLE";
-/// The regional content bucket.
-pub const CONTENT_BUCKET: &str = "AEX_CONTENT_BUCKET";
-/// The account that must own the content bucket.
-pub const CONTENT_BUCKET_OWNER: &str = "AEX_CONTENT_BUCKET_OWNER";
-/// The deletion-denial projection table.
-pub const DENIAL_PROJECTION_TABLE: &str = "AEX_DENIAL_PROJECTION_TABLE";
 /// How many deterministic shards the due scan sweeps.
 pub const DUE_SCAN_SHARDS: &str = "AEX_DUE_SCAN_SHARDS";
 /// Claim lease in milliseconds.
@@ -43,7 +33,7 @@ pub const STEP_DEADLINE_MS: &str = "AEX_STEP_DEADLINE_MS";
 pub const MAX_ATTEMPTS: &str = "AEX_MAX_ATTEMPTS";
 
 /// Every variable a healthy `session-operation-worker` requires.
-pub const REQUIRED: [&str; 16] = [
+pub const REQUIRED: [&str; 11] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
@@ -51,11 +41,6 @@ pub const REQUIRED: [&str; 16] = [
     OPERATION_DLQ_URL,
     WORK_TABLE,
     SESSION_TABLE,
-    CONTENT_TABLE,
-    REGISTRY_TABLE,
-    CONTENT_BUCKET,
-    CONTENT_BUCKET_OWNER,
-    DENIAL_PROJECTION_TABLE,
     DUE_SCAN_SHARDS,
     LEASE_MS,
     STEP_DEADLINE_MS,
@@ -94,16 +79,6 @@ pub struct Config {
     pub work_table: String,
     /// `session-authority` table.
     pub session_table: String,
-    /// `regional-content` table.
-    pub content_table: String,
-    /// `regional-registry` table.
-    pub registry_table: String,
-    /// Regional content bucket.
-    pub content_bucket: String,
-    /// Expected content-bucket owner account.
-    pub content_bucket_owner: String,
-    /// Deletion-denial projection table.
-    pub denial_projection_table: String,
     /// Deterministic due-scan shard count.
     pub due_scan_shards: u64,
     /// Claim lease in milliseconds.
@@ -171,11 +146,6 @@ impl Config {
             operation_dlq_url: queue_url(lookup, OPERATION_DLQ_URL, region)?,
             work_table: required(lookup, WORK_TABLE)?,
             session_table: required(lookup, SESSION_TABLE)?,
-            content_table: required(lookup, CONTENT_TABLE)?,
-            registry_table: required(lookup, REGISTRY_TABLE)?,
-            content_bucket: required(lookup, CONTENT_BUCKET)?,
-            content_bucket_owner: required(lookup, CONTENT_BUCKET_OWNER)?,
-            denial_projection_table: required(lookup, DENIAL_PROJECTION_TABLE)?,
             due_scan_shards,
             lease_ms: i64::try_from(bounded_u64(lookup, LEASE_MS, 1_000, 900_000)?).map_err(
                 |_| RegionalHttpConfigError::Invalid {

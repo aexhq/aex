@@ -1,7 +1,7 @@
 [package]
 name = "aex-brain-store-dynamodb"
 version = "0.1.0"
-description = "`aex-brain-store-dynamodb` owns the Brain `DynamoDB` and `SQS` adapter: journal and effect records, activation leases and fences, snapshot pointers, and wake publication."
+description = "`aex-brain-store-dynamodb` owns the Brain `DynamoDB` and `SQS` adapter: journal and effect records, activation leases and fences, and wake publication."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -54,7 +54,6 @@ time.workspace = true
 uuid.workspace = true
 aex-brain-app = { path = "../aex-brain-app" }
 aex-brain-domain = { path = "../aex-brain-domain" }
-aex-content-aws = { path = "../aex-content-aws" }
 # The shared regional store machinery: key templates, row codecs, item
 # measurement, the one transaction-plan compiler and the error vocabulary. Brain
 # calls these rather than forking the item shapes they own.

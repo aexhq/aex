@@ -156,7 +156,7 @@ pub async fn reconcile<S: ContentMetadataStore + ?Sized>(
                 let reachability = store.reachability(workspace, &digest, now).await?;
                 let mut item = item;
                 item.grant_pins = u32::try_from(reachability.unexpired_grants).unwrap_or(u32::MAX);
-                item.root_pins = u32::try_from(reachability.pins).unwrap_or(u32::MAX);
+                item.direct_pins = u32::try_from(reachability.pins).unwrap_or(u32::MAX);
                 match reconcile_staged(&item, now.unix_millis()) {
                     ReconcileOutcome::KeepStaged => report.kept_staged += 1,
                     ReconcileOutcome::RestoreLive => report.restored_live += 1,
@@ -299,7 +299,7 @@ async fn delete_one<S: ContentMetadataStore + ?Sized, O: DeletableObjects + ?Siz
     )?;
     item.state = ContentState::OrphanConfirmed;
     item.grant_pins = u32::try_from(reachability.unexpired_grants).unwrap_or(u32::MAX);
-    item.root_pins = u32::try_from(reachability.pins).unwrap_or(u32::MAX);
+    item.direct_pins = u32::try_from(reachability.pins).unwrap_or(u32::MAX);
 
     let planned = plan_delete(
         &item,

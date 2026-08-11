@@ -37,7 +37,6 @@ aex-brain-app = { path = "../../crates/aex-brain-app" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }
 aex-brain-hands = { path = "../../crates/aex-brain-hands" }
 aex-brain-managed-web = { path = "../../crates/aex-brain-managed-web" }
-aex-content-aws = { path = "../../crates/aex-content-aws" }
 aex-control-domain = { path = "../../crates/aex-control-domain" }
 aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
@@ -61,7 +60,6 @@ aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-kms.workspace = true
 aws-sdk-lambdamicrovms.workspace = true
-aws-sdk-s3.workspace = true
 aws-sdk-sqs.workspace = true
 aws-sdk-secretsmanager.workspace = true
 base64.workspace = true

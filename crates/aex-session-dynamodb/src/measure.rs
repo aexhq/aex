@@ -18,9 +18,6 @@ pub const DYNAMODB_ITEM_CEILING: usize = 400 * 1024;
 /// an attribute in a later revision without becoming unwritable.
 pub const APPLICATION_ITEM_CEILING: usize = 256 * 1024;
 
-/// The target size of a Merkle tree page or a fold snapshot page.
-pub const PAGE_TARGET_BYTES: usize = 192 * 1024;
-
 /// The largest canonical plaintext that is stored inline rather than in the
 /// object store (`CANONICAL_PLAINTEXT_DYNAMODB_MAX_BYTES`).
 ///
@@ -84,15 +81,6 @@ pub fn check_item(item: &Item) -> Result<(), StoreError> {
     check_against(item, APPLICATION_ITEM_CEILING)
 }
 
-/// Rejects a page above the page target.
-///
-/// # Errors
-///
-/// [`StoreError::ItemTooLarge`] carrying the measurement.
-pub fn check_page(item: &Item) -> Result<(), StoreError> {
-    check_against(item, PAGE_TARGET_BYTES)
-}
-
 fn check_against(item: &Item, ceiling: usize) -> Result<(), StoreError> {
     let measured = item_bytes(item);
     if measured <= ceiling {
@@ -137,8 +125,8 @@ pub const fn placement(bytes: usize) -> Placement {
 #[cfg(test)]
 mod tests {
     use super::{
-        APPLICATION_ITEM_CEILING, INLINE_PLAINTEXT_CEILING, PAGE_TARGET_BYTES, Placement,
-        check_item, check_page, item_bytes, placement,
+        APPLICATION_ITEM_CEILING, INLINE_PLAINTEXT_CEILING, Placement, check_item, item_bytes,
+        placement,
     };
     use crate::attr::{ItemBuilder, b, s};
     use crate::error::StoreError;
@@ -174,13 +162,6 @@ mod tests {
             ),
             "{error}"
         );
-    }
-
-    #[test]
-    fn the_page_target_is_exact_at_n_minus_one_n_and_n_plus_one() {
-        assert!(check_page(&sized(PAGE_TARGET_BYTES - 1)).is_ok());
-        assert!(check_page(&sized(PAGE_TARGET_BYTES)).is_ok());
-        assert!(check_page(&sized(PAGE_TARGET_BYTES + 1)).is_err());
     }
 
     #[test]

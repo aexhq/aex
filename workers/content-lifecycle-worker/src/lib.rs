@@ -52,14 +52,10 @@ pub struct ContentItem {
     pub staged_at_ms: i64,
     /// Monotonic GC epoch.
     pub gc_epoch: u64,
-    /// Direct owner edges.
-    pub owner_edges: u32,
-    /// Workspace/session root pins.
-    pub root_pins: u32,
+    /// Direct registered-content pins.
+    pub direct_pins: u32,
     /// Unexpired grant pins.
     pub grant_pins: u32,
-    /// Active operation roots.
-    pub operation_roots: u32,
 }
 
 impl std::fmt::Debug for ContentItem {
@@ -72,10 +68,8 @@ impl std::fmt::Debug for ContentItem {
             .field("state", &self.state)
             .field("staged_at_ms", &self.staged_at_ms)
             .field("gc_epoch", &self.gc_epoch)
-            .field("owner_edges", &self.owner_edges)
-            .field("root_pins", &self.root_pins)
+            .field("direct_pins", &self.direct_pins)
             .field("grant_pins", &self.grant_pins)
-            .field("operation_roots", &self.operation_roots)
             .finish()
     }
 }
@@ -106,18 +100,13 @@ impl ContentItem {
             state: ContentState::Staged,
             staged_at_ms,
             gc_epoch,
-            owner_edges: 0,
-            root_pins: 0,
+            direct_pins: 0,
             grant_pins: 0,
-            operation_roots: 0,
         })
     }
 
     const fn has_reachability(&self) -> bool {
-        self.owner_edges > 0
-            || self.root_pins > 0
-            || self.grant_pins > 0
-            || self.operation_roots > 0
+        self.direct_pins > 0 || self.grant_pins > 0
     }
 }
 

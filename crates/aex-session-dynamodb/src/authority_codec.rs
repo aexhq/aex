@@ -6,15 +6,14 @@
 
 use std::num::NonZeroU64;
 
-use aex_content_domain::{ContentDigest, ContentRoot};
+use aex_content_domain::ContentDigest;
 use aex_internal_contracts::RunId;
 use aex_operation_domain::{DeletionEpoch, DeletionGuard, DeletionState, OperationKind};
 use aex_secret_domain::CustodyRevision;
 use aex_session_domain::{
-    CancellationEpoch, CloneFiles, DomainError, EffectId, InterruptReason, Lineage, Message,
-    MessagePart, MessageRole, MessageState, MutationGuard, Origin, PersistRevision,
-    ResolvedConfigAuthority, ResolvedConfigDigest, Run, RunOutcome, Session, SessionRevision,
-    SessionStatus, WorkAdmission,
+    CancellationEpoch, DomainError, EffectId, InterruptReason, Lineage, Message, MessagePart,
+    MessageRole, MessageState, MutationGuard, Origin, ResolvedConfigAuthority,
+    ResolvedConfigDigest, Run, RunOutcome, Session, SessionRevision, SessionStatus, WorkAdmission,
 };
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{
@@ -34,34 +33,6 @@ pub const AUTHORITY_SCHEMA_VERSION: u64 = 1;
 pub const AUTHORITY_SCHEMA: &str = "authoritySchemaVersion";
 /// The canonical authority document attribute.
 pub const AUTHORITY_DOCUMENT: &str = "authorityDocument";
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct RootV1 {
-    digest: String,
-    entries: u64,
-    logical_bytes: u64,
-}
-
-impl From<ContentRoot> for RootV1 {
-    fn from(root: ContentRoot) -> Self {
-        Self {
-            digest: hex::encode(root.digest),
-            entries: root.entries,
-            logical_bytes: root.logical_bytes,
-        }
-    }
-}
-
-impl RootV1 {
-    fn decode(self, attribute: &'static str) -> Result<ContentRoot, CodecError> {
-        Ok(ContentRoot {
-            digest: decode_digest(&self.digest, attribute)?,
-            entries: self.entries,
-            logical_bytes: self.logical_bytes,
-        })
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -132,8 +103,6 @@ impl DeletionV1 {
 struct OriginV1 {
     session: SessionId,
     operation: OperationId,
-    source_persist_revision: u64,
-    files: String,
     cloned_at: Timestamp,
 }
 
@@ -142,8 +111,6 @@ impl From<Origin> for OriginV1 {
         Self {
             session: origin.session,
             operation: origin.operation,
-            source_persist_revision: origin.source_persist_revision.0,
-            files: clone_files(origin.files).to_owned(),
             cloned_at: origin.cloned_at,
         }
     }
@@ -154,8 +121,6 @@ impl OriginV1 {
         Ok(Origin {
             session: self.session,
             operation: self.operation,
-            source_persist_revision: PersistRevision(self.source_persist_revision),
-            files: parse_clone_files(&self.files)?,
             cloned_at: self.cloned_at,
         })
     }
@@ -220,10 +185,6 @@ struct SessionV1 {
     /// total function, and a lossy projection would force that derivation to
     /// invent whatever it could not read back.
     pinned_runtime: aex_runtime_control::generation::HandsGeneration,
-    initial_root: RootV1,
-    persisted_root: RootV1,
-    persist_revision: u64,
-    last_persisted_at: Option<Timestamp>,
     custody_revision: u64,
     origin: Option<OriginV1>,
     resolved: ResolvedV1,
@@ -248,10 +209,6 @@ impl From<&Session> for SessionV1 {
             root_agent: session.root_agent,
             generation: session.generation,
             pinned_runtime: session.pinned_runtime.definition().clone(),
-            initial_root: session.initial_root.into(),
-            persisted_root: session.persisted_root.into(),
-            persist_revision: session.persist_revision.0,
-            last_persisted_at: session.last_persisted_at,
             custody_revision: session.custody_revision.0,
             origin: session.lineage.origin.map(Into::into),
             resolved: (&session.resolved).into(),
@@ -295,10 +252,6 @@ impl SessionV1 {
                 self.pinned_runtime,
             )
             .map_err(|error| malformed(AUTHORITY_DOCUMENT, error.to_string()))?,
-            initial_root: self.initial_root.decode(AUTHORITY_DOCUMENT)?,
-            persisted_root: self.persisted_root.decode(AUTHORITY_DOCUMENT)?,
-            persist_revision: PersistRevision(self.persist_revision),
-            last_persisted_at: self.last_persisted_at,
             custody_revision: CustodyRevision(self.custody_revision),
             lineage: Lineage {
                 origin: self.origin.map(OriginV1::decode).transpose()?,
@@ -677,11 +630,6 @@ pub fn encode_session(session: &Session) -> Result<Item, CodecError> {
                 .map(|guard| s(guard.holder.to_string())),
         )
         .set(
-            "persistedRootDigest",
-            s(hex::encode(session.persisted_root.digest)),
-        )
-        .set("persistRevision", n(session.persist_revision.0))
-        .set(
             "resolvedConfigDigest",
             s(aex_wire::ids::ContentHash::from_bytes(session.resolved.digest().0).to_wire()),
         )
@@ -763,8 +711,6 @@ fn decode_session_row(row: Row<'_>, asserted: WorkspaceId) -> Result<Session, Co
         || row.string("provider")? != session.resolved.provider().as_str()
         || row.string("model")? != session.resolved.model()
         || row.u64("custodyRevision")? != session.custody_revision.0
-        || row.string("persistedRootDigest")? != hex::encode(session.persisted_root.digest)
-        || row.u64("persistRevision")? != session.persist_revision.0
         || row.timestamp("createdAt")? != session.created_at
         || row.timestamp("updatedAt")? != session.updated_at
     {
@@ -1116,23 +1062,6 @@ fn parse_deletion_state(text: &str) -> Result<DeletionState, CodecError> {
     }
 }
 
-const fn clone_files(files: CloneFiles) -> &'static str {
-    match files {
-        CloneFiles::Current => "current",
-        CloneFiles::Initial => "initial",
-        CloneFiles::None => "none",
-    }
-}
-
-fn parse_clone_files(text: &str) -> Result<CloneFiles, CodecError> {
-    match text {
-        "current" => Ok(CloneFiles::Current),
-        "initial" => Ok(CloneFiles::Initial),
-        "none" => Ok(CloneFiles::None),
-        _ => Err(malformed(AUTHORITY_DOCUMENT, "unknown clone file mode")),
-    }
-}
-
 const fn message_role(role: MessageRole) -> &'static str {
     match role {
         MessageRole::User => "user",
@@ -1238,8 +1167,6 @@ mod tests {
                         | "provider"
                         | "model"
                         | "custodyRevision"
-                        | "persistedRootDigest"
-                        | "persistRevision"
                         | "resolvedConfigDigest"
                         | AUTHORITY_SCHEMA
                         | AUTHORITY_DOCUMENT

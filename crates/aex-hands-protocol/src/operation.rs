@@ -474,28 +474,6 @@ impl std::fmt::Debug for PresignedPlan {
     }
 }
 
-/// Which half of the two-phase persist a request is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PersistPhase {
-    /// Walk the root, hash it, and store the `{path, len, sha256}` manifest.
-    Survey,
-    /// Fetch the list of blobs Brain still needs, with a presigned `PUT` for
-    /// each, and upload exactly those.
-    Upload,
-}
-
-impl PersistPhase {
-    /// Which grant direction this phase's plan must cover.
-    #[must_use]
-    pub const fn grant_direction(self) -> TransferDirection {
-        match self {
-            Self::Survey => TransferDirection::Store,
-            Self::Upload => TransferDirection::Fetch,
-        }
-    }
-}
-
 /// The viewport a browser session opens with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -692,9 +670,8 @@ pub enum OperationRequest {
     /// List a directory.
     ///
     /// An observation, answered from `lstat` alone. It reports mode, mtime and
-    /// size and deliberately carries **no content digest**: hashing every file
-    /// in a directory to answer "what is in it" is the persistence question, and
-    /// [`OperationRequest::Persist`] is where that question is asked.
+    /// size and deliberately carries **no content digest**: listing is an
+    /// observation and must not turn into an implicit full-tree hash.
     ListDir {
         /// Which directory.
         path: GuestPath,
@@ -756,18 +733,6 @@ pub enum OperationRequest {
         /// presigned URL and a digest per file.
         plan: PresignedPlan,
     },
-    /// Persist the workspace, in two phases.
-    Persist {
-        /// Paths to include.
-        include: Vec<GuestPath>,
-        /// Paths to exclude.
-        exclude: Vec<GuestPath>,
-        /// Which half of the persist this is.
-        phase: PersistPhase,
-        /// The grant this phase runs over. Its direction must be
-        /// [`PersistPhase::grant_direction`].
-        plan: PresignedPlan,
-    },
     /// Drive the headless browser.
     ///
     /// Present in the protocol whether or not the running image carries the
@@ -815,7 +780,6 @@ impl OperationRequest {
             | Self::ProcessStatus { .. }
             | Self::ProcessStop { .. }
             | Self::Materialize { .. }
-            | Self::Persist { .. }
             | Self::RegisteredTool { .. } => false,
         }
     }

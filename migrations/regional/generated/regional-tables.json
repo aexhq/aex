@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:4d994c30e28084dbe48e8a89bf82455f9d68965443660d2d492027e3593f9be6",
+  "digest": "blake3:04dcfad9fd53393180c87fe3185ba3db1f19f73d8ca25183c5b5e42725ac8272",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -608,26 +608,6 @@
           "resources": [
             "table"
           ]
-        },
-        {
-          "role": "brain-mux",
-          "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:Query"
-          ],
-          "resources": [
-            "table"
-          ]
-        },
-        {
-          "role": "session-operation-worker",
-          "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:Query"
-          ],
-          "resources": [
-            "table"
-          ]
         }
       ],
       "tags": {
@@ -746,7 +726,7 @@
       "schema": "aex.regional-table.v1",
       "table": "regional-content",
       "owner": "regional-stores",
-      "purpose": "Content body descriptors, inline ciphertext bodies, Merkle tree pages, root descriptors, root and body pins, download grants, durable grant-expiry cursors, GC epochs and GC candidates. Every customer-content partition is workspace scoped.",
+      "purpose": "Registered content body descriptors, inline ciphertext bodies, direct body pins, download grants, durable grant-expiry cursors, GC epochs and GC candidates. Every customer-content partition is workspace scoped; session filesystem roots and pages do not live here.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -795,13 +775,12 @@
           "sort": "gcScanSk",
           "sparse": true,
           "projectsRecordBody": false,
-          "rationale": "One index serves both mark (enumerate every body and page in 256 bounded buckets per workspace) and sweep (enumerate candidates). There is deliberately no reverse owner index and no reference count (R-DELETE): pin removal is a DeleteItem on a known key.",
+          "rationale": "One index serves both mark (enumerate every registered body in 256 bounded buckets per workspace) and sweep (enumerate candidates). There is deliberately no reverse owner index and no reference count (R-DELETE): pin removal is a DeleteItem on a known key.",
           "projection": {
             "type": "INCLUDE",
             "attributes": [
               "workspaceId",
               "digestSha256",
-              "pageDigest",
               "placement",
               "sizeBytes",
               "objectKey",
@@ -851,8 +830,6 @@
         "content_body",
         "content_pin",
         "download_grant",
-        "root_descriptor",
-        "tree_page",
         "gc_epoch",
         "gc_candidate",
         "grant_expiry_cursor"
@@ -879,30 +856,6 @@
             "dynamodb:PutItem",
             "dynamodb:UpdateItem",
             "dynamodb:DeleteItem",
-            "dynamodb:TransactWriteItems"
-          ],
-          "resources": [
-            "table",
-            "index/*"
-          ]
-        },
-        {
-          "role": "brain-mux",
-          "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:Query",
-            "dynamodb:TransactWriteItems"
-          ],
-          "resources": [
-            "table"
-          ]
-        },
-        {
-          "role": "session-operation-worker",
-          "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:Query",
-            "dynamodb:PutItem",
             "dynamodb:TransactWriteItems"
           ],
           "resources": [
@@ -1002,28 +955,6 @@
             "dynamodb:UpdateItem",
             "dynamodb:DeleteItem",
             "dynamodb:TransactWriteItems"
-          ],
-          "resources": [
-            "table"
-          ]
-        },
-        {
-          "role": "session-operation-worker",
-          "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:Query",
-            "dynamodb:UpdateItem",
-            "dynamodb:TransactWriteItems"
-          ],
-          "resources": [
-            "table"
-          ]
-        },
-        {
-          "role": "brain-mux",
-          "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:Query"
           ],
           "resources": [
             "table"

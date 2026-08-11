@@ -1,8 +1,7 @@
 //! `session-operation-worker` composition root (Rust Lambda ZIP).
 //!
 //! Exclusive responsibility: the genuinely cross-invocation legs — the
-//! `session_delete` purge, the `workspace_delete` regional purge, and paged
-//! `session_persist`/`session_fork` staging. Everything else terminalizes inline
+//! `session_delete` purge and the `workspace_delete` regional purge. Everything else terminalizes inline
 //! at admission or in the Brain/runtime work domain (RS-07).
 //!
 //! Two triggers, one binary: an SQS hint batch and a scheduled due scan. The

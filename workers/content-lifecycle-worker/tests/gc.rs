@@ -7,7 +7,7 @@
 
 use std::sync::Mutex;
 
-use aex_content_dynamodb::codec::{ContentDescriptor, ContentPin, GcEpoch, TreePage};
+use aex_content_dynamodb::codec::{ContentDescriptor, ContentPin, GcEpoch};
 use aex_content_dynamodb::store::{
     ContentMetadataStore, GcScanPage, GrantExpiry, GrantExpiryPage, Reachability, RedeemedGrant,
 };
@@ -109,18 +109,6 @@ impl ContentMetadataStore for Store {
         _digest: &ContentHash,
     ) -> Result<Option<InlineBody>, StoreError> {
         Ok(None)
-    }
-
-    async fn read_tree_page(
-        &self,
-        _workspace: WorkspaceId,
-        _page: aex_content_dynamodb::wire_pending::Blake3Digest,
-    ) -> Result<Option<TreePage>, StoreError> {
-        Ok(None)
-    }
-
-    async fn put_tree_pages(&self, _pages: &[TreePage]) -> Result<(), StoreError> {
-        Ok(())
     }
 
     async fn load_gc_epoch(&self, _workspace: WorkspaceId) -> Result<Option<GcEpoch>, StoreError> {

@@ -37,12 +37,11 @@ pub use plan::{
 };
 pub use ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext,
-    AuthorityCommitter, Clock, CommitError, CommitOutcome, ContentReader, ContentWriter,
-    ContinuityReader, CredentialState, DeploymentFacts, IdFactory, LimitsBundle, LimitsReader,
-    LiveEntry, LiveEntryKind, LiveListQuery, LiveListing, LiveWorkspaceReader, ModelQualifier,
-    PageBudget, PortError, ProviderCredentialBinding, QualificationRefusal, QualifiedModel,
-    RegistryReader, SealedRegistryEntry, SecretCustodyReader, SessionReader, SessionSnapshot,
-    VersionedOperation, WorkspaceContinuity,
+    AuthorityCommitter, Clock, CommitError, CommitOutcome, ContinuityReader, CredentialState,
+    DeploymentFacts, IdFactory, LimitsBundle, LimitsReader, LiveEntry, LiveEntryKind,
+    LiveListQuery, LiveListing, LiveWorkspaceReader, ModelQualifier, PageBudget, PortError,
+    ProviderCredentialBinding, QualificationRefusal, QualifiedModel, RegistryReader,
+    SecretCustodyReader, SessionReader, SessionSnapshot, VersionedOperation,
 };
 pub use projection::{
     canonical_session_bytes, public_session, public_session_list_item, public_status,

@@ -7,7 +7,6 @@
 
 use std::collections::BTreeSet;
 
-use aex_content_domain::{ContentOutcome, ContentRoot, PageDigest, TreeNode, TreeView};
 use aex_internal_contracts::RunId;
 use aex_operation_domain::Operation;
 use aex_operation_domain::operation::OperationVersion;
@@ -246,24 +245,6 @@ pub trait RegistryReader: Send + Sync {
     ) -> Result<Upload, PortError>;
 }
 
-/// Reads content descriptors and Merkle pages.
-#[async_trait::async_trait]
-pub trait ContentReader: Send + Sync {
-    /// Whether a body is present and usable.
-    async fn describe(
-        &self,
-        workspace: WorkspaceId,
-        digest: aex_content_domain::ContentDigest,
-    ) -> Result<ContentOutcome, PortError>;
-
-    /// One Merkle page.
-    async fn load_page(
-        &self,
-        workspace: WorkspaceId,
-        page: PageDigest,
-    ) -> Result<TreeNode, PortError>;
-}
-
 /// Whether a provider-credential binding may still be selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CredentialState {
@@ -292,47 +273,6 @@ pub struct ProviderCredentialBinding {
     pub revision: u64,
     /// Whether it may still be selected.
     pub state: CredentialState,
-}
-
-/// One entry of the registry resolution a session seals at create.
-///
-/// The tuple is exactly what the seal has to reproduce: which registry, which
-/// name, which revision was in force, and which body that revision named. It
-/// carries no value document, because the leaves the seal points at are the
-/// deduplicated bodies the workspace already owns.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SealedRegistryEntry {
-    /// Which registry.
-    pub kind: aex_content_domain::RegistryKind,
-    /// Which name.
-    pub name: aex_wire::ids::ResourceName,
-    /// The revision the pointer was at when it was read.
-    pub revision: aex_content_domain::identity::Revision,
-    /// The body that revision names.
-    pub digest: aex_content_domain::ContentDigest,
-}
-
-/// Writes content that must exist **before** a transaction commits.
-///
-/// Split from [`ContentReader`] rather than added to it so a read-only caller
-/// cannot acquire a writer by holding the reader it already had.
-///
-/// Everything written here is content-addressed and therefore idempotent, which
-/// is what makes a pre-transaction write safe: a crash between the write and
-/// the commit leaves an unreferenced body that the staged-orphan grace sweeps.
-/// Nothing written here is a transaction participant.
-#[async_trait::async_trait]
-pub trait ContentWriter: Send + Sync {
-    /// Seals one registry resolution into a content root.
-    ///
-    /// The entries are the exact tuples read from the registry pointers. The
-    /// returned root is the session's `initial_root`, and one root pin plus one
-    /// owner edge retains the whole selection however large it is.
-    async fn seal_registry_manifest(
-        &self,
-        workspace: WorkspaceId,
-        entries: &[SealedRegistryEntry],
-    ) -> Result<ContentRoot, PortError>;
 }
 
 /// Reads secret custody.
@@ -409,25 +349,9 @@ pub trait AccountStateReader: Send + Sync {
     ) -> Result<AccountProjection, PortError>;
 }
 
-/// What `aex-runtime-control` says about a session's workspace generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WorkspaceContinuity {
-    /// The generation in force, when one is.
-    pub generation: Option<GenerationId>,
-    /// Whether the session's continuity is intact.
-    pub intact: bool,
-}
-
-/// Reads runtime continuity and idleness.
-///
-/// `WorkspaceContinuity`, the idle predicate and the exact idle window are
-/// `aex-runtime-control`'s; this port consumes its verdict so the two cannot
-/// each compute a different answer.
+/// Reads runtime idleness for custody-sensitive commands.
 #[async_trait::async_trait]
 pub trait ContinuityReader: Send + Sync {
-    /// The session's continuity.
-    async fn continuity(&self, session: SessionId) -> Result<WorkspaceContinuity, PortError>;
-
     /// The session's idle evidence.
     async fn true_idle(&self, session: SessionId) -> Result<TrueIdle, PortError>;
 }
@@ -450,12 +374,8 @@ pub enum LiveEntryKind {
 
 /// One entry in a live workspace, exactly as the running `MicroVM` reports it.
 ///
-/// **There is no digest here, and that is the point.** [`TreeView`] and the
-/// content-addressed page machinery belong to persistence, where hashing is
-/// what makes a snapshot restorable. Answering "what is in this directory"
-/// through them means hashing every file's bytes and building a Merkle tree to
-/// serve an `ls`. A live listing is one `lstat` per entry: mode, mtime, size,
-/// and for a symlink its target.
+/// **There is no digest here, and that is the point.** A live listing is one
+/// `lstat` per entry: mode, mtime, size, and for a symlink its target.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiveEntry {
     /// The absolute path inside the guest root.
@@ -500,29 +420,10 @@ pub struct LiveListing {
 
 /// Reads the live workspace of a running generation.
 ///
-/// [`LiveWorkspaceReader::scan`] and [`LiveWorkspaceReader::root`] are the
-/// **persistence** half: they exist to content-address a workspace so it can be
-/// restored, and a full hash is the correct price for that.
-/// [`LiveWorkspaceReader::list`] and [`LiveWorkspaceReader::stat`] are the
-/// **observation** half, and they must never route through the persistence
-/// half — a directory listing that hashes every file is doing a snapshot's work
-/// to answer a question one `lstat` settles.
+/// These are same-generation observations. They never hash or persist the guest filesystem,
+/// and a missing generation is returned as missing rather than replaced from a snapshot.
 #[async_trait::async_trait]
 pub trait LiveWorkspaceReader: Send + Sync {
-    /// The live tree of one generation.
-    async fn scan(
-        &self,
-        session: SessionId,
-        generation: GenerationId,
-    ) -> Result<TreeView, PortError>;
-
-    /// The live root of one generation.
-    async fn root(
-        &self,
-        session: SessionId,
-        generation: GenerationId,
-    ) -> Result<ContentRoot, PortError>;
-
     /// One page of a live directory listing. No file content is read.
     async fn list(
         &self,
@@ -704,10 +605,6 @@ pub struct AppContext<'a> {
     pub sessions: &'a dyn SessionReader,
     /// The named registry.
     pub registry: &'a dyn RegistryReader,
-    /// Content.
-    pub content: &'a dyn ContentReader,
-    /// The content writer, for what must exist before a commit.
-    pub content_writer: &'a dyn ContentWriter,
     /// Secret custody.
     pub secrets: &'a dyn SecretCustodyReader,
     /// The signed model catalog, behind a synchronous seam. A command-only

@@ -1,4 +1,4 @@
-//! The production `ContinuityReader`.
+//! The production runtime-idle reader.
 //!
 //! `aex_session_app::ports::ContinuityReader` had exactly one implementation in
 //! the tree — `ScriptedPorts` — and every deployable that mounted a route
@@ -28,7 +28,7 @@ use aex_runtime_control::store::{
     GenerationView, ReadConsistency, RuntimeActivityStore, RuntimeStoreError,
 };
 use aex_secret_domain::{TrueIdle, TrueIdleViolation};
-use aex_session_app::ports::{ContinuityReader, PortError, WorkspaceContinuity};
+use aex_session_app::ports::{ContinuityReader, PortError};
 use aex_wire::ids::SessionId;
 use aex_wire::types::Timestamp;
 
@@ -118,26 +118,6 @@ fn violation_of(assessment: &IdleAssessment, now: Timestamp) -> Option<TrueIdleV
 
 #[async_trait::async_trait]
 impl ContinuityReader for RuntimeContinuity {
-    async fn continuity(&self, session: SessionId) -> Result<WorkspaceContinuity, PortError> {
-        let Some(view) = self.current(session).await? else {
-            // No generation has ever been pointed at, or the last one was
-            // retired and the pointer cleared. There is nothing to continue and
-            // nothing to discard.
-            return Ok(WorkspaceContinuity {
-                generation: None,
-                intact: false,
-            });
-        };
-        Ok(WorkspaceContinuity {
-            generation: Some(view.head.generation),
-            // A terminal generation is absorbing: no fence advance re-opens
-            // one, so its workspace is gone whatever the pointer still says.
-            // Everything else, including a suspended generation holding
-            // snapshot bytes, is continuity a discard would actually destroy.
-            intact: holds_continuity(view.head.state),
-        })
-    }
-
     async fn true_idle(&self, session: SessionId) -> Result<TrueIdle, PortError> {
         let Some(view) = self.current(session).await? else {
             // A session with no generation has no guest to disturb, so it is

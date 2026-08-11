@@ -32,7 +32,6 @@ pub mod fold;
 pub mod ids;
 pub mod journal;
 pub mod planner;
-pub mod snapshot;
 pub mod wire_pending;
 
 pub use budget::{BudgetDelta, BudgetError, BudgetGrant, BudgetNode, Dimension, StructuralLimits};
@@ -49,7 +48,3 @@ pub use ids::{
 };
 pub use journal::{FinishReason, JournalDecodeError, JournalEntry, JournalRecord, ParkReason};
 pub use planner::{OwedStep, PlanPolicy, plan};
-pub use snapshot::{
-    FOLD_SNAPSHOT_SCHEMA, FoldSnapshotArtifact, FoldSnapshotError, FoldSnapshotPointer,
-    JournalPoint, VerifiedFoldSnapshot,
-};

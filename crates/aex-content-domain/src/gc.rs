@@ -47,16 +47,10 @@ impl GcEpoch {
 /// Why a body survives a sweep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RetainReason {
-    /// A session root reaches it.
-    RootPin,
     /// A registry pointer reaches it.
     RegistryPin,
     /// An unexpired download grant reaches it.
     GrantPin,
-    /// An unexpired query cursor reaches it.
-    CursorPin,
-    /// An in-flight operation reaches it.
-    OperationPin,
     /// A garbage-collection pin holds it.
     GcPin,
     /// The authority has already moved past the epoch the decision assumed.
@@ -77,8 +71,8 @@ pub enum GcCondition {
         /// The expected epoch.
         expected: GcEpoch,
     },
-    /// No owner edge reaches the body.
-    NoOwnerEdge {
+    /// No direct pin reaches the body.
+    NoDirectPin {
         /// The owning workspace.
         workspace: WorkspaceId,
         /// The body.
@@ -121,7 +115,7 @@ pub struct SweepCandidate {
     pub staged_at: Timestamp,
     /// Which epoch the authority was on when the candidate was collected.
     pub observed_epoch: GcEpoch,
-    /// Every root the candidate is reachable from, as computed by the caller.
+    /// Every direct authority the candidate is reachable from.
     pub reachable_from: Vec<ReachableFrom>,
 }
 
@@ -130,8 +124,6 @@ pub struct SweepCandidate {
 pub enum ReachableFrom {
     /// A pin reaches the body directly.
     Direct(Pin),
-    /// A pin reaches the body through a tree it holds.
-    ThroughRoot(Pin),
 }
 
 impl ReachableFrom {
@@ -139,7 +131,7 @@ impl ReachableFrom {
     #[must_use]
     pub const fn pin(&self) -> &Pin {
         match self {
-            Self::Direct(pin) | Self::ThroughRoot(pin) => pin,
+            Self::Direct(pin) => pin,
         }
     }
 }
@@ -189,7 +181,7 @@ pub fn sweep_decision(
             workspace: candidate.workspace,
             expected: epoch,
         },
-        GcCondition::NoOwnerEdge {
+        GcCondition::NoDirectPin {
             workspace: candidate.workspace,
             digest: candidate.digest,
         },
@@ -202,7 +194,7 @@ pub fn sweep_decision(
 
 #[cfg(test)]
 mod tests {
-    use aex_wire::ids::{PrefixedId as _, SessionId, Uuid7, WorkspaceId};
+    use aex_wire::ids::{PrefixedId as _, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
 
     use super::{
@@ -210,8 +202,7 @@ mod tests {
         SweepDecision, sweep_decision,
     };
     use crate::digest::ContentDigest;
-    use crate::pin::{Pin, PinSet, RootKind};
-    use crate::tree::ContentRoot;
+    use crate::pin::{Pin, PinSet};
 
     fn moment(millis: i64) -> Timestamp {
         Timestamp::from_unix_millis(millis).expect("in range")
@@ -228,15 +219,11 @@ mod tests {
         }
     }
 
-    fn root_pin() -> Pin {
-        Pin::Root {
-            session: SessionId::from_uuid7(Uuid7::compose(1, [2; 10])),
-            kind: RootKind::Persisted,
-            root: ContentRoot {
-                digest: [1; 32],
-                entries: 1,
-                logical_bytes: 4,
-            },
+    fn grant_pin() -> Pin {
+        Pin::Grant {
+            grant: crate::GrantId(Uuid7::compose(1, [2; 10])),
+            digest: ContentDigest::of(b"body"),
+            expires_at: moment(STAGED_ORPHAN_GRACE_MS * 2),
         }
     }
 
@@ -258,14 +245,14 @@ mod tests {
 
     #[test]
     fn a_live_pin_retains() {
-        let pins: PinSet = [root_pin()].into_iter().collect();
+        let pins: PinSet = [grant_pin()].into_iter().collect();
         let decision = sweep_decision(
-            &candidate(vec![ReachableFrom::ThroughRoot(root_pin())]),
+            &candidate(vec![ReachableFrom::Direct(grant_pin())]),
             GcEpoch(3),
             &pins,
             moment(0),
         );
-        assert_eq!(decision, SweepDecision::Retain(RetainReason::RootPin));
+        assert_eq!(decision, SweepDecision::Retain(RetainReason::GrantPin));
     }
 
     #[test]

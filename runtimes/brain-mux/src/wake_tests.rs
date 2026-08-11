@@ -181,7 +181,6 @@ fn produced() -> ProviderOutcome {
 fn bound() -> Bindings {
     Bindings {
         store: BindingState::Ready,
-        snapshots: BindingState::Ready,
         provider: BindingState::Ready,
         catalog: BindingState::Ready,
         tools: BindingState::Ready,
@@ -242,7 +241,6 @@ fn compose_loop(provider: Arc<dyn ProviderPort>) -> Composed {
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -370,7 +368,6 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -545,7 +542,6 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -678,9 +674,6 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
             work_table: "work".to_owned(),
             secret_custody_table: "secret-custody".to_owned(),
             secret_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/fixture".to_owned(),
-            content_bucket: "content".to_owned(),
-            content_expected_owner: "123456789012".to_owned(),
-            content_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/content".to_owned(),
             runtime_activity_table: "runtime-activity".to_owned(),
             usage_compute_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/compute".to_owned(),
             usage_storage_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/storage".to_owned(),

@@ -5,11 +5,11 @@
 
 mod support;
 
-use aex_content_dynamodb::codec::{ContentDescriptor, encode_tree_page};
+use aex_content_dynamodb::codec::ContentDescriptor;
 use aex_content_dynamodb::expressions::{SWEEP_ORDER, sweep};
 use aex_content_dynamodb::keys;
 use aex_content_dynamodb::store::Reachability;
-use aex_content_dynamodb::wire_pending::{Blake3Digest, GcSweepPlan, PinOwner};
+use aex_content_dynamodb::wire_pending::{GcSweepPlan, PinOwner};
 use aex_session_dynamodb::error::{StoreError, decode_cancellation};
 use aex_session_dynamodb::measure;
 use aex_session_dynamodb::plan::Participant;
@@ -17,7 +17,7 @@ use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::CancellationReason;
 use aws_sdk_dynamodb::types::error::TransactionCanceledException;
 
-use support::{TABLE, descriptor, digest, now, organization, workspace};
+use support::{TABLE, descriptor, digest, organization, workspace};
 
 fn cancelled(codes: &[&str]) -> TransactWriteItemsError {
     TransactWriteItemsError::TransactionCanceledException(
@@ -133,23 +133,6 @@ fn a_surviving_pin_or_an_unexpired_grant_makes_a_body_uncollectable() {
 }
 
 #[test]
-fn an_over_large_tree_page_is_refused_with_its_measurement_and_never_as_a_provider_400() {
-    let page = aex_content_dynamodb::codec::TreePage {
-        workspace: workspace(),
-        page: Blake3Digest::of(b"oversized"),
-        level: 0,
-        entry_count: 1,
-        body: vec![7u8; measure::PAGE_TARGET_BYTES + 64],
-        created_at: now(),
-    };
-    let error = encode_tree_page(&page).expect_err("over the page target");
-    assert!(
-        error.to_string().contains("ceiling"),
-        "the measurement is what turns an opaque 400 into an actionable failure: {error}"
-    );
-}
-
-#[test]
 fn an_over_large_descriptor_is_refused_before_it_reaches_the_service() {
     let mut over: ContentDescriptor = descriptor();
     over.media_type = "x".repeat(measure::APPLICATION_ITEM_CEILING + 1);
@@ -158,7 +141,9 @@ fn an_over_large_descriptor_is_refused_before_it_reaches_the_service() {
 
 #[test]
 fn a_pin_identity_carrying_a_separator_stops_every_expression_builder() {
-    let owner = PinOwner::Cursor("cur#evil".to_owned());
-    assert!(keys::root_pin(workspace(), Blake3Digest::from_bytes([1; 32]), &owner).is_err());
+    let owner = PinOwner::Registry {
+        kind: "tool".to_owned(),
+        name: "cur#evil".to_owned(),
+    };
     assert!(keys::pin(workspace(), &digest(1), &owner).is_err());
 }

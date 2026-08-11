@@ -6,7 +6,7 @@
 
 use std::num::NonZeroU64;
 
-use aex_content_domain::{ContentDigest, ContentRoot};
+use aex_content_domain::ContentDigest;
 use aex_internal_contracts::{RunId, journal::JournalEntryKind};
 use aex_operation_domain::DeletionGuard;
 use aex_secret_domain::CustodyRevision;
@@ -22,8 +22,7 @@ use crate::agent::{AgentControl, AgentKind, AgentStatus, MaterializedState, Open
 use crate::approval::{ApprovalBinding, BindingField};
 use crate::budget::BudgetGrant;
 use crate::ids::{
-    AgentRevision, CancellationEpoch, EntryIdentity, JournalSeq, PersistRevision, SessionRevision,
-    UsageClosureId,
+    AgentRevision, CancellationEpoch, EntryIdentity, JournalSeq, SessionRevision, UsageClosureId,
 };
 use crate::journal::{AuthorityFact, JournalBody, JournalEntry};
 use crate::lineage::Lineage;
@@ -56,17 +55,6 @@ pub fn id<T: PrefixedId>(tag: u8) -> T {
 pub fn run_id(tag: u8) -> RunId {
     RunId::from_uuid7(Uuid7::compose(1_700_000_000_000, [tag; 10]))
 }
-
-/// A deterministic content root.
-#[must_use]
-pub fn root(tag: u8) -> ContentRoot {
-    ContentRoot {
-        digest: [tag; 32],
-        entries: u64::from(tag),
-        logical_bytes: u64::from(tag) * 64,
-    }
-}
-
 /// A deterministic spend grant.
 ///
 /// # Panics
@@ -180,10 +168,6 @@ pub fn session_fixture() -> Session {
         root_agent: id::<AgentId>(4),
         generation: None,
         pinned_runtime: pinned_runtime(id_value, workspace, organization),
-        initial_root: root(1),
-        persisted_root: root(1),
-        persist_revision: PersistRevision::INITIAL,
-        last_persisted_at: None,
         custody_revision: CustodyRevision::FIRST,
         lineage: Lineage::ROOT,
         resolved,

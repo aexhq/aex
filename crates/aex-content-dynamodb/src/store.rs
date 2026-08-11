@@ -17,17 +17,15 @@ use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::types::ReturnValuesOnConditionCheckFailure;
-use futures::StreamExt as _;
 
 use crate::codec::{
     self, ContentDescriptor, DownloadGrant, GcEpoch, GrantExpiryCursor, GrantExpiryPosition,
-    TreePage, decode_descriptor, decode_gc_epoch, decode_grant, decode_grant_expiry_cursor,
-    decode_inline_body, decode_tree_page, encode_grant_expiry_cursor,
-    validate_grant_expiry_position,
+    decode_descriptor, decode_gc_epoch, decode_grant, decode_grant_expiry_cursor,
+    decode_inline_body, encode_grant_expiry_cursor, validate_grant_expiry_position,
 };
 use crate::expressions;
 use crate::keys;
-use crate::wire_pending::{Blake3Digest, GcSweepPlan, InlineBody, body_hex};
+use crate::wire_pending::{GcSweepPlan, InlineBody, body_hex};
 
 /// One row of the slim garbage-collection scan projection.
 ///
@@ -162,26 +160,6 @@ pub trait ContentMetadataStore: Send + Sync + 'static {
         workspace: WorkspaceId,
         digest: &ContentHash,
     ) -> Result<Option<InlineBody>, StoreError>;
-
-    /// Reads one Merkle tree page.
-    ///
-    /// # Errors
-    ///
-    /// As [`ContentMetadataStore::load_descriptor`].
-    async fn read_tree_page(
-        &self,
-        workspace: WorkspaceId,
-        page: Blake3Digest,
-    ) -> Result<Option<TreePage>, StoreError>;
-
-    /// Writes tree pages, each immutably.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::Invalid`] for an over-large page, otherwise as above. An
-    /// already-present page is an idempotent success, because a page is
-    /// content-addressed and therefore identical by construction.
-    async fn put_tree_pages(&self, pages: &[TreePage]) -> Result<(), StoreError>;
 
     /// Admits one body: stage the descriptor, commit it, then pin it.
     ///
@@ -334,8 +312,6 @@ enum Consistency {
 /// HTTP pool) rather than a per-table quota — an on-demand table has none.
 /// Eight keeps a large tree write inside one connection pool without queueing
 /// behind itself.
-const MAX_CONCURRENT_TREE_PAGE_PUTS: usize = 8;
-
 /// The adapter.
 #[derive(Debug, Clone)]
 pub struct ContentStore {
@@ -459,40 +435,6 @@ impl ContentStore {
             .map_err(|error| classify(&error, Idempotence::Read))?;
         Ok(output.item)
     }
-
-    /// Writes one immutable tree page, treating a lost condition as replay.
-    async fn put_tree_page(&self, page: &TreePage) -> Result<(), StoreError> {
-        let builder = expressions::put_tree_page(&self.table, page)?;
-        let built = builder.build().map_err(|error| StoreError::Invalid {
-            detail: error.to_string(),
-        })?;
-        let outcome = self
-            .client
-            .put_item()
-            .table_name(&self.table)
-            .set_item(Some(built.item().clone()))
-            .set_condition_expression(built.condition_expression().map(str::to_owned))
-            .send()
-            .await;
-        match outcome {
-            Ok(_) => Ok(()),
-            Err(error) => {
-                // A page is content addressed, so an existing row holds the
-                // identical bytes and the write is an idempotent success.
-                if matches!(
-                    error.as_service_error(),
-                    Some(
-                        aws_sdk_dynamodb::operation::put_item::PutItemError::ConditionalCheckFailedException(
-                            _
-                        )
-                    )
-                ) {
-                    return Ok(());
-                }
-                Err(classify(&error, Idempotence::Write(Resolution::TargetItem)))
-            }
-        }
-    }
 }
 
 #[async_trait]
@@ -554,38 +496,6 @@ impl ContentMetadataStore for ContentStore {
             None => Ok(None),
             Some(item) => Ok(Some(decode_inline_body(&item, workspace)?)),
         }
-    }
-
-    async fn read_tree_page(
-        &self,
-        workspace: WorkspaceId,
-        page: Blake3Digest,
-    ) -> Result<Option<TreePage>, StoreError> {
-        let target = keys::tree_page(workspace, page);
-        match self
-            .get(&target.pk, &target.sk, Consistency::Eventual)
-            .await?
-        {
-            None => Ok(None),
-            Some(item) => Ok(Some(decode_tree_page(&item, workspace)?)),
-        }
-    }
-
-    async fn put_tree_pages(&self, pages: &[TreePage]) -> Result<(), StoreError> {
-        // Every put is built before the wave starts (an unpolled future has
-        // issued nothing), then driven at a fixed width instead of serially -
-        // a large tree commit was paying one round trip per page. `buffered`
-        // settles in input order, so the error a caller sees is the earliest
-        // failing page, and dropping the stream on that error cancels the rest;
-        // cancelling a content-addressed conditional put is safe because a
-        // replay writes the identical bytes or loses its condition, which is
-        // treated as success either way.
-        let puts: Vec<_> = pages.iter().map(|page| self.put_tree_page(page)).collect();
-        let mut open = futures::stream::iter(puts).buffered(MAX_CONCURRENT_TREE_PAGE_PUTS);
-        while let Some(outcome) = open.next().await {
-            outcome?;
-        }
-        Ok(())
     }
 
     async fn admit_body(
@@ -651,11 +561,9 @@ impl ContentMetadataStore for ContentStore {
 
         let mut entries = Vec::new();
         for item in output.items.unwrap_or_default() {
-            // The projection carries `digestSha256` for a body or a candidate
-            // and `pageDigest` for a tree page; exactly one of them is present.
+            // Every projected registered body or candidate carries its SHA-256 identity.
             let digest = item
                 .get("digestSha256")
-                .or_else(|| item.get("pageDigest"))
                 .and_then(|value| value.as_s().ok())
                 .cloned()
                 .ok_or(StoreError::Invalid {

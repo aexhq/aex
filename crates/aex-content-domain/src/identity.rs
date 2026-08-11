@@ -1,8 +1,8 @@
 //! Identities the contract stream does not mint.
 //!
 //! `aex-wire` owns every identifier that crosses the customer boundary. Three
-//! reachability subjects — a download grant, a query cursor and a registry
-//! revision — plus the registry's kind vocabulary are reachability authorities
+//! reachability subjects — a download grant and a registry revision — plus the
+//! registry's kind vocabulary are reachability authorities
 //! that no public route names by id, so they are declared here, once, in the
 //! lowest crate of the regional pure stack.
 //!
@@ -17,10 +17,6 @@ use aex_wire::ids::Uuid7;
 /// Identifies one minted download grant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GrantId(pub Uuid7);
-
-/// Identifies one open query cursor holding a root pinned.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CursorId(pub Uuid7);
 
 /// A registry pointer's strong monotone concurrency token.
 ///

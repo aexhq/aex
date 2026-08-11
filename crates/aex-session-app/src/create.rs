@@ -3,9 +3,8 @@
 //! One transaction, **constant** in request size: five items always plus one
 //! conditional, whatever the request selected (A D-1, A D-5). The 1088
 //! registered names, 64 secrets and 64 packages a maximal request may carry all
-//! collapse into values that ride existing items — the selection into one sealed
-//! content root, the secrets into one custody record, the packages into the
-//! resolved-configuration document on the head.
+//! collapse into values that ride existing items — the registered names and packages into
+//! the resolved-configuration document on the head, and the secrets into one custody record.
 //!
 //! # What this use case deliberately does not do
 //!
@@ -29,7 +28,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use aex_content_domain::{ContentRoot, OwnerEdge, Pin, PinSubject, RegistryKind, RootKind};
+use aex_content_domain::RegistryKind;
 use aex_secret_domain::{OwnerKeyEdgeId, SecretName, admit_custody};
 use aex_session_domain::{
     AgentControl, AgentKind, AgentStatus, CommandClass, DeletionGuard, IdempotencyIdentity,
@@ -49,7 +48,7 @@ use crate::error::AppError;
 use crate::plan::{
     Condition, ItemKey, Planned, SessionTransaction, TableFamily, TransactionIntent, Write,
 };
-use crate::ports::{AppContext, SealedRegistryEntry};
+use crate::ports::AppContext;
 
 /// The idempotency scope every create receipt is filed under.
 ///
@@ -102,7 +101,6 @@ pub async fn create_session(
         prepared.size,
         prepared.network,
         prepared.limits_revision,
-        &prepared.initial_root,
     )?;
 
     let custody = if command
@@ -145,12 +143,6 @@ pub async fn create_session(
         // create makes no provider call at all.
         generation: None,
         pinned_runtime: pinned,
-        initial_root: prepared.initial_root,
-        // A new session has persisted nothing. Its durable root is its initial
-        // one, which is what a first persist advances from.
-        persisted_root: prepared.initial_root,
-        persist_revision: aex_session_domain::PersistRevision::INITIAL,
-        last_persisted_at: None,
         custody_revision: custody
             .as_ref()
             .map_or(aex_secret_domain::CustodyRevision::FIRST, |custody| {
@@ -198,7 +190,6 @@ struct PreparedCreate<'a> {
     network: aex_runtime_control::generation::NetworkPolicy,
     limits_revision: u64,
     selectors: Vec<RegistrySelector>,
-    initial_root: ContentRoot,
 }
 
 async fn prepare_create<'a>(
@@ -271,7 +262,7 @@ async fn prepare_create<'a>(
     }
 
     let selectors = selectors_of(command);
-    let initial_root = seal(context, command, &selectors).await?;
+    validate_registry_selection(context, command, &selectors).await?;
 
     Ok(PreparedCreate {
         deployment,
@@ -280,7 +271,6 @@ async fn prepare_create<'a>(
         network,
         limits_revision: bundle.revision,
         selectors,
-        initial_root,
     })
 }
 
@@ -317,23 +307,6 @@ fn build_plan(
         Write::PutAgentControl(Box::new(root_agent)),
         Write::PutIdempotencyReceipt(Box::new(receipt)),
     ];
-
-    // A pin on an empty root retains nothing, so an empty seal writes neither
-    // content item and a create with no selection and no secrets is three items
-    // in one table.
-    if session.initial_root.entries > 0 {
-        let pin = Pin::Root {
-            session: session.id,
-            kind: RootKind::Initial,
-            root: session.initial_root,
-        };
-        writes.push(Write::PutPin(Box::new(pin.clone())));
-        writes.push(Write::PutOwnerEdge(Box::new(OwnerEdge {
-            workspace: session.workspace,
-            subject: PinSubject::Session(session.id),
-            pin,
-        })));
-    }
 
     if let Some(custody) = custody {
         conditions.push(Condition::ItemAbsent(ItemKey {
@@ -451,25 +424,18 @@ fn selectors_of(command: &CreateSession) -> Vec<RegistrySelector> {
     selectors
 }
 
-/// Seals the selected registry resolution into the session's initial root.
+/// Proves every registered name in the request exists in this workspace.
 ///
-/// The seal is a point-in-time snapshot by definition, so the transaction
-/// carries **no** `Condition::RegistryEtag` (A D-4): a concurrent registry
-/// mutation between this read and the commit does not invalidate the session,
-/// it means the session mounted the earlier revision, which is what "sealed"
-/// means. Conditioning on up to 1088 pointers would breach the 100-action
-/// ceiling to enforce a property the seal does not want.
-async fn seal(
+/// Session content is not copied, pinned, or sealed into an S3-backed filesystem root. The
+/// resolved configuration retains the requested registry names and the registry/content
+/// authorities continue to own their bodies independently of session lifetime.
+async fn validate_registry_selection(
     context: &AppContext<'_>,
     command: &CreateSession,
     selectors: &[RegistrySelector],
-) -> Result<ContentRoot, AppError> {
+) -> Result<(), AppError> {
     if selectors.is_empty() {
-        return Ok(ContentRoot {
-            digest: [0; 32],
-            entries: 0,
-            logical_bytes: 0,
-        });
+        return Ok(());
     }
     let pointers = context
         .registry
@@ -482,19 +448,7 @@ async fn seal(
             kind: "registered resource",
         }));
     }
-    let entries: Vec<SealedRegistryEntry> = pointers
-        .iter()
-        .map(|pointer| SealedRegistryEntry {
-            kind: pointer.row.kind,
-            name: pointer.row.name.clone(),
-            revision: pointer.row.revision,
-            digest: pointer.row.sha256,
-        })
-        .collect();
-    Ok(context
-        .content_writer
-        .seal_registry_manifest(command.workspace, &entries)
-        .await?)
+    Ok(())
 }
 
 /// The session's first credential custody, when the request named secrets.
@@ -640,7 +594,6 @@ fn pinned_runtime(
     size: ComputeSize,
     network: aex_runtime_control::generation::NetworkPolicy,
     limits_revision: u64,
-    _root: &ContentRoot,
 ) -> Result<PinnedRuntime, AppError> {
     let image = deployment
         .images

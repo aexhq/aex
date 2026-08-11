@@ -946,8 +946,7 @@ impl Session<'_> {
         }
     }
 
-    /// Rebuilds the fold from a verified immutable snapshot plus a bounded journal suffix,
-    /// or one explicit bounded sequence-zero fallback.
+    /// Rebuilds the fold from the bounded authoritative journal.
     ///
     /// A page that observes a gap returns no entries at all, so the agent never acts on a
     /// prefix of its own history: `read_page` refuses and this propagates the refusal. The
@@ -960,16 +959,12 @@ impl Session<'_> {
     }
 
     async fn load_fold(&self) -> Result<super::restore::RestoredFold, ActivationError> {
-        let (claimed_seq, claimed_hash, workspace) = {
+        let (claimed_seq, claimed_hash) = {
             let claim = self
                 .claim
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            (
-                claim.head.journal_tail,
-                claim.head.journal_tail_hash,
-                claim.authority.workspace,
-            )
+            (claim.head.journal_tail, claim.head.journal_tail_hash)
         };
         let revision = self
             .claim
@@ -995,14 +990,11 @@ impl Session<'_> {
         }
         let restored = super::restore::restore(
             self.ports.journal.as_ref(),
-            self.ports.snapshots.as_ref(),
-            workspace,
             self.key,
             claimed_seq,
             claimed_hash,
             self.policy.read,
             self.policy.restore,
-            self.policy.max_snapshot_bytes,
         )
         .await?;
         Ok(restored)

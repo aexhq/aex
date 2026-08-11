@@ -18,14 +18,13 @@ use crate::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
     ClockPort, CommitError, CommitReceipt, ConditionFailure, DecisionContext, DetachedStatus,
     DispatchTicket, DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage,
-    DurableWake, EffectStore, FenceGuard, FoldSnapshotStore, HandsAccepted, HandsEndpoint,
-    HandsError, HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalCursor,
-    JournalPage, JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery,
-    MalformedWakeReason, PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome,
-    ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SessionAuthority,
-    SnapshotPublishOutcome, SteadyInstant, StoreError, StreamBudget, ToolAdvertisement,
-    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, WakeBatch, WakeDelivery,
-    WakeOrigin, WakeQueue, WakeState,
+    DurableWake, EffectStore, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
+    HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalCursor, JournalPage,
+    JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery, MalformedWakeReason,
+    PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome, ProviderPort,
+    ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SessionAuthority, SteadyInstant,
+    StoreError, StreamBudget, ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolPort,
+    ToolRoute, ToolRoutingError, WakeBatch, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
 };
 use aex_brain_domain::budget::BudgetNode;
 use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
@@ -38,10 +37,9 @@ use aex_brain_domain::ids::{
     ToolName, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
-use aex_brain_domain::snapshot::{FoldSnapshotArtifact, FoldSnapshotPointer};
 use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
 use aex_model_catalog::{CatalogError as ModelCatalogError, QualifiedModel};
-use aex_wire::ids::{ContentHash as BodyDigest, GenerationId, PrefixedId, Uuid7};
+use aex_wire::ids::{GenerationId, PrefixedId, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -647,9 +645,6 @@ pub struct MemoryStore {
     commit_faults: Mutex<VecDeque<Option<CommitError>>>,
     read_faults: Mutex<VecDeque<StoreError>>,
     read_pages: Mutex<VecDeque<JournalPage>>,
-    snapshot_pointers: Mutex<BTreeMap<AgentKey, FoldSnapshotPointer>>,
-    snapshot_bodies: Mutex<BTreeMap<BodyDigest, Vec<u8>>>,
-    snapshot_faults: Mutex<VecDeque<StoreError>>,
     dispatch_head_races: Mutex<VecDeque<DispatchHeadRace>>,
     clock: Arc<FixedClock>,
     queue: Arc<MemoryQueue>,
@@ -667,9 +662,6 @@ impl MemoryStore {
             commit_faults: Mutex::new(VecDeque::new()),
             read_faults: Mutex::new(VecDeque::new()),
             read_pages: Mutex::new(VecDeque::new()),
-            snapshot_pointers: Mutex::new(BTreeMap::new()),
-            snapshot_bodies: Mutex::new(BTreeMap::new()),
-            snapshot_faults: Mutex::new(VecDeque::new()),
             dispatch_head_races: Mutex::new(VecDeque::new()),
             clock,
             queue,
@@ -863,48 +855,6 @@ impl MemoryStore {
             .lock()
             .expect("not poisoned")
             .push_back(page);
-    }
-
-    /// Scripts the next snapshot pointer/body read to fail.
-    pub fn fail_next_snapshot_read(&self, error: StoreError) {
-        self.snapshot_faults
-            .lock()
-            .expect("not poisoned")
-            .push_back(error);
-    }
-
-    /// Replaces an immutable body in the fixture to model storage corruption.
-    pub fn corrupt_snapshot_body(&self, digest: BodyDigest, body: Vec<u8>) {
-        self.snapshot_bodies
-            .lock()
-            .expect("not poisoned")
-            .insert(digest, body);
-    }
-
-    /// Installs an exact pointer/body pair without publication validation.
-    ///
-    /// This is a hostile-storage fixture: restore tests use it to prove that a pointer
-    /// ahead of the claim, a same-sequence fork, or malformed bytes fail closed. Normal
-    /// tests should call [`FoldSnapshotStore::publish`] instead.
-    pub fn seed_snapshot_unchecked(&self, pointer: FoldSnapshotPointer, body: Vec<u8>) {
-        self.snapshot_bodies
-            .lock()
-            .expect("not poisoned")
-            .insert(pointer.body_digest, body);
-        self.snapshot_pointers
-            .lock()
-            .expect("not poisoned")
-            .insert(pointer.agent, pointer);
-    }
-
-    /// Returns the currently selected snapshot pointer.
-    #[must_use]
-    pub fn snapshot_pointer(&self, key: AgentKey) -> Option<FoldSnapshotPointer> {
-        self.snapshot_pointers
-            .lock()
-            .expect("not poisoned")
-            .get(&key)
-            .cloned()
     }
 
     /// Replaces the tail pair returned with the next claim without changing stored pages.
@@ -1251,145 +1201,6 @@ impl JournalStore for MemoryStore {
                 wakes,
                 committed_at: now,
             })
-        })
-    }
-}
-
-impl FoldSnapshotStore for MemoryStore {
-    fn load_latest<'a>(
-        &'a self,
-        key: &'a AgentKey,
-    ) -> BoxFuture<'a, Result<Option<FoldSnapshotPointer>, StoreError>> {
-        Box::pin(async move {
-            self.log.note("snapshot_load_latest");
-            if let Some(fault) = self
-                .snapshot_faults
-                .lock()
-                .expect("not poisoned")
-                .pop_front()
-            {
-                return Err(fault);
-            }
-            Ok(self
-                .snapshot_pointers
-                .lock()
-                .expect("not poisoned")
-                .get(key)
-                .cloned())
-        })
-    }
-
-    fn load_body<'a>(
-        &'a self,
-        workspace: aex_wire::ids::WorkspaceId,
-        pointer: &'a FoldSnapshotPointer,
-        max_bytes: usize,
-    ) -> BoxFuture<'a, Result<Vec<u8>, StoreError>> {
-        Box::pin(async move {
-            self.log.note("snapshot_load_body");
-            if let Some(fault) = self
-                .snapshot_faults
-                .lock()
-                .expect("not poisoned")
-                .pop_front()
-            {
-                return Err(fault);
-            }
-            if self
-                .authorities
-                .lock()
-                .expect("not poisoned")
-                .get(&pointer.agent.session)
-                .is_none_or(|authority| authority.workspace != workspace)
-            {
-                return Err(StoreError::SessionWorkspaceMismatch);
-            }
-            if pointer.body_bytes > u64::try_from(max_bytes).unwrap_or(u64::MAX) {
-                return Err(StoreError::SnapshotBodyTooLarge {
-                    declared: pointer.body_bytes,
-                    max: max_bytes,
-                });
-            }
-            self.snapshot_bodies
-                .lock()
-                .expect("not poisoned")
-                .get(&pointer.body_digest)
-                .cloned()
-                .ok_or_else(|| StoreError::ContentUnavailable {
-                    reference: pointer.body_digest.to_wire(),
-                    reason: "the immutable snapshot body is absent".to_owned(),
-                })
-        })
-    }
-
-    fn publish<'a>(
-        &'a self,
-        workspace: aex_wire::ids::WorkspaceId,
-        artifact: &'a FoldSnapshotArtifact,
-    ) -> BoxFuture<'a, Result<SnapshotPublishOutcome, StoreError>> {
-        Box::pin(async move {
-            self.log.note("snapshot_publish");
-            let pointer = artifact.pointer();
-            let body = artifact.body();
-            if self
-                .authorities
-                .lock()
-                .expect("not poisoned")
-                .get(&pointer.agent.session)
-                .is_none_or(|authority| authority.workspace != workspace)
-            {
-                return Err(StoreError::SessionWorkspaceMismatch);
-            }
-            pointer
-                .verify(pointer.agent, body, body.len())
-                .map_err(|diagnostic| StoreError::SnapshotRejected {
-                    diagnostic: diagnostic.into(),
-                })?;
-
-            let agents = self.agents.lock().expect("not poisoned");
-            let row = agents
-                .get(&pointer.agent)
-                .ok_or(StoreError::SnapshotHistoricalMismatch)?;
-            let historical = row.entries.iter().find(|entry| {
-                entry.envelope.seq == pointer.absorbed.seq
-                    && entry.envelope.content_hash == pointer.absorbed.hash
-            });
-            if historical.is_none() || row.tail.is_none_or(|tail| tail < pointer.absorbed.seq) {
-                return Err(StoreError::SnapshotHistoricalMismatch);
-            }
-            drop(agents);
-
-            let mut bodies = self.snapshot_bodies.lock().expect("not poisoned");
-            if let Some(existing) = bodies.get(&pointer.body_digest) {
-                if existing != body {
-                    return Err(StoreError::Undecodable {
-                        location: "snapshot content address".to_owned(),
-                        reason: "two bodies claimed one SHA-256 digest".to_owned(),
-                    });
-                }
-            } else {
-                bodies.insert(pointer.body_digest, body.to_vec());
-            }
-            drop(bodies);
-
-            let mut pointers = self.snapshot_pointers.lock().expect("not poisoned");
-            if let Some(current) = pointers.get(&pointer.agent) {
-                if current.absorbed.seq > pointer.absorbed.seq {
-                    return Ok(SnapshotPublishOutcome::Superseded {
-                        current: current.absorbed,
-                    });
-                }
-                if current.absorbed.seq == pointer.absorbed.seq {
-                    if current == pointer {
-                        return Ok(SnapshotPublishOutcome::AlreadyCurrent);
-                    }
-                    return Err(StoreError::SnapshotPointerConflict {
-                        seq: current.absorbed.seq,
-                    });
-                }
-            }
-            pointers.insert(pointer.agent, pointer.clone());
-            Ok(SnapshotPublishOutcome::Published)
         })
     }
 }

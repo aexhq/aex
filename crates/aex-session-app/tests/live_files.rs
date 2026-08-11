@@ -3,10 +3,7 @@
 //!
 //! The point of this file is what it does **not** assert. A live listing is
 //! answered from the guest's `lstat`, so no case here reads content, asks for a
-//! digest, or touches the `ContentReader` port that the persistence machinery
-//! lives behind. `ScriptedPorts`' `ContentReader` refuses every call, so a use
-//! case that reached for a `TreeView` to answer `ls` would fail here rather
-//! than quietly pay for a full workspace hash.
+//! digest, or builds a persisted tree.
 
 use aex_session_app::testing::{CountingIds, FixedClock, PortCall, ScriptedPorts};
 use aex_session_app::{
@@ -73,7 +70,6 @@ async fn a_listing_reports_mode_mtime_and_size_and_never_reads_content() {
     .expect("the listing succeeds");
 
     assert_eq!(read.generation, generation(7));
-    assert!(read.intact);
     let observed: Vec<&str> = read
         .observed
         .entries
@@ -94,17 +90,11 @@ async fn a_listing_reports_mode_mtime_and_size_and_never_reads_content() {
     assert_eq!(first.size_bytes, 12);
     assert_eq!(first.mtime, moment(1_700));
 
-    // The content authority was never consulted. A listing served through
-    // `scan` -> `TreeView` would have had to load pages from it, and this port
-    // refuses every call, so that route cannot pass unnoticed.
+    // The content authority was never consulted.
     let calls = ports.calls();
     assert!(
         !calls.contains(&PortCall::Read("content")) && !calls.contains(&PortCall::Read("page")),
         "answering `ls` must not touch the content authority: {calls:?}"
-    );
-    assert!(
-        !calls.contains(&PortCall::Read("scan")),
-        "a live listing must not route through the persistence scan: {calls:?}"
     );
     assert!(calls.contains(&PortCall::Read("live_list")));
     assert!(
@@ -236,7 +226,7 @@ async fn a_session_with_no_generation_in_force_fails_rather_than_listing_nothing
 
 #[tokio::test]
 async fn a_pinned_generation_that_is_no_longer_in_force_is_refused() {
-    // A successor generation is a different filesystem. Answering from it would
+    // A different generation is a different filesystem. Answering from it would
     // return a confident wrong answer to the question that was asked.
     let ports = ScriptedPorts::idle()
         .with_generation(generation(7))

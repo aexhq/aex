@@ -24,10 +24,9 @@ use crate::kernel::{
 };
 use crate::ports::{
     BoxFuture, CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure,
-    DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, FoldSnapshotStore as _,
-    JournalCursor, JournalPage, LeaseStore as _, PreviewSink, ProviderDispatchError,
-    ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ReleaseDisposition,
-    SnapshotDiagnostic, SnapshotPublishOutcome, StoreError, StreamBudget, ToolAdvertisement,
+    DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, JournalCursor, JournalPage,
+    LeaseStore as _, PreviewSink, ProviderDispatchError, ProviderFailureKind, ProviderOutcome,
+    ProviderPort, RedactedDetail, ReleaseDisposition, StoreError, StreamBudget, ToolAdvertisement,
     ToolDispatchError, ToolOutcome, ToolResultBody, ToolRoute, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
@@ -44,7 +43,6 @@ use aex_brain_domain::ids::{
 use aex_brain_domain::journal::{
     ExecutorRoute, FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
 };
-use aex_brain_domain::snapshot::{FoldSnapshotArtifact, JournalPoint, SnapshotReplay};
 use aex_brain_domain::wire_pending::{
     AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
     ProviderId, ResolvedAgentConfig, Role, StopReason,
@@ -55,10 +53,7 @@ use aex_model_catalog::canonical::{
 use aex_model_catalog::document::{Capability, CapabilitySet};
 use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
 use aex_wire::CanonicalJson;
-use aex_wire::ids::{
-    ContentHash as SnapshotDigest, GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7,
-    WorkspaceId,
-};
+use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7};
 use core::future::Future as _;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -380,7 +375,6 @@ impl Harness {
     fn ports(&self) -> Ports {
         Ports {
             journal: Arc::clone(&self.store) as Arc<_>,
-            snapshots: Arc::clone(&self.store) as Arc<_>,
             effects: Arc::clone(&self.store) as Arc<_>,
             leases: Arc::clone(&self.store) as Arc<_>,
             wakes: Arc::clone(&self.queue) as Arc<_>,
@@ -2736,8 +2730,6 @@ fn restore_fixture(
     let tail_hash = entries.last().map(|entry| entry.envelope.content_hash);
     block_on(super::restore::restore(
         store,
-        store,
-        fixture_authority().workspace,
         key(),
         tail,
         tail_hash,
@@ -2746,80 +2738,54 @@ fn restore_fixture(
             max_bytes: usize::MAX,
         },
         budget,
-        usize::MAX,
     ))
 }
 
-fn snapshot_artifact(entries: &[JournalEntry]) -> FoldSnapshotArtifact {
-    let mut replay = SnapshotReplay::from_sequence_zero();
-    for entry in entries {
-        replay.apply(entry).expect("snapshot replay folds");
-    }
-    let tail = entries.last().expect("snapshot history is non-empty");
-    replay
-        .finish_exact(
-            key(),
-            JournalPoint {
-                seq: tail.envelope.seq,
-                hash: tail.envelope.content_hash,
-            },
-        )
-        .expect("snapshot replay finishes at its exact tail")
-}
-
-/// A snapshot is useful only if it can absorb old history while the authoritative journal
-/// continues moving. Publication therefore proves the historical row, not exact current head.
+/// A cold activation has one authority: the complete bounded journal from sequence zero.
 #[test]
-fn stale_verified_snapshot_replays_only_the_bounded_suffix() {
+fn cold_restore_replays_the_complete_journal_from_zero() {
     let harness = Harness::new(Vec::new());
     let entries = history();
-    let artifact = snapshot_artifact(&entries[..1]);
-    assert_eq!(
-        block_on(
-            harness
-                .store
-                .publish(fixture_authority().workspace, &artifact),
-        )
-        .expect("historical point is authoritative"),
-        SnapshotPublishOutcome::Published
-    );
-
     let restored = restore_fixture(
         &harness.store,
         &entries,
         RestoreBudget {
-            max_entries: 1,
-            max_bytes: artifact
-                .body()
-                .len()
-                .saturating_add(journal_bytes(&entries[1..])),
+            max_entries: entries.len(),
+            max_bytes: journal_bytes(&entries),
         },
     )
-    .expect("one-entry suffix fits while sequence-zero replay does not");
+    .expect("the complete journal fits");
 
     assert_eq!(restored.state, fold(&entries).expect("full history folds"));
-    assert_eq!(
-        restored.source,
-        RestoreSource::Snapshot {
-            absorbed: artifact.pointer().absorbed,
-            snapshot_bytes: artifact.body().len(),
-            suffix_entries: 1,
-            suffix_bytes: journal_bytes(&entries[1..]),
-        }
-    );
+    assert_eq!(restored.source, RestoreSource::JournalFromZero);
+    assert_eq!(restored.retained_bytes, journal_bytes(&entries));
+}
 
-    let one_byte_short = artifact
-        .body()
-        .len()
-        .saturating_add(journal_bytes(&entries[1..]))
-        .saturating_sub(1);
+/// Brain cannot hide an oversized cold restore behind a filesystem or object-store image.
+#[test]
+fn cold_restore_refuses_when_the_complete_journal_exceeds_either_bound() {
+    let harness = Harness::new(Vec::new());
+    let entries = history();
     assert!(matches!(
         restore_fixture(
             &harness.store,
             &entries,
             RestoreBudget {
                 max_entries: 1,
-                max_bytes: one_byte_short,
+                max_bytes: usize::MAX,
+            },
+        ),
+        Err(ActivationError::Store(
+            StoreError::RestoreBudgetExhausted { .. }
+        ))
+    ));
+    assert!(matches!(
+        restore_fixture(
+            &harness.store,
+            &entries,
+            RestoreBudget {
+                max_entries: entries.len(),
+                max_bytes: journal_bytes(&entries).saturating_sub(1),
             },
         ),
         Err(ActivationError::Store(
@@ -2828,213 +2794,15 @@ fn stale_verified_snapshot_replays_only_the_bounded_suffix() {
     ));
 }
 
-/// Corrupt optimization bytes may degrade to bounded journal replay. If that replay is too
-/// large, the terminal error must retain both the snapshot rejection and the journal bound.
+/// A historical claim cannot make later authoritative journal rows disappear.
 #[test]
-fn corrupt_snapshot_falls_back_when_small_and_preserves_both_causes_when_large() {
+fn journal_rows_beyond_the_claim_never_reach_planning() {
     let harness = Harness::new(Vec::new());
     let entries = history();
-    let artifact = snapshot_artifact(&entries[..1]);
-    block_on(
-        harness
-            .store
-            .publish(fixture_authority().workspace, &artifact),
-    )
-    .expect("snapshot publishes");
-    let mut corrupt = artifact.body().to_vec();
-    corrupt[0] ^= 1;
-    harness
-        .store
-        .corrupt_snapshot_body(artifact.pointer().body_digest, corrupt);
-
-    let restored = restore_fixture(
-        &harness.store,
-        &entries,
-        RestoreBudget {
-            max_entries: entries.len(),
-            max_bytes: artifact
-                .body()
-                .len()
-                .saturating_add(journal_bytes(&entries)),
-        },
-    )
-    .expect("authoritative fallback fits");
-    assert!(
-        matches!(
-            restored.source,
-            RestoreSource::JournalFallback {
-                diagnostic: SnapshotDiagnostic::Rejected(_)
-            }
-        ),
-        "unexpected restore source: {:?}",
-        restored.source
-    );
-
-    let error = restore_fixture(
-        &harness.store,
-        &entries,
-        RestoreBudget {
-            max_entries: 1,
-            max_bytes: artifact
-                .body()
-                .len()
-                .saturating_add(journal_bytes(&entries)),
-        },
-    )
-    .expect_err("the same corrupt snapshot cannot hide an oversized fallback");
-    assert!(matches!(
-        error,
-        ActivationError::SnapshotFallbackFailed {
-            snapshot: SnapshotDiagnostic::Rejected(_),
-            fallback,
-        } if matches!(*fallback, ActivationError::Store(StoreError::RestoreBudgetExhausted { .. }))
-    ));
-}
-
-/// Two fresh restore calls against one durable fixture model process restart/horizontal
-/// handoff: neither call depends on mux-local state or a previous decoded `FoldState`.
-#[test]
-fn snapshot_restore_survives_process_handoff_without_local_authority() {
-    let harness = Harness::new(Vec::new());
-    let entries = history();
-    let artifact = snapshot_artifact(&entries[..1]);
-    block_on(
-        harness
-            .store
-            .publish(fixture_authority().workspace, &artifact),
-    )
-    .expect("snapshot publishes");
-    let budget = RestoreBudget {
-        max_entries: 1,
-        max_bytes: usize::MAX,
-    };
-
-    let first = restore_fixture(&harness.store, &entries, budget).expect("first process restores");
-    let second =
-        restore_fixture(&harness.store, &entries, budget).expect("successor process restores");
-    assert_eq!(first, second);
-    assert_eq!(harness.log.count("snapshot_load_latest"), 2);
-    assert_eq!(harness.log.count("snapshot_load_body"), 2);
-}
-
-/// Workspace authority is request-scoped but still mandatory. A mismatch is not treated as
-/// an unavailable optimization because sequence-zero fallback would hide an authorization bug.
-#[test]
-fn snapshot_body_workspace_mismatch_is_fatal_before_journal_fallback() {
-    let harness = Harness::new(Vec::new());
-    let entries = history();
-    let artifact = snapshot_artifact(&entries[..1]);
-    block_on(
-        harness
-            .store
-            .publish(fixture_authority().workspace, &artifact),
-    )
-    .expect("snapshot publishes");
-    let wrong_workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [7; 10]));
-    let tail = entries.last().expect("history is non-empty");
-
-    assert_eq!(
-        block_on(super::restore::restore(
-            harness.store.as_ref(),
-            harness.store.as_ref(),
-            wrong_workspace,
-            key(),
-            Some(tail.envelope.seq),
-            Some(tail.envelope.content_hash),
-            crate::ports::ReadBudget {
-                max_entries: 64,
-                max_bytes: usize::MAX,
-            },
-            RestoreBudget {
-                max_entries: entries.len(),
-                max_bytes: usize::MAX,
-            },
-            usize::MAX,
-        )),
-        Err(ActivationError::Store(StoreError::SessionWorkspaceMismatch))
-    );
-    assert_eq!(harness.log.count("read_page"), 0);
-}
-
-/// Pointer selection is monotonic. A slower publisher cannot roll back a newer cut, and an
-/// impossible second body at the same sequence is quarantined rather than selected.
-#[test]
-fn snapshot_publication_refuses_rollback_and_same_sequence_conflict() {
-    let harness = Harness::new(Vec::new());
-    let entries = history();
-    let old = snapshot_artifact(&entries[..1]);
-    let current = snapshot_artifact(&entries);
-    let wrong_workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [7; 10]));
-    assert_eq!(
-        block_on(harness.store.publish(wrong_workspace, &current)),
-        Err(StoreError::SessionWorkspaceMismatch)
-    );
-    assert_eq!(
-        block_on(
-            harness
-                .store
-                .publish(fixture_authority().workspace, &current),
-        )
-        .expect("current snapshot publishes"),
-        SnapshotPublishOutcome::Published
-    );
-    assert_eq!(
-        block_on(
-            harness
-                .store
-                .publish(fixture_authority().workspace, &current),
-        )
-        .expect("exact retry is idempotent"),
-        SnapshotPublishOutcome::AlreadyCurrent
-    );
-    assert_eq!(
-        block_on(harness.store.publish(fixture_authority().workspace, &old),)
-            .expect("rollback is a typed no-op"),
-        SnapshotPublishOutcome::Superseded {
-            current: current.pointer().absorbed,
-        }
-    );
-    assert_eq!(
-        harness.store.snapshot_pointer(key()),
-        Some(current.pointer().clone())
-    );
-
-    let mut hostile = current.pointer().clone();
-    hostile.body_digest = SnapshotDigest::of(b"different derived bytes");
-    harness
-        .store
-        .seed_snapshot_unchecked(hostile, b"different derived bytes".to_vec());
-    assert_eq!(
-        block_on(
-            harness
-                .store
-                .publish(fixture_authority().workspace, &current),
-        ),
-        Err(StoreError::SnapshotPointerConflict {
-            seq: current.pointer().absorbed.seq,
-        })
-    );
-}
-
-/// A valid body that is ahead of the fenced claim is never allowed to seed planning. If
-/// authoritative replay sees more rows than the claimed bound, both refusals remain typed.
-#[test]
-fn snapshot_ahead_of_claim_is_diagnostic_not_authority() {
-    let harness = Harness::new(Vec::new());
-    let entries = history();
-    let current = snapshot_artifact(&entries);
-    block_on(
-        harness
-            .store
-            .publish(fixture_authority().workspace, &current),
-    )
-    .expect("snapshot publishes");
     let claimed = &entries[..1];
 
-    let restored = block_on(super::restore::restore(
+    let error = block_on(super::restore::restore(
         harness.store.as_ref(),
-        harness.store.as_ref(),
-        fixture_authority().workspace,
         key(),
         claimed.last().map(|entry| entry.envelope.seq),
         claimed.last().map(|entry| entry.envelope.content_hash),
@@ -3043,44 +2811,28 @@ fn snapshot_ahead_of_claim_is_diagnostic_not_authority() {
             max_bytes: usize::MAX,
         },
         RestoreBudget {
-            max_entries: claimed.len(),
+            max_entries: entries.len(),
             max_bytes: usize::MAX,
         },
-        usize::MAX,
     ))
-    .expect_err("the fixture journal still exposes rows beyond the historical claim");
-    assert!(
-        matches!(
-            restored,
-            ActivationError::SnapshotFallbackFailed {
-                snapshot: SnapshotDiagnostic::AheadOfClaim { .. },
-                ref fallback,
-            } if matches!(**fallback, ActivationError::Store(StoreError::RestoreBudgetExhausted { .. }))
-        ),
-        "unexpected restore error: {restored:?}"
-    );
+    .expect_err("the complete journal disagrees with the historical claim");
+    assert!(matches!(
+        error,
+        ActivationError::Store(StoreError::JournalTailMismatch { .. })
+    ));
 }
 
-/// Same sequence is insufficient authority: a claimed hash fork rejects the snapshot and
-/// preserves the authoritative replay's independent tail mismatch.
+/// Same sequence is insufficient authority: the claimed hash must equal the journal hash.
 #[test]
-fn snapshot_same_sequence_fork_never_reaches_planning() {
+fn claimed_hash_fork_never_reaches_planning() {
     let harness = Harness::new(Vec::new());
     let entries = history();
-    let snapshot = snapshot_artifact(&entries[..1]);
-    block_on(
-        harness
-            .store
-            .publish(fixture_authority().workspace, &snapshot),
-    )
-    .expect("snapshot publishes");
+    let tail = entries.last().expect("history is non-empty");
 
     let error = block_on(super::restore::restore(
         harness.store.as_ref(),
-        harness.store.as_ref(),
-        fixture_authority().workspace,
         key(),
-        Some(snapshot.pointer().absorbed.seq),
+        Some(tail.envelope.seq),
         Some(ContentHash([0xaa; 32])),
         crate::ports::ReadBudget {
             max_entries: 64,
@@ -3090,14 +2842,10 @@ fn snapshot_same_sequence_fork_never_reaches_planning() {
             max_entries: entries.len(),
             max_bytes: usize::MAX,
         },
-        usize::MAX,
     ))
     .expect_err("same-sequence different-hash authority must refuse");
     assert!(matches!(
         error,
-        ActivationError::SnapshotFallbackFailed {
-            snapshot: SnapshotDiagnostic::ForkAtClaim { .. },
-            fallback,
-        } if matches!(*fallback, ActivationError::Store(StoreError::JournalTailMismatch { .. }))
+        ActivationError::Store(StoreError::JournalTailMismatch { .. })
     ));
 }

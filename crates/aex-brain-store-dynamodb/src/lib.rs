@@ -1,5 +1,5 @@
 //! `aex-brain-store-dynamodb` owns the Brain `DynamoDB` and `SQS` adapter: journal and effect
-//! records, activation leases and fences, snapshot pointers, and wake publication.
+//! records, activation leases and fences, and wake publication.
 //!
 //! # Invariants
 //!
@@ -11,7 +11,6 @@
 //!
 //! - Brain semantics (`aex-brain-domain`, `aex-brain-app`)
 //! - provider or tool transport
-//! - immutable body placement (`aex-content-aws` through regional content authority)
 //! - session authority rows (`aex-session-dynamodb`)
 
 pub mod control;
@@ -21,7 +20,6 @@ pub mod journal;
 pub mod keys;
 pub mod lease;
 pub mod plan;
-pub mod snapshot;
 pub mod translate;
 pub mod wake;
 
@@ -29,6 +27,5 @@ pub use expressions::{Action, ActionKind, Condition, Table, WakeItem, WorkExpres
 pub use journal::BrainStore;
 pub use keys::{BRAIN_AGENT_PARTITION_PREFIX, BRAIN_PREFIX, BrainKeyError};
 pub use plan::{BrainTables, PlanError};
-pub use snapshot::{AwsFoldSnapshotStore, SnapshotBodyStore, SnapshotContentContext};
 pub use translate::TranslateError;
 pub use wake::{DueScan, SqsWakeQueue, WAKE_QUEUE_IAM_ACTIONS};

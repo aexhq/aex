@@ -27,7 +27,7 @@ use std::sync::Arc;
 /// continuation and releases the lease; it never waits locally while owning the session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivationResources {
-    /// Peak resident bytes reserved before any snapshot or journal body is read.
+    /// Peak resident bytes reserved before any journal body is read.
     pub context_bytes: u64,
     /// Maximum provider stream buffer held by one activation.
     pub stream_buffer_bytes: u64,

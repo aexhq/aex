@@ -391,7 +391,6 @@ impl Executor {
             },
             OperationRequest::Search { .. }
             | OperationRequest::Materialize { .. }
-            | OperationRequest::Persist { .. }
             | OperationRequest::Browser { .. }
             | OperationRequest::RegisteredTool { .. } => {
                 self.dispatch_search_or_refuse(journal, meta, now)
@@ -475,15 +474,13 @@ impl Executor {
             // for the browser capability, and — for a registered tool — an
             // implementation inside the image. Every one fails closed with the
             // reason named, before anything is spawned.
-            OperationRequest::Materialize { .. } | OperationRequest::Persist { .. } => {
-                Ok(Dispatch::Terminal(Box::new(failed(
-                    meta,
-                    now,
-                    "capability_unavailable",
-                    "workspace materialize and persist run over presigned HTTPS, which needs a \
+            OperationRequest::Materialize { .. } => Ok(Dispatch::Terminal(Box::new(failed(
+                meta,
+                now,
+                "capability_unavailable",
+                "workspace materialize runs over presigned HTTPS, which needs a \
                      TLS client the guest does not carry; see the recorded gap",
-                ))))
-            }
+            )))),
             OperationRequest::Browser { .. } => Ok(Dispatch::Terminal(Box::new(failed(
                 meta,
                 now,

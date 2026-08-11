@@ -64,21 +64,6 @@
         "dynamodb:TransactWriteItems"
       ],
       "resources": ["table"]
-    },
-    {
-      "role": "session-operation-worker",
-      "actions": [
-        "dynamodb:GetItem",
-        "dynamodb:Query",
-        "dynamodb:UpdateItem",
-        "dynamodb:TransactWriteItems"
-      ],
-      "resources": ["table"]
-    },
-    {
-      "role": "brain-mux",
-      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
-      "resources": ["table"]
     }
   ],
   "tags": { "aex:plane": "regional", "aex:component": "registry", "aex:data-class": "authority" }

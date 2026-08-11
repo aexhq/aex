@@ -27,9 +27,6 @@ use aws_smithy_http_client::test_util::{
 use aws_smithy_types::body::SdkBody;
 use base64::Engine as _;
 
-#[path = "adapters/snapshots.rs"]
-mod snapshots;
-
 fn v7(millis: u64, seed: u8) -> uuid::Uuid {
     uuid::Uuid::from_bytes(*Uuid7::compose(millis, [seed; 10]).as_bytes())
 }

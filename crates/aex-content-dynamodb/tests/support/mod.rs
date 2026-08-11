@@ -6,9 +6,7 @@
 use aex_content_dynamodb::codec::{ContentDescriptor, DownloadGrant, GcEpoch, ObjectLocation};
 use aex_content_dynamodb::wire_pending::InlineBody;
 use aex_session_dynamodb::measure;
-use aex_wire::ids::{
-    ContentHash, MeasurementId, OrganizationId, PrefixedId, SessionId, Uuid7, WorkspaceId,
-};
+use aex_wire::ids::{ContentHash, MeasurementId, OrganizationId, PrefixedId, Uuid7, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
@@ -123,11 +121,6 @@ pub fn other_workspace() -> WorkspaceId {
 #[must_use]
 pub fn organization() -> OrganizationId {
     OrganizationId::from_uuid7(Uuid7::compose(1_754_051_696_789, [2; 10]))
-}
-
-#[must_use]
-pub fn session() -> SessionId {
-    SessionId::from_uuid7(Uuid7::compose(1_754_051_696_789, [3; 10]))
 }
 
 #[must_use]

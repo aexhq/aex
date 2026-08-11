@@ -25,8 +25,8 @@ pub mod deletion;
 pub mod idempotency;
 pub mod ids;
 pub mod journal;
-pub mod lineage;
 pub mod lifecycle;
+pub mod lineage;
 pub mod message;
 pub mod pause;
 pub mod run;
@@ -56,20 +56,18 @@ pub use idempotency::{
 };
 pub use ids::{
     AccountRevision, AgentFence, AgentRevision, AuthorizationEpoch, CancellationEpoch, EffectId,
-    EntryIdentity, JournalSeq, PersistRevision, SessionRevision, UsageClosureId,
+    EntryIdentity, JournalSeq, SessionRevision, UsageClosureId,
 };
 pub use journal::{
     AuthorityFact, INLINE_BODY_MAX_BYTES, JournalBody, JournalEntry, JournalError, JournalPage,
     fold_control, validate_append,
-};
-pub use lineage::{
-    CloneFiles, CloneOutcome, CloneRequest, Lineage, Origin, PurgeCascade, detach, plan_clone,
 };
 pub use lifecycle::{
     ActiveMessage, AutomaticTransition, IDLE_SUSPEND_AFTER_SECONDS, LifecycleError,
     LifecycleRevision, LifecycleStatus, MAXIMUM_LIFETIME_SECONDS, ScheduledLifecycleEvent,
     ScheduledLifecycleKind, ScheduledLifecycleOutcome, SessionLifecycle, TerminationReason,
 };
+pub use lineage::{Lineage, Origin, PurgeCascade, detach};
 pub use message::{
     Message, MessageDelta, MessageError, MessagePart, MessageRole, MessageState, append_part, seal,
 };
@@ -85,7 +83,7 @@ pub use run::{
 pub use session::{
     MutationGuard, PinnedRuntime, PinnedRuntimeError, ResolvedConfigAuthority,
     ResolvedConfigDigest, ResolvedConfigError, Session, SessionError, SessionMetadata,
-    SessionMetadataError, SessionStatus, WorkAdmission, acquire_mutation_guard, public_root_hash,
+    SessionMetadataError, SessionStatus, WorkAdmission, acquire_mutation_guard,
     release_mutation_guard,
 };
 pub use terminal::{

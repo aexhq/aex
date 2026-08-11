@@ -771,22 +771,6 @@ fn compile_condition(
             holder.to_string(),
         ),
         Condition::RunNonTerminal { .. } => compile_run_status(output, prefix),
-        Condition::PersistRoot {
-            expected, revision, ..
-        } => {
-            term_eq_string(
-                output,
-                &format!("{prefix}root"),
-                "persistedRootDigest",
-                hex::encode(expected.digest),
-            );
-            term_eq_u64(
-                output,
-                &format!("{prefix}revision"),
-                "persistRevision",
-                revision.0,
-            );
-        }
         Condition::ItemAbsent(_) => output.and_literal(IMMUTABLE),
         Condition::ItemPresent(_) => output.and_literal("attribute_exists(pk)"),
         _ => {
@@ -901,7 +885,6 @@ fn is_head_condition(condition: &Condition) -> bool {
             | Condition::CancellationEpoch { .. }
             | Condition::MutationGuardFree { .. }
             | Condition::MutationGuardHeldBy { .. }
-            | Condition::PersistRoot { .. }
     )
 }
 
@@ -914,8 +897,7 @@ fn condition_session(condition: &Condition) -> Option<aex_wire::ids::SessionId> 
         | Condition::DeletionState { session, .. }
         | Condition::CancellationEpoch { session, .. }
         | Condition::MutationGuardFree { session }
-        | Condition::MutationGuardHeldBy { session, .. }
-        | Condition::PersistRoot { session, .. } => Some(*session),
+        | Condition::MutationGuardHeldBy { session, .. } => Some(*session),
         _ => None,
     }
 }
@@ -1303,41 +1285,6 @@ mod tests {
         assert_eq!(
             compiled.transaction.participants(),
             [crate::plan::Participant::SESSION_TERMINAL_EVENT]
-        );
-    }
-
-    #[test]
-    fn a_family_with_no_registered_owner_is_named_rather_than_silently_dropped() {
-        let (session, _run, _agent, _message) = running_session();
-        let pin = aex_content_domain::Pin::Root {
-            session: session.id,
-            kind: aex_content_domain::RootKind::Initial,
-            root: aex_content_domain::ContentRoot {
-                digest: [0; 32],
-                entries: 0,
-                logical_bytes: 0,
-            },
-        };
-        let input = SessionTransaction {
-            intent: TransactionIntent::AdmitMessage,
-            conditions: Vec::new(),
-            writes: vec![Write::PutPin(Box::new(pin))],
-            after_commit: Vec::new(),
-        };
-        let error = compile_application_transaction(
-            &RegionalTables::composed("dev", "eu-west-1"),
-            &input,
-            SessionBinding {
-                workspace: session.workspace,
-                organization: session.organization,
-                session: session.id,
-            },
-            &FamilyCompilers::new(),
-        )
-        .expect_err("no content adapter is composed in");
-        assert!(
-            matches!(error, StoreError::Invalid { ref detail } if detail.contains("ContentAuthority")),
-            "{error}"
         );
     }
 }

@@ -1,14 +1,13 @@
-//! The three operation arms the guest could not implement.
+//! Operation arms and capability boundaries the guest must enforce.
 //!
-//! `Materialize`/`Persist` carried a bare `ContentHash` the credential-free
-//! guest cannot resolve, `ProcessStatus` could only ever return a tail, and the
-//! browser capability gate had nothing to fire on. Each rule below is the one a
-//! guest executor is allowed to depend on.
+//! `Materialize` needs a grant because the credential-free guest cannot resolve
+//! a bare `ContentHash`, `ProcessStatus` returns a bounded window, and the
+//! browser capability gate is explicit. Each rule below is one a guest executor
+//! is allowed to depend on.
 
 use aex_hands_protocol::operation::{
     BrowserCommand, BrowserViewport, ContentEndpoint, ContentEndpointError, GuestPath,
-    GuestProcessId, GuestRoot, OperationRequest, PersistPhase, PlanRejection, PresignedPlan,
-    TransferDirection,
+    GuestProcessId, GuestRoot, OperationRequest, PlanRejection, PresignedPlan, TransferDirection,
 };
 use aex_wire::ids::ContentHash;
 use aex_wire::types::{HttpsUrl, Timestamp};
@@ -213,7 +212,7 @@ fn a_plan_never_renders_its_signature() {
 }
 
 #[test]
-fn materialize_and_persist_carry_a_grant_rather_than_a_bare_hash() {
+fn materialize_carries_a_grant_rather_than_a_bare_hash() {
     // H-BOUNDARY: the guest holds no AWS credential, so a `ContentHash` alone is
     // not a thing it can act on. `root` stays as identity for the call hash; the
     // grant is what moves bytes.
@@ -225,40 +224,6 @@ fn materialize_and_persist_carry_a_grant_rather_than_a_bare_hash() {
         panic!("materialize");
     };
     assert_eq!(plan.direction, TransferDirection::Fetch);
-
-    let root = GuestRoot::workspace();
-    let persist = OperationRequest::Persist {
-        include: vec![GuestPath::parse(&root, "/workspace/src").expect("path")],
-        exclude: Vec::new(),
-        phase: PersistPhase::Survey,
-        plan: store_plan(),
-    };
-    let OperationRequest::Persist { phase, plan, .. } = &persist else {
-        panic!("persist");
-    };
-    assert_eq!(phase.grant_direction(), TransferDirection::Store);
-    assert!(
-        plan.authorize(
-            &endpoint(),
-            moment(1_785_501_296_000),
-            phase.grant_direction()
-        )
-        .is_ok()
-    );
-    // Phase two reads the list of blobs Brain still wants, so its grant is a
-    // fetch. Presenting a survey grant for it is refused.
-    assert_eq!(
-        PersistPhase::Upload.grant_direction(),
-        TransferDirection::Fetch
-    );
-    assert!(matches!(
-        store_plan().authorize(
-            &endpoint(),
-            moment(1_785_501_296_000),
-            PersistPhase::Upload.grant_direction()
-        ),
-        Err(PlanRejection::WrongDirection { .. })
-    ));
 }
 
 // ---------------------------------------------------------------------------

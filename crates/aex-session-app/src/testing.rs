@@ -8,9 +8,7 @@
 use std::cell::RefCell;
 use std::num::NonZeroU64;
 
-use aex_content_domain::{
-    ContentDigest, ContentOutcome, ContentRoot, PageDigest, TreeNode, TreeView,
-};
+use aex_content_domain::ContentDigest;
 use aex_internal_contracts::RunId;
 use aex_operation_domain::Operation;
 use aex_secret_domain::{SecretName, SessionCustody, TrueIdle, WorkspaceSecret};
@@ -29,9 +27,9 @@ use aex_workspace_domain::{RegistryPointer, RegistrySelector, Upload};
 
 use crate::ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext, Clock,
-    ContentReader, ContinuityReader, IdFactory, LimitsReader, LiveEntry, LiveListQuery,
-    LiveListing, LiveWorkspaceReader, PageBudget, PortError, RegistryReader, SecretCustodyReader,
-    SessionReader, SessionSnapshot, VersionedOperation, WorkspaceContinuity,
+    ContinuityReader, IdFactory, LimitsReader, LiveEntry, LiveListQuery, LiveListing,
+    LiveWorkspaceReader, PageBudget, PortError, RegistryReader, SecretCustodyReader, SessionReader,
+    SessionSnapshot, VersionedOperation,
 };
 
 /// One recorded port interaction.
@@ -141,12 +139,10 @@ pub struct ScriptedPorts {
     limits_revision: u64,
     credential: Option<crate::ports::ProviderCredentialBinding>,
     pointers: Vec<aex_workspace_domain::RegistryPointer>,
-    sealed_root: aex_content_domain::ContentRoot,
     deployment: crate::ports::DeploymentFacts,
     qualification: Result<crate::ports::QualifiedModel, crate::ports::QualificationRefusal>,
     cancel_targets: Vec<AgentCancelTarget>,
     live_entries: Vec<LiveEntry>,
-    generation: Option<GenerationId>,
 }
 
 impl ScriptedPorts {
@@ -198,11 +194,6 @@ impl ScriptedPorts {
                 state: crate::ports::CredentialState::Ready,
             }),
             pointers: Vec::new(),
-            sealed_root: aex_content_domain::ContentRoot {
-                digest: [9; 32],
-                entries: 3,
-                logical_bytes: 300,
-            },
             deployment: deployment_facts(),
             qualification: Ok(crate::ports::QualifiedModel {
                 provider: aex_wire::provider::ProviderId::Openai,
@@ -211,14 +202,13 @@ impl ScriptedPorts {
             }),
             cancel_targets: Vec::new(),
             live_entries: Vec::new(),
-            generation: None,
         }
     }
 
-    /// Scripts the generation `ContinuityReader` reports as in force.
+    /// Scripts the exact live generation recorded on the session head.
     #[must_use]
     pub const fn with_generation(mut self, generation: GenerationId) -> Self {
-        self.generation = Some(generation);
+        self.snapshot.session.generation = Some(generation);
         self
     }
 
@@ -256,17 +246,6 @@ impl ScriptedPorts {
         pointers: Vec<aex_workspace_domain::RegistryPointer>,
     ) -> Self {
         self.pointers = pointers;
-        self
-    }
-
-    /// Scripts the seal as retaining nothing.
-    #[must_use]
-    pub const fn with_empty_seal(mut self) -> Self {
-        self.sealed_root = aex_content_domain::ContentRoot {
-            digest: [0; 32],
-            entries: 0,
-            logical_bytes: 0,
-        };
         self
     }
 
@@ -440,8 +419,6 @@ impl ScriptedPorts {
             ids,
             sessions: self,
             registry: self,
-            content: self,
-            content_writer: self,
             secrets: self,
             catalog: Some(self),
             deployment: Some(&self.deployment),
@@ -578,27 +555,6 @@ impl RegistryReader for ScriptedPorts {
 }
 
 #[async_trait::async_trait]
-impl ContentReader for ScriptedPorts {
-    async fn describe(
-        &self,
-        _workspace: WorkspaceId,
-        _digest: ContentDigest,
-    ) -> Result<ContentOutcome, PortError> {
-        self.log.record(PortCall::Read("describe"));
-        Err(PortError::NotFound { kind: "content" })
-    }
-
-    async fn load_page(
-        &self,
-        _workspace: WorkspaceId,
-        _page: PageDigest,
-    ) -> Result<TreeNode, PortError> {
-        self.log.record(PortCall::Read("load_page"));
-        Err(PortError::NotFound { kind: "page" })
-    }
-}
-
-#[async_trait::async_trait]
 impl SecretCustodyReader for ScriptedPorts {
     async fn read_secrets(
         &self,
@@ -665,14 +621,6 @@ impl AccountStateReader for ScriptedPorts {
 
 #[async_trait::async_trait]
 impl ContinuityReader for ScriptedPorts {
-    async fn continuity(&self, _session: SessionId) -> Result<WorkspaceContinuity, PortError> {
-        self.log.record(PortCall::Read("continuity"));
-        Ok(WorkspaceContinuity {
-            generation: self.generation,
-            intact: true,
-        })
-    }
-
     async fn true_idle(&self, _session: SessionId) -> Result<TrueIdle, PortError> {
         self.log.record(PortCall::Read("true_idle"));
         Ok(self.true_idle)
@@ -681,29 +629,6 @@ impl ContinuityReader for ScriptedPorts {
 
 #[async_trait::async_trait]
 impl LiveWorkspaceReader for ScriptedPorts {
-    async fn scan(
-        &self,
-        _session: SessionId,
-        _generation: GenerationId,
-    ) -> Result<TreeView, PortError> {
-        self.log.record(PortCall::Read("scan"));
-        TreeView::build(self.snapshot.session.workspace, &[]).map_err(|_| PortError::Corrupt {
-            kind: "live tree",
-            reason: "an empty tree always builds",
-        })
-    }
-
-    async fn root(
-        &self,
-        _session: SessionId,
-        _generation: GenerationId,
-    ) -> Result<ContentRoot, PortError> {
-        self.log.record(PortCall::Read("live_root"));
-        Ok(aex_content_domain::empty_root(
-            self.snapshot.session.workspace,
-        ))
-    }
-
     async fn list(
         &self,
         _session: SessionId,
@@ -896,18 +821,6 @@ pub fn create_identity_under(
             None,
         ),
     }))
-}
-
-#[async_trait::async_trait]
-impl crate::ports::ContentWriter for ScriptedPorts {
-    async fn seal_registry_manifest(
-        &self,
-        _workspace: WorkspaceId,
-        _entries: &[crate::ports::SealedRegistryEntry],
-    ) -> Result<ContentRoot, PortError> {
-        self.log.record(PortCall::Write("seal_registry_manifest"));
-        Ok(self.sealed_root)
-    }
 }
 
 impl crate::ports::ModelQualifier for ScriptedPorts {

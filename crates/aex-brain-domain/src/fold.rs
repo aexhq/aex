@@ -103,7 +103,7 @@ pub struct FoldState {
     ///
     /// This is derived from the durable assistant tool call plus its matching
     /// successful result. It is process-independent fold state, not an
-    /// executor cache, and survives journal compaction and snapshots.
+    /// executor cache, and is reconstructed from the durable journal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub todo_state: Option<aex_wire::CanonicalJson>,
     /// Effects opened and not yet settled.
@@ -152,7 +152,7 @@ pub struct FoldState {
 /// Stable JSON representation for typed-key maps.
 ///
 /// JSON object keys can only be strings. Encoding a typed identifier as a string-keyed
-/// object would make its display spelling part of the snapshot contract and would bypass
+/// object would make its display spelling part of the persisted JSON contract and would bypass
 /// the identifier's normal serde validation. A sorted array of `(key, value)` pairs keeps
 /// the typed codec, inherits `BTreeMap` ordering, and permits duplicate rejection on read.
 mod ordered_map_entries {

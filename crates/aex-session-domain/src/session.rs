@@ -2,22 +2,19 @@
 //!
 //! Two guards live here. `WorkAdmission` says whether new work may start at all
 //! and moves alongside a session-wide cancellation; the **mutation guard** is a
-//! single-holder exclusion that a whole-session command — persist, clone,
-//! discard, rebind — takes so two of them cannot interleave.
+//! single-holder exclusion that a whole-session command takes so two of them
+//! cannot interleave.
 
-use aex_content_domain::ContentRoot;
 use aex_internal_contracts::RunId;
 use aex_operation_domain::{DeletionGuard, DeletionState, OperationKind};
 use aex_secret_domain::CustodyRevision;
 use aex_wire::CanonicalJson;
-use aex_wire::ids::{
-    AgentId, ContentHash, GenerationId, OperationId, OrganizationId, SessionId, WorkspaceId,
-};
+use aex_wire::ids::{AgentId, GenerationId, OperationId, OrganizationId, SessionId, WorkspaceId};
 use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
 use sha2::{Digest as _, Sha256};
 
-use crate::ids::{CancellationEpoch, PersistRevision, SessionRevision};
+use crate::ids::{CancellationEpoch, SessionRevision};
 use crate::lineage::Lineage;
 
 /// Where the session is, as the public wire sees it.
@@ -326,21 +323,6 @@ pub enum SessionMetadataError {
     NonScalar,
 }
 
-/// Computes the public SHA-256 identity of a canonical BLAKE3 tree root.
-///
-/// The storage root remains the lossless BLAKE3 tuple. The public contract uses
-/// `ContentHash`, so its value is SHA-256 over a domain tag plus that complete
-/// tuple; it is never a mislabeled copy of the BLAKE3 digest.
-#[must_use]
-pub fn public_root_hash(root: &ContentRoot) -> ContentHash {
-    let mut hasher = Sha256::new();
-    hasher.update(b"aex.session.public-root.v1\0");
-    hasher.update(root.digest);
-    hasher.update(root.entries.to_be_bytes());
-    hasher.update(root.logical_bytes.to_be_bytes());
-    ContentHash::from_bytes(hasher.finalize().into())
-}
-
 /// One session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
@@ -374,14 +356,6 @@ pub struct Session {
     /// generation head and `CURRENT` pointer are **derived** from it on first
     /// launch, not written by the create transaction (A D-2).
     pub pinned_runtime: PinnedRuntime,
-    /// The root the session was created with.
-    pub initial_root: ContentRoot,
-    /// The durable root it last persisted.
-    pub persisted_root: ContentRoot,
-    /// How many times the durable root has advanced.
-    pub persist_revision: PersistRevision,
-    /// When it last persisted.
-    pub last_persisted_at: Option<Timestamp>,
     /// The custody revision its credentials are at.
     pub custody_revision: CustodyRevision,
     /// Where it came from.

@@ -28,9 +28,7 @@ use aws_sdk_dynamodb::types::{
     ProjectionType, ScalarAttributeType,
 };
 
-use support::{
-    DEFINITION, descriptor, digest, grant, now, organization, sealed, session, workspace,
-};
+use support::{DEFINITION, descriptor, digest, grant, now, organization, sealed, workspace};
 
 const TABLE: &str = "dev-eu-west-1-regional-content";
 
@@ -164,30 +162,23 @@ async fn the_scan_index_returns_the_projection_and_never_a_ciphertext() {
     let (_engine, client) = engine().await;
     let store = ContentStore::new(client.clone(), TABLE);
 
-    let page = codec::TreePage {
-        workspace: workspace(),
-        page: aex_content_dynamodb::Blake3Digest::of(b"an indexed page"),
-        level: 0,
-        entry_count: 3,
-        body: vec![7u8; 1_024],
-        created_at: now(),
-    };
-    let item = codec::encode_tree_page(&page).expect("encodes");
+    let indexed = descriptor();
+    let item = codec::encode_descriptor(&indexed).expect("encodes");
     client
         .put_item()
         .table_name(TABLE)
         .set_item(Some(item))
         .send()
         .await
-        .expect("the page is written");
+        .expect("the descriptor is written");
 
-    let bucket = keys::bucket_of(&page.page.to_hex()).expect("a bucket");
+    let bucket = keys::bucket_of(&hex::encode(indexed.digest.as_bytes())).expect("a bucket");
     let scanned = store
         .scan_gc_bucket(workspace(), bucket, PageBudget::new(25).expect("a page"))
         .await
         .expect("the scan succeeds");
     assert_eq!(scanned.entries.len(), 1);
-    assert_eq!(scanned.entries[0].digest, page.page.to_wire());
+    assert_eq!(scanned.entries[0].digest, indexed.digest.to_wire());
 
     // Read the index directly to prove the projection itself, not merely what
     // this crate chose to decode out of it.
@@ -286,14 +277,17 @@ async fn a_grant_and_its_pin_commit_together_and_a_replay_is_refused() {
 }
 
 #[tokio::test]
-async fn a_pin_written_against_a_root_is_visible_to_the_reachability_read_of_that_body() {
+async fn a_registry_pin_is_visible_to_the_reachability_read_of_that_body() {
     let (_engine, client) = engine().await;
     let store = ContentStore::new(client.clone(), TABLE);
 
     let body = digest(0x22);
     let pin = codec::ContentPin {
         workspace: workspace(),
-        owner: aex_content_dynamodb::PinOwner::Session(session()),
+        owner: aex_content_dynamodb::PinOwner::Registry {
+            kind: "tool".to_owned(),
+            name: "fixture".to_owned(),
+        },
         created_at: now(),
     };
     let built = expressions::pin_body(TABLE, &body, &pin)

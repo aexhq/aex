@@ -15,7 +15,7 @@ use aex_wire::types::Timestamp;
 
 use aex_session_dynamodb::component::{Component, KeyError, bucket3, due_shard, gc_bucket, shard4};
 
-use crate::wire_pending::{Blake3Digest, PinOwner, body_hex};
+use crate::wire_pending::{PinOwner, body_hex};
 
 /// One composite key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -39,23 +39,13 @@ pub const ITEM_TYPES: &[&str] = &[
     "content_body",
     "content_pin",
     "download_grant",
-    "root_descriptor",
-    "tree_page",
     "gc_epoch",
     "gc_candidate",
     "grant_expiry_cursor",
 ];
 
 /// The closed `pin_kind` vocabulary.
-pub const PIN_KINDS: &[&str] = &[
-    "session",
-    "registry",
-    "operation",
-    "export",
-    "cursor",
-    "gc",
-    "message",
-];
+pub const PIN_KINDS: &[&str] = &["registry"];
 
 /// The closed descriptor placement vocabulary.
 pub const PLACEMENTS: &[&str] = &["inline", "s3"];
@@ -87,7 +77,6 @@ pub const GC_SK: &str = "gcScanSk";
 pub const GC_PROJECTION: &[&str] = &[
     "workspaceId",
     "digestSha256",
-    "pageDigest",
     "placement",
     "sizeBytes",
     "objectKey",
@@ -166,12 +155,6 @@ pub fn content_partition(workspace: WorkspaceId, digest: &ContentHash) -> String
     format!("CONTENT#{workspace}#{}", body_hex(digest))
 }
 
-/// `ROOT#{workspace_id}#{root_b3_hex}`.
-#[must_use]
-pub fn root_partition(workspace: WorkspaceId, root: Blake3Digest) -> String {
-    format!("ROOT#{workspace}#{}", root.to_hex())
-}
-
 /// The body descriptor.
 #[must_use]
 pub fn descriptor(workspace: WorkspaceId, digest: &ContentHash) -> Key {
@@ -201,24 +184,6 @@ pub fn pin(
         content_partition(workspace, digest),
         pin_sort(owner)?,
     ))
-}
-
-/// A pin on one root, which is where a pin belongs whenever a root exists.
-///
-/// Pins live on roots, not on every body, so a session that binds a 10,000-file
-/// tool bundle writes **one** pin item rather than 10,000 (D-10). Only loose
-/// bodies — message content, tool results, journal overflow — carry a direct
-/// [`pin`], and those are one pin per body by construction.
-///
-/// # Errors
-///
-/// As [`pin`].
-pub fn root_pin(
-    workspace: WorkspaceId,
-    root: Blake3Digest,
-    owner: &PinOwner,
-) -> Result<Key, KeyError> {
-    Ok(Key::new(root_partition(workspace, root), pin_sort(owner)?))
 }
 
 fn pin_sort(owner: &PinOwner) -> Result<String, KeyError> {
@@ -266,21 +231,6 @@ pub fn grant(token_sha256_hex: &str) -> Result<Key, KeyError> {
     Ok(Key::new(format!("GRANT#{token}"), "STATE".to_owned()))
 }
 
-/// The root descriptor.
-#[must_use]
-pub fn root_descriptor(workspace: WorkspaceId, root: Blake3Digest) -> Key {
-    Key::new(root_partition(workspace, root), "DESC".to_owned())
-}
-
-/// One Merkle tree page.
-#[must_use]
-pub fn tree_page(workspace: WorkspaceId, page: Blake3Digest) -> Key {
-    Key::new(
-        format!("TREE#{workspace}#{}", page.to_hex()),
-        "PAGE".to_owned(),
-    )
-}
-
 /// The workspace's garbage-collection epoch.
 #[must_use]
 pub fn gc_epoch(workspace: WorkspaceId) -> Key {
@@ -323,13 +273,13 @@ pub fn gc_scan_sort(created_at: Timestamp, digest_hex: &str) -> Result<String, K
 
 #[cfg(test)]
 mod tests {
-    use aex_wire::ids::{ContentHash, PrefixedId, SessionId, Uuid7, WorkspaceId};
+    use aex_wire::ids::{ContentHash, PrefixedId, Uuid7, WorkspaceId};
 
     use super::{
         GC_BUCKETS, bucket_of, content_partition, descriptor, gc_candidate, gc_epoch,
-        gc_scan_partition, grant, grant_pin, inline_body, pin, root_pin, tree_page,
+        gc_scan_partition, grant, grant_pin, inline_body, pin,
     };
-    use crate::wire_pending::{Blake3Digest, PinOwner};
+    use crate::wire_pending::PinOwner;
 
     fn workspace(byte: u8) -> WorkspaceId {
         WorkspaceId::from_uuid7(Uuid7::compose(1_754_051_696_789, [byte; 10]))
@@ -337,10 +287,6 @@ mod tests {
 
     fn digest(byte: u8) -> ContentHash {
         ContentHash::from_bytes([byte; 32])
-    }
-
-    fn session() -> SessionId {
-        SessionId::from_uuid7(Uuid7::compose(1_754_051_696_789, [3; 10]))
     }
 
     #[test]
@@ -363,43 +309,18 @@ mod tests {
         assert_eq!(descriptor(workspace, &body).pk, partition);
         assert_eq!(inline_body(workspace, &body).pk, partition);
         assert_eq!(
-            pin(workspace, &body, &PinOwner::Session(session()))
-                .expect("a pin")
-                .pk,
+            pin(
+                workspace,
+                &body,
+                &PinOwner::Registry {
+                    kind: "tool".to_owned(),
+                    name: "fixture".to_owned(),
+                },
+            )
+            .expect("a pin")
+            .pk,
             partition
         );
-    }
-
-    #[test]
-    fn a_binding_pins_its_root_rather_than_every_body_underneath_it() {
-        let root = Blake3Digest::from_bytes([7; 32]);
-        let key = root_pin(workspace(1), root, &PinOwner::Session(session())).expect("a pin");
-        assert!(key.pk.starts_with("ROOT#wsp_"));
-        assert!(key.sk.starts_with("PIN#session#ses_"));
-    }
-
-    #[test]
-    fn a_registry_pin_identity_is_the_kind_and_the_name() {
-        let key = root_pin(
-            workspace(1),
-            Blake3Digest::from_bytes([8; 32]),
-            &PinOwner::Registry {
-                kind: "tool".to_owned(),
-                name: "search".to_owned(),
-            },
-        )
-        .expect("a pin");
-        assert_eq!(key.sk, "PIN#registry#tool:search");
-    }
-
-    #[test]
-    fn a_pin_identity_carrying_the_separator_can_never_reach_a_key() {
-        let error = root_pin(
-            workspace(1),
-            Blake3Digest::from_bytes([9; 32]),
-            &PinOwner::Export("exp#evil".to_owned()),
-        );
-        assert!(error.is_err());
     }
 
     #[test]
@@ -416,13 +337,8 @@ mod tests {
     }
 
     #[test]
-    fn a_tree_page_a_gc_epoch_and_a_candidate_are_all_workspace_scoped() {
+    fn a_gc_epoch_and_a_candidate_are_workspace_scoped() {
         let workspace = workspace(1);
-        assert!(
-            tree_page(workspace, Blake3Digest::from_bytes([1; 32]))
-                .pk
-                .starts_with("TREE#wsp_")
-        );
         assert!(gc_epoch(workspace).pk.starts_with("GC#wsp_"));
         assert!(
             gc_candidate(workspace, &digest(1))

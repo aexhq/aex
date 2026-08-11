@@ -13,9 +13,7 @@
 
 use std::collections::BTreeSet;
 
-use aex_content_domain::{
-    ContentDigest, ContentRoot, GrantId, PageDigest, Pin, RegistryKind, TreeNode,
-};
+use aex_content_domain::{ContentDigest, GrantId, Pin, RegistryKind};
 use aex_internal_contracts::RunId;
 use aex_operation_domain::{DeletionEpoch, DeletionState, Fence, Operation};
 use aex_secret_domain::{
@@ -28,9 +26,7 @@ use aex_session_domain::{
 };
 use aex_wire::ids::{AgentId, OperationId, OrganizationId, SessionId, UploadId, WorkspaceId};
 use aex_wire::types::{ETag, Timestamp};
-use aex_workspace_domain::{
-    DownloadGrant, PersistReceipt, RegistryPointer, RegistrySelector, Upload, UploadState,
-};
+use aex_workspace_domain::{DownloadGrant, RegistryPointer, RegistrySelector, Upload, UploadState};
 
 /// Largest number of actions one transaction may carry.
 pub const MAX_ACTIONS: usize = 100;
@@ -52,8 +48,6 @@ pub enum TransactionIntent {
     CommitTerminal,
     /// Stop a session's work.
     StopSession,
-    /// Persist the live workspace.
-    PersistWorkspace,
     /// Clone a session.
     CloneSession,
     /// Discard the live workspace.
@@ -242,26 +236,12 @@ pub enum Condition {
         /// Which body.
         digest: ContentDigest,
     },
-    /// A root pin exists.
-    RootPinPresent {
-        /// Which root.
-        root: ContentRoot,
-    },
     /// The grant has not lapsed.
     GrantUnexpired {
         /// Which grant.
         grant: GrantId,
         /// The instant to evaluate against.
         now: Timestamp,
-    },
-    /// The session's durable root and persist revision are exactly these.
-    PersistRoot {
-        /// Which session.
-        session: SessionId,
-        /// The expected root.
-        expected: ContentRoot,
-        /// The expected persist revision.
-        revision: aex_session_domain::PersistRevision,
     },
     /// The work item's fence is exactly this.
     OperationFence {
@@ -340,15 +320,14 @@ impl Condition {
             | Self::JournalTail { .. }
             | Self::RunNonTerminal { .. }
             | Self::AccountRevisionAtLeast { .. }
-            | Self::AuthorizationEpochAtLeast { .. }
-            | Self::PersistRoot { .. } => TableFamily::SessionAuthority,
+            | Self::AuthorizationEpochAtLeast { .. } => TableFamily::SessionAuthority,
             Self::RegistryEtag { .. } | Self::UploadState { .. } => TableFamily::Registry,
             Self::OperationFence { .. }
             | Self::OperationCursorAt { .. }
             | Self::OperationVersion { .. } => TableFamily::WorkAuthority,
-            Self::ContentOwned { .. }
-            | Self::RootPinPresent { .. }
-            | Self::GrantUnexpired { .. } => TableFamily::ContentAuthority,
+            Self::ContentOwned { .. } | Self::GrantUnexpired { .. } => {
+                TableFamily::ContentAuthority
+            }
             Self::SecretRevocationEpoch { .. } | Self::CustodyRevision { .. } => {
                 TableFamily::SecretCustody
             }
@@ -372,8 +351,7 @@ impl Condition {
             | Self::DeletionState { session, .. }
             | Self::CancellationEpoch { session, .. }
             | Self::MutationGuardFree { session }
-            | Self::MutationGuardHeldBy { session, .. }
-            | Self::PersistRoot { session, .. } => (session.to_string(), "HEAD".to_owned()),
+            | Self::MutationGuardHeldBy { session, .. } => (session.to_string(), "HEAD".to_owned()),
             Self::AgentRevision { session, agent, .. }
             | Self::AgentFence { session, agent, .. }
             | Self::JournalTail { session, agent, .. } => {
@@ -398,7 +376,6 @@ impl Condition {
             Self::ContentOwned { workspace, digest } => {
                 (workspace.to_string(), format!("CONTENT#{digest}"))
             }
-            Self::RootPinPresent { root } => (format!("{:x?}", root.digest), "ROOT_PIN".to_owned()),
             Self::GrantUnexpired { grant, .. } => (grant.0.to_string(), "GRANT".to_owned()),
             Self::OperationFence { operation, .. }
             | Self::OperationCursorAt { operation, .. }
@@ -481,8 +458,6 @@ pub enum Write {
     PutWorkItem(Box<aex_operation_domain::WorkItem>),
     /// Append a native outbox event.
     PutOutboxEvent(Box<OutboxEvent>),
-    /// Write an owner edge.
-    PutOwnerEdge(Box<aex_content_domain::OwnerEdge>),
     /// Add a pin.
     PutPin(Box<Pin>),
     /// Remove a pin.
@@ -499,23 +474,6 @@ pub enum Write {
     PutSecret(Box<WorkspaceSecret>),
     /// Write a session tombstone.
     PutTombstone(Box<SessionTombstone>),
-    /// Record what a committed persist left behind.
-    ///
-    /// Present in the vocabulary before any adapter renders it, because the
-    /// content and registry streams reconcile their row shapes against this
-    /// enum and the alternative — a generic `PutItem(family, key, bytes)` —
-    /// would end the closed vocabulary outright (D-5). Every adapter that does
-    /// not own the family refuses it by name rather than skipping it.
-    PutPersistReceipt(Box<PersistReceipt>),
-    /// Write one immutable Merkle page of a persisted tree.
-    PutTreePage {
-        /// The root the page belongs to.
-        root: ContentRoot,
-        /// The page's own digest, which is its identity.
-        digest: PageDigest,
-        /// The page.
-        page: Box<TreeNode>,
-    },
     /// Delete an item outright.
     DeleteItem(ItemKey),
 }
@@ -533,21 +491,15 @@ impl Write {
             | Self::AppendJournalPage { .. }
             | Self::PutApproval(_)
             | Self::CancelAgent { .. }
-            | Self::PutTombstone(_)
-            // A persist receipt is a session-scoped fact about the durable
-            // root, so it lives beside the head rather than with the content it
-            // describes.
-            | Self::PutPersistReceipt(_) => TableFamily::SessionAuthority,
+            | Self::PutTombstone(_) => TableFamily::SessionAuthority,
             Self::PutIdempotencyReceipt(_) => TableFamily::Idempotency,
             Self::PutOperation(_) | Self::RedactOperationResult(_) | Self::PutWorkItem(_) => {
                 TableFamily::WorkAuthority
             }
             Self::PutOutboxEvent(_) => TableFamily::Outbox,
-            Self::PutOwnerEdge(_)
-            | Self::PutPin(_)
-            | Self::DeletePin(_)
-            | Self::PutGrant(_)
-            | Self::PutTreePage { .. } => TableFamily::ContentAuthority,
+            Self::PutPin(_) | Self::DeletePin(_) | Self::PutGrant(_) => {
+                TableFamily::ContentAuthority
+            }
             Self::PutRegistryPointer(_) | Self::PutUpload(_) => TableFamily::Registry,
             Self::PutCustody(_) | Self::PutSecret(_) => TableFamily::SecretCustody,
             Self::DeleteItem(key) => key.family,
@@ -605,9 +557,6 @@ impl Write {
             Self::PutOutboxEvent(event) => {
                 (event.session.to_string(), format!("OUTBOX#{}", event.run))
             }
-            Self::PutOwnerEdge(edge) => {
-                (edge.workspace.to_string(), format!("EDGE#{:?}", edge.pin))
-            }
             Self::PutPin(pin) | Self::DeletePin(pin) => ("PIN".to_owned(), format!("{pin:?}")),
             Self::PutRegistryPointer(pointer) => (
                 pointer.row.workspace.to_string(),
@@ -626,13 +575,6 @@ impl Write {
             ),
             Self::PutTombstone(tombstone) => {
                 (tombstone.session.to_string(), "TOMBSTONE".to_owned())
-            }
-            Self::PutPersistReceipt(receipt) => (
-                receipt.session.to_string(),
-                format!("PERSIST#{}", receipt.persist_revision),
-            ),
-            Self::PutTreePage { root, digest, .. } => {
-                (format!("{:x?}", root.digest), format!("PAGE#{digest}"))
             }
             Self::DeleteItem(key) => return key.clone(),
         };
@@ -837,7 +779,7 @@ impl SessionTransaction {
     /// with request size would be a create whose tail latency and
     /// `TransactionConflictException` rate grew with request size, which the
     /// performance-first ordering forbids (A D-5).
-    pub const CREATE_MAX_ACTIONS: usize = 6;
+    pub const CREATE_MAX_ACTIONS: usize = 4;
 
     /// Enforces A D-1's create membership rule.
     ///
@@ -848,8 +790,6 @@ impl SessionTransaction {
         let mut head: Option<&Session> = None;
         let mut root_agent = 0_usize;
         let mut receipts = 0_usize;
-        let mut pins = 0_usize;
-        let mut edges = 0_usize;
         let mut custody = 0_usize;
         for write in &self.writes {
             match write {
@@ -861,8 +801,6 @@ impl SessionTransaction {
                 }
                 Write::PutAgentControl(_) => root_agent += 1,
                 Write::PutIdempotencyReceipt(_) => receipts += 1,
-                Write::PutPin(_) => pins += 1,
-                Write::PutOwnerEdge(_) => edges += 1,
                 Write::PutCustody(_) => custody += 1,
                 Write::PutMessage(_)
                 | Write::PutSealedMessage(_)
@@ -874,23 +812,22 @@ impl SessionTransaction {
                 | Write::RedactOperationResult(_)
                 | Write::PutWorkItem(_)
                 | Write::PutOutboxEvent(_)
+                | Write::PutPin(_)
                 | Write::DeletePin(_)
                 | Write::PutRegistryPointer(_)
                 | Write::PutUpload(_)
                 | Write::PutGrant(_)
                 | Write::PutSecret(_)
                 | Write::PutTombstone(_)
-                | Write::PutPersistReceipt(_)
-                | Write::PutTreePage { .. }
                 | Write::DeleteItem(_) => {
                     return Err(create_error(
-                        "a create writes only the head, its root agent, its receipt, its initial \
-                         root pin and owner edge, and its first custody",
+                        "a create writes only the head, its root agent, its receipt, and its first \
+                         custody",
                     ));
                 }
             }
         }
-        let Some(head) = head else {
+        let Some(_head) = head else {
             return Err(create_error("a create writes exactly one session head"));
         };
         if root_agent != 1 {
@@ -904,16 +841,6 @@ impl SessionTransaction {
                 "a create writes exactly one idempotency receipt; the receipt's conditional put \
                  is the concurrency election, so a create without one can mint two sessions for \
                  one key",
-            ));
-        }
-        // A pin on an empty root retains nothing, so an empty seal omits both
-        // content items. The branch is a total function of the sealed root and
-        // is decided here rather than trusted from the caller.
-        let retains = head.initial_root.entries > 0;
-        if pins != usize::from(retains) || edges != usize::from(retains) {
-            return Err(create_error(
-                "a create writes one root pin and one owner edge exactly when its sealed initial \
-                 root retains something",
             ));
         }
         if custody > 1 {
@@ -1130,7 +1057,7 @@ mod tests {
         assert_eq!(ids, value.condition_ids());
     }
 
-    /// A create plan over the domain fixture, with an empty sealed root.
+    /// A create plan over the domain fixture.
     fn create_plan(session: aex_session_domain::Session) -> SessionTransaction {
         let root_agent = crate::testing::root_agent_of(&session);
         let receipt = crate::testing::create_receipt(&session);
@@ -1146,19 +1073,9 @@ mod tests {
         }
     }
 
-    fn empty_root_session() -> aex_session_domain::Session {
-        let mut session = aex_session_domain::testing::session_fixture();
-        session.initial_root = aex_content_domain::ContentRoot {
-            digest: [0; 32],
-            entries: 0,
-            logical_bytes: 0,
-        };
-        session
-    }
-
     #[test]
     fn a_head_only_create_is_still_refused_by_the_participant_rule() {
-        let session = empty_root_session();
+        let session = aex_session_domain::testing::session_fixture();
         let value = SessionTransaction {
             intent: TransactionIntent::CreateSession,
             conditions: Vec::new(),
@@ -1173,26 +1090,15 @@ mod tests {
 
     #[test]
     fn a_create_with_no_selection_and_no_secrets_is_three_items_in_one_table() {
-        let shape = create_plan(empty_root_session())
+        let shape = create_plan(aex_session_domain::testing::session_fixture())
             .validate()
             .expect("the minimal create is complete");
         assert_eq!(shape.actions, 3);
     }
 
     #[test]
-    fn a_create_whose_seal_retains_something_must_carry_the_pin_and_its_edge() {
-        // The fixture's initial root has entries, so omitting the pin leaves
-        // `initial_root` naming content nothing retains.
-        let plan = create_plan(aex_session_domain::testing::session_fixture());
-        assert!(matches!(
-            plan.validate(),
-            Err(PlanError::CreateAuthority { .. })
-        ));
-    }
-
-    #[test]
     fn a_create_may_not_smuggle_a_write_a_create_was_not_asked_for() {
-        let mut plan = create_plan(empty_root_session());
+        let mut plan = create_plan(aex_session_domain::testing::session_fixture());
         plan.writes.push(Write::DeleteItem(key("SOMETHING")));
         assert!(matches!(
             plan.validate(),
@@ -1202,7 +1108,7 @@ mod tests {
 
     #[test]
     fn a_create_without_its_receipt_cannot_elect_a_winner() {
-        let mut plan = create_plan(empty_root_session());
+        let mut plan = create_plan(aex_session_domain::testing::session_fixture());
         plan.writes
             .retain(|write| !matches!(write, Write::PutIdempotencyReceipt(_)));
         assert!(matches!(

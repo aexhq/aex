@@ -1,6 +1,6 @@
 //! `aex-workspace-domain` owns the pure workspace, named-registry, upload, grant and
-//! persist model: monotone revisions, `ETag` semantics, single-use uploads,
-//! grant pins and the persist mirror.
+//! registry and content model: monotone revisions, `ETag` semantics,
+//! single-use uploads, and grant pins.
 //!
 //! # Invariants
 //!
@@ -25,7 +25,6 @@
 //! - authorization decisions about who may hold a grant.
 
 pub mod grant;
-pub mod persist;
 pub mod registry;
 pub mod upload;
 
@@ -35,10 +34,6 @@ pub use grant::{
     ByteRange, ContentObjectLocation, DownloadGrant, GRANT_TTL, GrantContentDescriptor,
     GrantPlacement, GrantRejection, GrantSubject, MAX_SIGNED_RANGE_BYTES, ObjectChecksum,
     mint_grant,
-};
-pub use persist::{
-    PatternAtom, PersistError, PersistPlan, PersistReceipt, PersistSelection, PersistShape,
-    Selector, SelectorError, SelectorSegment, plan_persist, replay_receipt,
 };
 pub use registry::{
     DeleteCommit, ProposedValue, RegisteredValueRef, RegistryCommit, RegistryPointer,

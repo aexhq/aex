@@ -8,20 +8,19 @@ use std::collections::BTreeSet;
 use aex_content_domain::ContentDigest;
 use aex_internal_contracts::RunId;
 use aex_operation_domain::{DeletionGuard, DeletionState, OperationKind};
-use aex_secret_domain::CloneCredentials;
 use aex_session_domain::testing::{
-    approval_binding, child_agent, drift_field, entry_at, id, materialized_state, moment, root,
+    approval_binding, child_agent, drift_field, entry_at, id, materialized_state, moment,
     running_session, session_fixture, terminal_attempt,
 };
 use aex_session_domain::{
     AccountProjection, AccountState, AgentControl, AgentError, AgentStatus, AgentTerminal,
     ApprovalCancelCause, ApprovalDecision, ApprovalRejection, ApprovalStatus, AuthorityFact,
-    BindingField, CancelCause, CancelScope, CloneFiles, CloneRequest, CommandClass, EffectId,
-    EffectiveLimits, ExemptCommand, JournalEntry, JournalError, JournalSeq, PauseReason,
-    PurgeCascade, PurgeEvidence, RunOutcome, RunStatus, SessionStatus, TerminalRejection,
-    WorkAdmission, cancel_pending, cancel_session_work, claim_terminal, complete_agent,
-    create_root, fold_control, pause_gate, plan_clone, project_account, purge, purge_complete,
-    request_approval, respond, restore, spawn, trash, validate_append,
+    BindingField, CancelCause, CancelScope, CommandClass, EffectId, EffectiveLimits, ExemptCommand,
+    JournalEntry, JournalError, JournalSeq, PauseReason, PurgeCascade, PurgeEvidence, RunOutcome,
+    RunStatus, SessionStatus, TerminalRejection, WorkAdmission, cancel_pending,
+    cancel_session_work, claim_terminal, complete_agent, create_root, fold_control, pause_gate,
+    project_account, purge, purge_complete, request_approval, respond, restore, spawn, trash,
+    validate_append,
 };
 use aex_wire::error::ErrorCode;
 use aex_wire::ids::{
@@ -1019,41 +1018,6 @@ fn purge_completion_requires_the_whole_predicate() {
         let mut evidence = complete.clone();
         omit(&mut evidence);
         assert!(purge_complete(&purging, &evidence, moment(1)).is_err());
-    }
-}
-
-#[test]
-fn clone_independence_and_conservation() {
-    // 27 `clone_independence` and 28 `clone_conservation`.
-    let source = session_fixture();
-    let before = source.clone();
-
-    for files in CloneFiles::ALL {
-        let request = CloneRequest {
-            source: source.id,
-            target: id::<SessionId>(70),
-            operation: id::<OperationId>(71),
-            source_persist_revision: source.persist_revision,
-            files,
-            credentials: CloneCredentials::Copy,
-        };
-        let live = root(3);
-        let empty = root(0);
-        let outcome = plan_clone(&request, source.initial_root, live, empty, moment(1));
-
-        // 27: the source is byte-identical after planning a clone.
-        assert_eq!(source, before);
-        assert!(outcome.lineage.is_clone());
-
-        // 28: the child's logical byte total equals the selected source root's.
-        let expected = match files {
-            CloneFiles::Current => live,
-            CloneFiles::Initial => source.initial_root,
-            CloneFiles::None => empty,
-        };
-        assert_eq!(outcome.root.logical_bytes, expected.logical_bytes);
-        assert_eq!(outcome.root.entries, expected.entries);
-        assert_eq!(outcome.read_live_workspace, files.reads_live_workspace());
     }
 }
 

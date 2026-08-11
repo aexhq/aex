@@ -34,7 +34,7 @@ fn staged_orphan_grace_is_exact_and_every_pin_blocks_deletion() {
         ReconcileOutcome::RestoreLive
     );
     let mut owned = staged();
-    owned.owner_edges = 1;
+    owned.direct_pins = 1;
     assert_eq!(
         reconcile_staged(&owned, 1_000 + GRACE_MILLIS),
         ReconcileOutcome::RestoreLive

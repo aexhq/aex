@@ -1,41 +1,21 @@
-//! Verified snapshot plus bounded authoritative journal suffix restore.
+//! Bounded reconstruction from the authoritative journal.
 //!
-//! This module is public so a composition can surface the typed source/diagnostic without
-//! changing activation semantics. The planner receives only `RestoredFold.state` after the
-//! final claimed-tail proof succeeds.
+//! Brain has no durable fold snapshot or filesystem recovery authority. A warm process may
+//! reuse an exact-revision fold cache entry, but every cold activation reconstructs from
+//! journal sequence zero under one explicit aggregate entry/byte ceiling.
 
 use crate::activation::{ActivationError, RestoreBudget};
-use crate::ports::{
-    FoldSnapshotStore, JournalCursor, JournalStore, ReadBudget, SnapshotDiagnostic, StoreError,
-};
+use crate::ports::{JournalCursor, JournalStore, ReadBudget, StoreError};
 use aex_brain_domain::fold::{FoldState, apply};
 use aex_brain_domain::ids::{AgentKey, ContentHash, JournalSeq};
-use aex_brain_domain::snapshot::JournalPoint;
-use aex_wire::ids::WorkspaceId;
 
 /// How a fold was reconstructed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreSource {
     /// An exact-revision process-local fold passed the claimed-tail check.
     WarmCache,
-    /// No usable snapshot existed and the bounded journal fit from sequence zero.
+    /// The bounded authoritative journal fit from sequence zero.
     JournalFromZero,
-    /// A verified immutable snapshot seeded a bounded suffix replay.
-    Snapshot {
-        /// The historical journal point the body absorbed.
-        absorbed: JournalPoint,
-        /// Exact canonical snapshot bytes fetched.
-        snapshot_bytes: usize,
-        /// Journal entries applied after the snapshot.
-        suffix_entries: usize,
-        /// Canonical inline journal bytes applied after the snapshot.
-        suffix_bytes: usize,
-    },
-    /// Snapshot restore was rejected, but the explicit bounded sequence-zero fallback fit.
-    JournalFallback {
-        /// Typed reason the optimization was not used.
-        diagnostic: SnapshotDiagnostic,
-    },
 }
 
 /// A state that proved it reaches the exact head returned by the fenced claim.
@@ -43,185 +23,35 @@ pub enum RestoreSource {
 pub struct RestoredFold {
     /// Validated fold state.
     pub state: FoldState,
-    /// Which path produced it and any typed fallback diagnostic.
+    /// Which path produced it.
     pub source: RestoreSource,
     /// Canonical authoritative bytes retained to derive this fold.
     ///
     /// This is the cache accounting input, not a claim about allocator RSS. Activation
     /// admission separately reserves the measured peak resident restore bound before any
-    /// body is hydrated.
+    /// journal page is hydrated.
     pub retained_bytes: usize,
 }
 
-/// Restores one claimed agent without treating a projection as authority.
+/// Reconstructs one claimed agent from journal sequence zero.
 ///
-/// Missing, invalid or unavailable snapshots take one sequence-zero fallback under the
-/// same existing ceiling. A valid snapshot whose suffix exceeds the ceiling does not try a
-/// strictly larger sequence-zero replay. Every success ends by comparing the folded
-/// `(sequence, hash)` with the head returned by the claim.
+/// Every success compares the folded `(sequence, hash)` with the head returned by the fenced
+/// claim. There is deliberately no durable snapshot fallback: if the complete authoritative
+/// history does not fit, the activation refuses with [`StoreError::RestoreBudgetExhausted`].
 ///
 /// # Errors
 ///
-/// Returns [`ActivationError`] if snapshot authority disagrees with the claimed session,
-/// neither the verified snapshot path nor its bounded authoritative fallback can restore the
-/// exact claimed tail, or the journal cannot be decoded and folded.
-#[allow(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    reason = "keeping pointer selection, verification, suffix replay and final claim comparison in one visible proof prevents a future success path from bypassing a check"
-)]
+/// Returns [`ActivationError`] if the bounded journal cannot be decoded and folded or does
+/// not reach the exact claimed tail.
 pub async fn restore(
     journal: &dyn JournalStore,
-    snapshots: &dyn FoldSnapshotStore,
-    workspace: WorkspaceId,
     key: AgentKey,
     claimed_seq: Option<JournalSeq>,
     claimed_hash: Option<ContentHash>,
     page: ReadBudget,
     total: RestoreBudget,
-    max_snapshot_bytes: usize,
 ) -> Result<RestoredFold, ActivationError> {
-    let pointer = match snapshots.load_latest(&key).await {
-        Ok(Some(pointer)) => pointer,
-        Ok(None) => {
-            return fallback(
-                journal,
-                key,
-                claimed_seq,
-                claimed_hash,
-                page,
-                total,
-                SnapshotDiagnostic::Missing,
-            )
-            .await;
-        }
-        Err(error @ StoreError::SessionWorkspaceMismatch) => return Err(error.into()),
-        Err(error) => {
-            let diagnostic = unavailable(error);
-            return fallback(
-                journal,
-                key,
-                claimed_seq,
-                claimed_hash,
-                page,
-                total,
-                diagnostic,
-            )
-            .await;
-        }
-    };
-
-    let snapshot_ceiling = max_snapshot_bytes.min(total.max_bytes);
-    let body = match snapshots
-        .load_body(workspace, &pointer, snapshot_ceiling)
-        .await
-    {
-        Ok(body) => body,
-        Err(error @ StoreError::SessionWorkspaceMismatch) => return Err(error.into()),
-        Err(error) => {
-            let diagnostic = unavailable(error);
-            return fallback(
-                journal,
-                key,
-                claimed_seq,
-                claimed_hash,
-                page,
-                total,
-                diagnostic,
-            )
-            .await;
-        }
-    };
-    let snapshot_bytes = body.len();
-    let verified = match pointer.verify(key, &body, snapshot_ceiling) {
-        Ok(verified) => verified,
-        Err(error) => {
-            return fallback(
-                journal,
-                key,
-                claimed_seq,
-                claimed_hash,
-                page,
-                total,
-                SnapshotDiagnostic::Rejected(error),
-            )
-            .await;
-        }
-    };
-
-    let diagnostic = if claimed_seq.is_none_or(|claimed| verified.pointer.absorbed.seq > claimed) {
-        Some(SnapshotDiagnostic::AheadOfClaim {
-            snapshot: verified.pointer.absorbed.seq,
-            claimed: claimed_seq,
-        })
-    } else if claimed_seq == Some(verified.pointer.absorbed.seq)
-        && claimed_hash != Some(verified.pointer.absorbed.hash)
-    {
-        Some(SnapshotDiagnostic::ForkAtClaim {
-            seq: verified.pointer.absorbed.seq,
-        })
-    } else {
-        None
-    };
-    if let Some(diagnostic) = diagnostic {
-        return fallback(
-            journal,
-            key,
-            claimed_seq,
-            claimed_hash,
-            page,
-            total,
-            diagnostic,
-        )
-        .await;
-    }
-
-    let remaining_bytes = total.max_bytes.saturating_sub(snapshot_bytes);
-    if remaining_bytes == 0 && claimed_seq != Some(verified.pointer.absorbed.seq) {
-        return Err(StoreError::RestoreBudgetExhausted {
-            entries: 1,
-            bytes: snapshot_bytes.saturating_add(1),
-            max_entries: total.max_entries,
-            max_bytes: total.max_bytes,
-        }
-        .into());
-    }
-    let (state, suffix_entries, suffix_bytes) = read_from(
-        journal,
-        key,
-        verified.state,
-        verified.pointer.absorbed.seq.next(),
-        claimed_seq,
-        claimed_hash,
-        page,
-        RestoreBudget {
-            max_entries: total.max_entries,
-            max_bytes: remaining_bytes,
-        },
-    )
-    .await?;
-    Ok(RestoredFold {
-        state,
-        source: RestoreSource::Snapshot {
-            absorbed: verified.pointer.absorbed,
-            snapshot_bytes,
-            suffix_entries,
-            suffix_bytes,
-        },
-        retained_bytes: snapshot_bytes.saturating_add(suffix_bytes),
-    })
-}
-
-async fn fallback(
-    journal: &dyn JournalStore,
-    key: AgentKey,
-    claimed_seq: Option<JournalSeq>,
-    claimed_hash: Option<ContentHash>,
-    page: ReadBudget,
-    total: RestoreBudget,
-    diagnostic: SnapshotDiagnostic,
-) -> Result<RestoredFold, ActivationError> {
-    match read_from(
+    let (state, _, retained_bytes) = read_from(
         journal,
         key,
         FoldState::empty(),
@@ -231,23 +61,12 @@ async fn fallback(
         page,
         total,
     )
-    .await
-    {
-        Ok((state, _, retained_bytes)) => Ok(RestoredFold {
-            state,
-            source: if matches!(diagnostic, SnapshotDiagnostic::Missing) {
-                RestoreSource::JournalFromZero
-            } else {
-                RestoreSource::JournalFallback { diagnostic }
-            },
-            retained_bytes,
-        }),
-        Err(fallback) if matches!(diagnostic, SnapshotDiagnostic::Missing) => Err(fallback),
-        Err(fallback) => Err(ActivationError::SnapshotFallbackFailed {
-            snapshot: diagnostic,
-            fallback: Box::new(fallback),
-        }),
-    }
+    .await?;
+    Ok(RestoredFold {
+        state,
+        source: RestoreSource::JournalFromZero,
+        retained_bytes,
+    })
 }
 
 #[allow(
@@ -357,22 +176,6 @@ const fn page_exhaustion_is_total(
     page: ReadBudget,
 ) -> bool {
     remaining_entries <= page.max_entries || remaining_bytes <= page.max_bytes
-}
-
-fn unavailable(error: StoreError) -> SnapshotDiagnostic {
-    match error {
-        StoreError::SnapshotRejected { diagnostic } => diagnostic,
-        StoreError::SnapshotBodyTooLarge { declared, max } => SnapshotDiagnostic::Rejected(
-            aex_brain_domain::snapshot::FoldSnapshotError::BodyTooLarge { declared, max },
-        ),
-        StoreError::Transport { reason, retryable } => {
-            SnapshotDiagnostic::Unavailable { reason, retryable }
-        }
-        other => SnapshotDiagnostic::Unavailable {
-            reason: other.to_string(),
-            retryable: false,
-        },
-    }
 }
 
 #[cfg(test)]

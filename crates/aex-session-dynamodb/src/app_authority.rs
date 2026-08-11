@@ -402,9 +402,7 @@ const fn condition_tag(condition: &Condition) -> &'static str {
         Condition::RegistryEtag { .. } => "RegistryEtag",
         Condition::UploadState { .. } => "UploadState",
         Condition::ContentOwned { .. } => "ContentOwned",
-        Condition::RootPinPresent { .. } => "RootPinPresent",
         Condition::GrantUnexpired { .. } => "GrantUnexpired",
-        Condition::PersistRoot { .. } => "PersistRoot",
         Condition::OperationFence { .. } => "OperationFence",
         Condition::OperationCursorAt { .. } => "OperationCursorAt",
         Condition::OperationVersion { .. } => "OperationVersion",
@@ -430,7 +428,6 @@ const fn write_tag(write: &Write) -> &'static str {
         Write::RedactOperationResult(_) => "RedactOperationResult",
         Write::PutWorkItem(_) => "PutWorkItem",
         Write::PutOutboxEvent(_) => "PutOutboxEvent",
-        Write::PutOwnerEdge(_) => "PutOwnerEdge",
         Write::PutPin(_) => "PutPin",
         Write::DeletePin(_) => "DeletePin",
         Write::PutRegistryPointer(_) => "PutRegistryPointer",
@@ -439,8 +436,6 @@ const fn write_tag(write: &Write) -> &'static str {
         Write::PutCustody(_) => "PutCustody",
         Write::PutSecret(_) => "PutSecret",
         Write::PutTombstone(_) => "PutTombstone",
-        Write::PutPersistReceipt(_) => "PutPersistReceipt",
-        Write::PutTreePage { .. } => "PutTreePage",
         Write::DeleteItem(_) => "DeleteItem",
     }
 }

@@ -69,13 +69,11 @@ pub fn public_session(session: &Session) -> Result<models::Session, CanonicalErr
         status: public_status(session.status),
         revision: session.revision.0,
         continuity: models::WorkspaceContinuity {
-            // A session that has never persisted has no durable root to name,
-            // and rendering the all-zero root as a hash would publish a digest
-            // that addresses nothing.
-            root_hash: (session.persist_revision.0 > 0)
-                .then(|| aex_session_domain::public_root_hash(&session.persisted_root)),
-            persist_revision: session.persist_revision.0,
-            last_persisted_at: session.last_persisted_at,
+            // Compatibility values until the public contract lane removes the retired
+            // persistence fields. No session root is stored behind these projections.
+            root_hash: None,
+            persist_revision: 0,
+            last_persisted_at: None,
             // The generation that is *live*, which is `None` until a launch.
             // Never the pinned definition: publishing that would tell a caller
             // a workspace is running when H-LAZY guarantees nothing has
@@ -84,11 +82,7 @@ pub fn public_session(session: &Session) -> Result<models::Session, CanonicalErr
         },
         lineage: models::SessionLineage {
             origin_session_id: session.lineage.origin.as_ref().map(|origin| origin.session),
-            cloned_at_persist_revision: session
-                .lineage
-                .origin
-                .as_ref()
-                .map(|origin| origin.source_persist_revision.0),
+            cloned_at_persist_revision: None,
             clone_operation_id: session
                 .lineage
                 .origin

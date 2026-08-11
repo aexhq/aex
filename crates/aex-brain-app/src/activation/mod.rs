@@ -39,9 +39,9 @@ pub mod memory;
 mod tests;
 
 use crate::ports::{
-    CatalogError, CatalogPort, ClaimError, ClockPort, CommitError, EffectStore, FoldSnapshotStore,
-    HandsError, HandsPort, IdPort, JournalStore, LeaseStore, ProviderPort, ReadBudget,
-    SnapshotDiagnostic, StoreError, ToolPort, ToolRoutingError, WakeQueue,
+    CatalogError, CatalogPort, ClaimError, ClockPort, CommitError, EffectStore, HandsError,
+    HandsPort, IdPort, JournalStore, LeaseStore, ProviderPort, ReadBudget, StoreError, ToolPort,
+    ToolRoutingError, WakeQueue,
 };
 use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::context::ContextPolicy;
@@ -80,8 +80,6 @@ pub struct RestoreBudget {
 pub struct Ports {
     /// The agent's journal: head, pages and the one decision transaction.
     pub journal: Arc<dyn JournalStore>,
-    /// Immutable fold snapshots and their monotonic durable pointer.
-    pub snapshots: Arc<dyn FoldSnapshotStore>,
     /// The durable effect record's two pre-settlement transitions.
     pub effects: Arc<dyn EffectStore>,
     /// Activation ownership.
@@ -126,9 +124,7 @@ pub struct ActivationPolicy {
     pub read: ReadBudget,
     /// The strict total journal restore ceiling across every page.
     pub restore: RestoreBudget,
-    /// Largest canonical immutable fold snapshot this build will parse.
-    pub max_snapshot_bytes: usize,
-    /// Peak resident bytes reserved before snapshot/journal hydration.
+    /// Peak resident bytes reserved before journal hydration.
     ///
     /// This is intentionally separate from canonical payload bytes. A reproducible
     /// process-RSS probe bounds decode/fold amplification; token counts and `DynamoDB`
@@ -190,13 +186,10 @@ impl Default for ActivationPolicy {
                 max_entries: 256,
                 max_bytes: 8 * 1_024 * 1_024,
             },
-            // A verified snapshot plus bounded suffix is the path for histories above this
-            // canonical payload ceiling. Admission separately reserves decoded working set.
             restore: RestoreBudget {
                 max_entries: 4_096,
                 max_bytes: 8 * 1_024 * 1_024,
             },
-            max_snapshot_bytes: 8 * 1_024 * 1_024,
             // Conservative until the production-shape allocator/RSS campaign tightens it.
             // Correct typed deferral is preferable to overcommitting a 1M-context mux.
             restore_resident_bytes: 64 * 1_024 * 1_024,
@@ -382,16 +375,6 @@ pub enum ActivationError {
     /// The journal did not fold.
     #[error(transparent)]
     Fold(#[from] FoldError),
-    /// Snapshot restore failed and the bounded authoritative sequence-zero fallback did too.
-    #[error(
-        "fold snapshot fallback failed ({snapshot}); sequence-zero restore failed ({fallback})"
-    )]
-    SnapshotFallbackFailed {
-        /// Why the acceleration path could not be used.
-        snapshot: SnapshotDiagnostic,
-        /// Why replaying the authoritative journal under the same ceiling also refused.
-        fallback: Box<ActivationError>,
-    },
     /// A capability lookup failed.
     #[error(transparent)]
     Catalog(#[from] CatalogError),

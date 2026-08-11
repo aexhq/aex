@@ -10,7 +10,6 @@
 //! | --- | --- | --- |
 //! | `WakeQueue` | `aex_brain_store_dynamodb::SqsWakeQueue` | real, over the configured queue and the `regional-work` due index |
 //! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_dynamodb::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
-//! | `FoldSnapshotStore` | `AwsFoldSnapshotStore` over the regional content bucket | immutable bodies and the monotonic pointer use the same session/content authorities as the activation |
 //! | `ToolPort` | injected production router | startup refuses unless all four coarse routes have concrete executors |
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
 //! | `ProviderPort` | regional custody + KMS + six-provider router, or explicit startup refusal | dispatch uses the immutable session pin and ticket-scoped tenant authority; registration remains owned by the secret API |
@@ -33,9 +32,11 @@ use aex_brain_app::activation::{
     DispatchDecision, DispatchLane, Ports, WakeLoop,
 };
 use aex_brain_app::kernel::{ActivationRegistry, DrainGate, FoldCache, PermitKind, PermitSet};
+#[cfg(test)]
+use aex_brain_app::ports::StoreError;
 use aex_brain_app::ports::{
-    BoxFuture, CatalogPort, ClockPort, FoldSnapshotStore, HandsError, HandsPort, IdPort,
-    ProviderPort, SteadyInstant, StoreError, ToolPort,
+    BoxFuture, CatalogPort, ClockPort, HandsError, HandsPort, IdPort, ProviderPort, SteadyInstant,
+    ToolPort,
 };
 use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::effect::EffectKind;
@@ -52,8 +53,7 @@ use aex_brain_app::ports::{
     AgentHead, CancelToken, CatalogDigest, CatalogError, Claim, ClaimError, CommitError,
     CommitReceipt, DecisionContext, DispatchTicket, EffectStore, FenceGuard, JournalPage,
     JournalStore, LeaseStore, PreviewSink, ProviderDispatchError, ProviderOutcome, ReadBudget,
-    RedactedDetail, ReleaseDisposition, SessionAuthority, SnapshotPublishOutcome, StreamBudget,
-    UnknownResolution,
+    RedactedDetail, ReleaseDisposition, SessionAuthority, StreamBudget, UnknownResolution,
 };
 #[cfg(test)]
 use aex_brain_domain::commit::DecisionCommit;
@@ -61,8 +61,6 @@ use aex_brain_domain::commit::DecisionCommit;
 use aex_brain_domain::effect::{DispatchEvidence, DispatchProof, DispatchStage, DurableEffect};
 #[cfg(test)]
 use aex_brain_domain::ids::{AgentKey, ModelSlug};
-#[cfg(test)]
-use aex_brain_domain::snapshot::{FoldSnapshotArtifact, FoldSnapshotPointer};
 #[cfg(test)]
 use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
 #[cfg(test)]
@@ -85,11 +83,6 @@ use aex_runtime_control_aws::worker::{Pace, RuntimeControl, RuntimePorts, Runtim
 /// fail closed.
 #[cfg(test)]
 pub const STORE_UNBOUND: &str = "aex-brain-store-dynamodb is not bound into this composition";
-
-/// Why verified fold snapshots would be refused, were they ever unbound.
-#[cfg(test)]
-pub const SNAPSHOT_ABSENT: &str = "the regional content-authority fold snapshot reader and \
-                                  monotonic publisher are not bound";
 
 /// Why the provider would be refused, were it ever unbound.
 #[cfg(test)]
@@ -362,33 +355,6 @@ impl JournalStore for UnboundStore {
 }
 
 #[cfg(test)]
-impl FoldSnapshotStore for UnboundStore {
-    fn load_latest<'a>(
-        &'a self,
-        _key: &'a AgentKey,
-    ) -> BoxFuture<'a, Result<Option<FoldSnapshotPointer>, StoreError>> {
-        Box::pin(async { Err(Self::refusal()) })
-    }
-
-    fn load_body<'a>(
-        &'a self,
-        _workspace: aex_wire::ids::WorkspaceId,
-        _pointer: &'a FoldSnapshotPointer,
-        _max_bytes: usize,
-    ) -> BoxFuture<'a, Result<Vec<u8>, StoreError>> {
-        Box::pin(async { Err(Self::refusal()) })
-    }
-
-    fn publish<'a>(
-        &'a self,
-        _workspace: aex_wire::ids::WorkspaceId,
-        _artifact: &'a FoldSnapshotArtifact,
-    ) -> BoxFuture<'a, Result<SnapshotPublishOutcome, StoreError>> {
-        Box::pin(async { Err(Self::refusal()) })
-    }
-}
-
-#[cfg(test)]
 impl EffectStore for UnboundStore {
     fn mark_dispatch_started<'a>(
         &'a self,
@@ -555,8 +521,6 @@ impl BindingState {
 pub struct Bindings {
     /// Whether the journal, effect and lease ports reach a real authority.
     pub store: BindingState,
-    /// Whether immutable fold snapshots and their monotonic pointer are real.
-    pub snapshots: BindingState,
     /// Whether the provider port reaches a real adapter.
     pub provider: BindingState,
     /// Whether the catalog port reaches a verified artifact.
@@ -578,7 +542,6 @@ impl Bindings {
     pub const fn unavailable() -> Self {
         Self {
             store: BindingState::Ready,
-            snapshots: BindingState::Unavailable(SNAPSHOT_ABSENT),
             provider: BindingState::Unavailable(PROVIDER_ABSENT),
             catalog: BindingState::Unavailable(CATALOG_ABSENT),
             tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
@@ -592,7 +555,6 @@ impl Bindings {
     pub const fn provider_ready() -> Self {
         Self {
             store: BindingState::Ready,
-            snapshots: BindingState::Unavailable(SNAPSHOT_ABSENT),
             provider: BindingState::Ready,
             catalog: BindingState::Unavailable(CATALOG_ABSENT),
             tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
@@ -621,7 +583,6 @@ impl Bindings {
     pub const fn production() -> Self {
         Self {
             store: BindingState::Ready,
-            snapshots: BindingState::Ready,
             provider: BindingState::Ready,
             catalog: BindingState::Ready,
             tools: BindingState::Ready,
@@ -633,7 +594,6 @@ impl Bindings {
     #[must_use]
     pub const fn complete(&self) -> bool {
         self.store.is_ready()
-            && self.snapshots.is_ready()
             && self.provider.is_ready()
             && self.catalog.is_ready()
             && self.tools.is_ready()
@@ -647,7 +607,6 @@ impl Bindings {
         let mut missing = Vec::new();
         for state in [
             self.store,
-            self.snapshots,
             self.provider,
             self.catalog,
             self.tools,
@@ -670,7 +629,6 @@ pub struct ProductionPeers {
     tools: Arc<dyn ToolPort>,
     hands: Arc<dyn HandsPort>,
     catalog: Arc<dyn CatalogPort>,
-    snapshots: Arc<dyn FoldSnapshotStore>,
 }
 
 impl ProductionPeers {
@@ -681,14 +639,12 @@ impl ProductionPeers {
         tools: Arc<dyn ToolPort>,
         hands_backend: Arc<dyn aex_brain_hands::HandsBackend>,
         catalog: Arc<dyn CatalogPort>,
-        snapshots: Arc<dyn FoldSnapshotStore>,
     ) -> Self {
         Self {
             provider,
             tools,
             hands: Arc::new(aex_brain_hands::HandsAdapter::new(hands_backend)),
             catalog,
-            snapshots,
         }
     }
 }
@@ -861,51 +817,6 @@ const fn coarse_tool_route(route: CatalogExecutorRoute) -> ExecutorRoute {
         | CatalogExecutorRoute::HandsBrowser
         | CatalogExecutorRoute::RegisteredCustom => ExecutorRoute::Hands,
     }
-}
-
-/// Real snapshot adapter settings.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SnapshotBinding {
-    /// Regional content bucket.
-    pub bucket: String,
-    /// Account that must own the bucket.
-    pub expected_owner: String,
-    /// Exact content KMS key ARN.
-    pub kms_key_arn: String,
-    /// Deployment plane used in the encryption context.
-    pub plane: String,
-    /// Deployment region used in the encryption context.
-    pub region: String,
-}
-
-/// Binds immutable snapshot bodies and their monotonic session-authority pointer.
-///
-/// # Errors
-///
-/// Returns a store composition error when deployment placement is invalid.
-pub fn snapshot_binding(
-    aws: &aws_config::SdkConfig,
-    tables: aex_brain_store_dynamodb::BrainTables,
-    binding: SnapshotBinding,
-) -> Result<Arc<dyn FoldSnapshotStore>, StoreError> {
-    let bodies = aex_content_aws::S3ContentObjects::new(
-        aws_sdk_s3::Client::new(aws),
-        aex_content_aws::BucketBinding {
-            bucket: binding.bucket,
-            expected_owner: binding.expected_owner,
-            kms_key_id: binding.kms_key_arn,
-        },
-    );
-    let context =
-        aex_brain_store_dynamodb::SnapshotContentContext::new(&binding.plane, &binding.region)?;
-    Ok(Arc::new(
-        aex_brain_store_dynamodb::AwsFoldSnapshotStore::new(
-            aws_sdk_dynamodb::Client::new(aws),
-            tables,
-            bodies,
-            context,
-        ),
-    ))
 }
 
 /// Real Hands ports sharing one runtime authority and one `MicroVM` client.
@@ -1136,7 +1047,6 @@ pub fn production_ports(
 ) -> Ports {
     Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        snapshots: peers.snapshots,
         effects: Arc::clone(&store) as Arc<_>,
         leases: store,
         wakes,
@@ -1385,19 +1295,18 @@ mod tests {
         assert!(!bindings.complete());
         assert!(bindings.store.is_ready());
         let missing = bindings.unsatisfied();
-        assert_eq!(missing.len(), 5);
+        assert_eq!(missing.len(), 4);
         assert!(!missing.contains(&STORE_UNBOUND));
         assert!(missing.contains(&PROVIDER_ABSENT));
         assert!(missing.contains(&CATALOG_ABSENT));
         assert!(missing.contains(&super::TOOL_EXECUTORS_ABSENT));
         assert!(missing.contains(&super::HANDS_ABSENT));
-        assert!(missing.contains(&super::SNAPSHOT_ABSENT));
 
         let with_provider = Bindings::provider_ready();
         assert!(!with_provider.complete());
         assert!(with_provider.provider.is_ready());
         let missing = with_provider.unsatisfied();
-        assert_eq!(missing.len(), 4);
+        assert_eq!(missing.len(), 3);
         assert!(!missing.contains(&PROVIDER_ABSENT));
         assert!(Bindings::production().complete());
     }
@@ -1561,7 +1470,6 @@ mod tests {
             Arc::clone(&admission),
             Bindings {
                 store: super::BindingState::Ready,
-                snapshots: super::BindingState::Ready,
                 provider: super::BindingState::Ready,
                 catalog: super::BindingState::Ready,
                 tools: super::BindingState::Ready,
@@ -1649,7 +1557,6 @@ mod tests {
             admission,
             Bindings {
                 store: super::BindingState::Ready,
-                snapshots: super::BindingState::Ready,
                 provider: super::BindingState::Ready,
                 catalog: super::BindingState::Ready,
                 tools: super::BindingState::Ready,

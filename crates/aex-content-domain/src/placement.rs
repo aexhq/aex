@@ -1,9 +1,8 @@
 //! Where a body physically lives, and the boundary that decides it.
 //!
 //! Placement is an internal storage decision, never a customer-visible one.
-//! Crossing the boundary never fails a request and never changes a root: the
-//! object locator is not an input to any digest, so a body may migrate between
-//! inline and object storage without moving a single hash.
+//! The object locator is not an input to the body digest, so a body may migrate
+//! between inline and object storage without moving its identity.
 
 use core::fmt;
 
@@ -14,9 +13,6 @@ pub const INLINE_PLACEMENT_MAX_BYTES: u64 = 32_768;
 
 /// Largest single item any regional application table may hold.
 pub const APPLICATION_ITEM_MAX_BYTES: u64 = 262_144;
-
-/// Target canonical size of one Merkle tree page.
-pub const TREE_PAGE_TARGET_BYTES: u64 = 196_608;
 
 /// Which storage class a canonical length selects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

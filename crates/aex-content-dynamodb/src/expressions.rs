@@ -11,15 +11,14 @@ use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::{IMMUTABLE, Participant, TransactionPlan, key, keyed};
 use aex_wire::ids::{ContentHash, WorkspaceId};
 use aex_wire::types::Timestamp;
-use aws_sdk_dynamodb::types::builders::{DeleteBuilder, PutBuilder, UpdateBuilder};
+use aws_sdk_dynamodb::types::builders::{PutBuilder, UpdateBuilder};
 use aws_sdk_dynamodb::types::{ConditionCheck, Delete, Put, Update};
 
 use crate::codec::{
-    self, ContentPin, DownloadGrant, GcCandidate, GcEpoch, TreePage, grant_pin_attributes,
-    pin_attributes,
+    self, ContentPin, DownloadGrant, GcCandidate, GcEpoch, grant_pin_attributes, pin_attributes,
 };
 use crate::keys;
-use crate::wire_pending::{Blake3Digest, GcSweepPlan, InlineBody, PinOwner, body_hex};
+use crate::wire_pending::{GcSweepPlan, InlineBody, body_hex};
 
 /// A transport deduplication identity that fits the provider's 36-character
 /// ceiling whatever the inputs are.
@@ -117,58 +116,6 @@ pub fn pin_body(
     Ok(Put::builder()
         .table_name(table)
         .set_item(Some(keyed(pin_attributes(pin), &pin_key.pk, &pin_key.sk)))
-        .condition_expression(IMMUTABLE))
-}
-
-/// Pins one root, which is where a binding's pin belongs.
-///
-/// # Errors
-///
-/// As [`pin_body`].
-pub fn pin_root(
-    table: &str,
-    root: Blake3Digest,
-    pin: &ContentPin,
-) -> Result<PutBuilder, StoreError> {
-    let pin_key = keys::root_pin(pin.workspace, root, &pin.owner)?;
-    Ok(Put::builder()
-        .table_name(table)
-        .set_item(Some(keyed(pin_attributes(pin), &pin_key.pk, &pin_key.sk)))
-        .condition_expression(IMMUTABLE))
-}
-
-/// Removes one root pin.
-///
-/// There is no reverse owner index and no reference count: the owner knows its
-/// own root digest, so releasing a pin is a `DeleteItem` on a key the caller
-/// already has (R-DELETE).
-///
-/// # Errors
-///
-/// As [`pin_body`].
-pub fn unpin_root(
-    table: &str,
-    workspace: WorkspaceId,
-    root: Blake3Digest,
-    owner: &PinOwner,
-) -> Result<DeleteBuilder, StoreError> {
-    let pin_key = keys::root_pin(workspace, root, owner)?;
-    Ok(Delete::builder()
-        .table_name(table)
-        .set_key(Some(key(&pin_key.pk, &pin_key.sk)))
-        .condition_expression("attribute_exists(pk)"))
-}
-
-/// Writes one Merkle tree page.
-///
-/// # Errors
-///
-/// [`StoreError::Invalid`] when the page is over the 192 KiB target.
-pub fn put_tree_page(table: &str, page: &TreePage) -> Result<PutBuilder, StoreError> {
-    let item = codec::encode_tree_page(page).map_err(|error| invalid(&error))?;
-    Ok(Put::builder()
-        .table_name(table)
-        .set_item(Some(item))
         .condition_expression(IMMUTABLE))
 }
 

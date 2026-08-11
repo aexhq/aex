@@ -6,7 +6,7 @@ use aex_content_dynamodb::codec::{
     decode_descriptor, decode_grant, encode_descriptor, encode_grant,
 };
 use aex_content_dynamodb::keys;
-use aex_content_dynamodb::wire_pending::{Blake3Digest, PinOwner, body_hex};
+use aex_content_dynamodb::wire_pending::{PinOwner, body_hex};
 use aex_wire::ids::ContentHash;
 use aex_wire::types::Timestamp;
 use proptest::prelude::*;
@@ -54,8 +54,11 @@ proptest! {
     fn a_pin_identity_that_could_forge_a_key_is_always_refused(
         identity in "\\PC*",
     ) {
-        let owner = PinOwner::Export(identity.clone());
-        let outcome = keys::root_pin(workspace(), Blake3Digest::from_bytes([1; 32]), &owner);
+        let owner = PinOwner::Registry {
+            kind: "tool".to_owned(),
+            name: identity.clone(),
+        };
+        let outcome = keys::pin(workspace(), &digest(1), &owner);
         let admissible = !identity.is_empty()
             && identity.len() <= 256
             && !identity.chars().any(|character| {

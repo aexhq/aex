@@ -1,8 +1,6 @@
 //! Brain's durable store ports.
 //!
-//! Production implementations live in `aex-brain-store-dynamodb` plus the regional content
-//! authority. Snapshot body composition remains fail-closed until that content adapter is
-//! wired; the journal/effect/lease/wake adapters are independent of it.
+//! Production implementations live in `aex-brain-store-dynamodb`.
 //!
 //! Two rules shape every signature here.
 //!
@@ -24,9 +22,6 @@ use aex_brain_domain::ids::{
     Timestamp, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
-use aex_brain_domain::snapshot::{
-    FoldSnapshotArtifact, FoldSnapshotError, FoldSnapshotPointer, JournalPoint,
-};
 use aex_wire::ids::{GenerationId, OrganizationId, WorkspaceId};
 use std::collections::BTreeMap;
 
@@ -212,94 +207,6 @@ pub trait JournalStore: Send + Sync + 'static {
         context: &'a DecisionContext,
         commit: &'a DecisionCommit,
     ) -> BoxFuture<'a, Result<CommitReceipt, CommitError>>;
-}
-
-/// Immutable fold bodies plus the strongly selected per-agent pointer.
-///
-/// This is an acceleration port, not journal authority. Implementations publish the body
-/// conditionally through the regional content authority, then advance a pointer only after
-/// proving the immutable journal row at `artifact.pointer().absorbed` has the exact hash and
-/// the current control tail is not behind it. The current head may be ahead: requiring an
-/// exact current head would starve snapshots for a continuously active agent.
-pub trait FoldSnapshotStore: Send + Sync + 'static {
-    /// Strongly reads the latest selected pointer for `key`.
-    fn load_latest<'a>(
-        &'a self,
-        key: &'a AgentKey,
-    ) -> BoxFuture<'a, Result<Option<FoldSnapshotPointer>, StoreError>>;
-
-    /// Fetches the exact workspace-scoped immutable body, refusing its declared length
-    /// before allocation.
-    ///
-    /// `workspace` comes from the claimed session authority for this activation; it is not
-    /// process configuration or mux-local tenant state.
-    fn load_body<'a>(
-        &'a self,
-        workspace: WorkspaceId,
-        pointer: &'a FoldSnapshotPointer,
-        max_bytes: usize,
-    ) -> BoxFuture<'a, Result<Vec<u8>, StoreError>>;
-
-    /// Conditionally publishes one opaque workspace-scoped fold produced only by a
-    /// sequence-zero [`SnapshotReplay`](aex_brain_domain::snapshot::SnapshotReplay) using
-    /// the same domain [`apply`](aex_brain_domain::fold::apply) as restore.
-    fn publish<'a>(
-        &'a self,
-        workspace: WorkspaceId,
-        artifact: &'a FoldSnapshotArtifact,
-    ) -> BoxFuture<'a, Result<SnapshotPublishOutcome, StoreError>>;
-}
-
-/// What a monotonic snapshot publication established.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SnapshotPublishOutcome {
-    /// This artifact advanced the selected pointer.
-    Published,
-    /// The exact same sequence/body was already selected.
-    AlreadyCurrent,
-    /// A later absorbed sequence was already selected; rollback was refused.
-    Superseded {
-        /// The selected later point.
-        current: JournalPoint,
-    },
-}
-
-/// Why restore did not use the selected snapshot.
-///
-/// This survives a bounded fallback in [`crate::activation::restore::RestoreSource`]. If a
-/// present/unavailable snapshot and fallback both fail,
-/// [`crate::activation::ActivationError::SnapshotFallbackFailed`] preserves both causes;
-/// ordinary absence leaves the original authoritative replay error unchanged.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum SnapshotDiagnostic {
-    /// No pointer has been published for this agent.
-    #[error("no fold snapshot pointer exists")]
-    Missing,
-    /// Pointer or body transport failed.
-    #[error("fold snapshot store unavailable: {reason}")]
-    Unavailable {
-        /// Redacted adapter detail.
-        reason: String,
-        /// Whether retry could help.
-        retryable: bool,
-    },
-    /// The pointer/body/state failed closed validation.
-    #[error(transparent)]
-    Rejected(#[from] FoldSnapshotError),
-    /// A pointer claims a sequence beyond the head returned with the fenced claim.
-    #[error("fold snapshot sequence {snapshot} is ahead of claimed journal tail {claimed:?}")]
-    AheadOfClaim {
-        /// Snapshot sequence.
-        snapshot: JournalSeq,
-        /// Claimed tail.
-        claimed: Option<JournalSeq>,
-    },
-    /// A same-sequence snapshot and claimed head carry different journal hashes.
-    #[error("fold snapshot and claimed head disagree at sequence {seq}")]
-    ForkAtClaim {
-        /// The shared sequence.
-        seq: JournalSeq,
-    },
 }
 
 /// The durable effect record's two pre-settlement transitions.
@@ -820,29 +727,6 @@ pub enum StoreError {
         folded_seq: Option<JournalSeq>,
         /// The hash reached by the complete fold.
         folded_hash: Option<ContentHash>,
-    },
-    /// The selected pointer and body could not seed restore.
-    #[error("fold snapshot was rejected: {diagnostic}")]
-    SnapshotRejected {
-        /// Typed reason retained for diagnostics and policy.
-        diagnostic: SnapshotDiagnostic,
-    },
-    /// Publication could not prove the absorbed append-only journal row.
-    #[error("fold snapshot historical journal point does not exist with the claimed hash")]
-    SnapshotHistoricalMismatch,
-    /// A different body was offered at the already-selected sequence.
-    #[error("fold snapshot pointer conflict at sequence {seq}")]
-    SnapshotPointerConflict {
-        /// The sequence with two proposed derived states.
-        seq: JournalSeq,
-    },
-    /// The immutable snapshot body exceeded the pre-allocation read bound.
-    #[error("fold snapshot body length {declared} exceeds the {max} byte read bound")]
-    SnapshotBodyTooLarge {
-        /// Stored/declared bytes.
-        declared: u64,
-        /// Caller ceiling.
-        max: usize,
     },
     /// The underlying service failed.
     #[error("store transport failed: {reason}")]
