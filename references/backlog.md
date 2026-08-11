@@ -35,6 +35,79 @@ ID in each dashboard environment; and restore focused unit, composition, and
 callback tests. Do not add only the button or only the secret: the provider is
 available when that whole vertical slice is deployable in both planes.
 
+## Generic secrets and typed integrations
+
+Launch has no generic secret vault and no first-class skill, tool bundle, custom
+instruction, or MCP-server resource. Dedicated BYOK provider credentials remain
+their own narrow write-only authority. Every other customer-supplied artifact is
+an opaque registered workspace file that a session may mount; conventional
+guidance such as `AGENTS.md`, skill files, tool bundles, and MCP configuration is
+read through Bash inside the session rather than being interpreted as a separate
+public capability.
+
+Revisit generic secrets only when a concrete non-provider consumer cannot use an
+opaque mounted file and has a complete custody, rotation, revocation, audit, and
+least-privilege design. Revisit typed integrations only when the type provides a
+customer-visible guarantee that an opaque file plus Bash cannot provide. Restore
+each category as a whole vertical slice—schema, immutable resolution, retention,
+credential authority where needed, runtime behavior, SDK/CLI, and user tests—not
+as dormant routes or catalog labels.
+
+## Hosted paid tools
+
+The launch built-in model tool catalog contains Bash only. It executes inside the
+session MicroVM and is charged as session compute. Hosted credential-backed tools
+such as web search, their public executor deployable, and any user BYOK tool-key
+surface are absent from the release rather than hidden behind an unreachable
+catalog row.
+
+Revisit this when customer demand justifies platform-managed paid tools and the
+release can prove immutable tool identity, metering, permission and approval
+binding, provider-key custody, result limits, and end-to-end reachability. Restore
+the catalog row, Brain route, executor release unit, readiness and environment
+bindings, and live receipts together.
+
+## Session persistence and crash recovery
+
+Launch sessions retain one provider generation for at most eight hours. Idle
+compute may suspend and resume that same generation, but there is no public
+persisted-session workspace and no S3-backed Brain or runtime snapshot. Explicit
+termination or runtime loss destroys ephemeral compute and live files; runtime
+loss terminates the session rather than reconstructing an ambiguous partial turn.
+Durable registered workspace files and telemetry storage are independent and
+remain supported.
+
+Revisit crash recovery when measured runtime-loss frequency or customer
+reliability commitments justify a new design. It must define the exact durable
+turn boundary, provider-effect replay semantics, encrypted snapshot ownership,
+retention/deletion, version compatibility, and recovery user experience before
+adding storage or a resume path. Revisit persistent session files separately only
+if customers need a second durable file abstraction in addition to registered
+workspace files.
+
+## Message attachments
+
+Launch message admission is text-only. Files are not silently converted to path
+text and are not dropped; customers mount opaque registered files or upload live
+session files and refer to them from text/Bash.
+
+Revisit attachments when the product has one immutable file-resolution and
+retention contract, canonical message-block representation, provider rendering,
+size limits, deletion behavior, and SDK/CLI upload workflow. Add all of those with
+black-box tests before widening `MessageSendRequest`.
+
+## Session trash and restore
+
+Launch deletion is asynchronous and irreversible. It terminates the exact
+generation, removes session-scoped user content and telemetry, and retains only a
+minimal tombstone plus aggregate billing/audit facts. There is no recovery window
+and no trash or restore route.
+
+Revisit a recovery window only when customer demand outweighs the additional
+retention and privacy complexity. A future design must pin recovery duration,
+storage cost, delete/export interactions, account-pause behavior, authorization,
+and the exact point at which deletion becomes irreversible.
+
 ## Asynchronous supply-chain assurance
 
 Dependency audits, licence inventory, packaged-artifact SBOM generation, and
