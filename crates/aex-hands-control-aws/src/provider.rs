@@ -26,13 +26,12 @@ use serde::{Deserialize, Serialize};
 /// Provider-hard maximum lifetime, in seconds, across running and suspended time.
 pub const MAX_DURATION_SECONDS: u64 = 28_800;
 
-/// Traffic-idle backstop, in seconds.
+/// Native endpoint-idle suspension, in seconds.
 ///
-/// Moved from 300 to the provider maximum deliberately. The provider measures idle
-/// only by inbound endpoint traffic, so a 300-second backstop can suspend an
-/// authority-open background job that is busy computing and simply not being talked
-/// to. H-IDLE makes AEX the only thing that decides idleness.
-pub const MAX_IDLE_DURATION_SECONDS: u64 = 28_800;
+/// The provider counts authenticated endpoint traffic, suspends after this quiet
+/// period, and auto-resumes the same retained generation when the endpoint is used
+/// again. This is event-driven provider behavior; AEX does not poll for idleness.
+pub const MAX_IDLE_DURATION_SECONDS: u64 = 180;
 
 /// How long a suspended generation may stay suspended, in seconds.
 ///
@@ -90,9 +89,12 @@ pub const FORBIDDEN_IAM_ACTIONS: [&str; 5] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct IdlePolicy {
-    /// Always `false`: every billable state transition must have an AEX intent
-    /// record and a provider request identity **before** the effect. An implicit
-    /// resume produces a state change and a charge with no intent.
+    /// Native same-generation auto-resume on authenticated endpoint traffic.
+    ///
+    /// The endpoint request is held until the guest `/resume` hook succeeds. AEX
+    /// records the shared session activity transition before making that request
+    /// and observes the provider result afterwards; it does not call
+    /// `ResumeMicrovm` on a low-level file or message path.
     pub auto_resume_enabled: bool,
     /// Traffic-idle backstop.
     pub max_idle_duration_seconds: u64,
@@ -103,7 +105,7 @@ pub struct IdlePolicy {
 impl Default for IdlePolicy {
     fn default() -> Self {
         Self {
-            auto_resume_enabled: false,
+            auto_resume_enabled: true,
             max_idle_duration_seconds: MAX_IDLE_DURATION_SECONDS,
             suspended_duration_seconds: SUSPENDED_DURATION_SECONDS,
         }
@@ -432,8 +434,8 @@ mod tests {
         assert_eq!(
             built.idle_policy,
             IdlePolicy {
-                auto_resume_enabled: false,
-                max_idle_duration_seconds: 28_800,
+                auto_resume_enabled: true,
+                max_idle_duration_seconds: 180,
                 suspended_duration_seconds: 28_800,
             }
         );
