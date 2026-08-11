@@ -37,9 +37,9 @@ pub use lease::{
     WorkCommit, WorkId, WorkItem, WorkState, claim, complete, renew,
 };
 pub use operation::{
-    CancelRejection, Execution, FailureClass, InlineBudget, Operation, OperationCommit,
-    OperationFailure, OperationKind, OperationResult, OperationScope, OperationStatus,
-    PersistShape, Progress, ProgressError, PublicProjectionError, TransitionError, cancel,
-    classify_persist, commit_point, fail, progress, revoke_telemetry_export, start, succeed,
+    CancelRejection, Execution, FailureClass, Operation, OperationCommit, OperationFailure,
+    OperationKind, OperationResult, OperationScope, OperationStatus, Progress, ProgressError,
+    PublicProjectionError, TransitionError, cancel, commit_point, fail, progress,
+    revoke_telemetry_export, start, succeed,
 };
-pub use redact::redact_for_purge;
+pub use redact::redact_for_session_delete;

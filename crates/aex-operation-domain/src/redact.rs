@@ -1,9 +1,9 @@
-//! Purge redaction.
+//! Irreversible session-deletion redaction.
 //!
-//! When a session is purged, the operations it already produced must stop
+//! When a session is deleted, the operations it already produced must stop
 //! carrying its content — but the envelope survives, so `GET /operations/{id}`
 //! still answers and the measurement identity still reconciles against usage.
-//! Stop, trash and purge results are content-free receipts and survive intact.
+//! Only the minimal session-delete tombstone survives intact.
 
 use crate::operation::{Operation, OperationCommit, OperationFailure, OperationResult};
 
@@ -12,8 +12,8 @@ use crate::operation::{Operation, OperationCommit, OperationFailure, OperationRe
 /// Returns `None` when nothing would change, so a caller writes nothing rather
 /// than churning a revision for no reason.
 #[must_use]
-pub fn redact_for_purge(operation: &Operation) -> Option<OperationCommit> {
-    if operation.kind.result_survives_purge() {
+pub fn redact_for_session_delete(operation: &Operation) -> Option<OperationCommit> {
+    if operation.kind.result_survives_session_delete() {
         return None;
     }
     let content_bearing = operation
@@ -49,7 +49,7 @@ mod tests {
     use aex_wire::ids::{MeasurementId, OperationId, PrefixedId as _, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
 
-    use super::redact_for_purge;
+    use super::redact_for_session_delete;
     use crate::operation::{
         FailureClass, Operation, OperationFailure, OperationKind, OperationResult, OperationScope,
         OperationStatus,
@@ -87,8 +87,9 @@ mod tests {
 
     #[test]
     fn redaction_keeps_the_envelope_and_the_measurement() {
-        let commit = redact_for_purge(&operation(OperationKind::SessionPersist)).expect("redacts");
-        let before = operation(OperationKind::SessionPersist);
+        let commit = redact_for_session_delete(&operation(OperationKind::SessionTerminate))
+            .expect("redacts");
+        let before = operation(OperationKind::SessionTerminate);
         assert_eq!(commit.operation.id, before.id);
         assert_eq!(commit.operation.status, before.status);
         assert_eq!(commit.operation.intent, before.intent);
@@ -101,21 +102,18 @@ mod tests {
     }
 
     #[test]
-    fn content_free_receipts_survive() {
-        for kind in [
-            OperationKind::SessionStop,
-            OperationKind::SessionTrash,
-            OperationKind::SessionPurge,
-        ] {
-            assert_eq!(redact_for_purge(&operation(kind)), None);
-        }
+    fn the_delete_tombstone_survives() {
+        assert_eq!(
+            redact_for_session_delete(&operation(OperationKind::SessionDelete)),
+            None
+        );
     }
 
     #[test]
     fn an_already_content_free_operation_is_not_rewritten() {
-        let mut bare = operation(OperationKind::SessionPersist);
+        let mut bare = operation(OperationKind::SessionCancel);
         bare.result = Some(OperationResult::receipt());
-        assert_eq!(redact_for_purge(&bare), None);
+        assert_eq!(redact_for_session_delete(&bare), None);
     }
 
     #[test]
@@ -128,7 +126,7 @@ mod tests {
             class: FailureClass::Terminal,
             detail: Some(content()),
         });
-        let commit = redact_for_purge(&failed).expect("redacts");
+        let commit = redact_for_session_delete(&failed).expect("redacts");
         let error = commit.operation.error.expect("kept");
         assert_eq!(error.code, ErrorCode::InvalidRequest);
         assert_eq!(error.detail, None);

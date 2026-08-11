@@ -34,11 +34,8 @@ pub struct AdmitRequest {
     /// The execution this **request** resolved to, when the caller classified
     /// it per request rather than per kind (D-2).
     ///
-    /// `None` means "the kind's default", which is what every fixed-shape
-    /// command uses. `SessionStop` and `SessionPersist` are the two kinds whose
-    /// shape depends on what the request found — a stop over more agents than
-    /// one bounded batch can settle, and a persist above the inline budget —
-    /// and both may only escalate `Inline` to `Continued`, never the reverse.
+    /// `None` means "the kind's default". A declaration may only escalate
+    /// `Inline` to `Continued`, never reverse a kind's durability requirement.
     pub execution: Option<Execution>,
 }
 
@@ -76,14 +73,14 @@ pub enum AdmissionOutcome {
     Replay(Box<Operation>),
     /// The same identity was reused for a different intent.
     Conflict(ConflictCode),
-    /// A purge already holds the session.
+    /// Irreversible deletion already holds the session.
     DeletionInProgress {
         /// The operation that claimed it.
         operation: OperationId,
     },
-    /// The session is gone.
-    SessionPurged {
-        /// The operation that purged it.
+    /// The session is gone except for its tombstone.
+    SessionDeleted {
+        /// The operation that deleted it.
         operation: OperationId,
     },
 }
@@ -91,7 +88,7 @@ pub enum AdmissionOutcome {
 /// Admits an operation.
 ///
 /// Ordering matters and is fixed: identity is resolved first, so the same
-/// identity always replays its original outcome even during and after a purge;
+/// identity always replays its original outcome even during and after deletion;
 /// only a **new** identity meets the deletion fence.
 #[must_use]
 pub fn admit(
@@ -113,21 +110,19 @@ pub fn admit(
         return AdmissionOutcome::Replay(Box::new(existing.clone()));
     }
 
-    if let Some(guard) = guard
-        && !request.kind.claims_session_deletion()
-    {
+    if let Some(guard) = guard {
         match guard.state {
-            DeletionState::Purging => {
-                if let Some(operation) = guard.purge_operation {
+            DeletionState::Deleting => {
+                if let Some(operation) = guard.delete_operation {
                     return AdmissionOutcome::DeletionInProgress { operation };
                 }
             }
-            DeletionState::Purged => {
-                if let Some(operation) = guard.purge_operation {
-                    return AdmissionOutcome::SessionPurged { operation };
+            DeletionState::Deleted => {
+                if let Some(operation) = guard.delete_operation {
+                    return AdmissionOutcome::SessionDeleted { operation };
                 }
             }
-            DeletionState::Live | DeletionState::Trashed => {}
+            DeletionState::Live => {}
         }
     }
 
@@ -205,47 +200,18 @@ mod tests {
         }
     }
 
-    fn purging() -> DeletionGuard {
+    fn deleting() -> DeletionGuard {
         DeletionGuard {
             session: SessionId::from_uuid7(Uuid7::compose(1, [3; 10])),
-            state: DeletionState::Purging,
-            epoch: DeletionEpoch(2),
-            trashed_at: Some(moment(1)),
-            recovery_deadline: None,
-            purge_operation: Some(OperationId::from_uuid7(Uuid7::compose(1, [9; 10]))),
+            state: DeletionState::Deleting,
+            epoch: DeletionEpoch(1),
+            delete_operation: Some(OperationId::from_uuid7(Uuid7::compose(1, [9; 10]))),
         }
     }
 
     #[test]
-    fn an_inline_kind_is_created_already_succeeded() {
-        let AdmissionOutcome::Inserted(created) =
-            admit(None, None, &request(OperationKind::SessionStop), moment(1))
-        else {
-            panic!("expected an insert");
-        };
-        assert_eq!(created.status, OperationStatus::Succeeded);
-        assert_eq!(created.committed_at, Some(moment(1)));
-        assert!(created.result.is_some());
-    }
-
-    #[test]
-    fn a_per_request_escalation_makes_an_inline_kind_continued() {
-        let mut escalated = request(OperationKind::SessionStop);
-        escalated.execution = Some(crate::operation::Execution::Continued);
-        let AdmissionOutcome::Inserted(created) = admit(None, None, &escalated, moment(1)) else {
-            panic!("expected an insert");
-        };
-        assert_eq!(created.status, OperationStatus::Queued);
-        assert_eq!(
-            created.committed_at, None,
-            "a continued stop is not latched by admission alone"
-        );
-        assert!(created.result.is_none());
-    }
-
-    #[test]
-    fn a_per_request_classification_can_never_de_escalate_a_continued_kind() {
-        let mut reduced = request(OperationKind::SessionPurge);
+    fn a_per_request_classification_cannot_de_escalate_a_session_command() {
+        let mut reduced = request(OperationKind::SessionCancel);
         reduced.execution = Some(crate::operation::Execution::Inline);
         let AdmissionOutcome::Inserted(created) = admit(None, None, &reduced, moment(1)) else {
             panic!("expected an insert");
@@ -268,16 +234,21 @@ mod tests {
     }
 
     #[test]
-    fn the_same_identity_always_replays_even_during_a_purge() {
-        let existing = match admit(None, None, &request(OperationKind::SessionStop), moment(1)) {
+    fn the_same_identity_always_replays_even_during_deletion() {
+        let existing = match admit(
+            None,
+            None,
+            &request(OperationKind::SessionCancel),
+            moment(1),
+        ) {
             AdmissionOutcome::Inserted(created) => *created,
             other => panic!("expected an insert, got {other:?}"),
         };
         assert_eq!(
             admit(
                 Some(&existing),
-                Some(&purging()),
-                &request(OperationKind::SessionStop),
+                Some(&deleting()),
+                &request(OperationKind::SessionCancel),
                 moment(2)
             ),
             AdmissionOutcome::Replay(Box::new(existing))
@@ -285,12 +256,12 @@ mod tests {
     }
 
     #[test]
-    fn a_new_identity_during_a_purge_is_deletion_in_progress() {
+    fn a_new_identity_during_deletion_is_deletion_in_progress() {
         assert_eq!(
             admit(
                 None,
-                Some(&purging()),
-                &request(OperationKind::SessionPersist),
+                Some(&deleting()),
+                &request(OperationKind::SessionCancel),
                 moment(2)
             ),
             AdmissionOutcome::DeletionInProgress {
@@ -301,11 +272,16 @@ mod tests {
 
     #[test]
     fn a_reused_identity_with_a_different_intent_conflicts() {
-        let existing = match admit(None, None, &request(OperationKind::SessionStop), moment(1)) {
+        let existing = match admit(
+            None,
+            None,
+            &request(OperationKind::SessionCancel),
+            moment(1),
+        ) {
             AdmissionOutcome::Inserted(created) => *created,
             other => panic!("expected an insert, got {other:?}"),
         };
-        let mut different = request(OperationKind::SessionStop);
+        let mut different = request(OperationKind::SessionCancel);
         different.intent = IntentDigest::from_bytes([7; 32]);
         assert_eq!(
             admit(Some(&existing), None, &different, moment(2)),

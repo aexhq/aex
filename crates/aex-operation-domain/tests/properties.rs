@@ -13,12 +13,12 @@ use aex_operation_domain::due::PageBudget;
 use aex_operation_domain::operation::{FailureClass, OperationScope};
 use aex_operation_domain::{
     AdmissionOutcome, AdmitRequest, CancelRejection, ClaimDenial, ClaimOutcome, ContinuationCursor,
-    CursorPosition, DedupIdentity, DeletionEpoch, DeletionGuard, DeletionState, Execution,
-    ExportMember, Fence, FenceRejection, InlineBudget, Operation, OperationFailure, OperationKind,
-    OperationResult, OperationStatus, OwnerId, PAGE_DEFAULT, PageError, PageToken, PersistShape,
-    Progress, PurgeStage, StepOutcome, WorkId, WorkItem, WorkState, admit, backoff, backoff_step,
-    cancel, claim, classify_persist, commit_point, complete, fail, page_limit, plan_due_scan,
-    redact_for_purge, shard_of, start, succeed,
+    CursorPosition, DedupIdentity, DeletionEpoch, DeletionGuard, DeletionState, ExportMember,
+    Fence, FenceRejection, Operation, OperationFailure, OperationKind, OperationResult,
+    OperationStatus, OwnerId, PAGE_DEFAULT, PageError, PageToken, Progress, PurgeStage,
+    StepOutcome, WorkId, WorkItem, WorkState, admit, backoff, backoff_step, cancel, claim,
+    commit_point, complete, fail, page_limit, plan_due_scan, redact_for_session_delete, shard_of,
+    start, succeed,
 };
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
@@ -93,9 +93,7 @@ fn guard(state: DeletionState) -> DeletionGuard {
         session: session(),
         state,
         epoch: DeletionEpoch(1),
-        trashed_at: Some(moment(1)),
-        recovery_deadline: None,
-        purge_operation: Some(operation_id(9)),
+        delete_operation: Some(operation_id(9)),
     }
 }
 
@@ -510,9 +508,8 @@ fn admission_outcomes_are_total() {
     let guards = [
         None,
         Some(guard(DeletionState::Live)),
-        Some(guard(DeletionState::Trashed)),
-        Some(guard(DeletionState::Purging)),
-        Some(guard(DeletionState::Purged)),
+        Some(guard(DeletionState::Deleting)),
+        Some(guard(DeletionState::Deleted)),
     ];
     for kind in OperationKind::ALL {
         for guard_state in &guards {
@@ -524,11 +521,12 @@ fn admission_outcomes_are_total() {
                     moment(1),
                 );
                 match (&fresh, guard_state.map(|value| value.state)) {
-                    (AdmissionOutcome::Inserted(_), _) => {}
-                    (AdmissionOutcome::DeletionInProgress { .. }, Some(DeletionState::Purging))
-                    | (AdmissionOutcome::SessionPurged { .. }, Some(DeletionState::Purged)) => {
-                        assert!(!kind.claims_session_deletion());
-                    }
+                    (AdmissionOutcome::Inserted(_), Some(DeletionState::Live) | None) => {}
+                    (
+                        AdmissionOutcome::DeletionInProgress { .. },
+                        Some(DeletionState::Deleting),
+                    )
+                    | (AdmissionOutcome::SessionDeleted { .. }, Some(DeletionState::Deleted)) => {}
                     other => panic!("unexpected fresh admission {other:?}"),
                 }
 
@@ -555,8 +553,8 @@ fn admission_outcomes_are_total() {
 #[test]
 fn a_foreign_workspace_is_never_told_the_record_exists() {
     // 52, workspace scoping: not_found, never forbidden.
-    let existing = admitted(OperationKind::SessionStop);
-    let mut foreign = request(OperationKind::SessionStop, 1);
+    let existing = admitted(OperationKind::SessionCancel);
+    let mut foreign = request(OperationKind::SessionCancel, 1);
     foreign.workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [8; 10]));
     let outcome = admit(Some(&existing), None, &foreign, moment(2));
     assert_eq!(
@@ -564,42 +562,6 @@ fn a_foreign_workspace_is_never_told_the_record_exists() {
         AdmissionOutcome::Conflict(ConflictCode::WrongWorkspace)
     );
     assert_eq!(ConflictCode::WrongWorkspace.code(), ErrorCode::NotFound);
-}
-
-proptest! {
-    #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
-
-    /// 53 `execution_classification_total`.
-    #[test]
-    fn execution_classification_total(
-        leaves in 0_u64..4_000,
-        pages in 0_u64..256,
-        bytes in 0_u64..(256 * 1024 * 1024),
-        grow_leaves in 0_u64..1_000,
-    ) {
-        for kind in OperationKind::ALL {
-            // Total: every kind classifies.
-            let _ = kind.execution();
-        }
-        let shape = PersistShape {
-            changed_leaves: leaves,
-            changed_pages: pages,
-            bytes_moved: bytes,
-        };
-        let smaller = classify_persist(&shape, &InlineBudget::DEFAULT);
-        let bigger = classify_persist(
-            &PersistShape {
-                changed_leaves: leaves.saturating_add(grow_leaves),
-                ..shape
-            },
-            &InlineBudget::DEFAULT,
-        );
-        // Monotone: growing a shape never turns Continued back into Inline.
-        prop_assert!(
-            !(smaller == Execution::Continued && bigger == Execution::Inline),
-            "classify_persist must be monotone"
-        );
-    }
 }
 
 #[test]
@@ -616,10 +578,13 @@ fn redaction_preserves_the_envelope() {
             content: Some(content.clone()),
         });
 
-        match redact_for_purge(&done) {
-            None => assert!(kind.result_survives_purge(), "{kind:?} must be redacted"),
+        match redact_for_session_delete(&done) {
+            None => assert!(
+                kind.result_survives_session_delete(),
+                "{kind:?} must be redacted"
+            ),
             Some(commit) => {
-                assert!(!kind.result_survives_purge());
+                assert!(!kind.result_survives_session_delete());
                 let redacted = commit.operation;
                 assert_eq!(redacted.id, done.id);
                 assert_eq!(redacted.kind, done.kind);

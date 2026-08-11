@@ -19,20 +19,16 @@ use crate::cursor::ContinuationCursor;
 /// What a durable operation does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OperationKind {
-    /// Stop the session's work.
-    SessionStop,
-    /// Persist the live workspace into the durable tree.
-    SessionPersist,
-    /// Discard the live workspace.
-    WorkspaceDiscard,
-    /// Rebind session credential custody.
-    CredentialRebind,
-    /// Move the session into the recovery window.
-    SessionTrash,
-    /// Bring the session back out of the recovery window.
-    SessionRestore,
-    /// Destroy the session.
-    SessionPurge,
+    /// Cancel the session's current message and return it to idle.
+    SessionCancel,
+    /// Suspend an idle session's exact retained generation.
+    SessionSuspend,
+    /// Resume the same retained generation to idle.
+    SessionResume,
+    /// Permanently destroy compute and ephemeral live files.
+    SessionTerminate,
+    /// Irreversibly delete session-scoped user content and telemetry.
+    SessionDelete,
     /// Destroy a whole workspace.
     WorkspaceDelete,
     /// Export telemetry.
@@ -52,14 +48,12 @@ pub enum Execution {
 
 impl OperationKind {
     /// Every kind, in canonical order.
-    pub const ALL: [Self; 10] = [
-        Self::SessionStop,
-        Self::SessionPersist,
-        Self::WorkspaceDiscard,
-        Self::CredentialRebind,
-        Self::SessionTrash,
-        Self::SessionRestore,
-        Self::SessionPurge,
+    pub const ALL: [Self; 8] = [
+        Self::SessionCancel,
+        Self::SessionSuspend,
+        Self::SessionResume,
+        Self::SessionTerminate,
+        Self::SessionDelete,
         Self::WorkspaceDelete,
         Self::TelemetryExport,
         Self::ContentGc,
@@ -69,13 +63,11 @@ impl OperationKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::SessionStop => "session_stop",
-            Self::SessionPersist => "session_persist",
-            Self::WorkspaceDiscard => "workspace_discard",
-            Self::CredentialRebind => "credential_rebind",
-            Self::SessionTrash => "session_trash",
-            Self::SessionRestore => "session_restore",
-            Self::SessionPurge => "session_purge",
+            Self::SessionCancel => "session_cancel",
+            Self::SessionSuspend => "session_suspend",
+            Self::SessionResume => "session_resume",
+            Self::SessionTerminate => "session_terminate",
+            Self::SessionDelete => "session_delete",
             Self::WorkspaceDelete => "workspace_delete",
             Self::TelemetryExport => "telemetry_export",
             Self::ContentGc => "content_gc",
@@ -88,29 +80,10 @@ impl OperationKind {
         Self::ALL.into_iter().find(|kind| kind.as_str() == text)
     }
 
-    /// How the kind runs by default. A `SessionPersist` may still escalate; see
-    /// [`classify_persist`].
+    /// How the kind runs by default.
     #[must_use]
     pub const fn execution(self) -> Execution {
-        match self {
-            Self::SessionStop
-            | Self::SessionPersist
-            | Self::CredentialRebind
-            | Self::SessionTrash
-            | Self::SessionRestore => Execution::Inline,
-            // A discard is continued (D-6). Acknowledging it inline would mean
-            // clearing `Session.generation` before the runtime authority has
-            // accepted the termination, which makes `WorkspaceDiscardResult`
-            // unfalsifiable; calling the runtime synchronously inside the
-            // command path is the other half of the same trade. It is born
-            // terminal in its admission transaction only when there is no
-            // generation to terminate.
-            Self::WorkspaceDiscard
-            | Self::SessionPurge
-            | Self::WorkspaceDelete
-            | Self::TelemetryExport
-            | Self::ContentGc => Execution::Continued,
-        }
+        Execution::Continued
     }
 
     /// Whether a caller may still cancel the operation the instant it is
@@ -137,9 +110,11 @@ impl OperationKind {
     pub const fn cancelable_on_accept(self) -> bool {
         !matches!(
             self,
-            Self::SessionStop
-                | Self::SessionTrash
-                | Self::SessionPurge
+            Self::SessionCancel
+                | Self::SessionSuspend
+                | Self::SessionResume
+                | Self::SessionTerminate
+                | Self::SessionDelete
                 | Self::WorkspaceDelete
                 | Self::TelemetryExport
         )
@@ -159,13 +134,11 @@ impl OperationKind {
     #[must_use]
     pub const fn public(self) -> Option<models::OperationKind> {
         Some(match self {
-            Self::SessionStop => models::OperationKind::SessionStop,
-            Self::SessionPersist => models::OperationKind::SessionPersist,
-            Self::WorkspaceDiscard => models::OperationKind::WorkspaceDiscard,
-            Self::CredentialRebind => models::OperationKind::CredentialRebind,
-            Self::SessionTrash => models::OperationKind::SessionTrash,
-            Self::SessionRestore => models::OperationKind::SessionRestore,
-            Self::SessionPurge => models::OperationKind::SessionPurge,
+            Self::SessionCancel => models::OperationKind::SessionCancel,
+            Self::SessionSuspend => models::OperationKind::SessionSuspend,
+            Self::SessionResume => models::OperationKind::SessionResume,
+            Self::SessionTerminate => models::OperationKind::SessionTerminate,
+            Self::SessionDelete => models::OperationKind::SessionDelete,
             Self::WorkspaceDelete => models::OperationKind::WorkspaceDelete,
             Self::TelemetryExport => models::OperationKind::TelemetryExport,
             Self::ContentGc => return None,
@@ -179,13 +152,11 @@ impl OperationKind {
     #[must_use]
     pub const fn from_public(kind: models::OperationKind) -> Self {
         match kind {
-            models::OperationKind::SessionStop => Self::SessionStop,
-            models::OperationKind::SessionPersist => Self::SessionPersist,
-            models::OperationKind::WorkspaceDiscard => Self::WorkspaceDiscard,
-            models::OperationKind::CredentialRebind => Self::CredentialRebind,
-            models::OperationKind::SessionTrash => Self::SessionTrash,
-            models::OperationKind::SessionRestore => Self::SessionRestore,
-            models::OperationKind::SessionPurge => Self::SessionPurge,
+            models::OperationKind::SessionCancel => Self::SessionCancel,
+            models::OperationKind::SessionSuspend => Self::SessionSuspend,
+            models::OperationKind::SessionResume => Self::SessionResume,
+            models::OperationKind::SessionTerminate => Self::SessionTerminate,
+            models::OperationKind::SessionDelete => Self::SessionDelete,
             models::OperationKind::WorkspaceDelete => Self::WorkspaceDelete,
             models::OperationKind::TelemetryExport => Self::TelemetryExport,
         }
@@ -194,65 +165,14 @@ impl OperationKind {
     /// Whether the kind claims the session's deletion guard.
     #[must_use]
     pub const fn claims_session_deletion(self) -> bool {
-        matches!(self, Self::SessionTrash | Self::SessionPurge)
+        matches!(self, Self::SessionDelete)
     }
 
     /// Whether the kind's result is content free and therefore survives a purge
     /// redaction intact.
     #[must_use]
-    pub const fn result_survives_purge(self) -> bool {
-        matches!(
-            self,
-            Self::SessionStop | Self::SessionTrash | Self::SessionPurge
-        )
-    }
-}
-
-/// How much a persist would move.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PersistShape {
-    /// How many leaves change.
-    pub changed_leaves: u64,
-    /// How many pages change.
-    pub changed_pages: u64,
-    /// How many body bytes move.
-    pub bytes_moved: u64,
-}
-
-/// The largest shape that still fits one admission transaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InlineBudget {
-    /// Largest inline `changed_leaves`.
-    pub max_changed_leaves: u64,
-    /// Largest inline `changed_pages`.
-    pub max_changed_pages: u64,
-    /// Largest inline `bytes_moved`.
-    pub max_bytes_moved: u64,
-}
-
-impl InlineBudget {
-    /// The launch budget. A persist above any dimension escalates rather than
-    /// timing out (D-09).
-    pub const DEFAULT: Self = Self {
-        max_changed_leaves: 1_000,
-        max_changed_pages: 64,
-        max_bytes_moved: 64 * 1024 * 1024,
-    };
-}
-
-/// Whether a persist of this shape can run inline.
-///
-/// Monotone in every dimension: growing a shape never turns a continued persist
-/// back into an inline one.
-#[must_use]
-pub const fn classify_persist(shape: &PersistShape, budget: &InlineBudget) -> Execution {
-    if shape.changed_leaves > budget.max_changed_leaves
-        || shape.changed_pages > budget.max_changed_pages
-        || shape.bytes_moved > budget.max_bytes_moved
-    {
-        Execution::Continued
-    } else {
-        Execution::Inline
+    pub const fn result_survives_session_delete(self) -> bool {
+        matches!(self, Self::SessionDelete)
     }
 }
 
@@ -512,21 +432,21 @@ impl OperationResult {
             };
         }
         match kind {
-            OperationKind::SessionStop => payload!(models::SessionStopResult, SessionStop),
-            OperationKind::SessionPersist => {
-                payload!(models::SessionPersistResult, SessionPersist)
+            OperationKind::SessionCancel => {
+                payload!(models::SessionCancelResult, SessionCancel)
             }
-            OperationKind::WorkspaceDiscard => {
-                payload!(models::WorkspaceDiscardResult, WorkspaceDiscard)
+            OperationKind::SessionSuspend => {
+                payload!(models::SessionSuspendResult, SessionSuspend)
             }
-            OperationKind::CredentialRebind => {
-                payload!(models::CredentialRebindResult, CredentialRebind)
+            OperationKind::SessionResume => {
+                payload!(models::SessionResumeResult, SessionResume)
             }
-            OperationKind::SessionTrash => payload!(models::SessionTrashResult, SessionTrash),
-            OperationKind::SessionRestore => {
-                payload!(models::SessionRestoreResult, SessionRestore)
+            OperationKind::SessionTerminate => {
+                payload!(models::SessionTerminateResult, SessionTerminate)
             }
-            OperationKind::SessionPurge => payload!(models::SessionTombstone, SessionPurge),
+            OperationKind::SessionDelete => {
+                payload!(models::SessionTombstone, SessionDelete)
+            }
             OperationKind::WorkspaceDelete => {
                 payload!(models::WorkspaceTombstone, WorkspaceDelete)
             }
@@ -1014,9 +934,9 @@ mod tests {
     use aex_wire::types::Timestamp;
 
     use super::{
-        CancelRejection, Execution, FailureClass, InlineBudget, Operation, OperationFailure,
-        OperationKind, OperationResult, OperationScope, OperationStatus, PersistShape, Progress,
-        TransitionError, cancel, classify_persist, commit_point, fail, start, succeed,
+        CancelRejection, Execution, FailureClass, Operation, OperationFailure, OperationKind,
+        OperationResult, OperationScope, OperationStatus, Progress, TransitionError, cancel,
+        commit_point, fail, start, succeed,
     };
 
     fn moment(millis: i64) -> Timestamp {
@@ -1047,35 +967,19 @@ mod tests {
     }
 
     #[test]
-    fn every_kind_classifies_and_persist_escalation_is_monotone() {
+    fn every_kind_is_continued_and_maps_to_one_stable_spelling() {
         for kind in OperationKind::ALL {
-            let _ = kind.execution();
+            assert_eq!(kind.execution(), Execution::Continued);
+            assert_eq!(OperationKind::parse(kind.as_str()), Some(kind));
         }
         assert_eq!(OperationKind::WorkspaceDelete.as_str(), "workspace_delete");
         assert!(OperationKind::WorkspaceDelete.is_public());
         assert!(!OperationKind::ContentGc.is_public());
-        let small = PersistShape {
-            changed_leaves: 1,
-            changed_pages: 1,
-            bytes_moved: 1,
-        };
-        assert_eq!(
-            classify_persist(&small, &InlineBudget::DEFAULT),
-            Execution::Inline
-        );
-        let big = PersistShape {
-            changed_leaves: u64::MAX,
-            ..small
-        };
-        assert_eq!(
-            classify_persist(&big, &InlineBudget::DEFAULT),
-            Execution::Continued
-        );
     }
 
     #[test]
     fn the_commit_latch_closes_cancel_and_fail() {
-        let queued = operation(OperationKind::SessionPersist);
+        let queued = operation(OperationKind::ContentGc);
         let running = start(&queued, moment(1)).expect("starts").operation;
         assert!(running.cancelable());
         let committed = commit_point(&running, None, moment(2)).expect("latches");
@@ -1096,7 +1000,7 @@ mod tests {
         assert_eq!(
             cancel(&committed, moment(3)),
             Err(CancelRejection::NotCancelable {
-                kind: OperationKind::SessionPersist,
+                kind: OperationKind::ContentGc,
                 committed: true,
             })
         );
@@ -1104,7 +1008,7 @@ mod tests {
 
     #[test]
     fn succeed_from_queued_back_fills_the_latch() {
-        let queued = operation(OperationKind::SessionStop);
+        let queued = operation(OperationKind::SessionTerminate);
         let done = succeed(&queued, OperationResult::receipt(), moment(5)).expect("succeeds");
         assert!(done.latched_commit);
         assert_eq!(done.operation.committed_at, Some(moment(5)));
@@ -1113,7 +1017,7 @@ mod tests {
 
     #[test]
     fn a_queued_cancel_terminalizes_and_a_running_one_records() {
-        let queued = operation(OperationKind::SessionPersist);
+        let queued = operation(OperationKind::ContentGc);
         let cancelled = cancel(&queued, moment(1)).expect("cancels").operation;
         assert_eq!(cancelled.status, OperationStatus::Cancelled);
         assert!(cancelled.cancel_requested);
@@ -1151,9 +1055,11 @@ mod tests {
     #[test]
     fn a_non_cancelable_kind_refuses_from_acceptance() {
         for kind in [
-            OperationKind::SessionStop,
-            OperationKind::SessionTrash,
-            OperationKind::SessionPurge,
+            OperationKind::SessionCancel,
+            OperationKind::SessionSuspend,
+            OperationKind::SessionResume,
+            OperationKind::SessionTerminate,
+            OperationKind::SessionDelete,
             OperationKind::WorkspaceDelete,
         ] {
             assert_eq!(
@@ -1199,12 +1105,12 @@ mod tests {
     #[test]
     fn public_projection_uses_the_envelope_kind_and_keeps_the_phase() {
         let session = SessionId::from_uuid7(Uuid7::compose(1, [3; 10]));
-        let payload = models::SessionStopResult {
+        let payload = models::SessionCancelResult {
             changed: true,
             session_id: session,
             session_revision: 9,
         };
-        let mut stored = operation(OperationKind::SessionStop);
+        let mut stored = operation(OperationKind::SessionCancel);
         stored.session = Some(session);
         stored.scope = OperationScope::Session(session);
         stored.status = OperationStatus::Succeeded;
@@ -1225,7 +1131,7 @@ mod tests {
         assert_eq!(public.progress.expect("progress").phase, "stopping");
         assert!(matches!(
             public.result,
-            Some(models::OperationResult::SessionStop(result))
+            Some(models::OperationResult::SessionCancel(result))
                 if result.session_id == session && result.session_revision == 9
         ));
     }
@@ -1239,7 +1145,7 @@ mod tests {
                 .is_none()
         );
 
-        let mut malformed = operation(OperationKind::SessionStop);
+        let mut malformed = operation(OperationKind::SessionCancel);
         malformed.result = Some(OperationResult {
             measurement: None,
             content: Some(CanonicalJson::parse(r#"{"wrong":true}"#).expect("canonical")),

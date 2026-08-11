@@ -2,36 +2,33 @@
 //!
 //! The guard lives here rather than in `aex-session-domain` because operation
 //! admission must fence against it and this crate is the lower of the two
-//! (D-26). `aex-session-domain` owns the transitions — trash, restore, purge,
-//! `purge_complete` — and re-exports these three types unchanged, so exactly one
-//! deletion state exists in the workspace.
+//! (D-26). `aex-session-domain` owns the irreversible delete transition and
+//! re-exports these types unchanged, so exactly one deletion state exists in
+//! the workspace.
 
 use aex_wire::ids::{OperationId, SessionId};
-use aex_wire::types::Timestamp;
-
 /// How far into deletion a session is.
 ///
-/// `Purging` is absorbing: no transition leaves it except the tombstone.
+/// There is no trash or restore window. Once deletion starts, ordinary work
+/// never becomes admissible again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DeletionState {
     /// Ordinary.
     Live,
-    /// In the recovery window.
-    Trashed,
     /// The destructive fence has been crossed.
-    Purging,
+    Deleting,
     /// Gone; only a tombstone remains.
-    Purged,
+    Deleted,
 }
 
 impl DeletionState {
     /// Every state, in lifecycle order.
-    pub const ALL: [Self; 4] = [Self::Live, Self::Trashed, Self::Purging, Self::Purged];
+    pub const ALL: [Self; 3] = [Self::Live, Self::Deleting, Self::Deleted];
 
     /// Whether no transition leaves this state.
     #[must_use]
     pub const fn is_absorbing(self) -> bool {
-        matches!(self, Self::Purging | Self::Purged)
+        matches!(self, Self::Deleting | Self::Deleted)
     }
 
     /// Whether ordinary session work may be admitted.
@@ -43,9 +40,8 @@ impl DeletionState {
 
 /// The monotone deletion epoch.
 ///
-/// Trash and purge each advance it by exactly one, so a command built against
-/// the pre-fence epoch fails its condition rather than committing behind the
-/// fence.
+/// Irreversible delete advances it exactly once, so a command built against the
+/// pre-fence epoch fails its condition rather than committing behind the fence.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DeletionEpoch(pub u64);
 
@@ -77,12 +73,8 @@ pub struct DeletionGuard {
     pub state: DeletionState,
     /// The current fence position.
     pub epoch: DeletionEpoch,
-    /// When it was trashed, when it has been.
-    pub trashed_at: Option<Timestamp>,
-    /// The instant after which restore is refused.
-    pub recovery_deadline: Option<Timestamp>,
-    /// The operation that claimed the purge, when one has.
-    pub purge_operation: Option<OperationId>,
+    /// The operation that claimed irreversible deletion, when one has.
+    pub delete_operation: Option<OperationId>,
 }
 
 impl DeletionGuard {
@@ -93,9 +85,7 @@ impl DeletionGuard {
             session,
             state: DeletionState::Live,
             epoch: DeletionEpoch::INITIAL,
-            trashed_at: None,
-            recovery_deadline: None,
-            purge_operation: None,
+            delete_operation: None,
         }
     }
 
@@ -111,11 +101,11 @@ mod tests {
     use super::{DeletionEpoch, DeletionState};
 
     #[test]
-    fn purging_and_purged_are_absorbing_and_admit_nothing() {
+    fn deleting_and_deleted_are_absorbing_and_admit_nothing() {
         for state in DeletionState::ALL {
             assert_eq!(
                 state.is_absorbing(),
-                matches!(state, DeletionState::Purging | DeletionState::Purged)
+                matches!(state, DeletionState::Deleting | DeletionState::Deleted)
             );
             assert_eq!(state.admits_work(), state == DeletionState::Live);
         }
