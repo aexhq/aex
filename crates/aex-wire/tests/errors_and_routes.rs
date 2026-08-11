@@ -173,36 +173,77 @@ fn the_route_table_is_indexed_by_route_id() {
 }
 
 #[test]
-fn the_session_lifecycle_vocabulary_is_trash_restore_purge() {
-    // R-DELETE supersedes `fork` and `delete`, and `clone` was withdrawn from
-    // the launch contract rather than left declared and unbuilt. Prelaunch clean
-    // cut means the old names are gone rather than aliased, so their absence is
-    // asserted here: an alias would let a generated client keep calling a verb
-    // whose semantics no longer exist.
-    for retired in ["session_fork", "session_delete", "session_clone"] {
+fn the_session_lifecycle_vocabulary_is_session_centric() {
+    // The MVP has one eight-hour session and no public run, persistence, or
+    // trash/restore lifecycle. Prelaunch clean cut means those old names are
+    // gone rather than aliased: a compatibility alias would let a generated
+    // client keep calling semantics that no longer exist.
+    for retired in [
+        "session_fork",
+        "session_stop",
+        "session_trash",
+        "session_restore",
+        "session_purge",
+        "session_persist",
+    ] {
         assert_eq!(RouteId::parse(retired), None, "`{retired}` must be gone");
         assert!(
             !ROUTES.iter().any(|r| r.operation_id == retired),
             "`{retired}` must be gone"
         );
     }
-    for (operation, template) in [
-        ("session_trash", "/api/sessions/{sessionId}/trashes"),
-        ("session_restore", "/api/sessions/{sessionId}/restores"),
-        ("session_purge", "/api/sessions/{sessionId}/purges"),
+
+    let create = route(RouteId::SessionCreate);
+    assert_eq!(create.template, "/api/sessions");
+    assert_eq!(create.method, HttpMethod::Post);
+    assert_eq!(create.success_status, 201);
+    assert_eq!(create.idempotency, IdempotencyKind::IdempotencyKey);
+    assert!(!create.pause_exempt);
+    assert!(create.declares(ErrorCode::AccountPaused));
+
+    // Resume can increase active compute and therefore remains behind the
+    // account-pause gate. Suspend, terminate, and irreversible deletion reduce
+    // or destroy retained resources, so they remain reachable while paused.
+    for (id, operation, template, pause_exempt) in [
+        (
+            RouteId::SessionResume,
+            "session_resume",
+            "/api/sessions/{sessionId}/resumptions",
+            false,
+        ),
+        (
+            RouteId::SessionSuspend,
+            "session_suspend",
+            "/api/sessions/{sessionId}/suspensions",
+            true,
+        ),
+        (
+            RouteId::SessionTerminate,
+            "session_terminate",
+            "/api/sessions/{sessionId}/terminations",
+            true,
+        ),
+        (
+            RouteId::SessionDelete,
+            "session_delete",
+            "/api/sessions/{sessionId}/deletions",
+            true,
+        ),
     ] {
-        let id = RouteId::parse(operation).unwrap_or_else(|| panic!("`{operation}` must exist"));
         let descriptor = route(id);
+        assert_eq!(descriptor.operation_id, operation);
+        assert_eq!(RouteId::parse(operation), Some(id));
         assert_eq!(descriptor.template, template);
         assert_eq!(descriptor.method, HttpMethod::Post);
         assert_eq!(descriptor.success_status, 202);
         assert_eq!(descriptor.idempotency, IdempotencyKind::OperationId);
+        assert_eq!(descriptor.pause_exempt, pause_exempt, "{operation}");
+        assert_eq!(
+            descriptor.declares(ErrorCode::AccountPaused),
+            !pause_exempt,
+            "{operation} must agree with the account-pause precedence gate"
+        );
     }
-    // Trash and purge are destructive controls a paused account must still
-    // reach; restore is an ordinary mutation and is not exempt.
-    assert!(route(RouteId::SessionTrash).pause_exempt);
-    assert!(route(RouteId::SessionPurge).pause_exempt);
-    assert!(!route(RouteId::SessionRestore).pause_exempt);
 }
 
 #[test]
