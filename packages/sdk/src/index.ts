@@ -33,12 +33,15 @@ export { FetchTransport } from "./transport/transport.js";
 export type { AexTransport, WireRequest, WireResponse } from "./transport/transport.js";
 export { Page } from "./transport/pagination.js";
 export { Download, MAX_SINGLE_GET_BYTES, planDownloadRanges } from "./downloads/download.js";
-export type { DownloadGrant, DownloadRange } from "./downloads/download.js";
+export type { DownloadRange } from "./downloads/download.js";
 export { parseNdjsonFrames } from "./observations/stream.js";
 export { ERROR_METADATA } from "./generated/errors.js";
 export type { ErrorClass } from "./generated/errors.js";
 export { ROUTES } from "./generated/routes.js";
 export type { RouteDescriptor, RouteId } from "./generated/routes.js";
+// Models and identifier constructors are emitted from the authored contract.
+// Re-exporting them here keeps application code on one dependency-free package.
+export * from "./generated/models.js";
 // The resource classes themselves are reached through `Aex`, not named at the
 // root: their set is derived from the deferral ledger, and a root export list
 // that moves whenever a route lands is a list nobody can review.

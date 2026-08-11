@@ -39,10 +39,10 @@ describe("downloads and NDJSON", () => {
       {
         url: "https://download.example/object",
         expiresAt: "2999-01-01T00:00:00Z",
-        sizeBytes: 3,
-        authorizedBytes: 3,
-        measurementId: "mea_1",
-        sha256: "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+        sizeBytes: "3",
+        authorizedBytes: "3",
+        measurementId: "msr_0100000000e008000000000001",
+        sha256: "sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
       },
       async () => new Response(new Uint8Array([1, 2, 3])),
     );
@@ -54,14 +54,35 @@ describe("downloads and NDJSON", () => {
       {
         url: "https://download.example/object",
         expiresAt: "2999-01-01T00:00:00Z",
-        sizeBytes: 3,
-        authorizedBytes: 3,
-        measurementId: "mea_1",
-        sha256: "unused-for-range",
+        sizeBytes: "3",
+        authorizedBytes: "3",
+        measurementId: "msr_0100000000e008000000000001",
+        sha256: "sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
       },
       async () => new Response(new Uint8Array([1, 2])),
     );
     await expect(download.bytes()).rejects.toBeInstanceOf(AexConfigError);
+  });
+
+  test("rejects non-canonical decimal grant lengths before fetching", async () => {
+    let fetched = false;
+    const download = new Download(
+      {
+        url: "https://download.example/object",
+        expiresAt: "2999-01-01T00:00:00Z",
+        sizeBytes: "03",
+        authorizedBytes: "3",
+        measurementId: "msr_0100000000e008000000000001",
+        sha256: "sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+      },
+      async () => {
+        fetched = true;
+        return new Response(new Uint8Array([1, 2, 3]));
+      },
+    );
+
+    await expect(download.bytes()).rejects.toBeInstanceOf(AexConfigError);
+    expect(fetched).toBeFalse();
   });
 
   test("parses frames across arbitrary chunks and never advances over a partial tail", async () => {

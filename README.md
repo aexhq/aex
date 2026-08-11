@@ -1,6 +1,6 @@
 # Aex
 
-High Performance agent platform 
+High-performance agent platform.
 
 [![npm version](https://img.shields.io/npm/v/@aexhq/sdk.svg)](https://www.npmjs.com/package/@aexhq/sdk)
 
@@ -10,15 +10,15 @@ High Performance agent platform
 > interruptions; do not rely on AEX for production workloads yet.
 
 ## Features
-- Supported models: 6 native models, vercel ai gateway and openrouter
-- Zero token markup with byok
-- Automatic suspend & resume
-- Storage cost only between turns
-- Subagents scale horizontally, spawn recursively
-- Rich built-in tools, bash, todo, web, custom tools & files
-- Fast milliseconds hand start-up
-- Skills & MCP Server support
-- Full observability, Open Telemetry & AG-UI compatible
+
+- Eight-hour, multi-message sessions with one retained MicroVM generation
+- Direct BYOK model access with an explicitly pinned provider credential
+- Automatic suspension after 180 idle seconds and automatic resume on the next
+  message or live-file call
+- Durable workspace files plus generation-local live files
+- `read_file`, `edit_file`, `write_file`, and Bash inside the MicroVM
+- Recursive subagents within one customer session
+- Typed observations, telemetry exports, OpenTelemetry, and AG-UI streams
 
 ## Start
 

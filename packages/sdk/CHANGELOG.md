@@ -6,103 +6,52 @@ follows semantic versioning.
 
 ## Unreleased
 
-Prepaid billing. The free/pro/team subscription catalog is gone: a card is
-optional, every workspace gets per-dimension free allowances that reset each UTC
-month, and past those you spend prepaid credit. There is no plan to be on.
-
-The idempotency key also stops being a customer concern. It is still on the wire
-and still load-bearing — the API has a 29-second ceiling, so a submit can succeed
-while its response never reaches you, and only a stable key keeps the retry from
-becoming a second session, a second container and a second bill. The SDK now owns
-that value end to end.
-
 ### Changed (BREAKING)
 
-- **`idempotencyKey` is removed from every public option.** `IdempotencyOptions`
-  is gone, along with `SessionCreateOptions.idempotencyKey`,
-  `SessionSendOptions.idempotencyKey`, `SessionStartOptions.idempotencyKey` and
-  `SessionStartOptions.messageIdempotencyKey`, the second `IdempotencyOptions`
-  argument to `aex.billingTopup(...)` and `aex.billingPortal(...)`, and the CLI
-  flags `aex start --idempotency-key`, `aex billing topup --idempotency-key` and
-  `aex billing portal --idempotency-key`. Passing the option now throws
-  `SessionConfigValidationError` instead of being silently accepted.
-
-  The SDK mints a key per logical mutation and REUSES it across its own automatic
-  retries (4 attempts by default: one try plus three retries). `Aex.start` still
-  derives the first-message key from the create key, so both halves of one start
-  de-duplicate together. `session.messages.replayLast()` still re-presents the
-  ORIGINAL key; `session.messages.send(...)` is how you ask for a new turn.
-
-  A retry loop you write yourself is NOT covered by that guarantee: each pass is
-  a new logical mutation carrying a new key, and each one bills. If a call still
-  fails once the built-in retries are exhausted, treat it as failed rather than
-  reissuing it blind, then reconcile with `aex.sessions.list()` and delete any
-  duplicate. Duplicates are bounded — they hit `maxIdleTtl`, checkpoint
-  themselves, and are listable and deletable.
-- **`402 insufficient_balance` → `402 insufficient_credits`.** The code names
-  what is actually exhausted: the free monthly allowance *and* the prepaid
-  balance. The body gains `admissionState`, `exhaustedDimension`, an
-  `allowanceRemaining` map covering every dimension, and a remedy sentence in
-  `message`, so a client can render the whole allowance panel instead of
-  reprinting a bare code. `apiCode === "insufficient_balance"` never matches
-  again — branch on `insufficient_credits`.
-- **`GET /billing` (`aex.billing()`) drops `planKey`, `subscriptionStatus` and
-  `pastDueAt`.** It now reports `period`, `admissionState`, `allowances[]`
-  (`dimension` / `quota` / `used` / `remaining` / `unit` / `label` / `resetAt`),
-  `autoTopup`, `paymentMethod` and `blocked`. New types: `BillingAllowance`,
-  `BillingAutoTopup`, `BillingPaymentMethod`, `BillingBlock`.
-- **`whoami().limits` drops `planKey`, `subscriptionStatus`, `subscriptionGate`,
-  `pastDueAt` and `graceEndsAt`; `balanceGateActive` is renamed
-  `creditGateActive`.** It gains `llmTokenAllowanceRemainingUsd` (the other half
-  of the credit predicate — a submit is admitted while either it or `balanceUsd`
-  is positive), `admissionState` and `autoTopupEnabled`. The parser REJECTS the
-  old envelope rather than tolerating it: there is no plan left to report, so a
-  body still carrying one comes from a deployment this SDK cannot read.
-- **`aex.billingCheckout({ planKey })` → `aex.billingTopup({ amountUsd })`**,
-  backed by `POST /billing/topup/checkout`. One hosted Checkout captures the
-  card, collects tax and buys the credit. The server rejects an amount below its
-  published minimum (`billing().autoTopup.minimumAmountUsd`).
-- **CLI `aex billing upgrade pro|team` → `aex billing topup <amountUsd>`.**
-  `aex billing` prints the allowance table and auto-recharge state instead of a
-  plan line.
-- **`BillingCheckoutPlanKey` and `BillingCheckoutRequest` are removed**, replaced
-  by `BillingTopupCheckoutRequest`.
+- The session is now the only customer-facing execution unit. Public run/turn
+  resources, identifiers, route families, result handles, and terminology are
+  removed. Send one text message at a time to a session and send the next after
+  the current activity finishes or is cancelled.
+- Session creation now requires an explicit `provider`, exact provider-native
+  `model`, and `providerCredentialId`. Managed model keys are not a launch
+  feature; provider credentials use their own encrypted, write-only BYOK
+  resource.
+- Session and Brain persistence, snapshots, crash recovery, clone/fork,
+  persisted-session files, workspace discard, trash, and restore are removed.
+  Runtime loss terminates the session rather than reconstructing partial work.
+- Generic secrets and typed skill, tool, instruction, and MCP registries are
+  removed. Those materials can be opaque registered workspace files. Dedicated
+  provider credentials remain.
+- Interactive approval policy and approval resources are removed. The launch
+  tool catalog is exactly `read_file`, `edit_file`, `write_file`, and Bash,
+  executed inside the session MicroVM.
+- Session messages are text-only and bounded to 24,576 UTF-8 bytes. Attachments
+  are not silently converted or dropped.
 
 ### Added
 
-- **`aex.billingAutoTopup({ enabled?, thresholdUsd?, amountUsd? })`** —
-  `PATCH /billing/autotopup`. Auto-recharge is **opt-in and off by default**; a
-  saved card never enables it on its own. Omitted fields keep their stored value,
-  and `thresholdUsd` must stay strictly below `amountUsd`. CLI:
-  `aex billing autotopup [--enable|--disable] [--threshold N] [--amount N]`.
-- **`402 account_blocked`** — a chargeback or dispute block. Deliberately NOT a
-  flavour of `insufficient_credits`: buying credit does not lift a block, so its
-  remedy points at support rather than at the payment form.
-- **`BillingAdmissionState`** — `"free"` | `"carded_manual"` | `"carded_auto"`,
-  reported by both `whoami().limits` and `billing()`.
-
-### Fixed
-
-- `redactSecrets` no longer masks the `llm_token_usd` allowance value. The
-  key-name heuristic matched `token` inside a metering dimension, which turned
-  the one figure a `402 insufficient_credits` body exists to carry into
-  `"[REDACTED]"`.
+- Eight-hour multi-message sessions backed by one exact retained generation.
+  The provider suspends it after 180 idle seconds and automatically resumes it
+  for the next message or live-file call. Suspension never extends the lifetime.
+- Manual suspend, resume, terminate, and irreversible delete operations.
+- Durable opaque workspace files selected by exact revision at session creation,
+  plus exact-generation live list/stat and resumable, digest-verified upload and
+  download for generation-local files.
+- Dedicated provider-credential registration, metadata reads, listing, and
+  revocation.
+- Durable observations, OpenTelemetry admission, streams, and telemetry exports
+  independent of ephemeral session execution state.
 
 ### Migration
 
-Replace `aex.billingCheckout({ planKey: "pro" })` with
-`aex.billingTopup({ amountUsd: 25 })`, and any
-`err.apiCode === "insufficient_balance"` check with `"insufficient_credits"` —
-handling `"account_blocked"` separately, since credit does not clear it. Read
-account state from `whoami().limits.admissionState` and remaining free allowance
-from `billing().allowances` rather than from `planKey`.
-
-Delete every `idempotencyKey` / `messageIdempotencyKey` you pass and every
-`--idempotency-key` you script; there is no replacement option and no shim. If
-you kept a key only to make your own retry safe, delete that retry loop too and
-let the built-in one run — it is the only loop that reuses the key. Keep a
-caller-side loop only where a duplicate session is acceptable, and reconcile with
-`aex.sessions.list()`.
+Replace run-oriented flows with `sessions.sessionCreate(...)`,
+`sessions.sessionMessageSend(...)`, `sessions.sessionGet(...)`, and
+`sessions.sessionMessagesList(...)`. Register a provider credential first and
+pass its exact id with `provider` and `model` when creating the session. Move
+durable inputs to registered workspace files; use the live-file helpers only for
+files that may be lost with the retained generation. Remove approval, generic
+secret, typed registry, persist, fork, restore, and run-result calls rather than
+wrapping them: the prelaunch release has no compatibility surface for them.
 
 ## 1.0.0
 

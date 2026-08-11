@@ -20,7 +20,7 @@ scopes:
   - { scope: "operations:read", doc: "Read durable operation records." }
   - { scope: "operations:write", doc: "Request cancellation of a durable operation." }
   - { scope: "workspace:read", doc: "Read the current workspace and its effective limits." }
-  - { scope: "sessions:read", doc: "Read sessions, sealed messages and approvals." }
+  - { scope: "sessions:read", doc: "Read sessions and sealed messages." }
   - { scope: "sessions:write", doc: "Create sessions, send messages, and cancel, suspend, resume or terminate a session." }
   - { scope: "sessions:delete", doc: "Admit irreversible session deletion." }
   - { scope: "files:live", doc: "Access live session files, automatically resuming the same suspended generation." }

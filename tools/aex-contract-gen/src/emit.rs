@@ -87,6 +87,10 @@ pub fn emit_all(ir: &ContractIr) -> GeneratedTree {
         crate::typescript::typescript_wire(ir, &digest),
     );
     tree.insert(
+        "packages/sdk/src/generated/models.ts",
+        crate::typescript_sdk::typescript_sdk_models(ir, &digest),
+    );
+    tree.insert(
         "packages/sdk/src/generated/routes.ts",
         crate::typescript_sdk::typescript_sdk_routes(ir, &digest),
     );

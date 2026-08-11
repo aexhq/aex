@@ -52,7 +52,7 @@ schemas:
       version: { type: string, min: 1, max: 64, doc: "The exact version; ranges are rejected." }
 
   SessionRegisteredSelection:
-    doc: Opaque workspace files mounted into the session. Conventional files such as `AGENTS.md` may carry guidance, skills, tool bundles, MCP configuration or custom instructions; Bash is the only built-in model tool.
+    doc: Opaque workspace files mounted into the session. Conventional files such as `AGENTS.md` may carry guidance, skills, tool bundles, MCP configuration or custom instructions; the built-in model tools are `read_file`, `edit_file`, `write_file`, and Bash.
     type: object
     fields:
       files: { type: array, max: 256, optional: true, items: { type: resource_name }, doc: "Registered files to mount." }

@@ -69,7 +69,7 @@
       "scope": "workspace:read"
     },
     {
-      "description": "Read sessions, sealed messages and approvals.",
+      "description": "Read sessions and sealed messages.",
       "scope": "sessions:read"
     },
     {

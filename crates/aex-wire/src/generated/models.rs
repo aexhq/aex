@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:c74b728e361ca151f7d1db58d802e04b88cbd663dc2e03f9ab6d4c27f300b3b8`.
+//! `sha256:dddf87f6715de38e24d77e348f34f1d066254b797719a09a995d660373335a66`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -3333,8 +3333,8 @@ pub struct SessionNetworkRequest {
 }
 
 /// Opaque workspace files mounted into the session. Conventional files such as `AGENTS.md` may
-/// carry guidance, skills, tool bundles, MCP configuration or custom instructions; Bash is the only
-/// built-in model tool.
+/// carry guidance, skills, tool bundles, MCP configuration or custom instructions; the built-in
+/// model tools are `read_file`, `edit_file`, `write_file`, and Bash.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionRegisteredSelection {

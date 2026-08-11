@@ -202,6 +202,7 @@ const SESSION_STREAM_MOUNTS: &[&str] = &[
     "registry_files_list",
     "registry_files_put",
     "session_cancel",
+    "session_create",
     "session_delete",
     "session_files_live_download_complete",
     "session_files_live_download_create",
@@ -215,6 +216,7 @@ const SESSION_STREAM_MOUNTS: &[&str] = &[
     "session_files_live_upload_get",
     "session_files_live_upload_part_put",
     "session_get",
+    "session_message_send",
     "session_messages_list",
     "session_observations_events_listen",
     "session_observations_events_stream",
@@ -333,11 +335,6 @@ fn deferred_operations_are_marked_in_every_published_artifact() {
         .filter(|route| route.get("deferredReason").is_some())
         .map(|route| route["operationId"].as_str().expect("operation id"))
         .collect();
-    assert!(
-        !deferred_in_registry.is_empty(),
-        "the ledger is empty; this test would prove nothing"
-    );
-
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for plane in ["central", "regional"] {
         let document: serde_json::Value = serde_json::from_slice(
@@ -462,12 +459,15 @@ fn one_operation_cannot_be_both_served_and_deferred() {
     let temp = tempfile::tempdir().expect("temporary contract root");
     copy_authored_contract(temp.path());
     let path = temp.path().join("api/schemas/registries/routes-meta.yaml");
-    let text = std::fs::read_to_string(&path)
-        .expect("routes metadata")
-        .replace(
-            "deferredOperations:\n",
-            "deferredOperations:\n  api_key_create: \"contradictory state\"\n",
-        );
+    let authored = std::fs::read_to_string(&path).expect("routes metadata");
+    let text = authored.replace(
+        "deferredOperations: {}",
+        "deferredOperations:\n  api_key_create: \"contradictory state\"",
+    );
+    assert_ne!(
+        text, authored,
+        "the served+deferred mutation rewrote nothing"
+    );
     std::fs::write(path, text).expect("mutate fixture metadata");
     let error = load::load(temp.path()).expect_err("conflicting route state must fail");
     assert!(

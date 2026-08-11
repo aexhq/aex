@@ -49,7 +49,10 @@ class LiveFileExecutor implements ResourceExecutor {
   ): Promise<T> {
     this.calls.push({ route, bindings, options });
     switch (route) {
-      case "session_files_live_upload_create":
+      case "session_files_live_upload_create": {
+        expect((options.body as { sha256: string }).sha256).toBe(hash(this.bytes));
+        return this.upload("staging") as T;
+      }
       case "session_files_live_upload_get":
         return this.upload("staging") as T;
       case "session_files_live_upload_part_put": {
@@ -57,6 +60,7 @@ class LiveFileExecutor implements ResourceExecutor {
         const body = options.body as Uint8Array;
         expect(body.byteLength).toBe(part.sizeBytes);
         expect(hash(body)).toBe(part.sha256);
+        expect(options.query?.sha256).toBe(part.sha256);
         if (!this.uploadReceipts.some((receipt) => receipt.partNumber === part.partNumber)) {
           this.uploadReceipts.push(part);
           this.uploadReceipts.sort((left, right) => left.partNumber - right.partNumber);
@@ -75,6 +79,7 @@ class LiveFileExecutor implements ResourceExecutor {
         return result as T;
       }
       case "session_files_live_download_complete":
+        expect((options.body as { sha256: string }).sha256).toBe(hash(this.bytes));
         return this.download("verified") as T;
       case "session_files_live_download_delete":
         return undefined as T;
@@ -110,7 +115,7 @@ class LiveFileExecutor implements ResourceExecutor {
       state,
       sizeBytes: String(this.bytes.byteLength),
       sha256: hash(this.bytes),
-      version: "1".repeat(64),
+      version: `sha256:${"1".repeat(64)}`,
       partSizeBytes: LIVE_FILE_PART_BYTES,
       partCount: this.parts.length,
       parts: this.parts,
@@ -198,7 +203,7 @@ function fixtureBytes(length: number): Uint8Array {
 }
 
 function hash(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
 function describeParts(bytes: Uint8Array): LiveFilePart[] {

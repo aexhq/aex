@@ -3,7 +3,7 @@
 //! The authorization scope registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:c74b728e361ca151f7d1db58d802e04b88cbd663dc2e03f9ab6d4c27f300b3b8`.
+//! `sha256:dddf87f6715de38e24d77e348f34f1d066254b797719a09a995d660373335a66`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -69,7 +69,7 @@ pub enum ScopeId {
     /// `workspace:read` — Read the current workspace and its effective limits.
     #[serde(rename = "workspace:read")]
     WorkspaceRead,
-    /// `sessions:read` — Read sessions, sealed messages and approvals.
+    /// `sessions:read` — Read sessions and sealed messages.
     #[serde(rename = "sessions:read")]
     SessionsRead,
     /// `sessions:write` — Create sessions, send messages, and cancel, suspend, resume or terminate

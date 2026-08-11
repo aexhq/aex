@@ -1,5 +1,5 @@
 # Live files, registered opaque workspace files, uploads, dedicated BYOK
-# provider credentials, approvals and effective limits.
+# provider credentials and effective limits.
 module: regional
 schemas:
   FileEntryType:

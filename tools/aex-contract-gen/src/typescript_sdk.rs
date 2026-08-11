@@ -9,14 +9,127 @@
 //! `aex-contract-gen -- check` remains the single proof that it matches the
 //! contract.
 //!
-//! Only the operation's addressing and retry vocabulary is projected. Request and
-//! response bodies stay in `@aexhq/wire`, which is where the validators live.
+//! The SDK keeps no runtime dependency on `@aexhq/wire`: it projects the authored
+//! model types without validators, then binds each generated method to its exact
+//! request and success model. Runtime validation stays in `@aexhq/wire`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::emit_models::camel_case;
-use crate::ir::{ContractIr, OperationIr};
+use crate::ir::{ContractIr, FieldType, OperationIr, SchemaBody};
 use crate::load::pascal_case;
+
+/// Renders dependency-free public model types for `@aexhq/sdk`.
+#[must_use]
+pub fn typescript_sdk_models(ir: &ContractIr, digest: &str) -> String {
+    let mut out = preamble(
+        digest,
+        &[
+            "The public wire model types used by the generated SDK resources.",
+            "",
+            "These declarations and identifier utilities are projected from the same",
+            "authored contract as `@aexhq/wire`, but carry no runtime validator dependency.",
+        ],
+    );
+    crate::typescript::emit_identifiers(ir, &mut out);
+    out.push_str(
+        "export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };\n\n",
+    );
+
+    for schema in ir.schemas.values() {
+        out.push_str(&format!("/** {} */\n", comment_safe(&schema.doc)));
+        match &schema.body {
+            SchemaBody::Object { fields } if fields.is_empty() => {
+                out.push_str(&format!(
+                    "export type {} = Readonly<Record<string, never>>;\n\n",
+                    schema.id
+                ));
+            }
+            SchemaBody::Object { fields } => {
+                out.push_str(&format!("export interface {} {{\n", schema.id));
+                for field in fields {
+                    out.push_str(&format!(
+                        "  readonly {}{}: {};\n",
+                        field.wire,
+                        if field.optional { "?" } else { "" },
+                        sdk_typescript_type(ir, &field.ty)
+                    ));
+                }
+                out.push_str("}\n\n");
+            }
+            SchemaBody::Enum { values } => {
+                out.push_str(&format!(
+                    "export type {} = {};\n\n",
+                    schema.id,
+                    values
+                        .iter()
+                        .map(|value| quoted(&value.value))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                ));
+            }
+            SchemaBody::Union { tag, variants } => {
+                let arms = variants
+                    .iter()
+                    .map(|variant| {
+                        format!(
+                            "({} & {{ readonly {}: {} }})",
+                            variant.payload,
+                            tag,
+                            quoted(&variant.value)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                out.push_str(&format!("export type {} = {arms};\n\n", schema.id));
+            }
+        }
+    }
+    debug_assert!(out.ends_with("\n\n"));
+    out.pop();
+    out
+}
+
+fn sdk_typescript_type(ir: &ContractIr, ty: &FieldType) -> String {
+    match ty {
+        FieldType::Text { .. }
+        | FieldType::Timestamp
+        | FieldType::Decimal
+        | FieldType::Cents
+        | FieldType::ContentHash
+        | FieldType::ResourceName
+        | FieldType::FilePath
+        | FieldType::TraceId
+        | FieldType::SpanId
+        | FieldType::HttpsUrl
+        | FieldType::ETag
+        | FieldType::Cursor
+        | FieldType::JsonPointer => "string".to_owned(),
+        FieldType::Id(kind) => format!("Id<{}>", quoted(kind)),
+        FieldType::Integer { .. } | FieldType::Float => "number".to_owned(),
+        FieldType::Bool => "boolean".to_owned(),
+        FieldType::Ref(id) => id.clone(),
+        FieldType::Array(inner, _) => {
+            format!("ReadonlyArray<{}>", sdk_typescript_type(ir, inner))
+        }
+        FieldType::Map(inner, _) => format!(
+            "Readonly<Record<string, {}>>",
+            sdk_typescript_type(ir, inner)
+        ),
+        FieldType::Region => {
+            "\"us-east-1\" | \"us-east-2\" | \"us-west-2\" | \"ap-northeast-1\" | \"eu-west-1\""
+                .to_owned()
+        }
+        FieldType::ComputeSize => "\"512mb\" | \"1gb\" | \"2gb\" | \"4gb\" | \"8gb\"".to_owned(),
+        FieldType::CanonicalJson => "JsonValue".to_owned(),
+        FieldType::ByteRange => "ByteRange".to_owned(),
+        FieldType::ProviderId => "ProviderId".to_owned(),
+        FieldType::Scope => union_of(ir.scopes.iter().map(|row| row.scope.as_str())),
+        FieldType::LimitId => union_of(ir.limits.iter().map(|row| row.id.as_str())),
+        FieldType::ErrorCode => union_of(ir.errors.iter().map(|row| row.code.as_str())),
+        FieldType::MetadataValue => "string | number | boolean | null".to_owned(),
+    }
+}
 
 /// Renders `packages/sdk/src/generated/routes.ts`.
 #[must_use]
@@ -187,6 +300,7 @@ pub fn typescript_sdk_resources(ir: &ContractIr, digest: &str) -> String {
             "what the platform answers.",
         ],
     );
+    out.push_str("import type * as Models from \"./models.js\";\n");
     out.push_str("import type { RouteId } from \"./routes.js\";\n\n");
 
     out.push_str("/** The one client capability every generated resource method needs. */\n");
@@ -219,7 +333,7 @@ pub fn typescript_sdk_resources(ir: &ContractIr, digest: &str) -> String {
         out.push_str("  }\n");
         for operation in members {
             out.push('\n');
-            resource_method(&mut out, operation);
+            resource_method(&mut out, ir, operation);
         }
         out.push_str("}\n\n");
     }
@@ -255,15 +369,20 @@ fn client_name(fragment: &str) -> String {
 }
 
 /// One generated resource method.
-fn resource_method(out: &mut String, operation: &OperationIr) {
+fn resource_method(out: &mut String, ir: &ContractIr, operation: &OperationIr) {
     let name = camel_case(&operation.id);
     let query_required = operation.query_params.iter().any(|param| !param.optional);
     let body = operation.request.is_some()
         || operation.body_class == "otlp"
         || operation.body_class == "binary";
-    let binary_response = operation.transport == "binary";
-    let method_generic = if binary_response { "" } else { "<T = unknown>" };
-    let return_type = if binary_response { "Uint8Array" } else { "T" };
+    let return_type = if operation.transport == "binary" {
+        "Uint8Array".to_owned()
+    } else {
+        operation
+            .success
+            .as_ref()
+            .map_or_else(|| "void".to_owned(), |model| format!("Models.{model}"))
+    };
     let idempotency_key = operation.idempotency == "idempotency_key";
     let operation_id = operation.idempotency == "operation_id";
     let required_field = !operation.path_params.is_empty()
@@ -280,9 +399,13 @@ fn resource_method(out: &mut String, operation: &OperationIr) {
         comment_safe(&operation.summary)
     ));
     if has_field {
-        out.push_str(&format!("  async {name}{method_generic}(params: {{\n"));
+        out.push_str(&format!("  async {name}(params: {{\n"));
         for param in &operation.path_params {
-            out.push_str(&format!("    readonly {}: string;\n", param.name));
+            out.push_str(&format!(
+                "    readonly {}: {};\n",
+                param.name,
+                sdk_method_param_type(ir, &param.ty)
+            ));
         }
         if !operation.query_params.is_empty() {
             out.push_str(&format!(
@@ -302,9 +425,12 @@ fn resource_method(out: &mut String, operation: &OperationIr) {
             out.push_str(&format!(
                 "    readonly body: {};\n",
                 if operation.body_class == "binary" {
-                    "Uint8Array"
+                    "Uint8Array".to_owned()
                 } else {
-                    "unknown"
+                    operation
+                        .request
+                        .as_ref()
+                        .map_or("unknown".to_owned(), |model| format!("Models.{model}"))
                 }
             ));
         }
@@ -312,22 +438,28 @@ fn resource_method(out: &mut String, operation: &OperationIr) {
             out.push_str("    readonly idempotencyKey: string;\n");
         }
         if operation_id {
-            out.push_str("    readonly operationId: string;\n");
+            out.push_str("    readonly operationId: Models.Id<\"operation\">;\n");
         }
         out.push_str(&format!(
             "  }}{}): Promise<{return_type}> {{\n",
             if required_field { "" } else { " = {}" }
         ));
     } else {
-        out.push_str(&format!(
-            "  async {name}{method_generic}(): Promise<{return_type}> {{\n"
-        ));
+        out.push_str(&format!("  async {name}(): Promise<{return_type}> {{\n"));
     }
 
     let bindings = operation
         .path_params
         .iter()
-        .map(|param| format!("{}: params.{}", param.name, param.name))
+        .map(|param| {
+            let value = match &param.ty {
+                FieldType::Integer { .. } | FieldType::Float | FieldType::Bool => {
+                    format!("String(params.{})", param.name)
+                }
+                _ => format!("params.{}", param.name),
+            };
+            format!("{}: {value}", param.name)
+        })
         .collect::<Vec<_>>();
     let mut options: Vec<String> = Vec::new();
     if !operation.query_params.is_empty() {
@@ -350,7 +482,7 @@ fn resource_method(out: &mut String, operation: &OperationIr) {
     }
     let mut call = format!(
         "    return this.#executor.execute<{}>({}",
-        if binary_response { "Uint8Array" } else { "T" },
+        return_type,
         quoted(&operation.id)
     );
     if !bindings.is_empty() || !options.is_empty() {
@@ -366,6 +498,15 @@ fn resource_method(out: &mut String, operation: &OperationIr) {
     call.push_str(");\n");
     out.push_str(&call);
     out.push_str("  }\n");
+}
+
+fn sdk_method_param_type(ir: &ContractIr, ty: &FieldType) -> String {
+    match ty {
+        FieldType::Id(_) | FieldType::Ref(_) | FieldType::ByteRange | FieldType::ProviderId => {
+            format!("Models.{}", sdk_typescript_type(ir, ty))
+        }
+        _ => sdk_typescript_type(ir, ty),
+    }
 }
 
 /// Renders `packages/sdk/src/generated/errors.ts`.

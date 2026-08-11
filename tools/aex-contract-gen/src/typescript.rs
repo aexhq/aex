@@ -113,7 +113,7 @@ fn schema_references(schema: &SchemaIr, target: &str) -> bool {
     }
 }
 
-fn emit_identifiers(ir: &ContractIr, out: &mut String) {
+pub(crate) fn emit_identifiers(ir: &ContractIr, out: &mut String) {
     out.push_str("export const ID_PREFIXES = {\n");
     for row in &ir.ids {
         out.push_str(&format!("  {}: {},\n", row.key, quoted(&row.prefix)));

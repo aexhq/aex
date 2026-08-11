@@ -31,7 +31,9 @@ test("generation is byte-identical and covers every generated operation", () => 
   // has to carry the fact, and the index has to list every one of them.
   const index = readFileSync(resolve(first, "not-yet-available.md"), "utf8");
   const deferred = routes.routes.filter((route) => route.deferredReason);
-  expect(deferred.length).toBeGreaterThan(0);
+  expect(index).toContain(
+    `These ${deferred.length} operations are published in the contract`,
+  );
   for (const route of deferred) {
     const section = api.slice(api.indexOf(`## \`${route.operationId}\``));
     const body = section.slice(0, section.indexOf("\n## ") === -1 ? undefined : section.indexOf("\n## "));

@@ -4,7 +4,7 @@ import { FetchTransport, type AexTransport, type WireRequest } from "../transpor
 import { CONTRACT_DIGEST, ROUTES, type RouteId } from "../generated/routes.js";
 import { GeneratedResources, type ExecuteOptions } from "../generated/resources.js";
 
-const SDK_VERSION = "0.50.1";
+const SDK_VERSION = "0.51.0";
 
 export interface AexOptions {
   readonly apiKey: string;

@@ -32,10 +32,13 @@ export function generateSiteViews(outputRoot = resolve(import.meta.dir, "../.gen
     readFileSync(resolve(workspaceRoot, "api/generated/registries/routes.json"), "utf8"),
   ) as { routes: RouteRow[] }).routes.sort((left: RouteRow, right: RouteRow) =>
     left.operationId.localeCompare(right.operationId));
+  const sdkVersion = (JSON.parse(
+    readFileSync(resolve(workspaceRoot, "packages/sdk/package.json"), "utf8"),
+  ) as { version: string }).version;
   const identity = Object.freeze({
     generatedBy: "apps/site/generate/main.ts",
     contractDigest: lock.contractDigest,
-    sdkVersion: "0.50.0",
+    sdkVersion,
     cliVersion: "0.50.0",
   });
   const header = `<!-- ${JSON.stringify(identity)} -->\n`;

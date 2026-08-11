@@ -5,6 +5,69 @@ description: Start with the explicit v1 client surface.
 
 # AEX documentation
 
-Create a session with an explicit `provider` and `model`, then keep the returned identifiers to resume durable work.
+An AEX session is an eight-hour, multi-message conversation backed by one exact
+retained MicroVM generation. It accepts one text message at a time. When that
+activity finishes or is cancelled, send the next message to the same session;
+there is no separate public run resource.
+
+```ts
+import { Aex, assertId, newId } from "@aexhq/sdk";
+
+const aex = new Aex(process.env.AEX_WORKSPACE_API_KEY!);
+const session = await aex.sessions.sessionCreate({
+  body: {
+    provider: "openai",
+    model: process.env.AEX_MODEL!,
+    providerCredentialId: assertId(
+      "provider_credential",
+      process.env.AEX_PROVIDER_CREDENTIAL_ID,
+    ),
+  },
+  idempotencyKey: crypto.randomUUID(),
+});
+
+await aex.sessions.sessionMessageSend({
+  sessionId: session.id,
+  body: { text: "Inspect the repository and report the failing tests." },
+  idempotencyKey: crypto.randomUUID(),
+});
+
+await aex.sessions.sessionSuspend({
+  sessionId: session.id,
+  body: {},
+  operationId: newId("operation"),
+});
+```
+
+Provider credentials are dedicated, encrypted BYOK resources. A session pins
+one exact credential; AEX does not supply a managed model key at launch.
+
+## Lifecycle
+
+The provider suspends an idle generation after 180 seconds and automatically
+resumes that same generation for a message or live-file call. Manual suspend
+and resume are also available. The hard eight-hour lifetime starts when the
+generation launches and is never extended by suspension.
+
+Termination permanently destroys the MicroVM and its live files while retaining
+session metadata, sealed messages, accounting, and telemetry. Runtime loss does
+the same: launch has no snapshot, crash recovery, clone/fork, trash, or restore
+path. Irreversible deletion is a separate operation.
+
+## Files and tools
+
+Registered workspace files are durable opaque inputs. Session creation selects
+exact revisions and copies them into the MicroVM. Live session files exist only
+in that generation and support exact list/stat plus resumable, digest-verified
+upload and download. They are not persisted or snapshotted when the session
+ends.
+
+The launch model-tool surface is exactly `read_file`, `edit_file`, `write_file`,
+and Bash, all inside the MicroVM. Instructions, skills, tool material, and MCP
+configuration can be ordinary workspace files, but they are not separate typed
+resources. There is no generic secret or interactive approval surface.
+
+Typed observations, OpenTelemetry ingestion, streams, and telemetry exports
+remain durable independently of session execution state.
 
 For help, email support@aex.dev.

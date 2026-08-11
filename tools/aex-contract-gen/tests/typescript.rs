@@ -42,6 +42,28 @@ fn every_schema_has_one_typescript_validator_and_type() {
 }
 
 #[test]
+fn every_schema_has_one_dependency_free_sdk_type() {
+    let root = repo_root();
+    let ir = load(&root).expect("load contract IR");
+    let source = generated("packages/sdk/src/generated/models.ts");
+
+    for schema in ir.schemas.values() {
+        assert!(
+            source.contains(&format!("export type {} =", schema.id))
+                || source.contains(&format!("export interface {} {{", schema.id)),
+            "{} has no generated SDK type",
+            schema.id
+        );
+    }
+    assert!(source.contains("export function newId<K extends IdKind>"));
+    assert!(source.contains("readonly id: Id<\"operation\">;"));
+    assert!(
+        !source.contains("from \""),
+        "SDK models must stay dependency-free"
+    );
+}
+
+#[test]
 fn generated_typescript_keeps_the_closed_wire_invariants() {
     let tree = generate_to_memory(&repo_root()).expect("generate");
     let source = String::from_utf8(
@@ -116,12 +138,7 @@ fn the_sdk_publishes_a_resource_method_for_every_served_operation_and_no_other()
     let source = generated("packages/sdk/src/generated/resources.ts");
 
     for operation in ir.operations() {
-        let method_generic = if operation.transport == "binary" {
-            ""
-        } else {
-            "<T = unknown>"
-        };
-        let method = format!("  async {}{method_generic}(", camel(&operation.id));
+        let method = format!("  async {}(", camel(&operation.id));
         let published = source.contains(&method);
         // The frame streams are absent for the other half of the same reason:
         // the SDK transport decodes one JSON body, so a generated method over a
@@ -139,15 +156,24 @@ fn the_sdk_publishes_a_resource_method_for_every_served_operation_and_no_other()
 }
 
 #[test]
+fn the_sdk_resource_surface_uses_authored_request_and_success_types() {
+    let source = generated("packages/sdk/src/generated/resources.ts");
+    assert!(source.contains("import type * as Models from \"./models.js\";"));
+    assert!(source.contains(
+        "async sessionCreate(params: {\n    readonly body: Models.SessionCreateRequest;"
+    ));
+    assert!(source.contains("): Promise<Models.Session> {"));
+    assert!(source.contains(
+        "async sessionMessageSend(params: {\n    readonly sessionId: Models.Id<\"session\">;\n    readonly body: Models.MessageSendRequest;"
+    ));
+    assert!(source.contains("readonly operationId: Models.Id<\"operation\">;"));
+    assert!(!source.contains("<T = unknown>"));
+}
+
+#[test]
 fn the_sdk_route_table_stays_total_over_every_operation_including_the_deferred() {
     let ir = load(&repo_root()).expect("load contract IR");
     let source = generated("packages/sdk/src/generated/routes.ts");
-    let deferred = ir
-        .operations()
-        .iter()
-        .filter(|operation| operation.deferred_reason.is_some())
-        .count();
-    assert!(deferred > 0, "the ledger is empty; this proves nothing");
     for operation in ir.operations() {
         let opening = format!("\n  {}: {{\n", operation.id);
         let start = source
@@ -206,6 +232,7 @@ fn the_generated_sdk_sources_import_nothing() {
     // the route table is emitted into the package instead of imported from
     // `@aexhq/wire`, and an emitted `import` would quietly undo it.
     for path in [
+        "packages/sdk/src/generated/models.ts",
         "packages/sdk/src/generated/routes.ts",
         "packages/sdk/src/generated/errors.ts",
     ] {

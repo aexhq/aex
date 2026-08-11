@@ -248,7 +248,7 @@ function replayKey(phase: string, seed: string): string {
 }
 
 function digestBytes(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
 async function hashHandle(handle: FileHandle, size: number): Promise<string> {
@@ -262,7 +262,7 @@ async function hashHandle(handle: FileHandle, size: number): Promise<string> {
     digest.update(buffer.subarray(0, bytesRead));
     offset += bytesRead;
   }
-  return digest.digest("hex");
+  return `sha256:${digest.digest("hex")}`;
 }
 
 async function readExact(handle: FileHandle, offset: number, length: number): Promise<Uint8Array> {
@@ -354,7 +354,7 @@ function validateParts(parts: readonly LiveFilePart[], size: number, count: numb
     if (!Number.isInteger(part.partNumber) || part.partNumber <= previous || part.partNumber > count
       || seen.has(part.partNumber) || offset !== (part.partNumber - 1) * LIVE_FILE_PART_BYTES
       || part.sizeBytes !== expectedSize || part.sizeBytes < 1
-      || !/^[0-9a-f]{64}$/.test(part.sha256)) {
+      || !/^sha256:[0-9a-f]{64}$/.test(part.sha256)) {
       throw new AexConfigError("invalid live-file part descriptor");
     }
     seen.add(part.partNumber);
