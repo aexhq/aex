@@ -243,6 +243,7 @@ fn head() -> AgentHead {
         phase: "awaiting_model".to_owned(),
         budget: aex_brain_domain::budget::BudgetNode::default(),
         stop_requested: false,
+        stop_reason: None,
         open_effects: Vec::new(),
         lease_expires_at: Timestamp::from_millis(1_767_225_615_000),
     }

@@ -5,9 +5,9 @@ use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
 use aex_control_app::ports::{
-    ClaimDueOperations, ClaimOutbox, ControlStore, ControlViewStore, FinishWorkspaceProvisionTx,
-    GcExpired, KeyMaterialReader, ProvisionWorkspaceRequest, RegionalControlPort, RequestId,
-    StoreError, TxOutcome,
+    ApplyAccountPauseRequest, ClaimDueOperations, ClaimOutbox, ControlStore, ControlViewStore,
+    FinishWorkspaceProvisionTx, GcExpired, KeyMaterialReader, ProvisionWorkspaceRequest,
+    RegionalControlPort, RequestId, StoreError, TxOutcome,
 };
 use aex_control_aurora::OutboxWakeTransactionStatus as Transaction;
 use aex_control_domain::{
@@ -977,7 +977,23 @@ impl Worker {
                 feed_sequence,
                 updated_at: timestamp(self.clock.now())?,
             })
-            .await
+            .await?;
+        if status == "paused" {
+            let applied = self
+                .regional
+                .apply_account_pause(&ApplyAccountPauseRequest {
+                    workspace_id: view.workspace.id,
+                    organization_id: view.workspace.organization_id,
+                    region: view.workspace.region,
+                    account_epoch: view.account.epoch,
+                })
+                .await
+                .map_err(|_| "regional_account_pause_unavailable".to_owned())?;
+            if !applied.complete {
+                return Err("regional_account_pause_incomplete".to_owned());
+            }
+        }
+        Ok(())
     }
 }
 

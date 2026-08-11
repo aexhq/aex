@@ -187,7 +187,7 @@ async fn a_create_carries_exactly_the_two_read_only_readiness_checks() {
     assert_eq!(shape.actions, plan.writes.len() + 2);
     assert!(plan.conditions.iter().any(|condition| matches!(
         condition,
-        aex_session_app::Condition::AccountRevisionAtLeast {
+        aex_session_app::Condition::AccountActiveAtLeast {
             at_least: aex_session_domain::AccountRevision(1),
             ..
         }

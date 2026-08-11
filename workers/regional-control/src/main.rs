@@ -10,7 +10,8 @@ use lambda_runtime::{LambdaEvent, service_fn};
 mod keys {
     pub const REGION: &str = "AEX_REGION";
     pub const SESSION_TABLE: &str = "AEX_SESSION_TABLE";
-    pub const ALL: &[&str] = &[REGION, SESSION_TABLE];
+    pub const AUTHZ_TABLE: &str = "AEX_AUTHZ_PROJECTION_TABLE";
+    pub const ALL: &[&str] = &[REGION, SESSION_TABLE, AUTHZ_TABLE];
 }
 
 /// Why this authority refused to start.
@@ -26,6 +27,7 @@ enum RegionalControlConfigError {
 struct Config {
     region: Region,
     session_table: String,
+    authz_table: String,
 }
 
 impl Config {
@@ -46,6 +48,7 @@ impl Config {
         Ok(Self {
             region,
             session_table: required(&lookup, keys::SESSION_TABLE)?,
+            authz_table: required(&lookup, keys::AUTHZ_TABLE)?,
         })
     }
 }
@@ -89,6 +92,7 @@ async fn main() -> ExitCode {
         aex_session_dynamodb::regional_control::RegionalWorkspaceStore::new(
             aws_sdk_dynamodb::Client::new(&aws),
             config.session_table,
+            config.authz_table,
             config.region,
         ),
     );
@@ -123,6 +127,10 @@ mod tests {
         BTreeMap::from([
             (keys::REGION, "eu-west-1".to_owned()),
             (keys::SESSION_TABLE, "aex-dev-session-authority".to_owned()),
+            (
+                keys::AUTHZ_TABLE,
+                "aex-dev-regional-authz-projection".to_owned(),
+            ),
         ])
     }
 
@@ -132,6 +140,7 @@ mod tests {
         let config = Config::from_lookup(|name| vars.get(name).cloned()).expect("valid");
         assert_eq!(config.region, Region::EuWest1);
         assert_eq!(config.session_table, "aex-dev-session-authority");
+        assert_eq!(config.authz_table, "aex-dev-regional-authz-projection");
     }
 
     #[test]

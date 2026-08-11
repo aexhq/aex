@@ -267,14 +267,14 @@ pub fn compile(
             adds.push(format!("{} {placeholder}", used_attribute(delta.dimension)));
             control = control.expression_attribute_values(placeholder, n(delta.quantity));
         }
-        let clear_stop_latch = terminal.as_ref().is_some_and(|terminal| {
+        let clear_stop_latch = commit.run.as_ref().is_some_and(|transition| {
             matches!(
-                terminal.run.outcome.as_ref(),
-                Some(aex_session_domain::RunOutcome::Cancelled { .. })
+                transition.finish,
+                FinishReason::Cancelled | FinishReason::AccountPaused
             )
         });
         let remove_clause = if clear_stop_latch {
-            " REMOVE stopRequested"
+            " REMOVE stopRequested, stopReason"
         } else {
             ""
         };
@@ -1053,7 +1053,9 @@ const fn finish_outcome(reason: FinishReason) -> &'static str {
         FinishReason::Completed => "succeeded",
         FinishReason::Timeout => "timed_out",
         FinishReason::Cancelled => "cancelled",
-        FinishReason::Interrupted | FinishReason::Budget => "interrupted",
+        FinishReason::Interrupted | FinishReason::Budget | FinishReason::AccountPaused => {
+            "interrupted"
+        }
         FinishReason::MaxTurns | FinishReason::MaxSteps | FinishReason::Failed => "failed",
     }
 }
@@ -1070,6 +1072,7 @@ fn terminal_outcome(
             deadline: run.deadline,
         },
         FinishReason::Budget => RunOutcome::Interrupted(InterruptReason::SpendCapExhausted),
+        FinishReason::AccountPaused => RunOutcome::Interrupted(InterruptReason::AccountPaused),
         FinishReason::Cancelled => RunOutcome::Cancelled {
             by: transition.cancellation.ok_or_else(|| {
                 PlanError::Boundary("a cancelled run has no cancellation operation".to_owned())
@@ -1321,6 +1324,7 @@ const fn finish_name(reason: aex_brain_domain::journal::FinishReason) -> &'stati
         Finish::Budget => "budget",
         Finish::Timeout => "timeout",
         Finish::Cancelled => "cancelled",
+        Finish::AccountPaused => "account_paused",
         Finish::Failed => "failed",
         Finish::Interrupted => "interrupted",
     }

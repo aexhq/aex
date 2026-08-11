@@ -76,6 +76,8 @@ impl Participant {
     pub const SESSION_SEALED_MESSAGE: Self = Self::new("session.sealed_message");
     /// The admitted run.
     pub const SESSION_RUN: Self = Self::new("session.run");
+    /// Workspace-scoped locator for one active session.
+    pub const SESSION_ACTIVE_LOCATOR: Self = Self::new("session.active_locator");
     /// The root agent's control item.
     pub const AGENT_ROOT_CONTROL: Self = Self::new("agent.root_control");
     /// An agent's control item.

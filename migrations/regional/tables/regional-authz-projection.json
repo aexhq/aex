@@ -59,6 +59,17 @@
       }
     },
     {
+      "role": "regional-control",
+      "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
+      "resources": ["table"],
+      "itemTypes": ["workspace_placement"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["WS#*"]
+      }
+    },
+    {
       "role": "regional-session-api",
       "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:TransactWriteItems", "dynamodb:Query"],
       "resources": ["table"]

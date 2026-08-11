@@ -24,7 +24,8 @@ use aex_wire::{CanonicalJson, canonical::to_jcs_string, models};
 
 use crate::error::AppError;
 use crate::plan::{
-    Condition, Hint, Planned, SessionTransaction, TransactionIntent, WorkCompletion, Write,
+    Condition, Hint, Planned, RootStopReason, SessionTransaction, TransactionIntent,
+    WorkCompletion, Write,
 };
 use crate::ports::{AppContext, PortError, RootAdmissionState};
 
@@ -637,10 +638,19 @@ fn plan_lifecycle_admission(
             session: session.id,
             expected: session.cancellation,
         },
-        Condition::AccountRevisionAtLeast {
-            workspace: session.workspace,
-            organization: session.organization,
-            at_least: account_revision,
+        match command_class(command.kind) {
+            CommandClass::PauseExempt => Condition::AccountRevisionAtLeast {
+                workspace: session.workspace,
+                organization: session.organization,
+                at_least: account_revision,
+            },
+            CommandClass::PausableMutation | CommandClass::PausableRead => {
+                Condition::AccountActiveAtLeast {
+                    workspace: session.workspace,
+                    organization: session.organization,
+                    at_least: account_revision,
+                }
+            }
         },
         Condition::ItemAbsent(operation_write.target()),
         Condition::ItemAbsent(operation_edge_write.target()),
@@ -661,6 +671,17 @@ fn plan_lifecycle_admission(
         head_write,
         work_write,
     ];
+    if matches!(
+        command.kind,
+        OperationKind::SessionTerminate | OperationKind::SessionDelete
+    ) && let Some(run) = session.active_run
+    {
+        writes.push(Write::DeleteActiveSession {
+            workspace: session.workspace,
+            session: session.id,
+            run,
+        });
+    }
     if let Some((root, cancellation)) = cancellation_root {
         let wake = cancellation_wake(command, root, cancellation, now)?;
         let root_write = Write::RequestRootCancellation {
@@ -670,6 +691,7 @@ fn plan_lifecycle_admission(
             to_revision: root.revision.next(),
             from_cancellation: session.cancellation,
             to_cancellation: cancellation,
+            reason: RootStopReason::SessionCancelled,
             at: now,
         };
         conditions.push(Condition::AgentRevision {
@@ -889,6 +911,49 @@ mod tests {
         assert_eq!(
             planned_head(&resume.plan).lifecycle.status,
             LifecycleStatus::Resuming
+        );
+    }
+
+    #[test]
+    fn pause_exempt_cleanup_uses_an_epoch_fence_while_resume_requires_active() {
+        let session = aex_session_domain::testing::session_fixture();
+        for kind in [
+            OperationKind::SessionCancel,
+            OperationKind::SessionSuspend,
+            OperationKind::SessionTerminate,
+            OperationKind::SessionDelete,
+        ] {
+            let planned = planned(kind, &session);
+            assert!(
+                planned
+                    .plan
+                    .conditions
+                    .iter()
+                    .any(|condition| matches!(condition, Condition::AccountRevisionAtLeast { .. }))
+            );
+            assert!(
+                !planned
+                    .plan
+                    .conditions
+                    .iter()
+                    .any(|condition| matches!(condition, Condition::AccountActiveAtLeast { .. }))
+            );
+        }
+
+        let mut suspended = session;
+        suspended.lifecycle.begin_suspend().expect("begins");
+        suspended
+            .lifecycle
+            .complete_suspend(now())
+            .expect("suspends");
+        suspended.status = suspended.lifecycle.status;
+        let resume = planned(OperationKind::SessionResume, &suspended);
+        assert!(
+            resume
+                .plan
+                .conditions
+                .iter()
+                .any(|condition| matches!(condition, Condition::AccountActiveAtLeast { .. }))
         );
     }
 

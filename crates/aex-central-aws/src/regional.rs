@@ -22,8 +22,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use aex_control_app::ports::{
-    DeleteWorkspaceRequest, DeleteWorkspaceResponse, EffectError, ProvisionWorkspaceRequest,
-    ProvisionWorkspaceResponse, RegionalControlPort,
+    ApplyAccountPauseRequest, ApplyAccountPauseResponse, DeleteWorkspaceRequest,
+    DeleteWorkspaceResponse, EffectError, ProvisionWorkspaceRequest, ProvisionWorkspaceResponse,
+    RegionalControlPort,
 };
 use aex_identity_app::ports::IdFactory;
 use aex_internal_contracts::SchemaVersion;
@@ -215,7 +216,8 @@ impl RegionalControlPort for LambdaRegionalControl {
             // An answer about another workspace, or about a deletion, is not an
             // answer to this request. It is never treated as success.
             RegionalControlOutcome::WorkspaceProvisioned { .. }
-            | RegionalControlOutcome::WorkspaceDeleted { .. } => Err(EffectError::Rejected {
+            | RegionalControlOutcome::WorkspaceDeleted { .. }
+            | RegionalControlOutcome::AccountPauseApplied { .. } => Err(EffectError::Rejected {
                 code: WRONG_SUBJECT,
                 retryable: false,
             }),
@@ -245,7 +247,45 @@ impl RegionalControlPort for LambdaRegionalControl {
             } if answered == workspace => Ok(DeleteWorkspaceResponse { removed }),
             RegionalControlOutcome::Refused { reason } => Err(refused(reason)),
             RegionalControlOutcome::WorkspaceDeleted { .. }
-            | RegionalControlOutcome::WorkspaceProvisioned { .. } => Err(EffectError::Rejected {
+            | RegionalControlOutcome::WorkspaceProvisioned { .. }
+            | RegionalControlOutcome::AccountPauseApplied { .. } => Err(EffectError::Rejected {
+                code: WRONG_SUBJECT,
+                retryable: false,
+            }),
+        }
+    }
+
+    async fn apply_account_pause(
+        &self,
+        request: &ApplyAccountPauseRequest,
+    ) -> Result<ApplyAccountPauseResponse, EffectError> {
+        let workspace = wire_workspace(request.workspace_id)?;
+        let organization = wire_organization(request.organization_id)?;
+        let outcome = self
+            .call(
+                request.region,
+                workspace.uuid7(),
+                RegionalControlRequest::ApplyAccountPause {
+                    workspace,
+                    organization,
+                    region: request.region,
+                    account_epoch: request.account_epoch,
+                },
+            )
+            .await?;
+        match outcome {
+            RegionalControlOutcome::AccountPauseApplied {
+                workspace: answered,
+                complete,
+                interrupted,
+            } if answered == workspace => Ok(ApplyAccountPauseResponse {
+                complete,
+                interrupted,
+            }),
+            RegionalControlOutcome::Refused { reason } => Err(refused(reason)),
+            RegionalControlOutcome::WorkspaceDeleted { .. }
+            | RegionalControlOutcome::WorkspaceProvisioned { .. }
+            | RegionalControlOutcome::AccountPauseApplied { .. } => Err(EffectError::Rejected {
                 code: WRONG_SUBJECT,
                 retryable: false,
             }),

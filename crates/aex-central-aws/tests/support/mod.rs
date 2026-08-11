@@ -186,6 +186,25 @@ pub fn deleted(id: uuid::Uuid, removed: bool) -> String {
     )
 }
 
+/// One region's bounded account-pause answer.
+///
+/// # Panics
+///
+/// If the envelope does not encode.
+#[must_use]
+pub fn account_pause_applied(id: uuid::Uuid, complete: bool, interrupted: u32) -> String {
+    use aex_wire::ids::PrefixedId as _;
+    let workspace = workspace_id(id);
+    envelope(
+        workspace.uuid7(),
+        aex_internal_contracts::control::RegionalControlOutcome::AccountPauseApplied {
+            workspace,
+            complete,
+            interrupted,
+        },
+    )
+}
+
 /// One region's refusal.
 ///
 /// # Panics

@@ -18,6 +18,7 @@ related:
   - references/contributing.md
   - references/repository-hygiene.md
   - references/architecture.md
+  - references/account-pause-control.md
   - references/glossary.md
 ---
 
@@ -41,6 +42,7 @@ executable sources.
 | Contributor and review procedure | [`contributing.md`](contributing.md) |
 | Durable-doc and generated-artifact placement | [`repository-hygiene.md`](repository-hygiene.md) |
 | Public v1 architecture and repository boundary | [`architecture.md`](architecture.md) |
+| Account-pause admission fence, active-session interruption, and consistency model | [`account-pause-control.md`](account-pause-control.md) |
 | Generated TypeScript wire binding and consumer migration boundary | [`typescript-wire-binding.md`](typescript-wire-binding.md) |
 | Rust-native rewrite implementation handoffs — what each stream landed, deferred and owes | [`rewrite/README.md`](rewrite/README.md) |
 | Collapsing the central HTTP surface onto one Fargate service (2026-08-09) — accepted | [`central-api-fargate-consolidation-2026-08-09.md`](central-api-fargate-consolidation-2026-08-09.md) |

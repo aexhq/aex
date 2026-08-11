@@ -1103,6 +1103,28 @@ pub struct DeleteWorkspaceResponse {
     pub removed: bool,
 }
 
+/// One exact regional account-pause application.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyAccountPauseRequest {
+    /// Workspace whose placement is paused.
+    pub workspace_id: Uuid,
+    /// Owning organization.
+    pub organization_id: Uuid,
+    /// Region holding the session authority.
+    pub region: aex_wire::types::Region,
+    /// Exact pause epoch.
+    pub account_epoch: u64,
+}
+
+/// Result of one bounded regional pause page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApplyAccountPauseResponse {
+    /// Whether the durable scan reached EOF.
+    pub complete: bool,
+    /// Sessions newly interrupted by this page.
+    pub interrupted: u32,
+}
+
 /// The regional control authority.
 #[async_trait]
 pub trait RegionalControlPort: Send + Sync {
@@ -1126,6 +1148,15 @@ pub trait RegionalControlPort: Send + Sync {
         &self,
         request: &DeleteWorkspaceRequest,
     ) -> Result<DeleteWorkspaceResponse, EffectError>;
+
+    /// Applies one account pause to a bounded, durable page of active sessions.
+    ///
+    /// An incomplete response is not loss: the central outbox remains
+    /// retryable and the regional checkpoint resumes the next page.
+    async fn apply_account_pause(
+        &self,
+        request: &ApplyAccountPauseRequest,
+    ) -> Result<ApplyAccountPauseResponse, EffectError>;
 }
 
 /// One invitation notification.

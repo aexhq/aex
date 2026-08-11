@@ -51,6 +51,28 @@ fn the_regional_control_payload_round_trips_at_the_contract_boundary() {
 }
 
 #[test]
+fn an_account_pause_names_the_exact_epoch_that_every_regional_write_must_fence() {
+    let request = RegionalControlEnvelope {
+        schema_version: SchemaVersion::V1,
+        request_id: Uuid7::compose(1, [4; 10]),
+        payload: RegionalControlRequest::ApplyAccountPause {
+            workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            organization: OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10])),
+            region: Region::EuWest1,
+            account_epoch: 19,
+        },
+    };
+    let document = serde_json::to_string(&request).expect("request encodes");
+    assert!(document.contains(r#""request":"apply_account_pause""#));
+    assert!(document.contains(r#""accountEpoch":19"#));
+    assert_eq!(
+        serde_json::from_str::<RegionalControlEnvelope<RegionalControlRequest>>(&document)
+            .expect("request decodes"),
+        request
+    );
+}
+
+#[test]
 fn one_cent_is_exactly_ten_thousand_microusd() {
     assert_eq!(MICROUSD_PER_CENT, 10_000);
     let amount = Microusd::from_cents(Cents::new(1234)).expect("convert");

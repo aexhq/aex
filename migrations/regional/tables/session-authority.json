@@ -2,7 +2,7 @@
   "schema": "aex.regional-table.v1",
   "table": "session-authority",
   "owner": "regional-stores",
-  "purpose": "Session heads, messages, internal execution facts, native events, approvals, agent control and journals, durable operations, idempotency receipts, ephemeral live-transfer coordination, irreversible-deletion coordination, and the fenced empty-workspace control row. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
+  "purpose": "Session heads, messages, internal execution facts, native events, approvals, agent control and journals, durable operations, idempotency receipts, workspace-scoped active-session locators, durable account-pause scan progress, ephemeral live-transfer coordination, irreversible-deletion coordination, and the fenced empty-workspace control row. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
@@ -121,12 +121,20 @@
     "operation",
     "idempotency_receipt",
     "outbox_event",
-    "regional_workspace_control"
+    "regional_workspace_control",
+    "active_session",
+    "account_pause_progress"
   ],
   "iam": [
     {
       "role": "regional-control",
-      "actions": ["dynamodb:GetItem", "dynamodb:PutItem"],
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:TransactWriteItems"
+      ],
       "resources": ["table"]
     },
     {

@@ -63,6 +63,10 @@ pub const AGENT_INDEX: &str = "agent_index";
 pub const FANOUT_PAGE: &str = "fanout_page";
 /// The `itemType` of an agent effect.
 pub const AGENT_EFFECT: &str = "agent_effect";
+/// Workspace-scoped locator for one currently running session.
+pub const ACTIVE_SESSION: &str = "active_session";
+/// Durable native continuation for one account-pause locator scan.
+pub const ACCOUNT_PAUSE_PROGRESS: &str = "account_pause_progress";
 
 /// The attribute a message's inline bytes live under.
 pub const CONTENT_INLINE: &str = "contentInline";

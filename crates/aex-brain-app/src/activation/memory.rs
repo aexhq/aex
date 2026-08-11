@@ -622,6 +622,7 @@ struct AgentRow {
     phase: String,
     budget: BudgetNode,
     stop_requested: bool,
+    stop_reason: Option<FinishReason>,
     lease_owner: Option<OwnerToken>,
     lease_expires_at: Timestamp,
     entries: Vec<JournalEntry>,
@@ -726,6 +727,7 @@ impl MemoryStore {
                 phase: "awaiting_model".to_owned(),
                 budget: BudgetNode::default(),
                 stop_requested: false,
+                stop_reason: None,
                 lease_owner: None,
                 lease_expires_at: Timestamp::from_millis(0),
                 entries,
@@ -798,6 +800,15 @@ impl MemoryStore {
     /// Panics when the supplied authority does not name an active run or its cancellation
     /// epoch is not exactly the next root-agent epoch.
     pub fn request_root_cancellation(&self, key: AgentKey, authority: SessionAuthority) {
+        self.request_root_stop(key, authority, FinishReason::Cancelled);
+    }
+
+    /// Installs an account-pause stop latch for a successor claim.
+    pub fn request_account_pause(&self, key: AgentKey, authority: SessionAuthority) {
+        self.request_root_stop(key, authority, FinishReason::AccountPaused);
+    }
+
+    fn request_root_stop(&self, key: AgentKey, authority: SessionAuthority, reason: FinishReason) {
         let active = authority
             .active
             .as_deref()
@@ -812,6 +823,7 @@ impl MemoryStore {
         row.cancel_epoch = CancelEpoch(active.session.cancellation.0);
         row.revision = row.revision.next();
         row.stop_requested = true;
+        row.stop_reason = Some(reason);
         drop(agents);
         self.authorities
             .lock()
@@ -961,6 +973,7 @@ impl MemoryStore {
             phase: row.phase.clone(),
             budget: row.budget,
             stop_requested: row.stop_requested,
+            stop_reason: row.stop_reason,
             open_effects: row
                 .effects
                 .values()

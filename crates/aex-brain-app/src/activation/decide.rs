@@ -560,7 +560,9 @@ const fn finish_outcome(reason: FinishReason) -> &'static str {
         FinishReason::Completed => "succeeded",
         FinishReason::Timeout => "timed_out",
         FinishReason::Cancelled => "cancelled",
-        FinishReason::Interrupted | FinishReason::Budget => "interrupted",
+        FinishReason::Interrupted | FinishReason::Budget | FinishReason::AccountPaused => {
+            "interrupted"
+        }
         FinishReason::MaxTurns | FinishReason::MaxSteps | FinishReason::Failed => "failed",
     }
 }

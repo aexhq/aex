@@ -640,7 +640,7 @@ fn build_plan(
             partition: session.id.to_string(),
             sort: "HEAD".to_owned(),
         }),
-        Condition::AccountRevisionAtLeast {
+        Condition::AccountActiveAtLeast {
             workspace: session.workspace,
             organization: session.organization,
             at_least: account_revision,

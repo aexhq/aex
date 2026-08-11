@@ -23,14 +23,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
 use aex_control_app::ports::{
-    AcceptInvitationsTx, AccountProjection, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
-    ClaimDueOperations, ClaimOutbox, CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore,
-    CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx, DeleteWorkspaceRequest,
-    DeleteWorkspaceResponse, EffectError, FinishWorkspaceProvisionTx, GcExpired, GcReport,
-    KeyMaterialReader, ListApiKeys, ListOperations, ListOrganizations, ListWorkspaces,
-    MembershipView, OperationView, OrganizationView, Page, PageRequest, ProvisionWorkspaceRequest,
-    ProvisionWorkspaceResponse, RegionalControlPort, RevokeApiKeyTx, StoreError, TxOutcome,
-    UserIdentity, WorkspaceKeyMaterial, WorkspaceView,
+    AcceptInvitationsTx, AccountProjection, ApplyAccountPauseRequest, ApplyAccountPauseResponse,
+    BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx, ClaimDueOperations, ClaimOutbox,
+    CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore, CreateApiKeyTx,
+    CreateInvitationTx, CreateOrganizationTx, DeleteWorkspaceRequest, DeleteWorkspaceResponse,
+    EffectError, FinishWorkspaceProvisionTx, GcExpired, GcReport, KeyMaterialReader, ListApiKeys,
+    ListOperations, ListOrganizations, ListWorkspaces, MembershipView, OperationView,
+    OrganizationView, Page, PageRequest, ProvisionWorkspaceRequest, ProvisionWorkspaceResponse,
+    RegionalControlPort, RevokeApiKeyTx, StoreError, TxOutcome, UserIdentity, WorkspaceKeyMaterial,
+    WorkspaceView,
 };
 use aex_control_domain::{
     AccountProfile, AccountState, ApiKey, Fence, IntentHash, Invitation, Membership, Operation,
@@ -140,17 +141,18 @@ fn operation(kind: OperationKind, status: OperationStatus) -> Operation {
     }
 }
 
-fn view(status: WorkspaceStatus) -> WorkspaceView {
+fn view(status: WorkspaceStatus, account_state: AccountState) -> WorkspaceView {
+    let paused = account_state == AccountState::PausedTopUpRequired;
     WorkspaceView {
         workspace: workspace(status),
         account: AccountProjection {
             profile: AccountProfile {
-                state: AccountState::Active,
-                reason: None,
-                revision: 1,
+                state: account_state,
+                reason: paused.then(|| "top_up_required".to_owned()),
+                revision: if paused { 2 } else { 1 },
                 changed_at: epoch(),
             },
-            epoch: 1,
+            epoch: if paused { 2 } else { 1 },
         },
         workspace_epoch: 1,
     }
@@ -218,6 +220,22 @@ fn invitation_email_requested() -> OutboxMessage {
     )
 }
 
+fn account_state_changed() -> OutboxMessage {
+    message(
+        13,
+        Topic::AccountStateChanged,
+        serde_json::json!({
+            "workspaceId": workspace_id(),
+            "organizationId": organization_id(),
+            "region": REGION.as_str(),
+            "accountEpoch": 2,
+            "accountRevision": 2,
+            "changedAtMs": u64::try_from(epoch().unix_timestamp_nanos() / 1_000_000)
+                .expect("the fixture timestamp is positive"),
+        }),
+    )
+}
+
 /// Every externally visible effect, in the order the worker produced it.
 #[derive(Debug, Default)]
 struct Journal(Mutex<Vec<String>>);
@@ -259,12 +277,21 @@ struct FakeStore {
     reachable: bool,
     workspace_status: WorkspaceStatus,
     operation_status: OperationStatus,
+    account_state: AccountState,
     key_material: Option<WorkspaceKeyMaterial>,
     wake_transactions: Mutex<VecDeque<aex_control_aurora::OutboxWakeTransactionStatus>>,
 }
 
 impl FakeStore {
     fn new(journal: Arc<Journal>, outbox: Vec<OutboxMessage>, reachable: bool) -> Self {
+        let account_state = if outbox
+            .iter()
+            .any(|message| message.topic == Topic::AccountStateChanged)
+        {
+            AccountState::PausedTopUpRequired
+        } else {
+            AccountState::Active
+        };
         Self {
             journal,
             outbox: Mutex::new(outbox),
@@ -272,6 +299,7 @@ impl FakeStore {
             reachable,
             workspace_status: WorkspaceStatus::Active,
             operation_status: OperationStatus::Running,
+            account_state,
             key_material: Some(WorkspaceKeyMaterial {
                 key_id: api_key_id(),
                 workspace_id: workspace_id(),
@@ -454,7 +482,7 @@ impl ControlStore for FakeStore {
 impl ControlViewStore for FakeStore {
     async fn get_workspace_view(&self, id: Uuid) -> Result<Option<WorkspaceView>, StoreError> {
         assert_eq!(id, workspace_id(), "the worker projected a foreign view");
-        Ok(Some(view(self.workspace_status)))
+        Ok(Some(view(self.workspace_status, self.account_state)))
     }
 
     async fn idempotency_id_for_operation(
@@ -574,6 +602,7 @@ impl WakeDelay for FakeWakeDelay {
 struct FakeRegional {
     journal: Arc<Journal>,
     available: bool,
+    pause_complete: bool,
 }
 
 #[async_trait]
@@ -602,6 +631,22 @@ impl RegionalControlPort for FakeRegional {
             .record(format!("regional_delete:{}", request.workspace_id));
         if self.available {
             Ok(DeleteWorkspaceResponse { removed: true })
+        } else {
+            Err(EffectError::Unavailable)
+        }
+    }
+
+    async fn apply_account_pause(
+        &self,
+        request: &ApplyAccountPauseRequest,
+    ) -> Result<ApplyAccountPauseResponse, EffectError> {
+        self.journal
+            .record(format!("regional_pause:{}", request.workspace_id));
+        if self.available {
+            Ok(ApplyAccountPauseResponse {
+                complete: self.pause_complete,
+                interrupted: 1,
+            })
         } else {
             Err(EffectError::Unavailable)
         }
@@ -705,6 +750,7 @@ enum Authority {
     Store,
     Mail,
     Regional,
+    RegionalPauseIncomplete,
     Capacity,
 }
 
@@ -772,6 +818,7 @@ impl Harness {
             Arc::new(FakeRegional {
                 journal: Arc::clone(&journal),
                 available: answers(Authority::Regional),
+                pause_complete: answers(Authority::RegionalPauseIncomplete),
             }),
             Arc::new(FakeCapacity {
                 journal: Arc::clone(&journal),
@@ -900,7 +947,7 @@ async fn a_statement_larger_than_one_batch_always_accepts_a_continuation() {
 }
 
 #[tokio::test]
-async fn a_queue_or_schedule_envelope_is_rejected() {
+async fn an_unknown_queue_envelope_is_rejected() {
     let harness = Harness::with(the_three_routes_outbox());
     let error = central_control_worker::handle_event(
         &harness.worker,
@@ -919,7 +966,65 @@ async fn a_queue_or_schedule_envelope_is_rejected() {
     .await
     .expect_err("there is no polled queue recovery path");
 
-    assert_eq!(error, "invalid_outbox_wake");
+    assert_eq!(error, "invalid_control_worker_event");
+    assert_eq!(harness.journal.count("dispatched:"), 0);
+}
+
+#[tokio::test]
+async fn the_recovery_schedule_drains_rows_whose_direct_wake_was_lost() {
+    let harness = Harness::with(the_three_routes_outbox());
+
+    central_control_worker::handle_event(
+        &harness.worker,
+        serde_json::json!({
+            "source": "aex.scheduler",
+            "detail-type": "aex.control_recovery",
+            "detail": {}
+        }),
+    )
+    .await
+    .expect("the recovery sweep runs");
+
+    assert_eq!(harness.journal.count("dispatched:"), 3);
+}
+
+#[tokio::test]
+async fn a_pause_becomes_the_admission_fence_before_active_sessions_are_interrupted() {
+    let harness = Harness::with(vec![account_state_changed()]);
+
+    harness.worker.tick().await.expect("the pause is projected");
+
+    let journal = harness.journal.entries();
+    let placement = journal
+        .iter()
+        .position(|entry| entry == "put_placement:paused")
+        .expect("the paused placement was written");
+    let interruption = journal
+        .iter()
+        .position(|entry| entry.starts_with("regional_pause:"))
+        .expect("the regional interruption was requested");
+    assert!(placement < interruption, "{journal:?}");
+    assert_eq!(harness.journal.count("dispatched:"), 1);
+}
+
+#[tokio::test]
+async fn an_incomplete_pause_page_releases_the_outbox_for_the_recovery_schedule() {
+    let message = account_state_changed();
+    let harness = Harness::build(vec![message.clone()], &[Authority::RegionalPauseIncomplete]);
+
+    assert_eq!(
+        harness.worker.tick().await,
+        Err("outbox_dispatch_failed".to_owned())
+    );
+
+    let journal = harness.journal.entries();
+    assert!(
+        journal.contains(&format!(
+            "released:{}:regional_account_pause_incomplete",
+            message.id
+        )),
+        "{journal:?}"
+    );
     assert_eq!(harness.journal.count("dispatched:"), 0);
 }
 

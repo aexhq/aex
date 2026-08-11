@@ -219,7 +219,20 @@ pub enum Condition {
         /// Which run.
         run: RunId,
     },
-    /// The account projection has reached at least this revision.
+    /// The active account projection has reached at least this revision.
+    AccountActiveAtLeast {
+        /// Workspace placement row carrying the account epoch.
+        workspace: WorkspaceId,
+        /// Which organization.
+        organization: OrganizationId,
+        /// The floor.
+        at_least: AccountRevision,
+    },
+    /// The account projection exists at at least this revision, regardless of status.
+    ///
+    /// Pause-exempt cleanup uses this weaker predicate so a paused account can
+    /// still cancel, suspend, terminate, or delete a session. Cost-incurring
+    /// work must use [`Condition::AccountActiveAtLeast`] instead.
     AccountRevisionAtLeast {
         /// Workspace placement row carrying the account epoch.
         workspace: WorkspaceId,
@@ -355,7 +368,9 @@ impl Condition {
             | Self::JournalTailHash { .. }
             | Self::RunNonTerminal { .. }
             | Self::AuthorizationEpochAtLeast { .. } => TableFamily::SessionAuthority,
-            Self::AccountRevisionAtLeast { .. } => TableFamily::AuthorizationProjection,
+            Self::AccountActiveAtLeast { .. } | Self::AccountRevisionAtLeast { .. } => {
+                TableFamily::AuthorizationProjection
+            }
             Self::ProviderCredentialReady { .. } => TableFamily::SecretCustody,
             Self::RegistryEtag { .. } | Self::UploadState { .. } => TableFamily::Registry,
             Self::OperationFence { .. }
@@ -396,7 +411,8 @@ impl Condition {
                 (format!("{session}#{agent}"), "CONTROL".to_owned())
             }
             Self::RunNonTerminal { session, run } => (session.to_string(), format!("RUN#{run}")),
-            Self::AccountRevisionAtLeast { workspace, .. } => {
+            Self::AccountActiveAtLeast { workspace, .. }
+            | Self::AccountRevisionAtLeast { workspace, .. } => {
                 (workspace.to_string(), "ACCOUNT_ADMISSION".to_owned())
             }
             Self::ProviderCredentialReady {
@@ -477,6 +493,51 @@ pub struct AgentWake {
     pub cancellation: CancellationEpoch,
     /// Admission instant and due time.
     pub at: Timestamp,
+}
+
+/// One running session discoverable by the workspace account-pause coordinator.
+///
+/// The row is inserted with message admission and removed with the terminal
+/// barrier. `pause_epoch` is an idempotency marker only; account status remains
+/// authoritative on the workspace placement row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveSessionLocator {
+    /// Owning workspace and query partition.
+    pub workspace: WorkspaceId,
+    /// Owning organization, checked by the pause transaction.
+    pub organization: OrganizationId,
+    /// Running session.
+    pub session: SessionId,
+    /// Run that made the locator active.
+    pub run: RunId,
+    /// Root agent whose stop latch is fenced.
+    pub root: AgentId,
+    /// Session cancellation epoch recorded by the latest locator writer.
+    pub cancellation: CancellationEpoch,
+    /// Latest account-pause epoch applied to this run, or zero before any pause.
+    pub pause_epoch: u64,
+    /// Last locator change.
+    pub updated_at: Timestamp,
+}
+
+/// Why the Brain root's durable stop latch was installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootStopReason {
+    /// A public session cancellation.
+    SessionCancelled,
+    /// The owning account became paused.
+    AccountPaused,
+}
+
+impl RootStopReason {
+    /// Stable `DynamoDB` spelling shared with the Brain control decoder.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SessionCancelled => "cancelled",
+            Self::AccountPaused => "account_paused",
+        }
+    }
 }
 
 /// The immutable customer-observable fact emitted with message admission.
@@ -560,6 +621,8 @@ pub enum Write {
         from_cancellation: CancellationEpoch,
         /// Cancellation epoch installed with the latch.
         to_cancellation: CancellationEpoch,
+        /// Why the root must stop.
+        reason: RootStopReason,
         /// Admission instant.
         at: Timestamp,
     },
@@ -606,6 +669,17 @@ pub enum Write {
         session: SessionId,
         /// Exact receipt admitted in the same transaction.
         receipt: Box<IdempotencyReceipt>,
+    },
+    /// Insert or advance the workspace-scoped active-session locator.
+    PutActiveSession(Box<ActiveSessionLocator>),
+    /// Remove the active-session locator at a terminal or lifecycle boundary.
+    DeleteActiveSession {
+        /// Owning workspace.
+        workspace: WorkspaceId,
+        /// Session whose active run ended.
+        session: SessionId,
+        /// Exact run whose locator may be removed.
+        run: RunId,
     },
     /// Replace an operation record.
     PutOperation(Box<Operation>),
@@ -667,6 +741,8 @@ impl Write {
             | Self::PutApproval(_)
             | Self::CancelAgent { .. }
             | Self::PutSessionReceiptDirectory { .. }
+            | Self::PutActiveSession(_)
+            | Self::DeleteActiveSession { .. }
             | Self::PutSessionOperationEdge { .. }
             | Self::PutTombstone(_) => TableFamily::SessionAuthority,
             Self::PutIdempotencyReceipt(_) => TableFamily::Idempotency,
@@ -743,6 +819,13 @@ impl Write {
                     receipt.key.key_sha256()
                 ),
             ),
+            Self::PutActiveSession(locator) => (
+                format!("ACTIVE#{}", locator.workspace),
+                format!("SESSION#{}", locator.session),
+            ),
+            Self::DeleteActiveSession {
+                workspace, session, ..
+            } => (format!("ACTIVE#{workspace}"), format!("SESSION#{session}")),
             Self::PutOperation(operation) => (operation.id.to_string(), "OPERATION".to_owned()),
             Self::PutSessionOperationEdge { session, operation } => {
                 (session.to_string(), format!("OP#{operation}"))
@@ -880,6 +963,8 @@ impl<'a> CreateWrites<'a> {
             Write::PutMessage(_)
             | Write::PutSealedMessage(_)
             | Write::PutRun(_)
+            | Write::PutActiveSession(_)
+            | Write::DeleteActiveSession { .. }
             | Write::AdmitRootRun { .. }
             | Write::RequestRootCancellation { .. }
             | Write::CancelAgent { .. }
@@ -1146,7 +1231,7 @@ impl SessionTransaction {
                 if *session == head.id && *agent == head.root_agent)
         });
         let has_active_account_fence = self.conditions.iter().any(|condition| {
-            matches!(condition, Condition::AccountRevisionAtLeast { workspace, organization, .. }
+            matches!(condition, Condition::AccountActiveAtLeast { workspace, organization, .. }
                 if *workspace == head.workspace && *organization == head.organization)
         });
         if !has_root_revision || !has_root_tail || !has_root_tail_hash || !has_active_account_fence
@@ -1158,19 +1243,21 @@ impl SessionTransaction {
         Ok(())
     }
 
-    /// Enforces the fixed 13-action message-admission authority.
+    /// Enforces the fixed 14-action message-admission authority.
     ///
-    /// Eleven immutable/update rows carry the message, its sealed projection,
-    /// internal Brain execution facts, durable wake, public event, and exact
-    /// receipt and deletion-directory locator. The twelfth action is the read-only active-account projection
-    /// fence. Head and root predicates merge onto their corresponding writes.
+    /// Twelve immutable/update rows carry the message, its sealed projection,
+    /// internal Brain execution facts, durable wake, public event, active-run
+    /// directory, and exact receipt and deletion-directory locator. Two more
+    /// actions are the active-account and provider-credential fences. Head and
+    /// root predicates merge onto their corresponding writes.
     #[expect(
         clippy::too_many_lines,
         reason = "the exhaustive closed participant and condition vocabularies must remain reviewable together"
     )]
     fn check_message_admission_participants(&self) -> Result<(), PlanError> {
-        let mut writes = [0_u8; 11];
+        let mut writes = [0_u8; 12];
         let mut head_session = None;
+        let mut active_locator = None;
         let mut receipt = None;
         let mut directory = None;
         for write in &self.writes {
@@ -1198,8 +1285,13 @@ impl SessionTransaction {
                     directory = Some((*session, value.as_ref()));
                     10
                 }
+                Write::PutActiveSession(locator) => {
+                    active_locator = Some(locator.as_ref());
+                    11
+                }
                 Write::PutAgentControl(_)
                 | Write::PutSessionDeletionHead(_)
+                | Write::DeleteActiveSession { .. }
                 | Write::RequestRootCancellation { .. }
                 | Write::CancelAgent { .. }
                 | Write::PutApproval(_)
@@ -1219,15 +1311,15 @@ impl SessionTransaction {
                 | Write::PutTombstone(_)
                 | Write::DeleteItem(_) => {
                     return Err(message_admission_error(
-                        "admission writes only its eleven closed participants",
+                        "admission writes only its twelve closed participants",
                     ));
                 }
             };
             writes[slot] = writes[slot].saturating_add(1);
         }
-        if writes != [1; 11] {
+        if writes != [1; 12] {
             return Err(message_admission_error(
-                "admission writes each of its eleven participants exactly once",
+                "admission writes each of its twelve participants exactly once",
             ));
         }
         if !matches!(
@@ -1239,6 +1331,15 @@ impl SessionTransaction {
         ) {
             return Err(message_admission_error(
                 "admission indexes the exact session message receipt it writes",
+            ));
+        }
+        if !matches!(
+            (head_session, active_locator),
+            (Some(head), Some(locator))
+                if locator.session == head && locator.pause_epoch == 0
+        ) {
+            return Err(message_admission_error(
+                "admission indexes its exact active session with no applied pause epoch",
             ));
         }
 
@@ -1272,7 +1373,7 @@ impl SessionTransaction {
                 .any(|condition| matches!(condition, Condition::CancellationEpoch { .. })),
             self.conditions
                 .iter()
-                .any(|condition| matches!(condition, Condition::AccountRevisionAtLeast { .. })),
+                .any(|condition| matches!(condition, Condition::AccountActiveAtLeast { .. })),
             self.conditions
                 .iter()
                 .any(|condition| matches!(condition, Condition::ProviderCredentialReady { .. })),
@@ -1303,7 +1404,7 @@ impl SessionTransaction {
                     }
                     | Condition::MutationGuardFree { .. }
                     | Condition::CancellationEpoch { .. }
-                    | Condition::AccountRevisionAtLeast { .. }
+                    | Condition::AccountActiveAtLeast { .. }
                     | Condition::ProviderCredentialReady { .. }
                     | Condition::AgentRevision { .. }
                     | Condition::JournalTail { .. }
@@ -1328,9 +1429,9 @@ impl SessionTransaction {
         let mut targets = BTreeSet::new();
         targets.extend(self.conditions.iter().map(Condition::target));
         targets.extend(self.writes.iter().map(Write::target));
-        if targets.len() != 13 {
+        if targets.len() != 14 {
             return Err(message_admission_error(
-                "admission is exactly thirteen physical actions after guard merging",
+                "admission is exactly fourteen physical actions after guard merging",
             ));
         }
         Ok(())
@@ -1559,7 +1660,7 @@ mod tests {
                     partition: session.id.to_string(),
                     sort: "HEAD".to_owned(),
                 }),
-                Condition::AccountRevisionAtLeast {
+                Condition::AccountActiveAtLeast {
                     workspace: session.workspace,
                     organization: session.organization,
                     at_least: aex_session_domain::AccountRevision(7),

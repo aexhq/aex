@@ -144,12 +144,11 @@ impl RegionalRefusal {
     }
 }
 
-/// One fenced request the central control plane makes of a region.
+/// One ordered request the central control plane makes of a region.
 ///
-/// Both arms carry the fence, so a region can refuse a stale attempt rather
-/// than apply it out of order, and both name the workspace the central plane
-/// preassigned, so a reconciler asks about *that* workspace rather than
-/// creating a second one.
+/// Workspace lifecycle arms carry their operation fence. Account pause carries
+/// the exact account epoch and every per-session transaction repeats that
+/// placement predicate, so a delayed pause cannot cross a later resume.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "request",
@@ -179,6 +178,17 @@ pub enum RegionalControlRequest {
         /// The fence this attempt runs under.
         fence: u64,
     },
+    /// Interrupt the sessions that were active when an account pause became visible.
+    ApplyAccountPause {
+        /// Workspace whose placement is paused.
+        workspace: WorkspaceId,
+        /// Owning organization.
+        organization: OrganizationId,
+        /// Region holding the session authority.
+        region: Region,
+        /// Exact account epoch of this pause.
+        account_epoch: u64,
+    },
 }
 
 /// What a region answered.
@@ -202,6 +212,15 @@ pub enum RegionalControlOutcome {
         workspace: WorkspaceId,
         /// Whether the regional half is gone.
         removed: bool,
+    },
+    /// One bounded account-pause page was applied.
+    AccountPauseApplied {
+        /// Workspace, echoed for subject validation.
+        workspace: WorkspaceId,
+        /// Whether the durable scan reached its end.
+        complete: bool,
+        /// Sessions newly interrupted by this page.
+        interrupted: u32,
     },
     /// The region refused, and said why.
     Refused {

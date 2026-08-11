@@ -8,7 +8,8 @@ use std::sync::Arc;
 use aex_central_aws::pepper::{PepperDirectory, PepperState, SecretsManagerPepperKeystore};
 use aex_central_aws::regional::LambdaRegionalControl;
 use aex_control_app::ports::{
-    DeleteWorkspaceRequest, ProvisionWorkspaceRequest, RegionalControlPort as _,
+    ApplyAccountPauseRequest, DeleteWorkspaceRequest, ProvisionWorkspaceRequest,
+    RegionalControlPort as _,
 };
 use aex_control_domain::{Fence, IntentHash};
 use aex_identity_app::ports::{PepperKeystore as _, PepperPurpose};
@@ -212,6 +213,25 @@ fn a_deletion_reports_whether_the_regional_half_is_gone() {
     }))
     .expect("the region answers");
     assert!(answer.removed);
+}
+
+#[test]
+fn an_account_pause_reports_bounded_checkpoint_progress() {
+    let workspace = Uuid::now_v7();
+    let port = regional(vec![(
+        200,
+        support::plain(),
+        support::account_pause_applied(workspace, false, 7),
+    )]);
+    let answer = run(port.apply_account_pause(&ApplyAccountPauseRequest {
+        workspace_id: workspace,
+        organization_id: Uuid::now_v7(),
+        region: Region::EuWest1,
+        account_epoch: 19,
+    }))
+    .expect("the region answers");
+    assert!(!answer.complete);
+    assert_eq!(answer.interrupted, 7);
 }
 
 #[test]

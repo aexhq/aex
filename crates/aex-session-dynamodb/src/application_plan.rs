@@ -12,10 +12,11 @@ use aex_session_app::plan::{
     Condition, ConditionId, Hint, ItemKey, SessionTransaction, TableFamily, TransactionIntent,
     Write,
 };
+use aex_wire::ids::WorkspaceId;
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::types::builders::{ConditionCheckBuilder, PutBuilder};
 
-use crate::attr::{n, s};
+use crate::attr::{ItemBuilder, n, s, stamp};
 use crate::error::StoreError;
 use crate::plan::{IMMUTABLE, Participant, RegionalTables, TransactionPlan, key};
 
@@ -117,34 +118,44 @@ impl ExternalActionCompiler for AuthorizationProjectionCompiler {
                     .to_owned(),
             });
         }
-        let Condition::AccountRevisionAtLeast {
-            workspace,
-            organization,
-            at_least,
-        } = action.conditions[0].1
-        else {
-            return Err(StoreError::Invalid {
-                detail: "the authorization-projection compiler received an unrelated condition"
-                    .to_owned(),
-            });
+        let (workspace, organization, at_least, requires_active) = match action.conditions[0].1 {
+            Condition::AccountActiveAtLeast {
+                workspace,
+                organization,
+                at_least,
+            } => (*workspace, *organization, *at_least, true),
+            Condition::AccountRevisionAtLeast {
+                workspace,
+                organization,
+                at_least,
+            } => (*workspace, *organization, *at_least, false),
+            _ => {
+                return Err(StoreError::Invalid {
+                    detail: "the authorization-projection compiler received an unrelated condition"
+                        .to_owned(),
+                });
+            }
         };
-        if *workspace != binding.workspace || *organization != binding.organization {
+        if workspace != binding.workspace || organization != binding.organization {
             return Err(cross_tenant());
         }
-        let physical = crate::keys::authorization_placement(*workspace);
-        output.condition_check(
-            Participant::AUTHZ_PLACEMENT,
-            aws_sdk_dynamodb::types::ConditionCheck::builder()
-                .table_name(&tables.regional_authz_projection)
-                .set_key(Some(key(&physical.pk, &physical.sk)))
-                .condition_expression(
-                    "organizationId = :organization AND accountEpoch >= :epoch AND #status = :active",
-                )
+        let physical = crate::keys::authorization_placement(workspace);
+        let mut check = aws_sdk_dynamodb::types::ConditionCheck::builder()
+            .table_name(&tables.regional_authz_projection)
+            .set_key(Some(key(&physical.pk, &physical.sk)))
+            .condition_expression(if requires_active {
+                "organizationId = :organization AND accountEpoch >= :epoch AND #status = :active"
+            } else {
+                "organizationId = :organization AND accountEpoch >= :epoch"
+            })
+            .expression_attribute_values(":organization", s(organization.to_string()))
+            .expression_attribute_values(":epoch", n(at_least.0));
+        if requires_active {
+            check = check
                 .expression_attribute_names("#status", "status")
-                .expression_attribute_values(":organization", s(organization.to_string()))
-                .expression_attribute_values(":epoch", n(at_least.0))
-                .expression_attribute_values(":active", s("active")),
-        )?;
+                .expression_attribute_values(":active", s("active"));
+        }
+        output.condition_check(Participant::AUTHZ_PLACEMENT, check)?;
         Ok(())
     }
 }
@@ -588,8 +599,89 @@ fn compile_owned(
             compile_run_write(tables, intent, action, run, binding, output)?;
             Ok(true)
         }
+        Write::PutActiveSession(locator) => {
+            compile_active_session_put(tables, action, locator, binding, output)?;
+            Ok(true)
+        }
+        Write::DeleteActiveSession {
+            workspace,
+            session,
+            run,
+        } => {
+            compile_active_session_delete(
+                tables, action, *workspace, *session, *run, binding, output,
+            )?;
+            Ok(true)
+        }
         _ => Ok(false),
     }
+}
+
+fn compile_active_session_put(
+    tables: &RegionalTables,
+    action: &LogicalAction<'_>,
+    locator: &aex_session_app::plan::ActiveSessionLocator,
+    binding: AuthorityBinding,
+    output: &mut TransactionPlan,
+) -> Result<(), StoreError> {
+    if locator.workspace != binding.workspace
+        || locator.organization != binding.organization
+        || Some(locator.session) != binding.session
+        || !action.conditions.is_empty()
+        || locator.pause_epoch != 0
+    {
+        return Err(cross_tenant());
+    }
+    let physical = crate::keys::active_session(locator.workspace, locator.session);
+    let item = ItemBuilder::new(crate::codec::ACTIVE_SESSION)
+        .set(crate::attr::PK, s(physical.pk))
+        .set(crate::attr::SK, s(physical.sk))
+        .set("workspaceId", s(locator.workspace.to_string()))
+        .set("organizationId", s(locator.organization.to_string()))
+        .set("sessionId", s(locator.session.to_string()))
+        .set("runId", s(locator.run.to_string()))
+        .set("rootAgentId", s(locator.root.to_string()))
+        .set("cancelEpoch", n(locator.cancellation.0))
+        .set("pauseEpoch", n(locator.pause_epoch))
+        .set("updatedAt", stamp(locator.updated_at))
+        .build();
+    let mut condition = Expression::default();
+    condition.and_literal(IMMUTABLE);
+    output.put(
+        Participant::SESSION_ACTIVE_LOCATOR,
+        conditional_put(&tables.session_authority, item, condition)?,
+    )?;
+    Ok(())
+}
+
+fn compile_active_session_delete(
+    tables: &RegionalTables,
+    action: &LogicalAction<'_>,
+    workspace: WorkspaceId,
+    session: aex_wire::ids::SessionId,
+    run: aex_internal_contracts::RunId,
+    binding: AuthorityBinding,
+    output: &mut TransactionPlan,
+) -> Result<(), StoreError> {
+    if workspace != binding.workspace
+        || Some(session) != binding.session
+        || !action.conditions.is_empty()
+    {
+        return Err(cross_tenant());
+    }
+    let physical = crate::keys::active_session(workspace, session);
+    output.delete(
+        Participant::SESSION_ACTIVE_LOCATOR,
+        aws_sdk_dynamodb::types::Delete::builder()
+            .table_name(&tables.session_authority)
+            .set_key(Some(key(&physical.pk, &physical.sk)))
+            .condition_expression(
+                "attribute_not_exists(pk) OR (workspaceId = :workspace AND runId = :run)",
+            )
+            .expression_attribute_values(":workspace", s(workspace.to_string()))
+            .expression_attribute_values(":run", s(run.to_string())),
+    )?;
+    Ok(())
 }
 
 fn compile_session_receipt_directory_write(
@@ -1125,11 +1217,14 @@ pub(crate) fn cross_tenant() -> StoreError {
 
 #[cfg(test)]
 mod tests {
-    use aex_session_app::plan::{Condition, SessionTransaction, TransactionIntent, Write};
+    use aex_session_app::plan::{
+        Condition, ConditionId, SessionTransaction, TransactionIntent, Write,
+    };
     use aex_session_domain::testing::running_session;
 
     use super::{
-        AuthorityBinding, ExternalActionCompiler, FamilyCompilers, LogicalAction, SessionBinding,
+        AuthorityBinding, AuthorizationProjectionCompiler, ExternalActionCompiler, FamilyCompilers,
+        LogicalAction, SessionBinding, compile_active_session_delete,
         compile_application_transaction,
     };
     use crate::error::StoreError;
@@ -1149,6 +1244,98 @@ mod tests {
                 detail: "unexpected external action".to_owned(),
             })
         }
+    }
+
+    #[test]
+    fn cost_incurring_and_pause_exempt_account_fences_differ_only_by_active_status() {
+        let (session, _run, _agent, _message) = running_session();
+        for (condition, requires_active) in [
+            (
+                Condition::AccountActiveAtLeast {
+                    workspace: session.workspace,
+                    organization: session.organization,
+                    at_least: aex_session_domain::AccountRevision(8),
+                },
+                true,
+            ),
+            (
+                Condition::AccountRevisionAtLeast {
+                    workspace: session.workspace,
+                    organization: session.organization,
+                    at_least: aex_session_domain::AccountRevision(8),
+                },
+                false,
+            ),
+        ] {
+            let action = LogicalAction {
+                target: condition.target(),
+                conditions: vec![(ConditionId(0), &condition)],
+                write: None,
+            };
+            let mut output = TransactionPlan::new("account-fence");
+            AuthorizationProjectionCompiler
+                .compile_action(
+                    &RegionalTables::composed("dev", "eu-west-1"),
+                    AuthorityBinding {
+                        workspace: session.workspace,
+                        organization: session.organization,
+                        session: Some(session.id),
+                    },
+                    &action,
+                    &mut output,
+                )
+                .expect("the account fence compiles");
+            let expression = output.actions()[0]
+                .condition_check()
+                .expect("the fence is a condition check")
+                .condition_expression();
+            assert_eq!(expression.contains("#status = :active"), requires_active);
+            assert!(expression.contains("accountEpoch >= :epoch"));
+        }
+    }
+
+    #[test]
+    fn terminal_cleanup_cannot_delete_a_successor_runs_locator() {
+        let (session, run, _agent, _message) = running_session();
+        let write = Write::DeleteActiveSession {
+            workspace: session.workspace,
+            session: session.id,
+            run: run.id,
+        };
+        let action = LogicalAction {
+            target: write.target(),
+            conditions: Vec::new(),
+            write: Some(&write),
+        };
+        let mut output = TransactionPlan::new("active-locator-delete");
+        compile_active_session_delete(
+            &RegionalTables::composed("dev", "eu-west-1"),
+            &action,
+            session.workspace,
+            session.id,
+            run.id,
+            AuthorityBinding {
+                workspace: session.workspace,
+                organization: session.organization,
+                session: Some(session.id),
+            },
+            &mut output,
+        )
+        .expect("the locator delete compiles");
+        let delete = output.actions()[0]
+            .delete()
+            .expect("the locator is one conditional delete");
+        assert_eq!(
+            delete.condition_expression(),
+            Some("attribute_not_exists(pk) OR (workspaceId = :workspace AND runId = :run)")
+        );
+        assert_eq!(
+            delete
+                .expression_attribute_values()
+                .and_then(|values| values.get(":run"))
+                .and_then(|value| value.as_s().ok()),
+            Some(&run.id.to_string())
+        );
     }
 
     #[test]

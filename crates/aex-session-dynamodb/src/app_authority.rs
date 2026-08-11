@@ -414,6 +414,7 @@ impl SessionAuthorityExternal {
         to_revision: AgentRevision,
         from_cancellation: CancellationEpoch,
         to_cancellation: CancellationEpoch,
+        reason: aex_session_app::plan::RootStopReason,
         at: Timestamp,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
@@ -471,12 +472,13 @@ impl SessionAuthorityExternal {
                 .condition_expression(rendered)
                 .update_expression(
                     "SET stopRequested = :requested, cancelEpoch = :nextCancellation, \
-                     revision = :nextRevision, updatedAt = :now",
+                     stopReason = :stopReason, revision = :nextRevision, updatedAt = :now",
                 )
                 .set_expression_attribute_names(Some(expression.names))
                 .set_expression_attribute_values(Some({
                     let mut values = expression.values;
                     values.insert(":requested".to_owned(), crate::attr::boolean(true));
+                    values.insert(":stopReason".to_owned(), s(reason.as_str()));
                     values.insert(
                         ":nextCancellation".to_owned(),
                         crate::attr::n(to_cancellation.0),
@@ -722,6 +724,7 @@ const fn condition_tag(condition: &Condition) -> &'static str {
         Condition::RootAgentIdle { .. } => "RootAgentIdle",
         Condition::JournalTailHash { .. } => "JournalTailHash",
         Condition::RunNonTerminal { .. } => "RunNonTerminal",
+        Condition::AccountActiveAtLeast { .. } => "AccountActiveAtLeast",
         Condition::AccountRevisionAtLeast { .. } => "AccountRevisionAtLeast",
         Condition::ProviderCredentialReady { .. } => "ProviderCredentialReady",
         Condition::AuthorizationEpochAtLeast { .. } => "AuthorizationEpochAtLeast",
@@ -754,6 +757,8 @@ const fn write_tag(write: &Write) -> &'static str {
         Write::PutApproval(_) => "PutApproval",
         Write::PutIdempotencyReceipt(_) => "PutIdempotencyReceipt",
         Write::PutSessionReceiptDirectory { .. } => "PutSessionReceiptDirectory",
+        Write::PutActiveSession(_) => "PutActiveSession",
+        Write::DeleteActiveSession { .. } => "DeleteActiveSession",
         Write::PutOperation(_) => "PutOperation",
         Write::PutSessionOperationEdge { .. } => "PutSessionOperationEdge",
         Write::RedactOperationResult(_) => "RedactOperationResult",
@@ -853,6 +858,7 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
                 to_revision,
                 from_cancellation,
                 to_cancellation,
+                reason,
                 at,
             }) => Self::root_cancellation_request(
                 tables,
@@ -864,6 +870,7 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
                 *to_revision,
                 *from_cancellation,
                 *to_cancellation,
+                *reason,
                 *at,
                 output,
             ),
@@ -1861,6 +1868,7 @@ mod tests {
                 to_revision: aex_session_domain::AgentRevision(4),
                 from_cancellation: aex_session_domain::CancellationEpoch(7),
                 to_cancellation: aex_session_domain::CancellationEpoch(8),
+                reason: aex_session_app::plan::RootStopReason::SessionCancelled,
                 at: aex_session_domain::testing::moment(9),
             }],
             after_commit: Vec::new(),
@@ -1882,6 +1890,7 @@ mod tests {
             .expect("the Brain control is a narrow update");
         let change = update.update_expression();
         assert!(change.contains("stopRequested = :requested"), "{change}");
+        assert!(change.contains("stopReason = :stopReason"), "{change}");
         assert!(
             change.contains("cancelEpoch = :nextCancellation"),
             "{change}"

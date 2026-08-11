@@ -235,6 +235,7 @@ impl Activation {
             authority: claim.authority.clone(),
             claim: Arc::clone(&claim_state),
             stop_requested: claim.head.stop_requested,
+            stop_reason: claim.head.stop_reason.unwrap_or(FinishReason::Cancelled),
             guard,
             state: FoldState::empty(),
             steps: 0,
@@ -879,6 +880,7 @@ struct Session<'a> {
     authority: SessionAuthority,
     claim: Arc<Mutex<Claim>>,
     stop_requested: bool,
+    stop_reason: FinishReason,
     guard: FenceGuard,
     state: FoldState,
     steps: u32,
@@ -1083,9 +1085,9 @@ impl Session<'_> {
                     unreachable!("load_open excludes settled effects")
                 }
             }
-            self.finish_current(&mut draft, FinishReason::Cancelled, None, None)?;
+            self.finish_current(&mut draft, self.stop_reason, None, None)?;
             self.commit(draft).await?;
-            return Ok(Some(Stop::Finished(FinishReason::Cancelled)));
+            return Ok(Some(Stop::Finished(self.stop_reason)));
         }
         if matches!(effect.state, EffectState::Prepared { .. }) {
             // Intent committed, nothing sent: the one unambiguous case. The step loop
@@ -1152,6 +1154,11 @@ impl Session<'_> {
         match owed {
             OwedStep::Finished { reason } => Ok(Step::Stop(Stop::Finished(reason))),
             OwedStep::Finish { reason } => {
+                let reason = if reason == FinishReason::Cancelled && self.stop_requested {
+                    self.stop_reason
+                } else {
+                    reason
+                };
                 let mut draft = self.draft(phase_tag(&self.state.phase));
                 self.finish_current(&mut draft, reason, self.state.failure.clone(), None)?;
                 self.commit(draft).await?;

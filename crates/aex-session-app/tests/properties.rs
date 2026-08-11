@@ -127,7 +127,7 @@ fn required_conditions(intent: TransactionIntent) -> Vec<&'static str> {
             "WorkAdmission",
             "MutationGuardFree",
             "CancellationEpoch",
-            "AccountRevisionAtLeast",
+            "AccountActiveAtLeast",
             "ProviderCredentialReady",
             "AgentRevision",
             "JournalTail",
@@ -169,6 +169,7 @@ fn condition_tag(condition: &Condition) -> &'static str {
         Condition::RootAgentIdle { .. } => "RootAgentIdle",
         Condition::JournalTailHash { .. } => "JournalTailHash",
         Condition::RunNonTerminal { .. } => "RunNonTerminal",
+        Condition::AccountActiveAtLeast { .. } => "AccountActiveAtLeast",
         Condition::AccountRevisionAtLeast { .. } => "AccountRevisionAtLeast",
         Condition::ProviderCredentialReady { .. } => "ProviderCredentialReady",
         Condition::AuthorizationEpochAtLeast { .. } => "AuthorizationEpochAtLeast",
@@ -239,6 +240,7 @@ async fn admission_is_atomic() {
     let mut has_sealed_projection = false;
     let mut has_run = false;
     let mut has_head = false;
+    let mut has_active_locator = false;
     for write in &plan.writes {
         match write {
             Write::PutMessage(_) => has_message = true,
@@ -253,14 +255,23 @@ async fn admission_is_atomic() {
                 );
                 assert_eq!(head.status, SessionStatus::Running);
             }
+            Write::PutActiveSession(locator) => {
+                has_active_locator = true;
+                assert_eq!(locator.session, planned.projected.1.id);
+                assert_eq!(
+                    locator.run,
+                    planned.projected.1.active_run.expect("active run")
+                );
+                assert_eq!(locator.pause_epoch, 0);
+            }
             _ => {}
         }
     }
-    assert!(has_message && has_sealed_projection && has_run && has_head);
+    assert!(has_message && has_sealed_projection && has_run && has_head && has_active_locator);
     assert_eq!(
         plan.validate().expect("valid admission").actions,
-        13,
-        "the receipt directory plus BYOK revision/state fence are distinct cross-table actions"
+        14,
+        "the active locator, receipt directory, and BYOK/account fences are distinct actions"
     );
     assert!(
         plan.conditions
@@ -561,8 +572,8 @@ async fn the_maximum_open_message_set_fits_one_terminal_transaction() {
     let generic_actions = planned.plan.validate().expect("valid").actions;
     assert_eq!(
         generic_actions + 2,
-        MAX_ACTIONS,
-        "the production Brain boundary adds RunFinished journal and public completion event"
+        MAX_ACTIONS - 1,
+        "the production Brain boundary adds two actions and a whole message costs two, leaving one unusable slot"
     );
     assert_eq!(
         planned

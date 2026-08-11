@@ -12,8 +12,9 @@ use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use aex_control_app::ports::{
-    AcceptInvitationsTx, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx, ClaimDueOperations,
-    ClaimOutbox, CompleteWorkspaceDeletionTx, ControlStore, CreateApiKeyTx, CreateInvitationTx,
+    AcceptInvitationsTx, ApplyAccountPauseRequest, ApplyAccountPauseResponse,
+    BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx, ClaimDueOperations, ClaimOutbox,
+    CompleteWorkspaceDeletionTx, ControlStore, CreateApiKeyTx, CreateInvitationTx,
     CreateOrganizationTx, DeleteWorkspaceRequest, DeleteWorkspaceResponse, EffectError,
     FinishWorkspaceProvisionTx, GcExpired, GcReport, IdempotencyRecordKey, ListApiKeys,
     ListOperations, ListOrganizations, ListWorkspaces, Page, PageRequest,
@@ -464,6 +465,13 @@ impl RegionalControlPort for Regional {
         &self,
         _request: &DeleteWorkspaceRequest,
     ) -> Result<DeleteWorkspaceResponse, EffectError> {
+        unreachable!("{UNDRIVEN}")
+    }
+
+    async fn apply_account_pause(
+        &self,
+        _request: &ApplyAccountPauseRequest,
+    ) -> Result<ApplyAccountPauseResponse, EffectError> {
         unreachable!("{UNDRIVEN}")
     }
 }

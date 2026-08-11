@@ -2509,6 +2509,59 @@ fn public_session_cancellation_closes_an_ambiguous_provider_effect_as_cancelled(
 }
 
 #[test]
+fn account_pause_closes_current_work_as_an_account_interruption() {
+    let mut harness = Harness::new(Vec::new());
+    harness.policy.renew_interval = core::time::Duration::from_secs(1);
+    let provider = Arc::new(GatedProvider::default());
+    let (mut session, run, root) = seed_public_cancellation_root(&mut harness);
+
+    let mut ports = harness.ports();
+    ports.provider = Arc::clone(&provider) as Arc<_>;
+    let activation = Activation::new(
+        ports,
+        harness.policy.clone(),
+        Arc::new(ActivationRegistry::new()),
+        Arc::new(DrainGate::new()),
+    );
+    let delivery = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
+        .expect("the queue answers")
+        .deliveries
+        .pop()
+        .expect("the root wake exists");
+    let mut first = Box::pin(activation.run(delivery));
+    let mut context = core::task::Context::from_waker(core::task::Waker::noop());
+    assert!(first.as_mut().poll(&mut context).is_pending());
+
+    session.cancellation = session.cancellation.next();
+    session.revision = session.revision.next();
+    harness
+        .store
+        .request_account_pause(root, root_authority(session, run));
+
+    assert!(matches!(
+        first.as_mut().poll(&mut context),
+        core::task::Poll::Ready(Err(ActivationError::Claim(ClaimError::Terminal)))
+    ));
+    provider.released.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        harness.run_next().expect("the successor settles the pause"),
+        Outcome::Progressed {
+            stop: Stop::Finished(FinishReason::AccountPaused),
+            ..
+        }
+    ));
+    assert!(harness.store.entries(root).iter().any(|entry| matches!(
+        &entry.record,
+        JournalRecord::RunFinished {
+            reason: FinishReason::AccountPaused,
+            ambiguous_effect: None,
+            ..
+        }
+    )));
+    assert_eq!(provider.dispatches.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn renewal_observes_session_deletion_during_a_pending_effect() {
     assert_session_authority_loss_stops_mid_effect(true);
 }

@@ -111,6 +111,12 @@ pub fn authorization_placement(workspace: WorkspaceId) -> Key {
     Key::new(format!("WS#{workspace}"), "PLACEMENT".to_owned())
 }
 
+/// Workspace-scoped locator for one currently running session.
+#[must_use]
+pub fn active_session(workspace: WorkspaceId, session: SessionId) -> Key {
+    Key::new(format!("ACTIVE#{workspace}"), format!("SESSION#{session}"))
+}
+
 /// One message.
 #[must_use]
 pub fn message(session: SessionId, message: MessageId) -> Key {
@@ -451,6 +457,8 @@ pub const ITEM_TYPES: &[&str] = &[
     "idempotency_receipt",
     "outbox_event",
     "regional_workspace_control",
+    "active_session",
+    "account_pause_progress",
 ];
 
 #[cfg(test)]

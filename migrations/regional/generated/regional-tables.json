@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:794431014f537059a4a098e9bd3a763f3ce6be296cae5a30341dab84e8f277a5",
+  "digest": "blake3:3cfa3efee21c535c8d899b02b464da6fc12c77fb27ad27898177656d3bda05dc",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -594,6 +594,26 @@
             "key": "dynamodb:LeadingKeys",
             "values": [
               "LIMIT#*"
+            ]
+          }
+        },
+        {
+          "role": "regional-control",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "workspace_placement"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "WS#*"
             ]
           }
         },
@@ -1553,7 +1573,7 @@
       "schema": "aex.regional-table.v1",
       "table": "session-authority",
       "owner": "regional-stores",
-      "purpose": "Session heads, messages, internal execution facts, native events, approvals, agent control and journals, durable operations, idempotency receipts, ephemeral live-transfer coordination, irreversible-deletion coordination, and the fenced empty-workspace control row. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
+      "purpose": "Session heads, messages, internal execution facts, native events, approvals, agent control and journals, durable operations, idempotency receipts, workspace-scoped active-session locators, durable account-pause scan progress, ephemeral live-transfer coordination, irreversible-deletion coordination, and the fenced empty-workspace control row. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -1713,14 +1733,19 @@
         "operation",
         "idempotency_receipt",
         "outbox_event",
-        "regional_workspace_control"
+        "regional_workspace_control",
+        "active_session",
+        "account_pause_progress"
       ],
       "iam": [
         {
           "role": "regional-control",
           "actions": [
             "dynamodb:GetItem",
-            "dynamodb:PutItem"
+            "dynamodb:Query",
+            "dynamodb:PutItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"

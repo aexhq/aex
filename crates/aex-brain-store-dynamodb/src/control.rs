@@ -62,6 +62,10 @@ pub fn decode(
         phase: row.string("status")?.to_owned(),
         budget: decode_budget(&row)?,
         stop_requested: row.boolean("stopRequested").unwrap_or(false),
+        stop_reason: row
+            .opt_string("stopReason")?
+            .map(parse_finish)
+            .transpose()?,
         open_effects,
         lease_expires_at: row
             .opt_timestamp("leaseExpiresAt")?
@@ -133,6 +137,7 @@ fn parse_finish(text: &str) -> Result<FinishReason, CodecError> {
         "budget" => FinishReason::Budget,
         "timeout" => FinishReason::Timeout,
         "cancelled" => FinishReason::Cancelled,
+        "account_paused" => FinishReason::AccountPaused,
         "failed" => FinishReason::Failed,
         "interrupted" => FinishReason::Interrupted,
         other => {

@@ -152,14 +152,14 @@ impl CancelCause {
 
     /// The admission state the cause leaves the session in.
     ///
-    /// Only `SessionCancel` returns admission to `Open`; the other three are
-    /// conditions that outlive the cancellation.
+    /// Account state is not copied into every session head. Both an explicit
+    /// cancellation and an account-pause interruption leave this local gate
+    /// open; the workspace placement remains the sole pause/restore authority.
     #[must_use]
     pub const fn target_admission(self) -> WorkAdmission {
         match self {
-            Self::SessionCancel => WorkAdmission::Open,
+            Self::SessionCancel | Self::AccountPaused => WorkAdmission::Open,
             Self::SessionDeleting => WorkAdmission::Deleting,
-            Self::AccountPaused => WorkAdmission::Paused,
             Self::ContinuityLost => WorkAdmission::ContinuityLost,
         }
     }

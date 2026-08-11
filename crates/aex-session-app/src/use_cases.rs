@@ -408,7 +408,7 @@ pub async fn admit_message(
         session: command.session,
         expected: materialized.session.cancellation,
     });
-    conditions.push(Condition::AccountRevisionAtLeast {
+    conditions.push(Condition::AccountActiveAtLeast {
         workspace: command.workspace,
         organization: materialized.session.organization,
         at_least: account.revision,
@@ -469,6 +469,16 @@ pub async fn admit_message(
             Write::PutAgentWakeDedupe(Box::new(wake.clone())),
             Write::PutAgentWake(Box::new(wake)),
             Write::PutMessageAdmittedEvent(Box::new(admitted_event)),
+            Write::PutActiveSession(Box::new(crate::plan::ActiveSessionLocator {
+                workspace: command.workspace,
+                organization: materialized.session.organization,
+                session: command.session,
+                run: run_id,
+                root: materialized.root.agent,
+                cancellation: materialized.session.cancellation,
+                pause_epoch: 0,
+                updated_at: now,
+            })),
             Write::PutSessionReceiptDirectory {
                 session: command.session,
                 receipt: Box::new(receipt.clone()),
@@ -583,6 +593,11 @@ pub async fn commit_terminal(
         Write::PutRun(Box::new(commit.run.clone())),
         Write::PutAgentControl(Box::new(agent.clone())),
         Write::PutSessionHead(Box::new(commit.session.clone())),
+        Write::DeleteActiveSession {
+            workspace: snapshot.workspace,
+            session: command.session,
+            run: command.attempt.run,
+        },
         Write::PutOutboxEvent(Box::new(commit.outbox.clone())),
     ];
     writes.extend(commit.sealed_messages.iter().flat_map(|message| {

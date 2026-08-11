@@ -44,6 +44,8 @@ pub enum FinishReason {
     Timeout,
     /// Cancelled by the caller or by an epoch advance.
     Cancelled,
+    /// Interrupted because the owning account became paused.
+    AccountPaused,
     /// A typed failure, including a truncated provider response.
     Failed,
     /// The projection of an `OutcomeUnknown` effect. Nothing else may produce it.
@@ -652,6 +654,7 @@ mod tests {
             FinishReason::Budget,
             FinishReason::Timeout,
             FinishReason::Cancelled,
+            FinishReason::AccountPaused,
             FinishReason::Failed,
             FinishReason::Interrupted,
         ] {

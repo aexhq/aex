@@ -880,7 +880,21 @@ async fn run_lambda(
     .map_err(|error| CentralControlWorkerRunError::Runtime(error.to_string()))
 }
 
-/// Routes one exact Aurora transaction wake to the bounded drain.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ScheduledSweep {
+    source: String,
+    #[serde(rename = "detail-type")]
+    detail_type: String,
+    #[serde(rename = "detail")]
+    _detail: ScheduledSweepDetail,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScheduledSweepDetail {}
+
+/// Routes an exact Aurora transaction wake or the recovery schedule to the bounded drain.
 ///
 /// # Errors
 ///
@@ -890,9 +904,16 @@ pub async fn handle_event(
     worker: &runtime::Worker,
     value: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let wake = serde_json::from_value::<runtime::OutboxWake>(value)
-        .map_err(|_| "invalid_outbox_wake".to_owned())?;
-    worker.wake(&wake).await?;
+    if let Ok(wake) = serde_json::from_value::<runtime::OutboxWake>(value.clone()) {
+        worker.wake(&wake).await?;
+        return Ok(serde_json::json!({}));
+    }
+    let sweep = serde_json::from_value::<ScheduledSweep>(value)
+        .map_err(|_| "invalid_control_worker_event".to_owned())?;
+    if sweep.source != "aex.scheduler" || sweep.detail_type != "aex.control_recovery" {
+        return Err("invalid_control_worker_event".to_owned());
+    }
+    worker.tick().await?;
     Ok(serde_json::json!({}))
 }
 

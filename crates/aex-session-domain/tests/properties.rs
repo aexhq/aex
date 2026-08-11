@@ -807,6 +807,16 @@ fn a_stale_generation_cancellation_is_the_second_declared_no_op() {
 }
 
 #[test]
+fn account_pause_interrupts_work_without_copying_account_state_into_the_session() {
+    let (session, _, _, _) = running_session();
+    let fence =
+        aex_session_domain::cancel_session_fence(&session, CancelCause::AccountPaused, true);
+    assert_eq!(fence.admission, WorkAdmission::Open);
+    assert_eq!(fence.cancellation, session.cancellation.next());
+    assert!(fence.changed);
+}
+
+#[test]
 fn root_cannot_complete() {
     // 22 `root_cannot_complete`.
     let session = session_fixture();

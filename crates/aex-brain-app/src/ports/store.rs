@@ -92,6 +92,8 @@ pub struct AgentHead {
     pub budget: BudgetNode,
     /// Whether a fenced stop has been requested.
     pub stop_requested: bool,
+    /// Why the stop latch was installed, when one was.
+    pub stop_reason: Option<FinishReason>,
     /// The effects open at the time of the read, summarized.
     pub open_effects: Vec<EffectId>,
     /// When the current lease expires.
