@@ -948,13 +948,14 @@ impl SessionTransaction {
 
     /// The largest number of items a create transaction may ever carry.
     ///
-    /// Three always: the ready public head, exact receipt, and a condition on
-    /// the already-started root control/journal authority. This is a
+    /// Four always: the ready public head, exact receipt, one condition on the
+    /// already-started root control/journal authority, and the commit-time
+    /// active-account fence. This is a
     /// **constant**, not a bound to grow into: a create whose action count grew
     /// with request size would be a create whose tail latency and
     /// `TransactionConflictException` rate grew with request size, which the
     /// performance-first ordering forbids (A D-5).
-    pub const CREATE_MAX_ACTIONS: usize = 3;
+    pub const CREATE_MAX_ACTIONS: usize = 4;
 
     /// Enforces A D-1's create membership rule.
     ///
@@ -1033,9 +1034,14 @@ impl SessionTransaction {
             matches!(condition, Condition::JournalTailHash { session, agent, .. }
                 if *session == head.id && *agent == head.root_agent)
         });
-        if !has_root_revision || !has_root_tail || !has_root_tail_hash {
+        let has_active_account_fence = self.conditions.iter().any(|condition| {
+            matches!(condition, Condition::AccountRevisionAtLeast { workspace, organization, .. }
+                if *workspace == head.workspace && *organization == head.organization)
+        });
+        if !has_root_revision || !has_root_tail || !has_root_tail_hash || !has_active_account_fence
+        {
             return Err(create_error(
-                "ready publication must condition on the elected root AgentStarted revision, journal tail and tail hash",
+                "ready publication must condition on the elected root AgentStarted revision, journal tail and tail hash plus the active-account revision",
             ));
         }
         Ok(())
@@ -1403,20 +1409,34 @@ mod tests {
 
     /// A create plan over the domain fixture.
     fn create_plan(session: aex_session_domain::Session) -> SessionTransaction {
-        let root_agent = crate::testing::root_agent_of(&session);
         let receipt = crate::testing::create_receipt(&session);
         SessionTransaction {
             intent: TransactionIntent::CreateSession,
             conditions: vec![
+                Condition::ItemAbsent(ItemKey {
+                    family: TableFamily::SessionAuthority,
+                    partition: session.id.to_string(),
+                    sort: "HEAD".to_owned(),
+                }),
+                Condition::AccountRevisionAtLeast {
+                    workspace: session.workspace,
+                    organization: session.organization,
+                    at_least: aex_session_domain::AccountRevision(7),
+                },
                 Condition::AgentRevision {
                     session: session.id,
-                    agent: root_agent.id,
-                    expected: root_agent.revision,
+                    agent: session.root_agent,
+                    expected: aex_session_domain::AgentRevision::INITIAL,
                 },
                 Condition::JournalTail {
                     session: session.id,
-                    agent: root_agent.id,
-                    expected: root_agent.journal_tail,
+                    agent: session.root_agent,
+                    expected: aex_session_domain::JournalSeq::INITIAL,
+                },
+                Condition::JournalTailHash {
+                    session: session.id,
+                    agent: session.root_agent,
+                    expected: [7; 32],
                 },
             ],
             writes: vec![
@@ -1443,11 +1463,11 @@ mod tests {
     }
 
     #[test]
-    fn a_ready_create_is_three_actions_in_one_table() {
+    fn ready_create_publication_is_four_constant_actions() {
         let shape = create_plan(aex_session_domain::testing::session_fixture())
             .validate()
             .expect("the minimal create is complete");
-        assert_eq!(shape.actions, 3);
+        assert_eq!(shape.actions, SessionTransaction::CREATE_MAX_ACTIONS);
     }
 
     #[test]

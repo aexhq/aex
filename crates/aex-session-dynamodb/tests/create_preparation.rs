@@ -40,6 +40,7 @@ fn preparation(files: Vec<PreparedFile>) -> CreatePreparation {
         workspace: WorkspaceId::from_uuid7(uuid(1)),
         organization: OrganizationId::from_uuid7(uuid(2)),
         intent: IntentDigest::from_bytes([3; 32]),
+        receipt_key_sha256: "04".repeat(32),
         coordinator: uuid(4),
         session: SessionId::from_uuid7(uuid(5)),
         root_agent: AgentId::from_uuid7(uuid(6)),
@@ -50,6 +51,7 @@ fn preparation(files: Vec<PreparedFile>) -> CreatePreparation {
         resolved_config: br#"{"model":"deepseek-chat"}"#.to_vec(),
         metadata: Some(br#"{"label":"fixture"}"#.to_vec()),
         materialized_agents: 8,
+        account_revision: 11,
         prepared_at: Timestamp::from_unix_millis(1_767_225_600_008).expect("timestamp"),
     }
 }
@@ -156,9 +158,53 @@ fn every_non_file_winner_fact_changes_the_elected_authority_identity() {
     changed = original.clone();
     changed.materialized_agents += 1;
     assert_ne!(changed.validate().expect("valid").authority_digest, digest);
+    changed = original.clone();
+    changed.account_revision += 1;
+    assert_ne!(changed.validate().expect("valid").authority_digest, digest);
     changed = original;
     changed.prepared_at = Timestamp::from_unix_millis(1_767_225_600_009).expect("timestamp");
     assert_ne!(changed.validate().expect("valid").authority_digest, digest);
+}
+
+#[test]
+fn replay_key_not_request_intent_addresses_the_private_election() {
+    let first = preparation(vec![file(0, 8)]);
+    let mut second = first.clone();
+    second.receipt_key_sha256 = "05".repeat(32);
+
+    let partition = |prepared: &CreatePreparation| {
+        elect_plan("dev-session-authority", prepared)
+            .expect("election")
+            .actions()[0]
+            .put()
+            .expect("header")
+            .item()
+            .get("pk")
+            .and_then(|value| value.as_s().ok())
+            .cloned()
+            .expect("partition")
+    };
+    assert_eq!(first.intent, second.intent, "the request body is unchanged");
+    assert_ne!(
+        partition(&first),
+        partition(&second),
+        "different Idempotency-Keys must elect different sessions even for one body"
+    );
+
+    let mut conflicting = first.clone();
+    conflicting.intent = IntentDigest::from_bytes([9; 32]);
+    assert_eq!(
+        partition(&first),
+        partition(&conflicting),
+        "one reused key must reload the original winner so intent drift conflicts"
+    );
+}
+
+#[test]
+fn replay_key_digest_is_canonical_lowercase_hex() {
+    let mut malformed = preparation(Vec::new());
+    malformed.receipt_key_sha256 = "AB".repeat(32);
+    assert_eq!(malformed.validate(), Err(CreatePreparationError::ReplayKey));
 }
 
 #[test]
@@ -167,6 +213,12 @@ fn metadata_is_staged_per_file_then_header_and_generation_are_elected_atomically
     let stages = stage_plans("dev-session-authority", &prepared).expect("stage plans");
     assert_eq!(stages.len(), 2);
     assert!(stages.iter().all(|plan| plan.len() == 1));
+    assert!(stages.iter().all(|plan| {
+        plan.actions()[0]
+            .put()
+            .and_then(|put| put.item().get("expiresAtEpochSeconds"))
+            .is_some()
+    }));
 
     let election = elect_plan("dev-session-authority", &prepared).expect("election plan");
     assert_eq!(election.len(), 2, "header + physical root control");
@@ -179,6 +231,13 @@ fn metadata_is_staged_per_file_then_header_and_generation_are_elected_atomically
         ["session.create_preparation", "agent.root_control"]
     );
     let control = election.actions()[1].put().expect("root control").item();
+    assert!(
+        election.actions()[0]
+            .put()
+            .expect("header")
+            .item()
+            .contains_key("expiresAtEpochSeconds")
+    );
     assert_eq!(
         control
             .get("limitsRevision")
@@ -206,13 +265,23 @@ fn the_physical_winner_reloads_every_elected_fact_without_volatile_reads() {
     let election = elect_plan("dev-session-authority", &prepared).expect("election plan");
     let header = election.actions()[0].put().expect("header put").item();
     assert_eq!(
-        decode_elected_preparation(header, &files, prepared.workspace, prepared.intent)
-            .expect("the winner reloads"),
+        decode_elected_preparation(
+            header,
+            &files,
+            prepared.workspace,
+            &prepared.receipt_key_sha256,
+        )
+        .expect("the winner reloads"),
         prepared
     );
 
     assert!(matches!(
-        decode_elected_preparation(header, &files[..1], prepared.workspace, prepared.intent),
+        decode_elected_preparation(
+            header,
+            &files[..1],
+            prepared.workspace,
+            &prepared.receipt_key_sha256,
+        ),
         Err(CreatePreparationError::Corrupt { .. })
     ));
 }

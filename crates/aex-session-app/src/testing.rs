@@ -258,6 +258,13 @@ impl ScriptedPorts {
         self
     }
 
+    /// Replaces the release-verified deployment facts as one authority value.
+    #[must_use]
+    pub fn with_deployment(mut self, deployment: crate::ports::DeploymentFacts) -> Self {
+        self.deployment = deployment;
+        self
+    }
+
     /// Scripts the catalog as refusing the pair.
     #[must_use]
     pub fn with_qualification_refusal(

@@ -1176,7 +1176,7 @@ mod tests {
             &RefuseExternal,
         );
         assert!(
-            matches!(error, Err(StoreError::Invalid { ref detail }) if detail == "session creation authority is wrong: a create writes exactly one idempotency receipt; the receipt's conditional put is the concurrency election, so a create without one can mint two sessions for one key"),
+            matches!(error, Err(StoreError::Invalid { ref detail }) if detail.contains("a create writes exactly one idempotency receipt")),
             "{error:?}"
         );
     }

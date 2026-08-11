@@ -1158,6 +1158,7 @@ impl LiveFileBackend for ProductionHandsBackend {
                 generation,
                 launched_at: lifetime.launched_at,
                 expires_at: lifetime.expires_at(),
+                observed_at: now()?,
                 lifecycle_fence: view.head.fence.0,
             })
         })

@@ -125,6 +125,8 @@ pub struct PreparedSessionCreate {
     pub agent_execution: crate::ports::AgentExecutionLimits,
     /// Revisioned per-message budget ceilings.
     pub run_budget: crate::ports::RunBudgetLimits,
+    /// Account projection revision rechecked after synchronous launch work.
+    pub account_revision: aex_session_domain::AccountRevision,
     /// Root-plus-subagent materialization ceiling used to derive active children.
     pub materialized_agents: u64,
     /// Canonical caller metadata.
@@ -160,6 +162,8 @@ pub struct RootStartedEvidence {
     pub session: SessionId,
     /// Exact elected generation.
     pub generation: GenerationId,
+    /// Provider-observation instant of the durable ready transition.
+    pub occurred_at: aex_wire::types::Timestamp,
     /// Physical control revision after the append.
     pub revision: AgentRevision,
     /// Physical journal tail; sequence zero is valid and expected initially.
@@ -200,44 +204,7 @@ pub async fn prepare_session_create(
         .load_receipt(command.workspace, CREATE_SCOPE, &command.identity, now)
         .await?
     {
-        return match replay(&stored, &command.identity.intent()) {
-            ReplayDecision::Conflict(code) => Err(AppError::Conflict(code)),
-            ReplayDecision::ReturnOriginal(ReceiptOutcome::Resource {
-                kind: ResourceKind::Session,
-                id,
-                response,
-            }) => {
-                let bytes =
-                    response
-                        .inline()
-                        .ok_or(AppError::Port(crate::ports::PortError::Corrupt {
-                            kind: "session create receipt",
-                            reason: "the stored session response is not inline",
-                        }))?;
-                let session: models::Session = serde_json::from_slice(bytes).map_err(|_| {
-                    AppError::Port(crate::ports::PortError::Corrupt {
-                        kind: "session create receipt",
-                        reason: "the stored session response is malformed",
-                    })
-                })?;
-                if id.0 != session.id.to_string() {
-                    return Err(AppError::Port(crate::ports::PortError::Corrupt {
-                        kind: "session create receipt",
-                        reason: "the stored resource id disagrees with its response",
-                    }));
-                }
-                Ok(PrepareSessionCreateOutcome::Replayed {
-                    session: Box::new(session),
-                    canonical_response: bytes.to_vec(),
-                })
-            }
-            ReplayDecision::ReturnOriginal(_) => {
-                Err(AppError::Port(crate::ports::PortError::Corrupt {
-                    kind: "session create receipt",
-                    reason: "the stored receipt does not name a session resource",
-                }))
-            }
-        };
+        return replay_session_create_receipt(&stored, command);
     }
     let prepared = prepare_create(context, command).await?;
 
@@ -285,12 +252,63 @@ pub async fn prepare_session_create(
             limits_revision: prepared.limits_revision,
             agent_execution: prepared.agent_execution,
             run_budget: prepared.run_budget,
+            account_revision: prepared.account_revision,
             materialized_agents: prepared.materialized_agents,
             metadata,
             initial_files: prepared.initial_files,
             prepared_at: now,
         },
     )))
+}
+
+/// Projects one strongly read create receipt without touching mutable planning
+/// dependencies.
+///
+/// Serving adapters use this after an ambiguous final publication. Keeping the
+/// check here ensures normal replay and commit recovery validate identical
+/// identity, resource and canonical-response facts.
+pub fn replay_session_create_receipt(
+    stored: &IdempotencyReceipt,
+    command: &CreateSession,
+) -> Result<PrepareSessionCreateOutcome, AppError> {
+    match replay(stored, &command.identity.intent()) {
+        ReplayDecision::Conflict(code) => Err(AppError::Conflict(code)),
+        ReplayDecision::ReturnOriginal(ReceiptOutcome::Resource {
+            kind: ResourceKind::Session,
+            id,
+            response,
+        }) => {
+            let bytes =
+                response
+                    .inline()
+                    .ok_or(AppError::Port(crate::ports::PortError::Corrupt {
+                        kind: "session create receipt",
+                        reason: "the stored session response is not inline",
+                    }))?;
+            let session: models::Session = serde_json::from_slice(bytes).map_err(|_| {
+                AppError::Port(crate::ports::PortError::Corrupt {
+                    kind: "session create receipt",
+                    reason: "the stored session response is malformed",
+                })
+            })?;
+            if id.0 != session.id.to_string() {
+                return Err(AppError::Port(crate::ports::PortError::Corrupt {
+                    kind: "session create receipt",
+                    reason: "the stored resource id disagrees with its response",
+                }));
+            }
+            Ok(PrepareSessionCreateOutcome::Replayed {
+                session,
+                canonical_response: bytes.to_vec(),
+            })
+        }
+        ReplayDecision::ReturnOriginal(_) => {
+            Err(AppError::Port(crate::ports::PortError::Corrupt {
+                kind: "session create receipt",
+                reason: "the stored receipt does not name a session resource",
+            }))
+        }
+    }
 }
 
 /// Publishes a session only after exact-generation readiness is proven.
@@ -314,6 +332,7 @@ pub fn publish_ready_session(
         || readiness.root_started.agent != prepared.root_agent
         || readiness.root_started.session != prepared.session
         || readiness.root_started.generation != prepared.generation
+        || readiness.root_started.occurred_at < readiness.launched_at
         || readiness.root_started.revision.0 == 0
     {
         return Err(AppError::Port(crate::ports::PortError::Corrupt {
@@ -348,7 +367,7 @@ pub fn publish_ready_session(
         resolved: prepared.resolved.clone(),
         metadata: prepared.metadata.clone(),
         created_at: prepared.prepared_at,
-        updated_at: readiness.launched_at,
+        updated_at: readiness.root_started.occurred_at,
     };
 
     let receipt = IdempotencyReceipt {
@@ -366,11 +385,16 @@ pub fn publish_ready_session(
             // The bytes that were sent, not a recipe for re-rendering them.
             response: ResponseBody::of(&crate::projection::canonical_session_bytes(&session)?),
         },
-        created_at: readiness.launched_at,
+        created_at: readiness.root_started.occurred_at,
         expires_at: None,
     };
 
-    let plan = build_plan(&session, &readiness.root_started, receipt);
+    let plan = build_plan(
+        &session,
+        &readiness.root_started,
+        prepared.account_revision,
+        receipt,
+    );
     plan.validate()?;
 
     Ok(Planned {
@@ -387,6 +411,7 @@ struct PreparedCreate<'a> {
     limits_revision: u64,
     agent_execution: crate::ports::AgentExecutionLimits,
     run_budget: crate::ports::RunBudgetLimits,
+    account_revision: aex_session_domain::AccountRevision,
     materialized_agents: u64,
     selectors: Vec<RegistrySelector>,
     initial_files: Vec<ResolvedInitialFile>,
@@ -489,6 +514,7 @@ async fn prepare_create<'a>(
         limits_revision: bundle.revision,
         agent_execution: bundle.agent_execution,
         run_budget: bundle.run_budget,
+        account_revision: projection.revision,
         materialized_agents: materialized_ceiling,
         selectors,
         initial_files,
@@ -592,17 +618,23 @@ pub fn initial_root_record(
 fn build_plan(
     session: &Session,
     root_started: &RootStartedEvidence,
+    account_revision: aex_session_domain::AccountRevision,
     receipt: IdempotencyReceipt,
 ) -> SessionTransaction {
-    // Every guard targets an item this plan also writes, so each merges into
-    // that write's own condition expression and the plan's action count is the
-    // number of writes. There is not one read-only `ConditionCheck` (A D-7).
+    // Head/receipt guards merge into their writes. The already-started root
+    // control and commit-time active-account projection are two read-only
+    // conditions, keeping ready publication at four constant actions.
     let conditions = vec![
         Condition::ItemAbsent(ItemKey {
             family: TableFamily::SessionAuthority,
             partition: session.id.to_string(),
             sort: "HEAD".to_owned(),
         }),
+        Condition::AccountRevisionAtLeast {
+            workspace: session.workspace,
+            organization: session.organization,
+            at_least: account_revision,
+        },
         Condition::AgentRevision {
             session: session.id,
             agent: root_started.agent,

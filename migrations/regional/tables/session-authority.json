@@ -90,11 +90,13 @@
   "timeToLive": {
     "enabled": true,
     "attribute": "expiresAtEpochSeconds",
-    "appliesTo": ["idempotency_receipt"],
-    "rationale": "Space reclamation only (OD-16, 24 hours). Every TTL'd row also carries an explicit expiresAt the reader checks; no fence reads TTL."
+    "appliesTo": ["idempotency_receipt", "session_create_preparation", "session_create_prepared_file"],
+    "rationale": "Space reclamation only (OD-16, 24 hours). Public receipts carry an explicit expiresAt checked by readers; private create-election rows are immutable scaffolding and use TTL only for eventual cleanup after publication or compensation. No authority fence reads TTL."
   },
   "itemTypes": [
     "session_head",
+    "session_create_preparation",
+    "session_create_prepared_file",
     "message",
     "sealed_message",
     "run",

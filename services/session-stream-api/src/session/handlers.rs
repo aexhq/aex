@@ -409,7 +409,7 @@ impl Routes {
     }
 
     /// The six ports this deployable supplies, plus the five it refuses.
-    fn bindings(&self) -> WireResult<CommandBindings> {
+    pub(super) fn bindings(&self) -> WireResult<CommandBindings> {
         let now = self.now()?;
         Ok(CommandBindings {
             clock: RequestClock(now),
@@ -687,7 +687,7 @@ impl Routes {
 }
 
 /// Everything an `AppContext` borrows, owned for the length of one request.
-struct CommandBindings {
+pub(super) struct CommandBindings {
     clock: RequestClock,
     ids: crate::session::app_ports::RequestIds,
     unowned: crate::session::app_ports::UnownedPorts,
@@ -701,7 +701,11 @@ struct CommandBindings {
 }
 
 impl CommandBindings {
-    fn context(&self) -> aex_session_app::AppContext<'_> {
+    pub(super) const fn ids(&self) -> &crate::session::app_ports::RequestIds {
+        &self.ids
+    }
+
+    pub(super) fn context(&self) -> aex_session_app::AppContext<'_> {
         aex_session_app::AppContext {
             clock: &self.clock,
             ids: &self.ids,
@@ -915,9 +919,11 @@ impl SessionsApi for Routes {
     async fn session_create(
         &self,
         _cx: &WireContext,
-        _body: models::SessionCreateRequest,
+        body: models::SessionCreateRequest,
     ) -> WireResult<Created<models::Session>> {
-        Err(not_served(RouteId::SessionCreate))
+        crate::session::create_route::create_session(self, body)
+            .await
+            .map(Created)
     }
 
     async fn session_delete(

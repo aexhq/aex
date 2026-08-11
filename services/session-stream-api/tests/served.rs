@@ -1613,7 +1613,7 @@ async fn a_wrong_method_on_a_deferred_path_is_a_method_refusal() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(deferred_path(RouteId::SessionCreate))
+                .uri(deferred_path(RouteId::SessionCancel))
                 .body(Body::empty())
                 .expect("a request"),
         )
@@ -1622,16 +1622,13 @@ async fn a_wrong_method_on_a_deferred_path_is_a_method_refusal() {
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
 }
 
-/// A create response is not earned by an immutable head alone. The same
-/// provider transaction must also establish the root agent, sealed registry
-/// selection and root pin, first custody authority, exact logical Hands
-/// generation and current pointer, replayable response receipt, and native
-/// creation event. Until the application plan and adapter can name every one of
-/// those participants, the public route must remain absent rather than expose a
-/// session that cannot execute or replay correctly.
+/// Create is mounted only after private replay-key election, exact registered
+/// file materialization, provider-native readiness, durable root AgentStarted,
+/// final active-account fencing, and an exact response receipt are composed.
 #[test]
-fn session_create_is_absent_until_the_complete_atomic_authority_is_composed() {
-    assert!(!Routes::served().contains(&RouteId::SessionCreate));
+fn session_create_is_mounted_only_after_exact_generation_readiness_is_composed() {
+    assert!(Routes::served().contains(&RouteId::SessionCreate));
+    assert!(!route(RouteId::SessionCreate).deferred);
 }
 
 // --- durable operations ----------------------------------------------------------

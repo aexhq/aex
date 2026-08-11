@@ -1,6 +1,6 @@
 //! Session admission: the create transaction's shape and its refusals.
 //!
-//! Everything here drives the real prepare/readiness/publication flow against
+//! Everything here drives the real prepare-then-publish create use case against
 //! scripted ports and inspects the plan it returned. Nothing is committed, because
 //! [`aex_session_app::AppContext`] holds no committer.
 //!
@@ -15,15 +15,14 @@ use std::collections::BTreeMap;
 
 use aex_session_app::plan::{TransactionIntent, Write};
 use aex_session_app::testing::{
-    CountingIds, FixedClock, ScriptedPorts, create_identity_under, deployment_facts,
+    CountingIds, FixedClock, PortCall, ScriptedPorts, create_identity_under, deployment_facts,
 };
 use aex_session_app::{
     AppError, CreateSession, PrepareSessionCreateOutcome, QualificationRefusal, ReadySessionLaunch,
-    SessionTransaction, initial_root_agent, initial_root_record, prepare_session_create,
+    RootStartedEvidence, SessionTransaction, initial_root_record, prepare_session_create,
     publish_ready_session,
 };
 use aex_session_domain::testing::{moment, session_fixture};
-use aex_session_domain::{EntryIdentity, JournalSeq};
 use aex_wire::error::ErrorCode;
 use aex_wire::limits::LimitId;
 use aex_wire::models;
@@ -34,8 +33,7 @@ fn clock() -> FixedClock {
     FixedClock(moment(1_000))
 }
 
-/// The smallest request the schema admits: no selection, no secrets, no
-/// packages, no metadata.
+/// The smallest request the schema admits: no selection, packages, or metadata.
 fn minimal_request() -> models::SessionCreateRequest {
     let session = session_fixture();
     let _ = &session;
@@ -118,23 +116,19 @@ async fn plan_of(
     ports: &ScriptedPorts,
     command: &CreateSession,
 ) -> Result<SessionTransaction, AppError> {
-    Ok(planned_of(ports, command).await?.plan)
+    Ok(ready_create(ports, command).await?.plan)
 }
 
-async fn planned_of(
+async fn ready_create(
     ports: &ScriptedPorts,
     command: &CreateSession,
 ) -> Result<aex_session_app::Planned<aex_session_domain::Session>, AppError> {
     let clock = clock();
     let ids = CountingIds::default();
-    let PrepareSessionCreateOutcome::Prepared(prepared) =
-        prepare_session_create(&ports.context(&clock, &ids), command).await?
-    else {
-        panic!("a fresh scripted request cannot replay");
+    let outcome = prepare_session_create(&ports.context(&clock, &ids), command).await?;
+    let PrepareSessionCreateOutcome::Prepared(prepared) = outcome else {
+        panic!("a fresh fixture identity cannot replay");
     };
-    let mut root_agent = initial_root_agent(&prepared);
-    root_agent.journal_tail = JournalSeq(1);
-    root_agent.last_entry = Some(EntryIdentity::from_bytes([7; 32]));
     let readiness = ReadySessionLaunch {
         generation: prepared.generation,
         launched_at: moment(1_001),
@@ -143,7 +137,15 @@ async fn planned_of(
             .iter()
             .map(|file| (file.name.clone(), file.revision))
             .collect(),
-        root_agent,
+        root_started: RootStartedEvidence {
+            agent: prepared.root_agent,
+            session: prepared.session,
+            generation: prepared.generation,
+            occurred_at: moment(1_001),
+            revision: aex_session_domain::AgentRevision(1),
+            journal_tail: aex_session_domain::JournalSeq::INITIAL,
+            journal_tail_hash: [7; 32],
+        },
     };
     publish_ready_session(&prepared, &readiness)
 }
@@ -153,7 +155,7 @@ async fn planned_of(
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_create_with_nothing_selected_is_three_actions_in_one_table() {
+async fn ready_create_publication_is_four_constant_actions() {
     let ports = ScriptedPorts::idle();
     let plan = plan_of(&ports, &command(minimal_request()))
         .await
@@ -162,8 +164,8 @@ async fn a_create_with_nothing_selected_is_three_actions_in_one_table() {
     assert_eq!(plan.intent, TransactionIntent::CreateSession);
     assert_eq!(
         plan.validate().expect("a create plan validates").actions,
-        3,
-        "head, receipt and a condition on the already-ready root"
+        SessionTransaction::CREATE_MAX_ACTIONS,
+        "head, receipt, started-root fence and active-account fence, and nothing else"
     );
     assert!(
         plan.writes.iter().all(|write| write.family()
@@ -174,16 +176,22 @@ async fn a_create_with_nothing_selected_is_three_actions_in_one_table() {
 }
 
 #[tokio::test]
-async fn a_create_conditions_on_the_already_ready_root() {
-    // Publication must not overwrite AgentStarted, so its root revision/tail
-    // guards share one read-only condition action.
+async fn a_create_carries_exactly_the_two_read_only_readiness_checks() {
+    // The started-root and active-account facts already exist, so publication
+    // must condition-check them rather than rewrite either authority.
     let ports = ScriptedPorts::idle();
     let plan = plan_of(&ports, &command(minimal_request()))
         .await
         .expect("admissible");
     let shape = plan.validate().expect("valid");
-    assert_eq!(shape.actions, 3);
-    assert_eq!(plan.writes.len(), 2);
+    assert_eq!(shape.actions, plan.writes.len() + 2);
+    assert!(plan.conditions.iter().any(|condition| matches!(
+        condition,
+        aex_session_app::Condition::AccountRevisionAtLeast {
+            at_least: aex_session_domain::AccountRevision(1),
+            ..
+        }
+    )));
 }
 
 #[tokio::test]
@@ -198,7 +206,10 @@ async fn a_selection_is_validated_without_copying_or_pinning_session_content() {
     let plan = plan_of(&ports, &command(request))
         .await
         .expect("admissible");
-    assert_eq!(plan.validate().expect("valid").actions, 3);
+    assert_eq!(
+        plan.validate().expect("valid").actions,
+        SessionTransaction::CREATE_MAX_ACTIONS
+    );
     assert!(
         plan.writes
             .iter()
@@ -207,11 +218,12 @@ async fn a_selection_is_validated_without_copying_or_pinning_session_content() {
 }
 
 #[tokio::test]
-async fn the_head_pins_and_publishes_the_ready_generation() {
-    // The public head appears only after the exact elected generation and root
-    // AgentStarted fact are ready.
+async fn the_ready_head_publishes_the_exact_elected_generation() {
+    // Create does not publish a head until this generation is reachable; the
+    // runtime rows are derived before publication, not smuggled into this
+    // authority transaction.
     let ports = ScriptedPorts::idle();
-    let planned = planned_of(&ports, &command(minimal_request()))
+    let planned = ready_create(&ports, &command(minimal_request()))
         .await
         .expect("admissible");
 
@@ -240,7 +252,7 @@ async fn the_head_pins_and_publishes_the_ready_generation() {
 #[tokio::test]
 async fn the_pinned_limits_revision_is_the_one_the_create_read() {
     let ports = ScriptedPorts::idle();
-    let planned = planned_of(&ports, &command(minimal_request()))
+    let planned = ready_create(&ports, &command(minimal_request()))
         .await
         .expect("admissible");
     assert_eq!(
@@ -258,7 +270,7 @@ async fn the_pinned_limits_revision_is_the_one_the_create_read() {
 async fn the_receipt_carries_the_exact_bytes_the_caller_is_sent() {
     // A D-6: a replay reproduces bytes, never a second rendering.
     let ports = ScriptedPorts::idle();
-    let planned = planned_of(&ports, &command(minimal_request()))
+    let planned = ready_create(&ports, &command(minimal_request()))
         .await
         .expect("admissible");
 
@@ -281,6 +293,12 @@ async fn the_receipt_carries_the_exact_bytes_the_caller_is_sent() {
             .expect("the projection is total")
             .as_slice(),
         "the stored bytes are the ones the 201 carries"
+    );
+    let public = aex_session_app::public_session(&planned.projected).expect("public session");
+    assert_eq!(
+        response.inline().expect("inline response"),
+        serde_json::to_vec(&public).expect("wire response serializes"),
+        "generated field order must keep fresh and replayed HTTP bodies byte-identical"
     );
 }
 
@@ -307,6 +325,41 @@ async fn two_callers_under_different_keys_address_different_receipts() {
     assert_ne!(
         one, two,
         "keyed by the caller's key, not by the intent, so two callers cannot collide"
+    );
+}
+
+#[tokio::test]
+async fn an_accepted_retry_reads_only_the_receipt_after_dependencies_change() {
+    let command = command(minimal_request());
+    let first = ready_create(&ScriptedPorts::idle(), &command)
+        .await
+        .expect("fresh create");
+    let receipt = first
+        .plan
+        .writes
+        .iter()
+        .find_map(|write| match write {
+            Write::PutIdempotencyReceipt(receipt) => Some(receipt.as_ref().clone()),
+            _ => None,
+        })
+        .expect("create receipt");
+    let changed = ScriptedPorts::idle()
+        .paused()
+        .with_revoked_provider_credential()
+        .with_receipt(receipt);
+    let clock = clock();
+    let ids = CountingIds::default();
+
+    assert!(matches!(
+        prepare_session_create(&changed.context(&clock, &ids), &command)
+            .await
+            .expect("the original response replays"),
+        PrepareSessionCreateOutcome::Replayed { .. }
+    ));
+    assert_eq!(
+        changed.calls(),
+        vec![PortCall::Read("load_receipt")],
+        "pause, credential, catalog, limits, and registry are irrelevant after acceptance"
     );
 }
 
@@ -395,18 +448,20 @@ async fn an_ecosystem_no_published_image_carries_is_refused() {
         .remove(&models::PackageEcosystem::Npm);
     // The scripted deployment is replaced wholesale so the refusal is decided
     // from the plane's own asserted facts, not from a per-request read.
-    let ports = ScriptedPorts::idle();
+    let ports = ScriptedPorts::idle().with_deployment(deployment);
     let mut request = minimal_request();
     request.packages = Some(vec![models::PackageRequest {
         ecosystem: models::PackageEcosystem::Npm,
         name: "left-pad".to_owned(),
         version: "1.0.0".to_owned(),
     }]);
-    // With every ecosystem published the same request is admissible, which is
-    // what makes the refusal above about the deployment rather than the request.
-    plan_of(&ports, &command(request))
-        .await
-        .expect("npm is published in the fixture deployment");
+    assert_eq!(
+        plan_of(&ports, &command(request))
+            .await
+            .expect_err("npm is absent from this plane's image")
+            .code(),
+        ErrorCode::UnsupportedPackageEcosystem
+    );
 }
 
 #[tokio::test]
@@ -646,7 +701,7 @@ proptest! {
 
         prop_assert_eq!(
             shape.actions,
-            3,
+            SessionTransaction::CREATE_MAX_ACTIONS,
             "256 files, 64 packages and 64 labels all collapse into values that ride existing \
              items; the transaction never grows"
         );
@@ -662,6 +717,9 @@ async fn a_selection_object_that_names_nothing_writes_no_session_content() {
     let plan = plan_of(&ports, &command(request))
         .await
         .expect("admissible");
-    assert_eq!(plan.validate().expect("valid").actions, 3);
+    assert_eq!(
+        plan.validate().expect("valid").actions,
+        SessionTransaction::CREATE_MAX_ACTIONS
+    );
     assert!(!ports.calls().iter().any(|call| call.is_write()));
 }

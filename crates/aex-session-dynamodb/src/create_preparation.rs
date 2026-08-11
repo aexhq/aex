@@ -41,6 +41,7 @@ const AGENT_CONTROL: &str = "agent_control";
 const JOURNAL_ENTRY: &str = "agent_journal";
 const PREPARATION_PARTICIPANT: Participant = Participant::new("session.create_preparation");
 const PREPARED_FILE_PARTICIPANT: Participant = Participant::new("session.create_prepared_file");
+const PREPARATION_RECLAIM_AFTER_MS: i64 = 86_400_000;
 
 /// One exact registry revision selected for synchronous materialization.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +74,12 @@ pub struct CreatePreparation {
     pub organization: OrganizationId,
     /// Canonical create intent.
     pub intent: IntentDigest,
+    /// Lowercase SHA-256 of the caller's idempotency key.
+    ///
+    /// This, not `intent`, elects the private preparation. Different keys that
+    /// carry the same request are distinct creates; one key carrying another
+    /// request must find this row so it can conflict.
+    pub receipt_key_sha256: String,
     /// Fresh coordinator attempt; another coordinator never resumes its work.
     pub coordinator: Uuid7,
     /// Final public session identity.
@@ -93,6 +100,8 @@ pub struct CreatePreparation {
     pub metadata: Option<Vec<u8>>,
     /// Root-plus-subagent ceiling used to derive the elected root budget.
     pub materialized_agents: u64,
+    /// Account projection revision rechecked at final public publication.
+    pub account_revision: u64,
     /// Preparation instant.
     pub prepared_at: Timestamp,
 }
@@ -135,6 +144,9 @@ pub struct DurableRootStarted {
 /// Why create preparation cannot be persisted or published.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CreatePreparationError {
+    /// The caller replay-key digest cannot enter the private authority key.
+    #[error("the create receipt key digest is not 64 lowercase hex characters")]
+    ReplayKey,
     /// More than 256 files were selected.
     #[error("selected {found} startup files; the ceiling is {maximum}")]
     FileCount {
@@ -187,6 +199,14 @@ impl CreatePreparation {
     /// Returns [`CreatePreparationError`] before any provider effect when the
     /// selected count/bytes, uniqueness or root generation is invalid.
     pub fn validate(&self) -> Result<PreparationSummary, CreatePreparationError> {
+        if self.receipt_key_sha256.len() != 64
+            || !self
+                .receipt_key_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(CreatePreparationError::ReplayKey);
+        }
         if self.files.len() > STARTUP_FILE_MAX_COUNT {
             return Err(CreatePreparationError::FileCount {
                 found: self.files.len(),
@@ -264,6 +284,7 @@ impl CreatePreparation {
             workspace: self.workspace,
             organization: self.organization,
             intent: self.intent,
+            receipt_key_sha256: self.receipt_key_sha256.clone(),
             coordinator: self.coordinator.to_string(),
             session: self.session,
             root_agent: self.root_agent,
@@ -274,6 +295,7 @@ impl CreatePreparation {
             resolved_config: ContentHash::of(&self.resolved_config),
             metadata: self.metadata.as_deref().map(ContentHash::of),
             materialized_agents: self.materialized_agents,
+            account_revision: self.account_revision,
             prepared_at: self.prepared_at,
         })
         .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
@@ -293,6 +315,7 @@ struct PreparationAuthority {
     workspace: WorkspaceId,
     organization: OrganizationId,
     intent: IntentDigest,
+    receipt_key_sha256: String,
     coordinator: String,
     session: SessionId,
     root_agent: AgentId,
@@ -303,6 +326,7 @@ struct PreparationAuthority {
     resolved_config: ContentHash,
     metadata: Option<ContentHash>,
     materialized_agents: u64,
+    account_revision: u64,
     prepared_at: Timestamp,
 }
 
@@ -336,8 +360,9 @@ fn stage_plan(
     index: usize,
     file: &PreparedFile,
 ) -> Result<TransactionPlan, CreatePreparationError> {
-    let partition = preparation_partition(prepared.workspace, prepared.intent);
+    let partition = preparation_partition(prepared.workspace, &prepared.receipt_key_sha256);
     let selection = summary.selection_digest.to_wire();
+    let reclaim_at = preparation_reclaim_epoch_seconds(prepared.prepared_at)?;
     let sort = format!("FILE#{selection}#{index:06}");
     let index_u64 = u64::try_from(index).map_err(|_| CreatePreparationError::FileCount {
         found: index,
@@ -348,6 +373,7 @@ fn stage_plan(
         .set(crate::attr::SK, s(sort))
         .set("workspaceId", s(prepared.workspace.to_string()))
         .set("intentDigest", s(prepared.intent.to_string()))
+        .set("receiptKeySha256", s(prepared.receipt_key_sha256.clone()))
         .set("selectionDigest", s(selection.clone()))
         .set("fileIndex", n(index_u64))
         .set("registeredName", s(file.name.to_string()))
@@ -358,8 +384,9 @@ fn stage_plan(
         .set("mountPath", s(file.mount_path.as_str()))
         .set("mediaType", s(file.media_type.clone()))
         .set("mode", s(file.mode.as_str()))
+        .set("expiresAtEpochSeconds", crate::attr::n_i64(reclaim_at))
         .build();
-    let same_file = "attribute_not_exists(pk) OR (selectionDigest = :selection AND fileIndex = :index AND registeredName = :name AND registryRevision = :revision AND registryEtag = :etag AND contentDigest = :content AND contentBytes = :bytes AND mountPath = :path AND mediaType = :media AND #mode = :mode)";
+    let same_file = "attribute_not_exists(pk) OR (workspaceId = :workspace AND receiptKeySha256 = :receipt AND intentDigest = :intent AND selectionDigest = :selection AND fileIndex = :index AND registeredName = :name AND registryRevision = :revision AND registryEtag = :etag AND contentDigest = :content AND contentBytes = :bytes AND mountPath = :path AND mediaType = :media AND #mode = :mode)";
     let mut plan = TransactionPlan::new(format!("create-file-{selection}-{index}"));
     plan.put(
         PREPARED_FILE_PARTICIPANT,
@@ -368,6 +395,9 @@ fn stage_plan(
             .set_item(Some(item))
             .condition_expression(same_file)
             .expression_attribute_names("#mode", "mode")
+            .expression_attribute_values(":workspace", s(prepared.workspace.to_string()))
+            .expression_attribute_values(":receipt", s(prepared.receipt_key_sha256.clone()))
+            .expression_attribute_values(":intent", s(prepared.intent.to_string()))
             .expression_attribute_values(":selection", s(selection))
             .expression_attribute_values(":index", n(index_u64))
             .expression_attribute_values(":name", s(file.name.to_string()))
@@ -401,9 +431,10 @@ pub fn elect_plan(
         .root_record
         .canonical_bytes()
         .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
-    let partition = preparation_partition(prepared.workspace, prepared.intent);
+    let partition = preparation_partition(prepared.workspace, &prepared.receipt_key_sha256);
     let selection = summary.selection_digest.to_wire();
     let coordinator = coordinator_text(prepared.coordinator);
+    let reclaim_at = preparation_reclaim_epoch_seconds(prepared.prepared_at)?;
     let header = ItemBuilder::new(PREPARATION)
         .set(crate::attr::PK, s(partition))
         .set(crate::attr::SK, s("PREPARED"))
@@ -411,6 +442,7 @@ pub fn elect_plan(
         .set("workspaceId", s(prepared.workspace.to_string()))
         .set("organizationId", s(prepared.organization.to_string()))
         .set("intentDigest", s(prepared.intent.to_string()))
+        .set("receiptKeySha256", s(prepared.receipt_key_sha256.clone()))
         .set("coordinator", s(coordinator.clone()))
         .set("sessionId", s(prepared.session.to_string()))
         .set("rootAgentId", s(prepared.root_agent.to_string()))
@@ -425,7 +457,9 @@ pub fn elect_plan(
         .set("resolvedConfig", b(prepared.resolved_config.clone()))
         .set_opt("metadata", prepared.metadata.clone().map(b))
         .set("materializedAgents", n(prepared.materialized_agents))
+        .set("accountRevision", n(prepared.account_revision))
         .set("preparedAt", stamp(prepared.prepared_at))
+        .set("expiresAtEpochSeconds", crate::attr::n_i64(reclaim_at))
         .build();
 
     let control_key = crate::keys::agent_control(prepared.session, prepared.root_agent);
@@ -576,7 +610,7 @@ impl CreatePreparationStore {
     /// Stages every selected revision and elects exactly one immutable winner.
     ///
     /// A conditional loss or ambiguous commit is resolved only by a strong
-    /// read of the intent-keyed header and its exact selection rows. The loser
+    /// read of the receipt-keyed header and its exact selection rows. The loser
     /// receives the winner's identities and must never launch its own generation.
     ///
     /// # Errors
@@ -600,7 +634,10 @@ impl CreatePreparationStore {
             Err(error @ StoreError::PreconditionFailed { .. })
             | Err(error @ StoreError::CommitAmbiguous { .. })
             | Err(error @ StoreError::Contended) => {
-                match self.load(prepared.workspace, prepared.intent).await? {
+                match self
+                    .load(prepared.workspace, &prepared.receipt_key_sha256)
+                    .await?
+                {
                     Some(winner) => Ok(winner),
                     None => Err(error.into()),
                 }
@@ -618,9 +655,16 @@ impl CreatePreparationStore {
     pub async fn load(
         &self,
         workspace: WorkspaceId,
-        intent: IntentDigest,
+        receipt_key_sha256: &str,
     ) -> Result<Option<CreatePreparation>, CreatePreparationError> {
-        let partition = preparation_partition(workspace, intent);
+        if receipt_key_sha256.len() != 64
+            || !receipt_key_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(CreatePreparationError::ReplayKey);
+        }
+        let partition = preparation_partition(workspace, receipt_key_sha256);
         let header = self
             .client
             .get_item()
@@ -636,7 +680,7 @@ impl CreatePreparationStore {
             return Ok(None);
         };
         let header_row = Row::bind(&header, PREPARATION).map_err(StoreError::from)?;
-        assert_header_binding(&header_row, workspace, intent)?;
+        assert_header_binding(&header_row, workspace, receipt_key_sha256)?;
         let selection = header_row
             .string("selectionDigest")
             .map_err(StoreError::from)?;
@@ -665,7 +709,7 @@ impl CreatePreparationStore {
                 break;
             }
         }
-        decode_elected_preparation(&header, &files, workspace, intent).map(Some)
+        decode_elected_preparation(&header, &files, workspace, receipt_key_sha256).map(Some)
     }
 
     /// Commits and strongly verifies the elected root `AgentStarted` record.
@@ -839,13 +883,14 @@ pub fn decode_elected_preparation(
     header: &Item,
     file_items: &[Item],
     workspace: WorkspaceId,
-    intent: IntentDigest,
+    receipt_key_sha256: &str,
 ) -> Result<CreatePreparation, CreatePreparationError> {
     let row = Row::bind(header, PREPARATION).map_err(StoreError::from)?;
-    assert_header_binding(&row, workspace, intent)?;
+    assert_header_binding(&row, workspace, receipt_key_sha256)?;
     if row.string("state").map_err(StoreError::from)? != "prepared" {
         return Err(corrupt("the elected header is not in prepared state"));
     }
+    let stored_intent = parse_intent(row.string("intentDigest").map_err(StoreError::from)?)?;
     let selection_text = row.string("selectionDigest").map_err(StoreError::from)?;
     let selection_digest = ContentHash::parse(selection_text)
         .map_err(|error| corrupt(format!("selectionDigest is malformed: {error}")))?;
@@ -862,7 +907,8 @@ pub fn decode_elected_preparation(
     for (expected_index, item) in file_items.iter().enumerate() {
         let file = Row::bind(item, PREPARED_FILE).map_err(StoreError::from)?;
         if file.string("workspaceId").map_err(StoreError::from)? != workspace.to_string()
-            || file.string("intentDigest").map_err(StoreError::from)? != intent.to_string()
+            || file.string("receiptKeySha256").map_err(StoreError::from)? != receipt_key_sha256
+            || file.string("intentDigest").map_err(StoreError::from)? != stored_intent.to_string()
             || file.string("selectionDigest").map_err(StoreError::from)? != selection_text
         {
             return Err(corrupt("a selected-file row has another authority binding"));
@@ -913,7 +959,8 @@ pub fn decode_elected_preparation(
     let prepared = CreatePreparation {
         workspace,
         organization: row.id("organizationId").map_err(StoreError::from)?,
-        intent,
+        intent: stored_intent,
+        receipt_key_sha256: receipt_key_sha256.to_owned(),
         coordinator,
         session: row.id("sessionId").map_err(StoreError::from)?,
         root_agent: row.id("rootAgentId").map_err(StoreError::from)?,
@@ -933,6 +980,7 @@ pub fn decode_elected_preparation(
             .map_err(StoreError::from)?
             .map(|bytes| bytes.to_vec()),
         materialized_agents: row.u64("materializedAgents").map_err(StoreError::from)?,
+        account_revision: row.u64("accountRevision").map_err(StoreError::from)?,
         prepared_at: row.timestamp("preparedAt").map_err(StoreError::from)?,
     };
     let summary = prepared.validate()?;
@@ -955,13 +1003,13 @@ pub fn decode_elected_preparation(
 fn assert_header_binding(
     row: &Row<'_>,
     workspace: WorkspaceId,
-    intent: IntentDigest,
+    receipt_key_sha256: &str,
 ) -> Result<(), CreatePreparationError> {
     if row.string("workspaceId").map_err(StoreError::from)? != workspace.to_string()
-        || row.string("intentDigest").map_err(StoreError::from)? != intent.to_string()
+        || row.string("receiptKeySha256").map_err(StoreError::from)? != receipt_key_sha256
     {
         return Err(corrupt(
-            "the intent-keyed header carries another workspace or intent",
+            "the replay-keyed header carries another workspace or receipt key",
         ));
     }
     Ok(())
@@ -971,6 +1019,25 @@ fn corrupt(reason: impl Into<String>) -> CreatePreparationError {
     CreatePreparationError::Corrupt {
         reason: reason.into(),
     }
+}
+
+fn parse_intent(text: &str) -> Result<IntentDigest, CreatePreparationError> {
+    if text.len() != 64 {
+        return Err(corrupt("intentDigest is not 64 lowercase hex characters"));
+    }
+    let mut bytes = [0_u8; 32];
+    for (index, slot) in bytes.iter_mut().enumerate() {
+        let pair = &text[index * 2..index * 2 + 2];
+        if pair
+            .bytes()
+            .any(|byte| !(byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+        {
+            return Err(corrupt("intentDigest is not 64 lowercase hex characters"));
+        }
+        *slot = u8::from_str_radix(pair, 16)
+            .map_err(|_| corrupt("intentDigest is not 64 lowercase hex characters"))?;
+    }
+    Ok(IntentDigest::from_bytes(bytes))
 }
 
 fn root_budget(record: &JournalRecord) -> Result<DimensionVector, CreatePreparationError> {
@@ -993,8 +1060,22 @@ fn root_limits(record: &JournalRecord) -> Result<(u64, u64), CreatePreparationEr
     }
 }
 
-fn preparation_partition(workspace: WorkspaceId, intent: IntentDigest) -> String {
-    format!("CREATE#{workspace}#{intent}")
+fn preparation_partition(workspace: WorkspaceId, receipt_key_sha256: &str) -> String {
+    format!("CREATE#{workspace}#{receipt_key_sha256}")
+}
+
+fn preparation_reclaim_epoch_seconds(
+    prepared_at: Timestamp,
+) -> Result<i64, CreatePreparationError> {
+    prepared_at
+        .unix_millis()
+        .checked_add(PREPARATION_RECLAIM_AFTER_MS)
+        .map(|millis| millis.div_euclid(1_000))
+        .ok_or_else(|| {
+            CreatePreparationError::Canonical(
+                "the private preparation reclaim instant overflows i64".to_owned(),
+            )
+        })
 }
 
 fn coordinator_text(coordinator: Uuid7) -> String {

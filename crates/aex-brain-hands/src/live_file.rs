@@ -35,6 +35,8 @@ pub struct LiveGenerationReady {
     pub launched_at: Timestamp,
     /// Provider hard-stop instant for the generation.
     pub expires_at: Timestamp,
+    /// When the authenticated endpoint readiness was observed.
+    pub observed_at: Timestamp,
     /// Lifecycle fence of the reachable generation.
     pub lifecycle_fence: u64,
 }

@@ -101,8 +101,7 @@ operationOwners:
 # production handler is intentionally absent and why. The generator rejects an
 # unknown operation, an empty reason, or overlap with `servedOperations`.
 # Deferral is not mount evidence and is emitted only into the delivery registry.
-deferredOperations:
-  session_create: "The complete session authority and create use case are not implemented."
+deferredOperations: {}
 
 # Actual public mount authority. `scenarioOwners` and `operationOwners` plan
 # where a route belongs; this table says which complete handlers are mounted
@@ -215,6 +214,7 @@ servedOperations:
     - session_observations_telemetry_stream
     - session_observations_traces_listen
     - session_observations_traces_stream
+    - session_create
     - session_files_live_download_complete
     - session_files_live_download_create
     - session_files_live_download_delete

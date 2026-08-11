@@ -103,12 +103,12 @@ impl LimitReads {
             .projection
             .read_limit_bundle_head(workspace)
             .await
-            .map_err(|error| port_error(&error, "effective limits"))?;
+            .map_err(|error| limit_error(&error))?;
         let payload = self
             .projection
             .read_limit_bundle(workspace)
             .await
-            .map_err(|error| port_error(&error, "effective limits"))?;
+            .map_err(|error| limit_error(&error))?;
         if head.workspace != workspace
             || payload.workspace != workspace
             || head.revision != payload.revision
@@ -278,6 +278,13 @@ fn port_error(error: &StoreError, kind: &'static str) -> PortError {
             reason: "the regional authority returned malformed state",
         },
         _ => PortError::Unavailable { kind },
+    }
+}
+
+fn limit_error(error: &StoreError) -> PortError {
+    match error {
+        StoreError::Misconfigured { .. } => PortError::NotFound { kind: "limit" },
+        other => port_error(other, "effective limits"),
     }
 }
 
