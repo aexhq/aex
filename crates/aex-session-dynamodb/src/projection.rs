@@ -48,7 +48,8 @@ pub const WORKSPACE_PROFILE: &str = "workspace_profile";
 /// `WS#{workspace_id}` / `PLACEMENT`.
 #[must_use]
 pub fn placement_key(workspace: WorkspaceId) -> (String, String) {
-    (format!("WS#{workspace}"), "PLACEMENT".to_owned())
+    let key = crate::keys::authorization_placement(workspace);
+    (key.pk, key.sk)
 }
 
 /// `KEY#{api_key_id}` / `AUTHZ`.

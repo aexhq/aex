@@ -1,7 +1,7 @@
 [package]
 name = "aex-session-app"
 version = "0.1.0"
-description = "`aex-session-app` owns transactional session admission, settlement, live reads, and the authority ports."
+description = "`aex-session-app` owns transactional session admission, current lifecycle planning, live-file reads and the authority ports."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

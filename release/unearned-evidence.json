@@ -2265,6 +2265,13 @@
     "subject": "services/session-stream-api",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.async_delivery` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
   },
   {
@@ -3113,6 +3120,13 @@
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.lambda.async_delivery` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

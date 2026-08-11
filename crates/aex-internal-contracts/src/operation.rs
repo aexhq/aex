@@ -28,10 +28,13 @@ impl SessionOperationWake {
     ///
     /// Refuses an identity outside the regional-work prefix or containing the
     /// table key separator.
-    pub fn new(workspace: WorkspaceId, work_id: impl Into<String>) -> Result<Self, WakeError> {
+    pub fn new(
+        workspace: WorkspaceId,
+        work_id: impl Into<String>,
+    ) -> Result<Self, InternalContractsWakeError> {
         let work_id = work_id.into();
         if !work_id.starts_with("wrk_") || work_id.contains('#') || work_id.len() > 128 {
-            return Err(WakeError::InvalidWorkId);
+            return Err(InternalContractsWakeError::InvalidWorkId);
         }
         Ok(Self {
             schema_version: SchemaVersion::V1,
@@ -43,7 +46,7 @@ impl SessionOperationWake {
 
 /// Why an internal operation wake was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum WakeError {
+pub enum InternalContractsWakeError {
     /// The work identity cannot name a regional-work row.
     #[error("invalid regional-work identity")]
     InvalidWorkId,

@@ -95,7 +95,7 @@ pub enum CatalogError {
 
 /// Why release-derived image deployment facts could not become selection authority.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ReleaseCatalogError {
+pub enum RuntimeControlReleaseCatalogError {
     /// The release fact was not the closed JSON catalog.
     #[error("expected the closed release JSON catalog: {0}")]
     Decode(String),
@@ -127,21 +127,21 @@ impl HandsImageCatalog {
     ///
     /// # Errors
     ///
-    /// Returns [`ReleaseCatalogError`] for malformed/partial catalogs, foreign
+    /// Returns [`RuntimeControlReleaseCatalogError`] for malformed/partial catalogs, foreign
     /// provider identities, or mutable/non-content-addressed image names.
     pub fn from_release_json(
         raw: &str,
         plane: &str,
         region: &str,
         account: &str,
-    ) -> Result<Self, ReleaseCatalogError> {
+    ) -> Result<Self, RuntimeControlReleaseCatalogError> {
         let entries = serde_json::from_str::<BTreeMap<String, HandsImageCatalogEntry>>(raw)
-            .map_err(|error| ReleaseCatalogError::Decode(error.to_string()))?;
+            .map_err(|error| RuntimeControlReleaseCatalogError::Decode(error.to_string()))?;
         let catalog = Self::from_entries(entries)?;
         let prefix = format!("arn:aws:lambda:{region}:{account}:microvm-image:aex-{plane}-");
         for identifier in catalog.image_identifiers() {
             let Some(suffix) = identifier.0.strip_prefix(&prefix) else {
-                return Err(ReleaseCatalogError::ForeignBinding {
+                return Err(RuntimeControlReleaseCatalogError::ForeignBinding {
                     identifier: identifier.0.clone(),
                     plane: plane.to_owned(),
                     account: account.to_owned(),
@@ -153,7 +153,7 @@ impl HandsImageCatalog {
                     .bytes()
                     .all(|byte| byte.is_ascii_lowercase() || (b'2'..=b'7').contains(&byte))
             {
-                return Err(ReleaseCatalogError::NotContentAddressed(
+                return Err(RuntimeControlReleaseCatalogError::NotContentAddressed(
                     identifier.0.clone(),
                 ));
             }

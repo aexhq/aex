@@ -101,6 +101,16 @@ pub fn create_preparation_edge(session: SessionId) -> Key {
     )
 }
 
+/// The workspace-placement row that fences regional admission at commit time.
+///
+/// This key is shared by the read-only projection adapter and the session
+/// transaction compiler. Keeping it here prevents the compiler from depending
+/// on the optional projection reader merely to address the same authority row.
+#[must_use]
+pub fn authorization_placement(workspace: WorkspaceId) -> Key {
+    Key::new(format!("WS#{workspace}"), "PLACEMENT".to_owned())
+}
+
 /// One message.
 #[must_use]
 pub fn message(session: SessionId, message: MessageId) -> Key {
@@ -449,8 +459,8 @@ mod tests {
     use aex_wire::types::Timestamp;
 
     use super::{
-        BRAIN_PREFIX, agent_control, event, head, journal, journal_sort_key, message, receipt,
-        sealed_message, sealed_message_prefix, workspace_index,
+        BRAIN_PREFIX, agent_control, authorization_placement, event, head, journal,
+        journal_sort_key, message, receipt, sealed_message, sealed_message_prefix, workspace_index,
     };
 
     fn session() -> SessionId {
@@ -511,6 +521,14 @@ mod tests {
         let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [4; 10]));
         assert!(receipt(workspace, "session.message:ses#evil", &"0".repeat(64)).is_err());
         assert!(receipt(workspace, "session.create", &"0".repeat(64)).is_ok());
+    }
+
+    #[test]
+    fn the_authorization_placement_key_is_shared_with_the_commit_fence() {
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [6; 10]));
+        let key = authorization_placement(workspace);
+        assert_eq!(key.pk, format!("WS#{workspace}"));
+        assert_eq!(key.sk, "PLACEMENT");
     }
 
     #[test]

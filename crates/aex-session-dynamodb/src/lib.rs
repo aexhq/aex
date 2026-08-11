@@ -65,7 +65,11 @@ pub mod stream_keys;
 pub mod codec;
 #[cfg(any(feature = "session-authority", feature = "authz-projection"))]
 pub mod event;
-#[cfg(any(feature = "session-authority", feature = "create-preparation"))]
+#[cfg(any(
+    feature = "session-authority",
+    feature = "authz-projection",
+    feature = "create-preparation"
+))]
 pub mod keys;
 #[cfg(feature = "session-authority")]
 pub mod regional_control;

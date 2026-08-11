@@ -132,7 +132,7 @@ enum SessionStreamApiRunError {
     Config(#[from] RegionalHttpConfigError),
     /// The build-bound signed model catalog could not become admission authority.
     #[error(transparent)]
-    Catalog(#[from] session_stream_api::release_catalog::ReleaseCatalogError),
+    Catalog(#[from] session_stream_api::release_catalog::SessionStreamReleaseCatalogError),
     /// The declared capability manifest did not admit the resolved configuration.
     #[error(transparent)]
     Composition(#[from] CompositionError),

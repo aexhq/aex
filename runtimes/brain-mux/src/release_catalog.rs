@@ -22,7 +22,7 @@ pub const COLLECTION_SHA256_BUILD_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_SHA2
 
 /// Why this binary cannot install model-catalog authority.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ReleaseCatalogError {
+pub enum BrainMuxReleaseCatalogError {
     /// The build did not carry the real paired release inputs.
     #[error("model catalog release binding unavailable: {0}")]
     MissingReleaseInputs(&'static str),
@@ -42,28 +42,33 @@ pub enum ReleaseCatalogError {
 /// cryptographically valid but service-incapable zero-Active collection
 /// refuses start-up: the caller exits non-zero instead of serving without
 /// catalog authority.
-pub fn load(now: aex_wire::types::Timestamp) -> Result<VerifiedCatalogPort, ReleaseCatalogError> {
+pub fn load(
+    now: aex_wire::types::Timestamp,
+) -> Result<VerifiedCatalogPort, BrainMuxReleaseCatalogError> {
     if let Some(reason) = RELEASE_INPUT_BLOCKER {
-        return Err(ReleaseCatalogError::MissingReleaseInputs(reason));
+        return Err(BrainMuxReleaseCatalogError::MissingReleaseInputs(reason));
     }
     let keys = TrustedKeys::new(RELEASE_TRUSTED_KEYS);
     let catalog = VerifiedCatalogPort::load_collection(RELEASE_CATALOG_COLLECTION, &keys, now)?;
     if !catalog.is_service_capable() {
-        return Err(ReleaseCatalogError::NoActiveModels);
+        return Err(BrainMuxReleaseCatalogError::NoActiveModels);
     }
     Ok(catalog)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{RELEASE_INPUT_BLOCKER, ReleaseCatalogError, load};
+    use super::{BrainMuxReleaseCatalogError, RELEASE_INPUT_BLOCKER, load};
 
     #[test]
     fn an_ordinary_build_names_the_real_release_inputs_it_lacks() {
         if let Some(reason) = RELEASE_INPUT_BLOCKER {
             let error = load(aex_model_catalog::fixture::at(1_800_000_000_000))
                 .expect_err("no production release inputs are present");
-            assert_eq!(error, ReleaseCatalogError::MissingReleaseInputs(reason));
+            assert_eq!(
+                error,
+                BrainMuxReleaseCatalogError::MissingReleaseInputs(reason)
+            );
             assert!(reason.contains("real publisher P-256 trust-root set"));
             assert!(reason.contains("signed model-catalog collection"));
         }

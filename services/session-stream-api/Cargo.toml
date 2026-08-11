@@ -25,7 +25,7 @@ seams = [
     "aws.dynamodb.transact_write",
     "aws.dynamodb.condition",
     "aws.dynamodb.streams",
-    "aws.lambda.async_invoke",
+    "aws.lambda.async_delivery",
     "aws.s3.conditional_put",
     "aws.iam.denial",
     "aws.alb.framing",

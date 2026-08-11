@@ -2957,7 +2957,7 @@
           "aws.dynamodb.transact_write",
           "aws.dynamodb.condition",
           "aws.dynamodb.streams",
-          "aws.lambda.async_invoke",
+          "aws.lambda.async_delivery",
           "aws.s3.conditional_put",
           "aws.iam.denial",
           "aws.alb.framing"
@@ -4137,6 +4137,7 @@
           "aws.dynamodb.ttl",
           "aws.iam.denial",
           "aws.kms.encryption_context",
+          "aws.lambda.async_delivery",
           "aws.lambda.microvm",
           "aws.s3.bounded_get",
           "aws.s3.conditional_put",
@@ -5538,7 +5539,8 @@
       "aex-live-session-stream-api"
     ],
     "aws.lambda.async_delivery": [
-      "aex-live-central-control-worker"
+      "aex-live-central-control-worker",
+      "aex-live-session-stream-api"
     ],
     "aws.lambda.microvm": [
       "aex-live-brain-mux",

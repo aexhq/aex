@@ -131,8 +131,7 @@ impl ExternalActionCompiler for AuthorizationProjectionCompiler {
         if *workspace != binding.workspace || *organization != binding.organization {
             return Err(cross_tenant());
         }
-        let (pk, sk) = crate::projection::placement_key(*workspace);
-        let physical = crate::keys::Key { pk, sk };
+        let physical = crate::keys::authorization_placement(*workspace);
         output.condition_check(
             Participant::AUTHZ_PLACEMENT,
             aws_sdk_dynamodb::types::ConditionCheck::builder()

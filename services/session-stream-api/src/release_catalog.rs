@@ -13,7 +13,7 @@ include!(concat!(env!("OUT_DIR"), "/model_catalog_release.rs"));
 
 /// Why the release catalog cannot become session admission authority.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ReleaseCatalogError {
+pub enum SessionStreamReleaseCatalogError {
     /// This binary was not built by the catalog-bound release recipe.
     #[error("model catalog release binding unavailable: {0}")]
     MissingReleaseInputs(&'static str),
@@ -37,14 +37,18 @@ pub struct ReleaseCatalog {
 ///
 /// Missing build bindings, invalid collection authority, or a zero-serviceable
 /// admission head refuses startup before the listener binds.
-pub fn load(now: aex_wire::types::Timestamp) -> Result<ReleaseCatalog, ReleaseCatalogError> {
+pub fn load(
+    now: aex_wire::types::Timestamp,
+) -> Result<ReleaseCatalog, SessionStreamReleaseCatalogError> {
     if let Some(reason) = RELEASE_INPUT_BLOCKER {
-        return Err(ReleaseCatalogError::MissingReleaseInputs(reason));
+        return Err(SessionStreamReleaseCatalogError::MissingReleaseInputs(
+            reason,
+        ));
     }
     let keys = TrustedKeys::new(RELEASE_TRUSTED_KEYS);
     let inner = VerifiedCatalogCollection::load(RELEASE_CATALOG_COLLECTION, &keys, now)?;
     if !inner.is_service_capable() {
-        return Err(ReleaseCatalogError::NoActiveModels);
+        return Err(SessionStreamReleaseCatalogError::NoActiveModels);
     }
     Ok(ReleaseCatalog { inner })
 }
@@ -83,14 +87,17 @@ impl ModelQualifier for ReleaseCatalog {
 
 #[cfg(test)]
 mod tests {
-    use super::{RELEASE_INPUT_BLOCKER, ReleaseCatalogError, load};
+    use super::{RELEASE_INPUT_BLOCKER, SessionStreamReleaseCatalogError, load};
 
     #[test]
     fn an_ordinary_build_cannot_become_session_admission_authority() {
         if let Some(reason) = RELEASE_INPUT_BLOCKER {
             let error = load(aex_model_catalog::fixture::at(1_800_000_000_000))
                 .expect_err("ordinary builds carry no release authority");
-            assert_eq!(error, ReleaseCatalogError::MissingReleaseInputs(reason));
+            assert_eq!(
+                error,
+                SessionStreamReleaseCatalogError::MissingReleaseInputs(reason)
+            );
             assert!(reason.contains("real publisher P-256 trust-root set"));
             assert!(reason.contains("signed model-catalog collection"));
         }

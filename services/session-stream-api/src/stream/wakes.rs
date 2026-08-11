@@ -89,7 +89,7 @@ pub struct StreamSpec {
 
 /// Startup or discovery failure.
 #[derive(Debug, thiserror::Error)]
-pub enum WakeError {
+pub enum SessionStreamWakeError {
     /// Provider call failed without exposing a provider response body.
     #[error("{operation} failed for {authority:?}: {reason}")]
     Provider {
@@ -137,7 +137,7 @@ pub async fn start(
     specs: Vec<StreamSpec>,
     hub: WakeHub,
     counters: Arc<ReadCounters>,
-) -> Result<WakeReaders, WakeError> {
+) -> Result<WakeReaders, SessionStreamWakeError> {
     let resolver = WorkspaceResolver::new(table, session_table);
     let mut tasks = Vec::with_capacity(specs.len());
     for spec in specs {
@@ -157,7 +157,7 @@ pub async fn start(
 async fn describe(
     client: &aws_sdk_dynamodbstreams::Client,
     spec: &StreamSpec,
-) -> Result<Vec<Shard>, WakeError> {
+) -> Result<Vec<Shard>, SessionStreamWakeError> {
     let mut after: Option<String> = None;
     let mut shards = Vec::new();
     loop {
@@ -165,23 +165,28 @@ async fn describe(
         if let Some(after) = after.as_deref() {
             request = request.exclusive_start_shard_id(after);
         }
-        let output = request.send().await.map_err(|error| WakeError::Provider {
-            operation: "DescribeStream",
-            authority: spec.authority,
-            reason: error.to_string(),
-        })?;
-        let description = output.stream_description().ok_or(WakeError::Contract {
-            authority: spec.authority,
-            reason: "the provider omitted StreamDescription",
-        })?;
+        let output = request
+            .send()
+            .await
+            .map_err(|error| SessionStreamWakeError::Provider {
+                operation: "DescribeStream",
+                authority: spec.authority,
+                reason: error.to_string(),
+            })?;
+        let description = output
+            .stream_description()
+            .ok_or(SessionStreamWakeError::Contract {
+                authority: spec.authority,
+                reason: "the provider omitted StreamDescription",
+            })?;
         if description.stream_status() != Some(&StreamStatus::Enabled) {
-            return Err(WakeError::Contract {
+            return Err(SessionStreamWakeError::Contract {
                 authority: spec.authority,
                 reason: "the stream is not enabled",
             });
         }
         if description.stream_view_type() != Some(&StreamViewType::KeysOnly) {
-            return Err(WakeError::Contract {
+            return Err(SessionStreamWakeError::Contract {
                 authority: spec.authority,
                 reason: "StreamViewType must be KEYS_ONLY",
             });
