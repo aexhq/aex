@@ -9,9 +9,12 @@ test("generation is byte-identical and covers every generated operation", () => 
   const first = mkdtempSync(resolve(tmpdir(), "aex-site-first-"));
   const second = mkdtempSync(resolve(tmpdir(), "aex-site-second-"));
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (() => {
-    throw new Error("static documentation generation attempted a network request");
-  }) as typeof fetch;
+  globalThis.fetch = Object.assign(
+    async () => {
+      throw new Error("static documentation generation attempted a network request");
+    },
+    { preconnect: originalFetch.preconnect },
+  );
   try {
     generateSiteViews(first);
     generateSiteViews(second);
@@ -55,6 +58,7 @@ test("generation is byte-identical and covers every generated operation", () => 
 }, 120_000);
 
 test("the site is configured as a static export", async () => {
-  const { default: config } = await import("../next.config.mjs");
+  const configPath = resolve(import.meta.dir, "../next.config.mjs");
+  const { default: config } = (await import(configPath)) as { default: { output?: string } };
   expect(config.output).toBe("export");
 });
