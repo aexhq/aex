@@ -13,12 +13,12 @@
 //! that the one-append case produces exactly [`DECISION_ORDER`]. Sharing the item shapes
 //! matters; sharing one function that cannot express the decision does not.
 
-use aex_brain_app::ports::{DecisionContext, SessionAuthority};
+use aex_brain_app::ports::{DecisionContext, RunBoundaryAuthority, SessionAuthority};
 use aex_brain_domain::budget::{BudgetDelta, Dimension};
 use aex_brain_domain::child::{ChildOutcome, ChildState};
 use aex_brain_domain::commit::{
     ChildWrite, DecisionCommit, EffectWrite, JoinWrite, PublicMessagePart, PublicMessageRole,
-    RunTransition, WakeCreate,
+    RunTransition, SessionHeadTransition, WakeCreate,
 };
 use aex_brain_domain::ids::{AgentKey, CancelEpoch};
 use aex_brain_domain::journal::FinishReason;
@@ -902,27 +902,58 @@ fn terminal_commit(
     commit: &DecisionCommit,
     agent: aex_wire::ids::AgentId,
 ) -> Result<Option<aex_session_domain::TerminalCommit>, PlanError> {
-    let (Some(run), Some(session)) = (&commit.run, &commit.session) else {
-        if commit.run.is_some() || commit.session.is_some() {
-            return Err(PlanError::Boundary(
-                "run and session transitions must be present together".to_owned(),
-            ));
-        }
-        if !commit.session_events.is_empty()
-            || commit.appends.iter().any(|record| {
-                matches!(
-                    record,
-                    aex_brain_domain::journal::JournalRecord::RunFinished { .. }
-                )
-            })
-        {
-            return Err(PlanError::Boundary(
-                "a run-finished record or completion event requires the terminal transition"
-                    .to_owned(),
-            ));
-        }
+    let Some((run, session)) = terminal_transitions(commit)? else {
         return Ok(None);
     };
+    let active = validate_terminal_authority(context, run, session)?;
+    validate_terminal_journal(commit, run)?;
+    validate_terminal_event(context, commit, run, active)?;
+    let fence = AgentFence(commit.guard.fence.0);
+    let attempt = TerminalAttempt {
+        run: run.run,
+        outcome: terminal_outcome(run, &active.run)?,
+        at: translate::at(context.now, "run terminal instant").map_err(BrainKeyError::from)?,
+        session_revision_seen: active.session.revision,
+        cancellation_seen: active.session.cancellation,
+        agent_fence: fence,
+        usage_closure: UsageClosureId(active.run.id.uuid7()),
+    };
+    claim_terminal(&active.run, &active.session, agent, fence, &[], &attempt)
+        .map(Some)
+        .map_err(|error| PlanError::Boundary(error.to_string()))
+}
+
+fn terminal_transitions(
+    commit: &DecisionCommit,
+) -> Result<Option<(&RunTransition, &SessionHeadTransition)>, PlanError> {
+    match (&commit.run, &commit.session) {
+        (Some(run), Some(session)) => Ok(Some((run, session))),
+        (Some(_), None) | (None, Some(_)) => Err(PlanError::Boundary(
+            "run and session transitions must be present together".to_owned(),
+        )),
+        (None, None)
+            if !commit.session_events.is_empty()
+                || commit.appends.iter().any(|record| {
+                    matches!(
+                        record,
+                        aex_brain_domain::journal::JournalRecord::RunFinished { .. }
+                    )
+                }) =>
+        {
+            Err(PlanError::Boundary(
+                "a run-finished record or completion event requires the terminal transition"
+                    .to_owned(),
+            ))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+fn validate_terminal_authority<'a>(
+    context: &'a DecisionContext,
+    run: &RunTransition,
+    session: &SessionHeadTransition,
+) -> Result<&'a RunBoundaryAuthority, PlanError> {
     if session.status != "idle" {
         return Err(PlanError::Boundary(
             "a root run boundary must return the session to idle".to_owned(),
@@ -940,6 +971,13 @@ fn terminal_commit(
             "the boundary disagrees with its strongly-read session/run authority".to_owned(),
         ));
     }
+    Ok(active)
+}
+
+fn validate_terminal_journal(
+    commit: &DecisionCommit,
+    run: &RunTransition,
+) -> Result<(), PlanError> {
     let finished = commit.appends.last().ok_or_else(|| {
         PlanError::Boundary("a root run boundary has no final journal record".to_owned())
     })?;
@@ -976,6 +1014,15 @@ fn terminal_commit(
             "RunFinished disagrees with the terminal transition".to_owned(),
         ));
     }
+    Ok(())
+}
+
+fn validate_terminal_event(
+    context: &DecisionContext,
+    commit: &DecisionCommit,
+    run: &RunTransition,
+    active: &RunBoundaryAuthority,
+) -> Result<(), PlanError> {
     let [event] = commit.session_events.as_slice() else {
         return Err(PlanError::Boundary(
             "a root run boundary requires exactly one public completion event".to_owned(),
@@ -998,25 +1045,7 @@ fn terminal_commit(
             "the public completion event disagrees with the run boundary".to_owned(),
         ));
     }
-    let attempt = TerminalAttempt {
-        run: run.run,
-        outcome: terminal_outcome(run, &active.run)?,
-        at: translate::at(context.now, "run terminal instant").map_err(BrainKeyError::from)?,
-        session_revision_seen: active.session.revision,
-        cancellation_seen: active.session.cancellation,
-        agent_fence: AgentFence(commit.guard.fence.0),
-        usage_closure: UsageClosureId(active.run.id.uuid7()),
-    };
-    claim_terminal(
-        &active.run,
-        &active.session,
-        agent,
-        AgentFence(commit.guard.fence.0),
-        &[],
-        &attempt,
-    )
-    .map(Some)
-    .map_err(|error| PlanError::Boundary(error.to_string()))
+    Ok(())
 }
 
 const fn finish_outcome(reason: FinishReason) -> &'static str {
