@@ -774,12 +774,13 @@ impl SessionTransaction {
 
     /// The largest number of items a create transaction may ever carry.
     ///
-    /// Five always, plus custody when the request named secrets. This is a
+    /// Three always: the ready public head, exact receipt, and a condition on
+    /// the already-started root control/journal authority. This is a
     /// **constant**, not a bound to grow into: a create whose action count grew
     /// with request size would be a create whose tail latency and
     /// `TransactionConflictException` rate grew with request size, which the
     /// performance-first ordering forbids (A D-5).
-    pub const CREATE_MAX_ACTIONS: usize = 4;
+    pub const CREATE_MAX_ACTIONS: usize = 3;
 
     /// Enforces A D-1's create membership rule.
     ///
@@ -788,9 +789,8 @@ impl SessionTransaction {
     /// instead of silently becoming a legal create participant.
     fn check_create_participants(&self) -> Result<(), PlanError> {
         let mut head: Option<&Session> = None;
-        let mut root_agent = 0_usize;
+        let mut root_writes = 0_usize;
         let mut receipts = 0_usize;
-        let mut custody = 0_usize;
         for write in &self.writes {
             match write {
                 Write::PutSessionHead(session) => {
@@ -799,9 +799,8 @@ impl SessionTransaction {
                     }
                     head = Some(session);
                 }
-                Write::PutAgentControl(_) => root_agent += 1,
+                Write::PutAgentControl(_) => root_writes += 1,
                 Write::PutIdempotencyReceipt(_) => receipts += 1,
-                Write::PutCustody(_) => custody += 1,
                 Write::PutMessage(_)
                 | Write::PutSealedMessage(_)
                 | Write::PutRun(_)
@@ -817,12 +816,12 @@ impl SessionTransaction {
                 | Write::PutRegistryPointer(_)
                 | Write::PutUpload(_)
                 | Write::PutGrant(_)
+                | Write::PutCustody(_)
                 | Write::PutSecret(_)
                 | Write::PutTombstone(_)
                 | Write::DeleteItem(_) => {
                     return Err(create_error(
-                        "a create writes only the head, its root agent, its receipt, and its first \
-                         custody",
+                        "ready publication writes only the public head and exact receipt",
                     ));
                 }
             }
@@ -830,10 +829,9 @@ impl SessionTransaction {
         let Some(_head) = head else {
             return Err(create_error("a create writes exactly one session head"));
         };
-        if root_agent != 1 {
+        if root_writes != 0 {
             return Err(create_error(
-                "a create writes exactly one root agent control record; a head whose root agent \
-                 does not exist answers 404 to the reader the 201 just invited",
+                "ready publication must not overwrite the root control whose AgentStarted tail it conditions on",
             ));
         }
         if receipts != 1 {
@@ -843,8 +841,19 @@ impl SessionTransaction {
                  one key",
             ));
         }
-        if custody > 1 {
-            return Err(create_error("a create writes at most one custody record"));
+        let head = head.expect("checked above");
+        let has_root_revision = self.conditions.iter().any(|condition| {
+            matches!(condition, Condition::AgentRevision { session, agent, .. }
+                if *session == head.id && *agent == head.root_agent)
+        });
+        let has_root_tail = self.conditions.iter().any(|condition| {
+            matches!(condition, Condition::JournalTail { session, agent, .. }
+                if *session == head.id && *agent == head.root_agent)
+        });
+        if !has_root_revision || !has_root_tail {
+            return Err(create_error(
+                "ready publication must condition on the elected root AgentStarted revision and journal tail",
+            ));
         }
         Ok(())
     }

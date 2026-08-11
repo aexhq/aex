@@ -6,10 +6,9 @@
 
 use aex_operation_domain::TransitionError;
 use aex_operation_domain::cursor::CursorError;
-use aex_secret_domain::CustodyRejection;
 use aex_session_domain::{
-    ApprovalRejection, DeletionRejection, PauseRejection, SessionDomainRunError, SessionError,
-    TerminalRejection,
+    ApprovalRejection, DeletionRejection, LifecycleError, PauseRejection, SessionDomainRunError,
+    SessionError, TerminalRejection,
 };
 use aex_wire::canonical::CanonicalError;
 use aex_wire::error::ErrorCode;
@@ -49,9 +48,9 @@ pub enum AppError {
     /// record a position the envelope cannot hold.
     #[error(transparent)]
     Cursor(#[from] CursorError),
-    /// Credential custody refused an admission or rebind.
+    /// The retained-generation lifecycle refused a transition.
     #[error(transparent)]
-    Custody(#[from] CustodyRejection),
+    Lifecycle(#[from] LifecycleError),
     /// A typed public operation result could not be canonicalized.
     #[error(transparent)]
     Canonical(#[from] CanonicalError),
@@ -80,9 +79,9 @@ impl AppError {
             | Self::Canonical(_) => ErrorCode::InternalError,
             Self::Paused(rejection) => rejection.code,
             Self::Session(SessionError::NotIdle { .. })
-            | Self::Custody(CustodyRejection::NotTrueIdle(_)) => ErrorCode::SessionNotIdle,
+            | Self::Lifecycle(LifecycleError::SessionBusy) => ErrorCode::SessionNotIdle,
             Self::Session(SessionError::Deleted(_))
-            | Self::Deletion(DeletionRejection::Purged(_)) => ErrorCode::SessionDeleted,
+            | Self::Deletion(DeletionRejection::Deleted(_)) => ErrorCode::SessionDeleted,
             Self::Approval(ApprovalRejection::NotFound) => ErrorCode::ApprovalNotFound,
             Self::Approval(ApprovalRejection::AlreadyResolved(_)) => {
                 ErrorCode::ApprovalAlreadyResolved
@@ -90,13 +89,13 @@ impl AppError {
             Self::Approval(ApprovalRejection::BindingChanged { .. }) => {
                 ErrorCode::ApprovalBindingChanged
             }
-            Self::Deletion(DeletionRejection::PurgeInProgress(_)) => ErrorCode::DeletionInProgress,
+            Self::Deletion(DeletionRejection::InProgress(_)) => ErrorCode::DeletionInProgress,
             Self::Session(_)
             | Self::Run(_)
             | Self::Terminal(_)
             | Self::Approval(_)
             | Self::Deletion(_)
-            | Self::Custody(_) => ErrorCode::PreconditionFailed,
+            | Self::Lifecycle(_) => ErrorCode::PreconditionFailed,
             Self::Conflict(code) => *code,
         }
     }

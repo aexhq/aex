@@ -10,7 +10,6 @@ use std::collections::BTreeSet;
 use aex_internal_contracts::RunId;
 use aex_operation_domain::Operation;
 use aex_operation_domain::operation::OperationVersion;
-use aex_secret_domain::{SecretName, SessionCustody, TrueIdle, WorkspaceSecret};
 use aex_session_domain::{
     AccountProjection, AgentControl, EffectiveLimits, IdempotencyIdentity, IdempotencyReceipt,
     JournalPage, JournalSeq, Run, Session,
@@ -265,8 +264,6 @@ pub struct ProviderCredentialBinding {
     pub credential: aex_wire::ids::ProviderCredentialId,
     /// Which provider it is for.
     pub provider: aex_wire::provider::ProviderId,
-    /// The workspace secret holding the key.
-    pub secret_name: SecretName,
     /// The secret generation bound at registration.
     pub source_generation: u64,
     /// The binding's monotone concurrency token.
@@ -275,19 +272,9 @@ pub struct ProviderCredentialBinding {
     pub state: CredentialState,
 }
 
-/// Reads secret custody.
+/// Reads dedicated BYOK provider credentials.
 #[async_trait::async_trait]
-pub trait SecretCustodyReader: Send + Sync {
-    /// Several workspace secrets in one read.
-    async fn read_secrets(
-        &self,
-        workspace: WorkspaceId,
-        names: &[SecretName],
-    ) -> Result<Vec<WorkspaceSecret>, PortError>;
-
-    /// One session's custody, when it has any.
-    async fn read_custody(&self, session: SessionId) -> Result<Option<SessionCustody>, PortError>;
-
+pub trait ProviderCredentialReader: Send + Sync {
     /// One provider-credential binding, when the workspace has it.
     ///
     /// `Ok(None)` is "this workspace has no such binding" and becomes
@@ -347,13 +334,6 @@ pub trait AccountStateReader: Send + Sync {
         &self,
         organization: OrganizationId,
     ) -> Result<AccountProjection, PortError>;
-}
-
-/// Reads runtime idleness for custody-sensitive commands.
-#[async_trait::async_trait]
-pub trait ContinuityReader: Send + Sync {
-    /// The session's idle evidence.
-    async fn true_idle(&self, session: SessionId) -> Result<TrueIdle, PortError>;
 }
 
 /// What kind of thing a live path names.
@@ -605,8 +585,8 @@ pub struct AppContext<'a> {
     pub sessions: &'a dyn SessionReader,
     /// The named registry.
     pub registry: &'a dyn RegistryReader,
-    /// Secret custody.
-    pub secrets: &'a dyn SecretCustodyReader,
+    /// Dedicated BYOK provider credentials.
+    pub credentials: &'a dyn ProviderCredentialReader,
     /// The signed model catalog, behind a synchronous seam. A command-only
     /// composition may omit it; session creation refuses that composition
     /// before reading any request-selected authority.
@@ -618,8 +598,6 @@ pub struct AppContext<'a> {
     pub limits: &'a dyn LimitsReader,
     /// The account projection.
     pub accounts: &'a dyn AccountStateReader,
-    /// Runtime continuity.
-    pub continuity: &'a dyn ContinuityReader,
     /// The live workspace.
     pub live: &'a dyn LiveWorkspaceReader,
 }

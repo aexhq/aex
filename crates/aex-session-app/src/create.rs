@@ -1,40 +1,33 @@
 //! Session admission.
 //!
-//! One transaction, **constant** in request size: five items always plus one
-//! conditional, whatever the request selected (A D-1, A D-5). The 1088
-//! registered names, 64 secrets and 64 packages a maximal request may carry all
-//! collapse into values that ride existing items — the registered names and packages into
-//! the resolved-configuration document on the head, and the secrets into one custody record.
+//! Session creation has a private preparation/election phase and a public
+//! readiness publication phase. The public head and exact response receipt do
+//! not exist until the exact provider generation is launched, every selected
+//! workspace-file revision is materialized, and the root `AgentStarted` fact
+//! is durable.
 //!
 //! # What this use case deliberately does not do
 //!
-//! **It does not look up the receipt.** The receipt's conditional
-//! `attribute_not_exists` put *is* the concurrency election (A D-6), and
-//! `TransactWriteItems` is all-or-nothing, so a caller that loses the receipt
-//! writes nothing at all. A pre-read would be a second, weaker election that
-//! costs a round trip on every create and still could not decide the race. The
-//! replay is resolved from the refused commit, where the answer is authoritative.
+//! **It reads the receipt before volatile planning.** An exact retry therefore
+//! returns the winner's bytes even after a credential is revoked, a registry
+//! file moves or an account pauses. The private claim elects concurrent first
+//! attempts; the conditional final receipt closes publication races.
 //!
-//! **It does not write the Hands generation rows.** It mints the
-//! [`GenerationId`] and pins the whole immutable definition on the head; the
-//! `runtime-activity` generation head and `CURRENT` pointer are derived from
-//! that pin, idempotently, by the first path that needs them (A D-2). No caller
-//! can observe their absence at create, because H-LAZY guarantees no provider
-//! call has happened and `liveGenerationId` is optional.
-//!
-//! **It carries no read-only condition check and no session counter** (A D-7,
-//! A D-8). Every pre-transaction read is eventually consistent and every stale
-//! outcome is either self-correcting or refused loudly downstream.
+//! The serving adapter must durably elect and reload the prepared identities
+//! before making provider or guest effects. A concurrent loser must reuse that
+//! claim; it must never mint and launch a second generation. This module keeps
+//! preparation and publication separate so an unready session cannot be
+//! projected accidentally.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use aex_content_domain::RegistryKind;
-use aex_secret_domain::{OwnerKeyEdgeId, SecretName, admit_custody};
 use aex_session_domain::{
     AgentControl, AgentKind, AgentStatus, CommandClass, DeletionGuard, IdempotencyIdentity,
-    IdempotencyReceipt, OpenEffectSet, PinnedRuntime, ReceiptKey, ReceiptOutcome,
-    ResolvedConfigAuthority, ResourceId, ResourceKind, ResponseBody, Session, SessionMetadata,
-    SessionRevision, SessionStatus, WorkAdmission, pause_gate,
+    IdempotencyReceipt, OpenEffectSet, PinnedRuntime, ProviderCredentialPin, ReceiptKey,
+    ReceiptOutcome, ReplayDecision, ResolvedConfigAuthority, ResourceId, ResourceKind,
+    ResponseBody, Session, SessionLifecycle, SessionMetadata, SessionRevision, SessionStatus,
+    WorkAdmission, pause_gate, replay,
 };
 use aex_wire::canonical::{CanonicalJson, to_jcs_string};
 use aex_wire::error::ErrorCode;
@@ -56,6 +49,13 @@ use crate::ports::AppContext;
 /// key is the whole identity.
 pub const CREATE_SCOPE: &str = "session.create";
 
+/// Synchronous creation's non-adjustable transport-honesty ceiling.
+///
+/// The effective revisioned workspace limit may lower this value, but may not
+/// raise it: the smallest supported endpoint needs to finish launch and the
+/// complete initial transfer within the serving request budget.
+pub const INITIAL_FILES_HARD_MAX_BYTES: u64 = 536_870_912;
+
 /// Admit one session.
 ///
 /// Not `Eq`: the request carries `MetadataValue`, whose numeric arm is an
@@ -73,6 +73,83 @@ pub struct CreateSession {
     pub request: models::SessionCreateRequest,
 }
 
+/// One selected registered file, bound to the exact revision create resolved.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedInitialFile {
+    /// The registered name selected by the request.
+    pub name: ResourceName,
+    /// The exact registry revision.
+    pub revision: u64,
+    /// The exact strong entity tag.
+    pub etag: aex_wire::types::ETag,
+    /// The canonical registered-file value used for materialization.
+    pub value: models::RegisteredFileRead,
+}
+
+impl ResolvedInitialFile {
+    /// Exact payload byte size declared by the registered content reference.
+    pub fn size_bytes(&self) -> Result<u64, AppError> {
+        u64::try_from(self.value.content.size_bytes.get()).map_err(|_| {
+            AppError::Port(crate::ports::PortError::Corrupt {
+                kind: "registered file",
+                reason: "the content size does not fit the runtime transfer authority",
+            })
+        })
+    }
+}
+
+/// The immutable facts a private create claim must elect before side effects.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedSessionCreate {
+    /// Authenticated create envelope.
+    pub command: CreateSession,
+    /// The final session identity.
+    pub session: SessionId,
+    /// The root agent identity.
+    pub root_agent: AgentId,
+    /// Exact provider generation identity.
+    pub generation: GenerationId,
+    /// Immutable runtime definition.
+    pub pinned_runtime: PinnedRuntime,
+    /// Dedicated BYOK credential version.
+    pub provider_credential: ProviderCredentialPin,
+    /// Complete resolved public configuration.
+    pub resolved: ResolvedConfigAuthority,
+    /// Canonical caller metadata.
+    pub metadata: Option<SessionMetadata>,
+    /// Selected immutable registry revisions in request order.
+    pub initial_files: Vec<ResolvedInitialFile>,
+    /// When the private claim was prepared.
+    pub prepared_at: aex_wire::types::Timestamp,
+}
+
+/// Readiness evidence supplied only after all create effects finish.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadySessionLaunch {
+    /// Exact generation the provider launched.
+    pub generation: GenerationId,
+    /// Provider-authoritative launch instant.
+    pub launched_at: aex_wire::types::Timestamp,
+    /// Registered names and revisions materialized into the guest, in order.
+    pub materialized_files: Vec<(ResourceName, u64)>,
+    /// Root control after its durable `AgentStarted` journal append.
+    pub root_agent: AgentControl,
+}
+
+/// Either a private preparation or the exact stored response of an earlier winner.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrepareSessionCreateOutcome {
+    /// No final receipt existed; this value must be durably elected before effects.
+    Prepared(Box<PreparedSessionCreate>),
+    /// The same identity already committed. No volatile dependency was read.
+    Replayed {
+        /// The generated public resource stored by the winner.
+        session: models::Session,
+        /// The exact canonical response bytes stored in the receipt.
+        canonical_response: Vec<u8>,
+    },
+}
+
 /// Admits a session and everything born with it.
 ///
 /// # Errors
@@ -81,10 +158,50 @@ pub struct CreateSession {
 /// unqualified provider and model pair, an absent or revoked provider
 /// credential, a network policy or package ecosystem this deployment cannot
 /// serve, a workspace over its ceiling, or a plan that is not submittable.
-pub async fn create_session(
+pub async fn prepare_session_create(
     context: &AppContext<'_>,
     command: &CreateSession,
-) -> Result<Planned<Session>, AppError> {
+) -> Result<PrepareSessionCreateOutcome, AppError> {
+    if let Some(stored) = context.sessions.load_receipt(&command.identity).await? {
+        return match replay(&stored, &command.identity.intent()) {
+            ReplayDecision::Conflict(code) => Err(AppError::Conflict(code)),
+            ReplayDecision::ReturnOriginal(ReceiptOutcome::Resource {
+                kind: ResourceKind::Session,
+                id,
+                response,
+            }) => {
+                let bytes =
+                    response
+                        .inline()
+                        .ok_or(AppError::Port(crate::ports::PortError::Corrupt {
+                            kind: "session create receipt",
+                            reason: "the stored session response is not inline",
+                        }))?;
+                let session: models::Session = serde_json::from_slice(bytes).map_err(|_| {
+                    AppError::Port(crate::ports::PortError::Corrupt {
+                        kind: "session create receipt",
+                        reason: "the stored session response is malformed",
+                    })
+                })?;
+                if id.0 != session.id.to_string() {
+                    return Err(AppError::Port(crate::ports::PortError::Corrupt {
+                        kind: "session create receipt",
+                        reason: "the stored resource id disagrees with its response",
+                    }));
+                }
+                Ok(PrepareSessionCreateOutcome::Replayed {
+                    session,
+                    canonical_response: bytes.to_vec(),
+                })
+            }
+            ReplayDecision::ReturnOriginal(_) => {
+                Err(AppError::Port(crate::ports::PortError::Corrupt {
+                    kind: "session create receipt",
+                    reason: "the stored receipt does not name a session resource",
+                }))
+            }
+        };
+    }
     let prepared = prepare_create(context, command).await?;
 
     let session_id: SessionId = aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
@@ -103,17 +220,6 @@ pub async fn create_session(
         prepared.limits_revision,
     )?;
 
-    let custody = if command
-        .request
-        .credentials
-        .as_ref()
-        .is_some_and(|credentials| !credentials.secrets.is_empty())
-    {
-        Some(prepare_custody(context, command, session_id, now).await?)
-    } else {
-        None
-    };
-
     let resolved = resolved_config(
         command,
         &prepared.qualified,
@@ -127,60 +233,141 @@ pub async fn create_session(
         .map(canonical_metadata)
         .transpose()?;
 
+    Ok(PrepareSessionCreateOutcome::Prepared(Box::new(
+        PreparedSessionCreate {
+            command: command.clone(),
+            session: session_id,
+            root_agent,
+            generation,
+            pinned_runtime: pinned,
+            provider_credential: ProviderCredentialPin {
+                credential: prepared.credential.credential,
+                provider: prepared.credential.provider,
+                source_generation: prepared.credential.source_generation,
+                revision: prepared.credential.revision,
+            },
+            resolved,
+            metadata,
+            initial_files: prepared.initial_files,
+            prepared_at: now,
+        },
+    )))
+}
+
+/// Publishes a session only after exact-generation readiness is proven.
+///
+/// # Errors
+///
+/// Returns [`AppError`] if the evidence names another generation, omits or
+/// reorders an elected registered-file revision, lacks `AgentStarted`, or if
+/// the provider launch instant cannot express the fixed eight-hour fence.
+pub fn publish_ready_session(
+    prepared: &PreparedSessionCreate,
+    readiness: &ReadySessionLaunch,
+) -> Result<Planned<Session>, AppError> {
+    let expected_files = prepared
+        .initial_files
+        .iter()
+        .map(|file| (file.name.clone(), file.revision))
+        .collect::<Vec<_>>();
+    if readiness.generation != prepared.generation
+        || readiness.materialized_files != expected_files
+        || readiness.root_agent.id != prepared.root_agent
+        || readiness.root_agent.session != prepared.session
+        || readiness.root_agent.generation != Some(prepared.generation)
+        || readiness.root_agent.journal_tail == aex_session_domain::JournalSeq::INITIAL
+        || readiness.root_agent.last_entry.is_none()
+    {
+        return Err(AppError::Port(crate::ports::PortError::Corrupt {
+            kind: "session create readiness",
+            reason: "readiness does not prove the elected generation, file revisions and root AgentStarted",
+        }));
+    }
     let session = Session {
-        id: session_id,
-        workspace: command.workspace,
-        organization: command.organization,
+        id: prepared.session,
+        workspace: prepared.command.workspace,
+        organization: prepared.command.organization,
         status: SessionStatus::Idle,
+        lifecycle: SessionLifecycle::launched(prepared.generation, readiness.launched_at).map_err(
+            |_| {
+                AppError::Port(crate::ports::PortError::Corrupt {
+                    kind: "session lifecycle",
+                    reason: "the current instant cannot express the eight-hour provider lifetime",
+                })
+            },
+        )?,
         revision: SessionRevision::INITIAL,
         active_run: None,
         work_admission: WorkAdmission::Open,
         cancellation: aex_session_domain::CancellationEpoch::INITIAL,
-        deletion: DeletionGuard::live(session_id),
+        deletion: DeletionGuard::live(prepared.session),
         mutation_guard: None,
-        root_agent,
-        // The generation that is *live*. Nothing is running: H-LAZY means the
-        // create makes no provider call at all.
-        generation: None,
-        pinned_runtime: pinned,
-        custody_revision: custody
-            .as_ref()
-            .map_or(aex_secret_domain::CustodyRevision::FIRST, |custody| {
-                custody.revision
-            }),
+        root_agent: prepared.root_agent,
+        generation: Some(prepared.generation),
+        pinned_runtime: prepared.pinned_runtime.clone(),
+        provider_credential: prepared.provider_credential,
         lineage: aex_session_domain::Lineage::ROOT,
-        resolved,
-        metadata,
-        created_at: now,
-        updated_at: now,
+        resolved: prepared.resolved.clone(),
+        metadata: prepared.metadata.clone(),
+        created_at: prepared.prepared_at,
+        updated_at: readiness.launched_at,
     };
 
     let receipt = IdempotencyReceipt {
-        key: ReceiptKey::of(CREATE_SCOPE, &command.identity).map_err(|_| {
+        key: ReceiptKey::of(CREATE_SCOPE, &prepared.command.identity).map_err(|_| {
             AppError::Port(crate::ports::PortError::Corrupt {
                 kind: "idempotency scope",
                 reason: "the create scope is a compile-time constant and must always be usable",
             })
         })?,
-        identity: command.identity.clone(),
-        intent: command.identity.intent(),
+        identity: prepared.command.identity.clone(),
+        intent: prepared.command.identity.intent(),
         outcome: ReceiptOutcome::Resource {
             kind: ResourceKind::Session,
-            id: ResourceId(session_id.to_string()),
+            id: ResourceId(prepared.session.to_string()),
             // The bytes that were sent, not a recipe for re-rendering them.
             response: ResponseBody::of(&crate::projection::canonical_session_bytes(&session)?),
         },
-        created_at: now,
+        created_at: readiness.launched_at,
         expires_at: None,
     };
 
-    let plan = build_plan(&session, root_agent_record(&session, now), receipt, custody);
+    let plan = build_plan(&session, &readiness.root_agent, receipt);
     plan.validate()?;
 
     Ok(Planned {
         plan,
         projected: session,
     })
+}
+
+/// Builds the root control row the private create claim owns before activation.
+///
+/// Brain appends `AgentStarted` to this exact control/journal authority. Final
+/// publication conditions on the resulting revision and tail and never
+/// overwrites them with an empty root.
+#[must_use]
+pub fn initial_root_agent(prepared: &PreparedSessionCreate) -> AgentControl {
+    AgentControl {
+        id: prepared.root_agent,
+        session: prepared.session,
+        kind: AgentKind::Root,
+        parent: None,
+        depth: 0,
+        status: AgentStatus::Idle,
+        revision: aex_session_domain::AgentRevision::INITIAL,
+        journal_tail: aex_session_domain::JournalSeq::INITIAL,
+        last_entry: None,
+        claim: None,
+        join: None,
+        budget: None,
+        open_effects: OpenEffectSet::default(),
+        pending_approval: None,
+        queue_reason: None,
+        generation: Some(prepared.generation),
+        terminal: None,
+        created_at: prepared.prepared_at,
+    }
 }
 
 struct PreparedCreate<'a> {
@@ -190,6 +377,8 @@ struct PreparedCreate<'a> {
     network: aex_runtime_control::generation::NetworkPolicy,
     limits_revision: u64,
     selectors: Vec<RegistrySelector>,
+    initial_files: Vec<ResolvedInitialFile>,
+    credential: crate::ports::ProviderCredentialBinding,
 }
 
 async fn prepare_create<'a>(
@@ -245,9 +434,14 @@ async fn prepare_create<'a>(
     if materialized_ceiling < 1 {
         return Err(AppError::Conflict(ErrorCode::LimitExceeded));
     }
+    let initial_file_ceiling = bundle
+        .limits
+        .require(LimitId::SessionInitialFilesBytes)
+        .map_err(|_| AppError::Port(crate::ports::PortError::NotFound { kind: "limit" }))?
+        .min(INITIAL_FILES_HARD_MAX_BYTES);
 
     let credential = context
-        .secrets
+        .credentials
         .read_provider_credential(command.workspace, command.request.provider_credential_id)
         .await?
         .ok_or(AppError::Conflict(ErrorCode::ProviderCredentialNotFound))?;
@@ -262,7 +456,8 @@ async fn prepare_create<'a>(
     }
 
     let selectors = selectors_of(command);
-    validate_registry_selection(context, command, &selectors).await?;
+    let initial_files =
+        resolve_initial_files(context, command, &selectors, initial_file_ceiling).await?;
 
     Ok(PreparedCreate {
         deployment,
@@ -271,30 +466,36 @@ async fn prepare_create<'a>(
         network,
         limits_revision: bundle.revision,
         selectors,
+        initial_files,
+        credential,
     })
 }
 
 /// The exactly-once transaction.
 fn build_plan(
     session: &Session,
-    root_agent: AgentControl,
+    root_agent: &AgentControl,
     receipt: IdempotencyReceipt,
-    custody: Option<aex_secret_domain::SessionCustody>,
 ) -> SessionTransaction {
     // Every guard targets an item this plan also writes, so each merges into
     // that write's own condition expression and the plan's action count is the
     // number of writes. There is not one read-only `ConditionCheck` (A D-7).
-    let mut conditions = vec![
+    let conditions = vec![
         Condition::ItemAbsent(ItemKey {
             family: TableFamily::SessionAuthority,
             partition: session.id.to_string(),
             sort: "HEAD".to_owned(),
         }),
-        Condition::ItemAbsent(ItemKey {
-            family: TableFamily::SessionAuthority,
-            partition: format!("{}#{}", session.id, session.root_agent),
-            sort: "CONTROL".to_owned(),
-        }),
+        Condition::AgentRevision {
+            session: session.id,
+            agent: root_agent.id,
+            expected: root_agent.revision,
+        },
+        Condition::JournalTail {
+            session: session.id,
+            agent: root_agent.id,
+            expected: root_agent.journal_tail,
+        },
         Condition::ItemAbsent(ItemKey {
             family: TableFamily::Idempotency,
             partition: receipt.key.scope().to_owned(),
@@ -302,60 +503,18 @@ fn build_plan(
         }),
     ];
 
-    let mut writes = vec![
+    let writes = vec![
         Write::PutSessionHead(Box::new(session.clone())),
-        Write::PutAgentControl(Box::new(root_agent)),
         Write::PutIdempotencyReceipt(Box::new(receipt)),
     ];
-
-    if let Some(custody) = custody {
-        conditions.push(Condition::ItemAbsent(ItemKey {
-            family: TableFamily::SecretCustody,
-            partition: session.id.to_string(),
-            sort: "CUSTODY".to_owned(),
-        }));
-        writes.push(Write::PutCustody(Box::new(custody)));
-    }
 
     SessionTransaction {
         intent: TransactionIntent::CreateSession,
         conditions,
         writes,
-        // No `session.created` event and no wake: nothing is runnable yet, and
-        // the head insert on `session-authority` already *is* the creation fact
-        // (A D-3).
+        // AgentStarted and materialization already committed behind the private
+        // claim. Publishing the head is the only public creation fact.
         after_commit: Vec::new(),
-    }
-}
-
-/// The session's root agent, at rest, bound to the generation the create pinned.
-fn root_agent_record(session: &Session, now: aex_wire::types::Timestamp) -> AgentControl {
-    AgentControl {
-        id: session.root_agent,
-        session: session.id,
-        kind: AgentKind::Root,
-        parent: None,
-        depth: 0,
-        // `Idle` is the root at rest and has no public child projection. A root
-        // is never born `Queued`: nothing has asked it to do anything.
-        status: AgentStatus::Idle,
-        revision: aex_session_domain::AgentRevision::INITIAL,
-        journal_tail: aex_session_domain::JournalSeq::INITIAL,
-        last_entry: None,
-        claim: None,
-        join: None,
-        // A root at rest has no run, so it has no run-local spend ceiling yet.
-        budget: None,
-        open_effects: OpenEffectSet::default(),
-        pending_approval: None,
-        queue_reason: None,
-        // The generation this agent will run in, decided with the head. Not
-        // `None`: the physical control row's generation is non-optional, and a
-        // root that names no generation could not be launched without inventing
-        // one.
-        generation: Some(session.pinned_runtime.generation()),
-        terminal: None,
-        created_at: now,
     }
 }
 
@@ -406,22 +565,16 @@ fn selectors_of(command: &CreateSession) -> Vec<RegistrySelector> {
     let Some(registered) = command.request.registered.as_ref() else {
         return Vec::new();
     };
-    let mut selectors = Vec::new();
-    let mut push = |kind: RegistryKind, names: Option<&Vec<ResourceName>>| {
-        for name in names.into_iter().flatten() {
-            selectors.push(RegistrySelector {
-                workspace: command.workspace,
-                kind,
-                name: name.clone(),
-            });
-        }
-    };
-    push(RegistryKind::File, registered.files.as_ref());
-    push(RegistryKind::Skill, registered.skills.as_ref());
-    push(RegistryKind::Tool, registered.tools.as_ref());
-    push(RegistryKind::Instruction, registered.instructions.as_ref());
-    push(RegistryKind::McpServer, registered.mcp_servers.as_ref());
-    selectors
+    registered
+        .files
+        .iter()
+        .flatten()
+        .map(|name| RegistrySelector {
+            workspace: command.workspace,
+            kind: RegistryKind::File,
+            name: name.clone(),
+        })
+        .collect()
 }
 
 /// Proves every registered name in the request exists in this workspace.
@@ -429,13 +582,14 @@ fn selectors_of(command: &CreateSession) -> Vec<RegistrySelector> {
 /// Session content is not copied, pinned, or sealed into an S3-backed filesystem root. The
 /// resolved configuration retains the requested registry names and the registry/content
 /// authorities continue to own their bodies independently of session lifetime.
-async fn validate_registry_selection(
+async fn resolve_initial_files(
     context: &AppContext<'_>,
     command: &CreateSession,
     selectors: &[RegistrySelector],
-) -> Result<(), AppError> {
+    ceiling: u64,
+) -> Result<Vec<ResolvedInitialFile>, AppError> {
     if selectors.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let pointers = context
         .registry
@@ -448,59 +602,58 @@ async fn validate_registry_selection(
             kind: "registered resource",
         }));
     }
-    Ok(())
-}
-
-/// The session's first credential custody, when the request named secrets.
-async fn prepare_custody(
-    context: &AppContext<'_>,
-    command: &CreateSession,
-    session: SessionId,
-    now: aex_wire::types::Timestamp,
-) -> Result<aex_secret_domain::SessionCustody, AppError> {
-    let names: Vec<SecretName> = command
-        .request
-        .credentials
-        .as_ref()
-        .map(|credentials| {
-            credentials
-                .secrets
-                .iter()
-                .map(|secret| secret.name.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    let unique: BTreeSet<&SecretName> = names.iter().collect();
-    if unique.len() != names.len() {
-        return Err(AppError::Custody(
-            aex_secret_domain::CustodyRejection::DuplicateName(
-                names
-                    .iter()
-                    .find(|name| names.iter().filter(|other| other == name).count() > 1)
-                    .cloned()
-                    .unwrap_or_else(|| names[0].clone()),
-            ),
-        ));
+    let mut by_name = BTreeMap::new();
+    for pointer in pointers {
+        if pointer.row.workspace != command.workspace || pointer.row.kind != RegistryKind::File {
+            return Err(AppError::Port(crate::ports::PortError::Corrupt {
+                kind: "registered file",
+                reason: "the registry reader returned a foreign selector",
+            }));
+        }
+        let name = pointer.row.name.clone();
+        if by_name.insert(name, pointer).is_some() {
+            return Err(AppError::Port(crate::ports::PortError::Corrupt {
+                kind: "registered file",
+                reason: "the registry reader returned one selector twice",
+            }));
+        }
     }
-    let selected = context
-        .secrets
-        .read_secrets(command.workspace, &names)
-        .await?;
-    if names
-        .iter()
-        .any(|name| !selected.iter().any(|secret| secret.name == *name))
-    {
-        return Err(crate::ports::PortError::NotFound { kind: "secret" }.into());
+    let mut total = 0_u64;
+    let mut resolved = Vec::with_capacity(selectors.len());
+    for selector in selectors {
+        let pointer = by_name.remove(&selector.name).ok_or(AppError::Port(
+            crate::ports::PortError::NotFound {
+                kind: "registered resource",
+            },
+        ))?;
+        let value: models::RegisteredFileRead = serde_json::from_str(pointer.value_doc.as_str())
+            .map_err(|_| {
+                AppError::Port(crate::ports::PortError::Corrupt {
+                    kind: "registered file",
+                    reason: "the value document is not a canonical registered-file value",
+                })
+            })?;
+        let file = ResolvedInitialFile {
+            name: selector.name.clone(),
+            revision: pointer.row.revision.0,
+            etag: pointer.row.etag,
+            value,
+        };
+        total = total
+            .checked_add(file.size_bytes()?)
+            .ok_or(AppError::Conflict(ErrorCode::LimitExceeded))?;
+        if total > ceiling {
+            return Err(AppError::Conflict(ErrorCode::LimitExceeded));
+        }
+        resolved.push(file);
     }
-    let edge = OwnerKeyEdgeId(context.ids.next_uuid_v7());
-    Ok(admit_custody(
-        session,
-        command.workspace,
-        None,
-        &selected,
-        edge,
-        now,
-    )?)
+    if !by_name.is_empty() {
+        return Err(AppError::Port(crate::ports::PortError::Corrupt {
+            kind: "registered file",
+            reason: "the registry reader returned an unrequested selector",
+        }));
+    }
+    Ok(resolved)
 }
 
 /// The canonical, content-addressed configuration the session resolved.
@@ -512,25 +665,14 @@ fn resolved_config(
 ) -> Result<ResolvedConfigAuthority, AppError> {
     use aex_runtime_control::shape::ShapeCapacity as _;
 
-    let mut registered = models::SessionRegisteredSelection {
-        files: None,
-        instructions: None,
-        mcp_servers: None,
-        skills: None,
-        tools: None,
+    let registered = models::SessionRegisteredSelection {
+        files: (!selectors.is_empty()).then(|| {
+            selectors
+                .iter()
+                .map(|selector| selector.name.clone())
+                .collect()
+        }),
     };
-    for selector in selectors {
-        let bucket = match selector.kind {
-            RegistryKind::File => &mut registered.files,
-            RegistryKind::Skill => &mut registered.skills,
-            RegistryKind::Tool => &mut registered.tools,
-            RegistryKind::Instruction => &mut registered.instructions,
-            RegistryKind::McpServer => &mut registered.mcp_servers,
-        };
-        bucket
-            .get_or_insert_with(Vec::new)
-            .push(selector.name.clone());
-    }
 
     let document = models::ResolvedConfig {
         approval_policy: command.request.approval_policy.clone().unwrap_or(
@@ -550,6 +692,12 @@ fn resolved_config(
             max_disk_gi_b: gibibytes(size.disk_bytes()),
             endpoint_bandwidth_m_bps: megabytes(size.network_bytes_per_second()),
             max_concurrent_connections: size.max_connections(),
+        },
+        lifecycle: models::SessionLifecyclePolicy {
+            idle_suspend_after_seconds: 180,
+            maximum_lifetime_seconds: 28_800,
+            resume_on_live_file_access: true,
+            resume_on_message: true,
         },
         model: command.request.model.clone(),
         network: models::ResolvedNetwork {

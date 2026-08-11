@@ -28,7 +28,11 @@ pub mod projection;
 pub mod testing;
 pub mod use_cases;
 
-pub use create::{CREATE_SCOPE, CreateSession, create_session};
+pub use create::{
+    CREATE_SCOPE, CreateSession, INITIAL_FILES_HARD_MAX_BYTES, PrepareSessionCreateOutcome,
+    PreparedSessionCreate, ReadySessionLaunch, ResolvedInitialFile, initial_root_agent,
+    prepare_session_create, publish_ready_session,
+};
 pub use error::AppError;
 pub use outcome::{Attempted, Observed, ProviderAnswer, Resolution, resolve};
 pub use plan::{
@@ -37,11 +41,11 @@ pub use plan::{
 };
 pub use ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext,
-    AuthorityCommitter, Clock, CommitError, CommitOutcome, ContinuityReader, CredentialState,
-    DeploymentFacts, IdFactory, LimitsBundle, LimitsReader, LiveEntry, LiveEntryKind,
-    LiveListQuery, LiveListing, LiveWorkspaceReader, ModelQualifier, PageBudget, PortError,
-    ProviderCredentialBinding, QualificationRefusal, QualifiedModel, RegistryReader,
-    SecretCustodyReader, SessionReader, SessionSnapshot, VersionedOperation,
+    AuthorityCommitter, Clock, CommitError, CommitOutcome, CredentialState, DeploymentFacts,
+    IdFactory, LimitsBundle, LimitsReader, LiveEntry, LiveEntryKind, LiveListQuery, LiveListing,
+    LiveWorkspaceReader, ModelQualifier, PageBudget, PortError, ProviderCredentialBinding,
+    ProviderCredentialReader, QualificationRefusal, QualifiedModel, RegistryReader, SessionReader,
+    SessionSnapshot, VersionedOperation,
 };
 pub use projection::{
     canonical_session_bytes, public_session, public_session_list_item, public_status,
