@@ -82,7 +82,7 @@ pub fn session_read_state<S: std::hash::BuildHasher>(
     if head_workspace(item) != Some(asserted_workspace) {
         return Err("workspaceId");
     }
-    match item_type {
+    match item_type.as_str() {
         "session_head" => match item
             .get("lifecycle")
             .and_then(|value| value.as_s().ok())

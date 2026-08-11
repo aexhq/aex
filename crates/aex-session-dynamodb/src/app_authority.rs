@@ -1666,6 +1666,7 @@ fn decode_cancel_target(item: &Item) -> Result<AgentCancelTarget, PortError> {
 
 #[cfg(test)]
 mod tests {
+    use aex_operation_domain::cursor::ContinuationCursor;
     use aex_session_app::plan::{Condition, SessionTransaction, TransactionIntent, Write};
     use aex_session_domain::testing::running_session;
 
@@ -1891,7 +1892,14 @@ mod tests {
             .condition_expression()
             .expect("both old fences are conditioned");
         assert!(guard.contains("cancelEpoch = :fromCancellation"), "{guard}");
-        assert!(guard.contains("revision"), "{guard}");
+        assert!(
+            update
+                .expression_attribute_names()
+                .expect("the revision guard uses an attribute-name placeholder")
+                .values()
+                .any(|attribute| attribute == "revision"),
+            "{guard}"
+        );
         assert!(
             guard.contains("attribute_not_exists(finishReason)"),
             "{guard}"
