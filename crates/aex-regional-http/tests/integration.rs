@@ -152,14 +152,14 @@ fn suffix<I: PrefixedId>(id: I) -> String {
 
 fn binding() -> CursorBinding {
     CursorBinding {
-        route: RouteId::SecretsList,
+        route: RouteId::SessionsList,
         principal_scope: [1; 32],
         region: Region::EuWest1,
         workspace_id: WorkspaceId::from_uuid7(Uuid7::compose(1_754_051_696_789, [2; 10])),
         session_id: None,
         query_hash: [0; 32],
         order: Order::Ascending,
-        snapshot: SnapshotToken::new("secrets").expect("a snapshot token"),
+        snapshot: SnapshotToken::new("sessions").expect("a snapshot token"),
     }
 }
 

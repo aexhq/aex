@@ -378,8 +378,8 @@ fn the_intent_is_salted_by_the_scope_rather_than_a_bare_body_digest() {
         principal: "key_1",
         organization: "org_1",
         workspace: workspace(1),
-        route: RouteId::SecretPut,
-        method: HttpMethod::Put,
+        route: RouteId::ProviderCredentialRegister,
+        method: HttpMethod::Post,
     };
     let second = IdentityContext {
         workspace: workspace(2),
@@ -576,14 +576,9 @@ fn every_generated_regional_route_has_exactly_one_planned_owner() {
             assert_eq!(route_owner(*id), None, "{id}");
         }
     }
-    assert_eq!(route_owner(RouteId::SecretPut), Some(RouteOwner::SecretApi));
     assert_eq!(
         route_owner(RouteId::ProviderCredentialRegister),
         Some(RouteOwner::SecretApi)
-    );
-    assert_eq!(
-        route_owner(RouteId::SecretGet),
-        Some(RouteOwner::SessionApi)
     );
     assert_eq!(
         route_owner(RouteId::SessionObservationsEventsListen),

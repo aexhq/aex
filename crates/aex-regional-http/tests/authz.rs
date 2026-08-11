@@ -151,14 +151,14 @@ fn a_cursor_ring_signs_under_its_current_key_and_verifies_under_an_overlap_key()
     )
     .expect("a well-formed ring");
     let binding = CursorBinding {
-        route: RouteId::SecretsList,
+        route: RouteId::SessionsList,
         principal_scope: [1; 32],
         region: Region::EuWest1,
         workspace_id: workspace(),
         session_id: None,
         query_hash: [0; 32],
         order: Order::Ascending,
-        snapshot: SnapshotToken::new("secrets").expect("a snapshot token"),
+        snapshot: SnapshotToken::new("sessions").expect("a snapshot token"),
     };
     let tuple = SortTuple::new(vec!["alpha".to_owned()]).expect("a tuple");
     let cursor = encode(ring.current(), &binding, &tuple, moment(1_000)).expect("a cursor");

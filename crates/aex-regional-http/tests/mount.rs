@@ -406,8 +406,8 @@ async fn a_refused_admission_never_reaches_the_dispatcher() {
         .router
         .oneshot(
             Request::builder()
-                .method("DELETE")
-                .uri(concrete_path(RouteId::SecretDelete))
+                .method("POST")
+                .uri(concrete_path(RouteId::ProviderCredentialRegister))
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -445,7 +445,7 @@ async fn the_declared_envelope_is_the_transport_body_ceiling() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(concrete_path(RouteId::SecretRevoke))
+                .uri(concrete_path(RouteId::ProviderCredentialRegister))
                 .header("content-type", "application/json")
                 .body(Body::from(vec![b'x'; 3 * 1024 * 1024]))
                 .expect("request"),
@@ -463,7 +463,7 @@ async fn the_declared_envelope_is_the_transport_body_ceiling() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(concrete_path(RouteId::SecretRevoke))
+                .uri(concrete_path(RouteId::ProviderCredentialRegister))
                 .header("content-type", "application/json")
                 .body(Body::from(vec![b'x'; ENVELOPE_BYTES + 1]))
                 .expect("request"),
@@ -481,12 +481,12 @@ async fn the_declared_envelope_is_the_transport_body_ceiling() {
 fn dispatcher_refuses_a_route_it_does_not_own() {
     // Owned by the secret edge, served there, and not this deployable's: "no
     // such resource here" is the true statement, not "declared but not built".
-    let refusal = not_served(RouteId::SecretDelete);
+    let refusal = not_served(RouteId::ProviderCredentialRegister);
     assert_eq!(refusal.code, ErrorCode::NotFound);
     assert!(
         !RouteOwner::SessionApi
             .routes()
-            .contains(&RouteId::SecretDelete),
+            .contains(&RouteId::ProviderCredentialRegister),
         "the refused route is genuinely unmounted"
     );
 }
@@ -497,9 +497,8 @@ fn a_stub_for_a_deferred_route_answers_the_same_code_as_the_refusal_arm() {
     // does not declare is rewritten to `internal_error` by `dispatch::declared`,
     // and only a deferred route declares `not_implemented`.
     //
-    // The route is derived rather than named. This test named `secret_put` until
-    // P3.3a landed it, at which point the first assertion was the only thing
-    // standing between a served route and a silently vacuous check.
+    // The route is derived rather than named, so a later contract cut cannot
+    // leave the assertion coupled to a route that no longer exists.
     let deferred = aex_wire::routes::ROUTES
         .iter()
         .find(|descriptor| descriptor.deferred)
@@ -602,11 +601,11 @@ fn an_owned_route_in_neither_set_fails_composition() {
             RouteOwner::SecretApi
         }
         fn served(&self) -> Vec<RouteId> {
-            // Drops `secret_revoke`, which the ledger does not defer.
+            // Drops a route the ledger does not defer.
             RouteOwner::SecretApi
                 .routes()
                 .into_iter()
-                .filter(|id| !route(*id).deferred && *id != RouteId::SecretRevoke)
+                .filter(|id| !route(*id).deferred && *id != RouteId::ProviderCredentialRegister)
                 .collect()
         }
         async fn dispatch(
@@ -628,7 +627,7 @@ fn an_owned_route_in_neither_set_fails_composition() {
     assert_eq!(
         error,
         MountError::Unaccounted {
-            route: "secret_revoke",
+            route: "provider_credential_register",
             deployable: RouteOwner::SecretApi.half(),
         }
     );
@@ -673,11 +672,14 @@ fn a_wrongly_owned_route_is_a_mount_error() {
 #[test]
 fn mount_error_names_the_offending_route() {
     let error = MountError::WrongOwner {
-        route: "secret_put",
+        route: "provider_credential_register",
         owner: "regional-secret-api",
         deployable: "regional-session-api",
     };
     let rendered = error.to_string();
-    assert!(rendered.contains("secret_put"), "{rendered}");
+    assert!(
+        rendered.contains("provider_credential_register"),
+        "{rendered}"
+    );
     assert!(rendered.contains("regional-secret-api"), "{rendered}");
 }
