@@ -314,12 +314,26 @@ jobs:
           # here would only compare a file against its own copy.
           tarball="$RELEASE_DIR/$(basename "$(jq -er .input "$RELEASE_DIR/recipe.json")")"
           cp "$RELEASE_DIR/artifact.bin" "$tarball"
+          manifest="$(jq -er '.argv | index("--cwd") as $i | .[$i + 1]' \
+            "$RELEASE_DIR/recipe.json")/package.json"
+          name=$(jq -er .name "$manifest")
+          version=$(jq -er .version "$manifest")
           # Prove the OIDC token endpoint is reachable before publishing. npm
           # reports a failed trusted-publishing exchange as `ENEEDAUTH`, which
           # is indistinguishable from having configured no credential at all, so
           # assert the one precondition npm will not tell us about.
           [[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]] \
             || { echo "::error::no OIDC token endpoint; the job lacks id-token: write"; exit 1; }
+          # Main publishes the complete selected graph, so an unchanged package
+          # may already have an immutable registry identity from an earlier
+          # composition. Reuse is safe only because the next step reads that
+          # exact version back and proves its bytes and provenance against this
+          # run's packed tarball. A changed package without a version bump still
+          # fails closed on the readback integrity comparison.
+          if npm view --json "$name@$version" >/dev/null 2>&1; then
+            echo "registry already serves $name@$version; exact readback will verify reuse"
+            exit 0
+          fi
           # `--loglevel verbose` is what makes a rejected exchange legible: it
           # names the registry's response instead of collapsing every cause into
           # `ENEEDAUTH`. On failure the debug log is the only record of which
@@ -327,6 +341,16 @@ jobs:
           # leaving it on a runner that is about to be destroyed.
           if ! npm publish "$tarball" --provenance --access public --loglevel verbose \
             2>&1 | tee "$RUNNER_TEMP/npm-publish.log"; then
+            # A concurrent or eventually-consistent publisher can win between
+            # the presence check and this POST. Treat only npm's exact immutable
+            # version collision as a candidate for reuse; readback remains the
+            # authority and rejects different bytes or missing provenance.
+            if grep -Fq \
+              "You cannot publish over the previously published versions: $version." \
+              "$RUNNER_TEMP/npm-publish.log"; then
+              echo "registry concurrently published $name@$version; exact readback will verify reuse"
+              exit 0
+            fi
             for log in "$HOME"/.npm/_logs/*-debug-0.log; do
               [ -f "$log" ] || continue
               echo "::group::npm debug log $(basename "$log")"

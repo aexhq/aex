@@ -207,6 +207,35 @@ describe("public main-push publication", () => {
     expect(source).not.toContain("steps.recipe.outputs.kind");
   });
 
+  test("npm publication reuses an immutable version only after exact readback", () => {
+    const workflow = Bun.YAML.parse(read(".github/workflows/_build-artifacts.yml")) as {
+      readonly jobs: Record<string, any>;
+    };
+    const steps = workflow.jobs.build.steps as readonly {
+      readonly name?: string;
+      readonly run?: string;
+    }[];
+    const publishIndex = steps.findIndex(
+      (step) => step.name === "Publish the packed tarball with npm provenance"
+    );
+    const readbackIndex = steps.findIndex(
+      (step) => step.name === "Read the published version back from the registry"
+    );
+    const publish = steps[publishIndex];
+    const readback = steps[readbackIndex];
+
+    expect(publishIndex).toBeGreaterThan(-1);
+    expect(readbackIndex).toBeGreaterThan(publishIndex);
+    expect(publish?.run).toContain('name=$(jq -er .name "$manifest")');
+    expect(publish?.run).toContain('version=$(jq -er .version "$manifest")');
+    expect(publish?.run).toContain('npm view --json "$name@$version"');
+    expect(publish?.run).toContain(
+      'You cannot publish over the previously published versions: $version.'
+    );
+    expect(readback?.run).toContain('npm view --json "$name@$version"');
+    expect(readback?.run).toContain("artifact npm-readback");
+  });
+
   test("main publication uses the same root gates as pull requests", () => {
     const main = Bun.YAML.parse(read(".github/workflows/main.yml")) as {
       readonly jobs: Record<string, any>;
