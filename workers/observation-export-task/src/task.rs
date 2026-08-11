@@ -135,6 +135,8 @@ pub struct ExportLease {
     pub format: Format,
     /// The completeness rule.
     pub completeness: Completeness,
+    /// The canonical wire export query validated at admission.
+    pub normalized_query: String,
     /// Every gap intersecting the window.
     pub gaps: Vec<String>,
     /// The deletion epoch the export pinned.
@@ -192,6 +194,8 @@ pub struct ExportProgress {
 pub struct PublishRequest {
     /// The fence the update is conditioned on.
     pub fence: u64,
+    /// The format whose public operation result is published.
+    pub format: Format,
     /// The scope whose live deletion epoch the update is conditioned on.
     pub scope: ScopeKey,
     /// The deletion epoch the export pinned.
@@ -264,6 +268,14 @@ pub trait ExportAuthority: Send + Sync {
     /// Returns [`TaskError::Provider`] when the update could not be attempted. A
     /// lost condition is [`Publication::Superseded`], not an error.
     async fn publish(&self, request: &PublishRequest) -> Result<Publication, TaskError>;
+
+    /// Atomically fails the export and its canonical operation.
+    async fn fail(
+        &self,
+        lease: &ExportLease,
+        error: &TaskError,
+        now: Timestamp,
+    ) -> Result<aex_observation_store_dynamodb::ExportSettlement, TaskError>;
 }
 
 /// The `S3` surface one export needs.
@@ -581,16 +593,28 @@ where
             LeaseOutcome::Lost { reason } => return Ok(ExportOutcome::Superseded { reason }),
             LeaseOutcome::Taken(lease) => *lease,
         };
-        let mut state = self.resume(&lease).await?;
+        let mut state = match self.resume(&lease).await {
+            Ok(state) => state,
+            Err(error) => {
+                return match self.authority.fail(&lease, &error, now).await? {
+                    aex_observation_store_dynamodb::ExportSettlement::Settled => Err(error),
+                    aex_observation_store_dynamodb::ExportSettlement::Superseded { reason } => {
+                        Ok(ExportOutcome::Superseded { reason })
+                    }
+                };
+            }
+        };
         let outcome = self.generate(&lease, &mut state, now).await;
-        self.settle(&state, outcome).await
+        self.settle(&lease, &state, outcome, now).await
     }
 
     /// Aborts an abandoned upload and reports what happened.
     async fn settle(
         &self,
+        lease: &ExportLease,
         state: &UploadState,
         outcome: Result<ExportOutcome, TaskError>,
+        now: Timestamp,
     ) -> Result<ExportOutcome, TaskError> {
         match outcome {
             Ok(ExportOutcome::Published { .. }) => outcome,
@@ -606,7 +630,12 @@ where
                 if let Err(abort) = self.abort(state).await {
                     tracing::error!(error = %abort, "the multipart upload could not be aborted");
                 }
-                Err(error)
+                match self.authority.fail(lease, &error, now).await? {
+                    aex_observation_store_dynamodb::ExportSettlement::Settled => Err(error),
+                    aex_observation_store_dynamodb::ExportSettlement::Superseded { reason } => {
+                        Ok(ExportOutcome::Superseded { reason })
+                    }
+                }
             }
         }
     }
@@ -835,6 +864,7 @@ where
     ) -> Result<ExportOutcome, TaskError> {
         let request = PublishRequest {
             fence: lease.fence,
+            format: lease.format,
             scope: lease.scope,
             pinned_deletion_epoch: lease.pinned_deletion_epoch,
             object_key: state.key.clone(),
@@ -959,6 +989,8 @@ mod tests {
             snapshot: 1_784_000_000_000,
             format,
             completeness: Completeness::AllowGaps,
+            normalized_query: r#"{"signal":"logs","timeRange":{"gte":"1970-01-01T00:00:00.000Z","lt":"1970-01-01T00:00:01.000Z"}}"#
+                .to_owned(),
             gaps: Vec::new(),
             pinned_deletion_epoch: 3,
             expires_at: now(),
@@ -1017,6 +1049,7 @@ mod tests {
         page_calls: AtomicUsize,
         cursors: Mutex<Vec<Option<String>>>,
         lease_calls: AtomicUsize,
+        fail_calls: AtomicUsize,
         progress: Mutex<Vec<ExportProgress>>,
         reserved_during_pages: Mutex<Vec<usize>>,
     }
@@ -1025,6 +1058,7 @@ mod tests {
         outcome: LeaseOutcome,
         stored: Option<ExportProgress>,
         publication: Publication,
+        failure_settlement: aex_observation_store_dynamodb::ExportSettlement,
         budget: MemoryBudget,
         recorder: Recorder,
     }
@@ -1035,6 +1069,7 @@ mod tests {
                 outcome: LeaseOutcome::Taken(Box::new(lease(Format::Ndjson))),
                 stored: None,
                 publication: Publication::Ready,
+                failure_settlement: aex_observation_store_dynamodb::ExportSettlement::Settled,
                 budget: budget.clone(),
                 recorder: Recorder {
                     pages: Mutex::new(pages),
@@ -1049,6 +1084,10 @@ mod tests {
 
         fn lease_calls(&self) -> usize {
             self.recorder.lease_calls.load(Ordering::Acquire)
+        }
+
+        fn fail_calls(&self) -> usize {
+            self.recorder.fail_calls.load(Ordering::Acquire)
         }
 
         fn recorded_progress(&self) -> Vec<ExportProgress> {
@@ -1126,6 +1165,16 @@ mod tests {
 
         async fn publish(&self, _request: &PublishRequest) -> Result<Publication, TaskError> {
             Ok(self.publication)
+        }
+
+        async fn fail(
+            &self,
+            _lease: &ExportLease,
+            _error: &TaskError,
+            _now: Timestamp,
+        ) -> Result<aex_observation_store_dynamodb::ExportSettlement, TaskError> {
+            self.recorder.fail_calls.fetch_add(1, Ordering::AcqRel);
+            Ok(self.failure_settlement.clone())
         }
     }
 
@@ -1271,6 +1320,7 @@ mod tests {
         assert_eq!(task.objects.uploaded_bytes(), object_bytes);
         assert_eq!(task.objects.completions(), 1);
         assert_eq!(task.objects.aborts(), 0);
+        assert_eq!(task.authority.fail_calls(), 0);
 
         // The manifest is the last thing written, and it names every member.
         let manifest = String::from_utf8(task.objects.last_body()).expect("the manifest is utf8");
@@ -1430,6 +1480,7 @@ mod tests {
             "{error:?}"
         );
         assert_eq!(task.authority.page_calls(), 0, "nothing is streamed");
+        assert_eq!(task.authority.fail_calls(), 1, "the pair is terminalized");
         assert_eq!(task.objects.completions(), 0);
     }
 
@@ -1549,6 +1600,31 @@ mod tests {
         assert!(matches!(error, TaskError::Manifest(_)), "{error:?}");
         assert_eq!(task.objects.aborts(), 1);
         assert_eq!(task.objects.completions(), 0);
+        assert_eq!(task.authority.fail_calls(), 1, "the pair is terminalized");
+    }
+
+    #[tokio::test]
+    async fn a_failure_retry_observes_a_winning_revoke_as_superseded() {
+        let budget = budget();
+        let mut authority = FakeAuthority::new(&budget, walk(1));
+        let mut refused = lease(Format::Ndjson);
+        refused.completeness = Completeness::Require;
+        refused.gaps = vec!["gap_a".to_owned()];
+        authority.outcome = LeaseOutcome::Taken(Box::new(refused));
+        authority.failure_settlement =
+            aex_observation_store_dynamodb::ExportSettlement::Superseded {
+                reason: "the export was revoked",
+            };
+        let task = task(authority, FakeObjects::default(), &budget);
+
+        assert_eq!(
+            task.run(now()).await.expect("revoke wins"),
+            ExportOutcome::Superseded {
+                reason: "the export was revoked"
+            }
+        );
+        assert_eq!(task.authority.fail_calls(), 1);
+        assert_eq!(task.objects.aborts(), 1);
     }
 
     #[tokio::test]

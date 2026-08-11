@@ -4130,7 +4130,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -4138,13 +4137,14 @@
             "operation_idempotency_conflict",
             "invalid_request",
             "limit_exceeded",
+            "session_deleting",
             "session_deleted",
             "telemetry_incomplete",
             "unsupported_export_signal",
             "invalid_query",
             "account_paused",
             "wrong_workspace_region",
-            "not_implemented"
+            "observability_unavailable"
           ],
           "etag": "none",
           "fragment": "telemetry-lifecycle",
@@ -4440,10 +4440,10 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
+            "gone",
             "operation_idempotency_conflict",
             "invalid_request",
             "limit_exceeded",
@@ -4452,7 +4452,7 @@
             "invalid_query",
             "account_paused",
             "wrong_workspace_region",
-            "not_implemented"
+            "observability_unavailable"
           ],
           "etag": "none",
           "fragment": "telemetry-lifecycle",
@@ -7403,6 +7403,7 @@
       "enum": [
         "preparing",
         "ready",
+        "failed",
         "expired",
         "revoked"
       ],

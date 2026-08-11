@@ -4,7 +4,7 @@
   "regenerate": "This file is committed and hand-edited, unlike `release/test-registry.json`. An id enters `routes` or `scenarios` only with the change that defers it, and leaves only with the change that mounts, deletes or un-defers it - moving it to `retired` in the same commit unless the contract deletes it outright.",
   "routes": {
     "floor": 48,
-    "floorNote": "The approved ceiling remains 48; the registry defers 17 routes today. The registry pointer lane mounted fifteen routes, the capacity lane mounted `account_get`, `workspace_current_get`, `workspace_limit_get` and `workspace_limits_list`, the canonical stored session authority mounted `session_get`, `sessions_list`, and the sealed-only `session_messages_list`, and the registry download lane mounted `registry_files_download_create`; all twenty-three now move from `deferred` to `retired`, so re-deferring one is an irreversible regression rather than architecture debt. `session_clone` left `deleting` because P0.2 deleted it from the contract outright. The other retired routes record the mounted work from P1.1, P3.2, P3.3, P3.4a and P5.2. What remains deferred and belongs to P0.1 is `session_approval_get` and `session_approvals_list`: manual approval is out of launch scope by decision D4, `brain-mux` hardcodes an empty `approval_required`, nothing constructs `Write::PutApproval`, and `session_approval_respond` is still deferred - so both reads would return a confident empty page over data no producer writes, which is exactly what the `501` arm exists to prevent.",
+    "floorNote": "The approved ceiling remains 48; the registry defers 15 routes today. The registry pointer lane mounted fifteen routes, the capacity lane mounted `account_get`, `workspace_current_get`, `workspace_limit_get` and `workspace_limits_list`, the canonical stored session authority mounted `session_get`, `sessions_list`, and the sealed-only `session_messages_list`, the registry download lane mounted `registry_files_download_create`, and the telemetry export lane mounted both export-create routes with their atomic export/operation lifecycle; all twenty-five now move from `deferred` to `retired`, so re-deferring one is an irreversible regression rather than architecture debt. `session_clone` left `deleting` because P0.2 deleted it from the contract outright. The other retired routes record the mounted work from P1.1, P3.2, P3.3, P3.4a and P5.2. What remains deferred and belongs to P0.1 is `session_approval_get` and `session_approvals_list`: manual approval is out of launch scope by decision D4, `brain-mux` hardcodes an empty `approval_required`, nothing constructs `Write::PutApproval`, and `session_approval_respond` is still deferred - so both reads would return a confident empty page over data no producer writes, which is exactly what the `501` arm exists to prevent.",
     "deleting": {},
     "deferred": [
       "session_approval_get",
@@ -21,9 +21,7 @@
       "session_message_send",
       "session_persist",
       "session_purge",
-      "session_telemetry_export_create",
-      "session_workspace_discard",
-      "telemetry_export_create"
+      "session_workspace_discard"
     ],
     "retired": [
       "account_get",
@@ -51,7 +49,9 @@
       "sessions_list",
       "session_restore",
       "session_stop",
+      "session_telemetry_export_create",
       "session_trash",
+      "telemetry_export_create",
       "upload_abort",
       "upload_complete",
       "upload_create",

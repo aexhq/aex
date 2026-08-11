@@ -89,12 +89,8 @@ pub fn owned_routes() -> Vec<RouteId> {
 /// Whether this deployable can answer an owned route completely.
 ///
 /// Read from the deferral ledger through the generated table, never listed
-/// here. Export admission is what the ledger defers today: the handler writes
-/// only the observation export row while returning a generic operation that
-/// the session operation authority cannot read, list or cancel, and retrying
-/// the caller-minted operation id can create a second export. The read,
-/// download and revoke routes stay served for export rows produced once the
-/// authorities are reconciled.
+/// here. A route becomes served only after its complete authority is composed;
+/// generated mount metadata is the reviewed switch consumed here.
 #[must_use]
 pub fn is_served(id: RouteId) -> bool {
     !route(id).deferred
@@ -528,23 +524,23 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_export_admission_is_owned_but_unserved() {
+    fn telemetry_export_admission_is_owned_and_served() {
         for id in [
             RouteId::TelemetryExportCreate,
             RouteId::SessionTelemetryExportCreate,
         ] {
             assert!(owned_routes().contains(&id));
-            assert!(!is_served(id));
-            assert!(!served_routes().contains(&id));
-            assert!(!mounted_templates().contains(route(id).template));
+            assert!(is_served(id));
+            assert!(served_routes().contains(&id));
+            assert!(mounted_templates().contains(route(id).template));
         }
     }
 
-    /// Export admission is mounted as the generated refusal arm and nothing
-    /// else: it answers `501 not_implemented`, mints no `Location`, and reaches
-    /// no handler. The previous bare `404` was indistinguishable from a typo.
+    /// Export admission reaches the common edge and handler mount rather than
+    /// the generated `501` refusal arm. The refusing fixture proves admission
+    /// was attempted without permitting an authority write.
     #[tokio::test]
-    async fn telemetry_export_admission_answers_the_published_refusal() {
+    async fn telemetry_export_admission_reaches_the_served_mount() {
         for path in [
             "/api/observations/telemetry/exports",
             "/api/observations/ses_0000000001e40r2081040g2081/telemetry/exports",
@@ -558,10 +554,10 @@ mod tests {
                 )
                 .await
                 .expect("the router answers");
-            assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED, "{path}");
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
             assert!(
                 response.headers().get(header::LOCATION).is_none(),
-                "{path} must not advertise an unreadable operation"
+                "an unauthenticated request must not advertise an operation"
             );
             let body = to_bytes(response.into_body(), usize::MAX)
                 .await
@@ -570,7 +566,7 @@ mod tests {
                 serde_json::from_slice(&body).expect("the published envelope");
             assert_eq!(
                 envelope["error"]["code"],
-                aex_wire::error::ErrorCode::NotImplemented.as_str(),
+                aex_wire::error::ErrorCode::Unauthenticated.as_str(),
                 "{path}"
             );
         }

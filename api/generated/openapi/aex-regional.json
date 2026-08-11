@@ -898,6 +898,7 @@
         "enum": [
           "preparing",
           "ready",
+          "failed",
           "expired",
           "revoked"
         ],
@@ -6732,7 +6733,6 @@
     },
     "/api/observations/telemetry/exports": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "telemetry_export_create",
         "parameters": [],
         "requestBody": {
@@ -6806,6 +6806,16 @@
             },
             "description": "Error."
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
           "429": {
             "content": {
               "application/json": {
@@ -6816,7 +6826,7 @@
             },
             "description": "Error."
           },
-          "501": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6833,10 +6843,10 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
+          "gone",
           "operation_idempotency_conflict",
           "invalid_request",
           "limit_exceeded",
@@ -6845,7 +6855,7 @@
           "invalid_query",
           "account_paused",
           "wrong_workspace_region",
-          "not_implemented"
+          "observability_unavailable"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "operation_id",
@@ -8336,7 +8346,6 @@
     },
     "/api/observations/{sessionId}/telemetry/exports": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_telemetry_export_create",
         "parameters": [
           {
@@ -8452,7 +8461,7 @@
             },
             "description": "Error."
           },
-          "501": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -8469,7 +8478,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -8477,13 +8485,14 @@
           "operation_idempotency_conflict",
           "invalid_request",
           "limit_exceeded",
+          "session_deleting",
           "session_deleted",
           "telemetry_incomplete",
           "unsupported_export_signal",
           "invalid_query",
           "account_paused",
           "wrong_workspace_region",
-          "not_implemented"
+          "observability_unavailable"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "operation_id",

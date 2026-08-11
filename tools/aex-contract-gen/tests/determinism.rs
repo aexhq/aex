@@ -264,18 +264,20 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
         .map(|route| (route["operationId"].as_str().expect("operation id"), route))
         .collect();
 
-    assert_eq!(
-        by_id["session_telemetry_export_create"].get("servedArtifact"),
-        None,
-        "an owned but unmounted admission must stay honestly absent"
-    );
-    assert!(
-        by_id["session_telemetry_export_create"]
-            .get("deferredReason")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|reason| !reason.is_empty()),
-        "an unmounted admission must carry its explicit architecture debt"
-    );
+    for operation in ["session_telemetry_export_create", "telemetry_export_create"] {
+        assert_eq!(
+            by_id[operation]
+                .get("servedArtifact")
+                .and_then(serde_json::Value::as_str),
+            Some("regional-observation-api"),
+            "mounted telemetry export admission must name its real artifact"
+        );
+        assert_eq!(
+            by_id[operation].get("deferredReason"),
+            None,
+            "mounted telemetry export admission cannot retain architecture debt"
+        );
+    }
     let stream_api: BTreeSet<_> = rows
         .iter()
         .filter(|route| route["servedArtifact"] == "session-stream-api")

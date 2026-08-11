@@ -48,6 +48,7 @@ fn the_export_task_holds_no_delete_capability_anywhere() {
         ROLE.granted(),
         &[
             Capability::ReadAuthority,
+            Capability::WriteExportControl,
             Capability::ReadBodies,
             Capability::WriteExportObjects
         ]

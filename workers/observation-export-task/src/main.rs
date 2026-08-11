@@ -42,7 +42,11 @@ use crate::task::{ExportOutcome, ExportTask, TaskError, TaskSettings, object_pre
 pub const ROLE: Role = Role::ExportTask;
 
 /// The dependencies this deployable proves before it reports ready.
-pub const REQUIRED_PROBES: &[Probe] = &[Probe::ObservationTable, Probe::ObservationBucket];
+pub const REQUIRED_PROBES: &[Probe] = &[
+    Probe::ObservationTable,
+    Probe::SessionAuthority,
+    Probe::ObservationBucket,
+];
 
 /// Why `observation-export-task` stopped.
 #[derive(Debug, thiserror::Error)]
@@ -118,7 +122,7 @@ pub async fn run(config: Config) -> Result<(), ObservationExportTaskRunError> {
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
     let s3 = aws_sdk_s3::Client::new(&aws);
 
-    let authority = aws::DynamoExportAuthority::new(dynamodb, s3.clone(), &config);
+    let authority = aws::DynamoExportAuthority::new(dynamodb, &s3, &config);
     let objects = aws::S3ExportObjects::new(s3, config.observation_bucket.clone());
 
     let mut passed = Vec::new();
@@ -129,6 +133,13 @@ pub async fn run(config: Config) -> Result<(), ObservationExportTaskRunError> {
             reason: error.to_string(),
         })?;
     passed.push(Probe::ObservationTable);
+    authority
+        .probe_session()
+        .await
+        .map_err(|error| ObservationExportTaskRunError::Probe {
+            reason: error.to_string(),
+        })?;
+    passed.push(Probe::SessionAuthority);
     objects
         .probe()
         .await
@@ -280,6 +291,7 @@ mod tests {
             ROLE.granted(),
             &[
                 Capability::ReadAuthority,
+                Capability::WriteExportControl,
                 Capability::ReadBodies,
                 Capability::WriteExportObjects
             ]

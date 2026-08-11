@@ -26,6 +26,8 @@ pub const EXPORT_ID_VAR: &str = "AEX_EXPORT_ID";
 pub const WORKSPACE_ID_VAR: &str = "AEX_WORKSPACE_ID";
 /// Environment variable naming the observation-authority `DynamoDB` table.
 pub const OBSERVATION_TABLE_VAR: &str = "AEX_OBSERVATION_TABLE";
+/// Environment variable naming the canonical operation authority.
+pub const SESSION_TABLE_VAR: &str = "AEX_SESSION_TABLE";
 /// Environment variable naming the regional observation `S3` bucket.
 pub const OBSERVATION_BUCKET_VAR: &str = "AEX_OBSERVATION_BUCKET";
 /// Environment variable naming the whole working memory budget, in bytes.
@@ -52,6 +54,7 @@ pub const REQUIRED_VARS: &[&str] = &[
     EXPORT_ID_VAR,
     WORKSPACE_ID_VAR,
     OBSERVATION_TABLE_VAR,
+    SESSION_TABLE_VAR,
     OBSERVATION_BUCKET_VAR,
     MEMORY_BUDGET_VAR,
     PART_BYTES_VAR,
@@ -116,6 +119,8 @@ pub struct Config {
     pub workspace_id: WorkspaceId,
     /// The observation-authority table.
     pub observation_table: String,
+    /// The session authority holding canonical operations and session fences.
+    pub session_table: String,
     /// The regional observation bucket, which also holds `exports/`.
     pub observation_bucket: String,
     /// The whole working memory budget, in bytes.
@@ -211,6 +216,7 @@ impl Config {
             export_id,
             workspace_id,
             observation_table: required(&lookup, OBSERVATION_TABLE_VAR)?,
+            session_table: required(&lookup, SESSION_TABLE_VAR)?,
             observation_bucket: required(&lookup, OBSERVATION_BUCKET_VAR)?,
             memory_budget_bytes,
             part_bytes,
@@ -359,7 +365,7 @@ mod tests {
         Config, EXPORT_ID_VAR, HEALTH_PORT_VAR, LEASE_MS_VAR, MEMORY_BUDGET_VAR,
         OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, ObservationExportTaskConfigError,
         PAGE_LIMIT_VAR, PART_BYTES_VAR, PLANE_VAR, REGION_VAR, REQUIRED_VARS, ROWGROUP_BYTES_VAR,
-        WORKSPACE_ID_VAR,
+        SESSION_TABLE_VAR, WORKSPACE_ID_VAR,
     };
 
     pub(crate) const EXPORT_FIXTURE: &str = "exp_0000000001e40r2081040g2081";
@@ -372,6 +378,7 @@ mod tests {
             (EXPORT_ID_VAR, EXPORT_FIXTURE.to_owned()),
             (WORKSPACE_ID_VAR, WORKSPACE_FIXTURE.to_owned()),
             (OBSERVATION_TABLE_VAR, "observation-authority".to_owned()),
+            (SESSION_TABLE_VAR, "session-authority".to_owned()),
             (OBSERVATION_BUCKET_VAR, "aex-dev-observations".to_owned()),
             (MEMORY_BUDGET_VAR, (512 * 1024 * 1024).to_string()),
             (PART_BYTES_VAR, (16 * 1024 * 1024).to_string()),

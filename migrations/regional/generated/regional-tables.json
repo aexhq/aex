@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:5c0d4e994b0a9a584772e027bdf2cf4fc0cb56057d9349c3923ccc187d3b4cb4",
+  "digest": "blake3:4d994c30e28084dbe48e8a89bf82455f9d68965443660d2d492027e3593f9be6",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -285,8 +285,27 @@
         {
           "role": "regional-observation-api",
           "actions": [
-            "dynamodb:PutItem",
-            "dynamodb:UpdateItem"
+            "dynamodb:TransactGetItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "export"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "EXPORT#*",
+              "OP#*"
+            ]
+          }
+        },
+        {
+          "role": "regional-observation-api",
+          "actions": [
+            "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"
@@ -295,7 +314,10 @@
             "operator": "ForAllValues:StringLike",
             "key": "dynamodb:LeadingKeys",
             "values": [
-              "EXPORT#*"
+              "EXPORT#*",
+              "FRONT#*",
+              "OP#*",
+              "SESSION#*"
             ]
           }
         },
@@ -351,6 +373,45 @@
             "table",
             "index/*"
           ]
+        },
+        {
+          "role": "observation-export-task",
+          "actions": [
+            "dynamodb:TransactGetItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "export"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "EXPORT#*",
+              "OP#*"
+            ]
+          }
+        },
+        {
+          "role": "observation-export-task",
+          "actions": [
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "EXPORT#*",
+              "FRONT#*",
+              "OP#*",
+              "SESSION#*"
+            ]
+          }
         },
         {
           "role": "regional-stream",
@@ -1603,6 +1664,7 @@
       "itemTypes": [
         "session_head",
         "message",
+        "sealed_message",
         "run",
         "session_event",
         "approval",
@@ -1699,7 +1761,7 @@
         {
           "role": "regional-observation-api",
           "actions": [
-            "dynamodb:PutItem"
+            "dynamodb:TransactGetItems"
           ],
           "resources": [
             "table"
@@ -1711,6 +1773,7 @@
             "operator": "ForAllValues:StringLike",
             "key": "dynamodb:LeadingKeys",
             "values": [
+              "EXPORT#*",
               "OP#*"
             ]
           }
@@ -1718,7 +1781,59 @@
         {
           "role": "regional-observation-api",
           "actions": [
-            "dynamodb:ConditionCheckItem"
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "operation"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "EXPORT#*",
+              "FRONT#*",
+              "OP#*",
+              "SESSION#*"
+            ]
+          }
+        },
+        {
+          "role": "observation-export-task",
+          "actions": [
+            "dynamodb:DescribeTable",
+            "dynamodb:GetItem"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "observation-export-task",
+          "actions": [
+            "dynamodb:TransactGetItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "operation"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "EXPORT#*",
+              "OP#*"
+            ]
+          }
+        },
+        {
+          "role": "observation-export-task",
+          "actions": [
+            "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"
@@ -1727,6 +1842,9 @@
             "operator": "ForAllValues:StringLike",
             "key": "dynamodb:LeadingKeys",
             "values": [
+              "EXPORT#*",
+              "FRONT#*",
+              "OP#*",
               "SESSION#*"
             ]
           }

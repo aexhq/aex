@@ -14,6 +14,7 @@ const REQUIRED: &[&str] = &[
     "AEX_EXPORT_ID",
     "AEX_WORKSPACE_ID",
     "AEX_OBSERVATION_TABLE",
+    "AEX_SESSION_TABLE",
     "AEX_OBSERVATION_BUCKET",
     "AEX_EXPORT_MEMORY_BUDGET_BYTES",
     "AEX_EXPORT_PART_BYTES",
@@ -81,6 +82,7 @@ fn a_part_size_below_the_provider_floor_refuses_by_name() {
         .env("AEX_EXPORT_ID", EXPORT)
         .env("AEX_WORKSPACE_ID", WORKSPACE)
         .env("AEX_OBSERVATION_TABLE", "observation-authority")
+        .env("AEX_SESSION_TABLE", "session-authority")
         .env("AEX_OBSERVATION_BUCKET", "aex-dev-observations")
         .env("AEX_EXPORT_MEMORY_BUDGET_BYTES", "536870912")
         // One byte under the 5 MiB S3 requires of a non-final part.
@@ -108,6 +110,7 @@ fn a_budget_that_cannot_cover_the_reservations_refuses_before_anything_runs() {
         .env("AEX_EXPORT_ID", EXPORT)
         .env("AEX_WORKSPACE_ID", WORKSPACE)
         .env("AEX_OBSERVATION_TABLE", "observation-authority")
+        .env("AEX_SESSION_TABLE", "session-authority")
         .env("AEX_OBSERVATION_BUCKET", "aex-dev-observations")
         .env("AEX_EXPORT_MEMORY_BUDGET_BYTES", "1048576")
         .env("AEX_EXPORT_PART_BYTES", "16777216")

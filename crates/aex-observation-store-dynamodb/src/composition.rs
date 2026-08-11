@@ -15,7 +15,7 @@ pub enum Capability {
     ReadAuthority,
     /// `dynamodb:TransactWriteItems`/`PutItem`/`UpdateItem` on admission rows.
     WriteAdmission,
-    /// `dynamodb:PutItem`/`UpdateItem` on export-control rows only.
+    /// Paired export-control/canonical-operation transaction reads and writes.
     WriteExportControl,
     /// `dynamodb:BatchWriteItem` on `OBS#` for deletion.
     DeleteObservations,
@@ -131,6 +131,7 @@ impl Role {
             Self::ExportLauncher => &[Capability::LaunchExportTasks],
             Self::ExportTask => &[
                 Capability::ReadAuthority,
+                Capability::WriteExportControl,
                 Capability::ReadBodies,
                 Capability::WriteExportObjects,
             ],
@@ -231,6 +232,7 @@ mod tests {
     fn the_export_task_holds_no_delete_anywhere() {
         assert!(!Role::ExportTask.holds(Capability::DeleteBodies));
         assert!(!Role::ExportTask.holds(Capability::DeleteObservations));
+        assert!(Role::ExportTask.holds(Capability::WriteExportControl));
         assert!(Role::ExportTask.holds(Capability::WriteExportObjects));
     }
 

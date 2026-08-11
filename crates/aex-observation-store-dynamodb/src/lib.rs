@@ -22,6 +22,7 @@
 //! wake `regional-stream` consumes.
 
 pub mod composition;
+pub mod export_pair;
 pub mod expressions;
 pub mod gap;
 pub mod gap_hint;
@@ -31,6 +32,10 @@ pub mod spool;
 pub mod store;
 
 pub use composition::{Capability, CapabilityViolation, Role, assert_grant};
+pub use export_pair::{
+    ExportAdmissionCommit, ExportAdmissionOutcome, ExportPairError, ExportPairStore, ExportPublish,
+    ExportSettlement, ExportStart,
+};
 pub use expressions::{DENSE_INDEX_PROJECTION, ExpressionBuilder, Index, is_safe_expression};
 pub use gap::{GAP_ITEM_TYPE, GapCodecError, GapStore, GapStoreError, append_action};
 pub use gap_hint::{GAP_HINT_ITEM_TYPE, GapAppendCount, hint_update, hint_update_action};

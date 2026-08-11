@@ -38,7 +38,9 @@ path = "src/main.rs"
 [dependencies]
 aex-observation-domain = { path = "../../crates/aex-observation-domain" }
 aex-observation-export = { path = "../../crates/aex-observation-export" }
+aex-observation-query = { path = "../../crates/aex-observation-query" }
 aex-observation-store-dynamodb = { path = "../../crates/aex-observation-store-dynamodb" }
+aex-operation-domain = { path = "../../crates/aex-operation-domain" }
 aex-otlp-admission = { path = "../../crates/aex-otlp-admission" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
@@ -54,6 +56,7 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+regional-observation-api = { path = "../../services/regional-observation-api" }
 
 [dev-dependencies]
 http-body-util.workspace = true

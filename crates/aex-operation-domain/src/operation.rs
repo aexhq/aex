@@ -129,15 +129,10 @@ impl OperationKind {
     /// `cancelRequested` flag that both the launcher's claim condition and the
     /// task's publication fence already honour.
     ///
-    /// One consequence worth stating rather than leaving as an apparent gap:
-    /// [`OperationStatus::Running`] is **unreachable** for `TelemetryExport`.
-    /// The operation is queued at admission and the export task writes the
-    /// terminal status directly, in the same conditional transaction that
-    /// publishes the export row. Nothing publishes an intermediate transition,
-    /// because the only component positioned to do so is the launcher, whose
-    /// grant is exactly "launch export tasks" with no observation read of any
-    /// kind. A client that wants progress polls `telemetry_export_get`, where
-    /// the fine-grained state actually lives.
+    /// The export task moves the operation to `Running` in the same transaction
+    /// that accepts its fenced generation lease. Fine-grained progress remains
+    /// on `telemetry_export_get`; the operation status still truthfully says
+    /// whether a task has crossed the authoritative acceptance fence.
     #[must_use]
     pub const fn cancelable_on_accept(self) -> bool {
         !matches!(
@@ -971,6 +966,44 @@ pub fn cancel(operation: &Operation, now: Timestamp) -> Result<OperationCommit, 
     Ok(OperationCommit::of(next, false))
 }
 
+/// Terminalizes a queued telemetry export when its dedicated export revoke
+/// fence wins.
+///
+/// Generic operation cancellation deliberately refuses telemetry exports: the
+/// operation row cannot stop the launcher or task. The dedicated revoke route
+/// owns the actual effect fence in `observation-authority`; after it has won,
+/// this transition lets the same transaction record the matching canonical
+/// operation outcome.
+///
+/// # Errors
+///
+/// Returns [`CancelRejection::NotCancelable`] for any other operation kind or
+/// a committed export, and [`CancelRejection::AlreadyTerminal`] for a terminal
+/// outcome other than an earlier cancellation.
+pub fn revoke_telemetry_export(
+    operation: &Operation,
+    now: Timestamp,
+) -> Result<OperationCommit, CancelRejection> {
+    if operation.status.is_terminal() {
+        if operation.status == OperationStatus::Cancelled {
+            return Ok(OperationCommit::of(operation.clone(), false));
+        }
+        return Err(CancelRejection::AlreadyTerminal(operation.status));
+    }
+    if operation.kind != OperationKind::TelemetryExport || operation.committed_at.is_some() {
+        return Err(CancelRejection::NotCancelable {
+            kind: operation.kind,
+            committed: operation.committed_at.is_some(),
+        });
+    }
+    let mut next = operation.clone();
+    next.cancel_requested = true;
+    next.status = OperationStatus::Cancelled;
+    next.updated_at = now;
+    next.terminal_at = Some(now);
+    Ok(OperationCommit::of(next, false))
+}
+
 #[cfg(test)]
 mod tests {
     use aex_wire::CanonicalJson;
@@ -1093,6 +1126,26 @@ mod tests {
         let requested = cancel(&running, moment(2)).expect("records").operation;
         assert_eq!(requested.status, OperationStatus::Running);
         assert!(requested.cancel_requested);
+    }
+
+    #[test]
+    fn the_dedicated_export_revoke_terminalizes_queued_and_running_exports() {
+        let queued = operation(OperationKind::TelemetryExport);
+        let running = start(&queued, moment(2)).expect("starts").operation;
+        for export in [queued, running] {
+            let revoked = super::revoke_telemetry_export(&export, moment(5))
+                .expect("the effect-owning revoke accepts the export")
+                .operation;
+            assert_eq!(revoked.status, OperationStatus::Cancelled);
+            assert!(revoked.cancel_requested);
+            assert_eq!(revoked.terminal_at, Some(moment(5)));
+            assert_eq!(
+                super::revoke_telemetry_export(&revoked, moment(6))
+                    .expect("an exact revoke replay is idempotent")
+                    .operation,
+                revoked
+            );
+        }
     }
 
     #[test]

@@ -544,6 +544,16 @@ pub fn export_sk(export: aex_wire::ids::ExportId) -> String {
     export.to_string()
 }
 
+/// The sort key of one export's durable generation checkpoint.
+///
+/// Export state rows share one workspace partition, so the export identity is
+/// part of the checkpoint key too. A constant `CKPT` key would make concurrent
+/// exports in the same workspace overwrite and resume one another.
+#[must_use]
+pub fn export_checkpoint_sk(export: aex_wire::ids::ExportId) -> String {
+    format!("CKPT#{export}")
+}
+
 /// Splits an `EXPORT#{workspace_id}` partition key.
 ///
 /// # Errors

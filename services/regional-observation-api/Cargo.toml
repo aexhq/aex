@@ -39,13 +39,16 @@ path = "src/main.rs"
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-observation-domain = { path = "../../crates/aex-observation-domain" }
+aex-observation-app = { path = "../../crates/aex-observation-app" }
 aex-observation-query = { path = "../../crates/aex-observation-query" }
 aex-observation-store-dynamodb = { path = "../../crates/aex-observation-store-dynamodb" }
+aex-operation-domain = { path = "../../crates/aex-operation-domain" }
 aex-otlp-admission = { path = "../../crates/aex-otlp-admission" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = [
     "authz-projection",
+    "session-authority",
 ] }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-wire = { path = "../../crates/aex-wire" }

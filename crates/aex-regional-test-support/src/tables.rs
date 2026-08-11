@@ -941,7 +941,17 @@ mod tests {
             ),
             (
                 "observation-authority",
-                strings(&["dynamodb:PutItem", "dynamodb:UpdateItem"]),
+                // Admission reads the existing export/operation pair through
+                // one cross-table transaction before deciding replay versus
+                // first creation.
+                strings(&["dynamodb:TransactGetItems"]),
+                strings(&["table"]),
+            ),
+            (
+                "observation-authority",
+                // The export row and operation row are one lifecycle pair, so
+                // their first write is atomic across both authority tables.
+                strings(&["dynamodb:TransactWriteItems"]),
                 strings(&["table"]),
             ),
             (
@@ -971,19 +981,16 @@ mod tests {
             ),
             (
                 "session-authority",
-                // The export control record is an operation row, so it is written
-                // where operations live. The grant is confined to the `OP#*`
-                // partition by a leading-key condition and carries no authority
-                // over the session rows that share the table.
-                strings(&["dynamodb:PutItem"]),
+                // The operation half of the lifecycle pair participates in
+                // the same replay snapshot as the export half.
+                strings(&["dynamodb:TransactGetItems"]),
                 strings(&["table"]),
             ),
             (
                 "session-authority",
-                // `ConditionCheckItem` is read-shaped: it asserts the session is
-                // in the state the export was admitted against, inside the same
-                // transaction that writes the `OP#*` row. It mutates nothing.
-                strings(&["dynamodb:ConditionCheckItem"]),
+                // The transaction writes the operation half while asserting
+                // the session/frontier admission snapshot has not changed.
+                strings(&["dynamodb:TransactWriteItems"]),
                 strings(&["table"]),
             ),
         ];
@@ -998,33 +1005,61 @@ mod tests {
     }
 
     #[test]
-    fn observation_api_writes_are_restricted_to_export_partition_keys() {
+    fn observation_api_pair_transactions_are_key_restricted_on_both_tables() {
         let tables = load_all(&definitions_directory()).expect("the definitions load");
-        let table = tables
+        let mut writes = tables
             .iter()
-            .find(|table| table.table == "observation-authority")
-            .expect("the observation authority is declared");
-        let writes = table
-            .iam
+            .flat_map(|table| {
+                table
+                    .iam
+                    .iter()
+                    .filter(|grant| {
+                        grant.role == "regional-observation-api"
+                            && grant.actions == ["dynamodb:TransactWriteItems"]
+                    })
+                    .map(|grant| (table.table.as_str(), grant))
+            })
+            .collect::<Vec<_>>();
+        writes.sort_by_key(|(table, _)| *table);
+
+        assert_eq!(
+            writes.iter().map(|(table, _)| *table).collect::<Vec<_>>(),
+            ["observation-authority", "session-authority"]
+        );
+        for (_, write) in writes {
+            assert_eq!(write.resources, ["table"]);
+            let condition = write
+                .condition
+                .as_ref()
+                .expect("pair transactions carry a leading-key condition");
+            assert_eq!(condition.operator, "ForAllValues:StringLike");
+            assert_eq!(condition.key, "dynamodb:LeadingKeys");
+            assert_eq!(
+                condition.values,
+                ["EXPORT#*", "FRONT#*", "OP#*", "SESSION#*"]
+            );
+        }
+
+        let primitive_writes = tables
             .iter()
+            .flat_map(|table| &table.iam)
             .filter(|grant| {
                 grant.role == "regional-observation-api"
                     && grant.actions.iter().any(|action| {
-                        matches!(action.as_str(), "dynamodb:PutItem" | "dynamodb:UpdateItem")
+                        matches!(
+                            action.as_str(),
+                            "dynamodb:PutItem"
+                                | "dynamodb:UpdateItem"
+                                | "dynamodb:DeleteItem"
+                                | "dynamodb:BatchWriteItem"
+                        )
                     })
             })
             .collect::<Vec<_>>();
-
-        assert_eq!(writes.len(), 1);
-        let write = writes[0];
-        assert_eq!(write.resources, ["table"]);
-        let condition = write
-            .condition
-            .as_ref()
-            .expect("export writes carry a leading-key condition");
-        assert_eq!(condition.operator, "ForAllValues:StringLike");
-        assert_eq!(condition.key, "dynamodb:LeadingKeys");
-        assert_eq!(condition.values, ["EXPORT#*"]);
+        assert!(
+            primitive_writes.is_empty(),
+            "export admission must not regain non-transactional write authority"
+        );
     }
 
     #[test]

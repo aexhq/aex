@@ -910,6 +910,8 @@ version = "0.1.0"
 dependencies = [
  "aex-observation-app",
  "aex-observation-domain",
+ "aex-operation-domain",
+ "aex-session-dynamodb",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -923,6 +925,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "time",
+ "tokio",
  "uuid",
 ]
 
@@ -5653,7 +5656,9 @@ version = "0.1.0"
 dependencies = [
  "aex-observation-domain",
  "aex-observation-export",
+ "aex-observation-query",
  "aex-observation-store-dynamodb",
+ "aex-operation-domain",
  "aex-otlp-admission",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
@@ -5665,6 +5670,7 @@ dependencies = [
  "aws-sdk-s3",
  "axum",
  "http-body-util",
+ "regional-observation-api",
  "serde_json",
  "thiserror",
  "time",
@@ -6578,9 +6584,11 @@ version = "0.1.0"
 dependencies = [
  "aex-identity-domain",
  "aex-internal-contracts",
+ "aex-observation-app",
  "aex-observation-domain",
  "aex-observation-query",
  "aex-observation-store-dynamodb",
+ "aex-operation-domain",
  "aex-otlp-admission",
  "aex-platform-telemetry",
  "aex-regional-http",

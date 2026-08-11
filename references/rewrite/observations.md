@@ -326,11 +326,11 @@ Nothing here is deployed, credentialed or published. No AWS call was made and no
 
 | Deployable | Host | What `run()` now does |
 | --- | --- | --- |
-| `regional-observation-api` | Rust Lambda ZIP, `axum` + `lambda_http` | Owns the finite routes in `RouteGroup::Observations` and `RouteGroup::TelemetryLifecycle`, narrows them through one reviewed served predicate, dispatches through the generated `dispatch_observations` / `dispatch_telemetry_lifecycle`, and serves them over a bounded `DynamoDB`/`S3` reader: frontier read, snapshot pin, per-index segment walk, residual predicate evaluation, budget classification, signed cursor, gap reads, export read, revoke and download grant. The two export-admission routes are contained in §12. |
+| `regional-observation-api` | Rust Lambda ZIP, `axum` + `lambda_http` | Owns the finite routes in `RouteGroup::Observations` and `RouteGroup::TelemetryLifecycle`, narrows them through one reviewed served predicate, dispatches through the generated `dispatch_observations` / `dispatch_telemetry_lifecycle`, and serves them over a bounded `DynamoDB`/`S3` reader: frontier read, snapshot pin, per-index segment walk, residual predicate evaluation, budget classification, signed cursor, gap reads, paired export admission, export read, revoke and download grant. The export-operation protocol is in §12. |
 | `regional-otlp` | Rust Lambda ZIP, `axum` + `lambda_http` | Mounts `RouteGroup::Otlp` (3), reserves the worst-case decoded footprint **before the first decode byte**, decodes and normalizes under the reservation, then runs the whole staged admission protocol: ingress gate, deletion fence, frontier allocation, transaction P, staging, transaction C, replayable materialization. A redaction pass sat between normalization and staging until 2026-08-09; the batch is now admitted as its author wrote it (§13). |
 | `observation-reconciler` | scheduled Rust Lambda, `lambda_runtime` | One duty per deployment, selected by `AEX_OBS_DUTY` from the closed `ControlDomain` vocabulary. Due-scans the sparse `gsi_control` index, takes a durable per-item claim, runs the duty body, and answers with a partial-batch failure body rather than throwing. |
 | `observation-export-launcher` | Rust Lambda, `lambda_runtime` | Due-scans `export.launch`, takes the fenced lease under an `admitted`-or-`launching` state with an expired lease and no cancellation, `RunTask`s with `clientToken = startedBy = export_id`, and reconciles every ambiguous outcome through `ListTasks{startedBy}` — never through a second `RunTask`. |
-| `observation-export-task` | one-shot Rust Fargate task | Takes the lease before any read, acquires every memory reservation before the producing loop starts, streams bounded pages into a checkpointed NDJSON member, uploads parts with a fenced checkpoint after each, verifies `ListParts` to exhaustion on resume, and publishes under one conditional update — losing which aborts the upload and exits `0`. |
+| `observation-export-task` | one-shot Rust Fargate task | Atomically takes the export lease and moves its canonical operation to `running` before any read, acquires every memory reservation before the producing loop starts, proves its reconstructed physical ledger equals the admission-pinned partitions, streams bounded pages into a per-export checkpointed NDJSON member, uploads parts with a fenced checkpoint after each, verifies `ListParts` to exhaustion on resume, and atomically settles the export and operation on publish or failure. |
 
 `/internal/healthz` and `/internal/readyz` are served by all five, always through
 `aex_observation_store_dynamodb::health::{HEALTHZ, READYZ}` rather than a hand-typed
@@ -350,7 +350,7 @@ AEX_PLANE                       dev | prd
 AEX_REGION                      a regional-plane region name
 AEX_OBSERVATION_TABLE           the observation-authority table
 AEX_OBSERVATION_BUCKET          the regional observation bucket
-AEX_SESSION_TABLE               session-authority, read-only, for events
+AEX_SESSION_TABLE               session-authority, event reads and paired export operations
 AEX_OBS_INDEX_SETTLE_MS         2000; must dominate the 1000 ms clock-skew bound
 AEX_OBS_QUERY_SCANNED_ITEMS     at most 50000
 AEX_OBS_QUERY_SEGMENTS          at most 64
@@ -369,12 +369,14 @@ cluster belongs to `observation-export-launcher`, not the API: admission writes
 the durable export control row and the launcher supplies its own cluster at the
 execution boundary.
 
-The API's `PutItem` and `UpdateItem` statement is separate from its read
-statement and is constrained by
-`ForAllValues:StringLike { dynamodb:LeadingKeys = ["EXPORT#*"] }`. The Rust
-`WriteExportControl` capability is therefore enforced by the deployed IAM
-request condition as well as by the application adapter; it cannot mutate
-admission, frontier, segment, gap, claim, or deletion rows.
+The API's paired capability is `TransactGetItems`/`TransactWriteItems`, separate
+from its ordinary read statements on both authorities. It atomically conditions the exact scope guard,
+puts the canonical `OP#*` operation in `session-authority`, and puts the
+`EXPORT#*` state in `observation-authority`. The generated write condition lists
+`EXPORT#*`, `FRONT#*`, `OP#*`, and `SESSION#*`; the paired read condition narrows
+that set to `EXPORT#*` and `OP#*`. DynamoDB evaluates a transaction's complete
+leading-key set against each participating table statement, while the physical
+table resources still prevent a prefix from crossing authorities.
 
 `regional-otlp`, as authored. Two of these no longer exist:
 `AEX_SECRET_CUSTODY_TABLE` and `AEX_OBS_REDACTION_KEY_REF` were removed with the
@@ -428,7 +430,7 @@ AEX_EXPORT_LAUNCH_SHARDS        1..=64
 AEX_EXPORT_LEASE_MS             1000..=900000
 ```
 
-`observation-export-task`, eleven:
+`observation-export-task`, twelve:
 
 ```text
 AEX_PLANE                       dev | prd
@@ -436,6 +438,7 @@ AEX_REGION                      a regional-plane region name
 AEX_EXPORT_ID                   an exp_ identifier
 AEX_WORKSPACE_ID                a wsp_ identifier
 AEX_OBSERVATION_TABLE           the observation-authority table
+AEX_SESSION_TABLE               canonical operation and session-scope authority
 AEX_OBSERVATION_BUCKET          the regional observation bucket
 AEX_EXPORT_MEMORY_BUDGET_BYTES  at least the sum of the four reservations
 AEX_EXPORT_PART_BYTES           5 MiB..=64 MiB; below 5 MiB no upload can complete
@@ -863,38 +866,46 @@ most 400 KiB and one Query evaluates at most 1 MiB. `BatchGetItem` hydration is
 also key-count bounded and retries only its unprocessed subset, so at most `L`
 distinct base rows are added to the reservation.
 
-## 12. Telemetry-export operation containment
+## 12. Telemetry-export operation authority
 
-The two telemetry-export admission routes are deliberately absent from the
-production router. The dormant handler creates only an `export` row in
-`observation-authority`, but returns a generic public `Operation`. Regional
-operation GET, list and cancellation are owned by `session-authority`, so that
-operation cannot subsequently be read, listed or cancelled there. Reporting
-`cancelable: true` does not repair the missing authority. The admission also
-mints a fresh `ExportId` on every call, so replaying the same caller-minted
-`Aex-Operation-Id` can create a second export instead of resolving the first.
+The workspace and session export-create routes are served. Admission derives
+`ExportId` from `(workspaceId, operationId)`, canonicalizes the concrete route,
+path and body into one intent digest, pins the accepted-time snapshot, deletion
+epoch, intersecting gap ids and exact ordered physical segment ledger, then
+commits the queued operation and export state in one cross-table
+`TransactWriteItems`. A same-intent retry reads both rows in one
+`TransactGetItems` snapshot and returns that pair before consulting mutable
+frontier, gap or plan state; a different intent under the operation id conflicts.
+Completeness `require`
+refuses an intersecting known gap before admission, while `allow_gaps` records
+the pinned gap evidence in the manifest input.
 
-Serving that handler would therefore publish two false guarantees at once. The
-workspace and session export-create paths now answer the router's bare `404`
-with no body and no `Location`; they perform no authentication or authority
-write. The other 25 finite observation routes remain mounted, including export
-read, download and revocation for a future correctly admitted export. The
-authored route and dormant handler remain visible so the missing product surface
-cannot be mistaken for a completed redesign.
+The launcher remains an observation-only handoff and needs no session-table
+binding. At task lease acceptance, `ExportPairStore` atomically moves
+`launching/queued` to `generating/running` and advances the export fence. A
+half-open lease is held only while `now < expiresAt`; equality permits takeover,
+and a newly accepted lease must end strictly after `now`. If the deletion guard
+is lost after admission, the task settles `launching/queued` or
+`generating/running` to `failed/failed` without re-requiring the lost guard, so
+retries cannot loop forever on a deleted scope.
 
-Re-enabling admission requires one authority protocol, not another local
-adapter workaround. At minimum, admission must atomically create the public
-operation row in `session-authority` and the export state in
-`observation-authority` with one request-intent identity; an exact replay must
-return the original pair and a different intent must conflict. Every lifecycle
-and cancellation transition must then update or fence both rows in one
-cross-table `TransactWriteItems`, so generic operation reads and the dedicated
-export read can never disagree. That redesign needs explicit table-item and IAM
-review and is not hidden inside this no-schema containment.
+Publish, generation failure and revoke are paired transactions too. Publication
+requires `generating/running` at the exact fence and writes `ready/succeeded`;
+failure writes `failed/failed`; revoke writes `revoked/cancelled` while live and
+preserves a compatible succeeded or failed operation when revoking an already
+terminal artifact. Every ambiguous write is resolved from one serializable
+pair snapshot, and an idempotent revoked read must still prove the compatible operation
+terminal state rather than hiding corruption.
+Serializable pair-read contention uses the regional pinned three-attempt policy
+with two bounded waits; throttling never sleeps for less than its `Retry-After`.
 
-The production-router regression drives both concrete POST paths and requires
-`404`, an empty body and no `Location`. Ownership tests retain all 27 generated
-finite routes while the served-set test pins the narrowed count at 25.
+Checkpoints share the workspace export partition but use
+`CKPT#{exportId}`, so concurrent exports never overwrite or resume one another.
+Before the first page read the worker reconstructs the typed query plan and
+requires its physical ledger to equal the admission-pinned `partitions` list.
+All 27 finite observation routes are now mounted; none of the three approval
+routes changed. The generated regional table bundle for this protocol has
+digest `blake3:4d994c30e28084dbe48e8a89bf82455f9d68965443660d2d492027e3593f9be6`.
 
 ## 13. The managed-secret redactor is removed (2026-08-09)
 

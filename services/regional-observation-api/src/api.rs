@@ -14,21 +14,24 @@ use aex_observation_domain::keys::{self, ScopeKey};
 use aex_observation_domain::order::{OrderBy, OrderTuple};
 use aex_observation_domain::signal::{Signal, SignalSet};
 use aex_observation_query::ast::{CmpOp, FieldRef, Predicate};
-use aex_observation_query::plan::plan;
+use aex_observation_query::plan::{Budget, plan};
+use aex_operation_domain::admission::{AdmissionOutcome, AdmitRequest, admit};
+use aex_operation_domain::{OperationKind as DomainOperationKind, OperationScope};
 use aex_regional_http::cursor::CursorKeyRing;
 use aex_regional_http::stream::split_records;
 use aex_wire::error::{ErrorCode, WireError, WireResult};
+use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{
-    ExportId, MeasurementId, PrefixedId as _, SessionId, TelemetryGapId, TraceId, Uuid7,
-    WorkspaceId,
+    ExportId, MeasurementId, OperationId, PrefixedId as _, SessionId, TelemetryGapId, TraceId,
+    Uuid7, WorkspaceId,
 };
 use aex_wire::models::{
     DownloadGrant, EmptyRequest, ExportCompleteness, ExportFormat, ExportStatus,
     MetricAggregationGroup, MetricAggregationPage, MetricAggregationRequest, Observation,
     ObservationFrame, ObservationFrameCursor, ObservationFrameGap, ObservationListenRequest,
-    ObservationPage, ObservationQuery, ObservationSignal, ObservationStreamRequest, Operation,
-    OperationKind, OperationStatus, RotateReason, TelemetryExport, TelemetryExportRequest,
-    TelemetryGap, TelemetryGapPage, TelemetryGapQuery, TimeRange, TraceDetail, TraceSummary,
+    ObservationPage, ObservationQuery, ObservationSignal, ObservationStreamRequest, RotateReason,
+    TelemetryExport, TelemetryExportRequest, TelemetryGap, TelemetryGapPage, TelemetryGapQuery,
+    TimeRange, TraceDetail, TraceSummary,
 };
 use aex_wire::server::{
     Accepted, Created, NdjsonStream, ObservationsApi, RequestContext, TelemetryLifecycleApi,
@@ -57,6 +60,22 @@ pub const LISTEN_POLL_MIN: Duration = Duration::from_millis(250);
 
 /// Slowest correctness fallback when wake hints are absent or lost.
 pub const LISTEN_POLL_MAX: Duration = Duration::from_secs(15);
+
+#[derive(Clone, Copy)]
+struct ExportIdentity {
+    operation: OperationId,
+    export: ExportId,
+    scope: ScopeKey,
+    intent: IntentDigest,
+}
+
+struct PreparedExportQuery {
+    deletion_epoch: u64,
+    snapshot: Timestamp,
+    partitions: Vec<String>,
+    gaps: Vec<String>,
+    now: Timestamp,
+}
 
 /// Heartbeat/checkpoint interval required by the public stream contract.
 pub const LISTEN_HEARTBEAT: Duration = Duration::from_secs(15);
@@ -804,84 +823,249 @@ impl ObservationRequest {
         session: Option<SessionId>,
         body: TelemetryExportRequest,
     ) -> WireResult<Accepted> {
+        let identity = self.export_identity(cx, session, &body)?;
+        if let Some(replay) = self.export_replay(session, identity).await? {
+            return Ok(replay);
+        }
+        let prepared = self
+            .prepare_export_query(identity.scope, &body, now()?)
+            .await?;
+        let commit = self.export_commit(session, &body, identity, prepared)?;
+        let outcome = self
+            .service
+            .reader
+            .export_pairs()
+            .admit(&commit)
+            .await
+            .map_err(|error| export_pair_error(&error, session.is_some()))?;
+        let public = outcome
+            .operation()
+            .record
+            .public()
+            .map_err(|_| WireError::new(ErrorCode::InternalError))?
+            .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
+        Ok(Accepted(public))
+    }
+
+    fn export_identity(
+        &self,
+        cx: &RequestContext,
+        session: Option<SessionId>,
+        body: &TelemetryExportRequest,
+    ) -> WireResult<ExportIdentity> {
         let operation_id = cx
             .operation_id
             .ok_or_else(|| WireError::new(ErrorCode::InvalidRequest))?;
-        let now = now()?;
-        let export_id = ExportId::from_uuid7(
-            Uuid7::from_bytes(*uuid::Uuid::now_v7().as_bytes())
-                .map_err(|_| WireError::new(ErrorCode::InternalError))?,
-        );
         let scope = self.scope(session);
-        let deletion_epoch = self.deletion_epoch(&scope).await?;
-        let mut item = std::collections::HashMap::new();
-        item.insert(
-            "pk".to_owned(),
-            aws_sdk_dynamodb::types::AttributeValue::S(keys::export_pk(self.workspace())),
+        let canonical_body =
+            aex_wire::to_jcs_bytes(&body).map_err(|_| WireError::new(ErrorCode::InvalidRequest))?;
+        let concrete_path = session.map_or_else(
+            || "/api/observations/telemetry/exports".to_owned(),
+            |session| format!("/api/observations/{session}/telemetry/exports"),
         );
-        item.insert(
-            "sk".to_owned(),
-            aws_sdk_dynamodb::types::AttributeValue::S(keys::export_sk(export_id)),
-        );
-        for (name, value) in [
-            ("itemType", "export".to_owned()),
-            ("exportId", export_id.to_string()),
-            ("operationId", operation_id.to_string()),
-            ("workspaceId", self.workspace().to_string()),
-            ("organizationId", self.organization().to_string()),
-            ("scopeKey", scope.to_key()),
-            ("format", body.format.as_str().to_owned()),
-            ("completeness", body.completeness.as_str().to_owned()),
-            ("state", "admitted".to_owned()),
-            ("clientToken", export_id.to_string()),
-            ("createdAt", now.to_wire()),
-            (
-                "cPk",
-                keys::control_pk(keys::ControlDomain::ExportLaunch, 0),
-            ),
-            ("cSk", keys::control_sk(now, &export_id.to_string())),
-        ] {
-            item.insert(
-                name.to_owned(),
-                aws_sdk_dynamodb::types::AttributeValue::S(value),
-            );
-        }
-        item.insert(
-            "fence".to_owned(),
-            aws_sdk_dynamodb::types::AttributeValue::N("0".to_owned()),
-        );
-        item.insert(
-            "cancelRequested".to_owned(),
-            aws_sdk_dynamodb::types::AttributeValue::Bool(false),
-        );
-        item.insert(
-            "deletionEpochPinned".to_owned(),
-            aws_sdk_dynamodb::types::AttributeValue::N(deletion_epoch.to_string()),
-        );
-        let mut builder = aex_observation_store_dynamodb::expressions::ExpressionBuilder::new();
-        let condition =
-            aex_observation_store_dynamodb::expressions::immutable_condition(&mut builder);
-        self.service
+        let (_, path) = aex_wire::routes::match_route(
+            aex_wire::routes::Plane::Regional,
+            aex_wire::routes::route(cx.route).method,
+            &concrete_path,
+        )
+        .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
+        let intent = aex_wire::intent_digest(cx.route, &path, Some(&canonical_body));
+        let export_id =
+            aex_observation_app::export::derive_export_id(self.workspace(), operation_id);
+        Ok(ExportIdentity {
+            operation: operation_id,
+            export: export_id,
+            scope,
+            intent,
+        })
+    }
+
+    async fn export_replay(
+        &self,
+        session: Option<SessionId>,
+        identity: ExportIdentity,
+    ) -> WireResult<Option<Accepted>> {
+        let Some(operation) = self
+            .service
             .reader
-            .put_export_control(item, &condition, builder.names(), builder.values())
+            .export_pairs()
+            .probe_admission(
+                self.workspace(),
+                identity.export,
+                identity.operation,
+                identity.intent,
+                identity.scope,
+            )
+            .await
+            .map_err(|error| export_pair_error(&error, session.is_some()))?
+        else {
+            return Ok(None);
+        };
+        let public = operation
+            .record
+            .public()
+            .map_err(|_| WireError::new(ErrorCode::InternalError))?
+            .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
+        Ok(Some(Accepted(public)))
+    }
+
+    async fn prepare_export_query(
+        &self,
+        scope: ScopeKey,
+        body: &TelemetryExportRequest,
+        now: Timestamp,
+    ) -> WireResult<PreparedExportQuery> {
+        if body.format == ExportFormat::OtlpJson
+            && matches!(
+                body.query.signal,
+                ObservationSignal::Events
+                    | ObservationSignal::Traces
+                    | ObservationSignal::Telemetry
+            )
+        {
+            return Err(WireError::new(ErrorCode::UnsupportedExportSignal));
+        }
+        let synthetic = ObservationQuery {
+            consistency: body.query.consistency,
+            cursor: None,
+            filter: body.query.filter.clone(),
+            limit: Some(u32::from(aex_observation_domain::limits::QUERY_MAX_LIMIT)),
+            order: Some(aex_wire::models::ObservationOrder::Ascending),
+            signal: body.query.signal,
+            time_range: body.query.time_range.clone(),
+        };
+        let signals = query::signal_for(body.query.signal, body.query.signal)?;
+        let normalized = query::with_scope(
+            query::normalize(
+                &synthetic,
+                signals,
+                aex_observation_domain::limits::QUERY_MAX_LIMIT,
+            )?,
+            &scope,
+        );
+        let frontier = self
+            .service
+            .reader
+            .frontier(&scope, self.workspace(), &normalized)
             .await
             .map_err(|error| read_error(&error))?;
-        Ok(Accepted(Operation {
-            cancelable: true,
-            updated_at: now,
-            workspace_id: self.workspace(),
-            committed_at: None,
-            created_at: now,
-            error: None,
-            id: operation_id,
-            kind: OperationKind::TelemetryExport,
-            progress: None,
-            result: None,
-            session_id: session,
-            started_at: None,
-            status: OperationStatus::Queued,
-            terminal_at: None,
-        }))
+        ensure_queryable(&scope, frontier.deletion_state)?;
+        let snapshot = match body.query.consistency {
+            Some(aex_wire::models::ObservationConsistency::Accepted) => {
+                frontier.accepted_at.min(now)
+            }
+            _ => self
+                .service
+                .reader
+                .pin(frontier, now)
+                .ok_or_else(|| WireError::new(ErrorCode::ObservabilityUnavailable))?
+                .accepted_at(),
+        };
+        let snapshot = aex_observation_query::coverage::Snapshot::at(snapshot);
+        let gaps = self
+            .service
+            .reader
+            .gap_history(&scope, self.workspace(), snapshot)
+            .await
+            .map_err(|error| read_error(&error))?;
+        let window = TimeWindow::new(normalized.time_gte, normalized.time_lt)
+            .ok_or_else(|| query::invalid_query("export timeRange must be non-empty"))?;
+        let gap_ids = gaps
+            .iter()
+            .filter(|gap| gap.revision.affects(normalized.signals, window))
+            .map(|gap| gap.revision.gap_id.to_string())
+            .collect::<Vec<_>>();
+        if body.completeness == ExportCompleteness::Require && !gap_ids.is_empty() {
+            return Err(WireError::new(ErrorCode::TelemetryIncomplete));
+        }
+        let query_plan = plan(
+            &normalized,
+            Budget {
+                max_returned: normalized.limit,
+                ..self.service.budget
+            },
+        )
+        .map_err(|error| query::query_error(&error))?;
+        let partitions = ObservationReader::export_partitions(
+            &scope,
+            self.workspace(),
+            &normalized,
+            &query_plan,
+        );
+        Ok(PreparedExportQuery {
+            deletion_epoch: frontier.deletion_epoch,
+            snapshot: snapshot.accepted_at(),
+            partitions,
+            gaps: gap_ids,
+            now,
+        })
+    }
+
+    fn export_commit(
+        &self,
+        session: Option<SessionId>,
+        body: &TelemetryExportRequest,
+        identity: ExportIdentity,
+        prepared: PreparedExportQuery,
+    ) -> WireResult<aex_observation_store_dynamodb::ExportAdmissionCommit> {
+        let operation = match admit(
+            None,
+            None,
+            &AdmitRequest {
+                id: identity.operation,
+                workspace: self.workspace(),
+                session,
+                kind: DomainOperationKind::TelemetryExport,
+                intent: identity.intent,
+                scope: session.map_or(
+                    OperationScope::Workspace(self.workspace()),
+                    OperationScope::Session,
+                ),
+                inline_result: None,
+                execution: None,
+            },
+            prepared.now,
+        ) {
+            AdmissionOutcome::Inserted(operation) => *operation,
+            _ => return Err(WireError::new(ErrorCode::InternalError)),
+        };
+        let launch_at = Timestamp::from_unix_millis(
+            prepared
+                .snapshot
+                .unix_millis()
+                .saturating_add(self.service.reader.settle_ms())
+                .max(prepared.now.unix_millis()),
+        )
+        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+        let export = aex_observation_app::export::plan(&aex_observation_app::ExportAdmission {
+            operation: identity.operation,
+            workspace: self.workspace(),
+            scope: session.map_or(
+                aex_observation_app::ExportScope::Workspace,
+                aex_observation_app::ExportScope::Session,
+            ),
+            format: body.format.as_str().to_owned(),
+            completeness: body.completeness.as_str().to_owned(),
+            normalized_query: String::from_utf8(
+                aex_wire::to_jcs_bytes(&body.query)
+                    .map_err(|_| WireError::new(ErrorCode::InvalidRequest))?,
+            )
+            .map_err(|_| WireError::new(ErrorCode::InternalError))?,
+            partitions: prepared.partitions,
+            intent: *identity.intent.as_bytes(),
+            deletion_epoch: prepared.deletion_epoch,
+            snapshot: prepared.snapshot,
+            gaps: prepared.gaps,
+            launch_at,
+            now: prepared.now,
+        })
+        .map_err(|_| WireError::new(ErrorCode::InvalidRequest))?;
+        Ok(aex_observation_store_dynamodb::ExportAdmissionCommit {
+            export,
+            operation,
+            scope: identity.scope,
+            deletion_epoch: prepared.deletion_epoch,
+        })
     }
 
     /// Reads one export record.
@@ -907,26 +1091,12 @@ impl ObservationRequest {
         session: Option<SessionId>,
         export: ExportId,
     ) -> WireResult<TelemetryExport> {
-        let mut builder = aex_observation_store_dynamodb::expressions::ExpressionBuilder::new();
-        let state = builder.name("state");
-        let revoked = builder.string("revoked");
-        let revoked_at = builder.name("revokedAt");
-        let at = builder.string(now()?.to_wire());
-        let cancel = builder.name("cancelRequested");
-        let truth = builder.boolean(true);
-        let existing = builder.name("pk");
         self.service
             .reader
-            .update_export_control(
-                &keys::export_pk(self.workspace()),
-                &keys::export_sk(export),
-                &format!("SET {state} = {revoked}, {revoked_at} = {at}, {cancel} = {truth}"),
-                &format!("attribute_exists({existing})"),
-                builder.names(),
-                builder.values(),
-            )
+            .export_pairs()
+            .revoke(self.workspace(), export, self.scope(session), now()?)
             .await
-            .map_err(|error| read_error(&error))?;
+            .map_err(|error| export_pair_error(&error, session.is_some()))?;
         self.export(session, export).await
     }
 
@@ -1506,15 +1676,31 @@ fn read_error(error: &ReadError) -> WireError {
         ReadError::Provider { .. } => WireError::new(ErrorCode::ObservabilityUnavailable)
             .with_retry_after(Duration::from_secs(1)),
         ReadError::InvalidResume => WireError::new(ErrorCode::InvalidCursor),
-        // The one export-control write path that carries a condition targets a
-        // single `EXPORT#{workspace}#{export}` / `STATE` row and asserts it
-        // exists, so a failed condition names exactly one fact: no such export.
-        // Both revoke routes declare `export_not_found`, and it is terminal —
-        // never a `Retry-After`.
-        ReadError::ExportAbsent { .. } => WireError::new(ErrorCode::ExportNotFound),
-        ReadError::Malformed { .. } | ReadError::InvalidWriteTarget { .. } => {
-            WireError::new(ErrorCode::InternalError)
+        ReadError::Malformed { .. } => WireError::new(ErrorCode::InternalError),
+    }
+}
+
+/// Maps the paired cross-table export authority onto route errors.
+fn export_pair_error(
+    error: &aex_observation_store_dynamodb::ExportPairError,
+    session_scoped: bool,
+) -> WireError {
+    use aex_observation_store_dynamodb::ExportPairError;
+
+    match error {
+        ExportPairError::Conflict => WireError::new(ErrorCode::OperationIdempotencyConflict),
+        ExportPairError::NotFound => WireError::new(ErrorCode::ExportNotFound),
+        ExportPairError::ScopeChanged if session_scoped => {
+            WireError::new(ErrorCode::SessionDeleted)
         }
+        ExportPairError::ScopeChanged => WireError::new(ErrorCode::Gone),
+        ExportPairError::Store(error) if error.retryable() => {
+            WireError::new(ErrorCode::ObservabilityUnavailable)
+                .with_retry_after(Duration::from_secs(1))
+        }
+        ExportPairError::InvalidLease
+        | ExportPairError::Corrupt { .. }
+        | ExportPairError::Store(_) => WireError::new(ErrorCode::InternalError),
     }
 }
 
@@ -1639,15 +1825,13 @@ fn decode_export(
 
 /// The gaps an `allow_gaps` export recorded inside its window.
 ///
-/// Written by the export task alongside the manifest. `None` and an empty list
-/// mean different things and are kept apart: `None` is "this export has not
-/// reached a state where gaps are known", an empty list is "the window was
-/// walked and had none". Collapsing them would make a gapless export
-/// indistinguishable from an unfinished one.
+/// Pinned at admission beside the snapshot and physical segment ledger.
+/// `None` remains distinct from an empty list so a legacy or malformed row does
+/// not make an unproved completeness claim.
 fn gap_ids(
     item: &std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue>,
 ) -> Option<Vec<aex_wire::ids::TelemetryGapId>> {
-    let stored = item.get("gapIds")?.as_l().ok()?;
+    let stored = item.get("gaps")?.as_l().ok()?;
     let mut ids = Vec::with_capacity(stored.len());
     for value in stored {
         // A malformed member is dropped rather than failing the whole read: the
@@ -1667,6 +1851,7 @@ fn gap_ids(
 fn export_status(state: &str) -> ExportStatus {
     match state {
         "ready" => ExportStatus::Ready,
+        "failed" => ExportStatus::Failed,
         "expired" => ExportStatus::Expired,
         "revoked" => ExportStatus::Revoked,
         _ => ExportStatus::Preparing,
@@ -2024,7 +2209,8 @@ impl TelemetryLifecycleApi for ObservationRequest {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
+    use std::sync::Arc;
 
     use aex_observation_domain::canonical::CanonicalValue;
     use aex_observation_domain::gap::{GapRecord, GapRevision, TimeWindow};
@@ -2033,45 +2219,306 @@ mod tests {
     use aex_observation_domain::signal::{Signal, SignalSet};
     use aex_observation_query::ast::MapRow;
     use aex_observation_query::plan::{Access, Budget, NormalizedQuery, ScopeAxis, plan};
-    use aex_wire::ids::{PrefixedId as _, SessionId, TelemetryGapId, Uuid7, WorkspaceId};
-    use aex_wire::models::{
-        ExportStatus, ObservationOrigin, ObservationOriginEarliest, TelemetryGapReason,
+    use aex_operation_domain::admission::{AdmissionOutcome, AdmitRequest, admit};
+    use aex_operation_domain::{OperationKind, OperationScope};
+    use aex_regional_http::context::{
+        AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization,
+        RequestContext as EdgeContext,
     };
-    use aex_wire::types::Timestamp;
+    use aex_regional_http::cursor::{CursorKey, CursorKeyRing};
+    use aex_session_dynamodb::attr::{Item, PK, SK, boolean, n, s};
+    use aex_session_dynamodb::codec::encode_operation;
+    use aex_session_dynamodb::wire_pending::StoredOperation;
+    use aex_wire::idempotency::PrincipalScope;
+    use aex_wire::ids::{
+        ApiKeyId, OperationId, OrganizationId, PrefixedId as _, SessionId, TelemetryGapId, Uuid7,
+        WorkspaceId,
+    };
+    use aex_wire::models::{
+        ExportCompleteness, ExportFormat, ExportQuery, ExportStatus, ObservationOrigin,
+        ObservationOriginEarliest, ObservationSignal, TelemetryExportRequest, TelemetryGapReason,
+        TimeRange,
+    };
+    use aex_wire::routes::RouteId;
+    use aex_wire::scopes::ScopeSet;
+    use aex_wire::server::{AcceptKind, RequestContext as WireContext};
+    use aex_wire::types::{Region, RequestId, Timestamp};
+    use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region as AwsRegion};
+    use aws_sdk_dynamodb::types::AttributeValue;
+    use aws_smithy_http_client::test_util::{ReplayEvent, StaticReplayClient};
+    use aws_smithy_types::body::SdkBody;
 
     use super::{
-        GRANT_LIFETIME, LISTEN_BUDGET, SocketLifetime, bind_metric_selection, export_status,
-        gap_to_wire, listen_window, read_error, unseen_gaps, window_for,
+        GRANT_LIFETIME, LISTEN_BUDGET, ObservationRequest, ObservationService, SocketLifetime,
+        StreamPolicy, StreamRevalidator, bind_metric_selection, export_status, gap_to_wire,
+        listen_window, read_error, unseen_gaps, window_for,
     };
     use crate::counters::{ReadCounter, ReadCounters};
     use crate::reader::ReadError;
 
-    #[test]
-    fn an_absent_export_is_a_terminal_404_on_both_revoke_routes() {
-        // The defect this pins: `update_export_control` folded
-        // `ConditionalCheckFailedException` into a provider failure, so revoking
-        // an export that does not exist answered `503 observability_unavailable`
-        // with `Retry-After: 1`, telling the client the plane was down.
-        let failure = read_error(&ReadError::ExportAbsent {
-            operation: "UpdateItem",
-        });
-        assert_eq!(failure.code, aex_wire::error::ErrorCode::ExportNotFound);
-        assert_eq!(failure.code.http_status(), 404);
-        assert!(
-            failure.retry_after.is_none(),
-            "an export that does not exist never becomes one by retrying"
-        );
-        for id in [
-            aex_wire::routes::RouteId::TelemetryExportRevoke,
-            aex_wire::routes::RouteId::SessionTelemetryExportRevoke,
-        ] {
-            assert!(
-                aex_wire::routes::route(id).declares(failure.code),
-                "`{}` does not declare `{}`",
-                aex_wire::routes::route(id).operation_id,
-                failure.code.as_str()
-            );
+    #[derive(Debug)]
+    struct RefusingRevalidator;
+
+    #[async_trait::async_trait]
+    impl StreamRevalidator for RefusingRevalidator {
+        async fn revalidate(
+            &self,
+            _authorization: &RegionalAuthorization,
+            _scope: &ScopeKey,
+        ) -> aex_wire::WireResult<()> {
+            Err(aex_wire::WireError::new(
+                aex_wire::error::ErrorCode::Unauthenticated,
+            ))
         }
+    }
+
+    fn export_body() -> TelemetryExportRequest {
+        TelemetryExportRequest {
+            completeness: ExportCompleteness::AllowGaps,
+            format: ExportFormat::Ndjson,
+            query: ExportQuery {
+                consistency: Some(aex_wire::models::ObservationConsistency::Accepted),
+                filter: None,
+                signal: ObservationSignal::Logs,
+                time_range: TimeRange {
+                    gte: Timestamp::from_unix_millis(1_000).expect("time"),
+                    lt: Timestamp::from_unix_millis(2_000).expect("time"),
+                },
+            },
+        }
+    }
+
+    fn export_workspace() -> WorkspaceId {
+        WorkspaceId::from_uuid7(Uuid7::compose(1, [8; 10]))
+    }
+
+    fn export_operation() -> OperationId {
+        OperationId::from_uuid7(Uuid7::compose(2, [7; 10]))
+    }
+
+    fn export_intent(body: &TelemetryExportRequest) -> aex_wire::idempotency::IntentDigest {
+        let route = RouteId::TelemetryExportCreate;
+        let canonical = aex_wire::to_jcs_bytes(body).expect("canonical request");
+        let (_, path) = aex_wire::routes::match_route(
+            aex_wire::routes::Plane::Regional,
+            aex_wire::routes::route(route).method,
+            "/api/observations/telemetry/exports",
+        )
+        .expect("the concrete route matches");
+        aex_wire::intent_digest(route, &path, Some(&canonical))
+    }
+
+    fn dynamo_attribute(value: &AttributeValue) -> serde_json::Value {
+        match value {
+            AttributeValue::S(value) => serde_json::json!({"S": value}),
+            AttributeValue::N(value) => serde_json::json!({"N": value}),
+            AttributeValue::Bool(value) => serde_json::json!({"BOOL": value}),
+            other => panic!("unsupported export replay attribute: {other:?}"),
+        }
+    }
+
+    fn dynamo_item(item: &Item) -> serde_json::Value {
+        serde_json::Value::Object(
+            item.iter()
+                .map(|(name, value)| (name.clone(), dynamo_attribute(value)))
+                .collect(),
+        )
+    }
+
+    fn exact_pair_response(body: &TelemetryExportRequest) -> String {
+        let workspace = export_workspace();
+        let operation_id = export_operation();
+        let intent = export_intent(body);
+        let operation = match admit(
+            None,
+            None,
+            &AdmitRequest {
+                id: operation_id,
+                workspace,
+                session: None,
+                kind: OperationKind::TelemetryExport,
+                intent,
+                scope: OperationScope::Workspace(workspace),
+                inline_result: None,
+                execution: None,
+            },
+            Timestamp::from_unix_millis(10).expect("time"),
+        ) {
+            AdmissionOutcome::Inserted(operation) => *operation,
+            _ => panic!("a fresh operation inserts"),
+        };
+        let operation_item = encode_operation(&StoredOperation {
+            record: operation,
+            version: 1,
+        })
+        .expect("the operation encodes");
+        let export_id = aex_observation_app::export::derive_export_id(workspace, operation_id);
+        let export_item = HashMap::from([
+            (
+                PK.to_owned(),
+                s(aex_observation_domain::keys::export_pk(workspace)),
+            ),
+            (
+                SK.to_owned(),
+                s(aex_observation_domain::keys::export_sk(export_id)),
+            ),
+            ("itemType".to_owned(), s("export")),
+            ("exportId".to_owned(), s(export_id.to_string())),
+            ("operationId".to_owned(), s(operation_id.to_string())),
+            ("workspaceId".to_owned(), s(workspace.to_string())),
+            (
+                "scopeKey".to_owned(),
+                s(ScopeKey::Workspace(workspace).to_key()),
+            ),
+            ("intentDigest".to_owned(), s(intent.to_string())),
+            ("state".to_owned(), s("admitted")),
+            ("fence".to_owned(), n(0)),
+            ("cancelRequested".to_owned(), boolean(false)),
+        ]);
+        serde_json::json!({
+            "Responses": [
+                {"Item": dynamo_item(&export_item)},
+                {"Item": dynamo_item(&operation_item)}
+            ]
+        })
+        .to_string()
+    }
+
+    fn replaying_export_request(
+        stored_body: &TelemetryExportRequest,
+    ) -> (ObservationRequest, WireContext, StaticReplayClient) {
+        let response = exact_pair_response(stored_body);
+        let replay = StaticReplayClient::new(vec![ReplayEvent::new(
+            http::Request::builder()
+                .method("POST")
+                .uri("https://dynamodb.eu-west-1.amazonaws.com/")
+                .body(SdkBody::empty())
+                .expect("a request"),
+            http::Response::builder()
+                .status(200)
+                .body(SdkBody::from(response))
+                .expect("a response"),
+        )]);
+        let dynamodb = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::Config::builder()
+                .behavior_version(BehaviorVersion::latest())
+                .region(AwsRegion::new("eu-west-1"))
+                .credentials_provider(Credentials::new(
+                    "AKIDTESTTESTTESTTEST",
+                    "test-secret",
+                    None,
+                    None,
+                    "aex-tests",
+                ))
+                .retry_config(aws_sdk_dynamodb::config::retry::RetryConfig::disabled())
+                .http_client(replay.clone())
+                .build(),
+        );
+        let s3 = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+                .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+                .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                    "AKIDTESTTESTTESTTEST",
+                    "test-secret",
+                    None,
+                    None,
+                    "aex-tests",
+                ))
+                .build(),
+        );
+        let reader = crate::reader::ObservationReader::new(
+            dynamodb,
+            s3,
+            "observation-authority",
+            "session-authority",
+            "observations",
+            2_000,
+            Arc::new(ReadCounters::default()),
+        );
+        let ring = CursorKeyRing::new(
+            CursorKey::new("test", vec![7; 32]).expect("a strong test key"),
+            Vec::new(),
+        )
+        .expect("one unique cursor key");
+        let service = Arc::new(ObservationService::new(
+            reader,
+            Budget::default(),
+            1,
+            Arc::new(ring),
+            Region::EuWest1,
+            StreamPolicy::new(Arc::new(RefusingRevalidator)),
+        ));
+        let workspace = export_workspace();
+        let organization = OrganizationId::from_uuid7(Uuid7::compose(1, [6; 10]));
+        let principal = PrincipalScope::WorkspaceKey {
+            key: ApiKeyId::from_uuid7(Uuid7::compose(1, [5; 10])),
+            workspace,
+            organization,
+        };
+        let authorized = EdgeContext {
+            request_id: RequestId::parse("export-replay").expect("request id"),
+            route: RouteId::TelemetryExportCreate,
+            auth: RegionalAuthorization {
+                principal,
+                credential_binding: [4; 32],
+                organization_id: organization,
+                workspace_id: workspace,
+                placement: Region::EuWest1,
+                scopes: ScopeSet::default(),
+                account_state: AccountState::Active,
+                epochs: AuthorizationEpochs::default(),
+            },
+            limits: EffectiveLimits {
+                json_body_bytes: 65_536,
+                otlp_body_bytes: 4 * 1_024 * 1_024,
+                query_page_items: 100,
+                query_page_bytes: 1_048_576,
+            },
+            operation_id: Some(export_operation()),
+            idempotency: None,
+            if_match: None,
+            received_at: time::OffsetDateTime::UNIX_EPOCH,
+        };
+        let wire = authorized.to_wire(AcceptKind::Json);
+        (ObservationRequest::new(service, authorized), wire, replay)
+    }
+
+    #[tokio::test]
+    async fn exact_export_retry_returns_before_any_frontier_or_gap_read() {
+        let body = export_body();
+        let (request, wire, replay) = replaying_export_request(&body);
+        let accepted = request
+            .admit_export(&wire, None, body)
+            .await
+            .expect("the exact operation replays");
+        assert_eq!(accepted.0.id, export_operation());
+        assert_eq!(
+            replay.actual_requests().count(),
+            1,
+            "only the atomic pair probe may run"
+        );
+    }
+
+    #[tokio::test]
+    async fn changed_export_body_conflicts_before_any_frontier_or_gap_read() {
+        let stored = export_body();
+        let (request, wire, replay) = replaying_export_request(&stored);
+        let mut changed = stored;
+        changed.completeness = ExportCompleteness::Require;
+        let error = request
+            .admit_export(&wire, None, changed)
+            .await
+            .expect_err("the occupied operation id conflicts");
+        assert_eq!(
+            error.code,
+            aex_wire::error::ErrorCode::OperationIdempotencyConflict
+        );
+        assert_eq!(
+            replay.actual_requests().count(),
+            1,
+            "a conflict must not consult volatile observation state"
+        );
     }
 
     #[test]
@@ -2154,9 +2601,10 @@ mod tests {
     #[test]
     fn only_a_ready_export_is_ready() {
         assert_eq!(export_status("ready"), ExportStatus::Ready);
+        assert_eq!(export_status("failed"), ExportStatus::Failed);
         assert_eq!(export_status("revoked"), ExportStatus::Revoked);
         assert_eq!(export_status("expired"), ExportStatus::Expired);
-        for preparing in ["admitted", "launching", "generating", "failed", ""] {
+        for preparing in ["admitted", "launching", "generating", ""] {
             assert_eq!(export_status(preparing), ExportStatus::Preparing);
         }
     }

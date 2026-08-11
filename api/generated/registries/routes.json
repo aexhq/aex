@@ -4582,8 +4582,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The durable session export-admission composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4591,13 +4589,14 @@
         "operation_idempotency_conflict",
         "invalid_request",
         "limit_exceeded",
+        "session_deleting",
         "session_deleted",
         "telemetry_incomplete",
         "unsupported_export_signal",
         "invalid_query",
         "account_paused",
         "wrong_workspace_region",
-        "not_implemented"
+        "observability_unavailable"
       ],
       "etag": "none",
       "fragment": "telemetry-lifecycle",
@@ -4619,6 +4618,7 @@
         "SC-OBSERVATION-EXPORT",
         "SC-OBSERVATION-GAP"
       ],
+      "servedArtifact": "regional-observation-api",
       "servingArtifact": "regional-observation-api",
       "successStatus": 202,
       "summary": "Admit the durable session telemetry-export operation.",
@@ -4946,11 +4946,10 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The durable workspace export-admission composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
+        "gone",
         "operation_idempotency_conflict",
         "invalid_request",
         "limit_exceeded",
@@ -4959,7 +4958,7 @@
         "invalid_query",
         "account_paused",
         "wrong_workspace_region",
-        "not_implemented"
+        "observability_unavailable"
       ],
       "etag": "none",
       "fragment": "telemetry-lifecycle",
@@ -4979,6 +4978,7 @@
         "SC-OBSERVATION-EXPORT",
         "SC-OBSERVATION-GAP"
       ],
+      "servedArtifact": "regional-observation-api",
       "servingArtifact": "regional-observation-api",
       "successStatus": 202,
       "summary": "Admit the durable workspace telemetry-export operation.",

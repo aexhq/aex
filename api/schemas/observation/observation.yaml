@@ -382,6 +382,7 @@ schemas:
     values:
       - { value: preparing, doc: "Being produced." }
       - { value: ready, doc: "Downloadable." }
+      - { value: failed, doc: "Generation ended without a publishable artifact; inspect the canonical operation failure." }
       - { value: expired, doc: "Past its retention." }
       - { value: revoked, doc: "Explicitly revoked." }
 

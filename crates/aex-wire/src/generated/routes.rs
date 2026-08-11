@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:20d11fdca3dff3d75d7502a60456949b23e16df9094593f0c3f619368ab2218e`.
+//! `sha256:746909d557013ea5aaf802d74181f53b5d868f79814b0bd9389302208ad0c0f2`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -4672,7 +4672,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         plane: Plane::Regional,
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
-        deferred: true,
+        deferred: false,
         method: HttpMethod::Post,
         template: "/api/observations/{sessionId}/telemetry/exports",
         path_params: &["sessionId"],
@@ -4691,13 +4691,14 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::OperationIdempotencyConflict,
             ErrorCode::InvalidRequest,
             ErrorCode::LimitExceeded,
+            ErrorCode::SessionDeleting,
             ErrorCode::SessionDeleted,
             ErrorCode::TelemetryIncomplete,
             ErrorCode::UnsupportedExportSignal,
             ErrorCode::InvalidQuery,
             ErrorCode::AccountPaused,
             ErrorCode::WrongWorkspaceRegion,
-            ErrorCode::NotImplemented,
+            ErrorCode::ObservabilityUnavailable,
         ],
         request_schema: Some("TelemetryExportRequest"),
         response_schema: Some("Operation"),
@@ -4974,7 +4975,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         plane: Plane::Regional,
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
-        deferred: true,
+        deferred: false,
         method: HttpMethod::Post,
         template: "/api/observations/telemetry/exports",
         path_params: &[],
@@ -4989,6 +4990,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         errors: &[
             ErrorCode::Unauthenticated,
             ErrorCode::InsufficientScope,
+            ErrorCode::Gone,
             ErrorCode::OperationIdempotencyConflict,
             ErrorCode::InvalidRequest,
             ErrorCode::LimitExceeded,
@@ -4997,7 +4999,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::InvalidQuery,
             ErrorCode::AccountPaused,
             ErrorCode::WrongWorkspaceRegion,
-            ErrorCode::NotImplemented,
+            ErrorCode::ObservabilityUnavailable,
         ],
         request_schema: Some("TelemetryExportRequest"),
         response_schema: Some("Operation"),

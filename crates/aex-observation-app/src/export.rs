@@ -124,6 +124,13 @@ pub struct ExportAdmission {
     pub intent: [u8; 32],
     /// The deletion epoch the scope was at when the export was admitted.
     pub deletion_epoch: u64,
+    /// The accepted-time snapshot every run must stop at.
+    pub snapshot: Timestamp,
+    /// Known gap identities intersecting the selected window at that snapshot.
+    pub gaps: Vec<String>,
+    /// Earliest instant at which every eventually-consistent index is allowed
+    /// to serve the pinned snapshot.
+    pub launch_at: Timestamp,
     /// When admission happened.
     pub now: Timestamp,
 }
@@ -222,11 +229,9 @@ pub fn plan(request: &ExportAdmission) -> Result<ExportPlan, ExportPlanError> {
             .ok_or(ExportPlanError::Unrepresentable)?,
     )
     .map_err(|_| ExportPlanError::Unrepresentable)?;
-    // The snapshot is taken at admission, not at launch. A long-queued export
-    // therefore reflects the moment it was requested rather than the moment it
-    // ran, which is the correct semantic for an export and the only one under
-    // which two runs of it produce the same artifact.
-    let snapshot = request.now.unix_millis();
+    // The snapshot is selected at admission, not at launch. A long-queued
+    // export therefore reflects the same accepted frontier on every run.
+    let snapshot = request.snapshot.unix_millis();
 
     let scope_key = request.scope.key(request.workspace).to_key();
 
@@ -256,7 +261,7 @@ pub fn plan(request: &ExportAdmission) -> Result<ExportPlan, ExportPlanError> {
         ("cPk".to_owned(), control_pk(ControlDomain::ExportLaunch, 0)),
         (
             "cSk".to_owned(),
-            control_sk(request.now, &export.to_string()),
+            control_sk(request.launch_at, &export.to_string()),
         ),
         // TTL is disabled on this table by design: a TTL delete is unordered,
         // unfenced and invisible to the fenced duties. Expiry runs through a
@@ -288,7 +293,10 @@ pub fn plan(request: &ExportAdmission) -> Result<ExportPlan, ExportPlanError> {
                 ),
             ]),
             flags: BTreeMap::from([("cancelRequested".to_owned(), false)]),
-            lists: BTreeMap::from([("partitions".to_owned(), request.partitions.clone())]),
+            lists: BTreeMap::from([
+                ("partitions".to_owned(), request.partitions.clone()),
+                ("gaps".to_owned(), request.gaps.clone()),
+            ]),
         },
         expires_at,
         snapshot,
@@ -325,6 +333,9 @@ mod tests {
             partitions: vec!["OBS#W#ws#logs#2026-08-01".to_owned()],
             intent: [7; 32],
             deletion_epoch: 3,
+            snapshot: at(),
+            gaps: vec!["gap_example".to_owned()],
+            launch_at: at(),
             now: at(),
         }
     }
@@ -391,6 +402,7 @@ mod tests {
              artifact that looks exactly like a complete one"
         );
         assert!(!row.flags["cancelRequested"]);
+        assert_eq!(row.lists["gaps"], vec!["gap_example"]);
         assert_eq!(row.text["state"], "admitted");
         assert_eq!(
             row.text["intentDigest"].len(),

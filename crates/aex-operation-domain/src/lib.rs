@@ -40,6 +40,6 @@ pub use operation::{
     CancelRejection, Execution, FailureClass, InlineBudget, Operation, OperationCommit,
     OperationFailure, OperationKind, OperationResult, OperationScope, OperationStatus,
     PersistShape, Progress, ProgressError, PublicProjectionError, TransitionError, cancel,
-    classify_persist, commit_point, fail, progress, start, succeed,
+    classify_persist, commit_point, fail, progress, revoke_telemetry_export, start, succeed,
 };
 pub use redact::redact_for_purge;

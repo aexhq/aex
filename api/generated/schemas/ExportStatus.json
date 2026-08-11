@@ -5,6 +5,7 @@
   "enum": [
     "preparing",
     "ready",
+    "failed",
     "expired",
     "revoked"
   ],
