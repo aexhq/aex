@@ -1010,7 +1010,7 @@ impl SessionsApi for Routes {
         _cx: &WireContext,
         body: models::SessionCreateRequest,
     ) -> WireResult<Created<models::Session>> {
-        crate::session::create_route::create_session(self, body)
+        Box::pin(crate::session::create_route::create_session(self, body))
             .await
             .map(Created)
     }
@@ -1719,7 +1719,7 @@ impl UnaryDispatch for Routes {
             }
             "operations" => dispatch_regional_operations(self, &wire, raw, limits).await?,
             "registry" => dispatch_registry(self, &wire, raw, limits).await?,
-            "sessions" => dispatch_sessions(self, &wire, raw, limits).await?,
+            "sessions" => Box::pin(dispatch_sessions(self, &wire, raw, limits)).await?,
             "files" => dispatch_files(self, &wire, raw, limits).await?,
             "uploads" => aex_wire::server::dispatch_uploads(self, &wire, raw, limits).await?,
             "usage" => dispatch_usage(self, &wire, raw, limits).await?,

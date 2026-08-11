@@ -6,8 +6,6 @@
 //! materialized, and root `AgentStarted` is durable does one final transaction
 //! publish the head and exact response receipt.
 
-use std::future::Future;
-
 use aex_brain_domain::budget::Dimension;
 use aex_brain_domain::journal::JournalRecord;
 use aex_hands_protocol::files::{FileRequest, FileResponse};
@@ -27,7 +25,8 @@ use aex_session_domain::{
 use aex_session_dynamodb::app_authority::{ApiHintSink, DynamoAuthorityCommitter};
 use aex_session_dynamodb::application_plan::{FamilyCompilers, SessionBinding};
 use aex_session_dynamodb::create_preparation::{
-    CreatePreparation, CreatePreparationError, CreatePreparationStore, PreparedFile, RootStarted,
+    CreatePreparation, CreatePreparationError, CreatePreparationStore, DurableRootStarted,
+    PreparedFile, RootStarted,
 };
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::Participant;
@@ -36,10 +35,10 @@ use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::idempotency::{IntentDigest, ReplayIdentity};
 use aex_wire::models;
 use aex_wire::routes::RouteId;
-use aex_wire::types::DecimalU128;
+use aex_wire::types::{DecimalU128, Timestamp};
 
 use super::create_readiness::{
-    ContentObjects, StartupGuest, StartupGuestError, materialize_selected,
+    ContentObjects, MaterializedFile, StartupGuest, StartupGuestError, materialize_selected,
 };
 use super::handlers::Routes;
 
@@ -54,10 +53,62 @@ pub(super) async fn create_session(
     let bindings = routes.bindings()?;
     let now = routes.now()?;
 
+    if let Some(session) = replay_existing(routes, &command, now).await? {
+        return Ok(session);
+    }
+
+    let preparations = CreatePreparationStore::new(
+        routes.shared.authority.clone(),
+        routes.shared.tables.session_authority.clone(),
+    );
+    let prepared = if let Some(winner) = preparations
+        .load(command.workspace, receipt_key.key_sha256())
+        .await
+        .map_err(|error| preparation_failure(&error))?
+    {
+        require_winner_intent(&winner, &command)?;
+        rehydrate(&winner, &command)?
+    } else {
+        let context = bindings.context();
+        match prepare_session_create(&context, &command)
+            .await
+            .map_err(|error| create_app_failure(&error))?
+        {
+            PrepareSessionCreateOutcome::Replayed { session, .. } => return Ok(*session),
+            PrepareSessionCreateOutcome::Prepared(candidate) => {
+                let candidate = private_preparation(
+                    candidate.as_ref(),
+                    receipt_key.key_sha256(),
+                    *bindings.ids(),
+                )?;
+                let winner = preparations
+                    .stage_and_elect(&candidate)
+                    .await
+                    .map_err(|error| preparation_failure(&error))?;
+                require_winner_intent(&winner, &command)?;
+                rehydrate(&winner, &command)?
+            }
+        }
+    };
+    let winner = preparations
+        .load(command.workspace, receipt_key.key_sha256())
+        .await
+        .map_err(|error| preparation_failure(&error))?
+        .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
+    derive_runtime_authority(routes, &prepared, &winner).await?;
+    let readiness = establish_readiness(routes, &preparations, &winner).await?;
+    publish_ready_head(routes, &command, &prepared, &winner, &readiness).await
+}
+
+async fn replay_existing(
+    routes: &Routes,
+    command: &CreateSession,
+    now: Timestamp,
+) -> WireResult<Option<models::Session>> {
     // Receipt before both private election and every volatile planning read.
     // An accepted retry remains independent of a later pause, credential
     // revocation, registry deletion or model-catalog change.
-    if let Some(stored) = routes
+    let Some(stored) = routes
         .shared
         .commands
         .load_receipt(
@@ -68,51 +119,21 @@ pub(super) async fn create_session(
         )
         .await
         .map_err(port_failure)?
-    {
-        return replayed(
-            replay_session_create_receipt(&stored, &command).map_err(create_app_failure)?,
-        );
-    }
-
-    let preparations = CreatePreparationStore::new(
-        routes.shared.authority.clone(),
-        routes.shared.tables.session_authority.clone(),
-    );
-    let prepared = if let Some(winner) = preparations
-        .load(command.workspace, receipt_key.key_sha256())
-        .await
-        .map_err(preparation_failure)?
-    {
-        require_winner_intent(&winner, &command)?;
-        rehydrate(&winner, &command)?
-    } else {
-        let context = bindings.context();
-        match prepare_session_create(&context, &command)
-            .await
-            .map_err(create_app_failure)?
-        {
-            PrepareSessionCreateOutcome::Replayed { session, .. } => return Ok(*session),
-            PrepareSessionCreateOutcome::Prepared(candidate) => {
-                let candidate = private_preparation(
-                    candidate.as_ref(),
-                    receipt_key.key_sha256(),
-                    bindings.ids(),
-                )?;
-                let winner = preparations
-                    .stage_and_elect(&candidate)
-                    .await
-                    .map_err(preparation_failure)?;
-                require_winner_intent(&winner, &command)?;
-                rehydrate(&winner, &command)?
-            }
-        }
+    else {
+        return Ok(None);
     };
-    let winner = preparations
-        .load(command.workspace, receipt_key.key_sha256())
-        .await
-        .map_err(preparation_failure)?
-        .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
+    replayed(
+        replay_session_create_receipt(&stored, command)
+            .map_err(|error| create_app_failure(&error))?,
+    )
+    .map(Some)
+}
 
+async fn derive_runtime_authority(
+    routes: &Routes,
+    prepared: &PreparedSessionCreate,
+    winner: &CreatePreparation,
+) -> WireResult<()> {
     let definition = prepared.pinned_runtime.definition();
     if let Err(error) = aex_runtime_activity_dynamodb::derive::derive_generation_rows(
         &routes.shared.runtime_activity,
@@ -124,85 +145,19 @@ pub(super) async fn create_session(
         eprintln!("session-stream-api: session create could not derive runtime authority: {error}");
         return Err(WireError::new(ErrorCode::InternalError));
     }
+    Ok(())
+}
 
-    let first_ready = match routes
-        .shared
-        .live_files
-        .ensure_ready(winner.session, winner.generation)
-        .await
-    {
-        Ok(ready) => ready,
-        Err(error) => {
-            compensate(routes, &winner, "launch readiness", &error).await;
-            return Err(WireError::new(ErrorCode::InternalError));
-        }
-    };
-    if !has_exact_provider_lifetime(&first_ready) {
-        compensate(
-            routes,
-            &winner,
-            "provider lifetime validation",
-            &"the ready generation does not carry the fixed eight-hour fence",
-        )
-        .await;
-        return Err(WireError::new(ErrorCode::InternalError));
-    }
-    let content = ContentObjects::new(routes.shared.content_objects.as_ref(), winner.workspace);
-    let guest = StartupHands(routes.shared.live_files.as_ref());
-    let materialized = match materialize_selected(&content, &guest, &winner).await {
-        Ok(materialized) => materialized,
-        Err(error) => {
-            compensate(routes, &winner, "startup file materialization", &error).await;
-            return Err(WireError::new(ErrorCode::InternalError));
-        }
-    };
-    // A final authenticated observation proves that the generation remained
-    // reachable after the last guest rename. Its observation time is the
-    // truthful occurrence time for the durable root start.
-    let ready = match routes
-        .shared
-        .live_files
-        .ensure_ready(winner.session, winner.generation)
-        .await
-    {
-        Ok(ready)
-            if ready.generation == first_ready.generation
-                && ready.launched_at == first_ready.launched_at
-                && ready.expires_at == first_ready.expires_at =>
-        {
-            ready
-        }
-        Ok(_) => {
-            compensate(
-                routes,
-                &winner,
-                "readiness identity drift",
-                &"mismatched readiness",
-            )
-            .await;
-            return Err(WireError::new(ErrorCode::InternalError));
-        }
-        Err(error) => {
-            compensate(routes, &winner, "final readiness", &error).await;
-            return Err(WireError::new(ErrorCode::InternalError));
-        }
-    };
-    let root = match preparations
-        .commit_root_started(
-            &winner,
-            RootStarted {
-                occurred_at: ready.observed_at,
-            },
-        )
-        .await
-    {
-        Ok(root) => root,
-        Err(error) => {
-            compensate(routes, &winner, "root AgentStarted", &error).await;
-            return Err(preparation_failure(error));
-        }
-    };
-    let readiness = ReadySessionLaunch {
+async fn establish_readiness(
+    routes: &Routes,
+    preparations: &CreatePreparationStore,
+    winner: &CreatePreparation,
+) -> WireResult<ReadySessionLaunch> {
+    let first_ready = ensure_initial_readiness(routes, winner).await?;
+    let materialized = materialize_initial_files(routes, winner).await?;
+    let ready = confirm_readiness(routes, winner, &first_ready).await?;
+    let root = persist_root_started(routes, preparations, winner, ready.observed_at).await?;
+    Ok(ReadySessionLaunch {
         generation: winner.generation,
         launched_at: ready.launched_at,
         materialized_files: materialized
@@ -218,12 +173,121 @@ pub(super) async fn create_session(
             journal_tail: JournalSeq(root.journal_tail),
             journal_tail_hash: root.journal_tail_hash,
         },
+    })
+}
+
+async fn ensure_initial_readiness(
+    routes: &Routes,
+    winner: &CreatePreparation,
+) -> WireResult<aex_brain_hands::LiveGenerationReady> {
+    let ready = match routes
+        .shared
+        .live_files
+        .ensure_ready(winner.session, winner.generation)
+        .await
+    {
+        Ok(ready) => ready,
+        Err(error) => {
+            compensate(routes, winner, "launch readiness", &error).await;
+            return Err(WireError::new(ErrorCode::InternalError));
+        }
     };
-    let planned = match publish_ready_session(&prepared, &readiness) {
+    if !has_exact_provider_lifetime(&ready) {
+        compensate(
+            routes,
+            winner,
+            "provider lifetime validation",
+            &"the ready generation does not carry the fixed eight-hour fence",
+        )
+        .await;
+        return Err(WireError::new(ErrorCode::InternalError));
+    }
+    Ok(ready)
+}
+
+async fn materialize_initial_files(
+    routes: &Routes,
+    winner: &CreatePreparation,
+) -> WireResult<Vec<MaterializedFile>> {
+    let content = ContentObjects::new(routes.shared.content_objects.as_ref(), winner.workspace);
+    let guest = StartupHands(routes.shared.live_files.as_ref());
+    match materialize_selected(&content, &guest, winner).await {
+        Ok(files) => Ok(files),
+        Err(error) => {
+            compensate(routes, winner, "startup file materialization", &error).await;
+            Err(WireError::new(ErrorCode::InternalError))
+        }
+    }
+}
+
+async fn confirm_readiness(
+    routes: &Routes,
+    winner: &CreatePreparation,
+    first_ready: &aex_brain_hands::LiveGenerationReady,
+) -> WireResult<aex_brain_hands::LiveGenerationReady> {
+    // A final authenticated observation proves that the generation remained
+    // reachable after the last guest rename. Its observation time is the
+    // truthful occurrence time for the durable root start.
+    match routes
+        .shared
+        .live_files
+        .ensure_ready(winner.session, winner.generation)
+        .await
+    {
+        Ok(ready)
+            if ready.generation == first_ready.generation
+                && ready.launched_at == first_ready.launched_at
+                && ready.expires_at == first_ready.expires_at =>
+        {
+            Ok(ready)
+        }
+        Ok(_) => {
+            compensate(
+                routes,
+                winner,
+                "readiness identity drift",
+                &"mismatched readiness",
+            )
+            .await;
+            Err(WireError::new(ErrorCode::InternalError))
+        }
+        Err(error) => {
+            compensate(routes, winner, "final readiness", &error).await;
+            Err(WireError::new(ErrorCode::InternalError))
+        }
+    }
+}
+
+async fn persist_root_started(
+    routes: &Routes,
+    preparations: &CreatePreparationStore,
+    winner: &CreatePreparation,
+    occurred_at: Timestamp,
+) -> WireResult<DurableRootStarted> {
+    match preparations
+        .commit_root_started(winner, RootStarted { occurred_at })
+        .await
+    {
+        Ok(root) => Ok(root),
+        Err(error) => {
+            compensate(routes, winner, "root AgentStarted", &error).await;
+            Err(preparation_failure(&error))
+        }
+    }
+}
+
+async fn publish_ready_head(
+    routes: &Routes,
+    command: &CreateSession,
+    prepared: &PreparedSessionCreate,
+    winner: &CreatePreparation,
+    readiness: &ReadySessionLaunch,
+) -> WireResult<models::Session> {
+    let planned = match publish_ready_session(prepared, readiness) {
         Ok(planned) => planned,
         Err(error) => {
-            compensate(routes, &winner, "ready publication planning", &error).await;
-            return Err(create_app_failure(error));
+            compensate(routes, winner, "ready publication planning", &error).await;
+            return Err(create_app_failure(&error));
         }
     };
     let binding = SessionBinding {
@@ -235,66 +299,81 @@ pub(super) async fn create_session(
         routes.shared.authority.clone(),
         routes.shared.tables.clone(),
         binding,
-        ready.observed_at,
+        readiness.root_started.occurred_at,
         ApiHintSink,
     );
     if let Err(error) = committer
         .commit_replayable(&planned.plan, &FamilyCompilers::new())
         .await
     {
-        match routes
-            .shared
-            .commands
-            .load_receipt(
-                command.workspace,
-                aex_session_app::CREATE_SCOPE,
-                &command.identity,
-                ready.observed_at,
-            )
-            .await
-        {
-            Ok(Some(stored)) => {
-                return replayed(
-                    replay_session_create_receipt(&stored, &command).map_err(create_app_failure)?,
-                );
-            }
-            Ok(None) => {}
-            Err(read_error) => {
-                // The final transaction may have committed. Never terminate
-                // that generation merely because recovery could not prove the
-                // receipt; the caller can safely retry the same key.
-                eprintln!(
-                    "session-stream-api: session create publication failed ({error}) and receipt recovery failed ({read_error})"
-                );
-                return Err(WireError::new(ErrorCode::CommitOutcomeUnknown));
-            }
-        }
-        if let StoreError::PreconditionFailed { participant, .. } = &error
-            && *participant == Participant::AUTHZ_PLACEMENT
-        {
-            compensate(routes, &winner, "account paused before publication", &error).await;
-            return Err(WireError::new(ErrorCode::AccountPaused));
-        }
-        if matches!(error, StoreError::CommitAmbiguous { .. })
-            || matches!(
-                &error,
-                StoreError::PreconditionFailed { participant, .. }
-                    if *participant == Participant::SESSION_HEAD
-                        || *participant == Participant::SESSION_IDEMPOTENCY
-            )
-        {
-            // A missing receipt immediately after an ambiguous multi-table
-            // commit, or after a condition says a public identity already
-            // exists, is not proof of rejection. Preserve the exact generation
-            // for receipt-first retry/reconciliation instead of destroying a
-            // potentially published session.
-            return Err(WireError::new(ErrorCode::CommitOutcomeUnknown));
-        }
-        compensate(routes, &winner, "public head publication", &error).await;
-        return Err(WireError::new(ErrorCode::InternalError));
+        return recover_publication(
+            routes,
+            command,
+            winner,
+            readiness.root_started.occurred_at,
+            &error,
+        )
+        .await;
     }
     aex_session_app::public_session(&planned.projected)
         .map_err(|_| WireError::new(ErrorCode::InternalError))
+}
+
+async fn recover_publication(
+    routes: &Routes,
+    command: &CreateSession,
+    winner: &CreatePreparation,
+    observed_at: Timestamp,
+    error: &StoreError,
+) -> WireResult<models::Session> {
+    match routes
+        .shared
+        .commands
+        .load_receipt(
+            command.workspace,
+            aex_session_app::CREATE_SCOPE,
+            &command.identity,
+            observed_at,
+        )
+        .await
+    {
+        Ok(Some(stored)) => {
+            return replayed(
+                replay_session_create_receipt(&stored, command)
+                    .map_err(|error| create_app_failure(&error))?,
+            );
+        }
+        Ok(None) => {}
+        Err(read_error) => {
+            // The final transaction may have committed. Never terminate that
+            // generation merely because recovery could not prove the receipt;
+            // the caller can safely retry the same key.
+            eprintln!(
+                "session-stream-api: session create publication failed ({error}) and receipt recovery failed ({read_error})"
+            );
+            return Err(WireError::new(ErrorCode::CommitOutcomeUnknown));
+        }
+    }
+    if let StoreError::PreconditionFailed { participant, .. } = error
+        && *participant == Participant::AUTHZ_PLACEMENT
+    {
+        compensate(routes, winner, "account paused before publication", error).await;
+        return Err(WireError::new(ErrorCode::AccountPaused));
+    }
+    if matches!(error, StoreError::CommitAmbiguous { .. })
+        || matches!(
+            error,
+            StoreError::PreconditionFailed { participant, .. }
+                if *participant == Participant::SESSION_HEAD
+                    || *participant == Participant::SESSION_IDEMPOTENCY
+        )
+    {
+        // A missing receipt after an ambiguous commit, or after a public
+        // identity condition failed, cannot prove that publication failed.
+        return Err(WireError::new(ErrorCode::CommitOutcomeUnknown));
+    }
+    compensate(routes, winner, "public head publication", error).await;
+    Err(WireError::new(ErrorCode::InternalError))
 }
 
 fn command(routes: &Routes, request: models::SessionCreateRequest) -> WireResult<CreateSession> {
@@ -318,9 +397,9 @@ fn command(routes: &Routes, request: models::SessionCreateRequest) -> WireResult
 fn private_preparation(
     prepared: &PreparedSessionCreate,
     receipt_key_sha256: &str,
-    ids: &crate::session::app_ports::RequestIds,
+    ids: crate::session::app_ports::RequestIds,
 ) -> WireResult<CreatePreparation> {
-    let root_record = initial_root_record(prepared).map_err(create_app_failure)?;
+    let root_record = initial_root_record(prepared).map_err(|error| create_app_failure(&error))?;
     Ok(CreatePreparation {
         workspace: prepared.command.workspace,
         organization: prepared.command.organization,
@@ -339,7 +418,9 @@ fn private_preparation(
                     revision: file.revision,
                     etag: file.etag.clone(),
                     content: file.value.content.sha256,
-                    size_bytes: file.size_bytes().map_err(create_app_failure)?,
+                    size_bytes: file
+                        .size_bytes()
+                        .map_err(|error| create_app_failure(&error))?,
                     mount_path: file.value.mount_path.clone(),
                     media_type: file.value.media_type.clone(),
                     mode: file.value.mode,
@@ -476,24 +557,22 @@ fn rehydrate(
 struct StartupHands<'a>(&'a dyn aex_brain_hands::LiveFileBackend);
 
 impl StartupGuest for StartupHands<'_> {
-    fn call(
+    async fn call(
         &self,
         session: aex_wire::ids::SessionId,
         generation: aex_wire::ids::GenerationId,
         activity: HandsOperationId,
         requests: Vec<FileRequest>,
-    ) -> impl Future<Output = Result<Vec<FileResponse>, StartupGuestError>> + Send {
-        async move {
-            let reply = self
-                .0
-                .call(session, generation, activity, &requests)
-                .await
-                .map_err(|_| StartupGuestError::Unavailable)?;
-            if reply.generation != generation {
-                return Err(StartupGuestError::Mismatched);
-            }
-            Ok(reply.responses)
+    ) -> Result<Vec<FileResponse>, StartupGuestError> {
+        let reply = self
+            .0
+            .call(session, generation, activity, &requests)
+            .await
+            .map_err(|_| StartupGuestError::Unavailable)?;
+        if reply.generation != generation {
+            return Err(StartupGuestError::Mismatched);
         }
+        Ok(reply.responses)
     }
 }
 
@@ -527,12 +606,12 @@ fn replayed(outcome: PrepareSessionCreateOutcome) -> WireResult<models::Session>
 }
 
 fn port_failure(error: aex_session_app::PortError) -> WireError {
-    create_app_failure(aex_session_app::AppError::Port(error))
+    create_app_failure(&aex_session_app::AppError::Port(error))
 }
 
-fn create_app_failure(error: aex_session_app::AppError) -> WireError {
+fn create_app_failure(error: &aex_session_app::AppError) -> WireError {
     if matches!(
-        &error,
+        error,
         aex_session_app::AppError::Port(aex_session_app::PortError::NotFound { kind: "limit" })
     ) {
         return WireError::new(ErrorCode::WorkspaceActivationRequired);
@@ -540,7 +619,7 @@ fn create_app_failure(error: aex_session_app::AppError) -> WireError {
     WireError::new(error.code())
 }
 
-fn preparation_failure(error: CreatePreparationError) -> WireError {
+fn preparation_failure(error: &CreatePreparationError) -> WireError {
     match error {
         CreatePreparationError::FileCount { .. } | CreatePreparationError::FileBytes { .. } => {
             WireError::new(ErrorCode::LimitExceeded)

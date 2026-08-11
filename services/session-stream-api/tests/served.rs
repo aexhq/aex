@@ -100,12 +100,12 @@ impl session_stream_api::session::operation_worker::OperationWorkerInvoker for N
 }
 
 impl aex_brain_hands::LiveFileBackend for NoLiveFiles {
-    fn ensure_ready<'a>(
-        &'a self,
+    fn ensure_ready(
+        &self,
         _session: SessionId,
         _generation: GenerationId,
     ) -> aex_brain_app::ports::BoxFuture<
-        'a,
+        '_,
         Result<aex_brain_hands::LiveGenerationReady, aex_brain_app::ports::HandsError>,
     > {
         Box::pin(async { panic!("a non-live fixture launched a generation") })
@@ -124,11 +124,11 @@ impl aex_brain_hands::LiveFileBackend for NoLiveFiles {
         Box::pin(async { panic!("a non-live fixture reached guest transport") })
     }
 
-    fn abort_unpublished<'a>(
-        &'a self,
+    fn abort_unpublished(
+        &self,
         _session: SessionId,
         _generation: GenerationId,
-    ) -> aex_brain_app::ports::BoxFuture<'a, Result<(), aex_brain_app::ports::HandsError>> {
+    ) -> aex_brain_app::ports::BoxFuture<'_, Result<(), aex_brain_app::ports::HandsError>> {
         Box::pin(async { panic!("a non-live fixture compensated generation create") })
     }
 }
@@ -1591,7 +1591,7 @@ async fn a_wrong_method_on_a_deferred_path_is_a_method_refusal() {
 }
 
 /// Create is mounted only after private replay-key election, exact registered
-/// file materialization, provider-native readiness, durable root AgentStarted,
+/// file materialization, provider-native readiness, durable root `AgentStarted`,
 /// final active-account fencing, and an exact response receipt are composed.
 #[test]
 fn session_create_is_mounted_only_after_exact_generation_readiness_is_composed() {

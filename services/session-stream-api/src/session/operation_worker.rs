@@ -60,6 +60,12 @@ impl OperationWorkerInvoker for LambdaOperationWorkerInvoker {
 }
 
 /// Derives the one work identity lifecycle admission stores for an operation.
+///
+/// # Panics
+///
+/// Panics if the internal wake contract rejects a work identifier derived
+/// directly from an already-valid [`OperationId`]. That would violate the
+/// shared identifier invariant rather than represent a request error.
 #[must_use]
 pub fn wake_for(workspace: WorkspaceId, operation: OperationId) -> SessionOperationWake {
     SessionOperationWake::new(workspace, WorkId(operation.uuid7()).to_string())
@@ -68,6 +74,11 @@ pub fn wake_for(workspace: WorkspaceId, operation: OperationId) -> SessionOperat
 
 /// Invokes the worker for one nonterminal operation and no-ops for a completed
 /// replay.
+///
+/// # Errors
+///
+/// Returns [`InvokeError`] when the wake cannot be encoded, Lambda is
+/// unavailable, or Lambda does not accept the asynchronous invocation.
 pub async fn invoke_pending(
     invoker: &dyn OperationWorkerInvoker,
     workspace: WorkspaceId,
