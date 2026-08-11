@@ -97,7 +97,7 @@ fn the_session_api_role_can_query_the_index_cancel_and_resolve_by_point_read() {
 }
 
 #[test]
-fn only_the_idempotency_receipt_is_reclaimed_by_ttl() {
+fn only_ephemeral_replay_scaffolding_is_reclaimed_by_ttl() {
     let definition = table_definition();
     let applies_to: Vec<&str> = definition["timeToLive"]["appliesTo"]
         .as_array()
@@ -105,7 +105,16 @@ fn only_the_idempotency_receipt_is_reclaimed_by_ttl() {
         .iter()
         .map(|value| value.as_str().expect("an item type"))
         .collect();
-    assert_eq!(applies_to, vec![codec::IDEMPOTENCY_RECEIPT]);
+    assert_eq!(
+        applies_to,
+        vec![
+            codec::IDEMPOTENCY_RECEIPT,
+            "session_create_preparation",
+            "session_create_prepared_file",
+            "live_file_transfer",
+            "live_file_election",
+        ]
+    );
 }
 
 #[test]
