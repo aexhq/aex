@@ -1141,11 +1141,11 @@ impl ProductionHandsBackend {
 }
 
 impl LiveFileBackend for ProductionHandsBackend {
-    fn ensure_ready<'a>(
-        &'a self,
+    fn ensure_ready(
+        &self,
         session: SessionId,
         generation: GenerationId,
-    ) -> BoxFuture<'a, Result<LiveGenerationReady, HandsError>> {
+    ) -> BoxFuture<'_, Result<LiveGenerationReady, HandsError>> {
         Box::pin(async move {
             let (view, _endpoint) = self.materialize(session, generation).await?;
             let lifetime = view.lifetime.ok_or_else(|| {
@@ -1225,11 +1225,11 @@ impl LiveFileBackend for ProductionHandsBackend {
         })
     }
 
-    fn abort_unpublished<'a>(
-        &'a self,
+    fn abort_unpublished(
+        &self,
         session: SessionId,
         generation: GenerationId,
-    ) -> BoxFuture<'a, Result<(), HandsError>> {
+    ) -> BoxFuture<'_, Result<(), HandsError>> {
         Box::pin(async move {
             const ATTEMPTS: usize = 16;
             for _ in 0..ATTEMPTS {
@@ -1257,7 +1257,7 @@ impl LiveFileBackend for ProductionHandsBackend {
                             "an unpublished generation was superseded before compensation",
                         ));
                     }
-                    CommandOutcome::Settled(_) | CommandOutcome::Retry { .. } => continue,
+                    CommandOutcome::Settled(_) | CommandOutcome::Retry { .. } => {}
                     CommandOutcome::Poison { .. } => {
                         return Err(dispatched(
                             ProviderFailureKind::ProtocolViolation,

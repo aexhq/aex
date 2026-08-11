@@ -49,11 +49,11 @@ pub struct LiveGenerationReady {
 pub trait LiveFileBackend: Send + Sync + 'static {
     /// Launches or recovers one elected generation and proves its authenticated
     /// guest endpoint is reachable without admitting a customer activity.
-    fn ensure_ready<'a>(
-        &'a self,
+    fn ensure_ready(
+        &self,
         session: SessionId,
         generation: GenerationId,
-    ) -> BoxFuture<'a, Result<LiveGenerationReady, HandsError>>;
+    ) -> BoxFuture<'_, Result<LiveGenerationReady, HandsError>>;
 
     /// Sends one bounded batch under one durable activity admission.
     fn call<'a>(
@@ -68,9 +68,9 @@ pub trait LiveFileBackend: Send + Sync + 'static {
     ///
     /// The call is exact-generation and idempotent. It reconciles an open
     /// launch/terminate intent before returning and never allocates a successor.
-    fn abort_unpublished<'a>(
-        &'a self,
+    fn abort_unpublished(
+        &self,
         session: SessionId,
         generation: GenerationId,
-    ) -> BoxFuture<'a, Result<(), HandsError>>;
+    ) -> BoxFuture<'_, Result<(), HandsError>>;
 }
