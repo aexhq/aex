@@ -18,13 +18,13 @@ impl RunId {
     /// The private persisted prefix, without the underscore.
     pub const PREFIX: &'static str = "run";
 
-    /// Builds an internal run identity from a validated UUIDv7 payload.
+    /// Builds an internal run identity from a validated `UUIDv7` payload.
     #[must_use]
     pub const fn from_uuid7(value: Uuid7) -> Self {
         Self(value)
     }
 
-    /// Returns the validated UUIDv7 payload.
+    /// Returns the validated `UUIDv7` payload.
     #[must_use]
     pub const fn uuid7(&self) -> Uuid7 {
         self.0
