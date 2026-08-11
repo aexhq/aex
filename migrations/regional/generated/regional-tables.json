@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:c2dfc514e236472fedd1530168d549b5500433a5f9a0c7f381467077f0c09583",
+  "digest": "blake3:0d39282c582db6cf421f5f15a26f6df8325dfd2231ce92810d08958417af2a1d",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -602,8 +602,8 @@
           "actions": [
             "dynamodb:GetItem",
             "dynamodb:TransactGetItems",
-            "dynamodb:Query",
-            "dynamodb:ConditionCheckItem"
+            "dynamodb:TransactWriteItems",
+            "dynamodb:Query"
           ],
           "resources": [
             "table"
@@ -885,8 +885,7 @@
             "dynamodb:GetItem",
             "dynamodb:Query",
             "dynamodb:PutItem",
-            "dynamodb:TransactWriteItems",
-            "dynamodb:ConditionCheckItem"
+            "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"
@@ -1075,8 +1074,7 @@
             "dynamodb:Query",
             "dynamodb:PutItem",
             "dynamodb:UpdateItem",
-            "dynamodb:TransactWriteItems",
-            "dynamodb:ConditionCheckItem"
+            "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"
@@ -1474,6 +1472,22 @@
           ]
         },
         {
+          "role": "session-operation-worker",
+          "actions": [
+            "dynamodb:GetItem"
+          ],
+          "resources": [
+            "table"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "GEN#*"
+            ]
+          }
+        },
+        {
           "role": "brain-mux",
           "actions": [
             "dynamodb:GetItem",
@@ -1495,6 +1509,15 @@
             "dynamodb:PutItem",
             "dynamodb:UpdateItem",
             "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ]
+        },
+        {
+          "role": "session-operation-worker",
+          "actions": [
+            "dynamodb:GetItem"
           ],
           "resources": [
             "table"
@@ -1675,7 +1698,6 @@
             "dynamodb:GetItem",
             "dynamodb:Query",
             "dynamodb:TransactWriteItems",
-            "dynamodb:ConditionCheckItem",
             "dynamodb:UpdateItem",
             "dynamodb:PutItem"
           ],

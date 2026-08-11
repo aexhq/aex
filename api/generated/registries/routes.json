@@ -2196,135 +2196,7 @@
     },
     {
       "altPrincipal": null,
-      "bodyClass": "none",
-      "deferred": true,
-      "deferredReason": "Nothing composed into the platform raises an approval, so the point read can only report that no approval exists.",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "session_deleted",
-        "approval_not_found",
-        "account_paused",
-        "wrong_workspace_region",
-        "not_implemented"
-      ],
-      "etag": "none",
-      "fragment": "approvals",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "session_approval_get",
-      "path": "/api/sessions/{sessionId}/approvals/{approvalId}",
-      "pathParams": [
-        "sessionId",
-        "approvalId"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "sessions:read",
-      "responseSchema": "Approval",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-BRAIN-TURN"
-      ],
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Read one approval and its bound-call record.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The atomic bound-call approval writer is not composed into the regional service.",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "invalid_request",
-        "session_deleting",
-        "session_deleted",
-        "approval_not_found",
-        "approval_already_resolved",
-        "approval_binding_changed",
-        "account_paused",
-        "wrong_workspace_region",
-        "not_implemented"
-      ],
-      "etag": "none",
-      "fragment": "approvals",
-      "idempotency": "none",
-      "method": "POST",
-      "operationId": "session_approval_respond",
-      "path": "/api/sessions/{sessionId}/approvals/{approvalId}/responses",
-      "pathParams": [
-        "sessionId",
-        "approvalId"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "ApprovalRespondRequest",
-      "requiredScope": "sessions:write",
-      "responseSchema": "Approval",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-BRAIN-TURN"
-      ],
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Decide a pending approval.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "deferred": true,
-      "deferredReason": "Nothing composed into the platform raises an approval, so the collection can only report an empty page.",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "invalid_cursor",
-        "session_deleted",
-        "account_paused",
-        "wrong_workspace_region",
-        "not_implemented"
-      ],
-      "etag": "none",
-      "fragment": "approvals",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "session_approvals_list",
-      "path": "/api/sessions/{sessionId}/approvals",
-      "pathParams": [
-        "sessionId"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [
-        "cursor",
-        "limit"
-      ],
-      "requestSchema": null,
-      "requiredScope": "sessions:read",
-      "responseSchema": "ApprovalPage",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-BRAIN-TURN"
-      ],
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "List the approvals of a session.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The multi-turn current-work cancellation authority and provider coordination are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2333,8 +2205,7 @@
         "session_deleting",
         "session_deleted",
         "wrong_workspace_region",
-        "commit_outcome_unknown",
-        "not_implemented"
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -2356,6 +2227,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Cancel current work and return the session to idle.",
@@ -3865,8 +3737,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The exact-generation manual resume authority and provider coordination are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3877,8 +3747,7 @@
         "session_deleted",
         "account_paused",
         "wrong_workspace_region",
-        "commit_outcome_unknown",
-        "not_implemented"
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -3900,6 +3769,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Resume the same retained generation to idle.",
@@ -3908,8 +3778,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The idle-only exact-generation manual suspension authority and provider coordination are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3920,8 +3788,7 @@
         "session_deleting",
         "session_deleted",
         "wrong_workspace_region",
-        "commit_outcome_unknown",
-        "not_implemented"
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -3943,6 +3810,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Suspend an idle session while retaining its exact generation; cancel active work first.",
@@ -4195,8 +4063,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The permanent compute/live-file termination authority and provider coordination are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4205,8 +4071,7 @@
         "session_deleting",
         "session_deleted",
         "wrong_workspace_region",
-        "commit_outcome_unknown",
-        "not_implemented"
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4228,6 +4093,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Permanently destroy compute and live files while retaining metadata and sealed messages.",

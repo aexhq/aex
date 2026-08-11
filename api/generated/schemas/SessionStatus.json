@@ -5,7 +5,6 @@
   "enum": [
     "idle",
     "running",
-    "awaiting_approval",
     "suspending",
     "suspended",
     "resuming",

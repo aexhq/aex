@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:baac0d51775c29553d4772dc56103c1c178a1312a14f00ea68ef2aa53741c21d`.
+//! `sha256:0a73669e758bc94ea1823a7bf7b4ba9134f2dbe964b538f402db72eb34cd95ae`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -59,9 +59,6 @@ use crate::models::AccountOperationalState;
 use crate::models::ApiKeyCreateRequest;
 use crate::models::ApiKeyPage;
 use crate::models::ApiKeysListQuery;
-use crate::models::Approval;
-use crate::models::ApprovalPage;
-use crate::models::ApprovalRespondRequest;
 use crate::models::AutoTopupPolicy;
 use crate::models::AutoTopupPolicyRequest;
 use crate::models::BillingBalance;
@@ -126,7 +123,6 @@ use crate::models::RegisteredFileValue;
 use crate::models::RegistryDownloadRequest;
 use crate::models::RegistryFilesListQuery;
 use crate::models::Session;
-use crate::models::SessionApprovalsListQuery;
 use crate::models::SessionCreateRequest;
 use crate::models::SessionFilesLiveDownloadPartGetQuery;
 use crate::models::SessionFilesLiveUploadPartPutQuery;
@@ -175,8 +171,6 @@ use crate::server::WithETag;
 pub enum RouteGroup {
     /// `api-keys` on the central plane, served by `ApiKeysApi`.
     ApiKeys,
-    /// `approvals` on the regional plane, served by `ApprovalsApi`.
-    Approvals,
     /// `auth` on the central plane, served by `AuthApi`.
     Auth,
     /// `billing` on the central plane, served by `BillingApi`.
@@ -219,7 +213,6 @@ impl RouteGroup {
     /// Every group, in key order.
     pub const ALL: &'static [RouteGroup] = &[
         RouteGroup::ApiKeys,
-        RouteGroup::Approvals,
         RouteGroup::Auth,
         RouteGroup::Billing,
         RouteGroup::Bootstrap,
@@ -245,7 +238,6 @@ impl RouteGroup {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ApiKeys => "central:api-keys",
-            Self::Approvals => "regional:approvals",
             Self::Auth => "central:auth",
             Self::Billing => "central:billing",
             Self::Bootstrap => "central:bootstrap",
@@ -272,7 +264,6 @@ impl RouteGroup {
     pub const fn plane(self) -> Plane {
         match self {
             Self::ApiKeys => Plane::Central,
-            Self::Approvals => Plane::Regional,
             Self::Auth => Plane::Central,
             Self::Billing => Plane::Central,
             Self::Bootstrap => Plane::Central,
@@ -299,7 +290,6 @@ impl RouteGroup {
     pub const fn trait_name(self) -> &'static str {
         match self {
             Self::ApiKeys => "ApiKeysApi",
-            Self::Approvals => "ApprovalsApi",
             Self::Auth => "AuthApi",
             Self::Billing => "BillingApi",
             Self::Bootstrap => "BootstrapApi",
@@ -326,7 +316,6 @@ impl RouteGroup {
     pub const fn routes(self) -> &'static [RouteId] {
         match self {
             Self::ApiKeys => API_KEYS_ROUTES,
-            Self::Approvals => APPROVALS_ROUTES,
             Self::Auth => AUTH_ROUTES,
             Self::Billing => BILLING_ROUTES,
             Self::Bootstrap => BOOTSTRAP_ROUTES,
@@ -354,13 +343,6 @@ pub const API_KEYS_ROUTES: &[RouteId] = &[
     RouteId::ApiKeyCreate,
     RouteId::ApiKeyRevoke,
     RouteId::ApiKeysList,
-];
-
-/// Every route of `regional:approvals`, in `RouteId` order.
-pub const APPROVALS_ROUTES: &[RouteId] = &[
-    RouteId::SessionApprovalGet,
-    RouteId::SessionApprovalRespond,
-    RouteId::SessionApprovalsList,
 ];
 
 /// Every route of `central:auth`, in `RouteId` order.
@@ -560,9 +542,6 @@ impl RouteId {
             Self::ApiKeyCreate => RouteGroup::ApiKeys,
             Self::ApiKeyRevoke => RouteGroup::ApiKeys,
             Self::ApiKeysList => RouteGroup::ApiKeys,
-            Self::SessionApprovalGet => RouteGroup::Approvals,
-            Self::SessionApprovalRespond => RouteGroup::Approvals,
-            Self::SessionApprovalsList => RouteGroup::Approvals,
             Self::DashboardSessionCreate => RouteGroup::Auth,
             Self::DashboardSessionDelete => RouteGroup::Auth,
             Self::DeviceAuthorizationCreate => RouteGroup::Auth,
@@ -820,87 +799,6 @@ pub async fn dispatch_api_keys<A: ApiKeysApi + ?Sized>(
             Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
         }
         other => Err(wrong_group(other, "central:api-keys")),
-    }
-}
-
-// --- regional:approvals ---------------------------------------------------------------
-
-/// The `approvals` fragment of the regional plane: 3 operations.
-/// Every method returns a future that is `Send`, so the composition crate can spawn it without
-/// wrapping. A method never names a status: the response type it returns is the status the route
-/// declares.
-pub trait ApprovalsApi: Send + Sync + 'static {
-    /// `GET /api/sessions/{sessionId}/approvals/{approvalId}`
-    /// Read one approval and its bound-call record.
-    fn session_approval_get(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        approval_id: ApprovalId,
-    ) -> impl Future<Output = WireResult<Approval>> + Send;
-
-    /// `POST /api/sessions/{sessionId}/approvals/{approvalId}/responses`
-    /// Decide a pending approval.
-    fn session_approval_respond(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        approval_id: ApprovalId,
-        body: ApprovalRespondRequest,
-    ) -> impl Future<Output = WireResult<Approval>> + Send;
-
-    /// `GET /api/sessions/{sessionId}/approvals`
-    /// List the approvals of a session.
-    fn session_approvals_list(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        query: SessionApprovalsListQuery,
-    ) -> impl Future<Output = WireResult<ApprovalPage>> + Send;
-}
-
-/// Decodes, calls and encodes one `regional:approvals` request.
-/// Total over `RouteId`: a route from another group is an internal error naming the mismatch, never
-/// a silently wrong handler.
-/// # Errors
-/// Returns the handler's own declared failure, or a decode failure the route declares. A code the
-/// route does not declare is refused at this boundary.
-pub async fn dispatch_approvals<A: ApprovalsApi + ?Sized>(
-    api: &A,
-    cx: &RequestContext,
-    raw: RawRequest<'_>,
-    limits: RequestLimits,
-) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
-    let reader = QueryReader::parse(raw.route, raw.query)?;
-    match raw.route {
-        RouteId::SessionApprovalGet => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let approval_id = path_param::<ApprovalId>(&raw, "approvalId")?;
-            expect_no_body(&raw)?;
-            let handled = api.session_approval_get(cx, session_id, approval_id);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionApprovalRespond => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let approval_id = path_param::<ApprovalId>(&raw, "approvalId")?;
-            let body = decode_body::<ApprovalRespondRequest>(&raw, limits)?;
-            let handled = api.session_approval_respond(cx, session_id, approval_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionApprovalsList => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let query = SessionApprovalsListQuery {
-                cursor: reader.optional("cursor")?,
-                limit: reader.optional_bounded("limit", 1, 1000)?,
-            };
-            expect_no_body(&raw)?;
-            let handled = api.session_approvals_list(cx, session_id, query);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        other => Err(wrong_group(other, "regional:approvals")),
     }
 }
 

@@ -4,10 +4,6 @@
   "additionalProperties": false,
   "description": "Everything the platform resolved for this session.",
   "properties": {
-    "approvalPolicy": {
-      "$ref": "aex:schema:ApprovalPolicy",
-      "description": "Resolved approval policy."
-    },
     "catalogRevision": {
       "description": "The signed model-catalog release that qualified this provider and model pair.",
       "maxLength": 68,
@@ -57,7 +53,6 @@
     }
   },
   "required": [
-    "approvalPolicy",
     "catalogRevision",
     "compute",
     "lifecycle",

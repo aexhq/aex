@@ -995,7 +995,6 @@
         "registry",
         "uploads",
         "provider-credentials",
-        "approvals",
         "observations",
         "otlp",
         "telemetry-lifecycle",
@@ -2059,119 +2058,7 @@
         },
         {
           "altPrincipal": null,
-          "bodyClass": "none",
-          "deferred": true,
-          "errors": [
-            "unauthenticated",
-            "insufficient_scope",
-            "not_found",
-            "session_deleted",
-            "approval_not_found",
-            "account_paused",
-            "wrong_workspace_region",
-            "not_implemented"
-          ],
-          "etag": "none",
-          "fragment": "approvals",
-          "idempotency": "none",
-          "method": "GET",
-          "operationId": "session_approval_get",
-          "path": "/api/sessions/{sessionId}/approvals/{approvalId}",
-          "pathParams": [
-            "sessionId",
-            "approvalId"
-          ],
-          "pauseExempt": false,
-          "plane": "regional",
-          "queryParams": [],
-          "requestSchema": null,
-          "requiredScope": "sessions:read",
-          "responseSchema": "Approval",
-          "safeRetry": true,
-          "successStatus": 200,
-          "summary": "Read one approval and its bound-call record.",
-          "transport": "unary"
-        },
-        {
-          "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
-          "errors": [
-            "unauthenticated",
-            "insufficient_scope",
-            "not_found",
-            "invalid_request",
-            "session_deleting",
-            "session_deleted",
-            "approval_not_found",
-            "approval_already_resolved",
-            "approval_binding_changed",
-            "account_paused",
-            "wrong_workspace_region",
-            "not_implemented"
-          ],
-          "etag": "none",
-          "fragment": "approvals",
-          "idempotency": "none",
-          "method": "POST",
-          "operationId": "session_approval_respond",
-          "path": "/api/sessions/{sessionId}/approvals/{approvalId}/responses",
-          "pathParams": [
-            "sessionId",
-            "approvalId"
-          ],
-          "pauseExempt": false,
-          "plane": "regional",
-          "queryParams": [],
-          "requestSchema": "ApprovalRespondRequest",
-          "requiredScope": "sessions:write",
-          "responseSchema": "Approval",
-          "safeRetry": false,
-          "successStatus": 200,
-          "summary": "Decide a pending approval.",
-          "transport": "unary"
-        },
-        {
-          "altPrincipal": null,
-          "bodyClass": "none",
-          "deferred": true,
-          "errors": [
-            "unauthenticated",
-            "insufficient_scope",
-            "not_found",
-            "invalid_cursor",
-            "session_deleted",
-            "account_paused",
-            "wrong_workspace_region",
-            "not_implemented"
-          ],
-          "etag": "none",
-          "fragment": "approvals",
-          "idempotency": "none",
-          "method": "GET",
-          "operationId": "session_approvals_list",
-          "path": "/api/sessions/{sessionId}/approvals",
-          "pathParams": [
-            "sessionId"
-          ],
-          "pauseExempt": false,
-          "plane": "regional",
-          "queryParams": [
-            "cursor",
-            "limit"
-          ],
-          "requestSchema": null,
-          "requiredScope": "sessions:read",
-          "responseSchema": "ApprovalPage",
-          "safeRetry": true,
-          "successStatus": 200,
-          "summary": "List the approvals of a session.",
-          "transport": "unary"
-        },
-        {
-          "altPrincipal": null,
-          "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2180,8 +2067,7 @@
             "session_deleting",
             "session_deleted",
             "wrong_workspace_region",
-            "commit_outcome_unknown",
-            "not_implemented"
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -3522,7 +3408,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3533,8 +3418,7 @@
             "session_deleted",
             "account_paused",
             "wrong_workspace_region",
-            "commit_outcome_unknown",
-            "not_implemented"
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -3559,7 +3443,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3570,8 +3453,7 @@
             "session_deleting",
             "session_deleted",
             "wrong_workspace_region",
-            "commit_outcome_unknown",
-            "not_implemented"
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -3804,7 +3686,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3813,8 +3694,7 @@
             "session_deleting",
             "session_deleted",
             "wrong_workspace_region",
-            "commit_outcome_unknown",
-            "not_implemented"
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -5602,211 +5482,6 @@
         "items"
       ],
       "type": "object"
-    },
-    "Approval": {
-      "additionalProperties": false,
-      "properties": {
-        "boundCall": {
-          "$ref": "aex:schema:ApprovalBoundCall",
-          "description": "Exactly what may run."
-        },
-        "createdAt": {
-          "description": "When it was raised.",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-          "type": "string",
-          "x-aex-time": "rfc3339-ms"
-        },
-        "decision": {
-          "$ref": "aex:schema:ApprovalDecision",
-          "description": "The recorded decision."
-        },
-        "expiresAt": {
-          "description": "When it stops being decidable.",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-          "type": "string",
-          "x-aex-time": "rfc3339-ms"
-        },
-        "id": {
-          "description": "Identity.",
-          "pattern": "^apr_[0-9a-hjkmnp-tv-z]{26}$",
-          "type": "string",
-          "x-aex-id": "approval"
-        },
-        "resolvedAt": {
-          "description": "When it was decided.",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-          "type": "string",
-          "x-aex-time": "rfc3339-ms"
-        },
-        "sessionId": {
-          "description": "The owning session.",
-          "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-          "type": "string",
-          "x-aex-id": "session"
-        },
-        "status": {
-          "$ref": "aex:schema:ApprovalStatus",
-          "description": "Lifecycle position."
-        }
-      },
-      "required": [
-        "boundCall",
-        "createdAt",
-        "expiresAt",
-        "id",
-        "sessionId",
-        "status"
-      ],
-      "type": "object"
-    },
-    "ApprovalBoundCall": {
-      "additionalProperties": false,
-      "properties": {
-        "agentId": {
-          "description": "The internal execution agent.",
-          "pattern": "^agt_[0-9a-hjkmnp-tv-z]{26}$",
-          "type": "string",
-          "x-aex-id": "agent"
-        },
-        "argumentsDigest": {
-          "description": "Canonical digest of the arguments.",
-          "pattern": "^sha256:[0-9a-f]{64}$",
-          "type": "string"
-        },
-        "configDigest": {
-          "description": "Digest of the resolved tool configuration.",
-          "pattern": "^sha256:[0-9a-f]{64}$",
-          "type": "string"
-        },
-        "expectedConfigRevision": {
-          "description": "The configuration revision the call expects.",
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "expectedGenerationId": {
-          "description": "The generation the call must run in.",
-          "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
-          "type": "string",
-          "x-aex-id": "generation"
-        },
-        "implementationDigest": {
-          "description": "Digest of the tool implementation.",
-          "pattern": "^sha256:[0-9a-f]{64}$",
-          "type": "string"
-        },
-        "toolCallId": {
-          "description": "The tool call.",
-          "pattern": "^tcl_[0-9a-hjkmnp-tv-z]{26}$",
-          "type": "string",
-          "x-aex-id": "tool_call"
-        },
-        "toolName": {
-          "description": "The canonical tool name.",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-          "type": "string"
-        }
-      },
-      "required": [
-        "agentId",
-        "argumentsDigest",
-        "configDigest",
-        "expectedConfigRevision",
-        "implementationDigest",
-        "toolCallId",
-        "toolName"
-      ],
-      "type": "object"
-    },
-    "ApprovalDecision": {
-      "enum": [
-        "approve",
-        "deny"
-      ],
-      "type": "string"
-    },
-    "ApprovalPage": {
-      "additionalProperties": false,
-      "properties": {
-        "items": {
-          "description": "The page.",
-          "items": {
-            "$ref": "aex:schema:Approval"
-          },
-          "maxItems": 1000,
-          "type": "array"
-        },
-        "nextCursor": {
-          "description": "Continuation token.",
-          "maxLength": 4096,
-          "type": "string",
-          "x-aex-cursor": true
-        }
-      },
-      "required": [
-        "items"
-      ],
-      "type": "object"
-    },
-    "ApprovalPolicy": {
-      "oneOf": [
-        {
-          "$ref": "aex:schema:ApprovalPolicyAllowAll",
-          "x-aex-discriminator-value": "allow_all"
-        },
-        {
-          "$ref": "aex:schema:ApprovalPolicyRequireForTools",
-          "x-aex-discriminator-value": "require_for_tools"
-        }
-      ],
-      "x-aex-discriminator": "mode"
-    },
-    "ApprovalPolicyAllowAll": {
-      "additionalProperties": false,
-      "properties": {},
-      "required": [],
-      "type": "object"
-    },
-    "ApprovalPolicyRequireForTools": {
-      "additionalProperties": false,
-      "properties": {
-        "tools": {
-          "description": "Built-in tools that need approval.",
-          "items": {
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-            "type": "string"
-          },
-          "maxItems": 256,
-          "type": "array"
-        }
-      },
-      "required": [
-        "tools"
-      ],
-      "type": "object"
-    },
-    "ApprovalRespondRequest": {
-      "additionalProperties": false,
-      "properties": {
-        "decision": {
-          "$ref": "aex:schema:ApprovalDecision",
-          "description": "The decision."
-        }
-      },
-      "required": [
-        "decision"
-      ],
-      "type": "object"
-    },
-    "ApprovalStatus": {
-      "enum": [
-        "pending",
-        "approved",
-        "denied",
-        "cancelled",
-        "expired"
-      ],
-      "type": "string"
     },
     "AutoTopupPolicy": {
       "additionalProperties": false,
@@ -7797,8 +7472,8 @@
           "x-aex-money": "cents"
         },
         "text": {
-          "description": "The complete user text.",
-          "maxLength": 1048576,
+          "description": "The complete user text. The MVP bound keeps Brain's canonical admission record below its 32,768-byte inline journal ceiling with envelope overhead; staged message bodies are deferred.",
+          "maxLength": 24576,
           "minLength": 1,
           "type": "string"
         }
@@ -9410,10 +9085,6 @@
     "ResolvedConfig": {
       "additionalProperties": false,
       "properties": {
-        "approvalPolicy": {
-          "$ref": "aex:schema:ApprovalPolicy",
-          "description": "Resolved approval policy."
-        },
         "catalogRevision": {
           "description": "The signed model-catalog release that qualified this provider and model pair.",
           "maxLength": 68,
@@ -9463,7 +9134,6 @@
         }
       },
       "required": [
-        "approvalPolicy",
         "catalogRevision",
         "compute",
         "lifecycle",
@@ -9674,10 +9344,6 @@
     "SessionCreateRequest": {
       "additionalProperties": false,
       "properties": {
-        "approvalPolicy": {
-          "$ref": "aex:schema:ApprovalPolicy",
-          "description": "When to ask for a built-in tool decision."
-        },
         "compute": {
           "$ref": "aex:schema:SessionComputeRequest",
           "description": "The baseline compute shape."
@@ -9936,7 +9602,6 @@
       "enum": [
         "idle",
         "running",
-        "awaiting_approval",
         "suspending",
         "suspended",
         "resuming",

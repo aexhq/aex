@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/MessageSendRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Admit one text message. Omitting `maxSpendCents` selects the 1000-cent default; an explicit positive value may be higher or lower. Omitting `deadline` uses the session's remaining lifetime/drain fence; an explicit deadline may only shorten it.",
+  "description": "Admit one text message of at most 24,576 UTF-8 bytes. Omitting `maxSpendCents` selects the 1000-cent default; an explicit positive value may be higher or lower. Omitting `deadline` uses the session's remaining lifetime/drain fence; an explicit deadline may only shorten it.",
   "properties": {
     "deadline": {
       "description": "An earlier absolute deadline. It must be in the future and cannot exceed the session's remaining `expiresAt`/drain fence.",
@@ -17,8 +17,8 @@
       "x-aex-money": "cents"
     },
     "text": {
-      "description": "The complete user text.",
-      "maxLength": 1048576,
+      "description": "The complete user text. The MVP bound keeps Brain's canonical admission record below its 32,768-byte inline journal ceiling with envelope overhead; staged message bodies are deferred.",
+      "maxLength": 24576,
       "minLength": 1,
       "type": "string"
     }

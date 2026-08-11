@@ -11,12 +11,10 @@ use aex_session_app::testing::{
     CountingIds, FixedClock, PortCall, ScriptedPorts, message_identity_under,
 };
 use aex_session_app::{
-    CommitTerminal, MAX_ACTIONS, MessageAdmissionOutcome, Planned, SendMessage,
-    SessionTransaction, admit_message, commit_terminal,
+    CommitTerminal, MAX_ACTIONS, MessageAdmissionOutcome, Planned, SendMessage, SessionTransaction,
+    admit_message, commit_terminal,
 };
-use aex_session_domain::testing::{
-    id, moment, running_session, session_fixture, terminal_attempt,
-};
+use aex_session_domain::testing::{id, moment, running_session, session_fixture, terminal_attempt};
 use aex_session_domain::{
     MAX_OPEN_MESSAGES_PER_RUN, Message, MessageRole, MessageState, SessionStatus, WorkAdmission,
 };

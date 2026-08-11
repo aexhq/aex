@@ -146,211 +146,6 @@
         ],
         "type": "object"
       },
-      "Approval": {
-        "additionalProperties": false,
-        "properties": {
-          "boundCall": {
-            "$ref": "aex:schema:ApprovalBoundCall",
-            "description": "Exactly what may run."
-          },
-          "createdAt": {
-            "description": "When it was raised.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "decision": {
-            "$ref": "aex:schema:ApprovalDecision",
-            "description": "The recorded decision."
-          },
-          "expiresAt": {
-            "description": "When it stops being decidable.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "id": {
-            "description": "Identity.",
-            "pattern": "^apr_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "approval"
-          },
-          "resolvedAt": {
-            "description": "When it was decided.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "sessionId": {
-            "description": "The owning session.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          },
-          "status": {
-            "$ref": "aex:schema:ApprovalStatus",
-            "description": "Lifecycle position."
-          }
-        },
-        "required": [
-          "boundCall",
-          "createdAt",
-          "expiresAt",
-          "id",
-          "sessionId",
-          "status"
-        ],
-        "type": "object"
-      },
-      "ApprovalBoundCall": {
-        "additionalProperties": false,
-        "properties": {
-          "agentId": {
-            "description": "The internal execution agent.",
-            "pattern": "^agt_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "agent"
-          },
-          "argumentsDigest": {
-            "description": "Canonical digest of the arguments.",
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
-          },
-          "configDigest": {
-            "description": "Digest of the resolved tool configuration.",
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
-          },
-          "expectedConfigRevision": {
-            "description": "The configuration revision the call expects.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "expectedGenerationId": {
-            "description": "The generation the call must run in.",
-            "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "generation"
-          },
-          "implementationDigest": {
-            "description": "Digest of the tool implementation.",
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
-          },
-          "toolCallId": {
-            "description": "The tool call.",
-            "pattern": "^tcl_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "tool_call"
-          },
-          "toolName": {
-            "description": "The canonical tool name.",
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "agentId",
-          "argumentsDigest",
-          "configDigest",
-          "expectedConfigRevision",
-          "implementationDigest",
-          "toolCallId",
-          "toolName"
-        ],
-        "type": "object"
-      },
-      "ApprovalDecision": {
-        "enum": [
-          "approve",
-          "deny"
-        ],
-        "type": "string"
-      },
-      "ApprovalPage": {
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "description": "The page.",
-            "items": {
-              "$ref": "aex:schema:Approval"
-            },
-            "maxItems": 1000,
-            "type": "array"
-          },
-          "nextCursor": {
-            "description": "Continuation token.",
-            "maxLength": 4096,
-            "type": "string",
-            "x-aex-cursor": true
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
-      "ApprovalPolicy": {
-        "oneOf": [
-          {
-            "$ref": "aex:schema:ApprovalPolicyAllowAll",
-            "x-aex-discriminator-value": "allow_all"
-          },
-          {
-            "$ref": "aex:schema:ApprovalPolicyRequireForTools",
-            "x-aex-discriminator-value": "require_for_tools"
-          }
-        ],
-        "x-aex-discriminator": "mode"
-      },
-      "ApprovalPolicyAllowAll": {
-        "additionalProperties": false,
-        "properties": {},
-        "required": [],
-        "type": "object"
-      },
-      "ApprovalPolicyRequireForTools": {
-        "additionalProperties": false,
-        "properties": {
-          "tools": {
-            "description": "Built-in tools that need approval.",
-            "items": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-              "type": "string"
-            },
-            "maxItems": 256,
-            "type": "array"
-          }
-        },
-        "required": [
-          "tools"
-        ],
-        "type": "object"
-      },
-      "ApprovalRespondRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "decision": {
-            "$ref": "aex:schema:ApprovalDecision",
-            "description": "The decision."
-          }
-        },
-        "required": [
-          "decision"
-        ],
-        "type": "object"
-      },
-      "ApprovalStatus": {
-        "enum": [
-          "pending",
-          "approved",
-          "denied",
-          "cancelled",
-          "expired"
-        ],
-        "type": "string"
-      },
       "BlobEncoding": {
         "enum": [
           "utf8",
@@ -1613,8 +1408,8 @@
             "x-aex-money": "cents"
           },
           "text": {
-            "description": "The complete user text.",
-            "maxLength": 1048576,
+            "description": "The complete user text. The MVP bound keeps Brain's canonical admission record below its 32,768-byte inline journal ceiling with envelope overhead; staged message bodies are deferred.",
+            "maxLength": 24576,
             "minLength": 1,
             "type": "string"
           }
@@ -3026,10 +2821,6 @@
       "ResolvedConfig": {
         "additionalProperties": false,
         "properties": {
-          "approvalPolicy": {
-            "$ref": "aex:schema:ApprovalPolicy",
-            "description": "Resolved approval policy."
-          },
           "catalogRevision": {
             "description": "The signed model-catalog release that qualified this provider and model pair.",
             "maxLength": 68,
@@ -3079,7 +2870,6 @@
           }
         },
         "required": [
-          "approvalPolicy",
           "catalogRevision",
           "compute",
           "lifecycle",
@@ -3290,10 +3080,6 @@
       "SessionCreateRequest": {
         "additionalProperties": false,
         "properties": {
-          "approvalPolicy": {
-            "$ref": "aex:schema:ApprovalPolicy",
-            "description": "When to ask for a built-in tool decision."
-          },
           "compute": {
             "$ref": "aex:schema:SessionComputeRequest",
             "description": "The baseline compute shape."
@@ -3552,7 +3338,6 @@
         "enum": [
           "idle",
           "running",
-          "awaiting_approval",
           "suspending",
           "suspended",
           "resuming",
@@ -9512,461 +9297,8 @@
         "x-aex-transport": "unary"
       }
     },
-    "/api/sessions/{sessionId}/approvals": {
-      "get": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
-        "operationId": "session_approvals_list",
-        "parameters": [
-          {
-            "description": "The session the request is scoped to.",
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "schema": {
-              "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "session"
-            }
-          },
-          {
-            "description": "Opaque continuation token.",
-            "in": "query",
-            "name": "cursor",
-            "required": false,
-            "schema": {
-              "maxLength": 4096,
-              "type": "string",
-              "x-aex-cursor": true
-            }
-          },
-          {
-            "description": "Page size.",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "maximum": 1000,
-              "minimum": 1,
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": null,
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApprovalPage"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "402": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "410": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "List the approvals of a session.",
-        "tags": [
-          "approvals"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "none",
-        "x-aex-deferred": true,
-        "x-aex-errors": [
-          "unauthenticated",
-          "insufficient_scope",
-          "not_found",
-          "invalid_cursor",
-          "session_deleted",
-          "account_paused",
-          "wrong_workspace_region",
-          "not_implemented"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "sessions:read",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/sessions/{sessionId}/approvals/{approvalId}": {
-      "get": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
-        "operationId": "session_approval_get",
-        "parameters": [
-          {
-            "description": "The session the request is scoped to.",
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "schema": {
-              "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "session"
-            }
-          },
-          {
-            "description": "The approval within the session.",
-            "in": "path",
-            "name": "approvalId",
-            "required": true,
-            "schema": {
-              "pattern": "^apr_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "approval"
-            }
-          }
-        ],
-        "requestBody": null,
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Approval"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "402": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "410": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Read one approval and its bound-call record.",
-        "tags": [
-          "approvals"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "none",
-        "x-aex-deferred": true,
-        "x-aex-errors": [
-          "unauthenticated",
-          "insufficient_scope",
-          "not_found",
-          "session_deleted",
-          "approval_not_found",
-          "account_paused",
-          "wrong_workspace_region",
-          "not_implemented"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "sessions:read",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/sessions/{sessionId}/approvals/{approvalId}/responses": {
-      "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
-        "operationId": "session_approval_respond",
-        "parameters": [
-          {
-            "description": "The session the request is scoped to.",
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "schema": {
-              "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "session"
-            }
-          },
-          {
-            "description": "The approval within the session.",
-            "in": "path",
-            "name": "approvalId",
-            "required": true,
-            "schema": {
-              "pattern": "^apr_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "approval"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:ApprovalRespondRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Approval"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "402": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "410": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Decide a pending approval.",
-        "tags": [
-          "approvals"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
-        "x-aex-errors": [
-          "unauthenticated",
-          "insufficient_scope",
-          "not_found",
-          "invalid_request",
-          "session_deleting",
-          "session_deleted",
-          "approval_not_found",
-          "approval_already_resolved",
-          "approval_binding_changed",
-          "account_paused",
-          "wrong_workspace_region",
-          "not_implemented"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": "sessions:write",
-        "x-aex-transport": "unary"
-      }
-    },
     "/api/sessions/{sessionId}/cancellations": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_cancel",
         "parameters": [
           {
@@ -10052,16 +9384,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "503": {
             "content": {
               "application/json": {
@@ -10079,7 +9401,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -10088,8 +9409,7 @@
           "session_deleting",
           "session_deleted",
           "wrong_workspace_region",
-          "commit_outcome_unknown",
-          "not_implemented"
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "operation_id",
@@ -12324,7 +11644,6 @@
     },
     "/api/sessions/{sessionId}/resumptions": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_resume",
         "parameters": [
           {
@@ -12420,16 +11739,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "503": {
             "content": {
               "application/json": {
@@ -12447,7 +11756,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -12458,8 +11766,7 @@
           "session_deleted",
           "account_paused",
           "wrong_workspace_region",
-          "commit_outcome_unknown",
-          "not_implemented"
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "operation_id",
@@ -12471,7 +11778,6 @@
     },
     "/api/sessions/{sessionId}/suspensions": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_suspend",
         "parameters": [
           {
@@ -12557,16 +11863,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "503": {
             "content": {
               "application/json": {
@@ -12584,7 +11880,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -12595,8 +11890,7 @@
           "session_deleting",
           "session_deleted",
           "wrong_workspace_region",
-          "commit_outcome_unknown",
-          "not_implemented"
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "operation_id",
@@ -12608,7 +11902,6 @@
     },
     "/api/sessions/{sessionId}/terminations": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_terminate",
         "parameters": [
           {
@@ -12694,16 +11987,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "503": {
             "content": {
               "application/json": {
@@ -12721,7 +12004,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -12730,8 +12012,7 @@
           "session_deleting",
           "session_deleted",
           "wrong_workspace_region",
-          "commit_outcome_unknown",
-          "not_implemented"
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "operation_id",

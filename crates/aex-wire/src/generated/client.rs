@@ -3,7 +3,7 @@
 //! The low-level client: one request builder and one method per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:baac0d51775c29553d4772dc56103c1c178a1312a14f00ea68ef2aa53741c21d`.
+//! `sha256:0a73669e758bc94ea1823a7bf7b4ba9134f2dbe964b538f402db72eb34cd95ae`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -57,9 +57,6 @@ use crate::models::AccountOperationalState;
 use crate::models::ApiKeyCreateRequest;
 use crate::models::ApiKeyPage;
 use crate::models::ApiKeysListQuery;
-use crate::models::Approval;
-use crate::models::ApprovalPage;
-use crate::models::ApprovalRespondRequest;
 use crate::models::AutoTopupPolicy;
 use crate::models::AutoTopupPolicyRequest;
 use crate::models::BillingBalance;
@@ -125,7 +122,6 @@ use crate::models::RegisteredFileValue;
 use crate::models::RegistryDownloadRequest;
 use crate::models::RegistryFilesListQuery;
 use crate::models::Session;
-use crate::models::SessionApprovalsListQuery;
 use crate::models::SessionCreateRequest;
 use crate::models::SessionFilesLiveDownloadPartGetQuery;
 use crate::models::SessionFilesLiveUploadPartPutQuery;
@@ -1693,87 +1689,6 @@ pub fn registry_files_put_request(
         query: String::new(),
         headers: request_headers(route, Some(idempotency_key), None, if_match),
         body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `GET /api/sessions/{sessionId}/approvals/{approvalId}`
-/// Read one approval and its bound-call record.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_approval_get_request(
-    session_id: SessionId,
-    approval_id: ApprovalId,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionApprovalGet;
-    let mut path = PathWriter::new(route);
-    path.bind(&session_id);
-    path.bind(&approval_id);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `POST /api/sessions/{sessionId}/approvals/{approvalId}/responses`
-/// Decide a pending approval.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_approval_respond_request(
-    session_id: SessionId,
-    approval_id: ApprovalId,
-    body: &ApprovalRespondRequest,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionApprovalRespond;
-    let mut path = PathWriter::new(route);
-    path.bind(&session_id);
-    path.bind(&approval_id);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Post,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, None),
-        body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `GET /api/sessions/{sessionId}/approvals`
-/// List the approvals of a session.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_approvals_list_request(
-    session_id: SessionId,
-    query: &SessionApprovalsListQuery,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionApprovalsList;
-    let mut path = PathWriter::new(route);
-    path.bind(&session_id);
-    let mut writer = QueryWriter::new();
-    writer.put_option("cursor", query.cursor.as_ref());
-    writer.put_option("limit", query.limit.as_ref());
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: writer.finish(),
-        headers: request_headers(route, None, None, None),
-        body: None,
     })
 }
 
@@ -4433,58 +4348,6 @@ impl<T: Transport> WireClient<T> {
         let request = registry_files_put_request(name, body, idempotency_key, if_match)?;
         let response = self.send(request).await?;
         decode_response_with_etag(RouteId::RegistryFilesPut, &response)
-    }
-
-    /// `GET /api/sessions/{sessionId}/approvals/{approvalId}`
-    /// Read one approval and its bound-call record.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn session_approval_get(
-        &self,
-        session_id: SessionId,
-        approval_id: ApprovalId,
-    ) -> Result<Approval, ClientError> {
-        let request = session_approval_get_request(session_id, approval_id)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::SessionApprovalGet, &response)
-    }
-
-    /// `POST /api/sessions/{sessionId}/approvals/{approvalId}/responses`
-    /// Decide a pending approval.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn session_approval_respond(
-        &self,
-        session_id: SessionId,
-        approval_id: ApprovalId,
-        body: &ApprovalRespondRequest,
-    ) -> Result<Approval, ClientError> {
-        let request = session_approval_respond_request(session_id, approval_id, body)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::SessionApprovalRespond, &response)
-    }
-
-    /// `GET /api/sessions/{sessionId}/approvals`
-    /// List the approvals of a session.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn session_approvals_list(
-        &self,
-        session_id: SessionId,
-        query: &SessionApprovalsListQuery,
-    ) -> Result<ApprovalPage, ClientError> {
-        let request = session_approvals_list_request(session_id, query)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::SessionApprovalsList, &response)
     }
 
     /// `POST /api/sessions/{sessionId}/cancellations`

@@ -29,6 +29,7 @@ name = "aex-brain-domain"
 version = "0.1.0"
 dependencies = [
  "aex-brain-test-support",
+ "aex-internal-contracts",
  "aex-model-catalog",
  "aex-wire",
  "blake3",
@@ -1279,8 +1280,10 @@ dependencies = [
 name = "aex-session-app"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-domain",
  "aex-content-domain",
  "aex-internal-contracts",
+ "aex-model-catalog",
  "aex-operation-domain",
  "aex-runtime-control",
  "aex-secret-domain",
@@ -1289,6 +1292,7 @@ dependencies = [
  "aex-workspace-domain",
  "async-trait",
  "proptest",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
  "thiserror",
@@ -1544,6 +1548,8 @@ dependencies = [
 name = "aex-work-dynamodb"
 version = "0.1.0"
 dependencies = [
+ "aex-operation-domain",
+ "aex-session-app",
  "aex-session-dynamodb",
  "aex-test-harness",
  "aex-wire",
@@ -1552,8 +1558,10 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws-smithy-http-client",
  "aws-smithy-types",
+ "hex",
  "proptest",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror",
  "time",
  "tokio",
@@ -7268,6 +7276,11 @@ dependencies = [
  "aex-operation-domain",
  "aex-platform-telemetry",
  "aex-regional-http",
+ "aex-runtime-activity-dynamodb",
+ "aex-runtime-control",
+ "aex-runtime-control-aws",
+ "aex-session-app",
+ "aex-session-domain",
  "aex-session-dynamodb",
  "aex-telemetry-schema",
  "aex-wire",
@@ -7275,6 +7288,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-sdk-sqs",
  "aws_lambda_events",
  "futures",
  "lambda_runtime",

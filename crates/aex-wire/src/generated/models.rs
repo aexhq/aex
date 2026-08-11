@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:baac0d51775c29553d4772dc56103c1c178a1312a14f00ea68ef2aa53741c21d`.
+//! `sha256:0a73669e758bc94ea1823a7bf7b4ba9134f2dbe964b538f402db72eb34cd95ae`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -13,9 +13,7 @@
 use crate::canonical::CanonicalJson;
 use crate::cursor::Cursor;
 use crate::error::ObservedErrorCode;
-use crate::ids::AgentId;
 use crate::ids::ApiKeyId;
-use crate::ids::ApprovalId;
 use crate::ids::ContentHash;
 use crate::ids::ExportId;
 use crate::ids::FileDownloadId;
@@ -2232,160 +2230,6 @@ impl ProviderId {
 
 // --- regional -------------------------------------------------------
 
-/// A pending or resolved tool approval.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Approval {
-    /// Exactly what may run.
-    pub bound_call: ApprovalBoundCall,
-    /// When it was raised.
-    pub created_at: Timestamp,
-    /// The recorded decision.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decision: Option<ApprovalDecision>,
-    /// When it stops being decidable.
-    pub expires_at: Timestamp,
-    /// Identity.
-    pub id: ApprovalId,
-    /// When it was decided.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolved_at: Option<Timestamp>,
-    /// The owning session.
-    pub session_id: SessionId,
-    /// Lifecycle position.
-    pub status: ApprovalStatus,
-}
-
-/// The exact call an approval is bound to. Nothing else may run under it.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ApprovalBoundCall {
-    /// The internal execution agent.
-    pub agent_id: AgentId,
-    /// Canonical digest of the arguments.
-    pub arguments_digest: ContentHash,
-    /// Digest of the resolved tool configuration.
-    pub config_digest: ContentHash,
-    /// The configuration revision the call expects.
-    pub expected_config_revision: u64,
-    /// The generation the call must run in.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_generation_id: Option<GenerationId>,
-    /// Digest of the tool implementation.
-    pub implementation_digest: ContentHash,
-    /// The tool call.
-    pub tool_call_id: ToolCallId,
-    /// The canonical tool name.
-    pub tool_name: ResourceName,
-}
-
-/// The two decisions a caller may make.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApprovalDecision {
-    /// Let the bound call run.
-    Approve,
-    /// Refuse the bound call.
-    Deny,
-}
-
-impl ApprovalDecision {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ApprovalDecision] =
-        &[ApprovalDecision::Approve, ApprovalDecision::Deny];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Approve => "approve",
-            Self::Deny => "deny",
-        }
-    }
-}
-
-/// One page of approvals.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ApprovalPage {
-    /// The page.
-    pub items: Vec<Approval>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// When a bound built-in tool call needs a human decision.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub enum ApprovalPolicy {
-    /// Never ask.
-    AllowAll(ApprovalPolicyAllowAll),
-    /// Ask for the named tools.
-    RequireForTools(ApprovalPolicyRequireForTools),
-}
-
-/// Every built-in tool call runs without an approval.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ApprovalPolicyAllowAll {}
-
-/// Named built-in tools require an explicit decision before they run.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ApprovalPolicyRequireForTools {
-    /// Built-in tools that need approval.
-    pub tools: Vec<ResourceName>,
-}
-
-/// Decide a pending approval. Exact replay returns the winner.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ApprovalRespondRequest {
-    /// The decision.
-    pub decision: ApprovalDecision,
-}
-
-/// Where an approval is in its lifecycle.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApprovalStatus {
-    /// Waiting on a decision.
-    Pending,
-    /// Approved; the bound call may run.
-    Approved,
-    /// Denied; the bound call will not run.
-    Denied,
-    /// Withdrawn by current-work cancellation, termination, deletion, account pause, runtime loss,
-    /// tool-call cancellation, or binding drift.
-    Cancelled,
-    /// Its explicit decision deadline elapsed.
-    Expired,
-}
-
-impl ApprovalStatus {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ApprovalStatus] = &[
-        ApprovalStatus::Pending,
-        ApprovalStatus::Approved,
-        ApprovalStatus::Denied,
-        ApprovalStatus::Cancelled,
-        ApprovalStatus::Expired,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Approved => "approved",
-            Self::Denied => "denied",
-            Self::Cancelled => "cancelled",
-            Self::Expired => "expired",
-        }
-    }
-}
-
 /// How inline blob bytes are encoded.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -2964,9 +2808,9 @@ impl MessageRole {
     }
 }
 
-/// Admit one text message. Omitting `maxSpendCents` selects the 1000-cent default; an explicit
-/// positive value may be higher or lower. Omitting `deadline` uses the session's remaining
-/// lifetime/drain fence; an explicit deadline may only shorten it.
+/// Admit one text message of at most 24,576 UTF-8 bytes. Omitting `maxSpendCents` selects the
+/// 1000-cent default; an explicit positive value may be higher or lower. Omitting `deadline` uses
+/// the session's remaining lifetime/drain fence; an explicit deadline may only shorten it.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessageSendRequest {
@@ -2978,7 +2822,9 @@ pub struct MessageSendRequest {
     /// account funds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_spend_cents: Option<Cents>,
-    /// The complete user text.
+    /// The complete user text. The MVP bound keeps Brain's canonical admission record below its
+    /// 32,768-byte inline journal ceiling with envelope overhead; staged message bodies are
+    /// deferred.
     pub text: String,
 }
 
@@ -3297,8 +3143,6 @@ pub struct ResolvedCompute {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ResolvedConfig {
-    /// Resolved approval policy.
-    pub approval_policy: ApprovalPolicy,
     /// The signed model-catalog release that qualified this provider and model pair.
     pub catalog_revision: String,
     /// Resolved capacity.
@@ -3405,9 +3249,6 @@ pub struct SessionComputeRequest {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionCreateRequest {
-    /// When to ask for a built-in tool decision.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval_policy: Option<ApprovalPolicy>,
     /// The baseline compute shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compute: Option<SessionComputeRequest>,
@@ -3526,8 +3367,6 @@ pub enum SessionStatus {
     Idle,
     /// Processing the active message.
     Running,
-    /// The active message is waiting for a bound tool-call decision.
-    AwaitingApproval,
     /// Stopping compute while retaining this exact generation.
     Suspending,
     /// Compute is stopped and this exact generation may be resumed.
@@ -3547,7 +3386,6 @@ impl SessionStatus {
     pub const ALL: &'static [SessionStatus] = &[
         SessionStatus::Idle,
         SessionStatus::Running,
-        SessionStatus::AwaitingApproval,
         SessionStatus::Suspending,
         SessionStatus::Suspended,
         SessionStatus::Resuming,
@@ -3562,7 +3400,6 @@ impl SessionStatus {
         match self {
             Self::Idle => "idle",
             Self::Running => "running",
-            Self::AwaitingApproval => "awaiting_approval",
             Self::Suspending => "suspending",
             Self::Suspended => "suspended",
             Self::Resuming => "resuming",
@@ -4264,18 +4101,6 @@ pub struct RegionalOperationsListQuery {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegistryFilesListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-}
-
-/// Query parameters of `session_approvals_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionApprovalsListQuery {
     /// Opaque continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,

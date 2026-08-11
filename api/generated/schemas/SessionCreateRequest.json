@@ -4,10 +4,6 @@
   "additionalProperties": false,
   "description": "Create an eight-hour multi-turn session with one explicitly pinned BYOK provider credential.",
   "properties": {
-    "approvalPolicy": {
-      "$ref": "aex:schema:ApprovalPolicy",
-      "description": "When to ask for a built-in tool decision."
-    },
     "compute": {
       "$ref": "aex:schema:SessionComputeRequest",
       "description": "The baseline compute shape."

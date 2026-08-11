@@ -59,9 +59,6 @@
 {"bindings":{"name":"sample-name"},"method":"GET","operationId":"registry_files_get","path":"/api/workspace/files/sample-name","plane":"regional"}
 {"bindings":{},"method":"GET","operationId":"registry_files_list","path":"/api/workspace/files","plane":"regional"}
 {"bindings":{"name":"sample-name"},"method":"PUT","operationId":"registry_files_put","path":"/api/workspace/files/sample-name","plane":"regional"}
-{"bindings":{"approvalId":"apr_01kyw2qa4ne00r40r40m30e209","sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"session_approval_get","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/approvals/apr_01kyw2qa4ne00r40r40m30e209","plane":"regional"}
-{"bindings":{"approvalId":"apr_01kyw2qa4ne00r40r40m30e209","sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_approval_respond","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/approvals/apr_01kyw2qa4ne00r40r40m30e209/responses","plane":"regional"}
-{"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"session_approvals_list","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/approvals","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_cancel","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/cancellations","plane":"regional"}
 {"bindings":{},"method":"POST","operationId":"session_create","path":"/api/sessions","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_delete","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/deletions","plane":"regional"}
