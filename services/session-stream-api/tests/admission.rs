@@ -76,7 +76,7 @@ fn admission_is_exactly_seven_actions_and_never_reserves_account_finance() {
             }),
             TransactionAction::PutRootContinuation(Condition::AttributeNotExists),
             TransactionAction::PutIdempotencyReceipt(Condition::AttributeNotExists),
-            TransactionAction::PutRunAdmittedEvent(Condition::AttributeNotExists),
+            TransactionAction::PutMessageAdmittedEvent(Condition::AttributeNotExists),
         ]
     );
 }

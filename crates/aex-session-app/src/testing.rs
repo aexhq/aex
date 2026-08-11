@@ -28,8 +28,8 @@ use aex_workspace_domain::{RegistryPointer, RegistrySelector, Upload};
 use crate::ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext, Clock,
     ContinuityReader, IdFactory, LimitsReader, LiveEntry, LiveListQuery, LiveListing,
-    LiveWorkspaceReader, PageBudget, PortError, RegistryReader, SecretCustodyReader, SessionReader,
-    SessionSnapshot, VersionedOperation,
+    LiveWorkspaceReader, MessageAdmissionSnapshot, PageBudget, PortError, RegistryReader,
+    RootAdmissionState, SecretCustodyReader, SessionReader, VersionedOperation,
 };
 
 /// One recorded port interaction.
@@ -127,7 +127,7 @@ impl IdFactory for CountingIds {
 #[derive(Debug)]
 pub struct ScriptedPorts {
     log: SyncLog,
-    snapshot: SessionSnapshot,
+    snapshot: MessageAdmissionSnapshot,
     operation: Option<VersionedOperation>,
     run: Option<Run>,
     receipt: Option<IdempotencyReceipt>,
@@ -169,10 +169,14 @@ impl ScriptedPorts {
                 state: AccountState::Active,
                 observed_at: moment(0),
             },
-            snapshot: SessionSnapshot {
-                session,
-                root_agent: root,
-                materialized: Vec::new(),
+            snapshot: MessageAdmissionSnapshot {
+                session: session.clone(),
+                root: RootAdmissionState {
+                    agent: root.id,
+                    revision: root.revision,
+                    journal_tail: root.journal_tail,
+                    idle: true,
+                },
             },
             operation: None,
             run: None,
@@ -185,7 +189,7 @@ impl ScriptedPorts {
                 .collect(),
             limits_revision: 4,
             credential: Some(crate::ports::ProviderCredentialBinding {
-                credential: aex_wire::ids::PrefixedId::from_uuid7(Uuid7::compose(1, [11; 10])),
+                credential: session.provider_credential.credential,
                 provider: aex_wire::provider::ProviderId::Openai,
                 secret_name: aex_secret_domain::SecretName::parse("openai-key")
                     .expect("a fixture secret name is valid"),
@@ -390,10 +394,10 @@ impl ScriptedPorts {
         &self.snapshot.session
     }
 
-    /// The scripted root agent.
+    /// The scripted root admission state.
     #[must_use]
-    pub const fn root_agent(&self) -> &AgentControl {
-        &self.snapshot.root_agent
+    pub const fn root_agent(&self) -> &RootAdmissionState {
+        &self.snapshot.root
     }
 
     /// Every call the ports recorded, in order.
@@ -441,12 +445,12 @@ impl SessionReader for ScriptedPorts {
         Ok(self.snapshot.session.clone())
     }
 
-    async fn load_snapshot(
+    async fn load_message_snapshot(
         &self,
         _workspace: WorkspaceId,
         _session: SessionId,
-    ) -> Result<SessionSnapshot, PortError> {
-        self.log.record(PortCall::Read("load_snapshot"));
+    ) -> Result<MessageAdmissionSnapshot, PortError> {
+        self.log.record(PortCall::Read("load_message_snapshot"));
         Ok(self.snapshot.clone())
     }
 
@@ -464,7 +468,10 @@ impl SessionReader for ScriptedPorts {
         _agent: AgentId,
     ) -> Result<AgentControl, PortError> {
         self.log.record(PortCall::Read("load_agent"));
-        Ok(self.snapshot.root_agent.clone())
+        Err(PortError::Unowned {
+            kind: "agent control",
+            seam: "the scripted message projection is intentionally narrower than AgentControl",
+        })
     }
 
     async fn list_agents(
@@ -474,7 +481,7 @@ impl SessionReader for ScriptedPorts {
     ) -> Result<AgentPage, PortError> {
         self.log.record(PortCall::Read("list_agents"));
         Ok(AgentPage {
-            agents: self.snapshot.materialized.clone(),
+            agents: Vec::new(),
             more: false,
         })
     }
@@ -517,7 +524,10 @@ impl SessionReader for ScriptedPorts {
 
     async fn load_receipt(
         &self,
+        _workspace: WorkspaceId,
+        _scope: &str,
         _identity: &IdempotencyIdentity,
+        _now: Timestamp,
     ) -> Result<Option<IdempotencyReceipt>, PortError> {
         self.log.record(PortCall::Read("load_receipt"));
         Ok(self.receipt.clone())
@@ -820,6 +830,40 @@ pub fn create_identity_under(
             &aex_wire::routes::PathBinding::default(),
             None,
         ),
+    }))
+}
+
+/// The replay envelope for one exact text-message request.
+///
+/// # Panics
+///
+/// Panics only when the fixture key, path, or generated request shape is
+/// invalid, all of which are programmer errors in a test.
+#[must_use]
+pub fn message_identity_under(
+    key: &str,
+    session: &Session,
+    request: &aex_wire::models::MessageSendRequest,
+) -> aex_session_domain::IdempotencyIdentity {
+    let path = format!("/api/sessions/{}/messages", session.id);
+    let (route_id, binding) = aex_wire::routes::match_route(
+        aex_wire::routes::Plane::Regional,
+        aex_wire::types::HttpMethod::Post,
+        &path,
+    )
+    .expect("the generated message path matches its route");
+    assert_eq!(route_id, aex_wire::routes::RouteId::SessionMessageSend);
+    let body = aex_wire::canonical::to_jcs_bytes(request)
+        .expect("a generated message request is canonicalizable");
+    aex_session_domain::IdempotencyIdentity::Key(Box::new(aex_wire::idempotency::ReplayIdentity {
+        principal: aex_wire::idempotency::PrincipalScope::WorkspaceKey {
+            key: aex_wire::ids::PrefixedId::from_uuid7(Uuid7::compose(1, [12; 10])),
+            workspace: session.workspace,
+            organization: session.organization,
+        },
+        route: route_id,
+        key: aex_wire::idempotency::IdempotencyKey::parse(key).expect("a fixture key is valid"),
+        intent: aex_wire::canonical::intent_digest(route_id, &binding, Some(&body)),
     }))
 }
 

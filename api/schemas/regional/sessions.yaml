@@ -278,7 +278,7 @@ schemas:
     doc: Admit one text message. Omitting `maxSpendCents` selects the 1000-cent default; an explicit positive value may be higher or lower. Omitting `deadline` uses the session's remaining lifetime/drain fence; an explicit deadline may only shorten it.
     type: object
     fields:
-      text: { type: string, min: 1, max: 1048576, doc: "The complete user text." }
+      text: { type: string, min: 1, max: 24576, doc: "The complete user text. The MVP bound keeps Brain's canonical admission record below its 32,768-byte inline journal ceiling with envelope overhead; staged message bodies are deferred." }
       maxSpendCents: { type: cents, optional: true, doc: "The current-message spend ceiling. Omission means 1000 cents; the platform does not reserve account funds." }
       deadline: { type: timestamp, optional: true, doc: "An earlier absolute deadline. It must be in the future and cannot exceed the session's remaining `expiresAt`/drain fence." }
 

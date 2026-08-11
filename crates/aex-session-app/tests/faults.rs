@@ -5,15 +5,16 @@
 //! case that fails must leave no partial plan behind — there is no "half a
 //! transaction" to submit.
 
-use aex_session_app::testing::{CountingIds, FixedClock, ScriptedPorts, fixture_spend};
+use aex_session_app::testing::{CountingIds, FixedClock, ScriptedPorts, message_identity_under};
 use aex_session_app::{
     AppError, CommitError, PortError, SendMessage, SessionCommand, admit_message, stop_session,
 };
-use aex_session_domain::testing::{id, moment, run_id, session_fixture};
-use aex_session_domain::{MessagePart, WorkAdmission};
+use aex_session_domain::WorkAdmission;
+use aex_session_domain::testing::{id, moment, session_fixture};
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
-use aex_wire::ids::{MessageId, OperationId};
+use aex_wire::ids::OperationId;
+use aex_wire::models::MessageSendRequest;
 
 fn clock() -> FixedClock {
     FixedClock(moment(1_000))
@@ -21,17 +22,16 @@ fn clock() -> FixedClock {
 
 fn send_message() -> SendMessage {
     let session = session_fixture();
+    let request = MessageSendRequest {
+        deadline: None,
+        max_spend_cents: None,
+        text: "hello".to_owned(),
+    };
     SendMessage {
         workspace: session.workspace,
         session: session.id,
-        message: id::<MessageId>(20),
-        run: run_id(21),
-        parts: vec![MessagePart::Text {
-            text: "hello".to_owned(),
-        }],
-        max_spend_cents: fixture_spend(),
-        deadline: moment(60_000),
-        intent: IntentDigest::from_bytes([3; 32]),
+        identity: message_identity_under("fixture-message-key", &session, &request),
+        request,
     }
 }
 

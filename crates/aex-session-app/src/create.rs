@@ -162,7 +162,17 @@ pub async fn prepare_session_create(
     context: &AppContext<'_>,
     command: &CreateSession,
 ) -> Result<PrepareSessionCreateOutcome, AppError> {
-    if let Some(stored) = context.sessions.load_receipt(&command.identity).await? {
+    let now = context.clock.now();
+    if let Some(stored) = context
+        .sessions
+        .load_receipt(
+            command.workspace,
+            CREATE_RECEIPT_SCOPE,
+            &command.identity,
+            now,
+        )
+        .await?
+    {
         return match replay(&stored, &command.identity.intent()) {
             ReplayDecision::Conflict(code) => Err(AppError::Conflict(code)),
             ReplayDecision::ReturnOriginal(ReceiptOutcome::Resource {
@@ -208,8 +218,6 @@ pub async fn prepare_session_create(
     let root_agent: AgentId = aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
     let generation: GenerationId =
         aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
-    let now = context.clock.now();
-
     let pinned = pinned_runtime(
         prepared.deployment,
         command,

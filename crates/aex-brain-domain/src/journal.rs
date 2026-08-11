@@ -18,7 +18,9 @@ use crate::wire_pending::{
     CanonicalBlock, CompleteAssistantMessage, ContentBlockRef, ContentRef, JoinMode,
     JournalEnvelope, NormalizedUsage, ResolvedAgentConfig, ToolResultPart,
 };
+use aex_internal_contracts::RunId;
 use aex_model_catalog::canonical::ProviderReceipt;
+use aex_wire::ids::MessageId;
 
 /// The inline body boundary.
 ///
@@ -181,6 +183,23 @@ pub enum JournalRecord {
         /// What the parent (or the session) granted.
         budget: BudgetGrant,
     },
+    /// One public session message was admitted as the root agent's current run.
+    ///
+    /// This is deliberately one record rather than a `UserMessage` followed by
+    /// a second run marker: the text, run-local spend ceiling and absolute
+    /// deadline become visible to the fold at one immutable sequence.
+    RunAdmitted {
+        /// Internal execution identity. It never enters the public API.
+        run: RunId,
+        /// The complete public user message this run executes.
+        message: MessageId,
+        /// Complete canonical input blocks.
+        content: Vec<ContentBlockRef>,
+        /// Caller-selected run-local spend ceiling in whole cents.
+        max_spend_cents: u64,
+        /// Absolute deadline, already shortened to the session lifetime fence.
+        deadline: Timestamp,
+    },
     /// Input from the customer, the API, or a parent's mailbox.
     UserMessage {
         /// The blocks of the message.
@@ -322,6 +341,7 @@ impl JournalRecord {
     pub const fn kind_name(&self) -> &'static str {
         match self {
             Self::AgentStarted { .. } => "agent_started",
+            Self::RunAdmitted { .. } => "run_admitted",
             Self::UserMessage { .. } => "user_message",
             Self::AssistantMessage { .. } => "assistant_message",
             Self::ToolResult { .. } => "tool_result",
@@ -487,6 +507,7 @@ mod tests {
         FinishReason, INLINE_BODY_BYTES, JournalDecodeError, JournalEntry, JournalRecord, decode,
     };
     use crate::ids::{JournalSeq, Timestamp};
+    use aex_wire::ids::{MessageId, PrefixedId as _, Uuid7};
 
     fn finished() -> JournalRecord {
         JournalRecord::AgentFinished {
@@ -501,6 +522,20 @@ mod tests {
             .canonical_bytes()
             .expect("a record canonicalizes");
         assert_eq!(decode(&bytes).expect("canonical bytes decode"), finished());
+    }
+
+    #[test]
+    fn run_admission_round_trips_with_exact_message_budget_and_deadline() {
+        let admitted = JournalRecord::RunAdmitted {
+            run: aex_internal_contracts::RunId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            message: MessageId::from_uuid7(Uuid7::compose(2, [2; 10])),
+            content: Vec::new(),
+            max_spend_cents: 50_000,
+            deadline: Timestamp::from_millis(90_000),
+        };
+        let bytes = admitted.canonical_bytes().expect("canonicalizes");
+        assert_eq!(decode(&bytes).expect("decodes"), admitted);
+        assert!(bytes.len() <= INLINE_BODY_BYTES);
     }
 
     #[test]
@@ -566,6 +601,7 @@ mod tests {
         // that forgets a name collides here rather than in a `DynamoDB` item.
         let names = [
             "agent_started",
+            "run_admitted",
             "user_message",
             "assistant_message",
             "tool_result",

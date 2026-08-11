@@ -24,7 +24,9 @@ use aex_session_domain::{
     CancellationEpoch, IdempotencyReceipt, JournalPage, JournalSeq, Message, OutboxEvent, Run,
     Session, SessionRevision, SessionTombstone, WorkAdmission,
 };
-use aex_wire::ids::{AgentId, OperationId, OrganizationId, SessionId, UploadId, WorkspaceId};
+use aex_wire::ids::{
+    AgentId, ObservationId, OperationId, OrganizationId, SessionId, UploadId, WorkspaceId,
+};
 use aex_wire::types::{ETag, Timestamp};
 use aex_workspace_domain::{DownloadGrant, RegistryPointer, RegistrySelector, Upload, UploadState};
 
@@ -97,6 +99,8 @@ pub struct ItemKey {
 /// domain about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TableFamily {
+    /// Read-only workspace/account admission projection.
+    AuthorizationProjection,
     /// The session authority.
     SessionAuthority,
     /// Public asynchronous operation records stored with the session authority.
@@ -208,6 +212,13 @@ pub enum Condition {
         /// The expected tail.
         expected: JournalSeq,
     },
+    /// The root control row is at rest and carries no owner or terminal.
+    RootAgentIdle {
+        /// Owning session.
+        session: SessionId,
+        /// Root agent.
+        agent: AgentId,
+    },
     /// The run has not settled.
     RunNonTerminal {
         /// The owning session, required to locate the physical run row.
@@ -217,6 +228,8 @@ pub enum Condition {
     },
     /// The account projection has reached at least this revision.
     AccountRevisionAtLeast {
+        /// Workspace placement row carrying the account epoch.
+        workspace: WorkspaceId,
         /// Which organization.
         organization: OrganizationId,
         /// The floor.
@@ -332,9 +345,10 @@ impl Condition {
             | Self::AgentRevision { .. }
             | Self::AgentFence { .. }
             | Self::JournalTail { .. }
+            | Self::RootAgentIdle { .. }
             | Self::RunNonTerminal { .. }
-            | Self::AccountRevisionAtLeast { .. }
             | Self::AuthorizationEpochAtLeast { .. } => TableFamily::SessionAuthority,
+            Self::AccountRevisionAtLeast { .. } => TableFamily::AuthorizationProjection,
             Self::RegistryEtag { .. } | Self::UploadState { .. } => TableFamily::Registry,
             Self::OperationFence { .. }
             | Self::OperationCursorAt { .. }
@@ -368,12 +382,13 @@ impl Condition {
             | Self::MutationGuardHeldBy { session, .. } => (session.to_string(), "HEAD".to_owned()),
             Self::AgentRevision { session, agent, .. }
             | Self::AgentFence { session, agent, .. }
-            | Self::JournalTail { session, agent, .. } => {
+            | Self::JournalTail { session, agent, .. }
+            | Self::RootAgentIdle { session, agent } => {
                 (format!("{session}#{agent}"), "CONTROL".to_owned())
             }
             Self::RunNonTerminal { session, run } => (session.to_string(), format!("RUN#{run}")),
-            Self::AccountRevisionAtLeast { organization, .. } => {
-                (organization.to_string(), "ACCOUNT".to_owned())
+            Self::AccountRevisionAtLeast { workspace, .. } => {
+                (workspace.to_string(), "ACCOUNT_ADMISSION".to_owned())
             }
             Self::AuthorizationEpochAtLeast { workspace, .. } => {
                 (workspace.to_string(), "AUTHORIZATION".to_owned())
@@ -427,6 +442,44 @@ pub struct WorkCompletion {
     pub at: Timestamp,
 }
 
+/// One immediate, deduplicated root-agent wake admitted with a message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentWake {
+    /// Stable regional-work row identity.
+    pub work_id: String,
+    /// Hash-keyed one-outstanding-wake claim.
+    pub dedupe_key: String,
+    /// Owning session.
+    pub session: SessionId,
+    /// Root agent.
+    pub agent: AgentId,
+    /// First journal sequence the activation must observe.
+    pub from: JournalSeq,
+    /// Cancellation epoch the activation must still observe.
+    pub cancellation: CancellationEpoch,
+    /// Admission instant and due time.
+    pub at: Timestamp,
+}
+
+/// The immutable customer-observable fact emitted with message admission.
+///
+/// Internal Brain run and agent identities are intentionally absent. Public
+/// clients observe a session accepting a message, then follow the session and
+/// message resources rather than an internal run resource.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageAdmittedEvent {
+    /// Event identity.
+    pub id: ObservationId,
+    /// Owning session.
+    pub session: SessionId,
+    /// Stable event order derived from the journal sequence.
+    pub sequence: u64,
+    /// Canonical inline event body.
+    pub body: Vec<u8>,
+    /// Admission instant.
+    pub at: Timestamp,
+}
+
 /// One durable change the transaction makes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Write {
@@ -445,6 +498,29 @@ pub enum Write {
     PutRun(Box<Run>),
     /// Replace an agent control record.
     PutAgentControl(Box<AgentControl>),
+    /// Advance only the Brain-owned root control facts established by message admission.
+    ///
+    /// A whole-record `PutAgentControl` cannot safely represent the production
+    /// Brain row. This narrow update preserves its leases, budget vectors and
+    /// every other owner-specific attribute.
+    AdmitRootRun {
+        /// Owning session.
+        session: SessionId,
+        /// Root agent.
+        agent: AgentId,
+        /// Revision observed before admission.
+        from_revision: AgentRevision,
+        /// Revision after admission.
+        to_revision: AgentRevision,
+        /// Journal tail observed before admission.
+        from_tail: JournalSeq,
+        /// Tail after the one `run_admitted` append.
+        to_tail: JournalSeq,
+        /// Blake3 identity of the appended canonical record.
+        entry_identity: aex_session_domain::EntryIdentity,
+        /// Admission instant.
+        at: Timestamp,
+    },
     /// Settle exactly one agent under a session-wide cancellation.
     ///
     /// Deliberately narrower than [`Write::PutAgentControl`]. The physical
@@ -484,10 +560,16 @@ pub enum Write {
     RedactOperationResult(OperationId),
     /// Replace a durable work item.
     PutWorkItem(Box<aex_operation_domain::WorkItem>),
+    /// Put the immediate root-agent wake row.
+    PutAgentWake(Box<AgentWake>),
+    /// Put the wake's one-outstanding dedupe claim as a distinct physical item.
+    PutAgentWakeDedupe(Box<AgentWake>),
     /// Retire one exact fenced regional-work claim.
     CompleteWorkItem(Box<WorkCompletion>),
     /// Append a native outbox event.
     PutOutboxEvent(Box<OutboxEvent>),
+    /// Append the public message-admitted event and outbox state.
+    PutMessageAdmittedEvent(Box<MessageAdmittedEvent>),
     /// Add a pin.
     PutPin(Box<Pin>),
     /// Remove a pin.
@@ -518,6 +600,7 @@ impl Write {
             | Self::PutSealedMessage(_)
             | Self::PutRun(_)
             | Self::PutAgentControl(_)
+            | Self::AdmitRootRun { .. }
             | Self::AppendJournalPage { .. }
             | Self::PutApproval(_)
             | Self::CancelAgent { .. }
@@ -526,8 +609,11 @@ impl Write {
             Self::PutOperation(_) | Self::RedactOperationResult(_) => {
                 TableFamily::OperationAuthority
             }
-            Self::PutWorkItem(_) | Self::CompleteWorkItem(_) => TableFamily::WorkAuthority,
-            Self::PutOutboxEvent(_) => TableFamily::Outbox,
+            Self::PutWorkItem(_)
+            | Self::PutAgentWake(_)
+            | Self::PutAgentWakeDedupe(_)
+            | Self::CompleteWorkItem(_) => TableFamily::WorkAuthority,
+            Self::PutOutboxEvent(_) | Self::PutMessageAdmittedEvent(_) => TableFamily::Outbox,
             Self::PutPin(_) | Self::DeletePin(_) | Self::PutGrant(_) => {
                 TableFamily::ContentAuthority
             }
@@ -561,6 +647,9 @@ impl Write {
                 format!("{}#{}", agent.session, agent.id),
                 "CONTROL".to_owned(),
             ),
+            Self::AdmitRootRun { session, agent, .. } => {
+                (format!("{session}#{agent}"), "CONTROL".to_owned())
+            }
             Self::CancelAgent { session, agent, .. } => {
                 (format!("{session}#{agent}"), "CONTROL".to_owned())
             }
@@ -585,10 +674,16 @@ impl Write {
             Self::PutOperation(operation) => (operation.id.to_string(), "OPERATION".to_owned()),
             Self::RedactOperationResult(id) => (id.to_string(), "OPERATION".to_owned()),
             Self::PutWorkItem(item) => (item.id.to_string(), "STATE".to_owned()),
+            Self::PutAgentWake(wake) => (wake.work_id.clone(), "STATE".to_owned()),
+            Self::PutAgentWakeDedupe(wake) => (wake.dedupe_key.clone(), "DEDUPE".to_owned()),
             Self::CompleteWorkItem(item) => (item.work_id.clone(), "STATE".to_owned()),
             Self::PutOutboxEvent(event) => {
                 (event.session.to_string(), format!("OUTBOX#{}", event.run))
             }
+            Self::PutMessageAdmittedEvent(event) => (
+                event.session.to_string(),
+                format!("EVENT#{:020}", event.sequence),
+            ),
             Self::PutPin(pin) | Self::DeletePin(pin) => ("PIN".to_owned(), format!("{pin:?}")),
             Self::PutRegistryPointer(pointer) => (
                 pointer.row.workspace.to_string(),
@@ -734,6 +829,12 @@ pub enum PlanError {
         /// Which membership rule failed.
         detail: &'static str,
     },
+    /// A message admission omitted or widened one of its atomic participants.
+    #[error("message admission authority is wrong: {detail}")]
+    MessageAdmissionAuthority {
+        /// Which membership rule failed.
+        detail: &'static str,
+    },
     /// The plan carries too many actions.
     #[error("plan carries {actions} actions, above the maximum of {max}")]
     TooManyActions {
@@ -773,6 +874,9 @@ impl SessionTransaction {
     pub fn validate(&self) -> Result<PlanShape, PlanError> {
         if self.intent == TransactionIntent::CreateSession {
             self.check_create_participants()?;
+        }
+        if self.intent == TransactionIntent::AdmitMessage {
+            self.check_message_admission_participants()?;
         }
         if self.intent == TransactionIntent::RegistryDownload {
             self.check_registry_download_participants()?;
@@ -836,14 +940,18 @@ impl SessionTransaction {
                 Write::PutMessage(_)
                 | Write::PutSealedMessage(_)
                 | Write::PutRun(_)
+                | Write::AdmitRootRun { .. }
                 | Write::CancelAgent { .. }
                 | Write::AppendJournalPage { .. }
                 | Write::PutApproval(_)
                 | Write::PutOperation(_)
                 | Write::RedactOperationResult(_)
                 | Write::PutWorkItem(_)
+                | Write::PutAgentWake(_)
+                | Write::PutAgentWakeDedupe(_)
                 | Write::CompleteWorkItem(_)
                 | Write::PutOutboxEvent(_)
+                | Write::PutMessageAdmittedEvent(_)
                 | Write::PutPin(_)
                 | Write::DeletePin(_)
                 | Write::PutRegistryPointer(_)
@@ -886,6 +994,146 @@ impl SessionTransaction {
         if !has_root_revision || !has_root_tail {
             return Err(create_error(
                 "ready publication must condition on the elected root AgentStarted revision and journal tail",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Enforces the fixed 11-action message-admission authority.
+    ///
+    /// Ten immutable/update rows carry the message, its sealed projection,
+    /// internal Brain execution facts, durable wake, public event, and exact
+    /// receipt. The eleventh action is the read-only active-account projection
+    /// fence. Head and root predicates merge onto their corresponding writes.
+    fn check_message_admission_participants(&self) -> Result<(), PlanError> {
+        let mut writes = [0_u8; 10];
+        for write in &self.writes {
+            let slot = match write {
+                Write::PutMessage(_) => 0,
+                Write::PutSealedMessage(_) => 1,
+                Write::PutRun(_) => 2,
+                Write::PutSessionHead(_) => 3,
+                Write::AdmitRootRun { .. } => 4,
+                Write::AppendJournalPage { .. } => 5,
+                Write::PutAgentWake(_) => 6,
+                Write::PutAgentWakeDedupe(_) => 7,
+                Write::PutMessageAdmittedEvent(_) => 8,
+                Write::PutIdempotencyReceipt(_) => 9,
+                Write::PutAgentControl(_)
+                | Write::CancelAgent { .. }
+                | Write::PutApproval(_)
+                | Write::PutOperation(_)
+                | Write::RedactOperationResult(_)
+                | Write::PutWorkItem(_)
+                | Write::CompleteWorkItem(_)
+                | Write::PutOutboxEvent(_)
+                | Write::PutPin(_)
+                | Write::DeletePin(_)
+                | Write::PutRegistryPointer(_)
+                | Write::PutUpload(_)
+                | Write::PutGrant(_)
+                | Write::PutCustody(_)
+                | Write::PutSecret(_)
+                | Write::PutTombstone(_)
+                | Write::DeleteItem(_) => {
+                    return Err(message_admission_error(
+                        "admission writes only its ten closed participants",
+                    ));
+                }
+            };
+            writes[slot] = writes[slot].saturating_add(1);
+        }
+        if writes != [1; 10] {
+            return Err(message_admission_error(
+                "admission writes each of its ten participants exactly once",
+            ));
+        }
+
+        let required = [
+            self.conditions
+                .iter()
+                .any(|condition| matches!(condition, Condition::SessionRevision { .. })),
+            self.conditions
+                .iter()
+                .any(|condition| matches!(condition, Condition::DeletionState { .. })),
+            self.conditions.iter().any(|condition| {
+                matches!(
+                    condition,
+                    Condition::SessionActiveRun { expected: None, .. }
+                )
+            }),
+            self.conditions.iter().any(|condition| {
+                matches!(
+                    condition,
+                    Condition::WorkAdmission {
+                        expected: WorkAdmission::Open,
+                        ..
+                    }
+                )
+            }),
+            self.conditions
+                .iter()
+                .any(|condition| matches!(condition, Condition::MutationGuardFree { .. })),
+            self.conditions
+                .iter()
+                .any(|condition| matches!(condition, Condition::CancellationEpoch { .. })),
+            self.conditions
+                .iter()
+                .any(|condition| matches!(condition, Condition::AccountRevisionAtLeast { .. })),
+            self.conditions
+                .iter()
+                .any(|condition| matches!(condition, Condition::AgentRevision { .. })),
+            self.conditions
+                .iter()
+                .any(|condition| matches!(condition, Condition::JournalTail { .. })),
+            self.conditions
+                .iter()
+                .any(|condition| matches!(condition, Condition::RootAgentIdle { .. })),
+        ];
+        if required.contains(&false) {
+            return Err(message_admission_error(
+                "admission must fence the live idle session, active account, and exact Brain root",
+            ));
+        }
+        if self.conditions.iter().any(|condition| {
+            !matches!(
+                condition,
+                Condition::SessionRevision { .. }
+                    | Condition::DeletionState { .. }
+                    | Condition::SessionActiveRun { expected: None, .. }
+                    | Condition::WorkAdmission {
+                        expected: WorkAdmission::Open,
+                        ..
+                    }
+                    | Condition::MutationGuardFree { .. }
+                    | Condition::CancellationEpoch { .. }
+                    | Condition::AccountRevisionAtLeast { .. }
+                    | Condition::AgentRevision { .. }
+                    | Condition::JournalTail { .. }
+                    | Condition::RootAgentIdle { .. }
+                    | Condition::ItemAbsent(_)
+            )
+        }) {
+            return Err(message_admission_error(
+                "admission carries no condition outside its closed authority",
+            ));
+        }
+        let wake_absence = self
+            .conditions
+            .iter()
+            .filter(|condition| matches!(condition, Condition::ItemAbsent(key) if key.family == TableFamily::WorkAuthority))
+            .count();
+        if wake_absence != 2 {
+            return Err(message_admission_error(
+                "admission conditions on both the wake and its dedupe row being absent",
+            ));
+        }
+        let mut targets = BTreeSet::new();
+        targets.extend(self.conditions.iter().map(Condition::target));
+        targets.extend(self.writes.iter().map(Write::target));
+        if targets.len() != 11 {
+            return Err(message_admission_error(
+                "admission is exactly eleven physical actions after guard merging",
             ));
         }
         Ok(())
@@ -1020,6 +1268,10 @@ const fn registry_download_error(detail: &'static str) -> PlanError {
     PlanError::RegistryDownloadAuthority { detail }
 }
 
+const fn message_admission_error(detail: &'static str) -> PlanError {
+    PlanError::MessageAdmissionAuthority { detail }
+}
+
 /// A projected result plus the one plan that would produce it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Planned<T> {
@@ -1046,7 +1298,7 @@ mod tests {
 
     fn plan(conditions: Vec<Condition>, writes: Vec<Write>) -> SessionTransaction {
         SessionTransaction {
-            intent: TransactionIntent::AdmitMessage,
+            intent: TransactionIntent::CommitTerminal,
             conditions,
             writes,
             after_commit: Vec::new(),

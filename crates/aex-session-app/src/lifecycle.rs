@@ -445,6 +445,7 @@ fn plan_lifecycle_admission(
             expected: session.cancellation,
         },
         Condition::AccountRevisionAtLeast {
+            workspace: session.workspace,
             organization: session.organization,
             at_least: account_revision,
         },

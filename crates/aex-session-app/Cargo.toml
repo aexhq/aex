@@ -34,8 +34,10 @@ create = "unit"
 live_suite = "application crate; its ports are exercised through its deployable's companion"
 
 [dependencies]
+aex-brain-domain = { path = "../aex-brain-domain" }
 aex-content-domain = { path = "../aex-content-domain" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
+aex-model-catalog = { path = "../aex-model-catalog" }
 aex-operation-domain = { path = "../aex-operation-domain" }
 aex-runtime-control = { path = "../aex-runtime-control" }
 aex-secret-domain = { path = "../aex-secret-domain" }

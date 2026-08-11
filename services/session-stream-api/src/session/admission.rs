@@ -52,7 +52,7 @@ pub enum TransactionAction {
     /// T6.
     PutIdempotencyReceipt(Condition),
     /// T7.
-    PutRunAdmittedEvent(Condition),
+    PutMessageAdmittedEvent(Condition),
 }
 
 impl TransactionAction {
@@ -66,7 +66,7 @@ impl TransactionAction {
             | Self::PutRun(_)
             | Self::UpdateSessionHead(_)
             | Self::PutIdempotencyReceipt(_)
-            | Self::PutRunAdmittedEvent(_) => Table::SessionAuthority,
+            | Self::PutMessageAdmittedEvent(_) => Table::SessionAuthority,
         }
     }
 }
@@ -124,7 +124,7 @@ pub fn compile_message_admission(
         }),
         TransactionAction::PutRootContinuation(Condition::AttributeNotExists),
         TransactionAction::PutIdempotencyReceipt(Condition::AttributeNotExists),
-        TransactionAction::PutRunAdmittedEvent(Condition::AttributeNotExists),
+        TransactionAction::PutMessageAdmittedEvent(Condition::AttributeNotExists),
     ];
     Ok(TransactionPlan {
         client_request_token,

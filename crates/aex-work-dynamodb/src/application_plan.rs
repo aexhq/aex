@@ -7,7 +7,7 @@
 use sha2::Digest as _;
 
 use aex_operation_domain::{OperationKind, OperationVersion, WorkItem, WorkState};
-use aex_session_app::plan::{Condition, Write};
+use aex_session_app::plan::{AgentWake, Condition, Write};
 use aex_session_dynamodb::application_plan::{
     AuthorityBinding, ExternalActionCompiler, LogicalAction,
 };
@@ -42,6 +42,22 @@ impl ExternalActionCompiler for WorkApplicationCompiler {
                 output.put(
                     Participant::WORK_OPERATION_STEP,
                     crate::claim::enqueue(&tables.regional_work, &record)?,
+                )?;
+            }
+            Some(Write::PutAgentWake(wake)) => {
+                require_absent(action)?;
+                let record = wake_record(binding, wake)?;
+                output.put(
+                    Participant::WORK_ROOT_WAKE,
+                    crate::claim::enqueue(&tables.regional_work, &record)?,
+                )?;
+            }
+            Some(Write::PutAgentWakeDedupe(wake)) => {
+                require_absent(action)?;
+                let record = wake_record(binding, wake)?;
+                output.put(
+                    Participant::WORK_DEDUPE,
+                    crate::claim::enqueue_dedupe(&tables.regional_work, &record)?,
                 )?;
             }
             Some(Write::CompleteWorkItem(completion)) => {
@@ -85,6 +101,58 @@ impl ExternalActionCompiler for WorkApplicationCompiler {
         }
         Ok(())
     }
+}
+
+fn require_absent(action: &LogicalAction<'_>) -> Result<(), StoreError> {
+    if action.conditions.len() == 1
+        && matches!(action.conditions[0].1, Condition::ItemAbsent(target) if *target == action.target)
+    {
+        Ok(())
+    } else {
+        Err(StoreError::Invalid {
+            detail: "a new agent wake item must carry its exact item-absent election".to_owned(),
+        })
+    }
+}
+
+fn wake_record(binding: AuthorityBinding, wake: &AgentWake) -> Result<WorkRecord, StoreError> {
+    if binding.session != Some(wake.session)
+        || !wake.work_id.starts_with("wrk_")
+        || wake.dedupe_key.len() != 64
+        || !wake
+            .dedupe_key
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(StoreError::Invalid {
+            detail: "the root wake disagrees with its tenant or canonical identities".to_owned(),
+        });
+    }
+    Ok(WorkRecord {
+        work_id: wake.work_id.clone(),
+        workspace: binding.workspace,
+        organization: binding.organization,
+        session: Some(wake.session),
+        agent: Some(wake.agent),
+        kind: "agent.wake".to_owned(),
+        priority: 0,
+        due_at: wake.at,
+        state: "pending".to_owned(),
+        attempt: 0,
+        max_attempts: 8,
+        fence: 0,
+        claim_owner: None,
+        lease_expires_at: None,
+        dedupe_key: wake.dedupe_key.clone(),
+        payload: Payload::new()
+            .set("sessionId", wake.session.to_string())
+            .set("agentId", wake.agent.to_string())
+            .set("fromSeq", wake.from.0.to_string())
+            .set("cancelEpoch", wake.cancellation.0.to_string()),
+        delivery: DeliveryEvidence::default(),
+        created_at: wake.at,
+        updated_at: wake.at,
+    })
 }
 
 fn record_of(binding: AuthorityBinding, work: &WorkItem) -> Result<WorkRecord, StoreError> {

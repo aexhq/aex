@@ -9,8 +9,8 @@
 //!   function of what was read;
 //! - an admission either writes every participant of its declared transaction or
 //!   none;
-//! - authorization and the pause gate run before idempotent replay, so a paused
-//!   caller is never re-shown a grant;
+//! - replayable admissions strongly read their receipt before mutable planning
+//!   dependencies, so an exact retry remains state-independent;
 //! - long commands become durable operations rather than held-open requests.
 //!
 //! # Not this crate's job
@@ -41,23 +41,24 @@ pub use lifecycle::{
 };
 pub use outcome::{Attempted, Observed, ProviderAnswer, Resolution, resolve};
 pub use plan::{
-    Condition, ConditionId, Hint, ItemKey, MAX_ACTIONS, MAX_BYTES, PlanError, PlanShape, Planned,
-    SessionTransaction, TableFamily, TransactionIntent, Write,
+    AgentWake, Condition, ConditionId, Hint, ItemKey, MAX_ACTIONS, MAX_BYTES, MessageAdmittedEvent,
+    PlanError, PlanShape, Planned, SessionTransaction, TableFamily, TransactionIntent, Write,
 };
 pub use ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext,
     AuthorityCommitter, Clock, CommitError, CommitOutcome, CredentialState, DeploymentFacts,
     IdFactory, LimitsBundle, LimitsReader, LiveEntry, LiveEntryKind, LiveListQuery, LiveListing,
-    LiveWorkspaceReader, ModelQualifier, PageBudget, PortError, ProviderCredentialBinding,
-    ProviderCredentialReader, QualificationRefusal, QualifiedModel, RegistryReader, SessionReader,
-    SessionSnapshot, VersionedOperation,
+    LiveWorkspaceReader, MessageAdmissionSnapshot, ModelQualifier, PageBudget, PortError,
+    ProviderCredentialBinding, ProviderCredentialReader, QualificationRefusal, QualifiedModel,
+    RegistryReader, RootAdmissionState, SessionReader, VersionedOperation,
 };
 pub use projection::{
     canonical_session_bytes, public_session, public_session_list_item, public_status,
 };
 pub use use_cases::{
-    CommitTerminal, LiveRead, Purge, RECOVERY_WINDOW, Rebind, Resume, STOP_BATCH_AGENTS,
-    SendMessage, SessionCommand, StartRun, admit_message, commit_terminal, continue_operation,
-    continue_stop, list_live_files, purge_session, rebind_credentials, restore_session, start_run,
-    stat_live_file, stop_session, trash_session,
+    CommitTerminal, LiveRead, MESSAGE_TEXT_MAX_BYTES, MessageAdmissionOutcome, Purge,
+    RECOVERY_WINDOW, Rebind, Resume, STOP_BATCH_AGENTS, SendMessage, SessionCommand, StartRun,
+    admit_message, commit_terminal, continue_operation, continue_stop, list_live_files,
+    purge_session, rebind_credentials, restore_session, start_run, stat_live_file, stop_session,
+    trash_session,
 };

@@ -14,11 +14,13 @@ use aex_secret_domain::{
     SourceGeneration, TrueIdle, TrueIdleViolation, admit_custody, set,
 };
 use aex_session_app::plan::{Condition, TransactionIntent, Write};
-use aex_session_app::testing::{CountingIds, FixedClock, PortCall, ScriptedPorts, fixture_spend};
+use aex_session_app::testing::{
+    CountingIds, FixedClock, PortCall, ScriptedPorts, message_identity_under,
+};
 use aex_session_app::use_cases::STOP_BATCH_AGENTS;
 use aex_session_app::{
-    AppError, CommitTerminal, MAX_ACTIONS, Planned, Rebind, SendMessage, SessionCommand,
-    SessionTransaction, StartRun, admit_message, commit_terminal, purge_session,
+    AppError, CommitTerminal, MAX_ACTIONS, MessageAdmissionOutcome, Planned, Rebind, SendMessage,
+    SessionCommand, SessionTransaction, StartRun, admit_message, commit_terminal, purge_session,
     rebind_credentials, restore_session, start_run, stop_session, trash_session,
 };
 use aex_session_domain::testing::{
@@ -31,6 +33,7 @@ use aex_session_domain::{
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{MessageId, OperationId, Uuid7};
+use aex_wire::models::MessageSendRequest;
 use aex_wire::types::Region;
 use proptest::prelude::*;
 
@@ -40,17 +43,16 @@ fn clock() -> FixedClock {
 
 fn send_message() -> SendMessage {
     let session = session_fixture();
+    let request = MessageSendRequest {
+        deadline: None,
+        max_spend_cents: None,
+        text: "hello".to_owned(),
+    };
     SendMessage {
         workspace: session.workspace,
         session: session.id,
-        message: id::<MessageId>(20),
-        run: run_id(21),
-        parts: vec![MessagePart::Text {
-            text: "hello".to_owned(),
-        }],
-        max_spend_cents: fixture_spend(),
-        deadline: moment(60_000),
-        intent: IntentDigest::from_bytes([3; 32]),
+        identity: message_identity_under("fixture-message-key", &session, &request),
+        request,
     }
 }
 
@@ -122,7 +124,9 @@ async fn every_plan(ports: &ScriptedPorts) -> Vec<(TransactionIntent, SessionTra
     let context = ports.context(&clock, &ids);
     let mut plans = Vec::new();
 
-    if let Ok(Planned { plan, .. }) = admit_message(&context, &send_message()).await {
+    if let Ok(MessageAdmissionOutcome::Planned(Planned { plan, .. })) =
+        admit_message(&context, &send_message()).await
+    {
         plans.push((plan.intent, plan));
     }
     if let Ok(Planned { plan, .. }) = stop_session(&context, &session_command(30)).await {
@@ -227,6 +231,10 @@ fn required_conditions(intent: TransactionIntent) -> Vec<&'static str> {
             "WorkAdmission",
             "MutationGuardFree",
             "CancellationEpoch",
+            "AccountRevisionAtLeast",
+            "AgentRevision",
+            "JournalTail",
+            "RootAgentIdle",
         ],
         TransactionIntent::StopSession => vec!["SessionRevision", "CancellationEpoch"],
         TransactionIntent::TrashSession
@@ -272,6 +280,7 @@ fn condition_tag(condition: &Condition) -> &'static str {
         Condition::AgentRevision { .. } => "AgentRevision",
         Condition::AgentFence { .. } => "AgentFence",
         Condition::JournalTail { .. } => "JournalTail",
+        Condition::RootAgentIdle { .. } => "RootAgentIdle",
         Condition::RunNonTerminal { .. } => "RunNonTerminal",
         Condition::AccountRevisionAtLeast { .. } => "AccountRevisionAtLeast",
         Condition::AuthorizationEpochAtLeast { .. } => "AuthorizationEpochAtLeast",
@@ -330,9 +339,12 @@ async fn admission_is_atomic() {
     let ids = CountingIds::default();
     let context = ports.context(&clock, &ids);
 
-    let planned = admit_message(&context, &send_message())
+    let MessageAdmissionOutcome::Planned(planned) = admit_message(&context, &send_message())
         .await
-        .expect("admits");
+        .expect("admits")
+    else {
+        panic!("a fresh request cannot replay");
+    };
     let plan = &planned.plan;
 
     let mut has_message = false;
@@ -346,13 +358,18 @@ async fn admission_is_atomic() {
             Write::PutRun(_) => has_run = true,
             Write::PutSessionHead(head) => {
                 has_head = true;
-                assert_eq!(head.active_run, Some(planned.projected.1.id));
+                assert!(head.active_run.is_some());
+                assert_eq!(
+                    head.lifecycle.active.map(|active| active.message),
+                    Some(planned.projected.0.id)
+                );
                 assert_eq!(head.status, SessionStatus::Running);
             }
             _ => {}
         }
     }
     assert!(has_message && has_sealed_projection && has_run && has_head);
+    assert_eq!(plan.validate().expect("valid admission").actions, 11);
 
     // No history yields a durable message without a wake: the two are in the
     // same plan, so either both land or neither does.
@@ -363,12 +380,185 @@ async fn admission_is_atomic() {
 }
 
 #[tokio::test]
+async fn omitted_and_explicit_message_bounds_are_preserved_in_every_authority() {
+    let ports = ScriptedPorts::idle();
+    let clock = clock();
+    let ids = CountingIds::default();
+    let default_command = send_message();
+    let MessageAdmissionOutcome::Planned(defaulted) =
+        admit_message(&ports.context(&clock, &ids), &default_command)
+            .await
+            .expect("default bounds admit")
+    else {
+        panic!("a fresh request cannot replay");
+    };
+    let default_run = defaulted
+        .plan
+        .writes
+        .iter()
+        .find_map(|write| match write {
+            Write::PutRun(run) => Some(run.as_ref()),
+            _ => None,
+        })
+        .expect("admission stores its internal execution");
+    assert_eq!(default_run.max_spend_cents.get(), 1_000);
+    assert_eq!(default_run.deadline, ports.session().lifecycle.expires_at);
+    let active = defaulted
+        .projected
+        .1
+        .lifecycle
+        .active
+        .expect("the session projects current activity");
+    assert_eq!(active.bounds.max_spend_cents.get(), 1_000);
+    assert_eq!(active.bounds.deadline, ports.session().lifecycle.expires_at);
+
+    let session = session_fixture();
+    let request = MessageSendRequest {
+        deadline: Some(moment(5_000)),
+        max_spend_cents: Some(aex_wire::types::Cents::new(50_000)),
+        text: "explicit".to_owned(),
+    };
+    let explicit = SendMessage {
+        workspace: session.workspace,
+        session: session.id,
+        identity: message_identity_under("explicit-bounds", &session, &request),
+        request,
+    };
+    let explicit_ports = ScriptedPorts::idle();
+    let explicit_ids = CountingIds::default();
+    let MessageAdmissionOutcome::Planned(explicit) =
+        admit_message(&explicit_ports.context(&clock, &explicit_ids), &explicit)
+            .await
+            .expect("an above-default cap and earlier deadline admit")
+    else {
+        panic!("a fresh request cannot replay");
+    };
+    let explicit_run = explicit
+        .plan
+        .writes
+        .iter()
+        .find_map(|write| match write {
+            Write::PutRun(run) => Some(run.as_ref()),
+            _ => None,
+        })
+        .expect("admission stores its internal execution");
+    assert_eq!(explicit_run.max_spend_cents.get(), 50_000);
+    assert_eq!(explicit_run.deadline, moment(5_000));
+}
+
+#[tokio::test]
+async fn message_text_is_bounded_by_utf8_bytes_below_the_journal_ceiling() {
+    let session = session_fixture();
+    let admitted_request = MessageSendRequest {
+        deadline: None,
+        max_spend_cents: None,
+        text: "é".repeat(12_288),
+    };
+    assert_eq!(admitted_request.text.len(), 24_576);
+    let admitted = SendMessage {
+        workspace: session.workspace,
+        session: session.id,
+        identity: message_identity_under("text-boundary", &session, &admitted_request),
+        request: admitted_request,
+    };
+    let clock = clock();
+    let ids = CountingIds::default();
+    let ports = ScriptedPorts::idle();
+    assert!(matches!(
+        admit_message(&ports.context(&clock, &ids), &admitted).await,
+        Ok(MessageAdmissionOutcome::Planned(_))
+    ));
+
+    let refused_request = MessageSendRequest {
+        deadline: None,
+        max_spend_cents: None,
+        text: "x".repeat(24_577),
+    };
+    let refused = SendMessage {
+        workspace: session.workspace,
+        session: session.id,
+        identity: message_identity_under("text-too-large", &session, &refused_request),
+        request: refused_request,
+    };
+    let refused_ids = CountingIds::default();
+    let error = admit_message(&ports.context(&clock, &refused_ids), &refused)
+        .await
+        .expect_err("one byte above the bound is refused");
+    assert_eq!(error.code(), ErrorCode::InvalidRequest);
+}
+
+#[tokio::test]
+async fn exact_message_replay_reads_no_mutable_admission_dependency() {
+    let command = send_message();
+    let clock = clock();
+    let first_ids = CountingIds::default();
+    let first_ports = ScriptedPorts::idle();
+    let MessageAdmissionOutcome::Planned(first) =
+        admit_message(&first_ports.context(&clock, &first_ids), &command)
+            .await
+            .expect("first admission plans")
+    else {
+        panic!("the first request cannot replay");
+    };
+    let receipt = first
+        .plan
+        .writes
+        .iter()
+        .find_map(|write| match write {
+            Write::PutIdempotencyReceipt(receipt) => Some(receipt.as_ref().clone()),
+            _ => None,
+        })
+        .expect("admission stores its exact response");
+    let replay_ports = ScriptedPorts::idle()
+        .paused()
+        .without_provider_credential()
+        .with_receipt(receipt);
+    let replay_ids = CountingIds::default();
+    let replay = admit_message(&replay_ports.context(&clock, &replay_ids), &command)
+        .await
+        .expect("account and credential changes cannot break exact replay");
+    let MessageAdmissionOutcome::Replayed { response, .. } = replay else {
+        panic!("the stored winner must replay");
+    };
+    assert_eq!(response.message.id, first.projected.0.id);
+    assert_eq!(replay_ports.calls(), vec![PortCall::Read("load_receipt")]);
+}
+
+#[tokio::test]
+async fn public_message_event_contains_no_internal_run_or_agent_identity() {
+    let ports = ScriptedPorts::idle();
+    let clock = clock();
+    let ids = CountingIds::default();
+    let MessageAdmissionOutcome::Planned(planned) =
+        admit_message(&ports.context(&clock, &ids), &send_message())
+            .await
+            .expect("admits")
+    else {
+        panic!("a fresh request cannot replay");
+    };
+    let event = planned
+        .plan
+        .writes
+        .iter()
+        .find_map(|write| match write {
+            Write::PutMessageAdmittedEvent(event) => Some(event.as_ref()),
+            _ => None,
+        })
+        .expect("writes a public message event");
+    let body: serde_json::Value = serde_json::from_slice(&event.body).expect("canonical JSON");
+    assert!(body.get("messageId").is_some());
+    assert!(body.get("sessionId").is_some());
+    assert!(body.get("runId").is_none());
+    assert!(body.get("agentId").is_none());
+}
+
+#[tokio::test]
 async fn the_maximum_open_message_set_fits_one_terminal_transaction() {
     let (session, run, _agent, _) = running_session();
     let ports = ScriptedPorts::idle()
         .with_session(session.clone())
         .with_run(run.clone());
-    let agent = ports.root_agent().id;
+    let agent = ports.root_agent().agent;
     let open_messages = (0..MAX_OPEN_MESSAGES_PER_RUN)
         .map(|index| Message {
             id: id::<MessageId>(u8::try_from(index + 40).expect("fixture tag")),
@@ -457,12 +647,11 @@ async fn replaying_an_operation_identity_yields_the_same_projection() {
 }
 
 // ---------------------------------------------------------------------------
-// 39 — authorization precedes replay
+// 39 — replay lookup precedes mutable admission dependencies
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_paused_caller_is_never_shown_a_receipt() {
-    // 39 `authorization_precedes_replay`.
+async fn a_fresh_paused_request_checks_replay_before_the_pause_gate() {
     let ports = ScriptedPorts::idle().paused();
     let clock = clock();
     let ids = CountingIds::default();
@@ -472,14 +661,16 @@ async fn a_paused_caller_is_never_shown_a_receipt() {
     let error = outcome.expect_err("a paused account must be denied");
     assert_eq!(error.code(), ErrorCode::AccountPaused);
 
-    // The receipt lookup never happened, so nothing could be re-disclosed.
-    assert!(
-        !ports
-            .calls()
-            .iter()
-            .any(|call| matches!(call, PortCall::Read("load_receipt"))),
-        "the pause gate runs before any replay lookup"
-    );
+    let calls = ports.calls();
+    let receipt = calls
+        .iter()
+        .position(|call| matches!(call, PortCall::Read("load_receipt")))
+        .expect("checks replay");
+    let account = calls
+        .iter()
+        .position(|call| matches!(call, PortCall::Read("projection")))
+        .expect("checks account admission");
+    assert!(receipt < account, "the strong receipt lookup runs first");
     assert!(!ports.recorded_a_write());
 }
 

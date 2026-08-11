@@ -11,8 +11,8 @@ use aex_internal_contracts::RunId;
 use aex_operation_domain::Operation;
 use aex_operation_domain::operation::OperationVersion;
 use aex_session_domain::{
-    AccountProjection, AgentControl, EffectiveLimits, IdempotencyIdentity, IdempotencyReceipt,
-    JournalPage, JournalSeq, Run, Session,
+    AccountProjection, AgentControl, AgentRevision, EffectiveLimits, IdempotencyIdentity,
+    IdempotencyReceipt, JournalPage, JournalSeq, Run, Session,
 };
 use aex_wire::ids::{
     AgentId, GenerationId, OperationId, OrganizationId, SessionId, UploadId, Uuid7, WorkspaceId,
@@ -96,15 +96,31 @@ pub struct VersionedOperation {
     pub version: OperationVersion,
 }
 
-/// Everything a command needs to know about a session in one read.
+/// The Brain-owned root facts needed to admit one new session message.
+///
+/// Deliberately narrower than [`AgentControl`]: the physical control row belongs
+/// to the Brain store and does not persist that third vocabulary. Message
+/// admission needs only the exact revision/tail and whether the root is at
+/// rest; the transaction rechecks all three before it writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionSnapshot {
+pub struct RootAdmissionState {
+    /// Root agent identity.
+    pub agent: AgentId,
+    /// Optimistic control revision.
+    pub revision: AgentRevision,
+    /// Immutable journal tail.
+    pub journal_tail: JournalSeq,
+    /// Whether the stored phase and lease facts admit a new message.
+    pub idle: bool,
+}
+
+/// The exact session and Brain-root projection used by message admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageAdmissionSnapshot {
     /// The session head.
     pub session: Session,
-    /// Its root agent.
-    pub root_agent: AgentControl,
-    /// Its non-terminal agents, for the materialized ceiling.
-    pub materialized: Vec<AgentControl>,
+    /// Its Brain-owned root admission facts.
+    pub root: RootAdmissionState,
 }
 
 /// Why a port read failed.
@@ -158,7 +174,7 @@ pub enum PortError {
 pub trait SessionReader: Send + Sync {
     /// One session head.
     ///
-    /// Split from [`SessionReader::load_snapshot`] on purpose: stop, trash and
+    /// Split from [`SessionReader::load_message_snapshot`] on purpose: stop, trash and
     /// restore need the head and nothing else (D-14), and bundling the agents
     /// into every head read made all three depend on a decode that no adapter
     /// in the tree can perform.
@@ -168,12 +184,12 @@ pub trait SessionReader: Send + Sync {
         session: SessionId,
     ) -> Result<Session, PortError>;
 
-    /// One session together with the agents a command needs.
-    async fn load_snapshot(
+    /// One session together with its narrow Brain-root admission projection.
+    async fn load_message_snapshot(
         &self,
         workspace: WorkspaceId,
         session: SessionId,
-    ) -> Result<SessionSnapshot, PortError>;
+    ) -> Result<MessageAdmissionSnapshot, PortError>;
 
     /// One run record.
     async fn load_run(&self, session: SessionId, run: RunId) -> Result<Run, PortError>;
@@ -215,7 +231,10 @@ pub trait SessionReader: Send + Sync {
     /// The receipt filed under an identity, when one exists.
     async fn load_receipt(
         &self,
+        workspace: WorkspaceId,
+        scope: &str,
         identity: &IdempotencyIdentity,
+        now: Timestamp,
     ) -> Result<Option<IdempotencyReceipt>, PortError>;
 
     /// One durable operation and the version it is stored at, when it exists.

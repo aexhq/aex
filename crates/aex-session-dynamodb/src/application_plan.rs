@@ -76,6 +76,7 @@ static IDEMPOTENCY: IdempotencyCompiler = IdempotencyCompiler::session();
 
 /// The outbox compiler, promoted for the same reason.
 static OUTBOX: OutboxCompiler = OutboxCompiler;
+static AUTHORIZATION_PROJECTION: AuthorizationProjectionCompiler = AuthorizationProjectionCompiler;
 
 impl<'a> FamilyCompilers<'a> {
     /// The families the session adapter compiles on its own behalf.
@@ -84,6 +85,10 @@ impl<'a> FamilyCompilers<'a> {
         let mut owners = BTreeMap::<TableFamily, &'a dyn ExternalActionCompiler>::new();
         owners.insert(TableFamily::Idempotency, &IDEMPOTENCY);
         owners.insert(TableFamily::Outbox, &OUTBOX);
+        owners.insert(
+            TableFamily::AuthorizationProjection,
+            &AUTHORIZATION_PROJECTION,
+        );
         Self { owners }
     }
 
@@ -92,6 +97,56 @@ impl<'a> FamilyCompilers<'a> {
     pub fn with(mut self, family: TableFamily, compiler: &'a dyn ExternalActionCompiler) -> Self {
         self.owners.insert(family, compiler);
         self
+    }
+}
+
+/// Compiles the commit-time account-pause fence against the workspace placement row.
+pub struct AuthorizationProjectionCompiler;
+
+impl ExternalActionCompiler for AuthorizationProjectionCompiler {
+    fn compile_action(
+        &self,
+        tables: &RegionalTables,
+        binding: AuthorityBinding,
+        action: &LogicalAction<'_>,
+        output: &mut TransactionPlan,
+    ) -> Result<(), StoreError> {
+        if action.write.is_some() || action.conditions.len() != 1 {
+            return Err(StoreError::Invalid {
+                detail: "the authorization projection is a single read-only admission fence"
+                    .to_owned(),
+            });
+        }
+        let Condition::AccountRevisionAtLeast {
+            workspace,
+            organization,
+            at_least,
+        } = action.conditions[0].1
+        else {
+            return Err(StoreError::Invalid {
+                detail: "the authorization-projection compiler received an unrelated condition"
+                    .to_owned(),
+            });
+        };
+        if *workspace != binding.workspace || *organization != binding.organization {
+            return Err(cross_tenant());
+        }
+        let (pk, sk) = crate::projection::placement_key(*workspace);
+        let physical = crate::keys::Key { pk, sk };
+        output.condition_check(
+            Participant::AUTHZ_PLACEMENT,
+            aws_sdk_dynamodb::types::ConditionCheck::builder()
+                .table_name(&tables.regional_authz_projection)
+                .set_key(Some(key(&physical.pk, &physical.sk)))
+                .condition_expression(
+                    "organizationId = :organization AND accountEpoch >= :epoch AND #status = :active",
+                )
+                .expression_attribute_names("#status", "status")
+                .expression_attribute_values(":organization", s(organization.to_string()))
+                .expression_attribute_values(":epoch", n(at_least.0))
+                .expression_attribute_values(":active", s("active")),
+        )?;
+        Ok(())
     }
 }
 
@@ -261,15 +316,48 @@ impl ExternalActionCompiler for OutboxCompiler {
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
-        let Some(Write::PutOutboxEvent(event)) = action.write else {
-            return Err(StoreError::Invalid {
-                detail: "the outbox family carries outbox-event writes only".to_owned(),
-            });
+        let (item, participant) = match action.write {
+            Some(Write::PutOutboxEvent(event)) => {
+                if Some(event.session) != binding.session {
+                    return Err(cross_tenant());
+                }
+                (
+                    crate::codec::encode_outbox_event(binding.workspace, event),
+                    Participant::SESSION_TERMINAL_EVENT,
+                )
+            }
+            Some(Write::PutMessageAdmittedEvent(event)) => {
+                if Some(event.session) != binding.session {
+                    return Err(cross_tenant());
+                }
+                let event = crate::wire_pending::SessionEvent {
+                    workspace: binding.workspace,
+                    event_seq: event.sequence,
+                    event_id: event.id,
+                    event_type: "session.message_admitted".to_owned(),
+                    run: None,
+                    agent: None,
+                    body: crate::wire_pending::Body::Inline(event.body.clone()),
+                    occurred_at: event.at,
+                    outbox_state: "pending",
+                };
+                (
+                    crate::codec::encode_event(
+                        binding.session.ok_or_else(|| StoreError::Invalid {
+                            detail: "a run-admitted event requires a session binding".to_owned(),
+                        })?,
+                        &event,
+                    ),
+                    Participant::SESSION_ADMITTED_EVENT,
+                )
+            }
+            _ => {
+                return Err(StoreError::Invalid {
+                    detail: "the outbox family carries terminal or message-admitted events only"
+                        .to_owned(),
+                });
+            }
         };
-        if Some(event.session) != binding.session {
-            return Err(cross_tenant());
-        }
-        let item = crate::codec::encode_outbox_event(binding.workspace, event);
         let mut expression = compile_conditions(&action.conditions)?;
         // A terminal barrier emits its outbox event exactly once; a replayed
         // barrier must lose the row rather than rewrite it, or a delivered event
@@ -282,7 +370,7 @@ impl ExternalActionCompiler for OutboxCompiler {
             expression.and_literal(IMMUTABLE);
         }
         output.put(
-            Participant::SESSION_TERMINAL_EVENT,
+            participant,
             conditional_put(&tables.session_authority, item, expression)?,
         )?;
         Ok(())

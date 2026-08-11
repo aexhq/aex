@@ -22,6 +22,8 @@ use crate::wire_pending::{
     CanonicalBlock, CanonicalMessage, ContentBlockRef, JoinGroup, JoinMode, NormalizedUsage,
     ResolvedAgentConfig, Role, StopReason, ToolResultPart,
 };
+use aex_internal_contracts::RunId;
+use aex_wire::ids::MessageId;
 
 /// Where the agent is in its cycle.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +93,14 @@ pub struct FoldState {
     pub last_stop_reason: Option<StopReason>,
     /// The user turn currently accumulating.
     pub open_user: Vec<ContentBlockRef>,
+    /// The root session run currently executing, when one was admitted.
+    pub active_run: Option<RunId>,
+    /// The public message that admitted [`FoldState::active_run`].
+    pub active_message: Option<MessageId>,
+    /// Run-local spend ceiling for the current root run.
+    pub active_max_spend_cents: Option<u64>,
+    /// Absolute fence for the current root run.
+    pub active_deadline: Option<Timestamp>,
     /// Tool calls asked for and not yet resolved, keyed by call id.
     #[serde(with = "ordered_map_entries")]
     pub pending_calls: BTreeMap<ToolCallId, PendingCall>,
@@ -340,10 +350,11 @@ impl FoldState {
 
 #[cfg(test)]
 mod control_projection_tests {
-    use super::{FoldState, PendingCall, project_control_state};
-    use crate::ids::{ToolCallId, ToolName};
-    use crate::journal::ExecutorRoute;
+    use super::{FoldState, PendingCall, Phase, apply_record, project_control_state};
+    use crate::ids::{JournalSeq, Timestamp, ToolCallId, ToolName};
+    use crate::journal::{ExecutorRoute, JournalEntry, JournalRecord};
     use aex_wire::CanonicalJson;
+    use aex_wire::ids::{MessageId, PrefixedId as _, Uuid7};
 
     fn todo_write(input: &str) -> PendingCall {
         PendingCall {
@@ -378,6 +389,35 @@ mod control_projection_tests {
             Some(&first.input),
             "a result attributed to another executor cannot mutate Brain control state"
         );
+    }
+
+    #[test]
+    fn run_admission_pins_internal_execution_and_enters_model_work() {
+        let run = aex_internal_contracts::RunId::from_uuid7(Uuid7::compose(1, [1; 10]));
+        let message = MessageId::from_uuid7(Uuid7::compose(2, [2; 10]));
+        let deadline = Timestamp::from_millis(90_000);
+        let entry = JournalEntry::seal(
+            JournalSeq::ZERO,
+            Timestamp::from_millis(1_000),
+            JournalRecord::RunAdmitted {
+                run,
+                message,
+                content: Vec::new(),
+                max_spend_cents: 1_000,
+                deadline,
+            },
+        )
+        .expect("the admission record seals");
+        let mut state = FoldState::empty();
+
+        apply_record(&mut state, &entry).expect("run admission folds");
+
+        assert_eq!(state.active_run, Some(run));
+        assert_eq!(state.active_message, Some(message));
+        assert_eq!(state.active_max_spend_cents, Some(1_000));
+        assert_eq!(state.active_deadline, Some(deadline));
+        assert_eq!(state.turn_started_at, Some(Timestamp::from_millis(1_000)));
+        assert_eq!(state.phase, Phase::AwaitingModel);
     }
 }
 
@@ -486,6 +526,23 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
                 });
             }
             state.phase = Phase::AwaitingInput;
+        }
+
+        JournalRecord::RunAdmitted {
+            run,
+            message,
+            content,
+            max_spend_cents,
+            deadline,
+        } => {
+            state.active_run = Some(*run);
+            state.active_message = Some(*message);
+            state.active_max_spend_cents = Some(*max_spend_cents);
+            state.active_deadline = Some(*deadline);
+            state.open_user.extend(content.iter().cloned());
+            state.turn_started_at = Some(entry.envelope.recorded_at);
+            state.steps_this_turn = 0;
+            state.phase = Phase::AwaitingModel;
         }
 
         JournalRecord::UserMessage { content, origin } => {

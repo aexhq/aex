@@ -35,8 +35,8 @@ use aex_session_app::plan::{
 };
 use aex_session_app::ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AuthorityCommitter, Clock,
-    CommitError, CommitOutcome, PageBudget, PortError, SessionReader, SessionSnapshot,
-    VersionedOperation,
+    CommitError, CommitOutcome, MessageAdmissionSnapshot, PageBudget, PortError,
+    RootAdmissionState, SessionReader, VersionedOperation,
 };
 use aex_session_domain::{
     AccountProjection, AccountRevision, AccountState, AgentControl, AgentRevision,
@@ -284,6 +284,174 @@ impl SessionAuthorityExternal {
         Ok(())
     }
 
+    fn root_run_admission(
+        tables: &RegionalTables,
+        binding: AuthorityBinding,
+        action: &LogicalAction<'_>,
+        session: SessionId,
+        agent: AgentId,
+        from_revision: AgentRevision,
+        to_revision: AgentRevision,
+        from_tail: JournalSeq,
+        to_tail: JournalSeq,
+        entry_identity: aex_session_domain::EntryIdentity,
+        at: Timestamp,
+        output: &mut TransactionPlan,
+    ) -> Result<(), StoreError> {
+        if Some(session) != binding.session
+            || from_revision.next() != to_revision
+            || from_tail.next() != to_tail
+        {
+            return Err(StoreError::Invalid {
+                detail: "a root run admission crosses its session or does not advance exactly one revision and journal position".to_owned(),
+            });
+        }
+        let mut expression = Expression::default();
+        expression.and_literal("attribute_exists(pk)");
+        let mut saw_revision = false;
+        let mut saw_tail = false;
+        let mut saw_idle = false;
+        for (id, condition) in &action.conditions {
+            match condition {
+                Condition::AgentRevision {
+                    session: guarded_session,
+                    agent: guarded_agent,
+                    expected,
+                } if (*guarded_session, *guarded_agent, *expected)
+                    == (session, agent, from_revision) =>
+                {
+                    saw_revision = true;
+                    term_eq_u64(
+                        &mut expression,
+                        &format!("c{}", id.0),
+                        "revision",
+                        expected.0,
+                    );
+                }
+                Condition::JournalTail {
+                    session: guarded_session,
+                    agent: guarded_agent,
+                    expected,
+                } if (*guarded_session, *guarded_agent, *expected)
+                    == (session, agent, from_tail) =>
+                {
+                    saw_tail = true;
+                    term_eq_u64(
+                        &mut expression,
+                        &format!("c{}", id.0),
+                        "journalTail",
+                        expected.0,
+                    );
+                }
+                Condition::RootAgentIdle {
+                    session: guarded_session,
+                    agent: guarded_agent,
+                } if (*guarded_session, *guarded_agent) == (session, agent) => {
+                    saw_idle = true;
+                    let prefix = format!("c{}", id.0);
+                    let name = format!("#{prefix}");
+                    let value = format!(":{prefix}");
+                    expression.names.insert(name.clone(), "status".to_owned());
+                    expression.values.insert(value.clone(), s("idle"));
+                    expression.terms.push(format!("{name} = {value}"));
+                    expression.and_literal("attribute_not_exists(claimOwner)");
+                    expression.and_literal("attribute_not_exists(finishReason)");
+                }
+                other => return Err(unsupported_condition(other)),
+            }
+        }
+        if !(saw_revision && saw_tail && saw_idle) {
+            return Err(StoreError::Invalid {
+                detail: "a root run admission requires exact revision, journal-tail and idle-owner guards".to_owned(),
+            });
+        }
+        let rendered = expression.rendered()?;
+        let mut names = expression.names;
+        let mut values = expression.values;
+        names.insert("#status".to_owned(), "status".to_owned());
+        values.insert(":running".to_owned(), s("awaiting_model"));
+        values.insert(":nextRevision".to_owned(), crate::attr::n(to_revision.0));
+        values.insert(":nextTail".to_owned(), crate::attr::n(to_tail.0));
+        values.insert(
+            ":nextTailHash".to_owned(),
+            s(hex::encode(entry_identity.as_bytes())),
+        );
+        values.insert(":hasJournal".to_owned(), crate::attr::boolean(true));
+        values.insert(":now".to_owned(), stamp(at));
+        let physical = crate::keys::agent_control(session, agent);
+        output.update(
+            Participant::AGENT_ROOT_CONTROL,
+            aws_sdk_dynamodb::types::Update::builder()
+                .table_name(&tables.session_authority)
+                .set_key(Some(key(&physical.pk, &physical.sk)))
+                .condition_expression(rendered)
+                .update_expression(
+                    "SET #status = :running, revision = :nextRevision, journalTail = :nextTail, \
+                     journalTailHash = :nextTailHash, hasJournal = :hasJournal, updatedAt = :now",
+                )
+                .set_expression_attribute_names(Some(names))
+                .set_expression_attribute_values(Some(values)),
+        )?;
+        Ok(())
+    }
+
+    fn journal_append(
+        tables: &RegionalTables,
+        binding: AuthorityBinding,
+        action: &LogicalAction<'_>,
+        session: SessionId,
+        page: &JournalPage,
+        output: &mut TransactionPlan,
+    ) -> Result<(), StoreError> {
+        if Some(session) != binding.session || page.entries.len() != 1 {
+            return Err(StoreError::Invalid {
+                detail: "an admission appends exactly one journal record in its bound session"
+                    .to_owned(),
+            });
+        }
+        let entry = &page.entries[0];
+        if page.first != entry.seq || page.agent != entry.agent {
+            return Err(StoreError::Invalid {
+                detail: "a journal page disagrees with its one entry".to_owned(),
+            });
+        }
+        let aex_session_domain::JournalBody::Inline(body) = &entry.body else {
+            return Err(StoreError::Invalid {
+                detail: "the MVP Brain journal admits inline records only".to_owned(),
+            });
+        };
+        let kind = serde_json::to_value(entry.kind)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .ok_or_else(|| StoreError::Invalid {
+                detail: "a journal kind has no canonical wire spelling".to_owned(),
+            })?;
+        let item = crate::codec::encode_journal(
+            session,
+            entry.agent,
+            &crate::wire_pending::JournalEntry {
+                seq: entry.seq.0,
+                entry_id: hex::encode(entry.identity.as_bytes()),
+                kind,
+                body: crate::wire_pending::Body::Inline(body.clone()),
+                body_bytes: u64::try_from(body.len()).unwrap_or(u64::MAX),
+                occurred_at: entry.recorded_at,
+            },
+        );
+        let mut expression = Expression::default();
+        if !action.conditions.is_empty() {
+            return Err(StoreError::Invalid {
+                detail: "an immutable journal append carries no mutable predicate".to_owned(),
+            });
+        }
+        expression.and_literal(IMMUTABLE);
+        output.put(
+            Participant::AGENT_JOURNAL,
+            conditional_put(&tables.session_authority, item, expression)?,
+        )?;
+        Ok(())
+    }
+
     fn read_only(
         tables: &RegionalTables,
         action: &LogicalAction<'_>,
@@ -396,6 +564,7 @@ const fn condition_tag(condition: &Condition) -> &'static str {
         Condition::AgentRevision { .. } => "AgentRevision",
         Condition::AgentFence { .. } => "AgentFence",
         Condition::JournalTail { .. } => "JournalTail",
+        Condition::RootAgentIdle { .. } => "RootAgentIdle",
         Condition::RunNonTerminal { .. } => "RunNonTerminal",
         Condition::AccountRevisionAtLeast { .. } => "AccountRevisionAtLeast",
         Condition::AuthorizationEpochAtLeast { .. } => "AuthorizationEpochAtLeast",
@@ -420,6 +589,7 @@ const fn write_tag(write: &Write) -> &'static str {
         Write::PutSealedMessage(_) => "PutSealedMessage",
         Write::PutRun(_) => "PutRun",
         Write::PutAgentControl(_) => "PutAgentControl",
+        Write::AdmitRootRun { .. } => "AdmitRootRun",
         Write::CancelAgent { .. } => "CancelAgent",
         Write::AppendJournalPage { .. } => "AppendJournalPage",
         Write::PutApproval(_) => "PutApproval",
@@ -427,8 +597,11 @@ const fn write_tag(write: &Write) -> &'static str {
         Write::PutOperation(_) => "PutOperation",
         Write::RedactOperationResult(_) => "RedactOperationResult",
         Write::PutWorkItem(_) => "PutWorkItem",
+        Write::PutAgentWake(_) => "PutAgentWake",
+        Write::PutAgentWakeDedupe(_) => "PutAgentWakeDedupe",
         Write::CompleteWorkItem(_) => "CompleteWorkItem",
         Write::PutOutboxEvent(_) => "PutOutboxEvent",
+        Write::PutMessageAdmittedEvent(_) => "PutMessageAdmittedEvent",
         Write::PutPin(_) => "PutPin",
         Write::DeletePin(_) => "DeletePin",
         Write::PutRegistryPointer(_) => "PutRegistryPointer",
@@ -489,6 +662,32 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
                 },
                 output,
             ),
+            Some(Write::AdmitRootRun {
+                session,
+                agent,
+                from_revision,
+                to_revision,
+                from_tail,
+                to_tail,
+                entry_identity,
+                at,
+            }) => Self::root_run_admission(
+                tables,
+                binding,
+                action,
+                *session,
+                *agent,
+                *from_revision,
+                *to_revision,
+                *from_tail,
+                *to_tail,
+                *entry_identity,
+                *at,
+                output,
+            ),
+            Some(Write::AppendJournalPage { session, page }) => {
+                Self::journal_append(tables, binding, action, *session, page, output)
+            }
             Some(other) => Err(StoreError::Invalid {
                 detail: format!(
                     "write `{}` has no compiler in the session authority adapter",
@@ -955,12 +1154,46 @@ impl SessionReader for SessionCommandReads {
         })
     }
 
-    async fn load_snapshot(
+    async fn load_message_snapshot(
         &self,
-        _workspace: WorkspaceId,
-        _session: SessionId,
-    ) -> Result<SessionSnapshot, PortError> {
-        Err(AGENT_CONTROL_SEAM)
+        workspace: WorkspaceId,
+        session: SessionId,
+    ) -> Result<MessageAdmissionSnapshot, PortError> {
+        let head = self.load_session(workspace, session).await?;
+        let physical = crate::keys::agent_control(session, head.root_agent);
+        let item = self
+            .get(&physical.pk, &physical.sk)
+            .await?
+            .ok_or(PortError::NotFound { kind: "root agent" })?;
+        let control =
+            crate::codec::decode_control(&item, workspace).map_err(|_| PortError::Corrupt {
+                kind: "root agent",
+                reason: "the stored Brain control row does not decode",
+            })?;
+        if control.session != session || control.agent != head.root_agent {
+            return Err(PortError::Corrupt {
+                kind: "root agent",
+                reason: "the stored Brain control row disagrees with the session head",
+            });
+        }
+        if head
+            .generation
+            .is_some_and(|generation| generation != control.generation)
+        {
+            return Err(PortError::Corrupt {
+                kind: "root agent",
+                reason: "the stored Brain control row names a different generation",
+            });
+        }
+        Ok(MessageAdmissionSnapshot {
+            session: head,
+            root: RootAdmissionState {
+                agent: control.agent,
+                revision: AgentRevision(control.revision),
+                journal_tail: JournalSeq(control.journal_tail),
+                idle: control.status == "idle" && control.claim_owner.is_none(),
+            },
+        })
     }
 
     async fn load_run(&self, session: SessionId, run: RunId) -> Result<Run, PortError> {
@@ -1059,13 +1292,88 @@ impl SessionReader for SessionCommandReads {
 
     async fn load_receipt(
         &self,
-        _identity: &IdempotencyIdentity,
+        workspace: WorkspaceId,
+        scope: &str,
+        identity: &IdempotencyIdentity,
+        now: Timestamp,
     ) -> Result<Option<IdempotencyReceipt>, PortError> {
-        Err(PortError::Unowned {
+        let expected = aex_session_domain::ReceiptKey::of(scope, identity).map_err(|_| {
+            PortError::Corrupt {
+                kind: "idempotency receipt key",
+                reason: "the application supplied an unusable receipt scope",
+            }
+        })?;
+        let physical =
+            crate::keys::receipt(workspace, scope, expected.key_sha256()).map_err(|_| {
+                PortError::Corrupt {
+                    kind: "idempotency receipt key",
+                    reason: "the application receipt key cannot enter the physical key template",
+                }
+            })?;
+        let Some(item) = self.get_strong(&physical.pk, &physical.sk).await? else {
+            return Ok(None);
+        };
+        let stored = crate::codec::decode_receipt(&item).map_err(|_| PortError::Corrupt {
             kind: "idempotency receipt",
-            seam: "`codec::decode_receipt` yields `wire_pending::Receipt`, not the domain \
-                   `IdempotencyReceipt`; the two shapes are reconciled by P0.3a",
-        })
+            reason: "the stored receipt does not decode",
+        })?;
+        if !crate::codec::receipt_is_live(&stored, now) {
+            return Ok(None);
+        }
+        if stored.scope != scope || stored.key_sha256 != expected.key_sha256() {
+            return Err(PortError::Corrupt {
+                kind: "idempotency receipt",
+                reason: "the stored receipt disagrees with the strongly addressed key",
+            });
+        }
+        let crate::replay::ReceiptBody::Inline(bytes) = stored.response else {
+            return Err(PortError::Corrupt {
+                kind: "idempotency receipt",
+                reason: "session command responses must fit the inline replay envelope",
+            });
+        };
+        let (kind, id) = match stored.response_kind.as_str() {
+            "session" => {
+                let response: aex_wire::models::Session =
+                    serde_json::from_slice(&bytes).map_err(|_| PortError::Corrupt {
+                        kind: "session create receipt",
+                        reason: "the stored response is malformed",
+                    })?;
+                (
+                    aex_session_domain::ResourceKind::Session,
+                    response.id.to_string(),
+                )
+            }
+            "message" => {
+                let response: aex_wire::models::MessageSendResult = serde_json::from_slice(&bytes)
+                    .map_err(|_| PortError::Corrupt {
+                        kind: "session message receipt",
+                        reason: "the stored response is malformed",
+                    })?;
+                (
+                    aex_session_domain::ResourceKind::Message,
+                    response.message.id.to_string(),
+                )
+            }
+            _ => {
+                return Err(PortError::Corrupt {
+                    kind: "idempotency receipt",
+                    reason: "a session command receipt carries an unrelated response kind",
+                });
+            }
+        };
+        Ok(Some(IdempotencyReceipt {
+            key: expected,
+            identity: identity.clone(),
+            intent: stored.intent,
+            outcome: aex_session_domain::ReceiptOutcome::Resource {
+                kind,
+                id: aex_session_domain::ResourceId(id),
+                response: aex_session_domain::ResponseBody::Inline(bytes),
+            },
+            created_at: stored.committed_at,
+            expires_at: Some(stored.expires_at),
+        }))
     }
 
     async fn load_operation(

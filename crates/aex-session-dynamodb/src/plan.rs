@@ -84,7 +84,7 @@ impl Participant {
     pub const AGENT_JOURNAL: Self = Self::new("agent.journal");
     /// A prepared or settled effect.
     pub const AGENT_EFFECT: Self = Self::new("agent.effect");
-    /// The `run.admitted` native event.
+    /// The public `session.message_admitted` native event.
     pub const SESSION_ADMITTED_EVENT: Self = Self::new("session.admitted_event");
     /// The run's terminal native event.
     pub const SESSION_TERMINAL_EVENT: Self = Self::new("session.terminal_event");
