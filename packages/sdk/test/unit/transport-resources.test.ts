@@ -38,7 +38,7 @@ describe("resource routing", () => {
     const transport = new ScriptedTransport();
     const aex = new Aex({ apiKey: KEY, transport });
 
-    await aex.sessions.sessionRunGet({ sessionId: "ses_1", runId: "run_1" });
+    await aex.sessions.sessionGet({ sessionId: "ses_1" });
     await aex.workspaces.workspaceGet({ workspaceId: "wsp_1" });
     await aex.organizations.organizationsList({ query: { limit: "2" } });
     await aex.apiKeys.apiKeyCreate({
@@ -47,12 +47,12 @@ describe("resource routing", () => {
     });
 
     expect(transport.requests.map((request) => request.routeId)).toEqual([
-      "session_run_get",
+      "session_get",
       "workspace_get",
       "organizations_list",
       "api_key_create",
     ]);
-    expect(transport.requests[0]?.path).toBe("/api/sessions/ses_1/runs/run_1");
+    expect(transport.requests[0]?.path).toBe("/api/sessions/ses_1");
     expect(transport.requests[1]?.path).toBe("/api/workspaces/wsp_1");
     expect(transport.requests[2]?.path).toBe("/api/organizations?limit=2");
     expect(transport.requests[3]?.headers.get("Idempotency-Key")).toBe("idk_1");
@@ -68,11 +68,10 @@ describe("resource routing", () => {
     //
     // The deferred set is read from the route registry rather than listed
     // here. A hand-typed list goes stale the moment a lane mounts one of its
-    // entries — `session_stop` and `session_trash` were both on this list and
-    // are both served now — and then it quietly asserts the opposite of what
-    // its name says.
+    // entries, and then it quietly asserts the opposite of what its name says.
     const sessions = aexSessionsSurface();
-    expect(sessions).toContain("sessionRunGet");
+    expect(sessions).toContain("sessionGet");
+    expect(sessions).not.toContain("sessionRunGet");
     const deferred = (Object.keys(ROUTES) as RouteId[])
       .filter((id) => ROUTES[id].deferred)
       .map(resourceMethodName);
