@@ -64,6 +64,35 @@ run "a_stream_source_starts_from_a_declared_position" {
   }
 }
 
+run "a_stream_source_filters_exact_new_image_authority_rows" {
+  command = plan
+
+  variables {
+    source_arn        = "arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-runtime-activity/stream/2026-08-01T00:00:00.000"
+    starting_position = "LATEST"
+    filter_patterns = [jsonencode({
+      eventName = ["INSERT", "MODIFY"]
+      dynamodb = {
+        NewImage = {
+          itemType = { S = ["hands_generation"] }
+        }
+      }
+    })]
+  }
+
+  assert {
+    condition = jsondecode(one(one(aws_lambda_event_source_mapping.this.filter_criteria).filter).pattern) == {
+      eventName = ["INSERT", "MODIFY"]
+      dynamodb = {
+        NewImage = {
+          itemType = { S = ["hands_generation"] }
+        }
+      }
+    }
+    error_message = "The exact stream filter must be attached to the event source mapping."
+  }
+}
+
 run "rejects_disabling_partial_batch_responses" {
   command = plan
 

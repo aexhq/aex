@@ -9,6 +9,20 @@ resource "aws_lambda_event_source_mapping" "this" {
 
   function_response_types = var.partial_batch_response ? ["ReportBatchItemFailures"] : []
 
+  dynamic "filter_criteria" {
+    for_each = length(var.filter_patterns) == 0 ? [] : [var.filter_patterns]
+
+    content {
+      dynamic "filter" {
+        for_each = filter_criteria.value
+
+        content {
+          pattern = filter.value
+        }
+      }
+    }
+  }
+
   dynamic "scaling_config" {
     for_each = var.scaling_config == null ? [] : [var.scaling_config]
 
