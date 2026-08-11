@@ -1,19 +1,15 @@
-//! The plaintext-boundary half of `regional:secrets`, over the real adapters.
+//! The provider-credential plaintext boundary, over the real adapters.
 //!
-//! This deployable owns the four routes that carry or destroy key material.
-//! `secret_delete` and `secret_revoke` need no cryptography at all — a tombstone
-//! and a revocation fence are conditional updates on one metadata row, and
-//! neither reads or writes a ciphertext. `secret_put` performs the platform's
-//! **first seal**: it reads the current metadata, derives the next generation,
-//! seals the plaintext under an encryption context that names that exact
-//! generation, and commits one transaction.
+//! The launch surface owns one write: register a provider credential. It seals
+//! the API key under a minted credential identity and atomically commits the
+//! backing custody rows, public binding, quota counter, and replay receipt.
 
 use std::sync::Arc;
 
 use aex_regional_http::context::RequestContext;
 use aex_regional_http::idempotency::IdempotencyIdentity;
 use aex_regional_http::mount::{UnaryDispatch, not_served};
-use aex_regional_http::projection::{self, ProjectionError, authority_failure, entity_tag};
+use aex_regional_http::projection::{self, authority_failure};
 use aex_regional_http::router::RouteOwner;
 use aex_secret_aws::crypto::SecretCrypto;
 use aex_secret_custody_dynamodb::codec::{
@@ -40,15 +36,15 @@ use aex_wire::ids::{PrefixedId as _, ProviderCredentialId, ResourceName, Uuid7, 
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::server::{
-    AcceptKind, Created, NoContent, ProviderCredentialsApi, RequestContext as WireContext,
-    SecretsApi, WithETag, dispatch_provider_credentials, dispatch_secrets,
+    AcceptKind, Created, ProviderCredentialsApi, RequestContext as WireContext, WithETag,
+    dispatch_provider_credentials,
 };
-use aex_wire::types::{ETag, Region, Timestamp};
+use aex_wire::types::{Region, Timestamp};
 
-/// The per-workspace collection bounds (D-13, owner batch B8).
+/// The per-workspace provider-credential bound (D-13, owner batch B8).
 ///
-/// Both are far above any plausible legitimate use and far below the point where
-/// the `SEC#{workspace}` partition or a listing's page budget becomes a problem.
+/// It is far above any plausible legitimate use and far below the point where
+/// the `SEC#{workspace}` partition becomes a problem.
 /// A limit that has never bound anybody is the one to pick, and raising it later
 /// is a constant edit with no migration behind it.
 ///
@@ -59,8 +55,6 @@ use aex_wire::types::{ETag, Region, Timestamp};
 /// no change to the expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SecretLimits {
-    /// The largest number of secrets one workspace may hold.
-    pub max_secrets: u64,
     /// The largest number of provider-credential bindings one workspace may
     /// hold.
     pub max_provider_credentials: u64,
@@ -70,20 +64,8 @@ pub struct SecretLimits {
 #[must_use]
 pub const fn secret_limits() -> SecretLimits {
     SecretLimits {
-        max_secrets: 500,
         max_provider_credentials: 100,
     }
-}
-
-/// Whether a secret name belongs to the reserved credential namespace (D-10).
-///
-/// The reservation is **typed**, not a string-prefix convention: a name is
-/// reserved exactly when it parses as a `ProviderCredentialId`. A prefix check
-/// would reserve names no registration could ever mint and would still have to
-/// parse to be sure, so the parse is the whole rule.
-#[must_use]
-pub fn is_reserved_name(name: &ResourceName) -> bool {
-    ProviderCredentialId::parse(name.as_str()).is_ok()
 }
 
 /// The adapters and start-up bindings every request shares.
@@ -168,42 +150,6 @@ impl Backoff for SleepBackoff {
     }
 }
 
-/// One committed `secret_put` response, so `commit_or_replay` can rebuild it.
-///
-/// The receipt stores the **canonical response body** inline. `SecretMetadata`
-/// is `{name, revision, state, createdAt, updatedAt, revokedAt}` and has no
-/// field that could hold key material, so no plaintext, ciphertext, wrapped key
-/// or context digest can enter a receipt through it.
-#[derive(Debug, Clone, PartialEq)]
-struct SealedMetadata(models::SecretMetadata);
-
-impl SealedMetadata {
-    const KIND: &'static str = "SecretMetadata";
-}
-
-impl DecodeReceipt for SealedMetadata {
-    fn decode_receipt(receipt: &Receipt) -> Result<Self, StoreError> {
-        if receipt.response_kind != Self::KIND {
-            return Err(StoreError::Invalid {
-                detail: format!(
-                    "a `{}` receipt cannot answer a secret write",
-                    receipt.response_kind
-                ),
-            });
-        }
-        let ReceiptBody::Inline(bytes) = &receipt.response else {
-            return Err(StoreError::Invalid {
-                detail: "a secret receipt stores its response inline".to_owned(),
-            });
-        };
-        serde_json::from_slice::<models::SecretMetadata>(bytes)
-            .map(Self)
-            .map_err(|error| StoreError::Invalid {
-                detail: format!("a stored secret receipt did not decode: {error}"),
-            })
-    }
-}
-
 /// One committed registration response.
 ///
 /// `ProviderCredential` publishes only the one-way `fingerprint`, so no key
@@ -273,24 +219,6 @@ impl Routes {
             .map_err(|_| WireError::new(ErrorCode::InternalError))
     }
 
-    /// Enforces the caller's `If-Match` against the current representation.
-    ///
-    /// The comparison is byte-for-byte against the tag the read path would have
-    /// issued, so a caller cannot pass a precondition by presenting a tag from
-    /// another resource, another revision or another representation.
-    fn check_if_match(&self, stored: &StoredSecret) -> WireResult<()> {
-        let Some(presented) = self.cx.if_match.as_ref() else {
-            return Ok(());
-        };
-        let value = projection::secret_metadata(stored).map_err(WireError::from)?;
-        let current: ETag = entity_tag("SecretMetadata", &value).map_err(WireError::from)?;
-        if presented == &current {
-            Ok(())
-        } else {
-            Err(WireError::new(ErrorCode::PreconditionFailed))
-        }
-    }
-
     /// Performs the first seal.
     ///
     /// The whole operation is `SecretCrypto::seal` and nothing else — there is
@@ -355,66 +283,6 @@ impl Routes {
         })
     }
 
-    /// Commits the sealed generation under the request's replay identity.
-    ///
-    /// The receipt `Put` is a participant of the **same** transaction as the
-    /// domain rows, so there is no window in which the effect landed and the
-    /// record of it did not.
-    async fn commit_sealed(
-        &self,
-        metadata: &StoredSecret,
-        generation: &StoredGeneration,
-        expected_revision: Option<SecretRevision>,
-        quota: Option<Quota>,
-        value: &models::SecretMetadata,
-        now: Timestamp,
-    ) -> WireResult<models::SecretMetadata> {
-        // The route declares `IdempotencyKind::IdempotencyKey`, so the edge has
-        // already refused a request without one. An absent identity here is an
-        // edge defect, not a customer condition, and is reported as such rather
-        // than quietly committing without a receipt.
-        let identity = self.cx.idempotency.as_ref().ok_or_else(|| {
-            WireError::new(ErrorCode::InternalError)
-                .with_message("this route requires a replay identity".to_owned())
-        })?;
-        let scope =
-            IdempotencyScope::new("secret:set", Some(metadata.name.as_str())).map_err(|error| {
-                WireError::new(ErrorCode::InvalidRequest).with_message(error.to_string())
-            })?;
-        let receipt = receipt_for(&scope, identity, SealedMetadata::KIND, value, now)?;
-
-        let custody = self.shared.custody.as_ref();
-        let receipts = CustodyReceipts(custody);
-        let outcome = commit_or_replay::<SealedMetadata, _, _>(
-            &receipts,
-            &SleepBackoff,
-            ReplayRequest {
-                workspace: metadata.workspace,
-                scope,
-                key: &identity.key,
-                intent: IntentDigest::from_bytes(identity.intent),
-                receipt_participant: Participant::SECRET_IDEMPOTENCY,
-                policy: RetryPolicy::PINNED,
-                now,
-            },
-            || async {
-                let plan = expressions::set(
-                    &self.shared.custody_table,
-                    generation,
-                    metadata,
-                    expected_revision,
-                    Some(&receipt),
-                    quota,
-                )?;
-                custody.commit(&plan).await?;
-                Ok(SealedMetadata(value.clone()))
-            },
-        )
-        .await
-        .map_err(|error| write_failure(&error))?;
-        Ok(outcome.into_inner().0)
-    }
-
     /// Commits one credential registration under the request's replay identity.
     async fn commit_registration(
         &self,
@@ -431,10 +299,13 @@ impl Routes {
         // The scope subject is the **provider**, not the minted id: a retry has
         // to find the winner's receipt, and it cannot know the id the winner
         // minted.
-        let scope = IdempotencyScope::new("secret:credential", Some(binding.provider.as_str()))
-            .map_err(|error| {
-                WireError::new(ErrorCode::InvalidRequest).with_message(error.to_string())
-            })?;
+        let scope = IdempotencyScope::new(
+            "provider_credential.register",
+            Some(binding.provider.as_str()),
+        )
+        .map_err(|error| {
+            WireError::new(ErrorCode::InvalidRequest).with_message(error.to_string())
+        })?;
         let receipt = receipt_for(&scope, identity, RegisteredCredential::KIND, value, now)?;
 
         let custody = self.shared.custody.as_ref();
@@ -474,7 +345,7 @@ impl Routes {
 ///
 /// A free function rather than a method: it depends on the request's replay
 /// identity and the response it is recording, and on nothing about the
-/// deployable — which is what makes it identical for both write paths.
+/// deployable.
 fn receipt_for<T: serde::Serialize>(
     scope: &IdempotencyScope<'_>,
     identity: &IdempotencyIdentity,
@@ -549,237 +420,6 @@ impl std::fmt::Debug for Routes {
     }
 }
 
-impl SecretsApi for Routes {
-    /// `DELETE /api/secrets/{name}` — the tombstone.
-    ///
-    /// The route declares no `not_found`, and that is deliberate: deleting a
-    /// name that is absent, or already a tombstone, is a completed request. Both
-    /// answer `204` **without a write**, so a retry is free and a repeated
-    /// delete never advances the revision a concurrent editor is fencing on.
-    async fn secret_delete(&self, _cx: &WireContext, name: ResourceName) -> WireResult<NoContent> {
-        let workspace = self.cx.auth.workspace_id;
-        let Some(stored) = self
-            .shared
-            .custody
-            .load_secret(workspace, &name)
-            .await
-            .map_err(|error| authority_failure(&error))?
-        else {
-            return Ok(NoContent);
-        };
-        if stored.state == SecretState::Deleted {
-            return Ok(NoContent);
-        }
-        self.check_if_match(&stored)?;
-        let builder = expressions::delete(
-            &self.shared.custody_table,
-            workspace,
-            name.as_str(),
-            stored.revision,
-            self.now()?,
-        )
-        .map_err(|error| authority_failure(&error))?;
-        self.shared
-            .custody
-            .commit_update(builder, Participant::SECRET_METADATA)
-            .await
-            .map_err(|error| authority_failure(&error))?;
-        Ok(NoContent)
-    }
-
-    async fn secret_get(
-        &self,
-        _cx: &WireContext,
-        _name: ResourceName,
-    ) -> WireResult<WithETag<models::SecretMetadata>> {
-        Err(not_served(RouteId::SecretGet))
-    }
-
-    /// `PUT /api/secrets/{name}` — the first seal.
-    ///
-    /// One read, one seal, one transaction, in that order and for a reason: the
-    /// source generation is **inside** the encryption context
-    /// (`CONTEXT_KEYS[5]`), so it has to be known before anything is sealed, and
-    /// it is derived from the revision the read observed.
-    ///
-    /// Overwrite semantics (D-8):
-    ///
-    /// * `If-Match` is optional and, when present, is compared byte-for-byte
-    ///   against the tag the read path would issue for the current stored
-    ///   representation;
-    /// * with or without it the write is always a compare-and-swap on the
-    ///   observed revision, so two writers racing on one name leave one winner
-    ///   and one `412` and lose nothing;
-    /// * a `PUT` over a **revoked** name succeeds and is the intended rotation
-    ///   path — the `O(1)` revoke raises `revokedThroughRevision` and leaves the
-    ///   state alone, so the new revision reads `ready` again while every
-    ///   session bound to an earlier revision stays fenced;
-    /// * a `PUT` over a **tombstone** is refused: the route declares no
-    ///   `not_found`, so it answers `precondition_failed`.
-    async fn secret_put(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-        body: models::SecretPutRequest,
-    ) -> WireResult<WithETag<models::SecretMetadata>> {
-        // D-10. A credential's backing secret is reserved and invisible, and a
-        // caller who guesses a `pcr_` id gets the same answer whether or not
-        // that credential exists — which leaks nothing and needs no special
-        // case.
-        if is_reserved_name(&name) {
-            return Err(WireError::new(ErrorCode::InvalidRequest).with_message(
-                "this name is reserved for a provider credential; register one instead".to_owned(),
-            ));
-        }
-        // The bytes leave the request body and enter `SecretPlaintext` in one
-        // move, so from here the only owner is a type that cannot be serialized
-        // and zeroizes on drop.
-        let plaintext = projection::secret_plaintext(body).map_err(WireError::from)?;
-        let workspace = self.cx.auth.workspace_id;
-        let now = self.now()?;
-
-        let stored = self
-            .shared
-            .custody
-            .load_secret(workspace, &name)
-            .await
-            .map_err(|error| authority_failure(&error))?;
-        if let Some(stored) = stored.as_ref() {
-            if stored.state == SecretState::Deleted {
-                return Err(WireError::new(ErrorCode::PreconditionFailed)
-                    .with_message("this secret is deleted".to_owned()));
-            }
-            self.check_if_match(stored)?;
-        } else if self.cx.if_match.is_some() {
-            // A precondition against a representation that does not exist can
-            // never be satisfied, and answering `200` would silently discard it.
-            return Err(WireError::new(ErrorCode::PreconditionFailed)
-                .with_message("this secret does not exist".to_owned()));
-        }
-
-        let (generation, revision, created_at, epoch) = match stored.as_ref() {
-            Some(current) => (
-                current.generation.next(),
-                current.revision.next(),
-                current.created_at,
-                // A later `set` mints a new generation but never lowers the
-                // epoch, so an existing session stays blocked until an explicit
-                // rebind.
-                current.revocation_epoch,
-            ),
-            None => (
-                SourceGeneration::FIRST,
-                SecretRevision::FIRST,
-                now,
-                RevocationEpoch::INITIAL,
-            ),
-        };
-
-        let sealed = self
-            .seal(workspace, &name, generation, &plaintext, now)
-            .await?;
-        let metadata = StoredSecret {
-            workspace,
-            name: name.clone(),
-            generation,
-            revision,
-            state: SecretState::Ready,
-            revocation_epoch: epoch,
-            // The fence the observed row carried is preserved verbatim: a `set`
-            // must never lower it, and the projection compares it against the
-            // *new* revision, which has advanced past it.
-            revoked_through_revision: stored.as_ref().map_or(SecretRevision(0), |current| {
-                current.revoked_through_revision
-            }),
-            created_at,
-            updated_at: now,
-            revoked_at: None,
-        };
-        let expected_revision = stored.as_ref().map(|current| current.revision);
-        // A replace does not consume quota: the collection does not grow, so a
-        // client re-PUTting one name in a loop can never exhaust the bound.
-        let quota = expected_revision
-            .is_none()
-            .then(|| Quota::secrets(self.shared.limits.max_secrets));
-
-        let value = projection::secret_metadata(&metadata).map_err(WireError::from)?;
-        let committed = self
-            .commit_sealed(&metadata, &sealed, expected_revision, quota, &value, now)
-            .await?;
-        let etag = entity_tag(SealedMetadata::KIND, &committed).map_err(WireError::from)?;
-        Ok(WithETag {
-            value: committed,
-            etag,
-        })
-    }
-
-    /// `POST /api/secrets/{name}/revocations` — the emergency fence.
-    ///
-    /// The route declares an `Idempotency-Key`, and this handler needs no
-    /// durable receipt to honour it. Revocation is terminal and the scope
-    /// subject is the name, so one scope plus one key can only ever carry one
-    /// intent: an already-fenced record is answered from its stored row and an
-    /// `idempotency_conflict` is unreachable rather than undetected.
-    async fn secret_revoke(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-        _body: models::EmptyRequest,
-    ) -> WireResult<models::SecretRevocation> {
-        let workspace = self.cx.auth.workspace_id;
-        let stored = self
-            .shared
-            .custody
-            .load_secret(workspace, &name)
-            .await
-            .map_err(|error| authority_failure(&error))?
-            .filter(|stored| stored.state != SecretState::Deleted)
-            .ok_or_else(|| WireError::new(ErrorCode::NotFound))?;
-
-        // Already fenced: the answer is the stored receipt, and no second update
-        // is compiled. A second revoke would advance the epoch and move
-        // `revokedAt`, which would make the same request answer differently.
-        if stored.revoked_through_revision >= stored.revision {
-            return projection::secret_revocation(&stored).map_err(WireError::from);
-        }
-
-        let now = self.now()?;
-        let builder = expressions::revoke(
-            &self.shared.custody_table,
-            workspace,
-            name.as_str(),
-            stored.revocation_epoch,
-            now,
-        )
-        .map_err(|error| authority_failure(&error))?;
-        self.shared
-            .custody
-            .commit_update(builder, Participant::SECRET_METADATA)
-            .await
-            .map_err(|error| authority_failure(&error))?;
-
-        // The committed row is exactly the observed one with the fence raised,
-        // the instant stamped and the revision untouched, so the receipt is
-        // built from what the transaction wrote rather than from a second read
-        // that could observe a later state.
-        let committed = StoredSecret {
-            revoked_through_revision: stored.revision,
-            revoked_at: Some(now),
-            updated_at: now,
-            ..stored
-        };
-        projection::secret_revocation(&committed).map_err(WireError::from)
-    }
-
-    async fn secrets_list(
-        &self,
-        _cx: &WireContext,
-        _query: models::SecretsListQuery,
-    ) -> WireResult<models::SecretMetadataPage> {
-        Err(not_served(RouteId::SecretsList))
-    }
-}
-
 impl ProviderCredentialsApi for Routes {
     async fn provider_credential_get(
         &self,
@@ -789,7 +429,7 @@ impl ProviderCredentialsApi for Routes {
         Err(not_served(RouteId::ProviderCredentialGet))
     }
 
-    /// `POST /api/secrets/provider-credentials` — register a BYOK key.
+    /// `POST /api/workspace/provider-credentials` — register a BYOK key.
     ///
     /// The seal is the whole operation (D-12). **The key is not validated
     /// against the provider**: a probe call would put third-party latency and
@@ -813,8 +453,9 @@ impl ProviderCredentialsApi for Routes {
     ) -> WireResult<Created<models::ProviderCredential>> {
         let workspace = self.cx.auth.workspace_id;
         let now = self.now()?;
-        let plaintext = SecretPlaintext::new(body.api_key.into_bytes())
-            .map_err(|error| WireError::from(ProjectionError::from(error)))?;
+        let plaintext = SecretPlaintext::new(body.api_key.into_bytes()).map_err(|error| {
+            WireError::new(ErrorCode::InvalidRequest).with_message(error.to_string())
+        })?;
 
         // Minted before the seal, because the credential id is the secret name
         // the encryption context has to name.
@@ -911,13 +552,7 @@ impl UnaryDispatch for Routes {
         limits: RequestLimits,
     ) -> WireResult<RawResponse> {
         let wire = cx.to_wire(accept);
-        let outcome = match route(raw.route).fragment {
-            "secrets" => dispatch_secrets(self, &wire, raw, limits).await?,
-            "provider-credentials" => {
-                dispatch_provider_credentials(self, &wire, raw, limits).await?
-            }
-            _ => return Err(not_served(raw.route)),
-        };
+        let outcome = dispatch_provider_credentials(self, &wire, raw, limits).await?;
         match outcome {
             aex_wire::dispatch::DispatchOutcome::Unary(response) => Ok(response),
             aex_wire::dispatch::DispatchOutcome::Ndjson(never) => match never.0 {},
@@ -968,7 +603,3 @@ impl UnaryDispatch for Dispatcher {
             .await
     }
 }
-
-/// The revision a first `set` writes, exposed so a composition test can build a
-/// record without re-deriving the domain's constant.
-pub const FIRST_REVISION: SecretRevision = SecretRevision::FIRST;

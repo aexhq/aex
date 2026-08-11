@@ -177,7 +177,7 @@ impl Config {
 
     /// The effective limits this deployable's edge enforces.
     ///
-    /// `regional-secret-api` owns four routes and none of them is a listing, so
+    /// `regional-secret-api` owns one route and it is not a listing, so
     /// the two page bounds are not configurable here and are zero. Zero is the
     /// honest value: it is not a page size this deployable would ever use, so a
     /// handler that started paginating would fail its own budget check rather

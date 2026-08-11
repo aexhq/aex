@@ -134,23 +134,17 @@ fn the_secret_edge_cannot_be_bound_to_a_forbidden_resource() {
 }
 
 #[test]
-fn the_secret_edge_owns_exactly_the_plaintext_bearing_routes() {
+fn the_secret_edge_owns_exactly_provider_credential_registration() {
     let owned = RouteOwner::SecretApi.routes();
     assert_eq!(
         owned,
-        vec![
-            RouteId::ProviderCredentialRegister,
-            RouteId::SecretDelete,
-            RouteId::SecretPut,
-            RouteId::SecretRevoke,
-        ],
-        "the secret edge owns the four plaintext-bearing routes and nothing else"
+        vec![RouteId::ProviderCredentialRegister],
+        "the secret edge owns credential registration and nothing else"
     );
-    // Every read that returns stored metadata belongs to the session API: this
-    // deployable has no route that returns a stored value.
-    for id in [RouteId::SecretGet, RouteId::SecretsList] {
-        assert_eq!(route_owner(id), Some(RouteOwner::SessionApi), "`{id}`");
-    }
+    assert_eq!(
+        route_owner(RouteId::ProviderCredentialRegister),
+        Some(RouteOwner::SecretApi)
+    );
 }
 
 #[test]
@@ -183,13 +177,8 @@ fn the_mounted_router_answers_exactly_the_served_set() {
     let served = Routes::served();
     assert_eq!(
         served,
-        vec![
-            RouteId::ProviderCredentialRegister,
-            RouteId::SecretDelete,
-            RouteId::SecretPut,
-            RouteId::SecretRevoke
-        ],
-        "every plaintext-bearing route this deployable owns is built"
+        vec![RouteId::ProviderCredentialRegister],
+        "provider credential registration is built"
     );
     for id in &served {
         assert_eq!(route_owner(*id), Some(RouteOwner::SecretApi), "`{id}`");

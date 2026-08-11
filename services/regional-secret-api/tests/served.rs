@@ -1,11 +1,10 @@
 //! The routes `regional-secret-api` genuinely serves, driven through the real
 //! router.
 //!
-//! What the doubles record is the **expression** each write committed, not only
-//! the body it answered. A tombstone that stopped conditioning on the observed
-//! revision, a `secret_put` that lost its receipt participant, or a registration
-//! that stopped writing its two halves in one transaction would each pass a body
-//! assertion and fail here.
+//! What the doubles record is the **expression** registration commits, not only
+//! the body it answers. A registration that stopped writing its backing secret
+//! and public binding in one transaction would pass a body assertion and fail
+//! here.
 //!
 //! The crypto double is not a cipher and does not pretend to be one: the AEAD is
 //! proved against real `KMS` in `aex-secret-aws`'s moto-backed target, where the
@@ -15,7 +14,6 @@
 //! commit, under the workspace's own branch key, and that no plaintext reaches
 //! any row but the sealed one.
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use aex_regional_http::context::{
@@ -23,15 +21,13 @@ use aex_regional_http::context::{
 };
 use aex_regional_http::idempotency::{IdempotencyIdentity, IdentityContext};
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission, mount_unary};
-use aex_regional_http::projection::entity_tag;
 use aex_regional_http::router::RouteOwner;
 use aex_secret_aws::crypto::{SealedSecret, SecretCrypto, SecretCryptoError};
 use aex_secret_custody_dynamodb::codec::SecretMetadata as StoredSecret;
 use aex_secret_custody_dynamodb::store::{Page, SecretCustodyStore};
 use aex_secret_domain::context::{EncryptionContext, Plane};
 use aex_secret_domain::plaintext::SecretPlaintext;
-use aex_secret_domain::revocation::RevocationEpoch;
-use aex_secret_domain::secret::{SecretName, SecretRevision, SecretState, SourceGeneration};
+use aex_secret_domain::secret::{SecretName, SourceGeneration};
 use aex_secret_keystore_dynamodb::provision::{BranchKeyAuthority, ProvisionError};
 use aex_secret_keystore_dynamodb::{ActiveBranchKey, BranchKeyId};
 use aex_session_dynamodb::error::StoreError;
@@ -47,7 +43,7 @@ use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::scopes::ScopeSet;
 use aex_wire::server::RouteGroup;
-use aex_wire::types::{ETag, Region, RequestId, Timestamp};
+use aex_wire::types::{Region, RequestId, Timestamp};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt as _;
@@ -68,29 +64,6 @@ fn moment(spelling: &str) -> Timestamp {
     Timestamp::parse(spelling).expect("a pinned spelling")
 }
 
-fn stored_secret(name: &str) -> StoredSecret {
-    StoredSecret {
-        workspace: workspace(),
-        name: ResourceName::parse(name).expect("a resource name"),
-        generation: SourceGeneration::FIRST,
-        revision: SecretRevision(4),
-        state: SecretState::Ready,
-        revocation_epoch: RevocationEpoch(2),
-        revoked_through_revision: SecretRevision(0),
-        created_at: moment("2026-08-01T12:34:56.789Z"),
-        updated_at: moment("2026-08-01T12:34:56.789Z"),
-        revoked_at: None,
-    }
-}
-
-/// One recorded conditional update.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Committed {
-    participant: String,
-    condition: String,
-    update: String,
-}
-
 /// One recorded transaction, as the provider would have received it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Transacted {
@@ -102,22 +75,13 @@ struct Transacted {
 
 #[derive(Debug, Default)]
 struct FakeCustody {
-    secrets: BTreeMap<String, StoredSecret>,
     receipt: Option<Receipt>,
     /// When set, every `commit` loses this participant's condition.
     lose: Option<Participant>,
-    committed: Mutex<Vec<Committed>>,
     transacted: Mutex<Vec<Transacted>>,
 }
 
 impl FakeCustody {
-    fn with(secrets: BTreeMap<String, StoredSecret>) -> Self {
-        Self {
-            secrets,
-            ..Self::default()
-        }
-    }
-
     fn replaying(receipt: Receipt) -> Self {
         Self {
             receipt: Some(receipt),
@@ -138,10 +102,6 @@ impl FakeCustody {
         }
     }
 
-    fn writes(&self) -> Vec<Committed> {
-        self.committed.lock().expect("an unpoisoned lock").clone()
-    }
-
     fn transactions(&self) -> Vec<Transacted> {
         self.transacted.lock().expect("an unpoisoned lock").clone()
     }
@@ -152,9 +112,9 @@ impl SecretCustodyStore for FakeCustody {
     async fn load_secret(
         &self,
         _workspace: WorkspaceId,
-        name: &SecretName,
+        _name: &SecretName,
     ) -> Result<Option<StoredSecret>, StoreError> {
-        Ok(self.secrets.get(name.as_str()).cloned())
+        Err(Self::out_of_scope("secret.get"))
     }
 
     async fn list_secrets(
@@ -265,24 +225,10 @@ impl SecretCustodyStore for FakeCustody {
 
     async fn commit_update(
         &self,
-        builder: aws_sdk_dynamodb::types::builders::UpdateBuilder,
-        participant: Participant,
+        _builder: aws_sdk_dynamodb::types::builders::UpdateBuilder,
+        _participant: Participant,
     ) -> Result<(), StoreError> {
-        let built = builder.build().map_err(|error| StoreError::Invalid {
-            detail: error.to_string(),
-        })?;
-        self.committed
-            .lock()
-            .expect("an unpoisoned lock")
-            .push(Committed {
-                participant: participant.to_string(),
-                condition: built
-                    .condition_expression()
-                    .expect("every mutation is conditional")
-                    .to_owned(),
-                update: built.update_expression().to_owned(),
-            });
-        Ok(())
+        Err(Self::out_of_scope("secret.update"))
     }
 }
 
@@ -374,14 +320,14 @@ fn identity(body: &str) -> IdempotencyIdentity {
         principal: "key",
         organization: "org",
         workspace: workspace(),
-        route: RouteId::SecretPut,
-        method: aex_wire::types::HttpMethod::Put,
+        route: RouteId::ProviderCredentialRegister,
+        method: aex_wire::types::HttpMethod::Post,
     };
     let key = IdempotencyKey::parse("replay-key").expect("a replay key");
     aex_regional_http::idempotency::identity(&context, &key, body.as_bytes())
 }
 
-fn context(request_id: RequestId, route_id: RouteId, if_match: Option<ETag>) -> RequestContext {
+fn context(request_id: RequestId, route_id: RouteId) -> RequestContext {
     RequestContext {
         request_id,
         route: route_id,
@@ -409,35 +355,25 @@ fn context(request_id: RequestId, route_id: RouteId, if_match: Option<ETag>) -> 
         // The edge derives this for every route declaring an `Idempotency-Key`
         // and refuses the request without one, so a handler is entitled to it.
         idempotency: Some(identity("{}")),
-        if_match,
+        if_match: None,
         received_at: time::OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(1_754_051_696),
     }
 }
 
-struct Admit {
-    if_match: Option<ETag>,
-}
+struct Admit;
 
 #[async_trait::async_trait]
 impl EdgeAdmission for Admit {
     async fn admit(&self, request: &AdmissionRequest<'_>) -> Result<RequestContext, WireError> {
-        Ok(context(
-            request.request_id.clone(),
-            request.route,
-            self.if_match.clone(),
-        ))
+        Ok(context(request.request_id.clone(), request.route))
     }
 }
 
-fn router(custody: Arc<FakeCustody>, if_match: Option<ETag>) -> axum::Router {
-    sealing_router(custody, Arc::new(FakeCrypto::default()), if_match)
+fn router(custody: Arc<FakeCustody>) -> axum::Router {
+    sealing_router(custody, Arc::new(FakeCrypto::default()))
 }
 
-fn sealing_router(
-    custody: Arc<FakeCustody>,
-    crypto: Arc<FakeCrypto>,
-    if_match: Option<ETag>,
-) -> axum::Router {
+fn sealing_router(custody: Arc<FakeCustody>, crypto: Arc<FakeCrypto>) -> axum::Router {
     let shared = Arc::new(Shared {
         custody: custody as Arc<dyn SecretCustodyStore>,
         custody_table: TABLE.to_owned(),
@@ -449,7 +385,7 @@ fn sealing_router(
     });
     mount_unary(
         Arc::new(Dispatcher::new(shared)),
-        Arc::new(Admit { if_match }),
+        Arc::new(Admit),
         aex_wire::dispatch::RequestLimits::DEFAULT,
     )
     .expect("the served set mounts")
@@ -521,23 +457,16 @@ fn the_served_set_matches_the_generated_actual_mount_authority() {
     assert_eq!(Routes::served(), generated);
     assert_eq!(
         generated,
-        vec![
-            RouteId::ProviderCredentialRegister,
-            RouteId::SecretDelete,
-            RouteId::SecretPut,
-            RouteId::SecretRevoke
-        ],
+        vec![RouteId::ProviderCredentialRegister],
         "this deployable now serves every route it owns"
     );
 }
 
 #[test]
-fn the_metadata_half_of_each_split_fragment_is_unreachable_here() {
+fn the_credential_read_half_is_unreachable_here() {
     let served = Routes::served();
-    for group in [RouteGroup::Secrets, RouteGroup::ProviderCredentials] {
-        for id in RouteOwner::SessionApi.routes_in(group) {
-            assert!(!served.contains(&id), "`{id}` is the session API's");
-        }
+    for id in RouteOwner::SessionApi.routes_in(RouteGroup::ProviderCredentials) {
+        assert!(!served.contains(&id), "`{id}` is the session API's");
     }
 }
 
@@ -552,7 +481,7 @@ fn the_metadata_half_of_each_split_fragment_is_unreachable_here() {
 #[tokio::test]
 async fn an_owned_but_unserved_route_answers_the_published_refusal() {
     let custody = Arc::new(FakeCustody::default());
-    let router = router(custody, None);
+    let router = router(custody);
     let unserved: Vec<_> = RouteOwner::SecretApi
         .routes()
         .into_iter()
@@ -586,11 +515,11 @@ async fn an_owned_but_unserved_route_answers_the_published_refusal() {
 async fn a_registration_commits_the_backing_secret_and_the_binding_together() {
     let custody = Arc::new(FakeCustody::default());
     let crypto = Arc::new(FakeCrypto::default());
-    let router = sealing_router(Arc::clone(&custody), Arc::clone(&crypto), None);
+    let router = sealing_router(Arc::clone(&custody), Arc::clone(&crypto));
     let (status, body) = send(
         &router,
         "POST",
-        "/api/secrets/provider-credentials",
+        "/api/workspace/provider-credentials",
         r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
     )
     .await;
@@ -651,13 +580,13 @@ async fn a_registration_commits_the_backing_secret_and_the_binding_together() {
 #[tokio::test]
 async fn two_registrations_under_one_label_are_two_bindings() {
     let custody = Arc::new(FakeCustody::default());
-    let router = router(Arc::clone(&custody), None);
+    let router = router(Arc::clone(&custody));
     let mut ids = Vec::new();
     for _ in 0..2 {
         let (status, body) = send(
             &router,
             "POST",
-            "/api/secrets/provider-credentials",
+            "/api/workspace/provider-credentials",
             r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
         )
         .await;
@@ -686,7 +615,7 @@ async fn a_replayed_registration_answers_the_original_minted_identity() {
         updated_at: moment("2026-08-01T12:00:00.000Z"),
     };
     let stored = Receipt {
-        scope: "secret:credential:openai".to_owned(),
+        scope: "provider_credential.register:openai".to_owned(),
         key_sha256: "0".repeat(64),
         intent: aex_wire::idempotency::IntentDigest::from_bytes(identity("{}").intent),
         response_kind: "ProviderCredential".to_owned(),
@@ -697,11 +626,11 @@ async fn a_replayed_registration_answers_the_original_minted_identity() {
         expires_at: moment("2036-08-01T12:00:00.000Z"),
     };
     let custody = Arc::new(FakeCustody::replaying(stored));
-    let router = router(Arc::clone(&custody), None);
+    let router = router(Arc::clone(&custody));
     let (status, body) = send(
         &router,
         "POST",
-        "/api/secrets/provider-credentials",
+        "/api/workspace/provider-credentials",
         r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
     )
     .await;
@@ -720,11 +649,11 @@ async fn a_replayed_registration_answers_the_original_minted_identity() {
 #[tokio::test]
 async fn a_registration_past_the_credential_bound_answers_limit_exceeded() {
     let custody = Arc::new(FakeCustody::losing(Participant::CUSTODY_CREDENTIAL_COUNT));
-    let router = router(Arc::clone(&custody), None);
+    let router = router(Arc::clone(&custody));
     let (status, body) = send(
         &router,
         "POST",
-        "/api/secrets/provider-credentials",
+        "/api/workspace/provider-credentials",
         r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
     )
     .await;
@@ -733,566 +662,4 @@ async fn a_registration_past_the_credential_bound_answers_limit_exceeded() {
         body["error"]["code"].as_str(),
         Some(ErrorCode::LimitExceeded.as_str())
     );
-}
-
-// --- put: the first seal ------------------------------------------------------------
-
-/// The whole shape of a create, in one case: the seal names the generation the
-/// transaction is about to commit, the plan carries its receipt and its quota
-/// guard, the metadata is conditioned on absence, and the answer carries a tag
-/// derived from the projected representation.
-#[tokio::test]
-async fn a_first_put_seals_under_the_generation_it_commits_and_answers_its_tag() {
-    let custody = Arc::new(FakeCustody::default());
-    let crypto = Arc::new(FakeCrypto::default());
-    let router = sealing_router(Arc::clone(&custody), Arc::clone(&crypto), None);
-    let (status, body) = send(
-        &router,
-        "PUT",
-        "/api/secrets/openai-key",
-        r#"{"value":"sk-live-abcdefgh"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-
-    let metadata: models::SecretMetadata =
-        serde_json::from_value(body).expect("the published schema");
-    assert_eq!(metadata.name.as_str(), "openai-key");
-    assert_eq!(metadata.revision, 1, "the first set writes revision one");
-    assert_eq!(metadata.state, models::SecretState::Ready);
-    assert_eq!(metadata.revoked_at, None);
-
-    let sealed = crypto.sealed();
-    assert_eq!(sealed.len(), 1, "one read, one seal, one transaction");
-    let (context, wrapped, length) = &sealed[0];
-    assert_eq!(
-        context.generation,
-        SourceGeneration::FIRST,
-        "the generation is inside the additional data, so it has to be known \
-         before anything is sealed"
-    );
-    assert_eq!(context.name.as_str(), "openai-key");
-    assert_eq!(context.workspace, workspace());
-    assert_eq!(
-        context.custody_revision, None,
-        "a first seal is a source generation, never session custody"
-    );
-    assert_eq!(
-        wrapped.as_slice(),
-        &WRAPPED,
-        "the workspace's own branch key"
-    );
-    assert_eq!(*length, "sk-live-abcdefgh".len());
-
-    let transactions = custody.transactions();
-    assert_eq!(transactions.len(), 1);
-    assert_eq!(
-        transactions[0].participants,
-        [
-            "secret.generation",
-            "secret.metadata",
-            "secret.lineage",
-            "secret.idempotency",
-            "secret.count",
-        ],
-        "the receipt and the quota guard ride the transaction they protect"
-    );
-    assert_eq!(
-        transactions[0].conditions[1], "attribute_not_exists(pk)",
-        "a create must lose to a concurrent create"
-    );
-    assert_eq!(
-        transactions[0].conditions[3], "attribute_not_exists(pk)",
-        "the conditional receipt put is the replay election"
-    );
-}
-
-/// D-8. The write is always a compare-and-swap on the revision the handler read,
-/// with or without an `If-Match`: the plan cannot be compiled without the
-/// observed revision, so an absent precondition is never a blind overwrite.
-#[tokio::test]
-async fn a_replacement_conditions_on_the_revision_the_handler_read() {
-    let custody = Arc::new(FakeCustody::with(BTreeMap::from([(
-        "openai-key".to_owned(),
-        stored_secret("openai-key"),
-    )])));
-    let crypto = Arc::new(FakeCrypto::default());
-    let router = sealing_router(Arc::clone(&custody), Arc::clone(&crypto), None);
-    let (status, body) = send(
-        &router,
-        "PUT",
-        "/api/secrets/openai-key",
-        r#"{"value":"sk-live-rotated"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-
-    let metadata: models::SecretMetadata =
-        serde_json::from_value(body).expect("the published schema");
-    assert_eq!(metadata.revision, 5, "the observed revision was four");
-    assert_eq!(
-        crypto.sealed()[0].0.generation,
-        SourceGeneration(2),
-        "every accepted set mints a new generation, even for an unchanged value"
-    );
-
-    let transactions = custody.transactions();
-    assert_eq!(
-        transactions[0].conditions[1], "#state = :ready AND revision = :expectedRevision",
-        "a replacement that stopped conditioning on the observed revision would \
-         silently discard a concurrent write"
-    );
-    assert!(
-        !transactions[0]
-            .participants
-            .contains(&"secret.count".to_owned()),
-        "a replace does not consume quota; the collection does not grow"
-    );
-}
-
-/// A lost compare-and-swap is `precondition_failed` and never an internal retry:
-/// a retry loop would hide a real concurrent writer.
-#[tokio::test]
-async fn a_lost_compare_and_swap_is_a_precondition_failure_rather_than_a_retry() {
-    let custody = Arc::new(FakeCustody::losing(Participant::SECRET_METADATA));
-    let router = router(Arc::clone(&custody), None);
-    let (status, body) = send(
-        &router,
-        "PUT",
-        "/api/secrets/openai-key",
-        r#"{"value":"sk-live-abcdefgh"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
-    assert_eq!(
-        body["error"]["code"].as_str(),
-        Some(ErrorCode::PreconditionFailed.as_str())
-    );
-    assert_eq!(
-        custody.transactions().len(),
-        1,
-        "a domain precondition failure must never be retried into a second commit"
-    );
-}
-
-/// D-13. The `(max + 1)`-th create answers the code the route declares, rather
-/// than an unclassified internal error, and it commits nothing.
-#[tokio::test]
-async fn a_create_past_the_workspace_bound_answers_limit_exceeded() {
-    let custody = Arc::new(FakeCustody::losing(Participant::SECRET_COUNT));
-    let router = router(Arc::clone(&custody), None);
-    let (status, body) = send(
-        &router,
-        "PUT",
-        "/api/secrets/openai-key",
-        r#"{"value":"sk-live-abcdefgh"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(
-        body["error"]["code"].as_str(),
-        Some(ErrorCode::LimitExceeded.as_str()),
-        "the declared code, not an internal error"
-    );
-}
-
-/// A stale `If-Match` refuses before anything is sealed or written.
-#[tokio::test]
-async fn a_stale_if_match_refuses_the_put_before_any_seal() {
-    let custody = Arc::new(FakeCustody::with(BTreeMap::from([(
-        "openai-key".to_owned(),
-        stored_secret("openai-key"),
-    )])));
-    let crypto = Arc::new(FakeCrypto::default());
-    let stale = ETag::parse("\"0000000000000000000000000000000000000000000000000000000000000000\"")
-        .expect("a strong tag");
-    let router = sealing_router(Arc::clone(&custody), Arc::clone(&crypto), Some(stale));
-    let (status, _) = send(
-        &router,
-        "PUT",
-        "/api/secrets/openai-key",
-        r#"{"value":"sk-live-abcdefgh"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
-    assert!(crypto.sealed().is_empty(), "a refusal seals nothing");
-    assert!(
-        custody.transactions().is_empty(),
-        "a refusal writes nothing"
-    );
-}
-
-/// A `PUT` over a tombstone is refused. The route declares no `not_found`, so
-/// the refusal is `precondition_failed`.
-#[tokio::test]
-async fn a_put_over_a_tombstone_is_refused_rather_than_resurrecting_it() {
-    let mut tombstoned = stored_secret("gone");
-    tombstoned.state = SecretState::Deleted;
-    let custody = Arc::new(FakeCustody::with(BTreeMap::from([(
-        "gone".to_owned(),
-        tombstoned,
-    )])));
-    let crypto = Arc::new(FakeCrypto::default());
-    let router = sealing_router(Arc::clone(&custody), Arc::clone(&crypto), None);
-    let (status, _) = send(
-        &router,
-        "PUT",
-        "/api/secrets/gone",
-        r#"{"value":"sk-live-abcdefgh"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
-    assert!(crypto.sealed().is_empty());
-}
-
-/// D-8. A `PUT` over a **revoked** name succeeds and is the intended rotation
-/// path: the fence stays where the revoke put it, and the new revision advances
-/// past it, so the projection reports `ready` again while every session bound to
-/// an earlier revision stays refused.
-#[tokio::test]
-async fn a_put_over_a_revoked_name_is_the_rotation_path_and_leaves_the_fence_standing() {
-    let mut fenced = stored_secret("openai-key");
-    fenced.revoked_through_revision = fenced.revision;
-    fenced.revoked_at = Some(moment("2026-08-01T14:00:00.000Z"));
-    let custody = Arc::new(FakeCustody::with(BTreeMap::from([(
-        "openai-key".to_owned(),
-        fenced.clone(),
-    )])));
-    let router = router(Arc::clone(&custody), None);
-    let (status, body) = send(
-        &router,
-        "PUT",
-        "/api/secrets/openai-key",
-        r#"{"value":"sk-live-rotated"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-
-    let metadata: models::SecretMetadata =
-        serde_json::from_value(body).expect("the published schema");
-    assert_eq!(
-        metadata.state,
-        models::SecretState::Ready,
-        "the new revision has advanced past the fence"
-    );
-    assert_eq!(metadata.revoked_at, None, "the set clears the instant");
-    assert_eq!(
-        metadata.revision,
-        fenced.revision.next().0,
-        "a session bound to revision {} stays refused",
-        fenced.revision.0
-    );
-}
-
-/// D-10. A caller who guesses a `pcr_` id gets the same answer whether or not
-/// that credential exists, which leaks nothing and needs no special case.
-#[tokio::test]
-async fn a_put_on_a_reserved_credential_name_is_an_invalid_request() {
-    let custody = Arc::new(FakeCustody::default());
-    let crypto = Arc::new(FakeCrypto::default());
-    let router = sealing_router(Arc::clone(&custody), Arc::clone(&crypto), None);
-    let reserved = ProviderCredentialId::from_uuid7(Uuid7::compose(1_754_051_696_789, [5; 10]));
-    let (status, body) = send(
-        &router,
-        "PUT",
-        &format!("/api/secrets/{reserved}"),
-        r#"{"value":"sk-live-abcdefgh"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body["error"]["code"].as_str(),
-        Some(ErrorCode::InvalidRequest.as_str())
-    );
-    assert!(crypto.sealed().is_empty(), "a reserved name seals nothing");
-    assert!(custody.transactions().is_empty());
-}
-
-/// A live receipt replays the stored response and writes nothing.
-#[tokio::test]
-async fn a_replayed_put_answers_the_stored_response_without_a_second_seal() {
-    let value = models::SecretMetadata {
-        created_at: moment("2026-08-01T12:00:00.000Z"),
-        name: ResourceName::parse("openai-key").expect("a resource name"),
-        revision: 1,
-        revoked_at: None,
-        state: models::SecretState::Ready,
-        updated_at: moment("2026-08-01T12:00:00.000Z"),
-    };
-    let stored = Receipt {
-        scope: "secret:set:openai-key".to_owned(),
-        key_sha256: "0".repeat(64),
-        intent: aex_wire::idempotency::IntentDigest::from_bytes(identity("{}").intent),
-        response_kind: "SecretMetadata".to_owned(),
-        response: aex_session_dynamodb::replay::ReceiptBody::Inline(
-            aex_wire::canonical::to_jcs_bytes(&value).expect("canonical bytes"),
-        ),
-        committed_at: moment("2026-08-01T12:00:00.000Z"),
-        expires_at: moment("2036-08-01T12:00:00.000Z"),
-    };
-    let custody = Arc::new(FakeCustody::replaying(stored));
-    let crypto = Arc::new(FakeCrypto::default());
-    let router = sealing_router(Arc::clone(&custody), Arc::clone(&crypto), None);
-    let (status, body) = send(
-        &router,
-        "PUT",
-        "/api/secrets/openai-key",
-        r#"{"value":"sk-live-abcdefgh"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let answered: models::SecretMetadata =
-        serde_json::from_value(body).expect("the published schema");
-    assert_eq!(answered, value, "a replay is the winner's own response");
-    assert!(
-        custody.transactions().is_empty(),
-        "a replay commits nothing at all"
-    );
-}
-
-/// The same key under a different body is the conflict the route declares.
-#[tokio::test]
-async fn the_same_key_with_a_different_body_is_an_idempotency_conflict() {
-    let value = models::SecretMetadata {
-        created_at: moment("2026-08-01T12:00:00.000Z"),
-        name: ResourceName::parse("openai-key").expect("a resource name"),
-        revision: 1,
-        revoked_at: None,
-        state: models::SecretState::Ready,
-        updated_at: moment("2026-08-01T12:00:00.000Z"),
-    };
-    let stored = Receipt {
-        scope: "secret:set:openai-key".to_owned(),
-        key_sha256: "0".repeat(64),
-        // A different intent under the same key: the earlier winner asked for
-        // something else.
-        intent: aex_wire::idempotency::IntentDigest::from_bytes([9; 32]),
-        response_kind: "SecretMetadata".to_owned(),
-        response: aex_session_dynamodb::replay::ReceiptBody::Inline(
-            aex_wire::canonical::to_jcs_bytes(&value).expect("canonical bytes"),
-        ),
-        committed_at: moment("2026-08-01T12:00:00.000Z"),
-        expires_at: moment("2036-08-01T12:00:00.000Z"),
-    };
-    let custody = Arc::new(FakeCustody::replaying(stored));
-    let router = router(Arc::clone(&custody), None);
-    let (status, body) = send(
-        &router,
-        "PUT",
-        "/api/secrets/openai-key",
-        r#"{"value":"sk-live-abcdefgh"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(
-        body["error"]["code"].as_str(),
-        Some(ErrorCode::IdempotencyConflict.as_str())
-    );
-    assert!(custody.transactions().is_empty());
-}
-
-/// No part of a secret may become durable outside the one sealed row.
-#[tokio::test]
-async fn no_plaintext_reaches_the_receipt_the_metadata_or_the_lineage() {
-    let custody = Arc::new(FakeCustody::default());
-    let router = router(Arc::clone(&custody), None);
-    let (status, body) = send(
-        &router,
-        "PUT",
-        "/api/secrets/openai-key",
-        r#"{"value":"sk-live-abcdefgh"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        !body.to_string().contains("sk-live-abcdefgh"),
-        "the response echoed the value"
-    );
-    assert!(
-        !format!("{:?}", custody.transactions()).contains("sk-live-abcdefgh"),
-        "a durable row carried the plaintext"
-    );
-}
-
-// --- delete -------------------------------------------------------------------------
-
-#[tokio::test]
-async fn a_delete_tombstones_under_the_revision_the_caller_read() {
-    let custody = Arc::new(FakeCustody::with(BTreeMap::from([(
-        "openai-key".to_owned(),
-        stored_secret("openai-key"),
-    )])));
-    let router = router(Arc::clone(&custody), None);
-    let (status, _) = send(&router, "DELETE", "/api/secrets/openai-key", "").await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-
-    let writes = custody.writes();
-    assert_eq!(writes.len(), 1);
-    assert_eq!(writes[0].participant, "secret.metadata");
-    assert!(
-        writes[0].condition.contains("revision = :expectedRevision"),
-        "{:?}",
-        writes[0]
-    );
-    assert!(
-        writes[0].update.contains("#state = :deleted"),
-        "{:?}",
-        writes[0]
-    );
-}
-
-/// The route declares no `not_found`, so an absent or already-tombstoned name is
-/// a completed request — answered without a write, so a retry never advances the
-/// revision a concurrent editor is fencing on.
-#[tokio::test]
-async fn a_repeated_delete_answers_no_content_without_writing_again() {
-    let mut tombstoned = stored_secret("gone");
-    tombstoned.state = SecretState::Deleted;
-    let custody = Arc::new(FakeCustody::with(BTreeMap::from([(
-        "gone".to_owned(),
-        tombstoned,
-    )])));
-    let router = router(Arc::clone(&custody), None);
-
-    for _ in 0..2 {
-        let (status, _) = send(&router, "DELETE", "/api/secrets/gone", "").await;
-        assert_eq!(status, StatusCode::NO_CONTENT);
-    }
-    let (status, _) = send(&router, "DELETE", "/api/secrets/absent", "").await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    assert!(
-        custody.writes().is_empty(),
-        "an idempotent delete must not advance a revision"
-    );
-}
-
-#[tokio::test]
-async fn a_stale_if_match_refuses_the_delete_before_any_write() {
-    let stored = stored_secret("openai-key");
-    let custody = Arc::new(FakeCustody::with(BTreeMap::from([(
-        "openai-key".to_owned(),
-        stored,
-    )])));
-    let stale = ETag::parse("\"0000000000000000000000000000000000000000000000000000000000000000\"")
-        .expect("a strong tag");
-    let router = router(Arc::clone(&custody), Some(stale));
-    let (status, body) = send(&router, "DELETE", "/api/secrets/openai-key", "").await;
-    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
-    assert_eq!(
-        body["error"]["code"].as_str(),
-        Some(ErrorCode::PreconditionFailed.as_str())
-    );
-    assert!(custody.writes().is_empty(), "a refusal writes nothing");
-}
-
-#[tokio::test]
-async fn the_current_entity_tag_satisfies_the_delete_precondition() {
-    let stored = stored_secret("openai-key");
-    let value = aex_regional_http::projection::secret_metadata(&stored).expect("projects");
-    let current = entity_tag("SecretMetadata", &value).expect("a tag");
-    let custody = Arc::new(FakeCustody::with(BTreeMap::from([(
-        "openai-key".to_owned(),
-        stored,
-    )])));
-    let router = router(Arc::clone(&custody), Some(current));
-    let (status, _) = send(&router, "DELETE", "/api/secrets/openai-key", "").await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    assert_eq!(custody.writes().len(), 1);
-}
-
-// --- revoke -------------------------------------------------------------------------
-
-#[tokio::test]
-async fn a_revoke_fences_every_prior_generation_and_answers_its_receipt() {
-    let custody = Arc::new(FakeCustody::with(BTreeMap::from([(
-        "openai-key".to_owned(),
-        stored_secret("openai-key"),
-    )])));
-    let router = router(Arc::clone(&custody), None);
-    let (status, body) = send(&router, "POST", "/api/secrets/openai-key/revocations", "{}").await;
-
-    assert_eq!(status, StatusCode::OK);
-    let receipt: models::SecretRevocation =
-        serde_json::from_value(body).expect("the published schema");
-    assert_eq!(receipt.name.as_str(), "openai-key");
-    assert_eq!(
-        receipt.revision, 4,
-        "a revocation advances no revision; it raises the fence"
-    );
-
-    let writes = custody.writes();
-    assert_eq!(writes.len(), 1);
-    assert!(
-        writes[0]
-            .condition
-            .contains("revocationEpoch = :expectedEpoch"),
-        "{:?}",
-        writes[0]
-    );
-    assert!(
-        writes[0]
-            .update
-            .contains("revokedThroughRevision = revision"),
-        "the fence is what every use path compares against: {:?}",
-        writes[0]
-    );
-}
-
-/// The route declares an `Idempotency-Key`, and this handler honours it without
-/// a durable receipt: revocation is terminal, so a replay is answered from the
-/// stored row and writes nothing.
-#[tokio::test]
-async fn a_replayed_revoke_answers_the_stored_receipt_and_writes_nothing() {
-    let mut fenced = stored_secret("openai-key");
-    fenced.revoked_through_revision = fenced.revision;
-    fenced.revoked_at = Some(moment("2026-08-01T14:00:00.000Z"));
-    let custody = Arc::new(FakeCustody::with(BTreeMap::from([(
-        "openai-key".to_owned(),
-        fenced,
-    )])));
-    let router = router(Arc::clone(&custody), None);
-
-    let mut receipts = Vec::new();
-    for _ in 0..2 {
-        let (status, body) =
-            send(&router, "POST", "/api/secrets/openai-key/revocations", "{}").await;
-        assert_eq!(status, StatusCode::OK);
-        receipts.push(body);
-    }
-    assert_eq!(receipts[0], receipts[1], "a replay is byte-identical");
-    assert_eq!(
-        receipts[0]["revokedAt"].as_str(),
-        Some("2026-08-01T14:00:00.000Z"),
-        "the stored instant is answered, never a fresh one"
-    );
-    assert!(
-        custody.writes().is_empty(),
-        "a terminal record is never revoked twice"
-    );
-}
-
-#[tokio::test]
-async fn revoking_an_absent_or_deleted_secret_is_not_found() {
-    let mut tombstoned = stored_secret("gone");
-    tombstoned.state = SecretState::Deleted;
-    let custody = Arc::new(FakeCustody::with(BTreeMap::from([(
-        "gone".to_owned(),
-        tombstoned,
-    )])));
-    let router = router(Arc::clone(&custody), None);
-    for name in ["gone", "absent"] {
-        let (status, body) = send(
-            &router,
-            "POST",
-            &format!("/api/secrets/{name}/revocations"),
-            "{}",
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{name}");
-        assert_eq!(
-            body["error"]["code"].as_str(),
-            Some(ErrorCode::NotFound.as_str())
-        );
-    }
-    assert!(custody.writes().is_empty());
 }

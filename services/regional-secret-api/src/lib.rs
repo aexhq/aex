@@ -1,4 +1,4 @@
-//! Plaintext admission boundary for secrets and provider credentials.
+//! Plaintext admission boundary for provider credentials.
 
 pub mod config;
 pub mod handlers;
@@ -71,15 +71,10 @@ impl<S, C> SecretEdge<S, C> {
     }
 }
 
-/// Plaintext-bearing routes owned exclusively by this edge.
+/// Provider-credential plaintext routes owned exclusively by this edge.
 #[must_use]
-pub fn secret_route_ids() -> Vec<RouteId> {
-    vec![
-        RouteId::ProviderCredentialRegister,
-        RouteId::SecretDelete,
-        RouteId::SecretPut,
-        RouteId::SecretRevoke,
-    ]
+pub fn provider_credential_route_ids() -> Vec<RouteId> {
+    vec![RouteId::ProviderCredentialRegister]
 }
 
 // D-14, applied. A second `SecretPlaintext` / `Ciphertext` / `SecretRecord` /
@@ -97,6 +92,7 @@ pub fn secret_route_ids() -> Vec<RouteId> {
 // and its `SecretRecord::revoke` bumped a per-record epoch rather than raising
 // the `revokedThroughRevision` fence RS-30 reads.
 //
-// `secret_put` is written against `aex_secret_domain::plaintext::SecretPlaintext`
-// and `aex_secret_custody_dynamodb::codec` and can no longer reach for the wrong
+// Credential registration is written against
+// `aex_secret_domain::plaintext::SecretPlaintext` and
+// `aex_secret_custody_dynamodb::codec` and can no longer reach for the wrong
 // type, because the wrong type is gone.

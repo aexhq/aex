@@ -299,7 +299,7 @@ pub fn provider_credential() -> ProviderCredential {
 #[must_use]
 pub fn receipt() -> Receipt {
     Receipt {
-        scope: "secret:credential:primary-openai".to_owned(),
+        scope: "provider_credential.register:primary-openai".to_owned(),
         key_sha256: "d".repeat(64),
         intent: IntentDigest::from_bytes([5; 32]),
         response_kind: "ProviderCredential".to_owned(),

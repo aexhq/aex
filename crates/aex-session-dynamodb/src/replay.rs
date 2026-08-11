@@ -38,6 +38,7 @@ impl<'a> IdempotencyScope<'a> {
     pub const BASES: &'static [&'static str] = &[
         "session.create",
         "session.message",
+        "provider_credential.register",
         "registry.set",
         "registry.delete",
         "registry.upload",
@@ -791,6 +792,12 @@ mod tests {
                 .expect("a subject")
                 .render(),
             "session.message:ses_x"
+        );
+        assert_eq!(
+            IdempotencyScope::new("provider_credential.register", Some("openai"))
+                .expect("a provider subject")
+                .render(),
+            "provider_credential.register:openai"
         );
     }
 
