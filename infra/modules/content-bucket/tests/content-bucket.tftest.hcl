@@ -99,22 +99,22 @@ run "browser_read_cors_is_exact_and_range_aware" {
   }
 
   assert {
-    condition     = one(aws_s3_bucket_cors_configuration.browser_read).cors_rule[0].allowed_origins == toset(["https://dev.aex.dev"])
+    condition     = one(one(aws_s3_bucket_cors_configuration.browser_read).cors_rule).allowed_origins == toset(["https://dev.aex.dev"])
     error_message = "Browser reads must be limited to the exact configured dashboard origin."
   }
 
   assert {
-    condition     = one(aws_s3_bucket_cors_configuration.browser_read).cors_rule[0].allowed_methods == toset(["GET", "HEAD"])
+    condition     = one(one(aws_s3_bucket_cors_configuration.browser_read).cors_rule).allowed_methods == toset(["GET", "HEAD"])
     error_message = "Browser reads may use only GET and HEAD."
   }
 
   assert {
-    condition     = one(aws_s3_bucket_cors_configuration.browser_read).cors_rule[0].allowed_headers == toset(["Range"])
+    condition     = one(one(aws_s3_bucket_cors_configuration.browser_read).cors_rule).allowed_headers == toset(["Range"])
     error_message = "Browser download preflights must allow the Range request header and no wildcard header."
   }
 
   assert {
-    condition = one(aws_s3_bucket_cors_configuration.browser_read).cors_rule[0].expose_headers == toset([
+    condition = one(one(aws_s3_bucket_cors_configuration.browser_read).cors_rule).expose_headers == toset([
       "Accept-Ranges", "Content-Length", "Content-Range", "ETag"
     ])
     error_message = "Browser clients must be able to observe immutable-object and byte-range response metadata."
