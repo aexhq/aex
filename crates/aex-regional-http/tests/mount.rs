@@ -245,21 +245,19 @@ fn no_central_route_has_a_regional_owner() {
 }
 
 #[test]
-fn a_split_group_is_divided_between_two_deployables() {
-    // `regional:secrets` and `regional:provider-credentials` are the two
-    // authoring fragments that span two deployables: plaintext admission is the
-    // secret edge's, metadata is the session API's.
-    for group in [RouteGroup::Secrets, RouteGroup::ProviderCredentials] {
-        let session = RouteOwner::SessionApi.routes_in(group);
-        let secret = RouteOwner::SecretApi.routes_in(group);
-        assert!(!session.is_empty(), "{group:?} has a session-api half");
-        assert!(!secret.is_empty(), "{group:?} has a secret-api half");
-        assert_eq!(
-            session.len() + secret.len(),
-            group.routes().len(),
-            "{group:?} is exactly divided"
-        );
-    }
+fn the_provider_credential_group_is_divided_between_two_deployables() {
+    // Plaintext registration belongs to the secret edge; credential reads and
+    // revocation belong to the session API.
+    let group = RouteGroup::ProviderCredentials;
+    let session = RouteOwner::SessionApi.routes_in(group);
+    let secret = RouteOwner::SecretApi.routes_in(group);
+    assert!(!session.is_empty(), "{group:?} has a session-api half");
+    assert!(!secret.is_empty(), "{group:?} has a secret-api half");
+    assert_eq!(
+        session.len() + secret.len(),
+        group.routes().len(),
+        "{group:?} is exactly divided"
+    );
 }
 
 #[test]
@@ -339,11 +337,9 @@ async fn a_route_owned_by_another_deployable_is_not_mounted() {
         RequestLimits::DEFAULT,
     )
     .expect("mounts");
-    // The secret edge's plaintext admission now carries its own first segment,
-    // `/api/secrets/`, and the session API mounts no template under it. The
-    // refusal is the router's own `404`, reached before any handler; it used to
-    // be a `405` because `PUT` and `GET /api/workspace/secrets/{name}` shared
-    // one template across the two deployables.
+    // Registration shares its collection path with the session API's listing
+    // route. The session router owns the path but not POST, so its structural
+    // refusal is `405` and the foreign handler is still unreachable.
     for id in RouteOwner::SecretApi.routes() {
         let descriptor = route(id);
         let response = mounted
@@ -361,7 +357,7 @@ async fn a_route_owned_by_another_deployable_is_not_mounted() {
             .expect("response");
         assert_eq!(
             response.status(),
-            StatusCode::NOT_FOUND,
+            StatusCode::METHOD_NOT_ALLOWED,
             "`{id}` is the secret edge's and must not answer on the session API"
         );
     }
@@ -492,102 +488,31 @@ fn dispatcher_refuses_a_route_it_does_not_own() {
 }
 
 #[test]
-fn a_stub_for_a_deferred_route_answers_the_same_code_as_the_refusal_arm() {
-    // The handler stub and the mounted arm must not disagree: a code the route
-    // does not declare is rewritten to `internal_error` by `dispatch::declared`,
-    // and only a deferred route declares `not_implemented`.
-    //
-    // The route is derived rather than named, so a later contract cut cannot
-    // leave the assertion coupled to a route that no longer exists.
-    let deferred = aex_wire::routes::ROUTES
-        .iter()
-        .find(|descriptor| descriptor.deferred)
-        .expect("the contract still defers something");
-    assert_eq!(not_served(deferred.id).code, ErrorCode::NotImplemented);
-    assert!(route(deferred.id).declares(ErrorCode::NotImplemented));
+fn the_launch_contract_has_no_deferred_routes() {
+    assert!(
+        aex_wire::routes::ROUTES
+            .iter()
+            .all(|descriptor| !descriptor.deferred),
+        "the launch contract must not regain an unimplemented route"
+    );
+    assert!(
+        aex_wire::routes::ROUTES
+            .iter()
+            .all(|descriptor| !descriptor.declares(ErrorCode::NotImplemented)),
+        "a complete route must not publish `not_implemented`"
+    );
 }
 
-/// An owned route the ledger defers is **mounted**, and it refuses honestly.
-///
-/// This replaces the assertion that it was absent. A bare `404` cannot be told
-/// apart from a typo, a wrong base URL or a wrong region, and that ambiguity
-/// lands in the first ten minutes of an integration.
-#[tokio::test]
-async fn a_deferred_route_answers_the_published_refusal() {
+#[test]
+fn a_complete_owner_mounts_no_refusal_arms() {
     let mounted = mount_unary(
         Arc::new(EchoDispatch(RouteOwner::SessionApi)),
-        // Admission would refuse every request; the arm must answer before it.
         Arc::new(AlwaysRefuse),
         RequestLimits::DEFAULT,
     )
     .expect("mounts");
-    let deferred = *mounted.refused.first().expect("the deployable owes routes");
-    let descriptor = route(deferred);
-    let response = mounted
-        .router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(descriptor.method.as_str())
-                .uri(concrete_path(deferred))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(
-        response.status(),
-        StatusCode::NOT_IMPLEMENTED,
-        "`{deferred}`"
-    );
-    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
-        .await
-        .expect("body");
-    let envelope: aex_wire::error::ApiError = serde_json::from_slice(&body).expect("envelope");
-    assert_eq!(
-        envelope.error.code,
-        aex_wire::error::ObservedErrorCode::Known(ErrorCode::NotImplemented)
-    );
-    assert!(!envelope.error.request_id.is_empty());
-    assert!(!envelope.error.retryable);
-    // No reason text: the ledger's prose is an engineering note, and one that
-    // has drifted is worse than none.
-    assert_eq!(
-        envelope.error.message,
-        ErrorCode::NotImplemented.default_message()
-    );
-
-    // A method the template does not publish at all is the router's `405`, not
-    // a `404`. It has to be derived: several deferred templates publish three of
-    // the four verbs — `/api/workspace/files/{name}` defers GET, PUT *and*
-    // DELETE — so simply flipping to "the other method" picks another published
-    // deferred operation, whose honest answer is the `501` arm and not a `405`.
-    let published: Vec<_> = aex_wire::routes::ROUTES
-        .iter()
-        .filter(|other| other.template == descriptor.template)
-        .map(|other| other.method)
-        .collect();
-    let wrong = [
-        aex_wire::types::HttpMethod::Get,
-        aex_wire::types::HttpMethod::Put,
-        aex_wire::types::HttpMethod::Post,
-        aex_wire::types::HttpMethod::Delete,
-    ]
-    .into_iter()
-    .find(|method| !published.contains(method))
-    .expect("a template that publishes every verb has no method to refuse");
-    let response = mounted
-        .router
-        .oneshot(
-            Request::builder()
-                .method(wrong.as_str())
-                .uri(concrete_path(deferred))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert!(mounted.refused.is_empty());
+    assert_eq!(mounted.routes, RouteOwner::SessionApi.routes());
 }
 
 /// The totality check: every owned route is served here or deferred by the
@@ -598,14 +523,14 @@ fn an_owned_route_in_neither_set_fails_composition() {
     #[async_trait::async_trait]
     impl UnaryDispatch for Forgetful {
         fn owner(&self) -> RouteOwner {
-            RouteOwner::SecretApi
+            RouteOwner::SessionApi
         }
         fn served(&self) -> Vec<RouteId> {
             // Drops a route the ledger does not defer.
-            RouteOwner::SecretApi
+            RouteOwner::SessionApi
                 .routes()
                 .into_iter()
-                .filter(|id| !route(*id).deferred && *id != RouteId::ProviderCredentialRegister)
+                .filter(|id| !route(*id).deferred && *id != RouteId::ProviderCredentialGet)
                 .collect()
         }
         async fn dispatch(
@@ -627,8 +552,8 @@ fn an_owned_route_in_neither_set_fails_composition() {
     assert_eq!(
         error,
         MountError::Unaccounted {
-            route: "provider_credential_register",
-            deployable: RouteOwner::SecretApi.half(),
+            route: "provider_credential_get",
+            deployable: RouteOwner::SessionApi.half(),
         }
     );
 }

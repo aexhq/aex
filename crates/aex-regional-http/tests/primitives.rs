@@ -873,7 +873,6 @@ fn observation(value: u64, body: &serde_json::Value) -> Observation {
         body: CanonicalJson::from_value(body).expect("canonical fixture"),
         id: ObservationId::from_uuid7(Uuid7::compose(value, [1; 10])),
         observed_at: stamp(i64::try_from(value).expect("fixture millis")),
-        run_id: None,
         sequence: DecimalU128::new(u128::from(value)),
         session_id: None,
         signal: ObservationSignal::Logs,
