@@ -60,7 +60,7 @@
     },
     {
       "role": "regional-session-api",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:Query", "dynamodb:ConditionCheckItem"],
+      "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:TransactWriteItems", "dynamodb:Query"],
       "resources": ["table"]
     },
     {

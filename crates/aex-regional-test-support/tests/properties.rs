@@ -104,6 +104,23 @@ fn session_operation_worker_holds_only_the_observation_deletion_control_actions(
 }
 
 #[test]
+fn every_manifest_uses_real_dynamodb_iam_actions() {
+    for table in tables::rebuild().expect("the definitions load").tables {
+        for grant in table.iam {
+            assert!(
+                !grant
+                    .actions
+                    .iter()
+                    .any(|action| action == "dynamodb:ConditionCheckItem"),
+                "{} grants nonexistent ConditionCheckItem to {}; transaction condition checks require dynamodb:TransactWriteItems",
+                table.table,
+                grant.role
+            );
+        }
+    }
+}
+
+#[test]
 fn only_the_keystore_departs_from_the_pk_sk_convention() {
     for table in tables::rebuild().expect("the definitions load").tables {
         if table.table == "regional-secret-keystore" {

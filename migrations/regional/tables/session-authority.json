@@ -124,7 +124,6 @@
         "dynamodb:GetItem",
         "dynamodb:Query",
         "dynamodb:TransactWriteItems",
-        "dynamodb:ConditionCheckItem",
         "dynamodb:UpdateItem",
         "dynamodb:PutItem"
       ],

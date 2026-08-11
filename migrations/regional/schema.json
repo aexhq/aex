@@ -197,7 +197,6 @@
                 "dynamodb:BatchWriteItem",
                 "dynamodb:TransactWriteItems",
                 "dynamodb:TransactGetItems",
-                "dynamodb:ConditionCheckItem",
                 "dynamodb:DescribeTable",
                 "dynamodb:GetRecords",
                 "dynamodb:GetShardIterator",

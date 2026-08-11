@@ -84,8 +84,7 @@
         "dynamodb:GetItem",
         "dynamodb:Query",
         "dynamodb:PutItem",
-        "dynamodb:TransactWriteItems",
-        "dynamodb:ConditionCheckItem"
+        "dynamodb:TransactWriteItems"
       ],
       "resources": ["table"]
     },
