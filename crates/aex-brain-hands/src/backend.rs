@@ -58,7 +58,7 @@ use aex_wire::types::Timestamp;
 use tokio::sync::Mutex;
 
 use crate::lease::{EndpointLeaseCache, GuestObservation, LeaseHandle, LeaseIdentity};
-use crate::live_file::{LiveFileBackend, LiveFileReply};
+use crate::live_file::{LiveFileBackend, LiveFileReply, LiveGenerationReady};
 use crate::{
     AuthenticatedGuestEndpoint, GuestReply, HttpGuestTransport, MAX_FRAME_BYTES,
     MAX_RESULT_BODY_BYTES, ResultAssembly, admit, admit_native_resume, launch_backoff_ms, settle,
@@ -1141,6 +1141,28 @@ impl ProductionHandsBackend {
 }
 
 impl LiveFileBackend for ProductionHandsBackend {
+    fn ensure_ready<'a>(
+        &'a self,
+        session: SessionId,
+        generation: GenerationId,
+    ) -> BoxFuture<'a, Result<LiveGenerationReady, HandsError>> {
+        Box::pin(async move {
+            let (view, _endpoint) = self.materialize(session, generation).await?;
+            let lifetime = view.lifetime.ok_or_else(|| {
+                dispatched(
+                    ProviderFailureKind::ProtocolViolation,
+                    "a reachable generation has no provider lifetime authority",
+                )
+            })?;
+            Ok(LiveGenerationReady {
+                generation,
+                launched_at: lifetime.launched_at,
+                expires_at: lifetime.expires_at(),
+                lifecycle_fence: view.head.fence.0,
+            })
+        })
+    }
+
     fn call<'a>(
         &'a self,
         session: SessionId,
@@ -1199,6 +1221,54 @@ impl LiveFileBackend for ProductionHandsBackend {
                 lifecycle_fence,
                 expires_at,
             })
+        })
+    }
+
+    fn abort_unpublished<'a>(
+        &'a self,
+        session: SessionId,
+        generation: GenerationId,
+    ) -> BoxFuture<'a, Result<(), HandsError>> {
+        Box::pin(async move {
+            const ATTEMPTS: usize = 16;
+            for _ in 0..ATTEMPTS {
+                let outcome = self
+                    .runtime
+                    .handle_command(
+                        aex_runtime_control_aws::RuntimeCommand::SessionTerminate {
+                            session,
+                            generation,
+                        },
+                        now()?,
+                    )
+                    .await;
+                match outcome {
+                    CommandOutcome::Settled(
+                        Settled::Terminated { .. }
+                        | Settled::AlreadyTerminal { .. }
+                        | Settled::Lost
+                        | Settled::NotMaterialized
+                        | Settled::NoGeneration,
+                    ) => return Ok(()),
+                    CommandOutcome::Settled(Settled::Superseded { .. }) => {
+                        return Err(dispatched(
+                            ProviderFailureKind::ProtocolViolation,
+                            "an unpublished generation was superseded before compensation",
+                        ));
+                    }
+                    CommandOutcome::Settled(_) | CommandOutcome::Retry { .. } => continue,
+                    CommandOutcome::Poison { .. } => {
+                        return Err(dispatched(
+                            ProviderFailureKind::ProtocolViolation,
+                            "unpublished generation compensation reached poisoned authority state",
+                        ));
+                    }
+                }
+            }
+            Err(dispatched(
+                ProviderFailureKind::Overloaded,
+                "unpublished generation compensation lost its bounded reconciliation budget",
+            ))
         })
     }
 }

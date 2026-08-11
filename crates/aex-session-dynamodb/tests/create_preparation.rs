@@ -30,6 +30,7 @@ fn file(index: usize, size_bytes: u64) -> PreparedFile {
         content: ContentHash::from_bytes([u8::try_from(index % 251).expect("tag"); 32]),
         size_bytes,
         mount_path: FilePath::parse(&format!("/src/file-{index}")).expect("path"),
+        media_type: "application/octet-stream".to_owned(),
         mode: RegisteredFileMode::V0644,
     }
 }

@@ -415,6 +415,10 @@ impl Routes {
             clock: RequestClock(now),
             ids: crate::session::app_ports::RequestIds,
             unowned: crate::session::app_ports::UnownedPorts,
+            registry: crate::session::app_ports::RegistryReads::new(Arc::clone(
+                &self.shared.registry,
+            )),
+            limits: crate::session::app_ports::LimitReads::new(Arc::clone(&self.shared.workspace)),
             reads: self.shared.commands.clone(),
             credentials: ProviderCredentialReads::new(
                 self.shared.custody_reads.clone(),
@@ -687,6 +691,8 @@ struct CommandBindings {
     clock: RequestClock,
     ids: crate::session::app_ports::RequestIds,
     unowned: crate::session::app_ports::UnownedPorts,
+    registry: crate::session::app_ports::RegistryReads,
+    limits: crate::session::app_ports::LimitReads,
     reads: SessionCommandReads,
     accounts: AuthorizedAccount,
     credentials: ProviderCredentialReads,
@@ -701,13 +707,11 @@ impl CommandBindings {
             ids: &self.ids,
             sessions: &self.reads,
             accounts: &self.accounts,
-            // Ports another stream owns refuse rather than
-            // inventing an answer; see `crate::session::app_ports`.
-            registry: &self.unowned,
+            registry: &self.registry,
             credentials: &self.credentials,
             catalog: Some(self.catalog.as_ref()),
             deployment: Some(&self.deployment),
-            limits: &self.unowned,
+            limits: &self.limits,
             live: &self.unowned,
         }
     }

@@ -339,6 +339,7 @@ mod tests {
             content: ContentHash::of(bytes),
             size_bytes: bytes.len() as u64,
             mount_path: aex_wire::ids::FilePath::parse("/src/startup.bin").expect("path"),
+            media_type: "application/octet-stream".to_owned(),
             mode: aex_wire::models::RegisteredFileMode::V0644,
         }
     }

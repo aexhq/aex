@@ -33,7 +33,7 @@ pub use executor::HandsToolExecutor;
 pub use port::{HandsAdapter, HandsBackend};
 
 pub use guest::{AuthenticatedGuestEndpoint, GuestReply, HttpGuestTransport};
-pub use live_file::{LiveFileBackend, LiveFileReply};
+pub use live_file::{LiveFileBackend, LiveFileReply, LiveGenerationReady};
 
 pub use adapter::{
     AdmitPlan, Alpn, CONNECTION_IDLE_MS, CONTEXT_TOOL_RESULT_BYTES, HandsError,

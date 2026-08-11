@@ -58,6 +58,8 @@ pub struct PreparedFile {
     pub size_bytes: u64,
     /// Exact guest destination selected by the registry value.
     pub mount_path: FilePath,
+    /// Declared media type needed to reconstruct the elected public value.
+    pub media_type: String,
     /// Exact POSIX mode selected by the registry value.
     pub mode: RegisteredFileMode,
 }
@@ -354,9 +356,10 @@ fn stage_plan(
         .set("contentDigest", s(file.content.to_wire()))
         .set("contentBytes", n(file.size_bytes))
         .set("mountPath", s(file.mount_path.as_str()))
+        .set("mediaType", s(file.media_type.clone()))
         .set("mode", s(file.mode.as_str()))
         .build();
-    let same_file = "attribute_not_exists(pk) OR (selectionDigest = :selection AND fileIndex = :index AND registeredName = :name AND registryRevision = :revision AND registryEtag = :etag AND contentDigest = :content AND contentBytes = :bytes AND mountPath = :path AND #mode = :mode)";
+    let same_file = "attribute_not_exists(pk) OR (selectionDigest = :selection AND fileIndex = :index AND registeredName = :name AND registryRevision = :revision AND registryEtag = :etag AND contentDigest = :content AND contentBytes = :bytes AND mountPath = :path AND mediaType = :media AND #mode = :mode)";
     let mut plan = TransactionPlan::new(format!("create-file-{selection}-{index}"));
     plan.put(
         PREPARED_FILE_PARTICIPANT,
@@ -373,6 +376,7 @@ fn stage_plan(
             .expression_attribute_values(":content", s(file.content.to_wire()))
             .expression_attribute_values(":bytes", n(file.size_bytes))
             .expression_attribute_values(":path", s(file.mount_path.as_str()))
+            .expression_attribute_values(":media", s(file.media_type.clone()))
             .expression_attribute_values(":mode", s(file.mode.as_str())),
     )?;
     Ok(plan)
@@ -890,6 +894,10 @@ pub fn decode_elected_preparation(
             content,
             size_bytes: file.u64("contentBytes").map_err(StoreError::from)?,
             mount_path,
+            media_type: file
+                .string("mediaType")
+                .map_err(StoreError::from)?
+                .to_owned(),
             mode,
         });
     }

@@ -88,6 +88,17 @@ use tower::ServiceExt as _;
 struct NoLiveFiles;
 
 impl aex_brain_hands::LiveFileBackend for NoLiveFiles {
+    fn ensure_ready<'a>(
+        &'a self,
+        _session: SessionId,
+        _generation: GenerationId,
+    ) -> aex_brain_app::ports::BoxFuture<
+        'a,
+        Result<aex_brain_hands::LiveGenerationReady, aex_brain_app::ports::HandsError>,
+    > {
+        Box::pin(async { panic!("a non-live fixture launched a generation") })
+    }
+
     fn call<'a>(
         &'a self,
         _session: SessionId,
@@ -99,6 +110,14 @@ impl aex_brain_hands::LiveFileBackend for NoLiveFiles {
         Result<aex_brain_hands::LiveFileReply, aex_brain_app::ports::HandsError>,
     > {
         Box::pin(async { panic!("a non-live fixture reached guest transport") })
+    }
+
+    fn abort_unpublished<'a>(
+        &'a self,
+        _session: SessionId,
+        _generation: GenerationId,
+    ) -> aex_brain_app::ports::BoxFuture<'a, Result<(), aex_brain_app::ports::HandsError>> {
+        Box::pin(async { panic!("a non-live fixture compensated generation create") })
     }
 }
 
