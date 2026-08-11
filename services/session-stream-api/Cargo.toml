@@ -66,6 +66,7 @@ aex-content-domain = { path = "../../crates/aex-content-domain" }
 aex-model-catalog = { path = "../../crates/aex-model-catalog" }
 aex-brain-hands = { path = "../../crates/aex-brain-hands" }
 aex-brain-app = { path = "../../crates/aex-brain-app" }
+aex-brain-domain = { path = "../../crates/aex-brain-domain" }
 aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
 aex-hands-protocol = { path = "../../crates/aex-hands-protocol" }
 aex-runtime-control = { path = "../../crates/aex-runtime-control" }

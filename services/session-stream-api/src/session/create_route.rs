@@ -69,7 +69,9 @@ pub(super) async fn create_session(
         .await
         .map_err(port_failure)?
     {
-        return replayed(replay_session_create_receipt(&stored, &command)?);
+        return replayed(
+            replay_session_create_receipt(&stored, &command).map_err(create_app_failure)?,
+        );
     }
 
     let preparations = CreatePreparationStore::new(
@@ -89,7 +91,7 @@ pub(super) async fn create_session(
             .await
             .map_err(create_app_failure)?
         {
-            PrepareSessionCreateOutcome::Replayed { session, .. } => return Ok(session),
+            PrepareSessionCreateOutcome::Replayed { session, .. } => return Ok(*session),
             PrepareSessionCreateOutcome::Prepared(candidate) => {
                 let candidate = private_preparation(
                     candidate.as_ref(),
@@ -252,7 +254,9 @@ pub(super) async fn create_session(
             .await
         {
             Ok(Some(stored)) => {
-                return replayed(replay_session_create_receipt(&stored, &command)?);
+                return replayed(
+                    replay_session_create_receipt(&stored, &command).map_err(create_app_failure)?,
+                );
             }
             Ok(None) => {}
             Err(read_error) => {
@@ -517,7 +521,7 @@ async fn compensate(
 
 fn replayed(outcome: PrepareSessionCreateOutcome) -> WireResult<models::Session> {
     match outcome {
-        PrepareSessionCreateOutcome::Replayed { session, .. } => Ok(session),
+        PrepareSessionCreateOutcome::Replayed { session, .. } => Ok(*session),
         PrepareSessionCreateOutcome::Prepared(_) => Err(WireError::new(ErrorCode::InternalError)),
     }
 }

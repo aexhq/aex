@@ -14,6 +14,7 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-domain",
  "aex-brain-test-support",
+ "aex-internal-contracts",
  "aex-model-catalog",
  "aex-operation-domain",
  "aex-session-domain",
@@ -7308,6 +7309,7 @@ name = "session-stream-api"
 version = "0.1.0"
 dependencies = [
  "aex-brain-app",
+ "aex-brain-domain",
  "aex-brain-hands",
  "aex-capacity-dynamodb",
  "aex-content-aws",
