@@ -32,9 +32,14 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                 action == "dynamodb:DeleteItem" || action == "dynamodb:BatchWriteItem"
             }) {
                 let allowed = match table.table.as_str() {
-                    "session-authority" | "regional-work" => {
-                        grant.role == "session-operation-worker"
-                    }
+                    // Session deletion owns terminal cleanup. Regional control
+                    // removes only stale active-session locators; a focused
+                    // table test proves its item and leading-key restriction.
+                    "session-authority" => matches!(
+                        grant.role.as_str(),
+                        "session-operation-worker" | "regional-control"
+                    ),
+                    "regional-work" => grant.role == "session-operation-worker",
                     "regional-content" => grant.role == "content-lifecycle-worker",
                     // The registry API deletes registered names outright. The
                     // upload-expiry collector is the second, far narrower

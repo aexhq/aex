@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:3cfa3efee21c535c8d899b02b464da6fc12c77fb27ad27898177656d3bda05dc",
+  "digest": "blake3:310befcb286be10e5df09128bbc0db80546f5f6bb7ae017deea157da517219e2",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -613,7 +613,10 @@
             "operator": "ForAllValues:StringLike",
             "key": "dynamodb:LeadingKeys",
             "values": [
-              "WS#*"
+              "WS#*",
+              "SESSION#*",
+              "AGENT#*",
+              "ACTIVE#*"
             ]
           }
         },
@@ -1741,15 +1744,108 @@
         {
           "role": "regional-control",
           "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:Query",
-            "dynamodb:PutItem",
-            "dynamodb:DeleteItem",
+            "dynamodb:GetItem"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "regional_workspace_control",
+            "account_pause_progress",
+            "session_head",
+            "agent_control"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "CONTROL#*",
+              "SESSION#*",
+              "AGENT#*"
+            ]
+          }
+        },
+        {
+          "role": "regional-control",
+          "actions": [
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "active_session"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "ACTIVE#*"
+            ]
+          }
+        },
+        {
+          "role": "regional-control",
+          "actions": [
+            "dynamodb:PutItem"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "regional_workspace_control",
+            "account_pause_progress"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "CONTROL#*"
+            ]
+          }
+        },
+        {
+          "role": "regional-control",
+          "actions": [
+            "dynamodb:DeleteItem"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "active_session"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "ACTIVE#*"
+            ]
+          }
+        },
+        {
+          "role": "regional-control",
+          "actions": [
             "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"
-          ]
+          ],
+          "itemTypes": [
+            "session_head",
+            "agent_control",
+            "active_session"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "WS#*",
+              "SESSION#*",
+              "AGENT#*",
+              "ACTIVE#*"
+            ]
+          }
         },
         {
           "role": "regional-session-api",

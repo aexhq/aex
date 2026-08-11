@@ -128,14 +128,58 @@
   "iam": [
     {
       "role": "regional-control",
-      "actions": [
-        "dynamodb:GetItem",
-        "dynamodb:Query",
-        "dynamodb:PutItem",
-        "dynamodb:DeleteItem",
-        "dynamodb:TransactWriteItems"
-      ],
-      "resources": ["table"]
+      "actions": ["dynamodb:GetItem"],
+      "resources": ["table"],
+      "itemTypes": ["regional_workspace_control", "account_pause_progress", "session_head", "agent_control"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["CONTROL#*", "SESSION#*", "AGENT#*"]
+      }
+    },
+    {
+      "role": "regional-control",
+      "actions": ["dynamodb:Query"],
+      "resources": ["table"],
+      "itemTypes": ["active_session"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["ACTIVE#*"]
+      }
+    },
+    {
+      "role": "regional-control",
+      "actions": ["dynamodb:PutItem"],
+      "resources": ["table"],
+      "itemTypes": ["regional_workspace_control", "account_pause_progress"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["CONTROL#*"]
+      }
+    },
+    {
+      "role": "regional-control",
+      "actions": ["dynamodb:DeleteItem"],
+      "resources": ["table"],
+      "itemTypes": ["active_session"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["ACTIVE#*"]
+      }
+    },
+    {
+      "role": "regional-control",
+      "actions": ["dynamodb:TransactWriteItems"],
+      "resources": ["table"],
+      "itemTypes": ["session_head", "agent_control", "active_session"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["WS#*", "SESSION#*", "AGENT#*", "ACTIVE#*"]
+      }
     },
     {
       "role": "regional-session-api",

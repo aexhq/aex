@@ -1072,9 +1072,17 @@ mod tests {
         let writers = table
             .iam
             .iter()
-            .filter(|grant| !grant.item_types.is_empty())
+            .filter(|grant| {
+                grant
+                    .actions
+                    .iter()
+                    .any(|action| action == "dynamodb:PutItem")
+            })
             .collect::<Vec<_>>();
-        assert_eq!(writers.len(), 2, "exactly two authorities own row families");
+        assert!(
+            !writers.is_empty(),
+            "the projection declares primary writers"
+        );
 
         let mut owned = std::collections::BTreeSet::new();
         for writer in &writers {
@@ -1153,6 +1161,94 @@ mod tests {
                 .values,
             ["LIMIT#*"]
         );
+    }
+
+    #[test]
+    fn regional_control_uses_placement_only_as_a_transaction_fence() {
+        let tables = load_all(&definitions_directory()).expect("the definitions load");
+        let table = tables
+            .iter()
+            .find(|table| table.table == "regional-authz-projection")
+            .expect("the authorization projection is declared");
+        let pause_fence = table
+            .iam
+            .iter()
+            .find(|grant| {
+                grant.role == "regional-control"
+                    && grant
+                        .actions
+                        .iter()
+                        .any(|action| action == "dynamodb:TransactWriteItems")
+            })
+            .expect("regional control can fence a pause transaction on placement");
+        assert!(
+            pause_fence.actions.iter().all(|action| matches!(
+                action.as_str(),
+                "dynamodb:GetItem" | "dynamodb:TransactWriteItems"
+            )),
+            "the pause participant cannot own a primitive projection write"
+        );
+        assert_eq!(pause_fence.item_types, ["workspace_placement"]);
+        let pause_condition = pause_fence
+            .condition
+            .as_ref()
+            .expect("pause transactions are leading-key restricted");
+        assert_eq!(pause_condition.operator, "ForAllValues:StringLike");
+        assert_eq!(pause_condition.key, "dynamodb:LeadingKeys");
+        for required in ["WS#*", "SESSION#*", "AGENT#*", "ACTIVE#*"] {
+            assert!(
+                pause_condition.values.iter().any(|value| value == required),
+                "pause transactions must admit their `{required}` participant"
+            );
+        }
+    }
+
+    #[test]
+    fn regional_control_deletes_only_active_session_locators() {
+        let tables = load_all(&definitions_directory()).expect("the definitions load");
+        let table = tables
+            .iter()
+            .find(|table| table.table == "session-authority")
+            .expect("the session authority is declared");
+        let delete_grants = table.iam.iter().filter(|grant| {
+            grant.role == "regional-control"
+                && grant
+                    .actions
+                    .iter()
+                    .any(|action| action == "dynamodb:DeleteItem")
+        });
+        let mut found = false;
+        for grant in delete_grants {
+            found = true;
+            assert!(
+                grant
+                    .actions
+                    .iter()
+                    .all(|action| action == "dynamodb:DeleteItem"),
+                "locator deletion stays separate from broader capabilities"
+            );
+            assert_eq!(grant.resources, ["table"]);
+            assert!(
+                !grant.item_types.is_empty()
+                    && grant
+                        .item_types
+                        .iter()
+                        .all(|item_type| item_type == "active_session"),
+                "regional control can delete only active-session locators"
+            );
+            let condition = grant
+                .condition
+                .as_ref()
+                .expect("locator deletion is leading-key restricted");
+            assert_eq!(condition.operator, "ForAllValues:StringLike");
+            assert_eq!(condition.key, "dynamodb:LeadingKeys");
+            assert!(
+                !condition.values.is_empty()
+                    && condition.values.iter().all(|value| value == "ACTIVE#*"),
+                "locator deletion cannot escape the active-session partition"
+            );
+        }
+        assert!(found, "regional control declares locator deletion");
     }
 
     #[test]

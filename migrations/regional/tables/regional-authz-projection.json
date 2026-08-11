@@ -66,7 +66,7 @@
       "condition": {
         "operator": "ForAllValues:StringLike",
         "key": "dynamodb:LeadingKeys",
-        "values": ["WS#*"]
+        "values": ["WS#*", "SESSION#*", "AGENT#*", "ACTIVE#*"]
       }
     },
     {
