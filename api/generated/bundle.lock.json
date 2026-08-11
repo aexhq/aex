@@ -1,5 +1,5 @@
 {
-  "contractDigest": "sha256:90fdf2649aa0c7151830e06eb94993aeafa67faf7c867042dbff4638af9aafba",
+  "contractDigest": "sha256:e2561cc03501325b6673ce07a84a8b2abfed58597cbad3f2c13297cba3542665",
   "generator": {
     "formatter": "aex-contract-gen internal renderer (rustfmt fixed point)",
     "name": "aex-contract-gen",
@@ -18,7 +18,7 @@
     "api/openapi/plane.central.yaml": "sha256:775e81fb6830790a757fca049bdeef76f6c07a372c0ab6fb84a8f99231ea2c51",
     "api/openapi/plane.regional.yaml": "sha256:540bd5e19670941e965c35aad6f33ddfe3e31ef68d78d0d16e2ec580e2a72140",
     "api/openapi/regional/approvals.yaml": "sha256:304cbb7402c7ab6a02bee1556698a91abed5d1db36a5a5553a258459c76fc965",
-    "api/openapi/regional/files.yaml": "sha256:be45ea2482685a6f0261c5a929375debc161ebc3939836cc477aad3e9acfb03a",
+    "api/openapi/regional/files.yaml": "sha256:3717e4833f4db14e94a884e788998090b3a38d9f6f3d806190b77a29841e1e10",
     "api/openapi/regional/observations.yaml": "sha256:a445743d8dd2c71f0f306c5e38b775891592f0ecea742d3f16b72bdf4964593c",
     "api/openapi/regional/operations.yaml": "sha256:7447a6ab351f10a93eabf185172c06ff5bfca4616c54b1fb76e51aa7e8298602",
     "api/openapi/regional/otlp.yaml": "sha256:b7f9a95d31802770d9e4b4100eb28c8c90cd571f35c11d699755bb6389cc0f5e",

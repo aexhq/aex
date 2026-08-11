@@ -2455,6 +2455,7 @@
             "not_found",
             "invalid_request",
             "invalid_cursor",
+            "limit_exceeded",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",

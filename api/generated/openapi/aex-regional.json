@@ -11063,6 +11063,16 @@
             },
             "description": "Error."
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
           "501": {
             "content": {
               "application/json": {
@@ -11097,6 +11107,7 @@
           "not_found",
           "invalid_request",
           "invalid_cursor",
+          "limit_exceeded",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
