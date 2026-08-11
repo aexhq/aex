@@ -590,6 +590,40 @@ impl Routes {
         self.admit_lifecycle(session_id, outcome).await
     }
 
+    async fn admit_cancellation_route(&self, session_id: SessionId) -> WireResult<Accepted> {
+        const ROOT_FENCE_ATTEMPTS: usize = 3;
+
+        let command = self.lifecycle_command(
+            session_id,
+            RouteId::SessionCancel,
+            OperationKind::SessionCancel,
+        )?;
+        for attempt in 0..ROOT_FENCE_ATTEMPTS {
+            let bindings = self.bindings()?;
+            let outcome = admit_lifecycle_operation(&bindings.context(), &command)
+                .await
+                .map_err(|error| app_failure(&error))?;
+            match self.admit_lifecycle(session_id, outcome).await {
+                Ok(accepted) => return Ok(accepted),
+                Err(error)
+                    if error.code == ErrorCode::PreconditionFailed
+                        && attempt + 1 < ROOT_FENCE_ATTEMPTS =>
+                {
+                    // Brain may have advanced the root revision between the
+                    // eventual planning reads and the conditional stop-latch
+                    // write. No operation row was elected in that case. Re-read
+                    // the exact operation first, then the current root, and
+                    // rebuild the same caller operation against its new fence.
+                }
+                Err(error) if error.code == ErrorCode::PreconditionFailed => {
+                    return Err(WireError::new(ErrorCode::CommitOutcomeUnknown));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("the bounded cancellation fence loop returns on every attempt")
+    }
+
     /// Submits one lifecycle admission and projects its durable operation.
     async fn admit_lifecycle(
         &self,
@@ -908,12 +942,7 @@ impl SessionsApi for Routes {
         session_id: SessionId,
         _body: models::EmptyRequest,
     ) -> WireResult<Accepted> {
-        self.admit_lifecycle_route(
-            session_id,
-            RouteId::SessionCancel,
-            OperationKind::SessionCancel,
-        )
-        .await
+        self.admit_cancellation_route(session_id).await
     }
 
     async fn session_create(

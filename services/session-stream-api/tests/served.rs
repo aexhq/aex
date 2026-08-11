@@ -1613,7 +1613,7 @@ async fn a_wrong_method_on_a_deferred_path_is_a_method_refusal() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(deferred_path(RouteId::SessionCancel))
+                .uri(deferred_path(RouteId::SessionDelete))
                 .body(Body::empty())
                 .expect("a request"),
         )
@@ -1629,6 +1629,14 @@ async fn a_wrong_method_on_a_deferred_path_is_a_method_refusal() {
 fn session_create_is_mounted_only_after_exact_generation_readiness_is_composed() {
     assert!(Routes::served().contains(&RouteId::SessionCreate));
     assert!(!route(RouteId::SessionCreate).deferred);
+}
+
+/// Cancellation is mounted only with the durable root stop latch, provider
+/// cancellation fence and Brain terminal barrier composed end to end.
+#[test]
+fn session_cancel_is_mounted_only_after_current_work_settlement_is_composed() {
+    assert!(Routes::served().contains(&RouteId::SessionCancel));
+    assert!(!route(RouteId::SessionCancel).deferred);
 }
 
 // --- durable operations ----------------------------------------------------------

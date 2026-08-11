@@ -557,6 +557,28 @@ pub enum Write {
         /// Admission instant.
         at: Timestamp,
     },
+    /// Fence the Brain root into cancelling its current run.
+    ///
+    /// The physical control row remains Brain-owned. This narrow update only
+    /// advances the cancellation epoch and control revision and sets the
+    /// durable stop latch; the successor activation consumes that latch by
+    /// committing the canonical `RunFinished(cancelled)` boundary.
+    RequestRootCancellation {
+        /// Owning session.
+        session: SessionId,
+        /// Root agent.
+        agent: AgentId,
+        /// Control revision observed by admission.
+        from_revision: AgentRevision,
+        /// Control revision after installing the stop latch.
+        to_revision: AgentRevision,
+        /// Cancellation epoch the control row must still carry.
+        from_cancellation: CancellationEpoch,
+        /// Cancellation epoch installed with the latch.
+        to_cancellation: CancellationEpoch,
+        /// Admission instant.
+        at: Timestamp,
+    },
     /// Settle exactly one agent under a session-wide cancellation.
     ///
     /// Deliberately narrower than [`Write::PutAgentControl`]. The physical
@@ -637,6 +659,7 @@ impl Write {
             | Self::PutRun(_)
             | Self::PutAgentControl(_)
             | Self::AdmitRootRun { .. }
+            | Self::RequestRootCancellation { .. }
             | Self::AppendJournalPage { .. }
             | Self::PutApproval(_)
             | Self::CancelAgent { .. }
@@ -683,8 +706,13 @@ impl Write {
                 format!("{}#{}", agent.session, agent.id),
                 "CONTROL".to_owned(),
             ),
-            Self::AdmitRootRun { session, agent, .. }
-            | Self::CancelAgent { session, agent, .. } => {
+            Self::AdmitRootRun { session, agent, .. } => {
+                (format!("{session}#{agent}"), "CONTROL".to_owned())
+            }
+            Self::RequestRootCancellation { session, agent, .. } => {
+                (format!("{session}#{agent}"), "CONTROL".to_owned())
+            }
+            Self::CancelAgent { session, agent, .. } => {
                 (format!("{session}#{agent}"), "CONTROL".to_owned())
             }
             Self::AppendJournalPage { session, page } => (
@@ -980,6 +1008,7 @@ impl SessionTransaction {
                 | Write::PutSealedMessage(_)
                 | Write::PutRun(_)
                 | Write::AdmitRootRun { .. }
+                | Write::RequestRootCancellation { .. }
                 | Write::CancelAgent { .. }
                 | Write::AppendJournalPage { .. }
                 | Write::PutApproval(_)
@@ -1072,6 +1101,7 @@ impl SessionTransaction {
                 Write::PutMessageAdmittedEvent(_) => 8,
                 Write::PutIdempotencyReceipt(_) => 9,
                 Write::PutAgentControl(_)
+                | Write::RequestRootCancellation { .. }
                 | Write::CancelAgent { .. }
                 | Write::PutApproval(_)
                 | Write::PutOperation(_)

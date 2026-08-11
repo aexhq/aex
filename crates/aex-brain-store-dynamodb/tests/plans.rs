@@ -21,7 +21,7 @@ use aex_brain_domain::journal::{FinishReason, JournalRecord};
 use aex_brain_domain::wire_pending::JoinMode;
 use aex_brain_store_dynamodb::plan::{self, BrainTables, participant};
 use aex_session_dynamodb::plan::Participant;
-use aex_wire::ids::{GenerationId, PrefixedId, Uuid7};
+use aex_wire::ids::{GenerationId, OperationId, PrefixedId, Uuid7};
 
 fn v7(millis: u64, seed: u8) -> uuid::Uuid {
     uuid::Uuid::from_bytes(*Uuid7::compose(millis, [seed; 10]).as_bytes())
@@ -312,6 +312,67 @@ fn a_root_run_boundary_is_one_six_action_session_centric_commit() {
         .item();
     assert!(event.get("runId").is_none());
     assert!(event.get("agentId").is_none());
+}
+
+#[test]
+fn a_cancelled_root_boundary_consumes_the_durable_stop_latch() {
+    let (mut session, run, agent, _) = aex_session_domain::testing::running_session();
+    let cancellation = OperationId::from_uuid7(Uuid7::compose(1_767_225_600_020, [21; 10]));
+    session.mutation_guard = Some(aex_session_domain::MutationGuard {
+        holder: cancellation,
+        kind: aex_operation_domain::OperationKind::SessionCancel,
+        acquired_at: aex_session_domain::testing::moment(10),
+    });
+    let mut context = context();
+    context.authority.workspace = session.workspace;
+    context.authority.organization = session.organization;
+    context.authority.deletion_epoch = session.deletion.epoch.0;
+    context.authority.active = Some(Box::new(RunBoundaryAuthority {
+        session: session.clone(),
+        run: run.clone(),
+    }));
+    let mut commit = base(vec![JournalRecord::RunFinished {
+        run: run.id,
+        reason: FinishReason::Cancelled,
+        failure: None,
+        output_messages: Vec::new(),
+        ambiguous_effect: None,
+    }]);
+    commit.guard.key = AgentKey::new(
+        SessionId(uuid::Uuid::from_bytes(*session.id.uuid7().as_bytes())),
+        AgentId(uuid::Uuid::from_bytes(*agent.id.uuid7().as_bytes())),
+    );
+    commit.guard.cancel_epoch = CancelEpoch(session.cancellation.0);
+    commit.guard.fence = Fence(agent.fence().0);
+    commit.run = Some(RunTransition {
+        run: run.id,
+        finish: FinishReason::Cancelled,
+        failure: None,
+        output_messages: Vec::new(),
+        cancellation: Some(cancellation),
+        ambiguous_effect: None,
+    });
+    commit.session = Some(SessionHeadTransition {
+        status: "idle".to_owned(),
+        revision: session.revision.0,
+    });
+    commit.session_events.push(PublicSessionEvent {
+        event_seq: event_seq(JournalSeq(10), 0),
+        message: run.message,
+        outcome: "cancelled".to_owned(),
+        at: context.now,
+    });
+    commit.control.phase = "awaiting_input".to_owned();
+
+    let compiled = plan::compile(&tables(), &context, &commit).expect("boundary compiles");
+    let control = compiled.actions()[0]
+        .update()
+        .expect("the root control advances");
+    assert!(
+        control.update_expression().contains("REMOVE stopRequested"),
+        "{}",
+        control.update_expression()
+    );
 }
 
 /// Every action carries a condition. The shared compiler refuses an unconditional

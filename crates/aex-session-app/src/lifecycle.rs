@@ -9,8 +9,8 @@
 use aex_operation_domain::operation::OperationVersion;
 use aex_operation_domain::{
     AdmissionOutcome, AdmitRequest, DedupIdentity, FailureClass, Operation, OperationFailure,
-    OperationKind, OperationResult, OperationScope, WorkId, WorkItem, WorkState, admit, fail,
-    succeed,
+    OperationKind, OperationResult, OperationScope, Progress, WorkId, WorkItem, WorkState, admit,
+    fail, succeed,
 };
 use aex_session_domain::{
     CancelCause, CommandClass, DeleteEvidence, Session, TerminationReason, acquire_mutation_guard,
@@ -26,7 +26,7 @@ use crate::error::AppError;
 use crate::plan::{
     Condition, Hint, Planned, SessionTransaction, TransactionIntent, WorkCompletion, Write,
 };
-use crate::ports::{AppContext, PortError};
+use crate::ports::{AppContext, PortError, RootAdmissionState};
 
 // `regional-work` has five bounded priority bands, zero highest. Customer
 // lifecycle control must outrank background cleanup and reconciliation.
@@ -105,7 +105,18 @@ pub fn settle_lifecycle_operation(
     let mut head = session.clone();
     let result = match operation.kind {
         OperationKind::SessionCancel => {
-            let changed = head.lifecycle.cancel_current(now)?;
+            if head.active_run.is_some() || head.lifecycle.active.is_some() {
+                return Err(AppError::Port(PortError::Corrupt {
+                    kind: "session cancellation settlement",
+                    reason: "the Brain RunFinished barrier has not cleared current work",
+                }));
+            }
+            head.lifecycle.cancel_current(now)?;
+            let changed = operation.progress.as_ref().is_some_and(|progress| {
+                progress.phase == "cancelling_current"
+                    && progress.processed == 0
+                    && progress.total_hint == Some(1)
+            });
             head.active_run = None;
             head.work_admission = aex_session_domain::WorkAdmission::Open;
             canonical_result(&models::SessionCancelResult {
@@ -166,7 +177,9 @@ pub fn settle_lifecycle_operation(
     head.revision = session.revision.next();
     head.mutation_guard = None;
     head.updated_at = now;
-    let succeeded = succeed(operation, result, now)?.operation;
+    let mut completed_operation = operation.clone();
+    completed_operation.progress = None;
+    let succeeded = succeed(&completed_operation, result, now)?.operation;
     let plan = SessionTransaction {
         intent: TransactionIntent::SettleLifecycle,
         conditions: vec![
@@ -412,14 +425,31 @@ pub async fn admit_lifecycle_operation(
         };
     }
 
-    let session = context
-        .sessions
-        .load_session(command.workspace, command.session)
-        .await?;
+    let (session, root) = if command.kind == OperationKind::SessionCancel {
+        let snapshot = context
+            .sessions
+            .load_message_snapshot(command.workspace, command.session)
+            .await?;
+        (snapshot.session, Some(snapshot.root))
+    } else {
+        (
+            context
+                .sessions
+                .load_session(command.workspace, command.session)
+                .await?,
+            None,
+        )
+    };
     let account = context.accounts.projection(session.organization).await?;
     pause_gate(command_class(command.kind), &account)?;
-    plan_lifecycle_admission(command, &session, account.revision, context.clock.now())
-        .map(LifecycleAdmissionOutcome::Planned)
+    plan_lifecycle_admission(
+        command,
+        &session,
+        root.as_ref(),
+        account.revision,
+        context.clock.now(),
+    )
+    .map(LifecycleAdmissionOutcome::Planned)
 }
 
 #[expect(
@@ -429,10 +459,11 @@ pub async fn admit_lifecycle_operation(
 fn plan_lifecycle_admission(
     command: &LifecycleCommand,
     session: &Session,
+    root: Option<&RootAdmissionState>,
     account_revision: aex_session_domain::AccountRevision,
     now: Timestamp,
 ) -> Result<Planned<Operation>, AppError> {
-    let operation = match admit(None, Some(&session.deletion), &admit_request(command), now) {
+    let mut operation = match admit(None, Some(&session.deletion), &admit_request(command), now) {
         AdmissionOutcome::Inserted(operation) => *operation,
         AdmissionOutcome::Conflict(conflict) => return Err(AppError::Conflict(conflict.code())),
         AdmissionOutcome::DeletionInProgress { operation } => {
@@ -460,12 +491,37 @@ fn plan_lifecycle_admission(
         command.kind,
         now,
     )?);
+    let mut cancellation_root = None;
     match command.kind {
         OperationKind::SessionCancel => {
-            let active = session.active_run.is_some() || session.lifecycle.active.is_some();
+            let active = session.active_run.is_some();
+            if session.lifecycle.active.map(|activity| activity.run) != session.active_run {
+                return Err(AppError::Port(PortError::Corrupt {
+                    kind: "session cancellation",
+                    reason: "the session head and lifecycle disagree on the current run",
+                }));
+            }
             let fence = cancel_session_fence(session, CancelCause::SessionCancel, active);
             head.cancellation = fence.cancellation;
             head.work_admission = fence.admission;
+            if active {
+                operation.progress = Some(Progress {
+                    phase: "cancelling_current".to_owned(),
+                    processed: 0,
+                    total_hint: Some(1),
+                });
+                let root = root.ok_or(AppError::Port(PortError::Corrupt {
+                    kind: "session cancellation",
+                    reason: "active work has no strongly bound Brain root",
+                }))?;
+                if root.agent != session.root_agent || root.idle {
+                    return Err(AppError::Port(PortError::Corrupt {
+                        kind: "session cancellation",
+                        reason: "the active session and Brain root disagree",
+                    }));
+                }
+                cancellation_root = Some((root, fence.cancellation));
+            }
         }
         OperationKind::SessionSuspend => {
             head.lifecycle.begin_suspend()?;
@@ -554,14 +610,43 @@ fn plan_lifecycle_admission(
             session: session.id,
         },
     });
+    let mut writes = vec![
+        operation_write,
+        Write::PutSessionHead(Box::new(head)),
+        work_write,
+    ];
+    if let Some((root, cancellation)) = cancellation_root {
+        let wake = cancellation_wake(command, root, cancellation, now)?;
+        let root_write = Write::RequestRootCancellation {
+            session: session.id,
+            agent: root.agent,
+            from_revision: root.revision,
+            to_revision: root.revision.next(),
+            from_cancellation: session.cancellation,
+            to_cancellation: cancellation,
+            at: now,
+        };
+        conditions.push(Condition::AgentRevision {
+            session: session.id,
+            agent: root.agent,
+            expected: root.revision,
+        });
+        conditions.push(Condition::ItemAbsent(
+            Write::PutAgentWake(Box::new(wake.clone())).target(),
+        ));
+        conditions.push(Condition::ItemAbsent(
+            Write::PutAgentWakeDedupe(Box::new(wake.clone())).target(),
+        ));
+        writes.extend([
+            root_write,
+            Write::PutAgentWake(Box::new(wake.clone())),
+            Write::PutAgentWakeDedupe(Box::new(wake)),
+        ]);
+    }
     let plan = SessionTransaction {
         intent: transaction_intent(command.kind)?,
         conditions,
-        writes: vec![
-            operation_write,
-            Write::PutSessionHead(Box::new(head)),
-            work_write,
-        ],
+        writes,
         after_commit: vec![Hint::OperationDue {
             operation: command.operation,
             due_at: now,
@@ -571,6 +656,39 @@ fn plan_lifecycle_admission(
     Ok(Planned {
         plan,
         projected: operation,
+    })
+}
+
+fn cancellation_wake(
+    command: &LifecycleCommand,
+    root: &RootAdmissionState,
+    cancellation: aex_session_domain::CancellationEpoch,
+    now: Timestamp,
+) -> Result<crate::plan::AgentWake, AppError> {
+    use sha2::Digest as _;
+
+    let suffix = command.operation.uuid7().encode_suffix();
+    let suffix = std::str::from_utf8(&suffix).map_err(|_| {
+        AppError::Port(PortError::Corrupt {
+            kind: "session cancellation wake",
+            reason: "an operation UUIDv7 did not render as Crockford ASCII",
+        })
+    })?;
+    let mut digest = sha2::Sha256::new();
+    digest.update(b"aex.agent.cancel.wake.v1\0");
+    digest.update(command.session.to_string().as_bytes());
+    digest.update(b"\0");
+    digest.update(root.agent.to_string().as_bytes());
+    digest.update(b"\0");
+    digest.update(command.operation.to_string().as_bytes());
+    Ok(crate::plan::AgentWake {
+        work_id: format!("wrk_cancel{suffix}"),
+        dedupe_key: format!("{:x}", digest.finalize()),
+        session: command.session,
+        agent: root.agent,
+        from: root.journal_tail,
+        cancellation,
+        at: now,
     })
 }
 
@@ -649,9 +767,21 @@ mod tests {
     }
 
     fn planned(kind: OperationKind, session: &Session) -> Planned<Operation> {
+        let root =
+            (kind == OperationKind::SessionCancel && session.active_run.is_some()).then(|| {
+                RootAdmissionState {
+                    agent: session.root_agent,
+                    revision: aex_session_domain::AgentRevision(3),
+                    journal_tail: aex_session_domain::JournalSeq(7),
+                    limits_revision: 4,
+                    max_run_duration_ms: 3_600_000,
+                    idle: false,
+                }
+            });
         plan_lifecycle_admission(
             &command(kind),
             session,
+            root.as_ref(),
             aex_session_domain::AccountRevision(7),
             now(),
         )
@@ -711,6 +841,28 @@ mod tests {
         let cancelling = planned_head(&cancel.plan);
         assert_eq!(cancelling.lifecycle.status, LifecycleStatus::Running);
         assert!(cancelling.cancellation > running.cancellation);
+        assert!(cancel.plan.writes.iter().any(|write| matches!(
+            write,
+            Write::RequestRootCancellation {
+                from_cancellation,
+                to_cancellation,
+                ..
+            } if *from_cancellation == running.cancellation
+                && *to_cancellation == running.cancellation.next()
+        )));
+        assert_eq!(
+            cancel
+                .plan
+                .writes
+                .iter()
+                .filter(|write| matches!(
+                    write,
+                    Write::PutAgentWake(_) | Write::PutAgentWakeDedupe(_)
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(cancel.plan.validate().expect("valid").actions, 7);
 
         let terminate = planned(OperationKind::SessionTerminate, &running);
         let terminating = planned_head(&terminate.plan);
@@ -869,16 +1021,25 @@ mod tests {
 
     #[test]
     fn cancellation_returns_the_same_session_to_idle() {
-        let (running, _, _, _) = aex_session_domain::testing::running_session();
+        let (running, run, _, _) = aex_session_domain::testing::running_session();
         let admitted = planned(OperationKind::SessionCancel, &running);
         let transitional = planned_head(&admitted.plan).clone();
+        let mut after_brain = transitional.clone();
+        after_brain
+            .lifecycle
+            .complete_message(run.id, aex_session_domain::testing::moment(15))
+            .expect("Brain terminal barrier returns the lifecycle to idle");
+        after_brain.status = after_brain.lifecycle.status;
+        after_brain.active_run = None;
+        after_brain.revision = transitional.revision.next();
+        after_brain.updated_at = aex_session_domain::testing::moment(15);
         let claim = LifecycleWorkClaim {
             work_id: WorkId(admitted.projected.id.uuid7()).to_string(),
             fence: 1,
             owner: "session-operation-worker:test".to_owned(),
         };
         let settled = settle_lifecycle_operation(
-            &transitional,
+            &after_brain,
             &admitted.projected,
             OperationVersion::FIRST,
             &claim,
@@ -889,6 +1050,35 @@ mod tests {
         assert_eq!(head.lifecycle.status, LifecycleStatus::Idle);
         assert_eq!(head.active_run, None);
         assert_eq!(head.work_admission, WorkAdmission::Open);
+        assert!(
+            settled
+                .projected
+                .result
+                .as_ref()
+                .and_then(|result| result.content.as_ref())
+                .is_some_and(|content| content.as_str().contains("\"changed\":true"))
+        );
+    }
+
+    #[test]
+    fn cancellation_cannot_publish_success_before_brain_clears_current_work() {
+        let (running, _, _, _) = aex_session_domain::testing::running_session();
+        let admitted = planned(OperationKind::SessionCancel, &running);
+        let transitional = planned_head(&admitted.plan).clone();
+        let claim = LifecycleWorkClaim {
+            work_id: WorkId(admitted.projected.id.uuid7()).to_string(),
+            fence: 1,
+            owner: "session-operation-worker:test".to_owned(),
+        };
+        let error = settle_lifecycle_operation(
+            &transitional,
+            &admitted.projected,
+            OperationVersion::FIRST,
+            &claim,
+            aex_session_domain::testing::moment(20),
+        )
+        .expect_err("current work still belongs to Brain");
+        assert_eq!(error.code(), ErrorCode::InternalError);
     }
 
     #[test]

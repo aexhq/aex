@@ -214,6 +214,7 @@ servedOperations:
     - session_observations_telemetry_stream
     - session_observations_traces_listen
     - session_observations_traces_stream
+    - session_cancel
     - session_create
     - session_files_live_download_complete
     - session_files_live_download_create

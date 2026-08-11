@@ -821,7 +821,17 @@ impl LifecyclePort for DynamoLifecyclePort {
         _now: Timestamp,
     ) -> Result<LifecycleReadiness, StoreError> {
         if step.kind == OperationKind::SessionCancel {
-            return Ok(LifecycleReadiness::Ready);
+            // Admission already installed the Brain root's durable stop latch
+            // and advanced the session cancellation epoch. The running
+            // activation observes that epoch through its lease renewal and
+            // passes the existing CancelToken into the provider stream; a
+            // successor activation then owns the canonical cancelled
+            // RunFinished barrier. Publishing the public operation before that
+            // barrier would claim the session was idle while provider work was
+            // still live, so this worker waits for the strong head to prove the
+            // active run is gone.
+            let session = self.session(step).await?;
+            return Ok(cancellation_readiness(&session));
         }
         let session = self.session(step).await?;
         if step.kind == OperationKind::SessionDelete {
@@ -1011,6 +1021,14 @@ impl LifecyclePort for DynamoLifecyclePort {
                 aex_session_dynamodb::error::Resolution::TargetItem,
             )
             .await
+    }
+}
+
+fn cancellation_readiness(session: &aex_session_domain::Session) -> LifecycleReadiness {
+    if session.active_run.is_none() && session.lifecycle.active.is_none() {
+        LifecycleReadiness::Ready
+    } else {
+        LifecycleReadiness::Deferred
     }
 }
 
@@ -1587,5 +1605,21 @@ mod lifecycle_observation_tests {
             observed_termination(GenerationState::Lost, at(28_800), at(20_000)),
             (TerminationReason::RuntimeLost, at(20_000))
         );
+    }
+
+    #[test]
+    fn cancellation_waits_for_the_brain_terminal_barrier() {
+        let (mut running, run, _, _) = aex_session_domain::testing::running_session();
+        assert_eq!(
+            cancellation_readiness(&running),
+            LifecycleReadiness::Deferred
+        );
+        running
+            .lifecycle
+            .complete_message(run.id, at(20_000))
+            .expect("Brain settles the current run");
+        running.active_run = None;
+        running.status = running.lifecycle.status;
+        assert_eq!(cancellation_readiness(&running), LifecycleReadiness::Ready);
     }
 }

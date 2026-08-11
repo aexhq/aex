@@ -330,6 +330,13 @@ pub async fn admit_message(
     wake_digest.update(command.session.to_string().as_bytes());
     wake_digest.update(b"\0");
     wake_digest.update(materialized.root.agent.to_string().as_bytes());
+    wake_digest.update(b"\0");
+    // A dedupe row is immutable and intentionally outlives its source wake.
+    // Binding it only to (session, agent) made the first admitted message
+    // permanently block every later turn in this multi-turn session. The run
+    // is the immutable execution identity, so each admitted message gets one
+    // stable wake election while retries of that same admission still collide.
+    wake_digest.update(run_id.to_string().as_bytes());
     let wake = crate::plan::AgentWake {
         work_id: format!("wrk_{wake_suffix}"),
         dedupe_key: lowercase_hex(&wake_digest.finalize()),

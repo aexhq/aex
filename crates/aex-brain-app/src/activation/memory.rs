@@ -790,6 +790,35 @@ impl MemoryStore {
         row.cancel_epoch = CancelEpoch(row.cancel_epoch.0.saturating_add(1));
     }
 
+    /// Installs the production-shaped root cancellation latch and its matching session
+    /// authority for a successor claim.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the supplied authority does not name an active run or its cancellation
+    /// epoch is not exactly the next root-agent epoch.
+    pub fn request_root_cancellation(&self, key: AgentKey, authority: SessionAuthority) {
+        let active = authority
+            .active
+            .as_deref()
+            .expect("root cancellation carries an active run boundary");
+        let mut agents = self.agents.lock().expect("not poisoned");
+        let row = agents.get_mut(&key).expect("the seeded agent exists");
+        assert_eq!(
+            active.session.cancellation.0,
+            row.cancel_epoch.advance().0,
+            "session and root cancellation epochs advance together"
+        );
+        row.cancel_epoch = CancelEpoch(active.session.cancellation.0);
+        row.revision = row.revision.next();
+        row.stop_requested = true;
+        drop(agents);
+        self.authorities
+            .lock()
+            .expect("not poisoned")
+            .insert(key.session, authority);
+    }
+
     /// Advances cancellation after the next effect preparation commits but before its
     /// pre-dispatch transaction checks the session head.
     pub fn cancel_before_next_dispatch(&self) {

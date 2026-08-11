@@ -40,7 +40,8 @@ use aex_session_app::ports::{
 };
 use aex_session_domain::{
     AccountProjection, AccountRevision, AccountState, AgentControl, AgentRevision,
-    IdempotencyIdentity, IdempotencyReceipt, JournalPage, JournalSeq, PauseReason, Run, Session,
+    CancellationEpoch, IdempotencyIdentity, IdempotencyReceipt, JournalPage, JournalSeq,
+    PauseReason, Run, Session,
 };
 use aex_wire::ids::{AgentId, OperationId, OrganizationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
@@ -399,6 +400,95 @@ impl SessionAuthorityExternal {
         Ok(())
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the narrow Brain-control transition names both sides of its two monotonic fences"
+    )]
+    fn root_cancellation_request(
+        tables: &RegionalTables,
+        binding: AuthorityBinding,
+        action: &LogicalAction<'_>,
+        session: SessionId,
+        agent: AgentId,
+        from_revision: AgentRevision,
+        to_revision: AgentRevision,
+        from_cancellation: CancellationEpoch,
+        to_cancellation: CancellationEpoch,
+        at: Timestamp,
+        output: &mut TransactionPlan,
+    ) -> Result<(), StoreError> {
+        if Some(session) != binding.session
+            || from_revision.next() != to_revision
+            || from_cancellation.next() != to_cancellation
+        {
+            return Err(StoreError::Invalid {
+                detail: "a root cancellation must stay in its session and advance both fences exactly once"
+                    .to_owned(),
+            });
+        }
+        let mut expression = Expression::default();
+        expression.and_literal("attribute_exists(pk)");
+        expression.and_literal("attribute_not_exists(finishReason)");
+        expression.and_literal("cancelEpoch = :fromCancellation");
+        let mut saw_revision = false;
+        for (id, condition) in &action.conditions {
+            match condition {
+                Condition::AgentRevision {
+                    session: guarded_session,
+                    agent: guarded_agent,
+                    expected,
+                } if (*guarded_session, *guarded_agent, *expected)
+                    == (session, agent, from_revision) =>
+                {
+                    saw_revision = true;
+                    term_eq_u64(
+                        &mut expression,
+                        &format!("c{}", id.0),
+                        "revision",
+                        expected.0,
+                    );
+                }
+                other => return Err(unsupported_condition(other)),
+            }
+        }
+        if !saw_revision {
+            return Err(StoreError::Invalid {
+                detail: "a root cancellation requires the exact control revision it observed"
+                    .to_owned(),
+            });
+        }
+        expression.values.insert(
+            ":fromCancellation".to_owned(),
+            crate::attr::n(from_cancellation.0),
+        );
+        let rendered = expression.rendered()?;
+        let physical = crate::keys::agent_control(session, agent);
+        output.update(
+            Participant::AGENT_ROOT_CONTROL,
+            aws_sdk_dynamodb::types::Update::builder()
+                .table_name(&tables.session_authority)
+                .set_key(Some(key(&physical.pk, &physical.sk)))
+                .condition_expression(rendered)
+                .update_expression(
+                    "SET stopRequested = :requested, cancelEpoch = :nextCancellation, \
+                     revision = :nextRevision, updatedAt = :now",
+                )
+                .set_expression_attribute_names(Some(expression.names))
+                .set_expression_attribute_values(Some({
+                    let mut values = expression.values;
+                    values.insert(":requested".to_owned(), crate::attr::boolean(true));
+                    values.insert(
+                        ":nextCancellation".to_owned(),
+                        crate::attr::n(to_cancellation.0),
+                    );
+                    values.insert(":nextRevision".to_owned(), crate::attr::n(to_revision.0));
+                    values.insert(":now".to_owned(), stamp(at));
+                    values
+                })),
+        )?;
+        Ok(())
+    }
+
     fn journal_append(
         tables: &RegionalTables,
         binding: AuthorityBinding,
@@ -657,6 +747,7 @@ const fn write_tag(write: &Write) -> &'static str {
         Write::PutRun(_) => "PutRun",
         Write::PutAgentControl(_) => "PutAgentControl",
         Write::AdmitRootRun { .. } => "AdmitRootRun",
+        Write::RequestRootCancellation { .. } => "RequestRootCancellation",
         Write::CancelAgent { .. } => "CancelAgent",
         Write::AppendJournalPage { .. } => "AppendJournalPage",
         Write::PutApproval(_) => "PutApproval",
@@ -749,6 +840,27 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
                 *from_tail,
                 *to_tail,
                 *entry_identity,
+                *at,
+                output,
+            ),
+            Some(Write::RequestRootCancellation {
+                session,
+                agent,
+                from_revision,
+                to_revision,
+                from_cancellation,
+                to_cancellation,
+                at,
+            }) => Self::root_cancellation_request(
+                tables,
+                binding,
+                action,
+                *session,
+                *agent,
+                *from_revision,
+                *to_revision,
+                *from_cancellation,
+                *to_cancellation,
                 *at,
                 output,
             ),

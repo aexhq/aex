@@ -26,14 +26,15 @@ use crate::ports::{
     BoxFuture, CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure,
     DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, JournalCursor, JournalPage,
     LeaseStore as _, PreviewSink, ProviderDispatchError, ProviderFailureKind, ProviderOutcome,
-    ProviderPort, RedactedDetail, ReleaseDisposition, StoreError, StreamBudget, ToolAdvertisement,
-    ToolDispatchError, ToolOutcome, ToolResultBody, ToolRoute, UnknownResolution, WakeQueue as _,
+    ProviderPort, RedactedDetail, ReleaseDisposition, RunBoundaryAuthority, SessionAuthority,
+    StoreError, StreamBudget, ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolResultBody,
+    ToolRoute, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::effect::{
     DetachedOperationRef, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
-    EffectState,
+    EffectState, SettledOutcome,
 };
 use aex_brain_domain::fold::fold;
 use aex_brain_domain::ids::{
@@ -53,7 +54,7 @@ use aex_model_catalog::canonical::{
 use aex_model_catalog::document::{Capability, CapabilitySet};
 use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
 use aex_wire::CanonicalJson;
-use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7};
+use aex_wire::ids::{GenerationId, OperationId, PrefixedId as _, ProviderCredentialId, Uuid7};
 use core::future::Future as _;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -170,6 +171,66 @@ fn history() -> Vec<JournalEntry> {
     )
     .expect("the record canonicalizes");
     vec![started, message]
+}
+
+fn root_key(session: &aex_session_domain::Session) -> AgentKey {
+    AgentKey::new(
+        SessionId(Uuid::from_bytes(*session.id.uuid7().as_bytes())),
+        AgentId(Uuid::from_bytes(*session.root_agent.uuid7().as_bytes())),
+    )
+}
+
+fn root_history(
+    session: &aex_session_domain::Session,
+    run: &aex_session_domain::Run,
+) -> Vec<JournalEntry> {
+    let mut resolved = config();
+    resolved.hands_generation = session
+        .generation
+        .expect("a running session has an exact generation");
+    let started = JournalEntry::seal(
+        JournalSeq(0),
+        Timestamp::from_millis(START),
+        JournalRecord::AgentStarted {
+            config: Box::new(resolved),
+            parent: None,
+            join: None,
+            depth: 0,
+            budget: DimensionVector::uniform(1_000),
+        },
+    )
+    .expect("the root start record canonicalizes");
+    let admitted = JournalEntry::seal(
+        JournalSeq(1),
+        Timestamp::from_millis(START + 1),
+        JournalRecord::RunAdmitted {
+            run: run.id,
+            message: run.message,
+            content: vec![ContentBlockRef::Inline {
+                block: CanonicalBlock::Text {
+                    text: BoundedString::truncating("summarize this"),
+                    annotations: Vec::new(),
+                },
+            }],
+            max_spend_cents: run.max_spend_cents.get(),
+            deadline: Timestamp::from_millis(run.deadline.unix_millis()),
+            limits_revision: 1,
+        },
+    )
+    .expect("the run admission record canonicalizes");
+    vec![started, admitted]
+}
+
+fn root_authority(
+    session: aex_session_domain::Session,
+    run: aex_session_domain::Run,
+) -> SessionAuthority {
+    SessionAuthority {
+        workspace: session.workspace,
+        organization: session.organization,
+        deletion_epoch: session.deletion.epoch.0,
+        active: Some(Box::new(RunBoundaryAuthority { session, run })),
+    }
 }
 
 fn journal_bytes(entries: &[JournalEntry]) -> usize {
@@ -2301,6 +2362,131 @@ fn assert_session_authority_loss_stops_mid_effect(delete: bool) {
 #[test]
 fn renewal_observes_session_cancellation_during_a_pending_effect() {
     assert_session_authority_loss_stops_mid_effect(false);
+}
+
+/// A public cancellation is stronger than an unclassified epoch loss: it installs a
+/// durable stop latch and a session operation guard before the predecessor is fenced. The
+/// successor preserves possibly-sent provider evidence but closes the public current work
+/// as cancelled, never interrupted and never re-dispatched.
+#[test]
+fn public_session_cancellation_closes_an_ambiguous_provider_effect_as_cancelled() {
+    let mut harness = Harness::new(Vec::new());
+    harness.policy.renew_interval = core::time::Duration::from_secs(1);
+    let provider = Arc::new(GatedProvider::default());
+
+    let (mut session, mut run, _, _) = aex_session_domain::testing::running_session();
+    let generation = session
+        .generation
+        .expect("the session fixture has an exact generation");
+    let admitted_at = aex_session_domain::testing::moment(START);
+    let deadline = aex_session_domain::testing::moment(START + 60_000);
+    session.lifecycle = aex_session_domain::SessionLifecycle::launched(
+        generation,
+        aex_session_domain::testing::moment(START - 1_000),
+    )
+    .expect("the launch fence is representable");
+    session
+        .lifecycle
+        .admit_message(
+            run.message,
+            run.id,
+            aex_session_domain::ResolvedMessageBounds {
+                max_spend_cents: run.max_spend_cents,
+                deadline,
+            },
+            admitted_at,
+        )
+        .expect("the fixture admits the current message");
+    session.status = session.lifecycle.status;
+    session.active_run = Some(run.id);
+    session.updated_at = admitted_at;
+    run.deadline = deadline;
+    run.cancellation_at_admission = session.cancellation;
+    run.queued_at = admitted_at;
+    run.started_at = Some(admitted_at);
+
+    let root = root_key(&session);
+    harness.store.seed(root, root_history(&session, &run));
+    harness
+        .store
+        .set_authority(root.session, root_authority(session.clone(), run.clone()));
+    let mut wake = wake_for(root, "wrk-public-cancel");
+    wake.tenant = session.workspace.to_string();
+    harness.queue.project(wake);
+
+    let mut ports = harness.ports();
+    ports.provider = Arc::clone(&provider) as Arc<_>;
+    let activation = Activation::new(
+        ports,
+        harness.policy.clone(),
+        Arc::new(ActivationRegistry::new()),
+        Arc::new(DrainGate::new()),
+    );
+    let delivery = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
+        .expect("the queue answers")
+        .deliveries
+        .pop()
+        .expect("the root wake exists");
+    let mut first = Box::pin(activation.run(delivery));
+    let mut context = core::task::Context::from_waker(core::task::Waker::noop());
+    assert!(first.as_mut().poll(&mut context).is_pending());
+
+    let operation = OperationId::from_uuid7(Uuid7::compose(
+        u64::try_from(START).expect("the fixture instant is positive"),
+        [24; 10],
+    ));
+    session.cancellation = session.cancellation.next();
+    session.revision = session.revision.next();
+    session.mutation_guard = Some(aex_session_domain::MutationGuard {
+        holder: operation,
+        kind: aex_operation_domain::OperationKind::SessionCancel,
+        acquired_at: aex_session_domain::testing::moment(START + 2),
+    });
+    harness
+        .store
+        .request_root_cancellation(root, root_authority(session, run));
+
+    let core::task::Poll::Ready(lost) = first.as_mut().poll(&mut context) else {
+        panic!("the predecessor observes the cancellation fence");
+    };
+    assert!(matches!(
+        lost,
+        Err(ActivationError::Claim(ClaimError::Terminal))
+    ));
+    assert_eq!(provider.dispatches.load(Ordering::SeqCst), 1);
+
+    provider.released.store(true, Ordering::SeqCst);
+    let successor = harness
+        .run_next()
+        .expect("the successor settles the cancelled current work");
+    assert!(matches!(
+        successor,
+        Outcome::Progressed {
+            stop: Stop::Finished(FinishReason::Cancelled),
+            ..
+        }
+    ));
+    let entries = harness.store.entries(root);
+    assert!(entries.iter().any(|entry| matches!(
+        &entry.record,
+        JournalRecord::EffectSettled {
+            outcome: SettledOutcome::OutcomeUnknown { .. },
+            ..
+        }
+    )));
+    assert!(entries.iter().any(|entry| matches!(
+        &entry.record,
+        JournalRecord::RunFinished {
+            reason: FinishReason::Cancelled,
+            ambiguous_effect: None,
+            ..
+        }
+    )));
+    assert_eq!(
+        provider.dispatches.load(Ordering::SeqCst),
+        1,
+        "cancellation never replays a possibly-served provider request"
+    );
 }
 
 #[test]

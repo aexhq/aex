@@ -1030,6 +1030,63 @@ impl Session<'_> {
         let Some(effect) = open.into_iter().find(|effect| !effect.state.is_settled()) else {
             return Ok(None);
         };
+        if self.stop_requested && self.state.active_run.is_some() {
+            // A session cancellation has already advanced both the session and root-agent
+            // epochs. The predecessor was allowed to observe that fence and drop its
+            // provider future before this successor claimed the root. Recovery must still
+            // settle the exact open effect honestly, but the customer's requested terminal
+            // result is cancellation rather than an infrastructure interruption.
+            let mut draft = self.draft("effecting");
+            match &effect.state {
+                EffectState::Prepared { .. } => {
+                    // The dispatch marker never committed, so the upstream provably saw
+                    // nothing. Closing the prepared effect prevents the ordinary resume
+                    // path from dispatching it after cancellation.
+                    decide::settle_known_failure(
+                        &mut draft,
+                        effect.id,
+                        DispatchStage::PreDispatch,
+                        DispatchProof::NotSent,
+                    );
+                }
+                EffectState::DispatchStarted { attempt } => {
+                    decide::settle_root_unknown(
+                        &mut draft,
+                        effect.id,
+                        effect.evidence.clone().unwrap_or_else(|| {
+                            DispatchEvidence::ambiguous(*attempt, DispatchStage::Dispatched)
+                        }),
+                    );
+                }
+                EffectState::ResponseStarted {
+                    attempt,
+                    provider_request_id,
+                } => {
+                    decide::settle_root_unknown(
+                        &mut draft,
+                        effect.id,
+                        effect.evidence.clone().unwrap_or_else(|| DispatchEvidence {
+                            stage: DispatchStage::Streaming,
+                            proof: DispatchProof::ResponseStarted,
+                            attempt: *attempt,
+                            provider_request_id: provider_request_id.clone(),
+                            external_operation: None,
+                            detached_tool: None,
+                            receipt: None,
+                            detail: None,
+                        }),
+                    );
+                }
+                EffectState::Complete { .. }
+                | EffectState::KnownFailure { .. }
+                | EffectState::OutcomeUnknown { .. } => {
+                    unreachable!("load_open excludes settled effects")
+                }
+            }
+            self.finish_current(&mut draft, FinishReason::Cancelled, None, None)?;
+            self.commit(draft).await?;
+            return Ok(Some(Stop::Finished(FinishReason::Cancelled)));
+        }
         if matches!(effect.state, EffectState::Prepared { .. }) {
             // Intent committed, nothing sent: the one unambiguous case. The step loop
             // re-dispatches it under this fence rather than opening a second effect.
@@ -1249,7 +1306,7 @@ impl Session<'_> {
             active
                 .session
                 .mutation_guard
-                .filter(|guard| guard.kind == aex_wire::models::OperationKind::SessionCancel)
+                .filter(|guard| guard.kind == aex_operation_domain::OperationKind::SessionCancel)
                 .map(|guard| guard.holder)
         } else {
             None

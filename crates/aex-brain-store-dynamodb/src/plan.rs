@@ -267,10 +267,21 @@ pub fn compile(
             adds.push(format!("{} {placeholder}", used_attribute(delta.dimension)));
             control = control.expression_attribute_values(placeholder, n(delta.quantity));
         }
-        let expression = if adds.is_empty() {
-            format!("SET {set_clause}")
+        let clear_stop_latch = terminal.as_ref().is_some_and(|terminal| {
+            matches!(
+                terminal.run.outcome.as_ref(),
+                Some(aex_session_domain::RunOutcome::Cancelled { .. })
+            )
+        });
+        let remove_clause = if clear_stop_latch {
+            " REMOVE stopRequested"
         } else {
-            format!("SET {set_clause} ADD {}", adds.join(", "))
+            ""
+        };
+        let expression = if adds.is_empty() {
+            format!("SET {set_clause}{remove_clause}")
+        } else {
+            format!("SET {set_clause}{remove_clause} ADD {}", adds.join(", "))
         };
         plan.update(
             Participant::AGENT_CONTROL,

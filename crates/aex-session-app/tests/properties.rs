@@ -277,6 +277,36 @@ async fn admission_is_atomic() {
 }
 
 #[tokio::test]
+async fn each_multi_turn_message_gets_a_distinct_durable_wake_election() {
+    let ports = ScriptedPorts::idle();
+    let clock = clock();
+    let ids = CountingIds::default();
+    let context = ports.context(&clock, &ids);
+
+    let mut wake_keys = Vec::new();
+    for _ in 0..2 {
+        let MessageAdmissionOutcome::Planned(planned) = admit_message(&context, &send_message())
+            .await
+            .expect("admits")
+        else {
+            panic!("the scripted authority has no receipt to replay");
+        };
+        let wake = planned
+            .plan
+            .writes
+            .iter()
+            .find_map(|write| match write {
+                Write::PutAgentWake(wake) => Some(wake.as_ref()),
+                _ => None,
+            })
+            .expect("message admission wakes the root");
+        wake_keys.push((wake.work_id.clone(), wake.dedupe_key.clone()));
+    }
+
+    assert_ne!(wake_keys[0], wake_keys[1]);
+}
+
+#[tokio::test]
 async fn omitted_and_explicit_message_bounds_are_preserved_in_every_authority() {
     let ports = ScriptedPorts::idle();
     let clock = clock();
