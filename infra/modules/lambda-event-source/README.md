@@ -20,7 +20,6 @@ changes behaviour on the next publish, and a missing
 | `scaling_config` | `object` | `{ maximum_concurrency }`; SQS only. |
 | `partial_batch_response` | `bool` | Must be `true`. |
 | `starting_position` | `string` | Required for a stream, forbidden for a queue. |
-| `filter_patterns` | `list(string)` | Optional valid JSON event filters; at most five. |
 | `enabled` | `bool` | Whether the mapping is enabled. |
 | `tags` | `map(string)` | Tags. |
 
@@ -39,7 +38,6 @@ changes behaviour on the next publish, and a missing
 - A DynamoDB stream source must declare a starting position; a queue source must
   not.
 - A scaling configuration is accepted only on a queue source.
-- Optional event filters are attached byte-for-byte after JSON validation.
 
 ## Not asserted here
 

@@ -97,17 +97,6 @@ variable "starting_position" {
   }
 }
 
-variable "filter_patterns" {
-  type        = list(string)
-  default     = []
-  description = "Optional AWS event-filter JSON patterns. Patterns are ORed by Lambda; fields inside one pattern are ANDed."
-
-  validation {
-    condition     = length(var.filter_patterns) <= 5 && alltrue([for pattern in var.filter_patterns : can(jsondecode(pattern))])
-    error_message = "At most five filter patterns may be supplied, and every pattern must be valid JSON."
-  }
-}
-
 variable "enabled" {
   type        = bool
   default     = true
