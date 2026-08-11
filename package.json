@@ -18,6 +18,8 @@
     "lint": "bun run brand:check && bun run --workspaces --if-present --parallel lint && bun run lint:tests",
     "typecheck": "bun run --filter @aexhq/wire typecheck && bun run --filter @aexhq/sdk typecheck && bun run --filter @aexhq/dashboard typecheck && bun run --filter @aexhq/site typecheck && bun run --filter @aexhq/user-tests typecheck && tsc --noEmit -p tsconfig.scripts.json",
     "dev:affected": "bun scripts/dev/affected-cli.ts",
+    "generate": "bun scripts/dev/generated-source.mjs build",
+    "generate:check": "bun scripts/dev/generated-source.mjs check",
     "hooks:install": "git config core.hooksPath .githooks",
     "lint:tests": "eslint --max-warnings=0 && bun scripts/verify-eslint-rules.mjs",
     "lint:tests:verify": "bun scripts/verify-eslint-rules.mjs",
