@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:1c6ffab954c76a19affde718c05a972b40f45507d5a0516c4bd17fdce7850bde",
+  "digest": "blake3:794431014f537059a4a098e9bd3a763f3ce6be296cae5a30341dab84e8f277a5",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -1519,7 +1519,8 @@
           "actions": [
             "dynamodb:GetItem",
             "dynamodb:Query",
-            "dynamodb:DeleteItem"
+            "dynamodb:DeleteItem",
+            "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"
@@ -1552,7 +1553,7 @@
       "schema": "aex.regional-table.v1",
       "table": "session-authority",
       "owner": "regional-stores",
-      "purpose": "Session heads, messages, runs, native events, approvals, agent control and journals, durable operations, idempotency receipts, and the fenced empty-workspace control row. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
+      "purpose": "Session heads, messages, internal execution facts, native events, approvals, agent control and journals, durable operations, idempotency receipts, ephemeral live-transfer coordination, irreversible-deletion coordination, and the fenced empty-workspace control row. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -1609,7 +1610,7 @@
           "sort": "wsIndexSk",
           "sparse": true,
           "projectsRecordBody": false,
-          "rationale": "Only session heads and operation states carry the index attributes, so a list query can never surface a prompt, a journal entry or an idempotency receipt. KEYS_ONLY keeps this shared sparse index a cheap ordered locator: callers hydrate selected authority rows before filtering or returning them, which also prevents an eventually consistent index projection from becoming session or operation truth. Every live, trashed and purging session head uses one lifecycle-neutral workspace partition ordered by createdAt and sessionId; this gives the public collection one total order and lets strong hydration apply exact status filtering. Purge completion removes the sparse keys entirely.",
+          "rationale": "Only public session heads and operation states carry the index attributes, so a list query can never surface a prompt, a journal entry or an idempotency receipt. KEYS_ONLY keeps this shared sparse index a cheap ordered locator: callers hydrate selected authority rows before filtering or returning them, which also prevents an eventually consistent index projection from becoming session or operation truth. Every live session head uses one lifecycle-neutral workspace partition ordered by createdAt and sessionId; irreversible deletion atomically replaces that payload-bearing head with an unindexed coordination envelope, so deleted content leaves the collection immediately.",
           "projection": {
             "type": "KEYS_ONLY",
             "attributes": []
@@ -1676,12 +1677,27 @@
         "enabled": true,
         "attribute": "expiresAtEpochSeconds",
         "appliesTo": [
-          "idempotency_receipt"
+          "idempotency_receipt",
+          "session_create_preparation",
+          "session_create_prepared_file",
+          "live_file_transfer",
+          "live_file_election"
         ],
-        "rationale": "Space reclamation only (OD-16, 24 hours). Every TTL'd row also carries an explicit expiresAt the reader checks; no fence reads TTL."
+        "rationale": "Space reclamation only (OD-16, 24 hours). Public receipts and generation-local live-transfer rows carry an explicit expiresAt checked by readers; private create-election rows are immutable scaffolding and use TTL only for eventual cleanup after publication or compensation. Irreversible session deletion removes enumerable live-transfer rows directly, and no authority fence reads TTL."
       },
       "itemTypes": [
         "session_head",
+        "session_deletion_head",
+        "session_tombstone",
+        "session_deletion_progress",
+        "session_deletion_evidence",
+        "session_receipt_directory",
+        "session_operation_edge",
+        "live_file_transfer",
+        "live_file_election",
+        "session_create_preparation",
+        "session_create_prepared_file",
+        "session_create_preparation_edge",
         "message",
         "sealed_message",
         "run",
@@ -1729,6 +1745,7 @@
           "actions": [
             "dynamodb:GetItem",
             "dynamodb:Query",
+            "dynamodb:TransactGetItems",
             "dynamodb:TransactWriteItems",
             "dynamodb:UpdateItem",
             "dynamodb:PutItem",
@@ -1805,7 +1822,8 @@
             "table"
           ],
           "itemTypes": [
-            "operation"
+            "operation",
+            "session_operation_edge"
           ],
           "condition": {
             "operator": "ForAllValues:StringLike",

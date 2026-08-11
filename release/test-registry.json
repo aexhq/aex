@@ -195,8 +195,7 @@
           "mutation": "unit",
           "planner": "unit",
           "properties": "unit",
-          "recovery": "unit",
-          "snapshot": "unit"
+          "recovery": "unit"
         },
         "not_applicable": {
           "live_suite": "pure domain crate; Area 9's registry declares no independent live seam"
@@ -1341,6 +1340,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "deletion": "unit",
           "g7_staged_commit_envelope": "integration",
           "properties": "unit"
         },
@@ -1918,7 +1918,6 @@
         ],
         "scenarios": [],
         "targets": {
-          "continuations": "unit",
           "create": "unit",
           "faults": "unit",
           "live_files": "unit",
@@ -1992,6 +1991,7 @@
         "scenarios": [],
         "targets": {
           "conformance": "unit",
+          "create_preparation": "unit",
           "faults": "unit",
           "integration": "integration",
           "limit_projection": "unit",
@@ -2957,6 +2957,7 @@
           "aws.dynamodb.transact_write",
           "aws.dynamodb.condition",
           "aws.dynamodb.streams",
+          "aws.lambda.async_invoke",
           "aws.s3.conditional_put",
           "aws.iam.denial",
           "aws.alb.framing"
@@ -4136,6 +4137,7 @@
           "aws.dynamodb.ttl",
           "aws.iam.denial",
           "aws.kms.encryption_context",
+          "aws.lambda.microvm",
           "aws.s3.bounded_get",
           "aws.s3.conditional_put",
           "aws.s3.multipart",
@@ -4149,10 +4151,12 @@
         ],
         "scenarios": [
           "SC-REGIONAL-ADMISSION",
-          "SC-REGISTRY-RESOURCES"
+          "SC-REGISTRY-RESOURCES",
+          "SC-SESSION-LIVE-FILES"
         ],
         "targets": {
           "e2e": "e2e",
+          "live-files": "e2e",
           "load": "e2e"
         },
         "not_applicable": {}
@@ -5225,7 +5229,6 @@
         "scenarios": [],
         "targets": {
           "composition": "unit",
-          "continuations": "unit",
           "performance_contract": "e2e",
           "reconciliation": "unit"
         },
@@ -5541,7 +5544,8 @@
       "aex-live-brain-mux",
       "aex-live-hands-image",
       "aex-live-regional-control",
-      "aex-live-runtime-control-worker"
+      "aex-live-runtime-control-worker",
+      "aex-live-session-stream-api"
     ],
     "aws.rds_data.transaction": [
       "aex-live-central-api",
