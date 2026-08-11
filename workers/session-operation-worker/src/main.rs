@@ -18,8 +18,9 @@ use futures::{StreamExt as _, stream};
 use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
 use session_operation_worker::config::Config;
 use session_operation_worker::{
-    BatchItem, DUE_SHARD_CONCURRENCY, DynamoOperationPort, OperationReconciler,
-    ReconcileDisposition, Trigger, WorkHint, WorkPort, batch_response, due_shards, next_due_cursor,
+    BatchItem, DUE_SHARD_CONCURRENCY, DynamoLifecyclePort, DynamoOperationPort,
+    OperationReconciler, ReconcileDisposition, Trigger, WorkHint, WorkPort, batch_response,
+    due_shards, next_due_cursor,
 };
 
 /// Bounded work rows read from each due shard in one scheduled invocation.
@@ -94,7 +95,8 @@ async fn run(
 
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
-    let worker = Worker::new(&config, &dynamodb)
+    let sqs = aws_sdk_sqs::Client::new(&aws);
+    let worker = Worker::new(&config, &dynamodb, &sqs)
         .map_err(|error| SessionOperationWorkerRunError::Composition(error.to_string()))?;
 
     lambda_runtime::run(service_fn(move |event: LambdaEvent<serde_json::Value>| {
@@ -117,7 +119,11 @@ struct Worker {
 }
 
 impl Worker {
-    fn new(config: &Config, dynamodb: &aws_sdk_dynamodb::Client) -> Result<Self, LambdaError> {
+    fn new(
+        config: &Config,
+        dynamodb: &aws_sdk_dynamodb::Client,
+        sqs: &aws_sdk_sqs::Client,
+    ) -> Result<Self, LambdaError> {
         let work =
             aex_work_dynamodb::store::WorkStore::new(dynamodb.clone(), config.work_table.clone());
         let operations = DynamoOperationPort::new(
@@ -125,13 +131,30 @@ impl Worker {
             config.session_table.clone(),
             config.work_table.clone(),
         );
+        let tables = aex_session_dynamodb::plan::RegionalTables {
+            session_authority: config.session_table.clone(),
+            regional_work: config.work_table.clone(),
+            runtime_activity: config.runtime_activity_table.clone(),
+            regional_content: "UNBOUND:regional-content".to_owned(),
+            regional_registry: "UNBOUND:regional-registry".to_owned(),
+            regional_secret_custody: "UNBOUND:regional-secret-custody".to_owned(),
+            regional_secret_keystore: "UNBOUND:regional-secret-keystore".to_owned(),
+            regional_authz_projection: "UNBOUND:regional-authz-projection".to_owned(),
+        };
+        let lifecycle = DynamoLifecyclePort::new(
+            dynamodb.clone(),
+            sqs.clone(),
+            tables,
+            config.runtime_lifecycle_queue_url.clone(),
+        );
         let reconciler = OperationReconciler::new(
             work,
             operations,
             format!("session-operation-worker:{}", config.release_digest),
             config.lease_ms,
         )
-        .map_err(|error| LambdaError::from(error.to_string()))?;
+        .map_err(|error| LambdaError::from(error.to_string()))?
+        .with_lifecycle(lifecycle);
         Ok(Self {
             reconciler,
             config: config.clone(),

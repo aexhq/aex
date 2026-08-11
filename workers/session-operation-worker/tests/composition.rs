@@ -25,6 +25,15 @@ fn complete() -> BTreeMap<&'static str, String> {
         ),
         (config::WORK_TABLE, "aex-dev-regional-work".to_owned()),
         (config::SESSION_TABLE, "aex-dev-session-authority".to_owned()),
+        (
+            config::RUNTIME_ACTIVITY_TABLE,
+            "aex-dev-runtime-activity".to_owned(),
+        ),
+        (
+            config::RUNTIME_LIFECYCLE_QUEUE_URL,
+            "https://sqs.eu-west-1.amazonaws.com/000000000000/aex-dev-runtime-lifecycle"
+                .to_owned(),
+        ),
         (config::DUE_SCAN_SHARDS, "64".to_owned()),
         (config::LEASE_MS, "60000".to_owned()),
         (config::STEP_DEADLINE_MS, "30000".to_owned()),

@@ -23,6 +23,10 @@ pub const OPERATION_DLQ_URL: &str = "AEX_OPERATION_DLQ_URL";
 pub const WORK_TABLE: &str = "AEX_WORK_TABLE";
 /// The `session-authority` table.
 pub const SESSION_TABLE: &str = "AEX_SESSION_TABLE";
+/// Exact-generation runtime authority table.
+pub const RUNTIME_ACTIVITY_TABLE: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
+/// Existing runtime-control-worker lifecycle queue.
+pub const RUNTIME_LIFECYCLE_QUEUE_URL: &str = "AEX_RUNTIME_LIFECYCLE_QUEUE_URL";
 /// How many deterministic shards the due scan sweeps.
 pub const DUE_SCAN_SHARDS: &str = "AEX_DUE_SCAN_SHARDS";
 /// Claim lease in milliseconds.
@@ -33,7 +37,7 @@ pub const STEP_DEADLINE_MS: &str = "AEX_STEP_DEADLINE_MS";
 pub const MAX_ATTEMPTS: &str = "AEX_MAX_ATTEMPTS";
 
 /// Every variable a healthy `session-operation-worker` requires.
-pub const REQUIRED: [&str; 11] = [
+pub const REQUIRED: [&str; 13] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
@@ -41,6 +45,8 @@ pub const REQUIRED: [&str; 11] = [
     OPERATION_DLQ_URL,
     WORK_TABLE,
     SESSION_TABLE,
+    RUNTIME_ACTIVITY_TABLE,
+    RUNTIME_LIFECYCLE_QUEUE_URL,
     DUE_SCAN_SHARDS,
     LEASE_MS,
     STEP_DEADLINE_MS,
@@ -79,6 +85,10 @@ pub struct Config {
     pub work_table: String,
     /// `session-authority` table.
     pub session_table: String,
+    /// Exact-generation runtime authority table.
+    pub runtime_activity_table: String,
+    /// Existing runtime-control-worker lifecycle queue.
+    pub runtime_lifecycle_queue_url: String,
     /// Deterministic due-scan shard count.
     pub due_scan_shards: u64,
     /// Claim lease in milliseconds.
@@ -146,6 +156,8 @@ impl Config {
             operation_dlq_url: queue_url(lookup, OPERATION_DLQ_URL, region)?,
             work_table: required(lookup, WORK_TABLE)?,
             session_table: required(lookup, SESSION_TABLE)?,
+            runtime_activity_table: required(lookup, RUNTIME_ACTIVITY_TABLE)?,
+            runtime_lifecycle_queue_url: queue_url(lookup, RUNTIME_LIFECYCLE_QUEUE_URL, region)?,
             due_scan_shards,
             lease_ms: i64::try_from(bounded_u64(lookup, LEASE_MS, 1_000, 900_000)?).map_err(
                 |_| RegionalHttpConfigError::Invalid {

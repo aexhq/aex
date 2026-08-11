@@ -5,7 +5,9 @@ pub mod config;
 use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64;
 
-use aex_operation_domain::OperationStatus;
+use std::sync::Arc;
+
+use aex_operation_domain::{OperationKind, OperationStatus};
 use aex_session_dynamodb::StoreError;
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::transactions::{OperationStepCancel, operation_cancelled};
@@ -256,6 +258,8 @@ pub struct OperationSnapshot {
     pub workspace: WorkspaceId,
     /// Owning session for session-scoped continuations.
     pub session: Option<SessionId>,
+    /// Exact operation kind.
+    pub kind: OperationKind,
     /// Current monotonic status.
     pub status: OperationStatus,
     /// Optimistic store version.
@@ -325,6 +329,7 @@ impl OperationPort for DynamoOperationPort {
             id: stored.record.id,
             workspace: stored.record.workspace,
             session: stored.record.session,
+            kind: stored.record.kind,
             status: stored.record.status,
             version: stored.version,
             cancel_requested: stored.record.cancel_requested,
@@ -346,6 +351,348 @@ impl OperationPort for DynamoOperationPort {
             now,
         )?;
         self.operations.commit_cancelled_step(&plan).await
+    }
+}
+
+/// Immutable authority binding for one session lifecycle step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LifecycleStep {
+    /// Owning workspace.
+    pub workspace: WorkspaceId,
+    /// Owning session.
+    pub session: SessionId,
+    /// Public operation identity.
+    pub operation: OperationId,
+    /// Exact lifecycle kind.
+    pub kind: OperationKind,
+    /// Operation version the original work item names.
+    pub admitted_version: u64,
+}
+
+/// Whether the provider/runtime authority is ready for session publication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleReadiness {
+    /// The exact provider state has committed and the session barrier may run.
+    Ready,
+    /// An idempotent runtime command was dispatched; redelivery observes it.
+    Deferred,
+    /// This port does not own the operation kind.
+    Unowned,
+}
+
+/// Provider/runtime bridge and atomic session-facing settlement.
+#[async_trait::async_trait]
+pub trait LifecyclePort: Send + Sync + 'static {
+    /// Observes or dispatches the exact-generation effect without taking the
+    /// regional-work claim.
+    async fn prepare(
+        &self,
+        step: &LifecycleStep,
+        now: Timestamp,
+    ) -> Result<LifecycleReadiness, StoreError>;
+
+    /// Publishes the already-observed effect and retires the exact claim.
+    async fn settle(
+        &self,
+        step: &LifecycleStep,
+        hold: &WorkClaim,
+        now: Timestamp,
+    ) -> Result<(), StoreError>;
+}
+
+#[derive(Debug, Default)]
+struct NoLifecycle;
+
+#[async_trait::async_trait]
+impl LifecyclePort for NoLifecycle {
+    async fn prepare(
+        &self,
+        _step: &LifecycleStep,
+        _now: Timestamp,
+    ) -> Result<LifecycleReadiness, StoreError> {
+        Ok(LifecycleReadiness::Unowned)
+    }
+
+    async fn settle(
+        &self,
+        _step: &LifecycleStep,
+        _hold: &WorkClaim,
+        _now: Timestamp,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Invalid {
+            detail: "no lifecycle settlement authority was composed".to_owned(),
+        })
+    }
+}
+
+/// Production exact-generation lifecycle bridge.
+///
+/// Provider effects remain owned by `runtime-control-worker`: this adapter
+/// sends an idempotent command to its existing queue, then a later redelivery
+/// strongly observes `runtime-activity` before committing the session-facing
+/// barrier. It never calls the provider control plane itself.
+#[derive(Debug, Clone)]
+pub struct DynamoLifecyclePort {
+    dynamodb: aws_sdk_dynamodb::Client,
+    sessions: aex_session_dynamodb::store::SessionStore,
+    operations: aex_session_dynamodb::store::OperationStore,
+    runtime: aex_runtime_activity_dynamodb::RuntimeActivityDynamoStore,
+    sqs: aws_sdk_sqs::Client,
+    runtime_queue_url: String,
+    tables: aex_session_dynamodb::plan::RegionalTables,
+}
+
+impl DynamoLifecyclePort {
+    /// Binds the three durable authorities and the runtime-control hint queue.
+    #[must_use]
+    pub fn new(
+        dynamodb: aws_sdk_dynamodb::Client,
+        sqs: aws_sdk_sqs::Client,
+        tables: aex_session_dynamodb::plan::RegionalTables,
+        runtime_queue_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            sessions: aex_session_dynamodb::store::SessionStore::new(
+                dynamodb.clone(),
+                tables.clone(),
+            ),
+            operations: aex_session_dynamodb::store::OperationStore::new(
+                dynamodb.clone(),
+                tables.session_authority.clone(),
+            ),
+            runtime: aex_runtime_activity_dynamodb::RuntimeActivityDynamoStore::new(
+                dynamodb.clone(),
+                tables.runtime_activity.clone(),
+            ),
+            dynamodb,
+            sqs,
+            runtime_queue_url: runtime_queue_url.into(),
+            tables,
+        }
+    }
+
+    async fn session(
+        &self,
+        step: &LifecycleStep,
+    ) -> Result<aex_session_domain::Session, StoreError> {
+        match aex_session_dynamodb::store::SessionQueries::load_session(
+            &self.sessions,
+            step.workspace,
+            step.session,
+        )
+        .await?
+        {
+            aex_session_dynamodb::store::SessionScoped::Active(session) => Ok(session),
+            aex_session_dynamodb::store::SessionScoped::Missing => Err(StoreError::Invalid {
+                detail: "the lifecycle work names a missing session".to_owned(),
+            }),
+            aex_session_dynamodb::store::SessionScoped::Deleted => Err(StoreError::Invalid {
+                detail: "the lifecycle work names a session past its deletion fence".to_owned(),
+            }),
+        }
+    }
+
+    async fn runtime_view(
+        &self,
+        session: &aex_session_domain::Session,
+    ) -> Result<aex_runtime_control::store::GenerationView, StoreError> {
+        use aex_runtime_control::store::{ReadConsistency, RuntimeActivityStore as _};
+
+        let generation = session.lifecycle.generation;
+        let view = self
+            .runtime
+            .load_generation_view(generation, ReadConsistency::Strong)
+            .await
+            .map_err(runtime_store_error)?
+            .ok_or_else(|| StoreError::Invalid {
+                detail: "the session generation has no runtime-activity authority".to_owned(),
+            })?;
+        if view.session != session.id || view.head.generation != generation {
+            return Err(StoreError::Invalid {
+                detail: "runtime-activity disagrees with the exact session generation".to_owned(),
+            });
+        }
+        Ok(view)
+    }
+
+    async fn dispatch(
+        &self,
+        command: aex_runtime_control_aws::RuntimeCommand,
+    ) -> Result<(), StoreError> {
+        let body = serde_json::to_string(&command).map_err(|error| StoreError::Invalid {
+            detail: format!("the runtime lifecycle command is not serializable: {error}"),
+        })?;
+        self.sqs
+            .send_message()
+            .queue_url(&self.runtime_queue_url)
+            .message_body(body)
+            .send()
+            .await
+            .map_err(|error| StoreError::Unavailable {
+                detail: format!("the runtime lifecycle hint could not be sent: {error}"),
+            })?;
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl LifecyclePort for DynamoLifecyclePort {
+    async fn prepare(
+        &self,
+        step: &LifecycleStep,
+        _now: Timestamp,
+    ) -> Result<LifecycleReadiness, StoreError> {
+        if step.kind == OperationKind::SessionCancel {
+            return Ok(LifecycleReadiness::Ready);
+        }
+        if step.kind == OperationKind::SessionDelete {
+            return Ok(LifecycleReadiness::Unowned);
+        }
+        let session = self.session(step).await?;
+        let view = self.runtime_view(&session).await?;
+        use aex_runtime_control::generation::GenerationState;
+        let ready = match step.kind {
+            OperationKind::SessionSuspend => view.head.state == GenerationState::Suspended,
+            OperationKind::SessionResume => view.head.state == GenerationState::Running,
+            OperationKind::SessionTerminate => view.head.state.is_terminal(),
+            OperationKind::SessionCancel | OperationKind::SessionDelete => unreachable!(),
+            OperationKind::WorkspaceDelete
+            | OperationKind::TelemetryExport
+            | OperationKind::ContentGc => return Ok(LifecycleReadiness::Unowned),
+        };
+        if ready {
+            return Ok(LifecycleReadiness::Ready);
+        }
+        if view.head.state.is_terminal() {
+            return Err(StoreError::Invalid {
+                detail: "the retained generation was lost before its lifecycle effect completed"
+                    .to_owned(),
+            });
+        }
+        let command = match step.kind {
+            OperationKind::SessionSuspend => {
+                aex_runtime_control_aws::RuntimeCommand::SessionSuspend {
+                    session: step.session,
+                    generation: session.lifecycle.generation,
+                }
+            }
+            OperationKind::SessionResume => {
+                aex_runtime_control_aws::RuntimeCommand::SessionResume {
+                    session: step.session,
+                    generation: session.lifecycle.generation,
+                }
+            }
+            OperationKind::SessionTerminate => {
+                aex_runtime_control_aws::RuntimeCommand::SessionTerminate {
+                    session: step.session,
+                    generation: session.lifecycle.generation,
+                }
+            }
+            _ => unreachable!(),
+        };
+        self.dispatch(command).await?;
+        Ok(LifecycleReadiness::Deferred)
+    }
+
+    async fn settle(
+        &self,
+        step: &LifecycleStep,
+        hold: &WorkClaim,
+        now: Timestamp,
+    ) -> Result<(), StoreError> {
+        let session = self.session(step).await?;
+        let stored = aex_session_dynamodb::store::OperationAuthority::load(
+            &self.operations,
+            step.workspace,
+            step.operation,
+        )
+        .await?
+        .ok_or_else(|| StoreError::Invalid {
+            detail: "the lifecycle operation disappeared before settlement".to_owned(),
+        })?;
+        if stored.record.kind != step.kind
+            || stored.record.session != Some(step.session)
+            || stored.version < step.admitted_version
+        {
+            return Err(StoreError::Invalid {
+                detail: "the lifecycle operation changed binding before settlement".to_owned(),
+            });
+        }
+        if step.kind != OperationKind::SessionCancel {
+            let view = self.runtime_view(&session).await?;
+            let ready = match step.kind {
+                OperationKind::SessionSuspend => {
+                    view.head.state == aex_runtime_control::generation::GenerationState::Suspended
+                }
+                OperationKind::SessionResume => {
+                    view.head.state == aex_runtime_control::generation::GenerationState::Running
+                }
+                OperationKind::SessionTerminate => view.head.state.is_terminal(),
+                _ => false,
+            };
+            if !ready {
+                return Err(StoreError::Contended);
+            }
+        }
+        let planned = aex_session_app::settle_lifecycle_operation(
+            &session,
+            &stored.record,
+            aex_operation_domain::OperationVersion(stored.version),
+            &aex_session_app::LifecycleWorkClaim {
+                work_id: hold.work_id.clone(),
+                fence: hold.fence,
+                owner: hold.owner.clone(),
+            },
+            now,
+        )
+        .map_err(|error| StoreError::Invalid {
+            detail: format!("the lifecycle settlement plan was rejected: {error}"),
+        })?;
+        let binding = aex_session_dynamodb::application_plan::SessionBinding {
+            workspace: step.workspace,
+            organization: session.organization,
+            session: step.session,
+        };
+        let operations =
+            aex_session_dynamodb::app_authority::SessionAuthorityExternal::new(binding);
+        let work = aex_work_dynamodb::WorkApplicationCompiler;
+        let compilers = aex_session_dynamodb::application_plan::FamilyCompilers::new()
+            .with(
+                aex_session_app::TableFamily::OperationAuthority,
+                &operations,
+            )
+            .with(aex_session_app::TableFamily::WorkAuthority, &work);
+        let committer = aex_session_dynamodb::app_authority::DynamoAuthorityCommitter::new(
+            self.dynamodb.clone(),
+            self.tables.clone(),
+            binding,
+            now,
+            aex_session_dynamodb::app_authority::ApiHintSink,
+        );
+        committer
+            .commit_replayable_resolving(
+                &planned.plan,
+                &compilers,
+                aex_session_dynamodb::error::Resolution::TargetItem,
+            )
+            .await
+    }
+}
+
+fn runtime_store_error(error: aex_runtime_control::store::RuntimeStoreError) -> StoreError {
+    match error {
+        aex_runtime_control::store::RuntimeStoreError::Unavailable { reason } => {
+            StoreError::Unavailable { detail: reason }
+        }
+        aex_runtime_control::store::RuntimeStoreError::Malformed { reason } => {
+            StoreError::Invalid { detail: reason }
+        }
+        aex_runtime_control::store::RuntimeStoreError::NoSuchGeneration { generation } => {
+            StoreError::Invalid {
+                detail: format!("runtime-activity has no generation {generation}"),
+            }
+        }
+        _ => StoreError::Contended,
     }
 }
 
@@ -409,16 +756,16 @@ pub enum ReconcileDisposition {
     Deferred,
 }
 
-/// Fenced reconciliation of terminal work and accepted cancellations.
+/// Fenced reconciliation of operation work and accepted cancellations.
 ///
-/// This is a complete no-effect continuation: it strongly validates the hint,
-/// observes the monotonic terminal operation, takes the work fence, and retires
-/// the row. An ambiguous retirement is resolved by reading the target; the
-/// write is never issued blindly a second time.
-#[derive(Debug, Clone)]
+/// Lifecycle effects are delegated to the composed runtime bridge before the
+/// work fence is taken. The fence is acquired only once exact provider state is
+/// ready for the atomic session-facing consistency barrier.
+#[derive(Clone)]
 pub struct OperationReconciler<W, O> {
     work: W,
     operations: O,
+    lifecycle: Arc<dyn LifecyclePort>,
     owner: String,
     lease_ms: i64,
 }
@@ -447,9 +794,17 @@ where
         Ok(Self {
             work,
             operations,
+            lifecycle: Arc::new(NoLifecycle),
             owner,
             lease_ms,
         })
+    }
+
+    /// Adds the production lifecycle effect and settlement authority.
+    #[must_use]
+    pub fn with_lifecycle(mut self, lifecycle: impl LifecyclePort) -> Self {
+        self.lifecycle = Arc::new(lifecycle);
+        self
     }
 
     /// The bound work port, exposed for readiness and deterministic tests.
@@ -493,8 +848,21 @@ where
         let cancelling = operation.status == OperationStatus::Running
             && operation.cancel_requested
             && operation.committed_at.is_none();
-        if !operation.status.is_terminal() && !cancelling {
-            return Ok(ReconcileDisposition::Deferred);
+        let lifecycle_step =
+            (!operation.status.is_terminal() && !cancelling).then(|| LifecycleStep {
+                workspace: binding.workspace,
+                session: binding.session,
+                operation: binding.operation,
+                kind: operation.kind,
+                admitted_version: binding.version,
+            });
+        if let Some(step) = lifecycle_step.as_ref() {
+            match self.lifecycle.prepare(step, now).await? {
+                LifecycleReadiness::Ready => {}
+                LifecycleReadiness::Deferred | LifecycleReadiness::Unowned => {
+                    return Ok(ReconcileDisposition::Deferred);
+                }
+            }
         }
 
         if work.state == "claimed"
@@ -532,7 +900,9 @@ where
             .await?
             .ok_or(ReconcileError::MissingWork)?;
         binding.verify_claimed(&claimed, &hold)?;
-        let committed = if cancelling {
+        let committed = if let Some(step) = lifecycle_step.as_ref() {
+            self.lifecycle.settle(step, &hold, now).await
+        } else if cancelling {
             self.operations.cancel_step(&operation, &hold, now).await
         } else {
             self.work.complete(&hold, now).await

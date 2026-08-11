@@ -640,6 +640,22 @@ impl<S: HintSink> DynamoAuthorityCommitter<S> {
         plan: &SessionTransaction,
         external: &impl ExternalActionCompiler,
     ) -> Result<(), StoreError> {
+        self.commit_replayable_resolving(
+            plan,
+            external,
+            crate::error::Resolution::IdempotencyReceipt,
+        )
+        .await
+    }
+
+    /// Commits a multi-family plan whose ambiguous outcome is resolved by the
+    /// caller-selected durable authority.
+    pub async fn commit_replayable_resolving(
+        &self,
+        plan: &SessionTransaction,
+        external: &impl ExternalActionCompiler,
+        resolution: crate::error::Resolution,
+    ) -> Result<(), StoreError> {
         let compiled = self.compile_with(plan, external)?;
         let request = compiled.transaction.compile(&self.client)?;
         match request.send().await {
@@ -653,10 +669,9 @@ impl<S: HintSink> DynamoAuthorityCommitter<S> {
                 Some(service) => {
                     crate::error::decode_cancellation(service, compiled.transaction.participants())
                 }
-                None => crate::error::classify(
-                    &error,
-                    crate::error::Idempotence::Write(crate::error::Resolution::IdempotencyReceipt),
-                ),
+                None => {
+                    crate::error::classify(&error, crate::error::Idempotence::Write(resolution))
+                }
             }),
         }
     }

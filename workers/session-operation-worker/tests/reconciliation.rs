@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-use aex_operation_domain::OperationStatus;
+use aex_operation_domain::{OperationKind, OperationStatus};
 use aex_session_dynamodb::StoreError;
 use aex_session_dynamodb::plan::Participant;
 use aex_wire::ids::{OperationId, PrefixedId, SessionId, Uuid7, WorkspaceId};
@@ -12,8 +12,9 @@ use aex_work_dynamodb::WorkClaim;
 use aex_work_dynamodb::codec::{DeliveryEvidence, Payload, WorkRecord};
 use aex_work_dynamodb::store::{DueEntry, DuePage};
 use session_operation_worker::{
-    OperationPort, OperationReconciler, OperationSnapshot, ReconcileDisposition, WorkHint,
-    WorkPort, compile_cancelled_step, next_due_cursor,
+    LifecyclePort, LifecycleReadiness, LifecycleStep, OperationPort, OperationReconciler,
+    OperationSnapshot, ReconcileDisposition, WorkHint, WorkPort, compile_cancelled_step,
+    next_due_cursor,
 };
 
 fn timestamp(millis: i64) -> Timestamp {
@@ -194,6 +195,45 @@ impl WorkPort for MemoryWork {
     }
 }
 
+struct MemoryLifecycle {
+    work: Arc<Mutex<Option<WorkRecord>>>,
+    prepares: Arc<Mutex<u64>>,
+    settlements: Arc<Mutex<u64>>,
+}
+
+#[async_trait::async_trait]
+impl LifecyclePort for MemoryLifecycle {
+    async fn prepare(
+        &self,
+        _step: &LifecycleStep,
+        _now: Timestamp,
+    ) -> Result<LifecycleReadiness, StoreError> {
+        *self.prepares.lock().expect("prepare lock") += 1;
+        Ok(LifecycleReadiness::Ready)
+    }
+
+    async fn settle(
+        &self,
+        _step: &LifecycleStep,
+        hold: &WorkClaim,
+        _now: Timestamp,
+    ) -> Result<(), StoreError> {
+        let mut work = self.work.lock().expect("work lock");
+        let row = work.as_mut().ok_or_else(precondition)?;
+        if row.state != "claimed"
+            || row.fence != hold.fence
+            || row.claim_owner.as_deref() != Some(hold.owner.as_str())
+        {
+            return Err(precondition());
+        }
+        row.state = "done".to_owned();
+        row.claim_owner = None;
+        row.lease_expires_at = None;
+        *self.settlements.lock().expect("settlement lock") += 1;
+        Ok(())
+    }
+}
+
 fn precondition() -> StoreError {
     StoreError::PreconditionFailed {
         participant: Participant::WORK_ROOT_WAKE,
@@ -281,6 +321,7 @@ fn reconciler_with_cancel(
                 id: operation(),
                 workspace: workspace(),
                 session: Some(session()),
+                kind: OperationKind::ContentGc,
                 status,
                 version: 4,
                 cancel_requested,
@@ -298,6 +339,61 @@ fn reconciler_with_cancel(
 
 fn reconciler(status: OperationStatus) -> OperationReconciler<MemoryWork, MemoryOperations> {
     reconciler_with_cancel(status, false)
+}
+
+#[tokio::test]
+async fn a_nonterminal_lifecycle_step_is_prepared_then_settled_under_the_exact_claim() {
+    let work = MemoryWork::new(pending_work());
+    let shared_work = Arc::clone(&work.record);
+    let prepares = Arc::new(Mutex::new(0));
+    let settlements = Arc::new(Mutex::new(0));
+    let reconciler = OperationReconciler::new(
+        MemoryWork {
+            record: Arc::clone(&shared_work),
+            complete_faults: work.complete_faults,
+        },
+        MemoryOperations {
+            snapshot: Mutex::new(OperationSnapshot {
+                id: operation(),
+                workspace: workspace(),
+                session: Some(session()),
+                kind: OperationKind::SessionSuspend,
+                status: OperationStatus::Queued,
+                version: 4,
+                cancel_requested: false,
+                committed_at: None,
+            }),
+            work: Arc::clone(&shared_work),
+            cancellations: Mutex::new(0),
+            cancel_faults: Mutex::new(VecDeque::new()),
+        },
+        "worker-1",
+        60_000,
+    )
+    .expect("valid worker settings")
+    .with_lifecycle(MemoryLifecycle {
+        work: Arc::clone(&shared_work),
+        prepares: Arc::clone(&prepares),
+        settlements: Arc::clone(&settlements),
+    });
+
+    assert_eq!(
+        reconciler
+            .reconcile(&hint(), timestamp(2_000))
+            .await
+            .expect("lifecycle reconciliation"),
+        ReconcileDisposition::Retired
+    );
+    assert_eq!(*prepares.lock().expect("prepare lock"), 1);
+    assert_eq!(*settlements.lock().expect("settlement lock"), 1);
+    assert_eq!(
+        shared_work
+            .lock()
+            .expect("work lock")
+            .as_ref()
+            .map(|row| row.state.as_str()),
+        Some("done")
+    );
 }
 
 #[tokio::test]
@@ -375,6 +471,7 @@ fn a_cancelled_step_is_one_stably_identified_two_authority_transaction() {
         id: operation(),
         workspace: workspace(),
         session: Some(session()),
+        kind: OperationKind::ContentGc,
         status: OperationStatus::Running,
         version: 4,
         cancel_requested: true,
