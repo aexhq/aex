@@ -94,4 +94,6 @@ d9f25a1b1ccc7dd36f3e1bcea81124db110e8c8f:conformance/credentials/workspace-keys.
 d9f25a1b1ccc7dd36f3e1bcea81124db110e8c8f:conformance/credentials/workspace-keys.jsonl:generic-api-key:11
 # Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
 d9f25a1b1ccc7dd36f3e1bcea81124db110e8c8f:conformance/credentials/workspace-keys.jsonl:generic-api-key:12
+# Canonical Secrets Manager reference in a schema-admin CLI conformance fixture; this is a resource name, never credential material.
+d1dfaa9ad8619ca40ae85e973a7b7079106a6c3b:workers/central-schema-admin/tests/conformance.rs:generic-api-key:210
 
