@@ -11,7 +11,9 @@
 //! So: `session_get` and `sessions_list` consume this. They must not grow their
 //! own.
 
-use aex_session_domain::{Session, SessionStatus, TerminationReason};
+use aex_session_domain::{
+    Message, MessagePart, MessageRole, MessageState, Session, SessionStatus, TerminationReason,
+};
 use aex_wire::canonical::{CanonicalError, to_jcs_bytes};
 use aex_wire::models;
 use aex_wire::types::Cents;
@@ -127,9 +129,60 @@ pub fn canonical_session_bytes(session: &Session) -> Result<Vec<u8>, CanonicalEr
     to_jcs_bytes(&public_session(session)?)
 }
 
+/// Projects one complete sealed message without exposing its internal run id.
+///
+/// # Errors
+///
+/// Returns [`CanonicalError`] for an open row or the retired persisted-file
+/// message part. Public admission is text-only and built-in tool records are
+/// the only non-text parts in this release.
+pub fn public_message(message: &Message) -> Result<models::Message, CanonicalError> {
+    if message.state != MessageState::Sealed || message.sealed_at.is_none() {
+        return Err(CanonicalError::Malformed {
+            reason: "only complete sealed messages are public".to_owned(),
+        });
+    }
+    let mut content = Vec::with_capacity(message.parts.len());
+    for part in &message.parts {
+        content.push(match part {
+            MessagePart::Text { text } => {
+                models::MessagePart::Text(models::MessagePartText { text: text.clone() })
+            }
+            MessagePart::ToolCall { id, arguments } => {
+                models::MessagePart::ToolCall(models::MessagePartToolCall {
+                    id: *id,
+                    arguments_digest: *arguments,
+                })
+            }
+            MessagePart::ToolResult { id, result } => {
+                models::MessagePart::ToolResult(models::MessagePartToolResult {
+                    id: *id,
+                    result_digest: *result,
+                })
+            }
+            MessagePart::File { .. } => {
+                return Err(CanonicalError::Malformed {
+                    reason: "persisted-file message parts are retired".to_owned(),
+                });
+            }
+        });
+    }
+    Ok(models::Message {
+        id: message.id,
+        session_id: message.session,
+        role: match message.role {
+            MessageRole::User => models::MessageRole::User,
+            MessageRole::Assistant => models::MessageRole::Assistant,
+            MessageRole::Tool => models::MessageRole::Tool,
+        },
+        content,
+        created_at: message.created_at,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use aex_session_domain::SessionStatus;
+    use aex_session_domain::{MessagePart, MessageRole, MessageState, SessionStatus};
 
     #[test]
     fn the_list_projection_is_complete_without_resolved_config() {
@@ -156,5 +209,33 @@ mod tests {
         assert_eq!(item.model, session.resolved.model());
         assert_eq!(item.created_at, session.created_at);
         assert_eq!(item.updated_at, session.updated_at);
+    }
+
+    #[test]
+    fn a_sealed_message_projects_without_its_internal_run_identity() {
+        let (session, run, agent, mut message) = aex_session_domain::testing::running_session();
+        message.role = MessageRole::User;
+        message.state = MessageState::Sealed;
+        message.parts = vec![MessagePart::Text {
+            text: "hello".to_owned(),
+        }];
+        message.sealed_at = Some(message.created_at);
+
+        let projected = super::public_message(&message).expect("sealed message projects");
+        let rendered = serde_json::to_value(&projected).expect("public message serializes");
+
+        assert_eq!(projected.session_id, session.id);
+        assert_eq!(projected.role, aex_wire::models::MessageRole::User);
+        assert_eq!(projected.content.len(), 1);
+        assert_eq!(message.run, Some(run.id));
+        assert_eq!(message.agent, agent.id);
+        assert!(rendered.get("runId").is_none());
+        assert!(rendered.get("agentId").is_none());
+    }
+
+    #[test]
+    fn an_open_message_is_never_public() {
+        let (_, _, _, message) = aex_session_domain::testing::running_session();
+        assert!(super::public_message(&message).is_err());
     }
 }

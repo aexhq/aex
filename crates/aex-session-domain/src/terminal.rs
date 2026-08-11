@@ -17,9 +17,10 @@ use aex_wire::ids::{AgentId, MessageId};
 use aex_wire::types::Timestamp;
 
 use crate::ids::{AgentFence, CancellationEpoch, SessionRevision, UsageClosureId};
+use crate::lifecycle::{LifecycleError, LifecycleStatus};
 use crate::message::{Message, MessageDelta, seal};
 use crate::run::{Run, RunOutcome};
-use crate::session::{Session, SessionStatus};
+use crate::session::Session;
 
 /// Largest number of open messages one run may carry into its terminal
 /// barrier.
@@ -121,6 +122,9 @@ pub enum TerminalRejection {
     /// The session is past the irreversible deletion fence.
     #[error("session is deleting")]
     SessionDeleting,
+    /// The session-centric lifecycle disagreed with the internal run owner.
+    #[error(transparent)]
+    Lifecycle(#[from] LifecycleError),
 }
 
 /// Settles a run, or reports why this attempt is not the winner.
@@ -193,7 +197,9 @@ pub fn claim_terminal(
         .collect();
 
     let mut head = session.clone();
-    head.status = SessionStatus::Idle;
+    head.lifecycle.complete_message(run.id, attempt.at)?;
+    debug_assert_eq!(head.lifecycle.status, LifecycleStatus::Idle);
+    head.status = head.lifecycle.status;
     head.active_run = None;
     head.revision = session.revision.next();
     head.updated_at = attempt.at;
@@ -257,6 +263,8 @@ mod tests {
         assert_eq!(commit.sealed_messages.len(), 1);
         assert_eq!(commit.session.active_run, None);
         assert_eq!(commit.session.status, SessionStatus::Idle);
+        assert_eq!(commit.session.lifecycle.active, None);
+        assert_eq!(commit.session.lifecycle.idle_since, Some(attempt.at));
         assert_eq!(commit.session.revision, session.revision.next());
         assert_eq!(commit.outbox.run, run.id);
         assert_eq!(commit.usage_closure, attempt.usage_closure);

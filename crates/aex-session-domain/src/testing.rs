@@ -263,14 +263,27 @@ const fn fact_tag(fact: AuthorityFact) -> u8 {
 pub fn running_session() -> (Session, Run, AgentControl, Message) {
     let mut session = session_fixture();
     let run_id = run_id(6);
+    let message_id = id::<MessageId>(7);
+    session
+        .lifecycle
+        .admit_message(
+            message_id,
+            run_id,
+            crate::ResolvedMessageBounds {
+                max_spend_cents: NonZeroU64::new(1_000).expect("non-zero"),
+                deadline: moment(60_000),
+            },
+            moment(1),
+        )
+        .expect("fixture message admission");
     session.active_run = Some(run_id);
-    session.status = SessionStatus::Running;
+    session.status = session.lifecycle.status;
 
     let agent = child_agent();
     let run = Run {
         id: run_id,
         session: session.id,
-        message: id::<MessageId>(7),
+        message: message_id,
         status: RunStatus::Running,
         max_spend_cents: NonZeroU64::new(1_000).expect("non-zero"),
         deadline: moment(60_000),

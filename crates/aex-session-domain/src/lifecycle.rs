@@ -359,6 +359,7 @@ impl SessionLifecycle {
         self.active = None;
         self.idle_since = Some(now);
         self.suspend_at = Some(suspend_at);
+        self.suspended_at = None;
         Ok(())
     }
 
@@ -448,6 +449,7 @@ mod tests {
             .complete_resume(at(5_000))
             .expect("generation resumed");
         assert_eq!(lifecycle.status, LifecycleStatus::Running);
+        assert_eq!(lifecycle.suspended_at, None);
         assert_eq!(lifecycle.active.expect("activity").message, message(2));
     }
 
