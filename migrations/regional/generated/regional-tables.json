@@ -1,13 +1,13 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:04dcfad9fd53393180c87fe3185ba3db1f19f73d8ca25183c5b5e42725ac8272",
+  "digest": "blake3:c2dfc514e236472fedd1530168d549b5500433a5f9a0c7f381467077f0c09583",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
       "table": "observation-authority",
       "owner": "observations-usage",
-      "purpose": "The observation authority and its own query engine: immutable OBS# observation revisions, the per-scope accepted frontier and deletion fence, the accepted- and event-time segment directories, staged admission pages and their receipts, the durable spool and usage outbox, series claims and their cardinality counters, workspace ingest quota, the regional ingress gate, telemetry gaps and the workspace gap-change hint that says whether they are worth reading, export state and export checkpoints. There is no downstream projection store and no change-feed rail: this table answers every supported query shape itself.",
+      "purpose": "The observation authority and its own query engine: immutable OBS# observation revisions, the per-scope accepted frontier and deletion fence, strongly consistent scope directories and materialization ledgers for exact deletion, the accepted- and event-time segment directories, staged admission pages and their receipts, the durable spool and usage outbox, series claims and their cardinality counters, workspace ingest quota, the regional ingress gate, telemetry gaps and the workspace gap-change hint that says whether they are worth reading, export state and export checkpoints. There is no downstream projection store and no change-feed rail: this table answers every supported query shape itself.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -258,6 +258,9 @@
       },
       "itemTypes": [
         "observation",
+        "segment",
+        "scope_batch",
+        "materialization_ledger",
         "staged_page",
         "admission_receipt",
         "spool_chunk",
@@ -265,6 +268,8 @@
         "series_claim",
         "telemetry_gap",
         "gap_change_hint",
+        "scope_deletion",
+        "scope_export",
         "export",
         "export_checkpoint"
       ],
@@ -351,6 +356,46 @@
           ]
         },
         {
+          "role": "session-operation-worker",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:UpdateItem"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "scope_deletion"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "FRONT#*"
+            ]
+          }
+        },
+        {
+          "role": "observation-reconciler",
+          "actions": [
+            "dynamodb:TransactGetItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "export"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "EXPORT#*",
+              "OP#*"
+            ]
+          }
+        },
+        {
           "role": "observation-export-launcher",
           "actions": [
             "dynamodb:Query",
@@ -366,7 +411,6 @@
           "actions": [
             "dynamodb:GetItem",
             "dynamodb:Query",
-            "dynamodb:PutItem",
             "dynamodb:UpdateItem"
           ],
           "resources": [
@@ -1447,7 +1491,10 @@
           "role": "regional-session-api",
           "actions": [
             "dynamodb:GetItem",
-            "dynamodb:Query"
+            "dynamodb:Query",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"
@@ -1768,6 +1815,48 @@
           ],
           "resources": [
             "table"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "EXPORT#*",
+              "FRONT#*",
+              "OP#*",
+              "SESSION#*"
+            ]
+          }
+        },
+        {
+          "role": "observation-reconciler",
+          "actions": [
+            "dynamodb:TransactGetItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "operation"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "EXPORT#*",
+              "OP#*"
+            ]
+          }
+        },
+        {
+          "role": "observation-reconciler",
+          "actions": [
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "operation"
           ],
           "condition": {
             "operator": "ForAllValues:StringLike",

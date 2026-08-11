@@ -260,6 +260,17 @@
       "resources": ["table", "index/*"]
     },
     {
+      "role": "session-operation-worker",
+      "actions": ["dynamodb:GetItem", "dynamodb:UpdateItem"],
+      "resources": ["table"],
+      "itemTypes": ["scope_deletion"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["FRONT#*"]
+      }
+    },
+    {
       "role": "observation-reconciler",
       "actions": ["dynamodb:TransactGetItems"],
       "resources": ["table"],

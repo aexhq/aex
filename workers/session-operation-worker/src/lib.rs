@@ -7,6 +7,9 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use std::sync::Arc;
 
+use aex_observation_store_dynamodb::{
+    SessionObservationDeletion, SessionObservationDeletionError, SessionObservationDeletionRequest,
+};
 use aex_operation_domain::{OperationKind, OperationStatus};
 use aex_session_dynamodb::StoreError;
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
@@ -258,7 +261,7 @@ pub struct OperationSnapshot {
     pub workspace: WorkspaceId,
     /// Owning session for session-scoped continuations.
     pub session: Option<SessionId>,
-    /// Exact operation kind.
+    /// Immutable operation kind.
     pub kind: OperationKind,
     /// Current monotonic status.
     pub status: OperationStatus,
@@ -801,37 +804,43 @@ pub fn compile_cancelled_step(
     Ok(plan)
 }
 
-/// Result of reconciling one terminal-operation hint.
+/// Result of reconciling one authoritative operation-step hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReconcileDisposition {
     /// This invocation retired the work row.
     Retired,
     /// A previous invocation already retired it.
     AlreadyRetired,
+    /// An idempotent nonterminal participant was durably scheduled or replayed.
+    EffectScheduled,
     /// The owning operation is still nonterminal and belongs to an effect lane.
     Deferred,
 }
 
-/// Fenced reconciliation of operation work and accepted cancellations.
+/// Reconciliation of terminal work, accepted cancellations and idempotent
+/// participant admission.
 ///
-/// Lifecycle effects are delegated to the composed runtime bridge before the
-/// work fence is taken. The fence is acquired only once exact provider state is
-/// ready for the atomic session-facing consistency barrier.
+/// Every path strongly validates the hint against the work and operation
+/// authorities first. Lifecycle effects are prepared before the work fence and
+/// settled behind it; session observation deletion uses its own operation-bound
+/// conditional row, so duplicate invocations replay that participant.
 #[derive(Clone)]
-pub struct OperationReconciler<W, O> {
+pub struct OperationReconciler<W, O, D> {
     work: W,
     operations: O,
+    observation_deletions: D,
     lifecycle: Arc<dyn LifecyclePort>,
     owner: String,
     lease_ms: i64,
 }
 
-impl<W, O> OperationReconciler<W, O>
+impl<W, O, D> OperationReconciler<W, O, D>
 where
     W: WorkPort,
     O: OperationPort,
+    D: SessionObservationDeletion,
 {
-    /// Binds the two authorities and the claim identity.
+    /// Binds the durable authorities and the claim identity.
     ///
     /// # Errors
     ///
@@ -840,6 +849,7 @@ where
     pub fn new(
         work: W,
         operations: O,
+        observation_deletions: D,
         owner: impl Into<String>,
         lease_ms: i64,
     ) -> Result<Self, ReconcileError> {
@@ -851,6 +861,7 @@ where
             work,
             operations,
             lifecycle: Arc::new(NoLifecycle),
+            observation_deletions,
             owner,
             lease_ms,
         })
@@ -873,6 +884,12 @@ where
     #[must_use]
     pub const fn operations(&self) -> &O {
         &self.operations
+    }
+
+    /// The bound observation deletion participant.
+    #[must_use]
+    pub const fn observation_deletions(&self) -> &D {
+        &self.observation_deletions
     }
 
     /// Reconciles one hint.
@@ -901,6 +918,17 @@ where
             .await?
             .ok_or(ReconcileError::MissingOperation)?;
         binding.verify(&operation)?;
+        if !operation.status.is_terminal() && operation.kind == OperationKind::SessionDelete {
+            self.observation_deletions
+                .request(SessionObservationDeletionRequest {
+                    workspace: binding.workspace,
+                    session: binding.session,
+                    operation: binding.operation,
+                    now,
+                })
+                .await?;
+            return Ok(ReconcileDisposition::EffectScheduled);
+        }
         let cancelling = operation.status == OperationStatus::Running
             && operation.cancel_requested
             && operation.committed_at.is_none();
@@ -1089,7 +1117,7 @@ pub enum ReconcileError {
     #[error("the work hint is invalid")]
     InvalidHint,
     /// Worker claim settings were unusable.
-    #[error("terminal reconciler settings are invalid")]
+    #[error("operation reconciler settings are invalid")]
     InvalidSettings,
     /// No base row exists under the hint's asserted tenant.
     #[error("the authoritative work row is missing")]
@@ -1106,6 +1134,9 @@ pub enum ReconcileError {
     /// Work payload, tenant, session, version, claim, or operation disagreed.
     #[error("the work and operation authorities do not agree")]
     AuthorityMismatch,
+    /// Observation deletion admission or replay failed.
+    #[error(transparent)]
+    ObservationDeletion(#[from] SessionObservationDeletionError),
     /// A regional authority call failed.
     #[error(transparent)]
     Store(#[from] StoreError),

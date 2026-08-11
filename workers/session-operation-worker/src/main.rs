@@ -29,6 +29,7 @@ const DUE_PAGE_ITEMS: u32 = 25;
 struct ShardOutcome {
     retired: u64,
     already_retired: u64,
+    effect_scheduled: u64,
     deferred: u64,
     failed: u64,
     cursor_advanced: bool,
@@ -109,12 +110,15 @@ async fn run(
 
 /// The composed operation-reconciliation slice.
 ///
-/// Nonterminal effect ports are not represented here until their authority
-/// transactions exist. This keeps startup honest: constructed clients are
-/// exactly the clients this slice calls.
+/// Startup composes only the durable ports this slice calls: work and operation
+/// authority plus the exact-session observation deletion participant.
 #[derive(Clone)]
 struct Worker {
-    reconciler: OperationReconciler<aex_work_dynamodb::store::WorkStore, DynamoOperationPort>,
+    reconciler: OperationReconciler<
+        aex_work_dynamodb::store::WorkStore,
+        DynamoOperationPort,
+        aex_observation_store_dynamodb::SessionObservationDeletionStore,
+    >,
     config: Config,
 }
 
@@ -147,9 +151,17 @@ impl Worker {
             tables,
             config.runtime_lifecycle_queue_url.clone(),
         );
+        let observation_deletions =
+            aex_observation_store_dynamodb::SessionObservationDeletionStore::new(
+                dynamodb.clone(),
+                config.observation_table.clone(),
+                config.observation_duty_shards,
+            )
+            .map_err(|error| LambdaError::from(error.to_string()))?;
         let reconciler = OperationReconciler::new(
             work,
             operations,
+            observation_deletions,
             format!("session-operation-worker:{}", config.release_digest),
             config.lease_ms,
         )
@@ -207,9 +219,11 @@ impl Worker {
                 .and_then(WorkHint::decode);
             let item = match outcome {
                 Ok(hint) => match self.reconcile(&hint, now).await {
-                    Ok(ReconcileDisposition::Retired | ReconcileDisposition::AlreadyRetired) => {
-                        BatchItem::succeeded(id)
-                    }
+                    Ok(
+                        ReconcileDisposition::Retired
+                        | ReconcileDisposition::AlreadyRetired
+                        | ReconcileDisposition::EffectScheduled,
+                    ) => BatchItem::succeeded(id),
                     Ok(ReconcileDisposition::Deferred) | Err(_) => BatchItem::failed(id),
                 },
                 Err(_) => BatchItem::failed(id),
@@ -247,6 +261,7 @@ impl Worker {
             .await;
         let mut retired = 0_u64;
         let mut already_retired = 0_u64;
+        let mut effect_scheduled = 0_u64;
         let mut deferred = 0_u64;
         let mut failed = 0_u64;
         let mut advanced_shards = 0_u64;
@@ -254,6 +269,7 @@ impl Worker {
             let outcome = outcome?;
             retired += outcome.retired;
             already_retired += outcome.already_retired;
+            effect_scheduled += outcome.effect_scheduled;
             deferred += outcome.deferred;
             failed += outcome.failed;
             advanced_shards += u64::from(outcome.cursor_advanced);
@@ -269,6 +285,7 @@ impl Worker {
             "advancedShards": advanced_shards,
             "retired": retired,
             "alreadyRetired": already_retired,
+            "effectScheduled": effect_scheduled,
         }))
     }
 
@@ -318,6 +335,7 @@ impl Worker {
             match self.reconcile(&hint, now).await {
                 Ok(ReconcileDisposition::Retired) => outcome.retired += 1,
                 Ok(ReconcileDisposition::AlreadyRetired) => outcome.already_retired += 1,
+                Ok(ReconcileDisposition::EffectScheduled) => outcome.effect_scheduled += 1,
                 Ok(ReconcileDisposition::Deferred) => outcome.deferred += 1,
                 Err(_) => outcome.failed += 1,
             }
@@ -341,6 +359,7 @@ impl std::fmt::Debug for Worker {
             .debug_struct("Worker")
             .field("work", &self.config.work_table)
             .field("operations", &self.config.session_table)
+            .field("observation_deletions", &self.config.observation_table)
             .finish_non_exhaustive()
     }
 }

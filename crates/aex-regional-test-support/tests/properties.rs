@@ -78,6 +78,32 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
 }
 
 #[test]
+fn session_operation_worker_holds_only_the_observation_deletion_control_actions() {
+    let bundle = tables::rebuild().expect("the definitions load");
+    let observation = bundle
+        .tables
+        .iter()
+        .find(|table| table.table == "observation-authority")
+        .expect("observation authority");
+    let grants = observation
+        .iam
+        .iter()
+        .filter(|grant| grant.role == "session-operation-worker")
+        .collect::<Vec<_>>();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(
+        grants[0].actions,
+        ["dynamodb:GetItem", "dynamodb:UpdateItem"]
+    );
+    assert_eq!(grants[0].resources, ["table"]);
+    assert_eq!(grants[0].item_types, ["scope_deletion"]);
+    let condition = grants[0].condition.as_ref().expect("leading-key fence");
+    assert_eq!(condition.operator, "ForAllValues:StringLike");
+    assert_eq!(condition.key, "dynamodb:LeadingKeys");
+    assert_eq!(condition.values, ["FRONT#*"]);
+}
+
+#[test]
 fn only_the_keystore_departs_from_the_pk_sk_convention() {
     for table in tables::rebuild().expect("the definitions load").tables {
         if table.table == "regional-secret-keystore" {

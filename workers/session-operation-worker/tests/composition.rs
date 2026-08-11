@@ -34,6 +34,11 @@ fn complete() -> BTreeMap<&'static str, String> {
             "https://sqs.eu-west-1.amazonaws.com/000000000000/aex-dev-runtime-lifecycle"
                 .to_owned(),
         ),
+        (
+            config::OBSERVATION_TABLE,
+            "aex-dev-observation-authority".to_owned(),
+        ),
+        (config::OBSERVATION_DUTY_SHARDS, "16".to_owned()),
         (config::DUE_SCAN_SHARDS, "64".to_owned()),
         (config::LEASE_MS, "60000".to_owned()),
         (config::STEP_DEADLINE_MS, "30000".to_owned()),
@@ -49,6 +54,8 @@ fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RegionalHttpCon
 fn a_complete_environment_is_accepted() {
     let config = read(&complete()).expect("the complete environment is accepted");
     assert_eq!(config.due_scan_shards, 64);
+    assert_eq!(config.observation_table, "aex-dev-observation-authority");
+    assert_eq!(config.observation_duty_shards, 16);
     assert_eq!(config.lease_ms, 60_000);
     assert_eq!(config.max_attempts, 8);
 }
@@ -104,6 +111,19 @@ fn a_zero_shard_count_refuses_the_process() {
         read(&vars),
         Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::DUE_SCAN_SHARDS
     ));
+}
+
+#[test]
+fn an_observation_duty_shard_count_outside_the_deployed_index_range_is_refused() {
+    for value in ["0", "65"] {
+        let mut vars = complete();
+        vars.insert(config::OBSERVATION_DUTY_SHARDS, value.to_owned());
+        assert!(matches!(
+            read(&vars),
+            Err(RegionalHttpConfigError::Invalid { name, .. })
+                if name == config::OBSERVATION_DUTY_SHARDS
+        ));
+    }
 }
 
 #[test]
