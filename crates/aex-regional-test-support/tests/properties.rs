@@ -121,6 +121,41 @@ fn every_manifest_uses_real_dynamodb_iam_actions() {
 }
 
 #[test]
+fn the_session_operation_worker_can_read_only_exact_runtime_generations() {
+    let tables = tables::rebuild().expect("the definitions load");
+    let runtime = tables
+        .tables
+        .iter()
+        .find(|table| table.table == "runtime-activity")
+        .expect("runtime activity is declared");
+    let grants = runtime
+        .iam
+        .iter()
+        .filter(|grant| grant.role == "session-operation-worker")
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        grants.len(),
+        1,
+        "the lifecycle bridge has one runtime grant"
+    );
+    let grant = grants[0];
+    assert_eq!(grant.actions, ["dynamodb:GetItem"]);
+    assert_eq!(grant.resources, ["table"]);
+    assert!(
+        grant.item_types.is_empty(),
+        "a read grant owns no row family"
+    );
+    let condition = grant
+        .condition
+        .as_ref()
+        .expect("the read is restricted to generation partitions");
+    assert_eq!(condition.operator, "ForAllValues:StringLike");
+    assert_eq!(condition.key, "dynamodb:LeadingKeys");
+    assert_eq!(condition.values, ["GEN#*"]);
+}
+
+#[test]
 fn only_the_keystore_departs_from_the_pk_sk_convention() {
     for table in tables::rebuild().expect("the definitions load").tables {
         if table.table == "regional-secret-keystore" {

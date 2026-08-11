@@ -78,6 +78,16 @@
       "resources": ["table", "index/*"]
     },
     {
+      "role": "session-operation-worker",
+      "actions": ["dynamodb:GetItem"],
+      "resources": ["table"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["GEN#*"]
+      }
+    },
+    {
       "role": "brain-mux",
       "actions": [
         "dynamodb:GetItem",
