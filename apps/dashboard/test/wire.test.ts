@@ -17,7 +17,7 @@ const source = readFileSync(resolve(import.meta.dir, "../src/ui/wire.ts"), "utf8
 const SCHEMA_FOR: Readonly<Record<string, string>> = {
   SessionListItem: "SessionListItem",
   Session: "Session",
-  Run: "Run",
+  Message: "Message",
   Approval: "Approval",
   MissingInterval: "MissingInterval",
   ObservationCoverage: "ObservationCoverage",
@@ -35,10 +35,11 @@ const SCHEMA_FOR: Readonly<Record<string, string>> = {
   DownloadGrant: "DownloadGrant",
   ApiKey: "ApiKey",
   NewApiKey: "NewApiKey",
-  SecretMetadata: "SecretMetadata",
+  ProviderCredential: "ProviderCredential",
   RegisteredEntry: "RegisteredFile",
   EffectiveWorkspaceLimit: "EffectiveWorkspaceLimit",
   FileEntry: "FileEntry",
+  LiveFileEntryPage: "LiveFileEntryPage",
 };
 
 interface Field {

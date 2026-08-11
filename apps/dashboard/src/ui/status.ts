@@ -3,27 +3,17 @@ import type { Status } from "./components";
 /**
  * Lifecycle value to status role, in one table.
  *
- * `undefined` is a deliberate answer: a session that is idle and a run that is
- * queued are neither good nor bad, and painting them green or amber would be the
- * dashboard adding a judgement the product does not make.
+ * `undefined` is a deliberate answer: an idle or suspended session is neither
+ * good nor bad, and painting it green or amber would add a judgement the product
+ * does not make.
  */
 export function sessionStatus(value: string): Status | undefined {
   switch (value) {
     case "running": return "good";
     case "awaiting_approval": return "warning";
+    case "terminating": return "warning";
+    case "terminated": return "serious";
     case "deleting": return "serious";
-    default: return undefined;
-  }
-}
-
-export function runStatus(value: string): Status | undefined {
-  switch (value) {
-    case "running": return "good";
-    case "succeeded": return "good";
-    case "failed": return "critical";
-    case "timed_out": return "critical";
-    case "cancelled": return "warning";
-    case "interrupted": return "warning";
     default: return undefined;
   }
 }

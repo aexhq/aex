@@ -20,7 +20,7 @@ function refusal(result: ReturnType<typeof resolvePassthrough>) {
 
 describe("route admission", () => {
   test("an unknown operation is refused before the credential is read", () => {
-    const result = resolvePassthrough("regional", "session_purge", request("/api/v1/regional/session_purge"), null);
+    const result = resolvePassthrough("regional", "unknown_operation", request("/api/v1/regional/unknown_operation"), null);
     expect(refusal(result)).toEqual({ status: 404, code: "not_found", message: "unknown operation" });
   });
 
@@ -63,13 +63,13 @@ describe("cross-site protection", () => {
   test("a mutation without a matching CSRF token is refused", () => {
     const result = resolvePassthrough(
       "regional",
-      "secret_put",
-      request("/api/v1/regional/secret_put?region=euw1&name=token", {
-        method: "PUT",
+      "provider_credential_register",
+      request("/api/v1/regional/provider_credential_register?region=euw1", {
+        method: "POST",
         cookie: `${SESSION}; ${CSRF}`,
         headers: { "x-aex-csrf": "other", "sec-fetch-site": "same-origin" },
       }),
-      new TextEncoder().encode(JSON.stringify({ value: "v" })),
+      new TextEncoder().encode(JSON.stringify({ name: "dev", provider: "openai", apiKey: "test-key" })),
     );
     expect(refusal(result)?.status).toBe(403);
   });
@@ -77,13 +77,13 @@ describe("cross-site protection", () => {
   test("a cross-site mutation is refused even with a matching token", () => {
     const result = resolvePassthrough(
       "regional",
-      "secret_put",
-      request("/api/v1/regional/secret_put?region=euw1&name=token", {
-        method: "PUT",
+      "provider_credential_register",
+      request("/api/v1/regional/provider_credential_register?region=euw1", {
+        method: "POST",
         cookie: `${SESSION}; ${CSRF}`,
         headers: { "x-aex-csrf": "token", "sec-fetch-site": "cross-site" },
       }),
-      new TextEncoder().encode(JSON.stringify({ value: "v" })),
+      new TextEncoder().encode(JSON.stringify({ name: "dev", provider: "openai", apiKey: "test-key" })),
     );
     expect(refusal(result)?.status).toBe(403);
   });
@@ -157,13 +157,13 @@ describe("mutation admission", () => {
   test("an idempotency-key operation without the header is refused", () => {
     const result = resolvePassthrough(
       "regional",
-      "secret_put",
-      request("/api/v1/regional/secret_put?region=euw1&name=token", {
-        method: "PUT",
+      "provider_credential_register",
+      request("/api/v1/regional/provider_credential_register?region=euw1", {
+        method: "POST",
         cookie: `${SESSION}; ${CSRF}`,
         headers: mutationHeaders,
       }),
-      new TextEncoder().encode(JSON.stringify({ value: "v" })),
+      new TextEncoder().encode(JSON.stringify({ name: "dev", provider: "openai", apiKey: "test-key" })),
     );
     expect(refusal(result)?.status).toBe(400);
   });
@@ -171,28 +171,28 @@ describe("mutation admission", () => {
   test("a well-formed mutation carries the credential, the key and a canonical body", () => {
     const result = resolvePassthrough(
       "regional",
-      "secret_put",
-      request("/api/v1/regional/secret_put?region=euw1&name=token", {
-        method: "PUT",
+      "provider_credential_register",
+      request("/api/v1/regional/provider_credential_register?region=euw1", {
+        method: "POST",
         cookie: `${SESSION}; ${CSRF}`,
         headers: { ...mutationHeaders, "idempotency-key": "idk_1" },
       }),
-      new TextEncoder().encode(JSON.stringify({ value: "v" })),
+      new TextEncoder().encode(JSON.stringify({ name: "dev", provider: "openai", apiKey: "test-key" })),
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.request.path).toBe("/api/secrets/token");
+    expect(result.request.path).toBe("/api/workspace/provider-credentials");
     expect(result.request.headers.get("authorization")).toBe("Bearer aex_ds_fixture");
     expect(result.request.headers.get("Idempotency-Key")).toBe("idk_1");
-    expect(new TextDecoder().decode(result.request.body)).toBe('{"value":"v"}');
+    expect(new TextDecoder().decode(result.request.body)).toBe('{"name":"dev","provider":"openai","apiKey":"test-key"}');
   });
 
   test("an oversized body is refused before it is parsed", () => {
     const result = resolvePassthrough(
       "regional",
-      "secret_put",
-      request("/api/v1/regional/secret_put?region=euw1&name=token", {
-        method: "PUT",
+      "provider_credential_register",
+      request("/api/v1/regional/provider_credential_register?region=euw1", {
+        method: "POST",
         cookie: `${SESSION}; ${CSRF}`,
         headers: { ...mutationHeaders, "idempotency-key": "idk_1" },
       }),
@@ -204,9 +204,9 @@ describe("mutation admission", () => {
   test("a body that is not JSON is refused", () => {
     const result = resolvePassthrough(
       "regional",
-      "secret_put",
-      request("/api/v1/regional/secret_put?region=euw1&name=token", {
-        method: "PUT",
+      "provider_credential_register",
+      request("/api/v1/regional/provider_credential_register?region=euw1", {
+        method: "POST",
         cookie: `${SESSION}; ${CSRF}`,
         headers: { ...mutationHeaders, "idempotency-key": "idk_1" },
       }),

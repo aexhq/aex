@@ -4,15 +4,14 @@ import { useState } from "react";
 
 import { DEADLINE_MS, submit, useResource } from "../client";
 import { Badge, Card, CoverageNotice, Empty, Notice, Resolved } from "../components";
-import { centsToUsd, readCoverage, type PanelState } from "../panel";
-import { bytes, instant, label, runStatus, sessionStatus } from "../status";
+import { readCoverage, type PanelState } from "../panel";
+import { bytes, instant, label, sessionStatus } from "../status";
 import type {
   Approval,
-  DownloadGrant,
-  FileEntry,
+  LiveFileEntryPage,
+  Message,
   ObservationPage,
   Page,
-  Run,
   Session,
 } from "../wire";
 
@@ -52,58 +51,40 @@ export function SessionHeader({ slug, region, sessionId, billingHref }: Scope) {
   );
 }
 
-export function RunsPanel({ region, sessionId, billingHref }: Scope) {
-  const { state, reload } = useResource<Page<Run>>("session_runs_list", {
+export function MessagesPanel({ region, sessionId, billingHref }: Scope) {
+  const { state, reload } = useResource<Page<Message>>("session_messages_list", {
     region,
     parameters: { sessionId, limit: "50" },
     deadlineMs: DEADLINE_MS.control,
   });
   return (
-    <Card title="Runs" description="One row per admitted turn of execution." flush>
+    <Card title="Messages" description="Complete sealed messages in immutable visibility order." flush>
       <Resolved state={state} reload={reload} billingHref={billingHref}>
         {(page) =>
           page.items.length === 0 ? (
-            <Empty title="No runs yet." hint="A run is admitted when a message is sent to the session." />
+            <Empty title="No messages yet." hint="Send text from the SDK or CLI to start the conversation." />
           ) : (
             <div className="scroller">
               <table>
-                <caption className="sr-only">Runs of this session</caption>
+                <caption className="sr-only">Messages in this session</caption>
                 <thead>
                   <tr>
-                    <th scope="col">Status</th>
-                    <th scope="col">Run</th>
-                    <th scope="col">Queued</th>
-                    <th scope="col">Terminal</th>
-                    <th scope="col">Spend ceiling</th>
-                    <th scope="col">Telemetry</th>
+                    <th scope="col">Role</th>
+                    <th scope="col">Message</th>
+                    <th scope="col">Created</th>
+                    <th scope="col">Content</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {page.items.map((run) => (
-                    <tr key={run.id}>
-                      <td>
-                        <Badge status={runStatus(run.status)} label={label(run.status)} />
-                        {run.error ? (
-                          <p className="small muted mono">{run.error.code}</p>
-                        ) : null}
-                      </td>
-                      <td className="mono small">{run.id}</td>
-                      <td className="small muted">{instant(run.queuedAt)}</td>
-                      <td className="small muted">{instant(run.terminalAt)}</td>
-                      <td className="numeric">{centsToUsd(run.maxSpendCents)}</td>
-                      <td>
-                        {run.telemetryComplete === false || (run.telemetryGapIds?.length ?? 0) > 0 ? (
-                          <Badge
-                            status="serious"
-                            label={`${run.telemetryGapIds?.length ?? 0} gap${
-                              (run.telemetryGapIds?.length ?? 0) === 1 ? "" : "s"
-                            }`}
-                          />
-                        ) : run.telemetryComplete === true ? (
-                          <Badge status="good" label="Complete" />
-                        ) : (
-                          <span className="small muted">not reported</span>
-                        )}
+                  {page.items.map((message) => (
+                    <tr key={message.id}>
+                      <td><Badge label={label(message.role)} /></td>
+                      <td className="mono small">{message.id}</td>
+                      <td className="small muted">{instant(message.createdAt)}</td>
+                      <td className="small">
+                        {message.content.map((part) =>
+                          part.type === "text" ? part.text : `${label(part.type)} ${part.id}`
+                        ).join("\n")}
                       </td>
                     </tr>
                   ))}
@@ -166,9 +147,7 @@ export function ApprovalsPanel({ region, sessionId, billingHref }: Scope) {
                     <strong className="small">{approval.boundCall.toolName}</strong>
                     <span className="small muted">expires {instant(approval.expiresAt)}</span>
                   </div>
-                  <p className="small muted mono">
-                    run {approval.boundCall.runId} · args {approval.boundCall.argumentsDigest.slice(0, 16)}…
-                  </p>
+                  <p className="small muted mono">args {approval.boundCall.argumentsDigest.slice(0, 16)}…</p>
                   {approval.status === "pending" ? (
                     <div className="row">
                       <button
@@ -205,73 +184,43 @@ export function ApprovalsPanel({ region, sessionId, billingHref }: Scope) {
   );
 }
 
-export function PersistedFilesPanel({ region, sessionId, billingHref }: Scope) {
-  const { state, reload } = useResource<Page<FileEntry>>("session_files_persisted_list", {
+export function LiveFilesPanel({ region, sessionId, billingHref }: Scope) {
+  const { state, reload } = useResource<LiveFileEntryPage>("session_files_live_list", {
     region,
     parameters: { sessionId },
-    body: { limit: 100, recursive: true },
+    body: { limit: 100, recursive: false },
     deadlineMs: DEADLINE_MS.resources,
   });
-  const [grant, setGrant] = useState<DownloadGrant | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-
-  async function mint(path: string) {
-    setProblem(null);
-    const result = await submit<DownloadGrant>("session_files_persisted_download_create", {
-      region,
-      parameters: { sessionId },
-      body: { path },
-    });
-    if (result.kind === "ready") setGrant(result.data);
-    else setProblem("failure" in result ? result.failure.message : "The grant could not be minted.");
-  }
 
   return (
     <Card
-      title="Persisted files"
-      description="The durable workspace of this session, as of its last persist."
+      title="Live files"
+      description="The ephemeral workspace in this session's exact retained generation. Reading automatically resumes a suspended generation."
       flush
     >
       <Resolved state={state} reload={reload} billingHref={billingHref}>
         {(page) =>
           page.items.length === 0 ? (
             <Empty
-              title="No persisted files."
-              hint="Files appear here after a persist operation; a live workspace is not listed."
+              title="No live files."
+              hint={`Generation ${page.workspaceAccess.generationId}${page.workspaceAccess.resumed ? " resumed for this read" : " answered this read"}.`}
             />
           ) : (
             <>
-              {problem ? (
-                <div style={{ padding: "var(--aex-space-4)" }}>
-                  <Notice status="warning" title="Download not authorised" live>
-                    <p className="small">{problem}</p>
-                  </Notice>
-                </div>
-              ) : null}
-              {grant ? (
-                <div style={{ padding: "var(--aex-space-4)" }}>
-                  <Notice status="good" title="Download ready" live>
-                    <p className="small">
-                      Signed for {bytes(grant.authorizedBytes)}, expires {instant(grant.expiresAt)}.
-                    </p>
-                    <p>
-                      <a className="button" data-variant="primary" href={grant.url} rel="noreferrer">
-                        Download
-                      </a>
-                    </p>
-                  </Notice>
-                </div>
-              ) : null}
+              <p className="small muted" style={{ padding: "var(--aex-space-4)" }}>
+                Generation {page.workspaceAccess.generationId}
+                {page.workspaceAccess.resumed ? " resumed for this read." : " answered without resuming."}
+              </p>
               <div className="scroller">
                 <table>
-                  <caption className="sr-only">Persisted files</caption>
+                  <caption className="sr-only">Live files</caption>
                   <thead>
                     <tr>
                       <th scope="col">Path</th>
                       <th scope="col">Type</th>
                       <th scope="col">Size</th>
                       <th scope="col">Modified</th>
-                      <th scope="col"><span className="sr-only">Actions</span></th>
+                      <th scope="col">Link target</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -281,13 +230,7 @@ export function PersistedFilesPanel({ region, sessionId, billingHref }: Scope) {
                         <td className="small muted">{entry.type}</td>
                         <td className="numeric">{bytes(entry.sizeBytes)}</td>
                         <td className="small muted">{instant(entry.mtime)}</td>
-                        <td>
-                          {entry.type === "file" ? (
-                            <button type="button" className="button" onClick={() => void mint(entry.path)}>
-                              Get link
-                            </button>
-                          ) : null}
-                        </td>
+                        <td className="mono small muted">{entry.target ?? "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -354,7 +297,6 @@ export function SessionEventsPanel({ slug, region, sessionId, billingHref }: Sco
                       <tr>
                         <th scope="col">Observed</th>
                         <th scope="col">Sequence</th>
-                        <th scope="col">Run</th>
                         <th scope="col">Trace</th>
                       </tr>
                     </thead>
@@ -363,7 +305,6 @@ export function SessionEventsPanel({ slug, region, sessionId, billingHref }: Sco
                         <tr key={observation.id}>
                           <td className="small muted">{instant(observation.observedAt)}</td>
                           <td className="numeric">{observation.sequence}</td>
-                          <td className="mono small">{observation.runId ?? "—"}</td>
                           <td className="mono small">
                             {observation.traceId ? (
                               <a href={`/w/${slug}/sessions/${sessionId}/traces/${observation.traceId}`}>

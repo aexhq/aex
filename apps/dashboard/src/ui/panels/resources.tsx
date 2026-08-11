@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import type { RouteId } from "@aexhq/sdk";
-
 import { DEADLINE_MS, submit, useResource } from "../client";
 import { Badge, Card, Empty, Notice, Resolved } from "../components";
 import type { PanelState } from "../panel";
@@ -12,8 +10,8 @@ import type {
   EffectiveWorkspaceLimit,
   LimitValue,
   Page,
+  ProviderCredential,
   RegisteredEntry,
-  SecretMetadata,
 } from "../wire";
 
 interface Scope {
@@ -21,18 +19,17 @@ interface Scope {
   readonly billingHref?: string | undefined;
 }
 
-const SECRET_NAME = /^[A-Za-z0-9._-]{1,128}$/;
+const CREDENTIAL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 /**
- * Secrets.
+ * Dedicated BYOK provider credentials.
  *
  * Values are write-only on the wire and are never read back, so there is no reveal
- * affordance and no masked field pretending to hold one. Delete and revoke are both
- * offered because they are not the same act: delete affects future admission,
- * revoke also cancels custody that is already held.
+ * affordance and no masked field pretending to hold one. This is deliberately
+ * provider-specific rather than a generic secret store.
  */
-export function SecretsPanel({ region, billingHref }: Scope) {
-  const { state, reload } = useResource<Page<SecretMetadata>>("secrets_list", {
+export function ProviderCredentialsPanel({ region, billingHref }: Scope) {
+  const { state, reload } = useResource<Page<ProviderCredential>>("provider_credentials_list", {
     region,
     parameters: { limit: "100" },
     deadlineMs: DEADLINE_MS.resources,
@@ -55,23 +52,23 @@ export function SecretsPanel({ region, billingHref }: Scope) {
     const form = event.currentTarget;
     const data = new FormData(form);
     const name = String(data.get("name") ?? "");
-    const value = String(data.get("value") ?? "");
-    if (!SECRET_NAME.test(name) || value.length === 0) {
-      setProblem("A secret needs a name of letters, digits, dot, dash or underscore, and a value.");
+    const provider = String(data.get("provider") ?? "");
+    const apiKey = String(data.get("apiKey") ?? "");
+    if (!CREDENTIAL_NAME.test(name) || provider.length === 0 || apiKey.length < 8) {
+      setProblem("A credential needs a valid name, provider, and API key of at least eight characters.");
       return;
     }
     setBusy(true);
-    const result = await submit<SecretMetadata>("secret_put", {
+    const result = await submit<ProviderCredential>("provider_credential_register", {
       region,
-      parameters: { name },
-      body: { value },
+      body: { name, provider, apiKey },
     });
     form.reset();
     await act(result);
   }
 
   return (
-    <Card title="Secrets" description="Names and states only. A value is never readable after it is set.">
+    <Card title="Provider credentials" description="Dedicated BYOK bindings. Key material is never readable after registration.">
       <div className="stack">
         {problem ? (
           <Notice status="warning" title="That change was not applied" live>
@@ -85,66 +82,63 @@ export function SecretsPanel({ region, billingHref }: Scope) {
             <input name="name" required maxLength={128} pattern="[A-Za-z0-9._\-]+" />
           </label>
           <label className="field">
-            <span>Value</span>
-            <input name="value" required type="password" autoComplete="off" />
+            <span>Provider</span>
+            <input name="provider" required maxLength={128} />
+          </label>
+          <label className="field">
+            <span>API key</span>
+            <input name="apiKey" required minLength={8} maxLength={8192} type="password" autoComplete="off" />
           </label>
           <button type="submit" className="button" data-variant="primary" disabled={busy}>
-            {busy ? "Saving…" : "Set secret"}
+            {busy ? "Saving…" : "Register credential"}
           </button>
         </form>
 
         <Resolved state={state} reload={reload} billingHref={billingHref}>
           {(page) =>
             page.items.length === 0 ? (
-              <Empty title="No secrets in this workspace." />
+              <Empty title="No provider credentials in this workspace." />
             ) : (
               <div className="scroller">
                 <table>
-                  <caption className="sr-only">Workspace secrets</caption>
+                  <caption className="sr-only">Provider credentials</caption>
                   <thead>
                     <tr>
                       <th scope="col">Name</th>
+                      <th scope="col">Provider</th>
                       <th scope="col">State</th>
                       <th scope="col">Updated</th>
                       <th scope="col"><span className="sr-only">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {page.items.map((secret) => (
-                      <tr key={secret.name}>
-                        <td className="mono small">{secret.name}</td>
+                    {page.items.map((credential) => (
+                      <tr key={credential.id}>
+                        <td className="mono small">{credential.name}</td>
+                        <td className="small">{credential.provider}</td>
                         <td>
                           <Badge
-                            status={secret.state === "ready" ? "good" : "warning"}
-                            label={label(secret.state)}
+                            status={credential.state === "ready" ? "good" : "warning"}
+                            label={label(credential.state)}
                           />
                         </td>
-                        <td className="small muted">{instant(secret.updatedAt)}</td>
+                        <td className="small muted">{instant(credential.updatedAt)}</td>
                         <td>
-                          <div className="row">
-                            {secret.state === "ready" ? (
-                              <button
-                                type="button"
-                                className="button"
-                                onClick={() => {
-                                  setBusy(true);
-                                  void submit("secret_revoke", { region, parameters: { name: secret.name } }).then(act);
-                                }}
-                              >
-                                Revoke
-                              </button>
-                            ) : null}
+                          {credential.state === "ready" ? (
                             <button
                               type="button"
                               className="button"
                               onClick={() => {
                                 setBusy(true);
-                                void submit("secret_delete", { region, parameters: { name: secret.name } }).then(act);
+                                void submit("provider_credential_revoke", {
+                                  region,
+                                  parameters: { providerCredentialId: credential.id },
+                                }).then(act);
                               }}
                             >
-                              Delete
+                              Revoke
                             </button>
-                          </div>
+                          ) : null}
                         </td>
                       </tr>
                     ))}
@@ -159,29 +153,12 @@ export function SecretsPanel({ region, billingHref }: Scope) {
   );
 }
 
-const REGISTRIES = [
-  { key: "files", routeId: "registry_files_list" satisfies RouteId, title: "Files" },
-  { key: "tools", routeId: "registry_tools_list" satisfies RouteId, title: "Tools" },
-  { key: "skills", routeId: "registry_skills_list" satisfies RouteId, title: "Skills" },
-  { key: "mcp", routeId: "registry_mcp_servers_list" satisfies RouteId, title: "MCP servers" },
-  { key: "instructions", routeId: "registry_instructions_list" satisfies RouteId, title: "Instructions" },
-] as const;
-
-type RegistryKey = (typeof REGISTRIES)[number]["key"];
-
 /**
- * The five registries are one panel, not five.
- *
- * Every registry entry has the same shape — name, digest, size, revision, times —
- * so five near-identical tables would be five copies of one design. Writing an
- * entry is not offered: each registry has its own typed value schema and the file
- * registry needs the staged-upload flow, none of which this surface can express
- * without inventing an editor per type. Recorded, not faked.
+ * Durable opaque workspace files. Skills, tools, MCP configuration, custom
+ * instructions, and arbitrary assets all use this one registry.
  */
 export function RegistriesPanel({ region, billingHref }: Scope) {
-  const [kind, setKind] = useState<RegistryKey>("files");
-  const active = REGISTRIES.find((candidate) => candidate.key === kind) ?? REGISTRIES[0];
-  const { state, reload } = useResource<Page<RegisteredEntry>>(active.routeId, {
+  const { state, reload } = useResource<Page<RegisteredEntry>>("registry_files_list", {
     region,
     parameters: { limit: "100" },
     deadlineMs: DEADLINE_MS.resources,
@@ -191,23 +168,13 @@ export function RegistriesPanel({ region, billingHref }: Scope) {
   return (
     <Card
       title="Registered resources"
-      description="What a session may mount. Entries are written from the SDK or the CLI."
-      actions={
-        <label className="field">
-          <span className="sr-only">Registry</span>
-          <select value={kind} onChange={(event) => setKind(event.target.value as RegistryKey)}>
-            {REGISTRIES.map((candidate) => (
-              <option key={candidate.key} value={candidate.key}>{candidate.title}</option>
-            ))}
-          </select>
-        </label>
-      }
+      description="Opaque workspace files a session may mount, including AGENTS.md, skills, tools, MCP configuration, and assets."
       flush
     >
       <Resolved state={state} reload={reload} billingHref={billingHref}>
         {(page) =>
           page.items.length === 0 ? (
-            <Empty title={`No registered ${active.title.toLowerCase()}.`} />
+            <Empty title="No registered files." />
           ) : (
             <>
               {grant ? (
@@ -226,14 +193,14 @@ export function RegistriesPanel({ region, billingHref }: Scope) {
               ) : null}
               <div className="scroller">
                 <table>
-                  <caption className="sr-only">Registered {active.title}</caption>
+                  <caption className="sr-only">Registered files</caption>
                   <thead>
                     <tr>
                       <th scope="col">Name</th>
                       <th scope="col">Digest</th>
                       <th scope="col">Size</th>
                       <th scope="col">Updated</th>
-                      {active.key === "files" ? <th scope="col"><span className="sr-only">Actions</span></th> : null}
+                      <th scope="col"><span className="sr-only">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -243,25 +210,23 @@ export function RegistriesPanel({ region, billingHref }: Scope) {
                         <td className="mono small muted">{entry.sha256.slice(0, 12)}…</td>
                         <td className="numeric">{bytes(entry.sizeBytes)}</td>
                         <td className="small muted">{instant(entry.updatedAt)}</td>
-                        {active.key === "files" ? (
-                          <td>
-                            <button
-                              type="button"
-                              className="button"
-                              onClick={() => {
-                                void submit<DownloadGrant>("registry_files_download_create", {
-                                  region,
-                                  parameters: { name: entry.name },
-                                  body: {},
-                                }).then((result) => {
-                                  if (result.kind === "ready") setGrant(result.data);
-                                });
-                              }}
-                            >
-                              Get link
-                            </button>
-                          </td>
-                        ) : null}
+                        <td>
+                          <button
+                            type="button"
+                            className="button"
+                            onClick={() => {
+                              void submit<DownloadGrant>("registry_files_download_create", {
+                                region,
+                                parameters: { name: entry.name },
+                                body: {},
+                              }).then((result) => {
+                                if (result.kind === "ready") setGrant(result.data);
+                              });
+                            }}
+                          >
+                            Get link
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

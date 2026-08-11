@@ -27,9 +27,11 @@ test("the allowlist carries no operator, no session mutation and no ingest route
   for (const excluded of [
     "session_create",
     "session_message_send",
-    "session_stop",
-    "session_trash",
-    "session_purge",
+    "session_cancel",
+    "session_suspend",
+    "session_resume",
+    "session_terminate",
+    "session_delete",
     "workspace_delete",
   ]) {
     expect((DASHBOARD_ROUTES as readonly string[]).includes(excluded)).toBe(false);

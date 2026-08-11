@@ -34,14 +34,13 @@ export const DASHBOARD_ROUTES = [
   "billing_auto_topup_policy_put",
   "billing_top_up_checkout_create",
   "billing_portal_session_create",
-  // Sessions and runs.
+  // Session conversation and observation.
   "sessions_list",
   "session_get",
-  "session_runs_list",
+  "session_messages_list",
   "session_approvals_list",
   "session_approval_respond",
-  "session_files_persisted_list",
-  "session_files_persisted_download_create",
+  "session_files_live_list",
   // Observability.
   "observations_events_query",
   "observations_traces_query",
@@ -52,16 +51,11 @@ export const DASHBOARD_ROUTES = [
   "session_observations_trace_get",
   "telemetry_gaps_query",
   // Workspace resources.
-  "secrets_list",
-  "secret_put",
-  "secret_delete",
-  "secret_revoke",
+  "provider_credentials_list",
+  "provider_credential_register",
+  "provider_credential_revoke",
   "registry_files_list",
   "registry_files_download_create",
-  "registry_tools_list",
-  "registry_skills_list",
-  "registry_mcp_servers_list",
-  "registry_instructions_list",
   "workspace_limits_list",
   // Usage.
   "usage_query",

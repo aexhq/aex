@@ -19,7 +19,7 @@ export interface Page<T> {
 export interface SessionListItem {
   readonly id: string;
   readonly workspaceId: string;
-  readonly status: "idle" | "running" | "awaiting_approval" | "deleting";
+  readonly status: SessionStatus;
   readonly provider: string;
   readonly model: string;
   readonly revision: number;
@@ -30,31 +30,49 @@ export interface SessionListItem {
 export interface Session {
   readonly id: string;
   readonly workspaceId: string;
-  readonly status: "idle" | "running" | "awaiting_approval" | "deleting";
+  readonly status: SessionStatus;
   readonly revision: number;
+  readonly activeMessageId?: string;
+  readonly activeMaxSpendCents?: string;
+  readonly activeDeadline?: string;
+  readonly launchedAt?: string;
+  readonly expiresAt?: string;
+  readonly idleSince?: string;
+  readonly suspendAt?: string;
+  readonly suspendedAt?: string;
+  readonly terminatedAt?: string;
+  readonly terminationReason?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly metadata?: Readonly<Record<string, string>>;
-  readonly continuity: { readonly persistRevision: number; readonly lastPersistedAt?: string };
   readonly resolvedConfig: {
     readonly provider: string;
     readonly model: string;
-    readonly providerCredentialId?: string;
+    readonly providerCredentialId: string;
   };
 }
 
-export interface Run {
+export type SessionStatus =
+  | "idle"
+  | "running"
+  | "awaiting_approval"
+  | "suspending"
+  | "suspended"
+  | "resuming"
+  | "terminating"
+  | "terminated"
+  | "deleting";
+
+export interface Message {
   readonly id: string;
   readonly sessionId: string;
-  readonly messageId: string;
-  readonly status: "queued" | "running" | "succeeded" | "failed" | "timed_out" | "cancelled" | "interrupted";
-  readonly maxSpendCents: string;
-  readonly queuedAt: string;
-  readonly startedAt?: string;
-  readonly terminalAt?: string;
-  readonly telemetryComplete?: boolean;
-  readonly telemetryGapIds?: readonly string[];
-  readonly error?: { readonly code: string; readonly message: string; readonly requestId: string };
+  readonly role: "user" | "assistant" | "tool";
+  readonly content: readonly (
+    | { readonly type: "text"; readonly text: string }
+    | { readonly type: "tool_call"; readonly id: string; readonly argumentsDigest: string }
+    | { readonly type: "tool_result"; readonly id: string; readonly resultDigest: string }
+  )[];
+  readonly createdAt: string;
 }
 
 export interface Approval {
@@ -68,9 +86,11 @@ export interface Approval {
   readonly boundCall: {
     readonly toolName: string;
     readonly toolCallId: string;
-    readonly runId: string;
     readonly agentId: string;
     readonly argumentsDigest: string;
+    readonly configDigest: string;
+    readonly expectedConfigRevision: number;
+    readonly expectedGenerationId?: string;
     readonly implementationDigest: string;
   };
 }
@@ -100,7 +120,6 @@ export interface Observation {
   readonly acceptedAt: string;
   readonly body: unknown;
   readonly sessionId?: string;
-  readonly runId?: string;
   readonly traceId?: string;
   readonly spanId?: string;
 }
@@ -150,7 +169,6 @@ export interface UsageAttribution {
   readonly source: string;
   readonly serviceTime: { readonly gte: string; readonly lt: string };
   readonly sessionId?: string;
-  readonly runId?: string;
   readonly operationId?: string;
 }
 
@@ -222,9 +240,12 @@ export interface NewApiKey extends ApiKey {
   readonly value: string;
 }
 
-export interface SecretMetadata {
+export interface ProviderCredential {
+  readonly id: string;
   readonly name: string;
+  readonly provider: string;
   readonly state: "ready" | "revoked";
+  readonly fingerprint: string;
   readonly revision: number;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -260,4 +281,14 @@ export interface FileEntry {
   readonly mtime: string;
   readonly sizeBytes: string;
   readonly sha256?: string;
+  readonly target?: string;
+}
+
+export interface LiveFileEntryPage {
+  readonly items: readonly FileEntry[];
+  readonly nextCursor?: string;
+  readonly workspaceAccess: {
+    readonly generationId: string;
+    readonly resumed: boolean;
+  };
 }
