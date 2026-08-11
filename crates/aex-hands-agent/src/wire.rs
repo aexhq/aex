@@ -865,7 +865,7 @@ mod tests {
 
         // 4. verb wins over the header check and the generation.
         let mut bad_verb = good.clone();
-        bad_verb[6] = 6;
+        bad_verb[6] = u8::MAX;
         bad_verb[8] ^= 0xff;
         assert!(matches!(
             decode_request(&bad_verb, &expectation()),

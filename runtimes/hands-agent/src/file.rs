@@ -13,6 +13,7 @@ use aex_hands_protocol::files::{
 use aex_hands_protocol::operation::{FileMode, GuestPath, GuestRoot};
 use aex_wire::ids::{ContentHash, UploadId};
 use serde::{Deserialize, Serialize};
+use sha2::Digest as _;
 
 const MAX_PARTS: u32 = 10_000;
 
@@ -126,7 +127,7 @@ impl FileService {
                 state: manifest.state,
             });
         }
-        std::fs::create_dir(&directory).map_err(map_io)?;
+        std::fs::create_dir(&directory).map_err(|error| map_io(&error))?;
         let manifest = UploadManifest {
             state: FileUploadState {
                 upload,
@@ -191,7 +192,9 @@ impl FileService {
             .find(|part| part.part_number == part_number)
         {
             if existing != &receipt
-                || std::fs::read(self.part_path(upload, part_number)).map_err(map_io)? != bytes
+                || std::fs::read(self.part_path(upload, part_number))
+                    .map_err(|error| map_io(&error))?
+                    != bytes
             {
                 return Err(FileFailureCode::Conflict);
             }
@@ -239,27 +242,27 @@ impl FileService {
         let target = self.host_path(&manifest.state.path);
         let parent = target.parent().ok_or(FileFailureCode::InvalidPath)?;
         let temporary = parent.join(format!(".aex-upload-{upload}"));
-        let mut output = open_new_truncated(&temporary).map_err(map_io)?;
+        let mut output = open_new_truncated(&temporary).map_err(|error| map_io(&error))?;
         let mut whole = sha2::Sha256::new();
         let mut assembled = 0u64;
         for receipt in &manifest.state.parts {
-            let mut part =
-                File::open(self.part_path(upload, receipt.part_number)).map_err(map_io)?;
+            let mut part = File::open(self.part_path(upload, receipt.part_number))
+                .map_err(|error| map_io(&error))?;
             let mut buffer = vec![0u8; 64 * 1024];
             let mut part_hash = sha2::Sha256::new();
             let mut part_bytes = 0u64;
             loop {
-                let read = part.read(&mut buffer).map_err(map_io)?;
+                let read = part.read(&mut buffer).map_err(|error| map_io(&error))?;
                 if read == 0 {
                     break;
                 }
-                output.write_all(&buffer[..read]).map_err(map_io)?;
-                use sha2::Digest as _;
+                output
+                    .write_all(&buffer[..read])
+                    .map_err(|error| map_io(&error))?;
                 whole.update(&buffer[..read]);
                 part_hash.update(&buffer[..read]);
                 part_bytes = part_bytes.saturating_add(read as u64);
             }
-            use sha2::Digest as _;
             if part_bytes != u64::from(receipt.size_bytes)
                 || ContentHash::from_bytes(part_hash.finalize().into()) != receipt.sha256
             {
@@ -268,22 +271,27 @@ impl FileService {
             }
             assembled = assembled.saturating_add(part_bytes);
         }
-        use sha2::Digest as _;
         if assembled != manifest.state.size_bytes
             || ContentHash::from_bytes(whole.finalize().into()) != manifest.state.sha256
         {
             let _ = std::fs::remove_file(&temporary);
             return Err(FileFailureCode::InvalidRequest);
         }
-        set_mode(&output, manifest.mode).map_err(map_io)?;
-        output.sync_all().map_err(map_io)?;
+        #[cfg(unix)]
+        set_mode(&output, manifest.mode).map_err(|error| map_io(&error))?;
+        #[cfg(not(unix))]
+        set_mode(&output, manifest.mode);
+        output.sync_all().map_err(|error| map_io(&error))?;
         drop(output);
         self.validate_workspace_path(&manifest.state.path, true)?;
         std::fs::rename(&temporary, &target).map_err(|error| {
             let _ = std::fs::remove_file(&temporary);
-            map_io(error)
+            map_io(&error)
         })?;
+        #[cfg(unix)]
         sync_directory(parent)?;
+        #[cfg(not(unix))]
+        sync_directory(parent);
         manifest.state.complete = true;
         self.write_manifest(&manifest)?;
         for receipt in &manifest.state.parts {
@@ -298,7 +306,7 @@ impl FileService {
         if self.read_manifest(upload)?.state.complete {
             return Err(FileFailureCode::Conflict);
         }
-        std::fs::remove_dir_all(self.upload_directory(upload)).map_err(map_io)?;
+        std::fs::remove_dir_all(self.upload_directory(upload)).map_err(|error| map_io(&error))?;
         Ok(FileResponse::UploadAborted { upload })
     }
 
@@ -309,8 +317,8 @@ impl FileService {
         range: Option<aex_hands_protocol::operation::ByteRangeRequest>,
     ) -> Result<FileResponse, FileFailureCode> {
         self.validate_workspace_path(path, false)?;
-        let mut file = open_read_nofollow(&self.host_path(path)).map_err(map_io)?;
-        let metadata = file.metadata().map_err(map_io)?;
+        let mut file = open_read_nofollow(&self.host_path(path)).map_err(|error| map_io(&error))?;
+        let metadata = file.metadata().map_err(|error| map_io(&error))?;
         if !metadata.is_file() {
             return Err(FileFailureCode::InvalidPath);
         }
@@ -390,8 +398,11 @@ impl FileService {
         opened
             .file
             .seek(std::io::SeekFrom::Start(offset))
-            .map_err(map_io)?;
-        opened.file.read_exact(&mut bytes).map_err(map_io)?;
+            .map_err(|error| map_io(&error))?;
+        opened
+            .file
+            .read_exact(&mut bytes)
+            .map_err(|error| map_io(&error))?;
         let chunk = FileDownloadChunk {
             download,
             offset,
@@ -409,7 +420,7 @@ impl FileService {
             .map_err(|_| FileFailureCode::Unavailable)?
             .remove(&download)
             .ok_or(FileFailureCode::NotFound)?;
-        let descriptor_metadata = opened.file.metadata().map_err(map_io)?;
+        let descriptor_metadata = opened.file.metadata().map_err(|error| map_io(&error))?;
         let descriptor_sha = hash_file(&mut opened.file)?;
         if descriptor_sha != opened.state.sha256
             || file_version(&descriptor_metadata, descriptor_sha) != opened.state.version
@@ -417,8 +428,9 @@ impl FileService {
             return Err(FileFailureCode::Conflict);
         }
         self.validate_workspace_path(&opened.path, false)?;
-        let mut current = open_read_nofollow(&self.host_path(&opened.path)).map_err(map_io)?;
-        let current_metadata = current.metadata().map_err(map_io)?;
+        let mut current =
+            open_read_nofollow(&self.host_path(&opened.path)).map_err(|error| map_io(&error))?;
+        let current_metadata = current.metadata().map_err(|error| map_io(&error))?;
         let current_sha = hash_file(&mut current)?;
         if current_sha != opened.state.sha256
             || file_version(&current_metadata, current_sha) != opened.state.version
@@ -465,7 +477,7 @@ impl FileService {
                     if error.kind() == std::io::ErrorKind::NotFound
                         && final_may_be_missing
                         && index + 1 == components.len() => {}
-                Err(error) => return Err(map_io(error)),
+                Err(error) => return Err(map_io(&error)),
             }
         }
         Ok(())
@@ -491,7 +503,7 @@ impl FileService {
             .join(format!("part-{number:05}"))
     }
     fn read_manifest(&self, upload: UploadId) -> Result<UploadManifest, FileFailureCode> {
-        let bytes = std::fs::read(self.manifest_path(upload)).map_err(map_io)?;
+        let bytes = std::fs::read(self.manifest_path(upload)).map_err(|error| map_io(&error))?;
         serde_json::from_slice(&bytes).map_err(|_| FileFailureCode::Conflict)
     }
     fn write_manifest(&self, manifest: &UploadManifest) -> Result<(), FileFailureCode> {
@@ -502,16 +514,19 @@ impl FileService {
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), FileFailureCode> {
     let temporary = path.with_extension("aex-new");
-    let mut file = open_new_truncated(&temporary).map_err(map_io)?;
-    file.write_all(bytes).map_err(map_io)?;
-    file.sync_all().map_err(map_io)?;
+    let mut file = open_new_truncated(&temporary).map_err(|error| map_io(&error))?;
+    file.write_all(bytes).map_err(|error| map_io(&error))?;
+    file.sync_all().map_err(|error| map_io(&error))?;
     drop(file);
     std::fs::rename(&temporary, path).map_err(|error| {
         let _ = std::fs::remove_file(&temporary);
-        map_io(error)
+        map_io(&error)
     })?;
     if let Some(parent) = path.parent() {
+        #[cfg(unix)]
         sync_directory(parent)?;
+        #[cfg(not(unix))]
+        sync_directory(parent);
     }
     Ok(())
 }
@@ -536,19 +551,19 @@ fn open_read_nofollow(path: &Path) -> Result<File, std::io::Error> {
 }
 
 fn hash_file(file: &mut File) -> Result<ContentHash, FileFailureCode> {
-    file.seek(std::io::SeekFrom::Start(0)).map_err(map_io)?;
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(|error| map_io(&error))?;
     let mut hash = sha2::Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
     loop {
-        let read = file.read(&mut buffer).map_err(map_io)?;
+        let read = file.read(&mut buffer).map_err(|error| map_io(&error))?;
         if read == 0 {
             break;
         }
-        use sha2::Digest as _;
         hash.update(&buffer[..read]);
     }
-    file.seek(std::io::SeekFrom::Start(0)).map_err(map_io)?;
-    use sha2::Digest as _;
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(|error| map_io(&error))?;
     Ok(ContentHash::from_bytes(hash.finalize().into()))
 }
 
@@ -591,20 +606,20 @@ fn set_mode(file: &File, mode: FileMode) -> Result<(), std::io::Error> {
     file.set_permissions(std::fs::Permissions::from_mode(bits))
 }
 #[cfg(not(unix))]
-fn set_mode(_file: &File, _mode: FileMode) -> Result<(), std::io::Error> {
-    Ok(())
-}
+fn set_mode(_file: &File, _mode: FileMode) {}
 
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), FileFailureCode> {
-    #[cfg(unix)]
     File::open(path)
         .and_then(|directory| directory.sync_all())
-        .map_err(map_io)?;
-    let _ = path;
+        .map_err(|error| map_io(&error))?;
     Ok(())
 }
 
-fn map_io(error: std::io::Error) -> FileFailureCode {
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) {}
+
+fn map_io(error: &std::io::Error) -> FileFailureCode {
     match error.kind() {
         std::io::ErrorKind::NotFound => FileFailureCode::NotFound,
         std::io::ErrorKind::StorageFull => FileFailureCode::LimitExceeded,
