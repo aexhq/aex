@@ -662,8 +662,8 @@ mod tests {
                 ("model".to_owned(), digest(2)),
                 (
                     "tool".to_owned(),
-                    "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb"
-                        .to_owned(),
+                    crate::artifact::tool_catalog_digest(root)
+                        .expect("source-bound tool catalog"),
                 ),
             ]),
         }
