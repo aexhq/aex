@@ -19,11 +19,15 @@ use aex_wire::ids::{
 };
 use aex_wire::models::RegisteredFileMode;
 use aex_wire::types::{ETag, Timestamp};
+use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::types::{Put, Update};
+use futures::{StreamExt as _, TryStreamExt as _};
 use serde::{Deserialize, Serialize};
 
-use crate::attr::{ItemBuilder, b, boolean, n, s, stamp};
-use crate::error::StoreError;
+use crate::attr::{Item, ItemBuilder, Row, b, boolean, n, s, stamp};
+use crate::error::{
+    Idempotence, Resolution, StoreError, classify, decode_cancellation_with_resolution,
+};
 use crate::plan::{IMMUTABLE, Participant, TransactionPlan};
 
 /// The declared synchronous startup-file aggregate ceiling: exactly 512 MiB.
@@ -79,6 +83,14 @@ pub struct CreatePreparation {
     pub files: Vec<PreparedFile>,
     /// Exact root fact later committed as journal sequence zero.
     pub root_record: JournalRecord,
+    /// Canonical immutable provider/runtime definition.
+    pub runtime_definition: Vec<u8>,
+    /// Canonical release-qualified public configuration.
+    pub resolved_config: Vec<u8>,
+    /// Canonical caller metadata, when supplied.
+    pub metadata: Option<Vec<u8>>,
+    /// Root-plus-subagent ceiling used to derive the elected root budget.
+    pub materialized_agents: u64,
     /// Preparation instant.
     pub prepared_at: Timestamp,
 }
@@ -94,6 +106,8 @@ pub struct PreparationSummary {
     pub selection_digest: ContentHash,
     /// BLAKE3 over the canonical `AgentStarted` body.
     pub root_entry_id: aex_brain_domain::ids::ContentHash,
+    /// SHA-256 over every immutable elected preparation fact.
+    pub authority_digest: ContentHash,
 }
 
 /// Provider-authoritative time at which readiness was established.
@@ -142,6 +156,12 @@ pub enum CreatePreparationError {
     /// The shared transaction compiler refused a row or condition.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// Elected storage disagreed with the schema or its own immutable digests.
+    #[error("stored create preparation is corrupt: {reason}")]
+    Corrupt {
+        /// Exact invariant or codec failure.
+        reason: String,
+    },
 }
 
 impl CreatePreparation {
@@ -220,17 +240,55 @@ impl CreatePreparation {
         }
         let selection = to_jcs_string(&self.files)
             .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
+        let selection_digest = ContentHash::of(selection.as_bytes());
         let root_entry_id = self
             .root_record
             .content_hash()
             .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
+        let authority = to_jcs_string(&PreparationAuthority {
+            workspace: self.workspace,
+            organization: self.organization,
+            intent: self.intent,
+            coordinator: self.coordinator.to_string(),
+            session: self.session,
+            root_agent: self.root_agent,
+            generation: self.generation,
+            selection_digest,
+            root_entry_id: root_entry_id.to_hex(),
+            runtime_definition: ContentHash::of(&self.runtime_definition),
+            resolved_config: ContentHash::of(&self.resolved_config),
+            metadata: self.metadata.as_deref().map(ContentHash::of),
+            materialized_agents: self.materialized_agents,
+            prepared_at: self.prepared_at,
+        })
+        .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
         Ok(PreparationSummary {
             file_count: self.files.len(),
             total_bytes,
-            selection_digest: ContentHash::of(selection.as_bytes()),
+            selection_digest,
             root_entry_id,
+            authority_digest: ContentHash::of(authority.as_bytes()),
         })
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparationAuthority {
+    workspace: WorkspaceId,
+    organization: OrganizationId,
+    intent: IntentDigest,
+    coordinator: String,
+    session: SessionId,
+    root_agent: AgentId,
+    generation: GenerationId,
+    selection_digest: ContentHash,
+    root_entry_id: String,
+    runtime_definition: ContentHash,
+    resolved_config: ContentHash,
+    metadata: Option<ContentHash>,
+    materialized_agents: u64,
+    prepared_at: Timestamp,
 }
 
 /// Builds one immutable stage transaction per selected file.
@@ -284,19 +342,25 @@ fn stage_plan(
         .set("contentBytes", n(file.size_bytes))
         .set("mountPath", s(file.mount_path.as_str()))
         .set("mode", s(file.mode.as_str()))
-        .set("preparedAt", stamp(prepared.prepared_at))
         .build();
+    let same_file = "attribute_not_exists(pk) OR (selectionDigest = :selection AND fileIndex = :index AND registeredName = :name AND registryRevision = :revision AND registryEtag = :etag AND contentDigest = :content AND contentBytes = :bytes AND mountPath = :path AND #mode = :mode)";
     let mut plan = TransactionPlan::new(format!("create-file-{selection}-{index}"));
     plan.put(
         PREPARED_FILE_PARTICIPANT,
         Put::builder()
             .table_name(table)
             .set_item(Some(item))
-            .condition_expression(
-                "attribute_not_exists(pk) OR (selectionDigest = :selection AND fileIndex = :index)",
-            )
+            .condition_expression(same_file)
+            .expression_attribute_names("#mode", "mode")
             .expression_attribute_values(":selection", s(selection))
-            .expression_attribute_values(":index", n(index_u64)),
+            .expression_attribute_values(":index", n(index_u64))
+            .expression_attribute_values(":name", s(file.name.to_string()))
+            .expression_attribute_values(":revision", n(file.revision))
+            .expression_attribute_values(":etag", s(file.etag.to_string()))
+            .expression_attribute_values(":content", s(file.content.to_wire()))
+            .expression_attribute_values(":bytes", n(file.size_bytes))
+            .expression_attribute_values(":path", s(file.mount_path.as_str()))
+            .expression_attribute_values(":mode", s(file.mode.as_str())),
     )?;
     Ok(plan)
 }
@@ -339,6 +403,11 @@ pub fn elect_plan(
         .set("selectedFileBytes", n(summary.total_bytes))
         .set("rootEntryId", s(summary.root_entry_id.to_hex()))
         .set("rootRecord", b(root_body))
+        .set("authorityDigest", s(summary.authority_digest.to_wire()))
+        .set("runtimeDefinition", b(prepared.runtime_definition.clone()))
+        .set("resolvedConfig", b(prepared.resolved_config.clone()))
+        .set_opt("metadata", prepared.metadata.clone().map(b))
+        .set("materializedAgents", n(prepared.materialized_agents))
         .set("preparedAt", stamp(prepared.prepared_at))
         .build();
 
@@ -372,7 +441,7 @@ pub fn elect_plan(
             .set(used_attribute(dimension), n(0));
     }
 
-    let same_election = "attribute_not_exists(pk) OR (selectionDigest = :selection AND coordinator = :coordinator AND sessionId = :session AND rootAgentId = :agent AND generationId = :generation)";
+    let same_election = "attribute_not_exists(pk) OR (authorityDigest = :authority AND coordinator = :coordinator AND sessionId = :session AND rootAgentId = :agent AND generationId = :generation)";
     let same_control = "attribute_not_exists(pk) OR (createSelectionDigest = :selection AND createCoordinator = :coordinator AND sessionId = :session AND agentId = :agent AND generationId = :generation AND revision = :zero AND hasJournal = :false)";
     let mut plan = TransactionPlan::new(format!("create-elect-{}", prepared.intent));
     plan.put(
@@ -381,7 +450,7 @@ pub fn elect_plan(
             .table_name(table)
             .set_item(Some(header))
             .condition_expression(same_election)
-            .expression_attribute_values(":selection", s(selection.clone()))
+            .expression_attribute_values(":authority", s(summary.authority_digest.to_wire()))
             .expression_attribute_values(":coordinator", s(coordinator.clone()))
             .expression_attribute_values(":session", s(prepared.session.to_string()))
             .expression_attribute_values(":agent", s(prepared.root_agent.to_string()))
@@ -468,6 +537,280 @@ pub fn root_started_plan(
             .condition_expression(IMMUTABLE),
     )?;
     Ok(plan)
+}
+
+/// Production authority for staging, electing, and strongly reloading a create winner.
+#[derive(Debug, Clone)]
+pub struct CreatePreparationStore {
+    client: Client,
+    table: String,
+}
+
+impl CreatePreparationStore {
+    /// Binds the authority to the physical session-authority table.
+    #[must_use]
+    pub fn new(client: Client, table: impl Into<String>) -> Self {
+        Self {
+            client,
+            table: table.into(),
+        }
+    }
+
+    /// Stages every selected revision and elects exactly one immutable winner.
+    ///
+    /// A conditional loss or ambiguous commit is resolved only by a strong
+    /// read of the intent-keyed header and its exact selection rows. The loser
+    /// receives the winner's identities and must never launch its own generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CreatePreparationError`] for invalid metadata, a store failure,
+    /// or corrupt winner state.
+    pub async fn stage_and_elect(
+        &self,
+        prepared: &CreatePreparation,
+    ) -> Result<CreatePreparation, CreatePreparationError> {
+        let plans = stage_plans(&self.table, prepared)?;
+        futures::stream::iter(plans)
+            .map(|plan| async move { self.commit(&plan).await })
+            .buffer_unordered(16)
+            .try_collect::<Vec<_>>()
+            .await?;
+
+        let plan = elect_plan(&self.table, prepared)?;
+        match self.commit(&plan).await {
+            Ok(()) => Ok(prepared.clone()),
+            Err(error @ StoreError::PreconditionFailed { .. })
+            | Err(error @ StoreError::CommitAmbiguous { .. })
+            | Err(error @ StoreError::Contended) => {
+                match self.load(prepared.workspace, prepared.intent).await? {
+                    Some(winner) => Ok(winner),
+                    None => Err(error.into()),
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Strongly loads one elected winner and all selection rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CreatePreparationError`] for read failures or any incomplete,
+    /// cross-tenant, non-canonical, or self-contradictory stored authority.
+    pub async fn load(
+        &self,
+        workspace: WorkspaceId,
+        intent: IntentDigest,
+    ) -> Result<Option<CreatePreparation>, CreatePreparationError> {
+        let partition = preparation_partition(workspace, intent);
+        let header = self
+            .client
+            .get_item()
+            .table_name(&self.table)
+            .key(crate::attr::PK, s(partition.clone()))
+            .key(crate::attr::SK, s("PREPARED"))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?
+            .item;
+        let Some(header) = header else {
+            return Ok(None);
+        };
+        let header_row = Row::bind(&header, PREPARATION).map_err(StoreError::from)?;
+        assert_header_binding(&header_row, workspace, intent)?;
+        let selection = header_row
+            .string("selectionDigest")
+            .map_err(StoreError::from)?;
+        let prefix = format!("FILE#{selection}#");
+        let mut files = Vec::new();
+        let mut start = None;
+        loop {
+            let output = self
+                .client
+                .query()
+                .table_name(&self.table)
+                .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
+                .expression_attribute_names("#pk", crate::attr::PK)
+                .expression_attribute_names("#sk", crate::attr::SK)
+                .expression_attribute_values(":pk", s(partition.clone()))
+                .expression_attribute_values(":prefix", s(prefix.clone()))
+                .consistent_read(true)
+                .scan_index_forward(true)
+                .set_exclusive_start_key(start)
+                .send()
+                .await
+                .map_err(|error| classify(&error, Idempotence::Read))?;
+            files.extend(output.items.unwrap_or_default());
+            start = output.last_evaluated_key;
+            if start.is_none() {
+                break;
+            }
+        }
+        decode_elected_preparation(&header, &files, workspace, intent).map(Some)
+    }
+
+    async fn commit(&self, plan: &TransactionPlan) -> Result<(), StoreError> {
+        let request = plan.compile(&self.client)?;
+        match request.send().await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if let Some(service) = error.as_service_error() {
+                    return Err(decode_cancellation_with_resolution(
+                        service,
+                        plan.participants(),
+                        Resolution::TargetItem,
+                    ));
+                }
+                Err(classify(&error, Idempotence::Write(Resolution::TargetItem)))
+            }
+        }
+    }
+}
+
+/// Decodes a strongly read elected header and its exact ordered selection rows.
+///
+/// This pure boundary is public so adapter tests can prove that the physical
+/// rows reconstruct the complete winner without a second volatile dependency
+/// read.
+///
+/// # Errors
+///
+/// Returns [`CreatePreparationError`] for an incomplete, cross-boundary,
+/// malformed, or digest-inconsistent row set.
+pub fn decode_elected_preparation(
+    header: &Item,
+    file_items: &[Item],
+    workspace: WorkspaceId,
+    intent: IntentDigest,
+) -> Result<CreatePreparation, CreatePreparationError> {
+    let row = Row::bind(header, PREPARATION).map_err(StoreError::from)?;
+    assert_header_binding(&row, workspace, intent)?;
+    if row.string("state").map_err(StoreError::from)? != "prepared" {
+        return Err(corrupt("the elected header is not in prepared state"));
+    }
+    let selection_text = row.string("selectionDigest").map_err(StoreError::from)?;
+    let selection_digest = ContentHash::parse(selection_text)
+        .map_err(|error| corrupt(format!("selectionDigest is malformed: {error}")))?;
+    let expected_count =
+        usize::try_from(row.u64("selectedFileCount").map_err(StoreError::from)?)
+            .map_err(|error| corrupt(format!("selectedFileCount does not fit usize: {error}")))?;
+    if file_items.len() != expected_count {
+        return Err(corrupt(format!(
+            "the header names {expected_count} files but {} exact selection rows exist",
+            file_items.len()
+        )));
+    }
+    let mut files = Vec::with_capacity(file_items.len());
+    for (expected_index, item) in file_items.iter().enumerate() {
+        let file = Row::bind(item, PREPARED_FILE).map_err(StoreError::from)?;
+        if file.string("workspaceId").map_err(StoreError::from)? != workspace.to_string()
+            || file.string("intentDigest").map_err(StoreError::from)? != intent.to_string()
+            || file.string("selectionDigest").map_err(StoreError::from)? != selection_text
+        {
+            return Err(corrupt("a selected-file row has another authority binding"));
+        }
+        let index = usize::try_from(file.u64("fileIndex").map_err(StoreError::from)?)
+            .map_err(|error| corrupt(format!("fileIndex does not fit usize: {error}")))?;
+        if index != expected_index {
+            return Err(corrupt(format!(
+                "selected-file rows are not complete and ordered: expected {expected_index}, found {index}"
+            )));
+        }
+        let name = ResourceName::parse(file.string("registeredName").map_err(StoreError::from)?)
+            .map_err(|error| corrupt(format!("registeredName is malformed: {error}")))?;
+        let etag = ETag::parse(file.string("registryEtag").map_err(StoreError::from)?)
+            .map_err(|error| corrupt(format!("registryEtag is malformed: {error}")))?;
+        let content = ContentHash::parse(file.string("contentDigest").map_err(StoreError::from)?)
+            .map_err(|error| corrupt(format!("contentDigest is malformed: {error}")))?;
+        let mount_path = FilePath::parse(file.string("mountPath").map_err(StoreError::from)?)
+            .map_err(|error| corrupt(format!("mountPath is malformed: {error}")))?;
+        let mode = match file.string("mode").map_err(StoreError::from)? {
+            "0644" => RegisteredFileMode::V0644,
+            "0755" => RegisteredFileMode::V0755,
+            other => return Err(corrupt(format!("mode `{other}` is not registered"))),
+        };
+        files.push(PreparedFile {
+            name,
+            revision: file.u64("registryRevision").map_err(StoreError::from)?,
+            etag,
+            content,
+            size_bytes: file.u64("contentBytes").map_err(StoreError::from)?,
+            mount_path,
+            mode,
+        });
+    }
+    let coordinator = Uuid7::decode_suffix(
+        row.string("coordinator")
+            .map_err(StoreError::from)?
+            .as_bytes(),
+    )
+    .map_err(|error| corrupt(format!("coordinator is malformed: {error}")))?;
+    let root_record =
+        aex_brain_domain::journal::decode(row.bytes("rootRecord").map_err(StoreError::from)?)
+            .map_err(|error| corrupt(format!("rootRecord is malformed: {error}")))?;
+    let prepared = CreatePreparation {
+        workspace,
+        organization: row.id("organizationId").map_err(StoreError::from)?,
+        intent,
+        coordinator,
+        session: row.id("sessionId").map_err(StoreError::from)?,
+        root_agent: row.id("rootAgentId").map_err(StoreError::from)?,
+        generation: row.id("generationId").map_err(StoreError::from)?,
+        files,
+        root_record,
+        runtime_definition: row
+            .bytes("runtimeDefinition")
+            .map_err(StoreError::from)?
+            .to_vec(),
+        resolved_config: row
+            .bytes("resolvedConfig")
+            .map_err(StoreError::from)?
+            .to_vec(),
+        metadata: row
+            .opt_bytes("metadata")
+            .map_err(StoreError::from)?
+            .map(|bytes| bytes.to_vec()),
+        materialized_agents: row.u64("materializedAgents").map_err(StoreError::from)?,
+        prepared_at: row.timestamp("preparedAt").map_err(StoreError::from)?,
+    };
+    let summary = prepared.validate()?;
+    let stored_authority =
+        ContentHash::parse(row.string("authorityDigest").map_err(StoreError::from)?)
+            .map_err(|error| corrupt(format!("authorityDigest is malformed: {error}")))?;
+    if summary.selection_digest != selection_digest
+        || summary.file_count != expected_count
+        || summary.total_bytes != row.u64("selectedFileBytes").map_err(StoreError::from)?
+        || summary.root_entry_id.to_hex() != row.string("rootEntryId").map_err(StoreError::from)?
+        || summary.authority_digest != stored_authority
+    {
+        return Err(corrupt(
+            "the elected header digests disagree with the strongly loaded facts",
+        ));
+    }
+    Ok(prepared)
+}
+
+fn assert_header_binding(
+    row: &Row<'_>,
+    workspace: WorkspaceId,
+    intent: IntentDigest,
+) -> Result<(), CreatePreparationError> {
+    if row.string("workspaceId").map_err(StoreError::from)? != workspace.to_string()
+        || row.string("intentDigest").map_err(StoreError::from)? != intent.to_string()
+    {
+        return Err(corrupt(
+            "the intent-keyed header carries another workspace or intent",
+        ));
+    }
+    Ok(())
+}
+
+fn corrupt(reason: impl Into<String>) -> CreatePreparationError {
+    CreatePreparationError::Corrupt {
+        reason: reason.into(),
+    }
 }
 
 fn root_budget(record: &JournalRecord) -> Result<DimensionVector, CreatePreparationError> {

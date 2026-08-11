@@ -6,7 +6,7 @@ use aex_brain_domain::journal::JournalRecord;
 use aex_brain_domain::wire_pending::{AgentLimits, ResolvedAgentConfig, SessionCredentialPin};
 use aex_session_dynamodb::create_preparation::{
     CreatePreparation, CreatePreparationError, PreparedFile, RootStarted, STARTUP_FILE_MAX_BYTES,
-    STARTUP_FILE_MAX_COUNT, elect_plan, root_started_plan, stage_plans,
+    STARTUP_FILE_MAX_COUNT, decode_elected_preparation, elect_plan, root_started_plan, stage_plans,
 };
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{
@@ -44,6 +44,10 @@ fn preparation(files: Vec<PreparedFile>) -> CreatePreparation {
         generation: GenerationId::from_uuid7(uuid(7)),
         files,
         root_record: root_record(GenerationId::from_uuid7(uuid(7))),
+        runtime_definition: br#"{"generation":"fixture"}"#.to_vec(),
+        resolved_config: br#"{"model":"deepseek-chat"}"#.to_vec(),
+        metadata: Some(br#"{"label":"fixture"}"#.to_vec()),
+        materialized_agents: 8,
         prepared_at: Timestamp::from_unix_millis(1_767_225_600_008).expect("timestamp"),
     }
 }
@@ -138,6 +142,24 @@ fn every_selected_revision_fact_changes_the_elected_manifest_identity() {
 }
 
 #[test]
+fn every_non_file_winner_fact_changes_the_elected_authority_identity() {
+    let original = preparation(vec![file(0, 8)]);
+    let digest = original.validate().expect("valid").authority_digest;
+    let mut changed = original.clone();
+    changed.runtime_definition.push(b' ');
+    assert_ne!(changed.validate().expect("valid").authority_digest, digest);
+    changed = original.clone();
+    changed.resolved_config.push(b' ');
+    assert_ne!(changed.validate().expect("valid").authority_digest, digest);
+    changed = original.clone();
+    changed.materialized_agents += 1;
+    assert_ne!(changed.validate().expect("valid").authority_digest, digest);
+    changed = original;
+    changed.prepared_at = Timestamp::from_unix_millis(1_767_225_600_009).expect("timestamp");
+    assert_ne!(changed.validate().expect("valid").authority_digest, digest);
+}
+
+#[test]
 fn metadata_is_staged_per_file_then_header_and_generation_are_elected_atomically() {
     let prepared = preparation(vec![file(0, 8), file(1, 9)]);
     let stages = stage_plans("dev-session-authority", &prepared).expect("stage plans");
@@ -169,6 +191,28 @@ fn metadata_is_staged_per_file_then_header_and_generation_are_elected_atomically
             .map(String::as_str),
         Some("3600000")
     );
+}
+
+#[test]
+fn the_physical_winner_reloads_every_elected_fact_without_volatile_reads() {
+    let prepared = preparation(vec![file(0, 8), file(1, 9)]);
+    let files = stage_plans("dev-session-authority", &prepared)
+        .expect("stage plans")
+        .into_iter()
+        .map(|plan| plan.actions()[0].put().expect("staged put").item().clone())
+        .collect::<Vec<_>>();
+    let election = elect_plan("dev-session-authority", &prepared).expect("election plan");
+    let header = election.actions()[0].put().expect("header put").item();
+    assert_eq!(
+        decode_elected_preparation(header, &files, prepared.workspace, prepared.intent)
+            .expect("the winner reloads"),
+        prepared
+    );
+
+    assert!(matches!(
+        decode_elected_preparation(header, &files[..1], prepared.workspace, prepared.intent),
+        Err(CreatePreparationError::Corrupt { .. })
+    ));
 }
 
 #[test]
