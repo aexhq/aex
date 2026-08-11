@@ -1263,6 +1263,8 @@ impl SessionReader for SessionCommandReads {
                 agent: control.agent,
                 revision: AgentRevision(control.revision),
                 journal_tail: JournalSeq(control.journal_tail),
+                limits_revision: control.limits_revision,
+                max_run_duration_ms: control.max_run_duration_ms,
                 idle: control.status == "idle" && control.claim_owner.is_none(),
             },
         })

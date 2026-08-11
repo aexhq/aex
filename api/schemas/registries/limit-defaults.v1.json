@@ -19,6 +19,27 @@
       "value": 256
     },
     {
+      "id": "session.agent_execution",
+      "value": {
+        "max_turns": 32,
+        "max_steps_per_turn": 16,
+        "turn_deadline_ms": 600000,
+        "max_depth": 4,
+        "max_fanout": 32
+      }
+    },
+    {
+      "id": "session.run_budget",
+      "value": {
+        "max_run_duration_ms": 3600000,
+        "total_children_created": 128,
+        "provider_calls": 96,
+        "hands_calls": 64,
+        "queued_children": 32,
+        "retained_result_bytes": 8388608
+      }
+    },
+    {
       "id": "api.json_body",
       "value": 65536
     },

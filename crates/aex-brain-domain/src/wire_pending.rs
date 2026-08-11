@@ -99,6 +99,8 @@ pub struct ResolvedAgentConfig {
     pub tool_manifest_digests: Vec<ContentHash>,
     /// The canonical Hands generation every agent in the session shares.
     pub hands_generation: GenerationId,
+    /// Effective workspace-limit bundle revision that produced these ceilings.
+    pub limits_revision: u64,
     /// Per-agent run limits.
     pub limits: AgentLimits,
 }
@@ -155,6 +157,12 @@ pub struct AgentLimits {
     pub max_steps_per_turn: u32,
     /// Wall-clock ceiling for one turn, in milliseconds.
     pub turn_deadline_ms: u32,
+    /// Maximum duration of one admitted message.
+    pub max_run_duration_ms: u64,
+    /// Deepest admitted lineage, root at zero.
+    pub max_depth: u16,
+    /// Largest one-decision child fanout.
+    pub max_fanout: u32,
 }
 
 /// Membership and mode of one join group.

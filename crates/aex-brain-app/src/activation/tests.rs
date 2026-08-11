@@ -117,10 +117,14 @@ fn config() -> ResolvedAgentConfig {
         system: None,
         tool_manifest_digests: Vec::new(),
         hands_generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
+        limits_revision: 1,
         limits: AgentLimits {
             max_turns: 4,
             max_steps_per_turn: 8,
             turn_deadline_ms: 600_000,
+            max_run_duration_ms: 3_600_000,
+            max_depth: 4,
+            max_fanout: 32,
         },
     }
 }

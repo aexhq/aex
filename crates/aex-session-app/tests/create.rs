@@ -19,7 +19,8 @@ use aex_session_app::testing::{
 };
 use aex_session_app::{
     AppError, CreateSession, PrepareSessionCreateOutcome, QualificationRefusal, ReadySessionLaunch,
-    SessionTransaction, initial_root_agent, prepare_session_create, publish_ready_session,
+    SessionTransaction, initial_root_agent, initial_root_record, prepare_session_create,
+    publish_ready_session,
 };
 use aex_session_domain::testing::{moment, session_fixture};
 use aex_session_domain::{EntryIdentity, JournalSeq};
@@ -60,6 +61,57 @@ fn command(request: models::SessionCreateRequest) -> CreateSession {
         identity: create_identity_under("k-1", &session),
         request,
     }
+}
+
+#[tokio::test]
+async fn root_start_uses_only_the_revisioned_launch_limit_maps() {
+    let ports = ScriptedPorts::idle();
+    let clock = clock();
+    let ids = CountingIds::default();
+    let outcome = prepare_session_create(&ports.context(&clock, &ids), &command(minimal_request()))
+        .await
+        .expect("the minimal request prepares");
+    let PrepareSessionCreateOutcome::Prepared(prepared) = outcome else {
+        panic!("a fresh identity cannot replay");
+    };
+    let aex_brain_domain::JournalRecord::AgentStarted { config, budget, .. } =
+        initial_root_record(&prepared).expect("the root record derives from elected facts")
+    else {
+        panic!("the initial root record must be AgentStarted");
+    };
+
+    assert_eq!(config.limits_revision, 4);
+    assert_eq!(config.limits.max_turns, 32);
+    assert_eq!(config.limits.max_steps_per_turn, 16);
+    assert_eq!(config.limits.turn_deadline_ms, 600_000);
+    assert_eq!(config.limits.max_run_duration_ms, 3_600_000);
+    assert_eq!(config.limits.max_depth, 4);
+    assert_eq!(config.limits.max_fanout, 32);
+    assert_eq!(
+        budget.get(aex_brain_domain::budget::Dimension::TotalChildrenCreated),
+        128
+    );
+    assert_eq!(
+        budget.get(aex_brain_domain::budget::Dimension::ProviderCalls),
+        96
+    );
+    assert_eq!(
+        budget.get(aex_brain_domain::budget::Dimension::HandsCalls),
+        64
+    );
+    assert_eq!(
+        budget.get(aex_brain_domain::budget::Dimension::QueuedChildren),
+        32
+    );
+    assert_eq!(
+        budget.get(aex_brain_domain::budget::Dimension::RetainedResultBytes),
+        8_388_608
+    );
+    assert_eq!(
+        budget.get(aex_brain_domain::budget::Dimension::CostMicroUsd),
+        0,
+        "BYOK+Bash charges no hosted-tool budget; the caller cap is pinned per message"
+    );
 }
 
 async fn plan_of(

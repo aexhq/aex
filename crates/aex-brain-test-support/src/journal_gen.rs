@@ -136,10 +136,14 @@ pub fn config() -> ResolvedAgentConfig {
         system: None,
         tool_manifest_digests: vec![ContentHash::of(b"fixture-tools")],
         hands_generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
+        limits_revision: 1,
         limits: AgentLimits {
             max_turns: 32,
             max_steps_per_turn: 16,
             turn_deadline_ms: 600_000,
+            max_run_duration_ms: 3_600_000,
+            max_depth: 4,
+            max_fanout: 32,
         },
     }
 }

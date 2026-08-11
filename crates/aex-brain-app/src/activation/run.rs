@@ -2281,6 +2281,9 @@ const DEFAULT_LIMITS: aex_brain_domain::wire_pending::AgentLimits =
         max_turns: 1,
         max_steps_per_turn: 1,
         turn_deadline_ms: 1,
+        max_run_duration_ms: 1,
+        max_depth: 0,
+        max_fanout: 0,
     };
 
 /// The first unresolved call, in the assistant message's tool-use order.

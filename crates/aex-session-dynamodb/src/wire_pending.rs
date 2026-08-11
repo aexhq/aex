@@ -156,6 +156,10 @@ pub struct AgentControl {
     pub journal_tail: u64,
     /// The canonical entry identity at `journal_tail`, absent before the first append.
     pub journal_tail_hash: Option<String>,
+    /// Effective limit bundle revision pinned at root creation.
+    pub limits_revision: u64,
+    /// Maximum duration of one admitted message.
+    pub max_run_duration_ms: u64,
     /// The current claim owner, when claimed.
     pub claim_owner: Option<String>,
     /// The lease expiry, when claimed.

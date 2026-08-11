@@ -119,6 +119,14 @@ pub struct PreparedSessionCreate {
     pub provider_credential: ProviderCredentialPin,
     /// Complete resolved public configuration.
     pub resolved: ResolvedConfigAuthority,
+    /// Exact effective-limit revision and execution map used by Brain.
+    pub limits_revision: u64,
+    /// Revisioned execution ceilings.
+    pub agent_execution: crate::ports::AgentExecutionLimits,
+    /// Revisioned per-message budget ceilings.
+    pub run_budget: crate::ports::RunBudgetLimits,
+    /// Root-plus-subagent materialization ceiling used to derive active children.
+    pub materialized_agents: u64,
     /// Canonical caller metadata.
     pub metadata: Option<SessionMetadata>,
     /// Selected immutable registry revisions in request order.
@@ -274,6 +282,10 @@ pub async fn prepare_session_create(
                 revision: prepared.credential.revision,
             },
             resolved,
+            limits_revision: prepared.limits_revision,
+            agent_execution: prepared.agent_execution,
+            run_budget: prepared.run_budget,
+            materialized_agents: prepared.materialized_agents,
             metadata,
             initial_files: prepared.initial_files,
             prepared_at: now,
@@ -373,6 +385,9 @@ struct PreparedCreate<'a> {
     size: ComputeSize,
     network: aex_runtime_control::generation::NetworkPolicy,
     limits_revision: u64,
+    agent_execution: crate::ports::AgentExecutionLimits,
+    run_budget: crate::ports::RunBudgetLimits,
+    materialized_agents: u64,
     selectors: Vec<RegistrySelector>,
     initial_files: Vec<ResolvedInitialFile>,
     credential: crate::ports::ProviderCredentialBinding,
@@ -472,9 +487,104 @@ async fn prepare_create<'a>(
         size,
         network,
         limits_revision: bundle.revision,
+        agent_execution: bundle.agent_execution,
+        run_budget: bundle.run_budget,
+        materialized_agents: materialized_ceiling,
         selectors,
         initial_files,
         credential,
+    })
+}
+
+/// Builds the exact immutable root `AgentStarted` record elected before launch.
+///
+/// The values come only from the revision-bound effective-limit bundle and the
+/// release-qualified configuration. No Brain test default can enter a serving
+/// session through this constructor.
+pub fn initial_root_record(
+    prepared: &PreparedSessionCreate,
+) -> Result<aex_brain_domain::JournalRecord, AppError> {
+    use aex_brain_domain::budget::{Dimension, DimensionVector};
+    use aex_brain_domain::ids::{CatalogPin, ModelSlug};
+    use aex_brain_domain::wire_pending::{AgentLimits, ResolvedAgentConfig, SessionCredentialPin};
+
+    let resolved: models::ResolvedConfig =
+        serde_json::from_value(prepared.resolved.document().to_value()).map_err(|_| {
+            AppError::Port(crate::ports::PortError::Corrupt {
+                kind: "resolved configuration",
+                reason: "the elected document no longer decodes",
+            })
+        })?;
+    let catalog_pin = CatalogPin::from_wire(&resolved.catalog_revision).map_err(|_| {
+        AppError::Port(crate::ports::PortError::Corrupt {
+            kind: "model catalog pin",
+            reason: "the release-qualified catalog revision is malformed",
+        })
+    })?;
+    let model = ModelSlug::new(resolved.model).map_err(|_| {
+        AppError::Port(crate::ports::PortError::Corrupt {
+            kind: "qualified model",
+            reason: "the release-qualified model exceeds Brain's bound",
+        })
+    })?;
+    let credential = SessionCredentialPin::new(
+        prepared.provider_credential.credential,
+        prepared.provider_credential.revision,
+        prepared.provider_credential.source_generation,
+        0,
+    )
+    .ok_or(AppError::Port(crate::ports::PortError::Corrupt {
+        kind: "provider credential pin",
+        reason: "the elected credential revision and generation must be positive",
+    }))?;
+    let mut budget = DimensionVector::ZERO;
+    budget.set(
+        Dimension::TotalChildrenCreated,
+        prepared.run_budget.total_children_created,
+    );
+    budget.set(Dimension::ProviderCalls, prepared.run_budget.provider_calls);
+    budget.set(Dimension::HandsCalls, prepared.run_budget.hands_calls);
+    // BYOK provider calls and the in-guest Bash tool do not charge this hosted-tool dimension.
+    budget.set(Dimension::CostMicroUsd, 0);
+    budget.set(
+        Dimension::ActiveChildren,
+        prepared
+            .materialized_agents
+            .saturating_sub(1)
+            .min(prepared.run_budget.total_children_created),
+    );
+    budget.set(
+        Dimension::QueuedChildren,
+        prepared.run_budget.queued_children,
+    );
+    budget.set(
+        Dimension::RetainedResultBytes,
+        prepared.run_budget.retained_result_bytes,
+    );
+    Ok(aex_brain_domain::JournalRecord::AgentStarted {
+        config: Box::new(ResolvedAgentConfig {
+            catalog_pin,
+            provider: resolved.provider,
+            credential,
+            model,
+            system: None,
+            // Bash is release-built into Hands and has no hosted tool manifest.
+            tool_manifest_digests: Vec::new(),
+            hands_generation: prepared.generation,
+            limits_revision: prepared.limits_revision,
+            limits: AgentLimits {
+                max_turns: prepared.agent_execution.max_turns,
+                max_steps_per_turn: prepared.agent_execution.max_steps_per_turn,
+                turn_deadline_ms: prepared.agent_execution.turn_deadline_ms,
+                max_run_duration_ms: prepared.run_budget.max_run_duration_ms,
+                max_depth: prepared.agent_execution.max_depth,
+                max_fanout: prepared.agent_execution.max_fanout,
+            },
+        }),
+        parent: None,
+        join: None,
+        depth: 0,
+        budget,
     })
 }
 

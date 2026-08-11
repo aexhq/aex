@@ -110,6 +110,10 @@ pub struct RootAdmissionState {
     pub revision: AgentRevision,
     /// Immutable journal tail.
     pub journal_tail: JournalSeq,
+    /// Effective-limit revision pinned by the root `AgentStarted` record.
+    pub limits_revision: u64,
+    /// Maximum duration of one message under that revision.
+    pub max_run_duration_ms: u64,
     /// Whether the stored phase and lease facts admit a new message.
     pub idle: bool,
 }
@@ -325,6 +329,42 @@ pub struct LimitsBundle {
     /// `LimitUnresolved` for anything it does not hold, which is the loud
     /// outcome rather than a silent zero.
     pub limits: EffectiveLimits,
+    /// Revisioned Brain execution ceilings for every message in the session.
+    pub agent_execution: AgentExecutionLimits,
+    /// Revisioned per-message budget ceilings pinned into the root authority.
+    pub run_budget: RunBudgetLimits,
+}
+
+/// The `session.agent_execution` effective map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentExecutionLimits {
+    /// Assistant turns per message.
+    pub max_turns: u32,
+    /// Planner steps per turn.
+    pub max_steps_per_turn: u32,
+    /// One turn's wall-clock fence.
+    pub turn_deadline_ms: u32,
+    /// Deepest admitted child lineage, root at zero.
+    pub max_depth: u16,
+    /// Largest one-decision fanout.
+    pub max_fanout: u32,
+}
+
+/// The `session.run_budget` effective map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunBudgetLimits {
+    /// Longest one message may remain active.
+    pub max_run_duration_ms: u64,
+    /// Children ever created below the root.
+    pub total_children_created: u64,
+    /// Provider calls admitted for one message.
+    pub provider_calls: u64,
+    /// Hands calls admitted for one message.
+    pub hands_calls: u64,
+    /// Children durably queued at once.
+    pub queued_children: u64,
+    /// Retained child-result bytes.
+    pub retained_result_bytes: u64,
 }
 
 /// Reads the workspace's effective limits.

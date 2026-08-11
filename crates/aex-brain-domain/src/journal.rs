@@ -194,6 +194,8 @@ pub enum JournalRecord {
         max_spend_cents: u64,
         /// Absolute deadline, already shortened to the session lifetime fence.
         deadline: Timestamp,
+        /// Effective workspace-limit revision that admitted this message.
+        limits_revision: u64,
     },
     /// Input from the customer, the API, or a parent's mailbox.
     UserMessage {
@@ -549,6 +551,7 @@ mod tests {
             content: Vec::new(),
             max_spend_cents: 50_000,
             deadline: Timestamp::from_millis(90_000),
+            limits_revision: 7,
         };
         let bytes = admitted.canonical_bytes().expect("canonicalizes");
         assert_eq!(decode(&bytes).expect("decodes"), admitted);

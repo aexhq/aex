@@ -251,6 +251,7 @@ pub async fn admit_message(
         command.request.deadline,
         now,
         materialized.session.lifecycle.expires_at,
+        materialized.root.max_run_duration_ms,
     )
     .map_err(|_| AppError::Conflict(ErrorCode::InvalidRequest))?;
     let message_id = MessageId::from_uuid7(context.ids.next_uuid_v7());
@@ -296,6 +297,7 @@ pub async fn admit_message(
         }],
         max_spend_cents: bounds.max_spend_cents.get(),
         deadline: aex_brain_domain::Timestamp::from_millis(bounds.deadline.unix_millis()),
+        limits_revision: materialized.root.limits_revision,
     };
     let journal_body = run_admitted
         .canonical_bytes()

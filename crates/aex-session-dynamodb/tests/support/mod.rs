@@ -164,6 +164,8 @@ pub fn control() -> AgentControl {
         revision: 4,
         journal_tail: 9,
         journal_tail_hash: Some("a".repeat(64)),
+        limits_revision: 7,
+        max_run_duration_ms: 3_600_000,
         claim_owner: Some("worker-1".to_owned()),
         lease_expires_at: Some(later(30_000)),
         fence: 2,

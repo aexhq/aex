@@ -170,6 +170,8 @@ pub fn encode_control(control: &AgentControl) -> Item {
                 .as_ref()
                 .map(|hash| s(hash.clone())),
         )
+        .set("limitsRevision", n(control.limits_revision))
+        .set("maxRunDurationMs", n(control.max_run_duration_ms))
         .set_opt(
             "claimOwner",
             control.claim_owner.as_ref().map(|owner| s(owner.clone())),
@@ -211,6 +213,8 @@ pub fn decode_control(item: &Item, asserted: WorkspaceId) -> Result<AgentControl
         revision: row.u64("revision")?,
         journal_tail,
         journal_tail_hash,
+        limits_revision: row.u64("limitsRevision")?,
+        max_run_duration_ms: row.u64("maxRunDurationMs")?,
         claim_owner: row.opt_string("claimOwner")?.map(str::to_owned),
         lease_expires_at: row.opt_timestamp("leaseExpiresAt")?,
         fence: row.u64("fence")?,
@@ -829,6 +833,8 @@ mod tests {
             revision: 2,
             journal_tail: 7,
             journal_tail_hash: Some("a".repeat(64)),
+            limits_revision: 7,
+            max_run_duration_ms: 3_600_000,
             claim_owner: None,
             lease_expires_at: None,
             fence: 3,

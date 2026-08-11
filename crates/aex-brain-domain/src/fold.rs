@@ -420,6 +420,7 @@ mod control_projection_tests {
                 content: Vec::new(),
                 max_spend_cents: 1_000,
                 deadline,
+                limits_revision: 7,
             },
         )
         .expect("the admission record seals");
@@ -450,6 +451,7 @@ mod control_projection_tests {
                 content: Vec::new(),
                 max_spend_cents: 1_000,
                 deadline: Timestamp::from_millis(90_000),
+                limits_revision: 7,
             },
         )
         .expect("admission seals");
@@ -576,6 +578,10 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
                 depth: *depth,
                 ..BudgetNode::default()
             };
+            state.structural = StructuralLimits {
+                max_depth: config.limits.max_depth,
+                max_fanout: config.limits.max_fanout,
+            };
             if let Some(join) = join {
                 state.joins.entry(*join).or_insert_with(|| JoinGroup {
                     join: *join,
@@ -594,6 +600,7 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             content,
             max_spend_cents,
             deadline,
+            limits_revision: _,
         } => {
             // Limits named by the admitted message are per run. Model history and
             // cumulative usage survive the boundary, while its planner turn count does

@@ -65,10 +65,14 @@ fn root_record(generation: GenerationId) -> JournalRecord {
             system: None,
             tool_manifest_digests: Vec::new(),
             hands_generation: generation,
+            limits_revision: 1,
             limits: AgentLimits {
                 max_turns: 32,
                 max_steps_per_turn: 16,
                 turn_deadline_ms: 600_000,
+                max_run_duration_ms: 3_600_000,
+                max_depth: 4,
+                max_fanout: 32,
             },
         }),
         parent: None,
@@ -149,6 +153,21 @@ fn metadata_is_staged_per_file_then_header_and_generation_are_elected_atomically
             .map(|participant| participant.as_str())
             .collect::<Vec<_>>(),
         ["session.create_preparation", "agent.root_control"]
+    );
+    let control = election.actions()[1].put().expect("root control").item();
+    assert_eq!(
+        control
+            .get("limitsRevision")
+            .and_then(|value| value.as_n().ok())
+            .map(String::as_str),
+        Some("1")
+    );
+    assert_eq!(
+        control
+            .get("maxRunDurationMs")
+            .and_then(|value| value.as_n().ok())
+            .map(String::as_str),
+        Some("3600000")
     );
 }
 

@@ -171,6 +171,8 @@ impl ScriptedPorts {
                     agent: root.id,
                     revision: root.revision,
                     journal_tail: root.journal_tail,
+                    limits_revision: 4,
+                    max_run_duration_ms: 3_600_000,
                     idle: true,
                 },
             },
@@ -577,6 +579,21 @@ impl LimitsReader for ScriptedPorts {
         Ok(crate::ports::LimitsBundle {
             revision: self.limits_revision,
             limits: self.limits.clone(),
+            agent_execution: crate::ports::AgentExecutionLimits {
+                max_turns: 32,
+                max_steps_per_turn: 16,
+                turn_deadline_ms: 600_000,
+                max_depth: 4,
+                max_fanout: 32,
+            },
+            run_budget: crate::ports::RunBudgetLimits {
+                max_run_duration_ms: 3_600_000,
+                total_children_created: 128,
+                provider_calls: 96,
+                hands_calls: 64,
+                queued_children: 32,
+                retained_result_bytes: 8_388_608,
+            },
         })
     }
 }

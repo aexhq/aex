@@ -356,6 +356,8 @@ pub fn elect_plan(
         .set("revision", n(0))
         .set("journalTail", n(0))
         .set("hasJournal", boolean(false))
+        .set("limitsRevision", n(root_limits(&prepared.root_record)?.0))
+        .set("maxRunDurationMs", n(root_limits(&prepared.root_record)?.1))
         .set("fence", n(0))
         .set("cancelEpoch", n(0))
         .set("stopRequested", boolean(false))
@@ -471,6 +473,17 @@ pub fn root_started_plan(
 fn root_budget(record: &JournalRecord) -> Result<DimensionVector, CreatePreparationError> {
     match record {
         JournalRecord::AgentStarted { budget, .. } => Ok(*budget),
+        _ => Err(CreatePreparationError::RootRecord {
+            reason: "the first root record is not AgentStarted",
+        }),
+    }
+}
+
+fn root_limits(record: &JournalRecord) -> Result<(u64, u64), CreatePreparationError> {
+    match record {
+        JournalRecord::AgentStarted { config, .. } => {
+            Ok((config.limits_revision, config.limits.max_run_duration_ms))
+        }
         _ => Err(CreatePreparationError::RootRecord {
             reason: "the first root record is not AgentStarted",
         }),

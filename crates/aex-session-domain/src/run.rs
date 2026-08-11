@@ -26,7 +26,7 @@ pub const DEFAULT_MESSAGE_MAX_SPEND_CENTS: NonZeroU64 =
 pub struct ResolvedMessageBounds {
     /// The caller's explicit positive value, or exactly 1000 when omitted.
     pub max_spend_cents: NonZeroU64,
-    /// The caller's earlier deadline, or the session lifetime/drain fence.
+    /// The caller's earlier deadline, or the earlier run/session fence.
     pub deadline: Timestamp,
 }
 
@@ -47,9 +47,10 @@ pub enum MessageBoundsError {
 /// Resolves the public optional message bounds without reserving account funds.
 ///
 /// `session_fence` is the earlier of the immutable provider `expiresAt` and any
-/// internal drain deadline. Omission uses that exact fence. An explicit
-/// deadline may only shorten it; an explicit positive spend cap is preserved
-/// even when it is above the launch default.
+/// internal drain deadline. Omission uses the earlier of that fence and the
+/// revisioned `max_run_duration_ms` fence. An explicit deadline may only
+/// shorten it; an explicit positive spend cap is preserved even when it is
+/// above the launch default.
 ///
 /// # Errors
 ///
@@ -60,13 +61,18 @@ pub fn resolve_message_bounds(
     requested_deadline: Option<Timestamp>,
     now: Timestamp,
     session_fence: Timestamp,
+    max_run_duration_ms: u64,
 ) -> Result<ResolvedMessageBounds, MessageBoundsError> {
     let max_spend_cents = match requested_spend_cents {
         Some(value) => NonZeroU64::new(value).ok_or(MessageBoundsError::ZeroSpend)?,
         None => DEFAULT_MESSAGE_MAX_SPEND_CENTS,
     };
-    let deadline = requested_deadline.unwrap_or(session_fence);
-    if deadline > session_fence {
+    let duration = i64::try_from(max_run_duration_ms).unwrap_or(i64::MAX);
+    let run_fence = Timestamp::from_unix_millis(now.unix_millis().saturating_add(duration))
+        .unwrap_or(session_fence);
+    let effective_fence = session_fence.min(run_fence);
+    let deadline = requested_deadline.unwrap_or(effective_fence);
+    if deadline > effective_fence {
         return Err(MessageBoundsError::DeadlineAfterSessionFence);
     }
     if deadline <= now {
@@ -423,11 +429,29 @@ mod tests {
 
     #[test]
     fn omitted_public_bounds_resolve_to_exact_default_and_session_fence() {
-        let resolved = resolve_message_bounds(None, None, moment(1_000), moment(60_000))
+        let resolved = resolve_message_bounds(None, None, moment(1_000), moment(60_000), 59_000)
             .expect("the session has remaining time");
         assert_eq!(resolved.max_spend_cents, DEFAULT_MESSAGE_MAX_SPEND_CENTS);
         assert_eq!(resolved.max_spend_cents.get(), 1_000);
         assert_eq!(resolved.deadline, moment(60_000));
+    }
+
+    #[test]
+    fn omitted_deadline_is_capped_by_the_revisioned_run_duration() {
+        let resolved =
+            resolve_message_bounds(None, None, moment(1_000), moment(28_800_000), 3_600_000)
+                .expect("the one-hour run fence is still in the future");
+        assert_eq!(resolved.deadline, moment(3_601_000));
+        assert_eq!(
+            resolve_message_bounds(
+                None,
+                Some(moment(3_601_001)),
+                moment(1_000),
+                moment(28_800_000),
+                3_600_000,
+            ),
+            Err(MessageBoundsError::DeadlineAfterSessionFence)
+        );
     }
 
     #[test]
@@ -438,6 +462,7 @@ mod tests {
                 Some(moment(30_000)),
                 moment(1_000),
                 moment(60_000),
+                59_000,
             )
             .expect("positive spend and earlier deadline are caller-controlled");
             assert_eq!(resolved.max_spend_cents.get(), cents);
@@ -445,7 +470,7 @@ mod tests {
         }
 
         assert_eq!(
-            resolve_message_bounds(Some(0), None, moment(1_000), moment(60_000)),
+            resolve_message_bounds(Some(0), None, moment(1_000), moment(60_000), 59_000),
             Err(MessageBoundsError::ZeroSpend)
         );
         assert_eq!(
@@ -454,6 +479,7 @@ mod tests {
                 Some(moment(60_001)),
                 moment(1_000),
                 moment(60_000),
+                59_000,
             ),
             Err(MessageBoundsError::DeadlineAfterSessionFence)
         );
