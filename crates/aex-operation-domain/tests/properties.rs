@@ -7,22 +7,23 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU16;
 
-use aex_content_domain::NormalizedPath;
 use aex_operation_domain::admission::ConflictCode;
 use aex_operation_domain::due::PageBudget;
 use aex_operation_domain::operation::{FailureClass, OperationScope};
 use aex_operation_domain::{
     AdmissionOutcome, AdmitRequest, CancelRejection, ClaimDenial, ClaimOutcome, ContinuationCursor,
     CursorPosition, DedupIdentity, DeletionEpoch, DeletionGuard, DeletionState, ExportMember,
-    Fence, FenceRejection, Operation, OperationFailure, OperationKind, OperationResult,
-    OperationStatus, OwnerId, PAGE_DEFAULT, PageError, PageToken, Progress, PurgeStage,
-    StepOutcome, WorkId, WorkItem, WorkState, admit, backoff, backoff_step, cancel, claim,
-    commit_point, complete, fail, page_limit, plan_due_scan, redact_for_session_delete, shard_of,
-    start, succeed,
+    Fence, FenceRejection, LifecycleStage, Operation, OperationFailure, OperationKind,
+    OperationResult, OperationStatus, OwnerId, PAGE_DEFAULT, PageError, PageToken, Progress,
+    SessionDeleteStage, StepOutcome, WorkId, WorkItem, WorkState, admit, backoff, backoff_step,
+    cancel, claim, commit_point, complete, fail, page_limit, plan_due_scan,
+    redact_for_session_delete, shard_of, start, succeed,
 };
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
-use aex_wire::ids::{MeasurementId, OperationId, PrefixedId as _, SessionId, Uuid7, WorkspaceId};
+use aex_wire::ids::{
+    GenerationId, MeasurementId, OperationId, PrefixedId as _, SessionId, Uuid7, WorkspaceId,
+};
 use aex_wire::types::Timestamp;
 use proptest::prelude::*;
 use time::Duration;
@@ -338,8 +339,16 @@ fn attempts_are_bounded_and_poison_is_never_redriven() {
 // ---------------------------------------------------------------------------
 
 fn cursor_position() -> impl Strategy<Value = CursorPosition> {
+    let generation = GenerationId::from_uuid7(Uuid7::compose(1, [8; 10]));
     prop_oneof![
-        prop::sample::select(PurgeStage::ALL.to_vec()).prop_map(CursorPosition::Purge),
+        prop::sample::select(SessionDeleteStage::ALL.to_vec())
+            .prop_map(CursorPosition::SessionDelete),
+        prop::sample::select(LifecycleStage::ALL.to_vec())
+            .prop_map(move |stage| { CursorPosition::SessionSuspend { stage, generation } }),
+        prop::sample::select(LifecycleStage::ALL.to_vec())
+            .prop_map(move |stage| { CursorPosition::SessionResume { stage, generation } }),
+        prop::sample::select(LifecycleStage::ALL.to_vec())
+            .prop_map(move |stage| { CursorPosition::SessionTerminate { stage, generation } }),
         (
             0_u32..1_000,
             0_u64..1_000_000,
@@ -352,11 +361,6 @@ fn cursor_position() -> impl Strategy<Value = CursorPosition> {
             }),
         prop::collection::vec(any::<u8>(), 0..512).prop_map(|bytes| CursorPosition::Gc {
             scanned_through: PageToken::new(bytes).expect("in range")
-        }),
-        prop::sample::select(vec!["a", "a/b", "dir/file.txt", "é/ß"]).prop_map(|text| {
-            CursorPosition::Persist {
-                next_path: NormalizedPath::parse(text).expect("valid"),
-            }
         }),
     ]
 }

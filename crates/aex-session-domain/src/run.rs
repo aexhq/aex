@@ -86,8 +86,8 @@ pub use aex_internal_contracts::outbox::RunStatus;
 /// Why the platform fenced a run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptReason {
-    /// A stop operation asked for it.
-    StopRequested {
+    /// A public session cancellation asked for it.
+    SessionCancel {
         /// Which operation.
         operation: OperationId,
     },

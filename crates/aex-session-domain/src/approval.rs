@@ -62,12 +62,12 @@ pub enum ApprovalDecision {
 /// Why a pending approval was withdrawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ApprovalCancelCause {
-    /// A stop operation asked for it.
-    StopRequested,
+    /// The public session cancellation command asked for it.
+    SessionCancel,
     /// The run was cancelled.
     RunCancelled,
-    /// The session is being trashed.
-    SessionTrashing,
+    /// The irreversible deletion fence was crossed.
+    SessionDeleting,
     /// The account is paused.
     AccountPaused,
     /// The workspace generation is gone.
@@ -81,9 +81,9 @@ pub enum ApprovalCancelCause {
 impl ApprovalCancelCause {
     /// Every cause, in canonical order.
     pub const ALL: [Self; 7] = [
-        Self::StopRequested,
+        Self::SessionCancel,
         Self::RunCancelled,
-        Self::SessionTrashing,
+        Self::SessionDeleting,
         Self::AccountPaused,
         Self::ContinuityLost,
         Self::ToolCallCancelled,
@@ -506,8 +506,8 @@ pub fn cause_in_scope(
     scope: &CancelScope,
 ) -> bool {
     match cause {
-        ApprovalCancelCause::SessionTrashing | ApprovalCancelCause::AccountPaused => true,
-        ApprovalCancelCause::StopRequested | ApprovalCancelCause::RunCancelled => {
+        ApprovalCancelCause::SessionDeleting | ApprovalCancelCause::AccountPaused => true,
+        ApprovalCancelCause::SessionCancel | ApprovalCancelCause::RunCancelled => {
             scope.run == Some(approval.binding.run)
         }
         ApprovalCancelCause::ContinuityLost => {
@@ -548,6 +548,7 @@ pub fn cancel_pending(
 
 #[cfg(test)]
 mod tests {
+    use aex_internal_contracts::RunId;
     use aex_wire::ids::{ApprovalId, PrefixedId as _, Uuid7};
     use aex_wire::types::Timestamp;
 
@@ -695,7 +696,7 @@ mod tests {
 
         // Unconditional causes always apply.
         for cause in [
-            ApprovalCancelCause::SessionTrashing,
+            ApprovalCancelCause::SessionDeleting,
             ApprovalCancelCause::AccountPaused,
         ] {
             assert!(cancel_pending(&pending, cause, &CancelScope::UNSCOPED, moment(1)).is_some());
@@ -709,7 +710,7 @@ mod tests {
         assert!(
             cancel_pending(
                 &pending,
-                ApprovalCancelCause::StopRequested,
+                ApprovalCancelCause::SessionCancel,
                 &wrong_run,
                 moment(1)
             )

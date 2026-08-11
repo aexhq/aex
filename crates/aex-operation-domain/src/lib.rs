@@ -26,7 +26,8 @@ pub mod redact;
 pub use admission::{AdmissionOutcome, AdmitRequest, ConflictCode, admit};
 pub use cursor::{
     CURSOR_MAX_ENCODED_BYTES, CURSOR_VERSION, ContinuationCursor, CursorError, CursorKind,
-    CursorPosition, ExportMember, PAGE_DEFAULT, PageError, PageToken, PurgeStage, page_limit,
+    CursorPosition, ExportMember, LifecycleStage, PAGE_DEFAULT, PageError, PageToken,
+    SessionDeleteStage, page_limit,
 };
 pub use deletion::{DeletionEpoch, DeletionGuard, DeletionState};
 pub use due::{

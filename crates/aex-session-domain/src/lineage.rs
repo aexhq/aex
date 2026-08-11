@@ -1,8 +1,8 @@
 //! Session lineage.
 //!
 //! Clone is not part of the launch contract. The retained edge vocabulary exists only so
-//! deletion can detach or cascade over historical descendants without preserving a workspace
-//! root or persistence revision.
+//! deletion can detach historical descendants without preserving a workspace root or
+//! persistence revision.
 
 use aex_wire::ids::{OperationId, SessionId};
 use aex_wire::types::Timestamp;
@@ -34,15 +34,6 @@ pub struct Origin {
     pub operation: OperationId,
     /// When it was made.
     pub cloned_at: Timestamp,
-}
-
-/// How a purge treats a session's lineage descendants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum PurgeCascade {
-    /// Clear each descendant's origin link and leave the descendant alive.
-    DetachDescendants,
-    /// Purge the whole lineage-descendant closure.
-    PurgeClosure,
 }
 
 /// Clears a clone edge without touching anything else about the child.

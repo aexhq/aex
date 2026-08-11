@@ -15,39 +15,9 @@ use aex_wire::types::Timestamp;
 use sha2::{Digest as _, Sha256};
 
 use crate::ids::{CancellationEpoch, SessionRevision};
+pub use crate::lifecycle::LifecycleStatus as SessionStatus;
+use crate::lifecycle::SessionLifecycle;
 use crate::lineage::Lineage;
-
-/// Where the session is, as the public wire sees it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SessionStatus {
-    /// At rest.
-    Idle,
-    /// A run owns the session.
-    Running,
-    /// A run is blocked on an approval.
-    AwaitingApproval,
-    /// In the recovery window.
-    Trashed,
-    /// Past the destructive fence.
-    Purging,
-}
-
-impl SessionStatus {
-    /// Every status, in lifecycle order.
-    pub const ALL: [Self; 5] = [
-        Self::Idle,
-        Self::Running,
-        Self::AwaitingApproval,
-        Self::Trashed,
-        Self::Purging,
-    ];
-
-    /// Whether a run currently owns the session.
-    #[must_use]
-    pub const fn has_active_run(self) -> bool {
-        matches!(self, Self::Running | Self::AwaitingApproval)
-    }
-}
 
 /// Whether new work may be admitted, and why not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -56,21 +26,18 @@ pub enum WorkAdmission {
     Open,
     /// The account is paused.
     Paused,
-    /// The session is being trashed.
-    Trashing,
-    /// The session is being purged.
-    Purging,
+    /// The irreversible deletion fence has been crossed.
+    Deleting,
     /// The workspace generation the session depended on is gone.
     ContinuityLost,
 }
 
 impl WorkAdmission {
     /// Every admission state, in canonical order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 4] = [
         Self::Open,
         Self::Paused,
-        Self::Trashing,
-        Self::Purging,
+        Self::Deleting,
         Self::ContinuityLost,
     ];
 
@@ -334,6 +301,11 @@ pub struct Session {
     pub organization: OrganizationId,
     /// Where it is.
     pub status: SessionStatus,
+    /// The canonical retained-generation lifecycle authority.
+    ///
+    /// `status`, `active_run` and `generation` remain checked index/control
+    /// projections for existing internal consumers; codecs reject any drift.
+    pub lifecycle: SessionLifecycle,
     /// The head's concurrency token.
     pub revision: SessionRevision,
     /// The run that owns it, when one does.
@@ -530,7 +502,7 @@ mod tests {
         let guard = acquire_mutation_guard(
             &session,
             operation(1),
-            OperationKind::SessionPersist,
+            OperationKind::SessionSuspend,
             moment(1),
         )
         .expect("acquires");
@@ -540,7 +512,7 @@ mod tests {
             acquire_mutation_guard(
                 &session,
                 operation(1),
-                OperationKind::SessionPersist,
+                OperationKind::SessionSuspend,
                 moment(2)
             ),
             Ok(guard)
@@ -549,7 +521,7 @@ mod tests {
             acquire_mutation_guard(
                 &session,
                 operation(2),
-                OperationKind::SessionTrash,
+                OperationKind::SessionDelete,
                 moment(2)
             ),
             Err(SessionError::MutationGuardHeld {
@@ -572,7 +544,7 @@ mod tests {
             acquire_mutation_guard(
                 &session,
                 operation(1),
-                OperationKind::SessionPersist,
+                OperationKind::SessionSuspend,
                 moment(1),
             )
             .expect("acquires"),
@@ -596,7 +568,7 @@ mod tests {
             acquire_mutation_guard(
                 &session,
                 operation(1),
-                OperationKind::SessionPersist,
+                OperationKind::SessionSuspend,
                 moment(1)
             ),
             Err(SessionError::NotIdle { run })

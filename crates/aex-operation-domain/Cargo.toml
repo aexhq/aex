@@ -30,7 +30,6 @@ properties = "unit"
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
 
 [dependencies]
-aex-content-domain = { path = "../aex-content-domain" }
 aex-wire = { path = "../aex-wire" }
 blake3.workspace = true
 serde_json.workspace = true

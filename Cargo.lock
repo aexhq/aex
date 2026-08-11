@@ -939,7 +939,6 @@ dependencies = [
 name = "aex-operation-domain"
 version = "0.1.0"
 dependencies = [
- "aex-content-domain",
  "aex-wire",
  "blake3",
  "proptest",

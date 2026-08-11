@@ -118,9 +118,9 @@ pub enum TerminalRejection {
         /// What the attempt presented.
         presented: AgentFence,
     },
-    /// The session is past the destructive fence.
-    #[error("session is purging")]
-    SessionPurging,
+    /// The session is past the irreversible deletion fence.
+    #[error("session is deleting")]
+    SessionDeleting,
 }
 
 /// Settles a run, or reports why this attempt is not the winner.
@@ -151,10 +151,8 @@ pub fn claim_terminal(
                 .unwrap_or_else(|| unreachable!("a terminal run always records its outcome")),
         });
     }
-    if session.deletion.state == DeletionState::Purging
-        || session.deletion.state == DeletionState::Purged
-    {
-        return Err(TerminalRejection::SessionPurging);
+    if session.deletion.state != DeletionState::Live {
+        return Err(TerminalRejection::SessionDeleting);
     }
     if session.active_run != Some(run.id) {
         return Err(TerminalRejection::NotSessionOwner {
@@ -232,7 +230,7 @@ pub fn sealed_ids(commit: &TerminalCommit) -> Vec<MessageId> {
 #[cfg(test)]
 mod tests {
     use aex_internal_contracts::RunId;
-    use aex_wire::ids::{PrefixedId as _, Uuid7};
+    use aex_wire::ids::Uuid7;
 
     use super::{MAX_OPEN_MESSAGES_PER_RUN, TerminalRejection, claim_terminal};
     use crate::ids::{AgentFence, CancellationEpoch, SessionRevision};

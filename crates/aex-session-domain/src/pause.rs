@@ -94,20 +94,18 @@ impl CommandClass {
 
 /// The closed exempt set.
 ///
-/// Security revocation, stop, discard, trash and purge; account and workspace
+/// Security revocation, cancellation, termination and deletion; account and workspace
 /// state reads; billing and payment; and the safe operation envelopes for those.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ExemptCommand {
     /// Revoke a secret or a credential.
     SecurityRevocation,
-    /// Stop a session's work.
-    SessionStop,
-    /// Discard the live workspace.
-    WorkspaceDiscard,
-    /// Trash a session.
-    SessionTrash,
-    /// Purge a session or a workspace.
-    Purge,
+    /// Cancel a session's current work.
+    SessionCancel,
+    /// Permanently terminate a session's runtime.
+    SessionTerminate,
+    /// Irreversibly delete a session or workspace.
+    Delete,
     /// Read account or workspace state.
     StateRead,
     /// Billing and payment.
@@ -118,12 +116,11 @@ pub enum ExemptCommand {
 
 impl ExemptCommand {
     /// Every exempt command. The set is closed; a command not on it is pausable.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::SecurityRevocation,
-        Self::SessionStop,
-        Self::WorkspaceDiscard,
-        Self::SessionTrash,
-        Self::Purge,
+        Self::SessionCancel,
+        Self::SessionTerminate,
+        Self::Delete,
         Self::StateRead,
         Self::Billing,
         Self::OperationEnvelope,

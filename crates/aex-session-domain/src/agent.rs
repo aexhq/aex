@@ -131,10 +131,10 @@ pub enum QueueReason {
 /// Why a session-wide cancellation happened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CancelCause {
-    /// A stop operation asked for it.
-    StopRequested,
-    /// The session is being trashed.
-    SessionTrashing,
+    /// The public cancellation command asked for it.
+    SessionCancel,
+    /// The irreversible deletion fence was crossed.
+    SessionDeleting,
     /// The account is paused.
     AccountPaused,
     /// The workspace generation is gone.
@@ -144,21 +144,21 @@ pub enum CancelCause {
 impl CancelCause {
     /// Every cause, in canonical order.
     pub const ALL: [Self; 4] = [
-        Self::StopRequested,
-        Self::SessionTrashing,
+        Self::SessionCancel,
+        Self::SessionDeleting,
         Self::AccountPaused,
         Self::ContinuityLost,
     ];
 
     /// The admission state the cause leaves the session in.
     ///
-    /// Only `StopRequested` returns admission to `Open`; the other three are
+    /// Only `SessionCancel` returns admission to `Open`; the other three are
     /// conditions that outlive the cancellation.
     #[must_use]
     pub const fn target_admission(self) -> WorkAdmission {
         match self {
-            Self::StopRequested => WorkAdmission::Open,
-            Self::SessionTrashing => WorkAdmission::Trashing,
+            Self::SessionCancel => WorkAdmission::Open,
+            Self::SessionDeleting => WorkAdmission::Deleting,
             Self::AccountPaused => WorkAdmission::Paused,
             Self::ContinuityLost => WorkAdmission::ContinuityLost,
         }
@@ -802,7 +802,7 @@ mod tests {
     fn cancelling_nothing_does_not_advance_the_epoch() {
         let session = session_fixture();
         let commit =
-            cancel_session_work(&session, &[], CancelCause::StopRequested, None, moment(1));
+            cancel_session_work(&session, &[], CancelCause::SessionCancel, None, moment(1));
         assert!(!commit.changed);
         assert_eq!(commit.cancellation, session.cancellation);
     }
@@ -825,7 +825,7 @@ mod tests {
         let commit = cancel_session_work(
             &session,
             &[child],
-            CancelCause::SessionTrashing,
+            CancelCause::SessionDeleting,
             None,
             moment(2),
         );

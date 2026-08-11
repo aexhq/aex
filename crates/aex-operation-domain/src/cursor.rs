@@ -10,8 +10,7 @@
 //! for the same reason every other encoding in this stream is: a `serde` bump
 //! must not be able to move a persisted value.
 
-use aex_content_domain::NormalizedPath;
-use aex_wire::ids::{AgentId, GenerationId, PrefixedId as _, Uuid7};
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 
 /// The one cursor envelope version.
 pub const CURSOR_VERSION: u16 = 1;
@@ -25,58 +24,56 @@ pub const PAGE_DEFAULT: u16 = 100;
 /// Which continued operation a cursor belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CursorKind {
-    /// A session or workspace purge.
-    Purge,
+    /// Manual suspension of an exact generation.
+    SessionSuspend,
+    /// Manual resumption of an exact generation.
+    SessionResume,
+    /// Permanent termination of an exact generation.
+    SessionTerminate,
+    /// Irreversible cross-plane session deletion.
+    SessionDelete,
     /// A telemetry export.
     Export,
     /// A content garbage collection.
     Gc,
-    /// An escalated persist.
-    Persist,
-    /// An escalated session stop (D-2): more agents than one bounded batch can
-    /// settle, so the run/head barrier moves only on the final step.
-    Stop,
-    /// A live-workspace discard (D-6), which waits on the runtime authority's
-    /// acceptance of generation termination.
-    Discard,
 }
 
 impl CursorKind {
     /// Every kind, in canonical order.
     pub const ALL: [Self; 6] = [
-        Self::Purge,
+        Self::SessionSuspend,
+        Self::SessionResume,
+        Self::SessionTerminate,
+        Self::SessionDelete,
         Self::Export,
         Self::Gc,
-        Self::Persist,
-        Self::Stop,
-        Self::Discard,
     ];
 
     const fn discriminant(self) -> u8 {
         match self {
-            Self::Purge => 1,
-            Self::Export => 2,
-            Self::Gc => 3,
-            Self::Persist => 4,
-            Self::Stop => 5,
-            Self::Discard => 6,
+            Self::SessionSuspend => 1,
+            Self::SessionResume => 2,
+            Self::SessionTerminate => 3,
+            Self::SessionDelete => 4,
+            Self::Export => 5,
+            Self::Gc => 6,
         }
     }
 
     const fn from_discriminant(value: u8) -> Option<Self> {
         match value {
-            1 => Some(Self::Purge),
-            2 => Some(Self::Export),
-            3 => Some(Self::Gc),
-            4 => Some(Self::Persist),
-            5 => Some(Self::Stop),
-            6 => Some(Self::Discard),
+            1 => Some(Self::SessionSuspend),
+            2 => Some(Self::SessionResume),
+            3 => Some(Self::SessionTerminate),
+            4 => Some(Self::SessionDelete),
+            5 => Some(Self::Export),
+            6 => Some(Self::Gc),
             _ => None,
         }
     }
 }
 
-/// How far a live-workspace discard has got.
+/// How far a provider-backed session lifecycle operation has got.
 ///
 /// Two stages, and the boundary between them is the commit latch: the step that
 /// moves `Terminating` to `Clearing` is the step that observed the runtime
@@ -84,82 +81,79 @@ impl CursorKind {
 /// first irreversible effect. Before it, the discard is still cancelable; after
 /// it, the operation may never become `Failed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum DiscardStage {
-    /// Termination of the pinned generation has been requested of
-    /// `aex-runtime-control` and not yet accepted.
-    Terminating,
-    /// Termination was accepted; the session head's generation is being cleared
-    /// and the result written.
-    Clearing,
+pub enum LifecycleStage {
+    /// The revision-bound runtime command has not yet been accepted.
+    Dispatch,
+    /// Runtime control accepted the command and is settling its provider intent.
+    AwaitProvider,
+    /// The exact runtime result is being committed to the session/operation rows.
+    Commit,
 }
 
-impl DiscardStage {
+impl LifecycleStage {
     /// Every stage, in execution order.
-    pub const ALL: [Self; 2] = [Self::Terminating, Self::Clearing];
+    pub const ALL: [Self; 3] = [Self::Dispatch, Self::AwaitProvider, Self::Commit];
 
     const fn discriminant(self) -> u8 {
         match self {
-            Self::Terminating => 1,
-            Self::Clearing => 2,
+            Self::Dispatch => 1,
+            Self::AwaitProvider => 2,
+            Self::Commit => 3,
         }
     }
 
     const fn from_discriminant(value: u8) -> Option<Self> {
         match value {
-            1 => Some(Self::Terminating),
-            2 => Some(Self::Clearing),
+            1 => Some(Self::Dispatch),
+            2 => Some(Self::AwaitProvider),
+            3 => Some(Self::Commit),
             _ => None,
         }
     }
 }
 
-/// How far a purge has got.
+/// How far irreversible session deletion has got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum PurgeStage {
-    /// Closing admission and cancelling in-flight work.
-    Fencing,
-    /// Terminating provider generations.
-    Generations,
-    /// Removing owner and root edges.
-    Edges,
-    /// Sweeping unpinned content.
-    Content,
-    /// Detaching or cascading descendants.
-    Descendants,
-    /// Writing and projecting the denial fact.
-    Denial,
+pub enum SessionDeleteStage {
+    /// Terminate the exact retained generation first.
+    Terminate,
+    /// Remove session and message user-content rows.
+    SessionContent,
+    /// Remove Brain journal/control user-content rows.
+    BrainContent,
+    /// Remove session observations, telemetry and export objects.
+    Observations,
+    /// Verify retained accounting/audit facts and write the minimal tombstone.
+    Tombstone,
 }
 
-impl PurgeStage {
+impl SessionDeleteStage {
     /// Every stage, in execution order.
-    pub const ALL: [Self; 6] = [
-        Self::Fencing,
-        Self::Generations,
-        Self::Edges,
-        Self::Content,
-        Self::Descendants,
-        Self::Denial,
+    pub const ALL: [Self; 5] = [
+        Self::Terminate,
+        Self::SessionContent,
+        Self::BrainContent,
+        Self::Observations,
+        Self::Tombstone,
     ];
 
     const fn discriminant(self) -> u8 {
         match self {
-            Self::Fencing => 1,
-            Self::Generations => 2,
-            Self::Edges => 3,
-            Self::Content => 4,
-            Self::Descendants => 5,
-            Self::Denial => 6,
+            Self::Terminate => 1,
+            Self::SessionContent => 2,
+            Self::BrainContent => 3,
+            Self::Observations => 4,
+            Self::Tombstone => 5,
         }
     }
 
     const fn from_discriminant(value: u8) -> Option<Self> {
         match value {
-            1 => Some(Self::Fencing),
-            2 => Some(Self::Generations),
-            3 => Some(Self::Edges),
-            4 => Some(Self::Content),
-            5 => Some(Self::Descendants),
-            6 => Some(Self::Denial),
+            1 => Some(Self::Terminate),
+            2 => Some(Self::SessionContent),
+            3 => Some(Self::BrainContent),
+            4 => Some(Self::Observations),
+            5 => Some(Self::Tombstone),
             _ => None,
         }
     }
@@ -228,8 +222,29 @@ impl PageToken {
 /// Where a continued operation resumes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CursorPosition {
-    /// A purge, at a stage.
-    Purge(PurgeStage),
+    /// Manual suspension of an exact retained generation.
+    SessionSuspend {
+        /// Current provider-authority phase.
+        stage: LifecycleStage,
+        /// The immutable generation the caller observed.
+        generation: GenerationId,
+    },
+    /// Manual resumption of an exact retained generation.
+    SessionResume {
+        /// Current provider-authority phase.
+        stage: LifecycleStage,
+        /// The immutable generation the caller observed.
+        generation: GenerationId,
+    },
+    /// Permanent termination of an exact retained generation.
+    SessionTerminate {
+        /// Current provider-authority phase.
+        stage: LifecycleStage,
+        /// The immutable generation the caller observed.
+        generation: GenerationId,
+    },
+    /// Irreversible deletion, at a cross-plane stage.
+    SessionDelete(SessionDeleteStage),
     /// An export, at a byte offset inside one part of one member.
     Export {
         /// Which part.
@@ -244,32 +259,6 @@ pub enum CursorPosition {
         /// Where the scan got to.
         scanned_through: PageToken,
     },
-    /// A persist, at a path.
-    Persist {
-        /// The next path to consider.
-        next_path: NormalizedPath,
-    },
-    /// A paged stop, at the next agent to settle.
-    ///
-    /// The position is exclusive of everything already settled and inclusive of
-    /// `next_agent`, so a duplicate step re-reads exactly the same batch and its
-    /// `OperationCursorAt` guard refuses the second commit.
-    Stop {
-        /// The next agent to settle, in canonical agent order.
-        next_agent: AgentId,
-    },
-    /// A workspace discard, at a stage, for one pinned generation.
-    ///
-    /// The generation travels in the cursor rather than being re-read from the
-    /// head on each step: the caller's `ifGenerationId` pinned which generation
-    /// was meant at admission, and a step that re-read the head could terminate
-    /// a generation the caller never asked about.
-    Discard {
-        /// How far the discard has got.
-        stage: DiscardStage,
-        /// The generation the admission pinned.
-        generation: GenerationId,
-    },
 }
 
 impl CursorPosition {
@@ -277,12 +266,12 @@ impl CursorPosition {
     #[must_use]
     pub const fn kind(&self) -> CursorKind {
         match self {
-            Self::Purge(_) => CursorKind::Purge,
+            Self::SessionSuspend { .. } => CursorKind::SessionSuspend,
+            Self::SessionResume { .. } => CursorKind::SessionResume,
+            Self::SessionTerminate { .. } => CursorKind::SessionTerminate,
+            Self::SessionDelete(_) => CursorKind::SessionDelete,
             Self::Export { .. } => CursorKind::Export,
             Self::Gc { .. } => CursorKind::Gc,
-            Self::Persist { .. } => CursorKind::Persist,
-            Self::Stop { .. } => CursorKind::Stop,
-            Self::Discard { .. } => CursorKind::Discard,
         }
     }
 }
@@ -341,7 +330,13 @@ impl ContinuationCursor {
         out.extend_from_slice(&self.version.to_le_bytes());
         out.push(self.kind.discriminant());
         match &self.position {
-            CursorPosition::Purge(stage) => out.push(stage.discriminant()),
+            CursorPosition::SessionSuspend { stage, generation }
+            | CursorPosition::SessionResume { stage, generation }
+            | CursorPosition::SessionTerminate { stage, generation } => {
+                out.push(stage.discriminant());
+                out.extend_from_slice(generation.uuid7().as_bytes());
+            }
+            CursorPosition::SessionDelete(stage) => out.push(stage.discriminant()),
             CursorPosition::Export {
                 part,
                 byte_offset,
@@ -353,16 +348,6 @@ impl ContinuationCursor {
             }
             CursorPosition::Gc { scanned_through } => {
                 push_bytes(&mut out, scanned_through.as_bytes());
-            }
-            CursorPosition::Persist { next_path } => {
-                push_bytes(&mut out, next_path.as_bytes());
-            }
-            CursorPosition::Stop { next_agent } => {
-                out.extend_from_slice(next_agent.uuid7().as_bytes());
-            }
-            CursorPosition::Discard { stage, generation } => {
-                out.push(stage.discriminant());
-                out.extend_from_slice(generation.uuid7().as_bytes());
             }
         }
         out.extend_from_slice(&self.processed.to_le_bytes());
@@ -406,8 +391,23 @@ impl ContinuationCursor {
         let kind = CursorKind::from_discriminant(reader.byte()?)
             .ok_or(CursorError::UnknownDiscriminant)?;
         let position = match kind {
-            CursorKind::Purge => CursorPosition::Purge(
-                PurgeStage::from_discriminant(reader.byte()?)
+            CursorKind::SessionSuspend => CursorPosition::SessionSuspend {
+                stage: LifecycleStage::from_discriminant(reader.byte()?)
+                    .ok_or(CursorError::UnknownDiscriminant)?,
+                generation: generation(&mut reader)?,
+            },
+            CursorKind::SessionResume => CursorPosition::SessionResume {
+                stage: LifecycleStage::from_discriminant(reader.byte()?)
+                    .ok_or(CursorError::UnknownDiscriminant)?,
+                generation: generation(&mut reader)?,
+            },
+            CursorKind::SessionTerminate => CursorPosition::SessionTerminate {
+                stage: LifecycleStage::from_discriminant(reader.byte()?)
+                    .ok_or(CursorError::UnknownDiscriminant)?,
+                generation: generation(&mut reader)?,
+            },
+            CursorKind::SessionDelete => CursorPosition::SessionDelete(
+                SessionDeleteStage::from_discriminant(reader.byte()?)
                     .ok_or(CursorError::UnknownDiscriminant)?,
             ),
             CursorKind::Export => CursorPosition::Export {
@@ -418,24 +418,6 @@ impl ContinuationCursor {
             },
             CursorKind::Gc => CursorPosition::Gc {
                 scanned_through: PageToken::new(reader.bytes()?.to_vec())?,
-            },
-            CursorKind::Persist => CursorPosition::Persist {
-                next_path: NormalizedPath::parse(
-                    std::str::from_utf8(reader.bytes()?).map_err(|_| CursorError::Malformed)?,
-                )
-                .map_err(|_| CursorError::Malformed)?,
-            },
-            CursorKind::Stop => CursorPosition::Stop {
-                next_agent: AgentId::from_uuid7(
-                    Uuid7::from_bytes(reader.array::<16>()?).map_err(|_| CursorError::Malformed)?,
-                ),
-            },
-            CursorKind::Discard => CursorPosition::Discard {
-                stage: DiscardStage::from_discriminant(reader.byte()?)
-                    .ok_or(CursorError::UnknownDiscriminant)?,
-                generation: GenerationId::from_uuid7(
-                    Uuid7::from_bytes(reader.array::<16>()?).map_err(|_| CursorError::Malformed)?,
-                ),
             },
         };
         let processed = u64::from_le_bytes(reader.array::<8>()?);
@@ -457,6 +439,12 @@ impl ContinuationCursor {
             total_hint,
         })
     }
+}
+
+fn generation(reader: &mut Reader<'_>) -> Result<GenerationId, CursorError> {
+    Ok(GenerationId::from_uuid7(
+        Uuid7::from_bytes(reader.array::<16>()?).map_err(|_| CursorError::Malformed)?,
+    ))
 }
 
 fn push_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
@@ -608,19 +596,27 @@ pub const fn page_limit(requested: Option<u16>, effective_max: u16) -> Result<u1
 
 #[cfg(test)]
 mod tests {
-    use aex_content_domain::NormalizedPath;
     use aex_wire::ids::PrefixedId as _;
 
     use super::{
-        CURSOR_MAX_ENCODED_BYTES, ContinuationCursor, CursorError, CursorPosition, DiscardStage,
-        ExportMember, PAGE_DEFAULT, PageError, PageToken, PurgeStage, page_limit,
+        CURSOR_MAX_ENCODED_BYTES, ContinuationCursor, CursorError, CursorPosition, ExportMember,
+        LifecycleStage, PAGE_DEFAULT, PageError, PageToken, SessionDeleteStage, page_limit,
     };
 
     fn every_position() -> Vec<CursorPosition> {
-        let mut out: Vec<CursorPosition> = PurgeStage::ALL
+        let generation = aex_wire::ids::GenerationId::from_uuid7(aex_wire::ids::Uuid7::compose(
+            1_700_000_000_001,
+            [3; 10],
+        ));
+        let mut out: Vec<CursorPosition> = SessionDeleteStage::ALL
             .into_iter()
-            .map(CursorPosition::Purge)
+            .map(CursorPosition::SessionDelete)
             .collect();
+        for stage in LifecycleStage::ALL {
+            out.push(CursorPosition::SessionSuspend { stage, generation });
+            out.push(CursorPosition::SessionResume { stage, generation });
+            out.push(CursorPosition::SessionTerminate { stage, generation });
+        }
         for member in ExportMember::ALL {
             out.push(CursorPosition::Export {
                 part: 7,
@@ -631,24 +627,6 @@ mod tests {
         out.push(CursorPosition::Gc {
             scanned_through: PageToken::new(b"page-token".to_vec()).expect("in range"),
         });
-        out.push(CursorPosition::Persist {
-            next_path: NormalizedPath::parse("a/b/c.txt").expect("valid"),
-        });
-        out.push(CursorPosition::Stop {
-            next_agent: aex_wire::ids::AgentId::from_uuid7(aex_wire::ids::Uuid7::compose(
-                1_700_000_000_000,
-                [7; 10],
-            )),
-        });
-        for stage in DiscardStage::ALL {
-            out.push(CursorPosition::Discard {
-                stage,
-                generation: aex_wire::ids::GenerationId::from_uuid7(aex_wire::ids::Uuid7::compose(
-                    1_700_000_000_001,
-                    [3; 10],
-                )),
-            });
-        }
         out
     }
 
@@ -663,8 +641,12 @@ mod tests {
 
     #[test]
     fn decode_rejects_trailing_bytes_and_unknown_discriminants() {
-        let cursor = ContinuationCursor::new(CursorPosition::Purge(PurgeStage::Edges), 1, None)
-            .expect("builds");
+        let cursor = ContinuationCursor::new(
+            CursorPosition::SessionDelete(SessionDeleteStage::BrainContent),
+            1,
+            None,
+        )
+        .expect("builds");
         let mut encoded = cursor.encode().expect("encodes");
         encoded.push(0);
         assert_eq!(

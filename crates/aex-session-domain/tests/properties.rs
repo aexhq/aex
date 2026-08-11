@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use aex_content_domain::ContentDigest;
 use aex_internal_contracts::RunId;
-use aex_operation_domain::{DeletionGuard, DeletionState, OperationKind};
+use aex_operation_domain::{DeletionState, OperationKind};
 use aex_session_domain::testing::{
     approval_binding, child_agent, drift_field, entry_at, id, materialized_state, moment,
     running_session, session_fixture, terminal_attempt,
@@ -15,20 +15,19 @@ use aex_session_domain::testing::{
 use aex_session_domain::{
     AccountProjection, AccountState, AgentControl, AgentError, AgentStatus, AgentTerminal,
     ApprovalCancelCause, ApprovalDecision, ApprovalRejection, ApprovalStatus, AuthorityFact,
-    BindingField, CancelCause, CancelScope, CommandClass, EffectId, EffectiveLimits, ExemptCommand,
-    JournalEntry, JournalError, JournalSeq, PauseReason, PurgeCascade, PurgeEvidence, RunOutcome,
-    RunStatus, SessionStatus, TerminalRejection, WorkAdmission, cancel_pending,
-    cancel_session_work, claim_terminal, complete_agent, create_root, fold_control, pause_gate,
-    project_account, purge, purge_complete, request_approval, respond, restore, spawn, trash,
-    validate_append,
+    BindingField, CancelCause, CancelScope, CommandClass, DeleteEvidence, EffectId,
+    EffectiveLimits, ExemptCommand, JournalEntry, JournalError, JournalSeq, LifecycleStatus,
+    PauseReason, ResolvedMessageBounds, RunOutcome, RunStatus, SessionLifecycle, SessionStatus,
+    TerminalRejection, WorkAdmission, begin_delete, cancel_pending, cancel_session_work,
+    claim_terminal, complete_agent, complete_delete, create_root, fold_control, pause_gate,
+    project_account, request_approval, respond, spawn, validate_append,
 };
 use aex_wire::error::ErrorCode;
 use aex_wire::ids::{
-    AgentId, ApprovalId, GenerationId, OperationId, PrefixedId as _, SessionId, Uuid7,
+    AgentId, ApprovalId, GenerationId, MessageId, OperationId, PrefixedId as _, Uuid7, WorkspaceId,
 };
 use aex_wire::limits::LimitId;
 use proptest::prelude::*;
-use time::Duration;
 
 fn limits(materialized_agents: u64) -> EffectiveLimits {
     [(LimitId::SessionMaterializedAgents, materialized_agents)]
@@ -42,60 +41,46 @@ fn limits(materialized_agents: u64) -> EffectiveLimits {
 
 #[test]
 fn session_status_reachability() {
-    // 1 `session_status_reachability`: every declared status is produced by a
-    // declared transition, and the two that own a run agree about it.
+    // 1 `session_status_reachability`: every declared public status is produced
+    // by the retained-generation lifecycle, not inserted as a fixture-only arm.
     let mut observed: BTreeSet<SessionStatus> = BTreeSet::new();
-    observed.insert(session_fixture().status);
-
-    let (session, run, agent, message) = running_session();
-    observed.insert(session.status);
-    let commit = claim_terminal(
-        &run,
-        &session,
-        agent.id,
-        aex_session_domain::AgentFence::INITIAL,
-        std::slice::from_ref(&message),
-        &terminal_attempt(&session, &run),
-    )
-    .expect("wins");
-    observed.insert(commit.session.status);
-
-    let trashed = trash(
-        &session.deletion,
-        id::<OperationId>(20),
-        moment(1),
-        Duration::days(7),
-    )
-    .expect("trashes");
-    assert_eq!(trashed.admission, WorkAdmission::Trashing);
-    observed.insert(SessionStatus::Trashed);
-
-    let purging = purge(
-        &trashed.guard,
-        id::<OperationId>(21),
-        PurgeCascade::DetachDescendants,
-        &[],
-        moment(2),
-    )
-    .expect("claims");
-    assert_eq!(purging.admission, WorkAdmission::Purging);
-    observed.insert(SessionStatus::Purging);
-
-    // `AwaitingApproval` is reached by raising an approval on a running session.
-    let binding = approval_binding();
-    request_approval(
-        id::<ApprovalId>(22),
-        binding.clone(),
-        &binding,
-        None,
-        moment(3),
-        moment(100),
-    )
-    .expect("raises");
-    observed.insert(SessionStatus::AwaitingApproval);
+    let mut lifecycle =
+        SessionLifecycle::launched(id::<GenerationId>(1), moment(0)).expect("launches");
+    observed.insert(lifecycle.status);
+    lifecycle
+        .admit_message(
+            id::<MessageId>(2),
+            RunId::from_uuid7(Uuid7::compose(1, [3; 10])),
+            ResolvedMessageBounds {
+                max_spend_cents: std::num::NonZeroU64::new(1_000).expect("positive"),
+                deadline: moment(10_000),
+            },
+            moment(1),
+        )
+        .expect("message");
+    observed.insert(lifecycle.status);
+    let run = lifecycle.active.expect("active").run;
+    lifecycle.await_approval(run).expect("awaits");
+    observed.insert(lifecycle.status);
+    lifecycle.cancel_current(moment(2)).expect("cancels");
+    lifecycle.begin_suspend().expect("starts suspend");
+    observed.insert(lifecycle.status);
+    lifecycle.complete_suspend(moment(3)).expect("suspends");
+    observed.insert(lifecycle.status);
+    lifecycle.begin_resume().expect("starts resume");
+    observed.insert(lifecycle.status);
+    lifecycle.complete_resume(moment(4)).expect("resumes");
+    lifecycle
+        .begin_terminate(aex_session_domain::TerminationReason::User)
+        .expect("starts terminate");
+    observed.insert(lifecycle.status);
+    lifecycle.complete_terminate(moment(5)).expect("terminates");
+    observed.insert(lifecycle.status);
+    lifecycle.begin_delete().expect("starts delete");
+    observed.insert(lifecycle.status);
 
     assert_eq!(observed.len(), SessionStatus::ALL.len());
-    for status in SessionStatus::ALL {
+    for status in LifecycleStatus::ALL {
         assert!(observed.contains(&status), "{status:?} must be reachable");
     }
 }
@@ -215,19 +200,19 @@ proptest! {
 
     /// 2 `revision_monotone`.
     #[test]
-    fn revision_monotone(steps in prop::collection::vec(0_u8..4, 1..16)) {
+    fn revision_monotone(steps in prop::collection::vec(0_u8..3, 1..16)) {
         let mut session = session_fixture();
         let mut revision = session.revision;
         let mut cancellation = session.cancellation;
         let mut deletion = session.deletion.epoch;
 
         for step in steps {
-            match step % 4 {
+            match step % 3 {
                 0 => {
                     let commit = cancel_session_work(
                         &session,
                         &[],
-                        CancelCause::StopRequested,
+                        CancelCause::SessionCancel,
                         None,
                         moment(1),
                     );
@@ -238,24 +223,8 @@ proptest! {
                 }
                 1 => {
                     if session.deletion.state == DeletionState::Live {
-                        let commit = trash(
-                            &session.deletion,
-                            id::<OperationId>(20),
-                            moment(1),
-                            Duration::days(7),
-                        )
-                        .expect("trashes");
-                        prop_assert!(commit.guard.epoch > deletion);
-                        deletion = commit.guard.epoch;
-                        session.deletion = commit.guard;
-                        session.work_admission = commit.admission;
-                    }
-                }
-                2 => {
-                    if session.deletion.state == DeletionState::Trashed {
-                        let commit =
-                            restore(&session.deletion, id::<OperationId>(21), moment(2))
-                                .expect("restores");
+                        let commit = begin_delete(&session.deletion, id::<OperationId>(20))
+                            .expect("deletes");
                         prop_assert!(commit.guard.epoch > deletion);
                         deletion = commit.guard.epoch;
                         session.deletion = commit.guard;
@@ -638,7 +607,7 @@ fn approval_cancel_scope_is_exact() {
     for cause in ApprovalCancelCause::ALL {
         let fires_unscoped = matches!(
             cause,
-            ApprovalCancelCause::SessionTrashing | ApprovalCancelCause::AccountPaused
+            ApprovalCancelCause::SessionDeleting | ApprovalCancelCause::AccountPaused
         );
         assert_eq!(
             cancel_pending(&pending, cause, &CancelScope::UNSCOPED, moment(1)).is_some(),
@@ -672,7 +641,7 @@ proptest! {
             let attempt = acquire_mutation_guard(
                 &session,
                 holder,
-                OperationKind::SessionPersist,
+                OperationKind::SessionSuspend,
                 moment(1),
             );
             if let Ok(guard) = attempt {
@@ -877,7 +846,7 @@ fn root_cannot_complete() {
 }
 
 // ---------------------------------------------------------------------------
-// 23-28 — deletion, purge and clone
+// 23-28 — irreversible deletion and clone detachment
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -886,138 +855,65 @@ fn deletion_epoch_fences_every_pre_fence_command() {
     let session = session_fixture();
     let before = session.deletion.epoch;
 
-    let trashed = trash(
-        &session.deletion,
-        id::<OperationId>(20),
-        moment(1),
-        Duration::days(7),
-    )
-    .expect("trashes")
-    .guard;
-    assert!(trashed.epoch > before);
+    let deleting = begin_delete(&session.deletion, id::<OperationId>(20))
+        .expect("claims")
+        .guard;
+    assert!(deleting.epoch > before);
 
-    let purging = purge(
-        &trashed,
-        id::<OperationId>(21),
-        PurgeCascade::DetachDescendants,
-        &[],
-        moment(2),
-    )
-    .expect("claims")
-    .guard;
-    assert!(purging.epoch > trashed.epoch);
-
-    // A command built against the pre-fence epoch is stale at every later stage.
-    for guard in [&trashed, &purging] {
-        assert_ne!(guard.epoch, before);
-    }
+    // A command built against the pre-fence epoch is stale forever.
+    assert_ne!(deleting.epoch, before);
 }
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 192, ..ProptestConfig::default() })]
 
-    /// 24 `restore_window`.
+    /// 24 `delete_owner_idempotent` and 25 `delete_absorbing`.
     #[test]
-    fn restore_window(window_ms in 1_i64..10_000, at in 0_i64..20_000, claimed in any::<bool>()) {
+    fn delete_owner_idempotent(replays in 1_usize..12) {
         let session = session_fixture();
-        let mut trashed = trash(
-            &session.deletion,
-            id::<OperationId>(20),
-            moment(0),
-            Duration::milliseconds(window_ms),
-        )
-        .expect("trashes")
-        .guard;
-        if claimed {
-            trashed.purge_operation = Some(id::<OperationId>(21));
-        }
-
-        let outcome = restore(&trashed, id::<OperationId>(22), moment(at));
-        let should_succeed = !claimed && at <= window_ms;
-        prop_assert_eq!(outcome.is_ok(), should_succeed);
-    }
-
-    /// 25 `purge_absorbing`.
-    #[test]
-    fn purge_absorbing(steps in prop::collection::vec(0_u8..3, 1..12)) {
-        let session = session_fixture();
-        let mut guard: DeletionGuard = purge(
-            &session.deletion,
-            id::<OperationId>(21),
-            PurgeCascade::DetachDescendants,
-            &[],
-            moment(0),
-        )
-        .expect("claims")
-        .guard;
-
-        for step in steps {
-            match step {
-                0 => {
-                    prop_assert!(
-                        trash(&guard, id::<OperationId>(20), moment(1), Duration::days(1)).is_err()
-                    );
-                }
-                1 => prop_assert!(restore(&guard, id::<OperationId>(22), moment(1)).is_err()),
-                _ => prop_assert!(
-                    purge(
-                        &guard,
-                        id::<OperationId>(23),
-                        PurgeCascade::PurgeClosure,
-                        &[],
-                        moment(1)
-                    )
-                    .is_err()
-                ),
-            }
-            prop_assert_eq!(guard.state, DeletionState::Purging);
-            guard = DeletionGuard { ..guard };
+        let first = begin_delete(&session.deletion, id::<OperationId>(20)).expect("claims");
+        for _ in 0..replays {
+            prop_assert_eq!(begin_delete(&first.guard, id::<OperationId>(20)), Ok(first));
+            prop_assert!(begin_delete(&first.guard, id::<OperationId>(21)).is_err());
         }
     }
 }
 
 #[test]
-fn purge_completion_requires_the_whole_predicate() {
-    // 26 `purge_linearization`, completion half.
+fn delete_completion_requires_the_whole_predicate() {
+    // 26 `delete_linearization`, completion half.
     let session = session_fixture();
-    let purging = purge(
-        &session.deletion,
-        id::<OperationId>(21),
-        PurgeCascade::DetachDescendants,
-        &[],
-        moment(0),
-    )
-    .expect("claims")
-    .guard;
+    let deleting = begin_delete(&session.deletion, id::<OperationId>(21))
+        .expect("claims")
+        .guard;
 
-    let complete = PurgeEvidence {
-        fences_committed: true,
-        operations_settled: true,
-        generations_terminated: Vec::new(),
-        grants_closed: true,
-        edges_removed: true,
-        content_purged: true,
-        descendants_settled: true,
-        denial_durable: true,
-        denial_projected: true,
+    let complete = DeleteEvidence {
+        generation_terminated: true,
+        session_content_removed: true,
+        messages_removed: true,
+        brain_user_content_removed: true,
+        observations_removed: true,
+        export_objects_removed: true,
+        billing_aggregate_retained: true,
+        audit_fact_retained: true,
     };
-    assert!(purge_complete(&purging, &complete, moment(1)).is_ok());
+    assert!(complete_delete(&deleting, id::<WorkspaceId>(22), &complete, moment(1)).is_ok());
 
     // Each individual omission blocks completion, so nothing is optional.
-    let omissions: [fn(&mut PurgeEvidence); 8] = [
-        |value| value.fences_committed = false,
-        |value| value.operations_settled = false,
-        |value| value.grants_closed = false,
-        |value| value.edges_removed = false,
-        |value| value.content_purged = false,
-        |value| value.descendants_settled = false,
-        |value| value.denial_durable = false,
-        |value| value.denial_projected = false,
+    let omissions: [fn(&mut DeleteEvidence); 8] = [
+        |value| value.generation_terminated = false,
+        |value| value.session_content_removed = false,
+        |value| value.messages_removed = false,
+        |value| value.brain_user_content_removed = false,
+        |value| value.observations_removed = false,
+        |value| value.export_objects_removed = false,
+        |value| value.billing_aggregate_retained = false,
+        |value| value.audit_fact_retained = false,
     ];
     for omit in omissions {
         let mut evidence = complete.clone();
         omit(&mut evidence);
-        assert!(purge_complete(&purging, &evidence, moment(1)).is_err());
+        assert!(complete_delete(&deleting, id::<WorkspaceId>(22), &evidence, moment(1)).is_err());
     }
 }
 
@@ -1095,7 +991,7 @@ fn pause_gate_exemptions_are_exactly_the_declared_list() {
         let rejection = pause_gate(class, &paused).expect_err("must deny");
         assert_eq!(rejection.code, ErrorCode::AccountPaused);
     }
-    assert_eq!(ExemptCommand::ALL.len(), 8);
+    assert_eq!(ExemptCommand::ALL.len(), 7);
 }
 
 #[test]

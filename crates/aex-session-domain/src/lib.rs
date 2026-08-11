@@ -7,7 +7,7 @@
 //!   `fold(fold(prior, a), b)` for every split, and a rejected batch leaves
 //!   `prior` byte-identical;
 //! - exactly one writer settles a run, and every loser produces no write at all;
-//! - a terminal run, a sealed message and a purged session all reject every
+//! - a terminal run, a sealed message and a deleted session all reject every
 //!   further command instead of reopening;
 //! - lineage is append-only: a clone never mutates its source.
 //!
@@ -47,8 +47,8 @@ pub use approval::{
 };
 pub use budget::{BudgetGrant, EffectiveLimits, LimitUnresolved};
 pub use deletion::{
-    DeletionEpoch, DeletionGuard, DeletionRejection, DeletionState, PurgeCommit, PurgeEvidence,
-    RestoreCommit, SessionTombstone, TrashCommit, purge, purge_complete, restore, trash,
+    DeleteCommit, DeleteEvidence, DeletionEpoch, DeletionGuard, DeletionRejection, DeletionState,
+    SessionTombstone, begin_delete, complete_delete,
 };
 pub use idempotency::{
     IdempotencyIdentity, IdempotencyReceipt, ReceiptKey, ReceiptKeyError, ReceiptOutcome,
@@ -67,7 +67,7 @@ pub use lifecycle::{
     LifecycleRevision, LifecycleStatus, MAXIMUM_LIFETIME_SECONDS, ScheduledLifecycleEvent,
     ScheduledLifecycleKind, ScheduledLifecycleOutcome, SessionLifecycle, TerminationReason,
 };
-pub use lineage::{Lineage, Origin, PurgeCascade, detach};
+pub use lineage::{Lineage, Origin, detach};
 pub use message::{
     Message, MessageDelta, MessageError, MessagePart, MessageRole, MessageState, append_part, seal,
 };

@@ -141,6 +141,12 @@ pub fn session_fixture() -> Session {
                     "peak":{"memoryMiB":2048,"vcpus":2.0},
                     "size":"1gb"
                 },
+                "lifecycle":{
+                    "idleSuspendAfterSeconds":180,
+                    "maximumLifetimeSeconds":28800,
+                    "resumeOnLiveFileAccess":true,
+                    "resumeOnMessage":true
+                },
                 "model":"gpt-test",
                 "network":{"hands":{"mode":"none"}},
                 "packages":[],
@@ -154,11 +160,15 @@ pub fn session_fixture() -> Session {
         "gpt-test".to_owned(),
     )
     .expect("matching fixture projections");
+    let pinned_runtime = pinned_runtime(id_value, workspace, organization);
+    let generation = pinned_runtime.generation();
     Session {
         id: id_value,
         workspace,
         organization,
         status: SessionStatus::Idle,
+        lifecycle: crate::SessionLifecycle::launched(generation, moment(0))
+            .expect("the fixture launch instant is representable"),
         revision: SessionRevision::INITIAL,
         active_run: None,
         work_admission: WorkAdmission::Open,
@@ -166,8 +176,8 @@ pub fn session_fixture() -> Session {
         deletion: DeletionGuard::live(id_value),
         mutation_guard: None,
         root_agent: id::<AgentId>(4),
-        generation: None,
-        pinned_runtime: pinned_runtime(id_value, workspace, organization),
+        generation: Some(generation),
+        pinned_runtime,
         custody_revision: CustodyRevision::FIRST,
         lineage: Lineage::ROOT,
         resolved,
