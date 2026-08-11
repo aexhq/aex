@@ -5,7 +5,7 @@
 //! mount path and mode. Each file row is staged immutably before one small
 //! transaction elects the selection header and physical root-agent control.
 //! The split is required because 256 legal 4 KiB mount paths cannot fit in one
-//! DynamoDB item or one 100-action transaction.
+//! `DynamoDB` item or one 100-action transaction.
 
 use std::collections::BTreeSet;
 
@@ -202,114 +202,138 @@ impl CreatePreparation {
     /// Returns [`CreatePreparationError`] before any provider effect when the
     /// selected count/bytes, uniqueness or root generation is invalid.
     pub fn validate(&self) -> Result<PreparationSummary, CreatePreparationError> {
-        if self.receipt_key_sha256.len() != 64
-            || !self
-                .receipt_key_sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(CreatePreparationError::ReplayKey);
-        }
-        if self.files.len() > STARTUP_FILE_MAX_COUNT {
-            return Err(CreatePreparationError::FileCount {
-                found: self.files.len(),
-                maximum: STARTUP_FILE_MAX_COUNT,
-            });
-        }
-        let mut names = BTreeSet::new();
-        let mut paths = BTreeSet::new();
-        let mut total_bytes = 0_u64;
-        for file in &self.files {
-            if !names.insert(file.name.as_str()) {
-                return Err(CreatePreparationError::Duplicate {
-                    kind: "registered name",
-                    value: file.name.to_string(),
-                });
-            }
-            if !paths.insert(file.mount_path.as_str()) {
-                return Err(CreatePreparationError::Duplicate {
-                    kind: "mount path",
-                    value: file.mount_path.as_str().to_owned(),
-                });
-            }
-            total_bytes = total_bytes.checked_add(file.size_bytes).ok_or(
-                CreatePreparationError::FileBytes {
-                    found: u64::MAX,
-                    maximum: STARTUP_FILE_MAX_BYTES,
-                },
-            )?;
-            if total_bytes > STARTUP_FILE_MAX_BYTES {
-                return Err(CreatePreparationError::FileBytes {
-                    found: total_bytes,
-                    maximum: STARTUP_FILE_MAX_BYTES,
-                });
-            }
-        }
-        let JournalRecord::AgentStarted {
-            config,
-            parent,
-            join,
-            depth,
-            ..
-        } = &self.root_record
-        else {
-            return Err(CreatePreparationError::RootRecord {
-                reason: "the first root record is not AgentStarted",
-            });
-        };
-        if parent.is_some() || join.is_some() || *depth != 0 {
-            return Err(CreatePreparationError::RootRecord {
-                reason: "a root start must have no parent/join and depth zero",
-            });
-        }
-        if config.hands_generation != self.generation {
-            return Err(CreatePreparationError::RootRecord {
-                reason: "the pinned Hands generation differs from the elected generation",
-            });
-        }
-        if !self
-            .root_record
-            .fits_inline()
-            .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?
-        {
-            return Err(CreatePreparationError::RootRecord {
-                reason: "the AgentStarted body exceeds the durable inline journal ceiling",
-            });
-        }
+        validate_receipt_key(&self.receipt_key_sha256)?;
+        let total_bytes = validate_prepared_files(&self.files)?;
+        let root_entry_id = validate_root_start(self)?;
         let selection = to_jcs_string(&self.files)
             .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
         let selection_digest = ContentHash::of(selection.as_bytes());
-        let root_entry_id = self
-            .root_record
-            .content_hash()
-            .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
-        let authority = to_jcs_string(&PreparationAuthority {
-            workspace: self.workspace,
-            organization: self.organization,
-            intent: self.intent,
-            receipt_key_sha256: self.receipt_key_sha256.clone(),
-            coordinator: self.coordinator.to_string(),
-            session: self.session,
-            root_agent: self.root_agent,
-            generation: self.generation,
-            selection_digest,
-            root_entry_id: root_entry_id.to_hex(),
-            runtime_definition: ContentHash::of(&self.runtime_definition),
-            resolved_config: ContentHash::of(&self.resolved_config),
-            metadata: self.metadata.as_deref().map(ContentHash::of),
-            materialized_agents: self.materialized_agents,
-            account_revision: self.account_revision,
-            prepared_at: self.prepared_at,
-        })
-        .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
         Ok(PreparationSummary {
             file_count: self.files.len(),
             total_bytes,
             selection_digest,
             root_entry_id,
-            authority_digest: ContentHash::of(authority.as_bytes()),
+            authority_digest: preparation_authority_digest(self, selection_digest, root_entry_id)?,
         })
     }
+}
+
+fn validate_receipt_key(receipt_key_sha256: &str) -> Result<(), CreatePreparationError> {
+    if receipt_key_sha256.len() != 64
+        || !receipt_key_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(CreatePreparationError::ReplayKey);
+    }
+    Ok(())
+}
+
+fn validate_prepared_files(files: &[PreparedFile]) -> Result<u64, CreatePreparationError> {
+    if files.len() > STARTUP_FILE_MAX_COUNT {
+        return Err(CreatePreparationError::FileCount {
+            found: files.len(),
+            maximum: STARTUP_FILE_MAX_COUNT,
+        });
+    }
+    let mut names = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    let mut total_bytes = 0_u64;
+    for file in files {
+        if !names.insert(file.name.as_str()) {
+            return Err(CreatePreparationError::Duplicate {
+                kind: "registered name",
+                value: file.name.to_string(),
+            });
+        }
+        if !paths.insert(file.mount_path.as_str()) {
+            return Err(CreatePreparationError::Duplicate {
+                kind: "mount path",
+                value: file.mount_path.as_str().to_owned(),
+            });
+        }
+        total_bytes =
+            total_bytes
+                .checked_add(file.size_bytes)
+                .ok_or(CreatePreparationError::FileBytes {
+                    found: u64::MAX,
+                    maximum: STARTUP_FILE_MAX_BYTES,
+                })?;
+        if total_bytes > STARTUP_FILE_MAX_BYTES {
+            return Err(CreatePreparationError::FileBytes {
+                found: total_bytes,
+                maximum: STARTUP_FILE_MAX_BYTES,
+            });
+        }
+    }
+    Ok(total_bytes)
+}
+
+fn validate_root_start(
+    prepared: &CreatePreparation,
+) -> Result<aex_brain_domain::ids::ContentHash, CreatePreparationError> {
+    let JournalRecord::AgentStarted {
+        config,
+        parent,
+        join,
+        depth,
+        ..
+    } = &prepared.root_record
+    else {
+        return Err(CreatePreparationError::RootRecord {
+            reason: "the first root record is not AgentStarted",
+        });
+    };
+    if parent.is_some() || join.is_some() || *depth != 0 {
+        return Err(CreatePreparationError::RootRecord {
+            reason: "a root start must have no parent/join and depth zero",
+        });
+    }
+    if config.hands_generation != prepared.generation {
+        return Err(CreatePreparationError::RootRecord {
+            reason: "the pinned Hands generation differs from the elected generation",
+        });
+    }
+    if !prepared
+        .root_record
+        .fits_inline()
+        .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?
+    {
+        return Err(CreatePreparationError::RootRecord {
+            reason: "the AgentStarted body exceeds the durable inline journal ceiling",
+        });
+    }
+    prepared
+        .root_record
+        .content_hash()
+        .map_err(|error| CreatePreparationError::Canonical(error.to_string()))
+}
+
+fn preparation_authority_digest(
+    prepared: &CreatePreparation,
+    selection_digest: ContentHash,
+    root_entry_id: aex_brain_domain::ids::ContentHash,
+) -> Result<ContentHash, CreatePreparationError> {
+    let authority = to_jcs_string(&PreparationAuthority {
+        workspace: prepared.workspace,
+        organization: prepared.organization,
+        intent: prepared.intent,
+        receipt_key_sha256: prepared.receipt_key_sha256.clone(),
+        coordinator: prepared.coordinator.to_string(),
+        session: prepared.session,
+        root_agent: prepared.root_agent,
+        generation: prepared.generation,
+        selection_digest,
+        root_entry_id: root_entry_id.to_hex(),
+        runtime_definition: ContentHash::of(&prepared.runtime_definition),
+        resolved_config: ContentHash::of(&prepared.resolved_config),
+        metadata: prepared.metadata.as_deref().map(ContentHash::of),
+        materialized_agents: prepared.materialized_agents,
+        account_revision: prepared.account_revision,
+        prepared_at: prepared.prepared_at,
+    })
+    .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
+    Ok(ContentHash::of(authority.as_bytes()))
 }
 
 #[derive(Serialize)]
@@ -415,6 +439,110 @@ fn stage_plan(
     Ok(plan)
 }
 
+struct ElectionMaterial {
+    summary: PreparationSummary,
+    partition: String,
+    selection: String,
+    coordinator: String,
+    reclaim_at: i64,
+}
+
+impl ElectionMaterial {
+    fn derive(
+        prepared: &CreatePreparation,
+        summary: PreparationSummary,
+    ) -> Result<Self, CreatePreparationError> {
+        Ok(Self {
+            summary,
+            partition: preparation_partition(prepared.workspace, &prepared.receipt_key_sha256),
+            selection: summary.selection_digest.to_wire(),
+            coordinator: coordinator_text(prepared.coordinator),
+            reclaim_at: preparation_reclaim_epoch_seconds(prepared.prepared_at)?,
+        })
+    }
+
+    fn header(&self, prepared: &CreatePreparation) -> Result<Item, CreatePreparationError> {
+        let root_body = prepared
+            .root_record
+            .canonical_bytes()
+            .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
+        Ok(ItemBuilder::new(PREPARATION)
+            .set(crate::attr::PK, s(self.partition.clone()))
+            .set(crate::attr::SK, s("PREPARED"))
+            .set("state", s("prepared"))
+            .set("workspaceId", s(prepared.workspace.to_string()))
+            .set("organizationId", s(prepared.organization.to_string()))
+            .set("intentDigest", s(prepared.intent.to_string()))
+            .set("receiptKeySha256", s(prepared.receipt_key_sha256.clone()))
+            .set("coordinator", s(self.coordinator.clone()))
+            .set("sessionId", s(prepared.session.to_string()))
+            .set("rootAgentId", s(prepared.root_agent.to_string()))
+            .set("generationId", s(prepared.generation.to_string()))
+            .set("selectionDigest", s(self.selection.clone()))
+            .set("selectedFileCount", n(self.summary.file_count as u64))
+            .set("selectedFileBytes", n(self.summary.total_bytes))
+            .set("rootEntryId", s(self.summary.root_entry_id.to_hex()))
+            .set("rootRecord", b(root_body))
+            .set(
+                "authorityDigest",
+                s(self.summary.authority_digest.to_wire()),
+            )
+            .set("runtimeDefinition", b(prepared.runtime_definition.clone()))
+            .set("resolvedConfig", b(prepared.resolved_config.clone()))
+            .set_opt("metadata", prepared.metadata.clone().map(b))
+            .set("materializedAgents", n(prepared.materialized_agents))
+            .set("accountRevision", n(prepared.account_revision))
+            .set("preparedAt", stamp(prepared.prepared_at))
+            .set("expiresAtEpochSeconds", crate::attr::n_i64(self.reclaim_at))
+            .build())
+    }
+
+    fn control(&self, prepared: &CreatePreparation) -> Result<Item, CreatePreparationError> {
+        let key = crate::keys::agent_control(prepared.session, prepared.root_agent);
+        let (limits_revision, max_run_duration_ms) = root_limits(&prepared.root_record)?;
+        let mut control = ItemBuilder::new(AGENT_CONTROL)
+            .set(crate::attr::PK, s(key.pk))
+            .set(crate::attr::SK, s(key.sk))
+            .set("agentId", s(prepared.root_agent.to_string()))
+            .set("sessionId", s(prepared.session.to_string()))
+            .set("workspaceId", s(prepared.workspace.to_string()))
+            .set("generationId", s(prepared.generation.to_string()))
+            .set("createCoordinator", s(self.coordinator.clone()))
+            .set("createSelectionDigest", s(self.selection.clone()))
+            .set("status", s("preparing"))
+            .set("revision", n(0))
+            .set("journalTail", n(0))
+            .set("hasJournal", boolean(false))
+            .set("limitsRevision", n(limits_revision))
+            .set("maxRunDurationMs", n(max_run_duration_ms))
+            .set("fence", n(0))
+            .set("cancelEpoch", n(0))
+            .set("stopRequested", boolean(false))
+            .set("depth", n(0))
+            .set("createdAt", stamp(prepared.prepared_at))
+            .set("updatedAt", stamp(prepared.prepared_at));
+        let budget = root_budget(&prepared.root_record)?;
+        for dimension in DIMENSIONS {
+            control = control
+                .set(limit_attribute(dimension), n(budget.get(dimension)))
+                .set(reserved_attribute(dimension), n(0))
+                .set(used_attribute(dimension), n(0));
+        }
+        Ok(control.build())
+    }
+
+    fn edge(&self, prepared: &CreatePreparation) -> Item {
+        let key = crate::keys::create_preparation_edge(prepared.session);
+        ItemBuilder::new(PREPARATION_EDGE)
+            .set(crate::attr::PK, s(key.pk))
+            .set(crate::attr::SK, s(key.sk))
+            .set("workspaceId", s(prepared.workspace.to_string()))
+            .set("sessionId", s(prepared.session.to_string()))
+            .set("preparationPk", s(self.partition.clone()))
+            .build()
+    }
+}
+
 /// Atomically elects the prepared selection and a fresh physical root control.
 ///
 /// No provider launch is legal before this three-action plan commits. The
@@ -432,70 +560,9 @@ pub fn elect_plan(
     prepared: &CreatePreparation,
 ) -> Result<TransactionPlan, CreatePreparationError> {
     let summary = prepared.validate()?;
-    let root_body = prepared
-        .root_record
-        .canonical_bytes()
-        .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
-    let partition = preparation_partition(prepared.workspace, &prepared.receipt_key_sha256);
-    let selection = summary.selection_digest.to_wire();
-    let coordinator = coordinator_text(prepared.coordinator);
-    let reclaim_at = preparation_reclaim_epoch_seconds(prepared.prepared_at)?;
-    let header = ItemBuilder::new(PREPARATION)
-        .set(crate::attr::PK, s(partition.clone()))
-        .set(crate::attr::SK, s("PREPARED"))
-        .set("state", s("prepared"))
-        .set("workspaceId", s(prepared.workspace.to_string()))
-        .set("organizationId", s(prepared.organization.to_string()))
-        .set("intentDigest", s(prepared.intent.to_string()))
-        .set("receiptKeySha256", s(prepared.receipt_key_sha256.clone()))
-        .set("coordinator", s(coordinator.clone()))
-        .set("sessionId", s(prepared.session.to_string()))
-        .set("rootAgentId", s(prepared.root_agent.to_string()))
-        .set("generationId", s(prepared.generation.to_string()))
-        .set("selectionDigest", s(selection.clone()))
-        .set("selectedFileCount", n(summary.file_count as u64))
-        .set("selectedFileBytes", n(summary.total_bytes))
-        .set("rootEntryId", s(summary.root_entry_id.to_hex()))
-        .set("rootRecord", b(root_body))
-        .set("authorityDigest", s(summary.authority_digest.to_wire()))
-        .set("runtimeDefinition", b(prepared.runtime_definition.clone()))
-        .set("resolvedConfig", b(prepared.resolved_config.clone()))
-        .set_opt("metadata", prepared.metadata.clone().map(b))
-        .set("materializedAgents", n(prepared.materialized_agents))
-        .set("accountRevision", n(prepared.account_revision))
-        .set("preparedAt", stamp(prepared.prepared_at))
-        .set("expiresAtEpochSeconds", crate::attr::n_i64(reclaim_at))
-        .build();
-
-    let control_key = crate::keys::agent_control(prepared.session, prepared.root_agent);
-    let mut control = ItemBuilder::new(AGENT_CONTROL)
-        .set(crate::attr::PK, s(control_key.pk))
-        .set(crate::attr::SK, s(control_key.sk))
-        .set("agentId", s(prepared.root_agent.to_string()))
-        .set("sessionId", s(prepared.session.to_string()))
-        .set("workspaceId", s(prepared.workspace.to_string()))
-        .set("generationId", s(prepared.generation.to_string()))
-        .set("createCoordinator", s(coordinator.clone()))
-        .set("createSelectionDigest", s(selection.clone()))
-        .set("status", s("preparing"))
-        .set("revision", n(0))
-        .set("journalTail", n(0))
-        .set("hasJournal", boolean(false))
-        .set("limitsRevision", n(root_limits(&prepared.root_record)?.0))
-        .set("maxRunDurationMs", n(root_limits(&prepared.root_record)?.1))
-        .set("fence", n(0))
-        .set("cancelEpoch", n(0))
-        .set("stopRequested", boolean(false))
-        .set("depth", n(0))
-        .set("createdAt", stamp(prepared.prepared_at))
-        .set("updatedAt", stamp(prepared.prepared_at));
-    let budget = root_budget(&prepared.root_record)?;
-    for dimension in DIMENSIONS {
-        control = control
-            .set(limit_attribute(dimension), n(budget.get(dimension)))
-            .set(reserved_attribute(dimension), n(0))
-            .set(used_attribute(dimension), n(0));
-    }
+    let material = ElectionMaterial::derive(prepared, summary)?;
+    let header = material.header(prepared)?;
+    let control = material.control(prepared)?;
 
     let same_election = "attribute_not_exists(pk) OR (authorityDigest = :authority AND coordinator = :coordinator AND sessionId = :session AND rootAgentId = :agent AND generationId = :generation)";
     let same_control = "attribute_not_exists(pk) OR (createSelectionDigest = :selection AND createCoordinator = :coordinator AND sessionId = :session AND agentId = :agent AND generationId = :generation AND revision = :zero AND hasJournal = :false)";
@@ -506,8 +573,11 @@ pub fn elect_plan(
             .table_name(table)
             .set_item(Some(header))
             .condition_expression(same_election)
-            .expression_attribute_values(":authority", s(summary.authority_digest.to_wire()))
-            .expression_attribute_values(":coordinator", s(coordinator.clone()))
+            .expression_attribute_values(
+                ":authority",
+                s(material.summary.authority_digest.to_wire()),
+            )
+            .expression_attribute_values(":coordinator", s(material.coordinator.clone()))
             .expression_attribute_values(":session", s(prepared.session.to_string()))
             .expression_attribute_values(":agent", s(prepared.root_agent.to_string()))
             .expression_attribute_values(":generation", s(prepared.generation.to_string())),
@@ -516,29 +586,21 @@ pub fn elect_plan(
         Participant::AGENT_ROOT_CONTROL,
         Put::builder()
             .table_name(table)
-            .set_item(Some(control.build()))
+            .set_item(Some(control))
             .condition_expression(same_control)
-            .expression_attribute_values(":selection", s(selection))
-            .expression_attribute_values(":coordinator", s(coordinator))
+            .expression_attribute_values(":selection", s(material.selection.clone()))
+            .expression_attribute_values(":coordinator", s(material.coordinator.clone()))
             .expression_attribute_values(":session", s(prepared.session.to_string()))
             .expression_attribute_values(":agent", s(prepared.root_agent.to_string()))
             .expression_attribute_values(":generation", s(prepared.generation.to_string()))
             .expression_attribute_values(":zero", n(0))
             .expression_attribute_values(":false", boolean(false)),
     )?;
-    let edge_key = crate::keys::create_preparation_edge(prepared.session);
-    let edge = ItemBuilder::new(PREPARATION_EDGE)
-        .set(crate::attr::PK, s(edge_key.pk))
-        .set(crate::attr::SK, s(edge_key.sk))
-        .set("workspaceId", s(prepared.workspace.to_string()))
-        .set("sessionId", s(prepared.session.to_string()))
-        .set("preparationPk", s(partition))
-        .build();
     plan.put(
         PREPARATION_EDGE_PARTICIPANT,
         Put::builder()
             .table_name(table)
-            .set_item(Some(edge))
+            .set_item(Some(material.edge(prepared)))
             .condition_expression(IMMUTABLE),
     )?;
     Ok(plan)
@@ -651,9 +713,11 @@ impl CreatePreparationStore {
         let plan = elect_plan(&self.table, prepared)?;
         match self.commit(&plan).await {
             Ok(()) => Ok(prepared.clone()),
-            Err(error @ StoreError::PreconditionFailed { .. })
-            | Err(error @ StoreError::CommitAmbiguous { .. })
-            | Err(error @ StoreError::Contended) => {
+            Err(
+                error @ (StoreError::PreconditionFailed { .. }
+                | StoreError::CommitAmbiguous { .. }
+                | StoreError::Contended),
+            ) => {
                 match self
                     .load(prepared.workspace, &prepared.receipt_key_sha256)
                     .await?
@@ -749,10 +813,12 @@ impl CreatePreparationStore {
     ) -> Result<DurableRootStarted, CreatePreparationError> {
         let plan = root_started_plan(&self.table, prepared, &started)?;
         match self.commit(&plan).await {
-            Ok(()) => self.load_root_started(prepared).await,
-            Err(StoreError::PreconditionFailed { .. })
-            | Err(StoreError::CommitAmbiguous { .. })
-            | Err(StoreError::Contended) => self.load_root_started(prepared).await,
+            Ok(())
+            | Err(
+                StoreError::PreconditionFailed { .. }
+                | StoreError::CommitAmbiguous { .. }
+                | StoreError::Contended,
+            ) => self.load_root_started(prepared).await,
             Err(error) => Err(error.into()),
         }
     }
@@ -923,16 +989,36 @@ pub fn decode_elected_preparation(
             file_items.len()
         )));
     }
+    let files = decode_prepared_files(
+        file_items,
+        workspace,
+        receipt_key_sha256,
+        stored_intent,
+        selection_text,
+    )?;
+    let prepared =
+        decode_elected_header(&row, workspace, receipt_key_sha256, stored_intent, files)?;
+    verify_elected_summary(&row, &prepared, selection_digest, expected_count)?;
+    Ok(prepared)
+}
+
+fn decode_prepared_files(
+    file_items: &[Item],
+    workspace: WorkspaceId,
+    receipt_key_sha256: &str,
+    intent: IntentDigest,
+    selection_digest: &str,
+) -> Result<Vec<PreparedFile>, CreatePreparationError> {
     let mut files = Vec::with_capacity(file_items.len());
     for (expected_index, item) in file_items.iter().enumerate() {
         let file = Row::bind(item, PREPARED_FILE).map_err(StoreError::from)?;
-        if file.string("workspaceId").map_err(StoreError::from)? != workspace.to_string()
-            || file.string("receiptKeySha256").map_err(StoreError::from)? != receipt_key_sha256
-            || file.string("intentDigest").map_err(StoreError::from)? != stored_intent.to_string()
-            || file.string("selectionDigest").map_err(StoreError::from)? != selection_text
-        {
-            return Err(corrupt("a selected-file row has another authority binding"));
-        }
+        assert_prepared_file_binding(
+            &file,
+            workspace,
+            receipt_key_sha256,
+            intent,
+            selection_digest,
+        )?;
         let index = usize::try_from(file.u64("fileIndex").map_err(StoreError::from)?)
             .map_err(|error| corrupt(format!("fileIndex does not fit usize: {error}")))?;
         if index != expected_index {
@@ -940,33 +1026,64 @@ pub fn decode_elected_preparation(
                 "selected-file rows are not complete and ordered: expected {expected_index}, found {index}"
             )));
         }
-        let name = ResourceName::parse(file.string("registeredName").map_err(StoreError::from)?)
-            .map_err(|error| corrupt(format!("registeredName is malformed: {error}")))?;
-        let etag = ETag::parse(file.string("registryEtag").map_err(StoreError::from)?)
-            .map_err(|error| corrupt(format!("registryEtag is malformed: {error}")))?;
-        let content = ContentHash::parse(file.string("contentDigest").map_err(StoreError::from)?)
-            .map_err(|error| corrupt(format!("contentDigest is malformed: {error}")))?;
-        let mount_path = FilePath::parse(file.string("mountPath").map_err(StoreError::from)?)
-            .map_err(|error| corrupt(format!("mountPath is malformed: {error}")))?;
-        let mode = match file.string("mode").map_err(StoreError::from)? {
-            "0644" => RegisteredFileMode::V0644,
-            "0755" => RegisteredFileMode::V0755,
-            other => return Err(corrupt(format!("mode `{other}` is not registered"))),
-        };
-        files.push(PreparedFile {
-            name,
-            revision: file.u64("registryRevision").map_err(StoreError::from)?,
-            etag,
-            content,
-            size_bytes: file.u64("contentBytes").map_err(StoreError::from)?,
-            mount_path,
-            media_type: file
-                .string("mediaType")
-                .map_err(StoreError::from)?
-                .to_owned(),
-            mode,
-        });
+        files.push(decode_prepared_file(&file)?);
     }
+    Ok(files)
+}
+
+fn assert_prepared_file_binding(
+    file: &Row<'_>,
+    workspace: WorkspaceId,
+    receipt_key_sha256: &str,
+    intent: IntentDigest,
+    selection_digest: &str,
+) -> Result<(), CreatePreparationError> {
+    if file.string("workspaceId").map_err(StoreError::from)? != workspace.to_string()
+        || file.string("receiptKeySha256").map_err(StoreError::from)? != receipt_key_sha256
+        || file.string("intentDigest").map_err(StoreError::from)? != intent.to_string()
+        || file.string("selectionDigest").map_err(StoreError::from)? != selection_digest
+    {
+        return Err(corrupt("a selected-file row has another authority binding"));
+    }
+    Ok(())
+}
+
+fn decode_prepared_file(file: &Row<'_>) -> Result<PreparedFile, CreatePreparationError> {
+    let name = ResourceName::parse(file.string("registeredName").map_err(StoreError::from)?)
+        .map_err(|error| corrupt(format!("registeredName is malformed: {error}")))?;
+    let etag = ETag::parse(file.string("registryEtag").map_err(StoreError::from)?)
+        .map_err(|error| corrupt(format!("registryEtag is malformed: {error}")))?;
+    let content = ContentHash::parse(file.string("contentDigest").map_err(StoreError::from)?)
+        .map_err(|error| corrupt(format!("contentDigest is malformed: {error}")))?;
+    let mount_path = FilePath::parse(file.string("mountPath").map_err(StoreError::from)?)
+        .map_err(|error| corrupt(format!("mountPath is malformed: {error}")))?;
+    let mode = match file.string("mode").map_err(StoreError::from)? {
+        "0644" => RegisteredFileMode::V0644,
+        "0755" => RegisteredFileMode::V0755,
+        other => return Err(corrupt(format!("mode `{other}` is not registered"))),
+    };
+    Ok(PreparedFile {
+        name,
+        revision: file.u64("registryRevision").map_err(StoreError::from)?,
+        etag,
+        content,
+        size_bytes: file.u64("contentBytes").map_err(StoreError::from)?,
+        mount_path,
+        media_type: file
+            .string("mediaType")
+            .map_err(StoreError::from)?
+            .to_owned(),
+        mode,
+    })
+}
+
+fn decode_elected_header(
+    row: &Row<'_>,
+    workspace: WorkspaceId,
+    receipt_key_sha256: &str,
+    intent: IntentDigest,
+    files: Vec<PreparedFile>,
+) -> Result<CreatePreparation, CreatePreparationError> {
     let coordinator = Uuid7::decode_suffix(
         row.string("coordinator")
             .map_err(StoreError::from)?
@@ -979,7 +1096,7 @@ pub fn decode_elected_preparation(
     let prepared = CreatePreparation {
         workspace,
         organization: row.id("organizationId").map_err(StoreError::from)?,
-        intent: stored_intent,
+        intent,
         receipt_key_sha256: receipt_key_sha256.to_owned(),
         coordinator,
         session: row.id("sessionId").map_err(StoreError::from)?,
@@ -998,11 +1115,20 @@ pub fn decode_elected_preparation(
         metadata: row
             .opt_bytes("metadata")
             .map_err(StoreError::from)?
-            .map(|bytes| bytes.to_vec()),
+            .map(<[u8]>::to_vec),
         materialized_agents: row.u64("materializedAgents").map_err(StoreError::from)?,
         account_revision: row.u64("accountRevision").map_err(StoreError::from)?,
         prepared_at: row.timestamp("preparedAt").map_err(StoreError::from)?,
     };
+    Ok(prepared)
+}
+
+fn verify_elected_summary(
+    row: &Row<'_>,
+    prepared: &CreatePreparation,
+    selection_digest: ContentHash,
+    expected_count: usize,
+) -> Result<(), CreatePreparationError> {
     let summary = prepared.validate()?;
     let stored_authority =
         ContentHash::parse(row.string("authorityDigest").map_err(StoreError::from)?)
@@ -1017,7 +1143,7 @@ pub fn decode_elected_preparation(
             "the elected header digests disagree with the strongly loaded facts",
         ));
     }
-    Ok(prepared)
+    Ok(())
 }
 
 fn assert_header_binding(
