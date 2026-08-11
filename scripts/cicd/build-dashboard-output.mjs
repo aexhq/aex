@@ -47,6 +47,8 @@ try {
 await mkdir(".vercel", { recursive: true });
 await writeFile(linkPath, localProject, { encoding: "utf8", flag: "wx" });
 try {
+  run(["run", "--filter", "@aexhq/wire", "build"]);
+  if (process.exitCode) throw new Error("dashboard wire dependency build failed");
   run(["run", "--filter", "@aexhq/sdk", "build"]);
   if (process.exitCode) throw new Error("dashboard SDK dependency build failed");
   run(["run", "vercel", "build", "--no-color"]);
