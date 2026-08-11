@@ -57,5 +57,6 @@ pub use projection::{
 };
 pub use use_cases::{
     CommitTerminal, LiveRead, MESSAGE_TEXT_MAX_BYTES, MessageAdmissionOutcome, SendMessage,
-    StartRun, admit_message, commit_terminal, list_live_files, start_run, stat_live_file,
+    StartRun, admit_message, commit_terminal, list_live_files, message_receipt_scope,
+    replay_message_receipt, start_run, stat_live_file,
 };

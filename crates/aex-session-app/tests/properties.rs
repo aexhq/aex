@@ -11,8 +11,8 @@ use aex_session_app::testing::{
     CountingIds, FixedClock, PortCall, ScriptedPorts, message_identity_under,
 };
 use aex_session_app::{
-    CommitTerminal, MAX_ACTIONS, MessageAdmissionOutcome, Planned, SendMessage, SessionTransaction,
-    admit_message, commit_terminal,
+    AppError, CommitTerminal, MAX_ACTIONS, MessageAdmissionOutcome, Planned, SendMessage,
+    SessionTransaction, admit_message, commit_terminal, replay_message_receipt,
 };
 use aex_session_domain::testing::{id, moment, running_session, session_fixture, terminal_attempt};
 use aex_session_domain::{
@@ -128,6 +128,7 @@ fn required_conditions(intent: TransactionIntent) -> Vec<&'static str> {
             "MutationGuardFree",
             "CancellationEpoch",
             "AccountRevisionAtLeast",
+            "ProviderCredentialReady",
             "AgentRevision",
             "JournalTail",
             "RootAgentIdle",
@@ -168,6 +169,7 @@ fn condition_tag(condition: &Condition) -> &'static str {
         Condition::RootAgentIdle { .. } => "RootAgentIdle",
         Condition::RunNonTerminal { .. } => "RunNonTerminal",
         Condition::AccountRevisionAtLeast { .. } => "AccountRevisionAtLeast",
+        Condition::ProviderCredentialReady { .. } => "ProviderCredentialReady",
         Condition::AuthorizationEpochAtLeast { .. } => "AuthorizationEpochAtLeast",
         Condition::RegistryEtag { .. } => "RegistryEtag",
         Condition::UploadState { .. } => "UploadState",
@@ -254,7 +256,16 @@ async fn admission_is_atomic() {
         }
     }
     assert!(has_message && has_sealed_projection && has_run && has_head);
-    assert_eq!(plan.validate().expect("valid admission").actions, 11);
+    assert_eq!(
+        plan.validate().expect("valid admission").actions,
+        12,
+        "the BYOK revision/state fence is a distinct cross-table action"
+    );
+    assert!(
+        plan.conditions
+            .iter()
+            .any(|condition| matches!(condition, Condition::ProviderCredentialReady { .. }))
+    );
 
     // No history yields a durable message without a wake: the two are in the
     // same plan, so either both land or neither does.
@@ -407,6 +418,48 @@ async fn exact_message_replay_reads_no_mutable_admission_dependency() {
     };
     assert_eq!(response.message.id, first.projected.0.id);
     assert_eq!(replay_ports.calls(), vec![PortCall::Read("load_receipt")]);
+}
+
+#[tokio::test]
+async fn commit_recovery_decodes_only_the_addressed_receipt_and_rejects_intent_drift() {
+    let command = send_message();
+    let clock = clock();
+    let ids = CountingIds::default();
+    let ports = ScriptedPorts::idle();
+    let MessageAdmissionOutcome::Planned(first) =
+        admit_message(&ports.context(&clock, &ids), &command)
+            .await
+            .expect("first admission plans")
+    else {
+        panic!("the first request cannot replay");
+    };
+    let receipt = first
+        .plan
+        .writes
+        .iter()
+        .find_map(|write| match write {
+            Write::PutIdempotencyReceipt(receipt) => Some(receipt.as_ref()),
+            _ => None,
+        })
+        .expect("admission stores its exact response");
+
+    let replay = replay_message_receipt(receipt, &command).expect("the winner is recoverable");
+    assert!(matches!(replay, MessageAdmissionOutcome::Replayed { .. }));
+
+    let session = session_fixture();
+    let changed_request = MessageSendRequest {
+        text: "different text".to_owned(),
+        ..command.request.clone()
+    };
+    let changed = SendMessage {
+        workspace: session.workspace,
+        session: session.id,
+        identity: message_identity_under("message-key", &session, &changed_request),
+        request: changed_request,
+    };
+    let error = replay_message_receipt(receipt, &changed)
+        .expect_err("the same key cannot recover a different canonical intent");
+    assert_eq!(error.code(), ErrorCode::IdempotencyConflict);
 }
 
 #[tokio::test]

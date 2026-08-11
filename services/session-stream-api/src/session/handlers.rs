@@ -36,7 +36,11 @@ use aex_secret_custody_dynamodb::codec::{CredentialState, ProviderCredential as 
 use aex_secret_custody_dynamodb::expressions;
 use aex_secret_custody_dynamodb::store::CustodyStore;
 use aex_secret_custody_dynamodb::store::SecretCustodyStore;
-use aex_session_app::{LifecycleAdmissionOutcome, LifecycleCommand, admit_lifecycle_operation};
+use aex_session_app::SessionReader as _;
+use aex_session_app::{
+    LifecycleAdmissionOutcome, LifecycleCommand, MessageAdmissionOutcome, SendMessage,
+    admit_lifecycle_operation, admit_message, message_receipt_scope, replay_message_receipt,
+};
 use aex_session_dynamodb::app_authority::{
     ApiHintSink, AuthorizedAccount, DynamoAuthorityCommitter, RequestClock,
     SessionAuthorityExternal, SessionCommandReads,
@@ -55,6 +59,7 @@ use aex_usage_query_dynamodb::store::UsageProjectionReads;
 use aex_wire::cursor::Cursor;
 use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
+use aex_wire::idempotency::{IntentDigest, ReplayIdentity};
 use aex_wire::ids::{OperationId, ProviderCredentialId, ResourceName, SessionId, WorkspaceId};
 use aex_wire::limits::LimitId;
 use aex_wire::models;
@@ -421,6 +426,146 @@ impl Routes {
         })
     }
 
+    fn message_command(
+        &self,
+        session: SessionId,
+        request: models::MessageSendRequest,
+    ) -> WireResult<SendMessage> {
+        let replay = self.cx.idempotency.as_ref().ok_or_else(|| {
+            WireError::new(ErrorCode::InvalidRequest)
+                .with_message("this route requires an `Idempotency-Key`")
+        })?;
+        let intent = IntentDigest::from_bytes(replay.intent);
+        Ok(SendMessage {
+            workspace: self.cx.auth.workspace_id,
+            session,
+            identity: aex_session_domain::IdempotencyIdentity::Key(Box::new(ReplayIdentity {
+                principal: self.cx.auth.principal,
+                route: RouteId::SessionMessageSend,
+                key: replay.key.clone(),
+                intent,
+            })),
+            request,
+        })
+    }
+
+    async fn admit_message_route(
+        &self,
+        session: SessionId,
+        request: models::MessageSendRequest,
+    ) -> WireResult<models::MessageSendResult> {
+        let command = self.message_command(session, request)?;
+        let bindings = self.bindings()?;
+        let outcome = admit_message(&bindings.context(), &command)
+            .await
+            .map_err(|error| app_failure(&error))?;
+        match outcome {
+            MessageAdmissionOutcome::Replayed { response, .. } => Ok(*response),
+            MessageAdmissionOutcome::Planned(planned) => {
+                let response = models::MessageSendResult {
+                    message: aex_session_app::projection::public_message(&planned.projected.0)
+                        .map_err(|_| WireError::new(ErrorCode::InternalError))?,
+                    session: aex_session_app::public_session(&planned.projected.1)
+                        .map_err(|_| WireError::new(ErrorCode::InternalError))?,
+                };
+                self.commit_message(&command, &planned.plan, response).await
+            }
+        }
+    }
+
+    async fn commit_message(
+        &self,
+        command: &SendMessage,
+        plan: &aex_session_app::SessionTransaction,
+        attempted: models::MessageSendResult,
+    ) -> WireResult<models::MessageSendResult> {
+        let binding = SessionBinding {
+            workspace: command.workspace,
+            organization: self.cx.auth.organization_id,
+            session: command.session,
+        };
+        let committer = DynamoAuthorityCommitter::new(
+            self.shared.authority.clone(),
+            self.shared.tables.clone(),
+            binding,
+            self.now()?,
+            ApiHintSink,
+        );
+        let work = WorkApplicationCompiler;
+        let credentials = aex_secret_custody_dynamodb::ProviderCredentialAdmissionCompiler;
+        let compilers = FamilyCompilers::new()
+            .with(aex_session_app::TableFamily::SecretCustody, &credentials)
+            .with(aex_session_app::TableFamily::WorkAuthority, &work);
+        match committer
+            .commit_replayable_resolving(
+                plan,
+                &compilers,
+                aex_session_dynamodb::Resolution::IdempotencyReceipt,
+            )
+            .await
+        {
+            Ok(()) => Ok(attempted),
+            Err(error) => self.recover_message(&error, command).await,
+        }
+    }
+
+    async fn recover_message(
+        &self,
+        failure: &StoreError,
+        command: &SendMessage,
+    ) -> WireResult<models::MessageSendResult> {
+        if !matches!(
+            failure,
+            StoreError::PreconditionFailed { .. } | StoreError::CommitAmbiguous { .. }
+        ) {
+            return Err(authority_failure(failure));
+        }
+
+        let scope = message_receipt_scope(command.session);
+        let receipt = self
+            .shared
+            .commands
+            .load_receipt(command.workspace, &scope, &command.identity, self.now()?)
+            .await
+            .map_err(|error| app_failure(&aex_session_app::AppError::Port(error)))?;
+        if let Some(receipt) = receipt {
+            return match replay_message_receipt(&receipt, command)
+                .map_err(|error| app_failure(&error))?
+            {
+                MessageAdmissionOutcome::Replayed { response, .. } => Ok(*response),
+                MessageAdmissionOutcome::Planned(_) => {
+                    Err(WireError::new(ErrorCode::InternalError))
+                }
+            };
+        }
+
+        let StoreError::PreconditionFailed { participant, .. } = failure else {
+            return Err(WireError::new(ErrorCode::CommitOutcomeUnknown));
+        };
+        Err(
+            if *participant == Participant::CUSTODY_PROVIDER_CREDENTIAL {
+                WireError::new(ErrorCode::ProviderCredentialRevoked)
+            } else if *participant == Participant::AUTHZ_PLACEMENT {
+                WireError::new(ErrorCode::AccountPaused)
+            } else if matches!(
+                *participant,
+                Participant::SESSION_HEAD
+                    | Participant::AGENT_ROOT_CONTROL
+                    | Participant::WORK_ROOT_WAKE
+                    | Participant::WORK_DEDUPE
+            ) {
+                WireError::new(ErrorCode::SessionNotIdle)
+            } else if *participant == Participant::SESSION_IDEMPOTENCY {
+                // A strongly addressed receipt should exist after losing its
+                // immutable-put election. If it does not, the transaction outcome
+                // is not safe to describe as a definite customer conflict.
+                WireError::new(ErrorCode::CommitOutcomeUnknown)
+            } else {
+                WireError::new(ErrorCode::InternalError)
+            },
+        )
+    }
+
     async fn admit_lifecycle_route(
         &self,
         session_id: SessionId,
@@ -551,11 +696,11 @@ impl CommandBindings {
             // Ports another stream owns refuse rather than
             // inventing an answer; see `crate::session::app_ports`.
             registry: &self.unowned,
+            credentials: &self.credentials,
             catalog: None,
             deployment: None,
             limits: &self.unowned,
             live: &self.unowned,
-            credentials: &self.credentials,
         }
     }
 }
@@ -802,10 +947,12 @@ impl SessionsApi for Routes {
     async fn session_message_send(
         &self,
         _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::MessageSendRequest,
+        session_id: SessionId,
+        body: models::MessageSendRequest,
     ) -> WireResult<Created<models::MessageSendResult>> {
-        Err(not_served(RouteId::SessionMessageSend))
+        self.admit_message_route(session_id, body)
+            .await
+            .map(Created)
     }
 
     async fn session_messages_list(

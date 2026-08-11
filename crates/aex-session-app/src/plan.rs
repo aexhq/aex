@@ -25,8 +25,10 @@ use aex_session_domain::{
     Session, SessionRevision, SessionTombstone, WorkAdmission,
 };
 use aex_wire::ids::{
-    AgentId, ObservationId, OperationId, OrganizationId, SessionId, UploadId, WorkspaceId,
+    AgentId, ObservationId, OperationId, OrganizationId, ProviderCredentialId, SessionId, UploadId,
+    WorkspaceId,
 };
+use aex_wire::provider::ProviderId;
 use aex_wire::types::{ETag, Timestamp};
 use aex_workspace_domain::{DownloadGrant, RegistryPointer, RegistrySelector, Upload, UploadState};
 
@@ -235,6 +237,19 @@ pub enum Condition {
         /// The floor.
         at_least: AccountRevision,
     },
+    /// The exact dedicated BYOK binding remains ready at commit time.
+    ProviderCredentialReady {
+        /// Owning workspace.
+        workspace: WorkspaceId,
+        /// Exact provider selected by the session.
+        provider: ProviderId,
+        /// Exact binding identity.
+        credential: ProviderCredentialId,
+        /// Immutable sealed-source generation pinned by the session.
+        source_generation: u64,
+        /// Binding revision observed by admission.
+        revision: u64,
+    },
     /// The workspace authorization epoch has reached at least this.
     AuthorizationEpochAtLeast {
         /// Which workspace.
@@ -349,6 +364,7 @@ impl Condition {
             | Self::RunNonTerminal { .. }
             | Self::AuthorizationEpochAtLeast { .. } => TableFamily::SessionAuthority,
             Self::AccountRevisionAtLeast { .. } => TableFamily::AuthorizationProjection,
+            Self::ProviderCredentialReady { .. } => TableFamily::SecretCustody,
             Self::RegistryEtag { .. } | Self::UploadState { .. } => TableFamily::Registry,
             Self::OperationFence { .. }
             | Self::OperationCursorAt { .. }
@@ -390,6 +406,15 @@ impl Condition {
             Self::AccountRevisionAtLeast { workspace, .. } => {
                 (workspace.to_string(), "ACCOUNT_ADMISSION".to_owned())
             }
+            Self::ProviderCredentialReady {
+                workspace,
+                provider,
+                credential,
+                ..
+            } => (
+                workspace.to_string(),
+                format!("PROVIDER_CREDENTIAL#{}#{credential}", provider.as_str()),
+            ),
             Self::AuthorizationEpochAtLeast { workspace, .. } => {
                 (workspace.to_string(), "AUTHORIZATION".to_owned())
             }
@@ -1088,6 +1113,9 @@ impl SessionTransaction {
                 .any(|condition| matches!(condition, Condition::AccountRevisionAtLeast { .. })),
             self.conditions
                 .iter()
+                .any(|condition| matches!(condition, Condition::ProviderCredentialReady { .. })),
+            self.conditions
+                .iter()
                 .any(|condition| matches!(condition, Condition::AgentRevision { .. })),
             self.conditions
                 .iter()
@@ -1114,6 +1142,7 @@ impl SessionTransaction {
                     | Condition::MutationGuardFree { .. }
                     | Condition::CancellationEpoch { .. }
                     | Condition::AccountRevisionAtLeast { .. }
+                    | Condition::ProviderCredentialReady { .. }
                     | Condition::AgentRevision { .. }
                     | Condition::JournalTail { .. }
                     | Condition::RootAgentIdle { .. }
@@ -1137,9 +1166,9 @@ impl SessionTransaction {
         let mut targets = BTreeSet::new();
         targets.extend(self.conditions.iter().map(Condition::target));
         targets.extend(self.writes.iter().map(Write::target));
-        if targets.len() != 11 {
+        if targets.len() != 12 {
             return Err(message_admission_error(
-                "admission is exactly eleven physical actions after guard merging",
+                "admission is exactly twelve physical actions after guard merging",
             ));
         }
         Ok(())

@@ -103,7 +103,6 @@ operationOwners:
 # Deferral is not mount evidence and is emitted only into the delivery registry.
 deferredOperations:
   session_create: "The complete session authority and create use case are not implemented."
-  session_message_send: "The wire and domain message vocabularies and durable command path are not reconciled."
 
 # Actual public mount authority. `scenarioOwners` and `operationOwners` plan
 # where a route belongs; this table says which complete handlers are mounted
@@ -229,6 +228,7 @@ servedOperations:
     - session_files_live_upload_part_put
     - session_delete
     - session_get
+    - session_message_send
     - session_messages_list
     - session_cancel
     - session_resume

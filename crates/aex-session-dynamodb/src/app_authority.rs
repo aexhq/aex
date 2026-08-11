@@ -571,6 +571,7 @@ const fn condition_tag(condition: &Condition) -> &'static str {
         Condition::RootAgentIdle { .. } => "RootAgentIdle",
         Condition::RunNonTerminal { .. } => "RunNonTerminal",
         Condition::AccountRevisionAtLeast { .. } => "AccountRevisionAtLeast",
+        Condition::ProviderCredentialReady { .. } => "ProviderCredentialReady",
         Condition::AuthorizationEpochAtLeast { .. } => "AuthorizationEpochAtLeast",
         Condition::RegistryEtag { .. } => "RegistryEtag",
         Condition::UploadState { .. } => "UploadState",

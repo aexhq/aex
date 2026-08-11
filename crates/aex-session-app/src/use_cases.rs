@@ -71,6 +71,64 @@ pub enum MessageAdmissionOutcome {
     },
 }
 
+/// The receipt namespace for one session's message admissions.
+#[must_use]
+pub fn message_receipt_scope(session: SessionId) -> String {
+    format!("session.message:{session}")
+}
+
+/// Decodes and verifies an already-addressed message receipt without reading
+/// any mutable admission dependency.
+///
+/// The HTTP composition uses this after an ambiguous or condition-losing
+/// transaction. Keeping the resolver pure is load bearing: recovery may prove
+/// that the original request won, but it must never re-plan against a later
+/// account, credential or session state.
+///
+/// # Errors
+///
+/// Returns an idempotency conflict for a reused key with different intent and
+/// a corruption error when the addressed row is not a valid message response.
+pub fn replay_message_receipt(
+    stored: &aex_session_domain::IdempotencyReceipt,
+    command: &SendMessage,
+) -> Result<MessageAdmissionOutcome, AppError> {
+    match replay(stored, &command.identity.intent()) {
+        ReplayDecision::Conflict(code) => Err(AppError::Conflict(code)),
+        ReplayDecision::ReturnOriginal(ReceiptOutcome::Resource {
+            kind: ResourceKind::Message,
+            id,
+            response,
+        }) => {
+            let bytes = response.inline().ok_or(AppError::Port(PortError::Corrupt {
+                kind: "message admission receipt",
+                reason: "the stored message response is not inline",
+            }))?;
+            let response: aex_wire::models::MessageSendResult = serde_json::from_slice(bytes)
+                .map_err(|_| {
+                    AppError::Port(PortError::Corrupt {
+                        kind: "message admission receipt",
+                        reason: "the stored message response is malformed",
+                    })
+                })?;
+            if id.0 != response.message.id.to_string() || response.session.id != command.session {
+                return Err(AppError::Port(PortError::Corrupt {
+                    kind: "message admission receipt",
+                    reason: "the stored resource identity disagrees with its response",
+                }));
+            }
+            Ok(MessageAdmissionOutcome::Replayed {
+                response: Box::new(response),
+                canonical_response: bytes.to_vec(),
+            })
+        }
+        ReplayDecision::ReturnOriginal(_) => Err(AppError::Port(PortError::Corrupt {
+            kind: "message admission receipt",
+            reason: "the stored receipt does not name a message resource",
+        })),
+    }
+}
+
 /// Start an admitted run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StartRun {
@@ -144,48 +202,14 @@ pub async fn admit_message(
         return Err(AppError::Conflict(ErrorCode::InvalidRequest));
     }
 
-    let receipt_scope = format!("session.message:{}", command.session);
+    let receipt_scope = message_receipt_scope(command.session);
     let now = context.clock.now();
     if let Some(stored) = context
         .sessions
         .load_receipt(command.workspace, &receipt_scope, &command.identity, now)
         .await?
     {
-        return match replay(&stored, &command.identity.intent()) {
-            ReplayDecision::Conflict(code) => Err(AppError::Conflict(code)),
-            ReplayDecision::ReturnOriginal(ReceiptOutcome::Resource {
-                kind: ResourceKind::Message,
-                id,
-                response,
-            }) => {
-                let bytes = response.inline().ok_or(AppError::Port(PortError::Corrupt {
-                    kind: "message admission receipt",
-                    reason: "the stored message response is not inline",
-                }))?;
-                let response: aex_wire::models::MessageSendResult = serde_json::from_slice(bytes)
-                    .map_err(|_| {
-                    AppError::Port(PortError::Corrupt {
-                        kind: "message admission receipt",
-                        reason: "the stored message response is malformed",
-                    })
-                })?;
-                if id.0 != response.message.id.to_string() || response.session.id != command.session
-                {
-                    return Err(AppError::Port(PortError::Corrupt {
-                        kind: "message admission receipt",
-                        reason: "the stored resource identity disagrees with its response",
-                    }));
-                }
-                Ok(MessageAdmissionOutcome::Replayed {
-                    response: Box::new(response),
-                    canonical_response: bytes.to_vec(),
-                })
-            }
-            ReplayDecision::ReturnOriginal(_) => Err(AppError::Port(PortError::Corrupt {
-                kind: "message admission receipt",
-                reason: "the stored receipt does not name a message resource",
-            })),
-        };
+        return replay_message_receipt(&stored, command);
     }
     let materialized = context
         .sessions
@@ -379,6 +403,13 @@ pub async fn admit_message(
         workspace: command.workspace,
         organization: materialized.session.organization,
         at_least: account.revision,
+    });
+    conditions.push(Condition::ProviderCredentialReady {
+        workspace: command.workspace,
+        provider: credential.provider,
+        credential: credential.credential,
+        source_generation: credential.source_generation,
+        revision: credential.revision,
     });
     conditions.push(Condition::AgentRevision {
         session: command.session,

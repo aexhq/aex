@@ -47,9 +47,8 @@ hex.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 aex-secret-domain = { path = "../aex-secret-domain" }
-# The port traits only. This crate holds both rows a `SecretCustodyReader`
-# has to join — the metadata fence and the sealed generation — so joining
-# them anywhere else would mean a second reader of the ciphertext row.
+# The narrow BYOK admission port and cross-table condition vocabulary. The
+# adapter projects metadata only and never exposes credential material.
 aex-session-app = { path = "../aex-session-app" }
 aex-wire = { path = "../aex-wire" }
 # The shared regional store machinery only. `default-features = false` keeps the
