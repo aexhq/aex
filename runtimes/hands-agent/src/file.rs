@@ -352,9 +352,7 @@ impl FileService {
                 let _ = std::fs::remove_file(&temporary);
                 return Err(FileFailureCode::Conflict);
             }
-            output
-                .write_all(&bytes)
-                .map_err(|error| map_io(&error))?;
+            output.write_all(&bytes).map_err(|error| map_io(&error))?;
             hash.update(&bytes);
             assembled = assembled.saturating_add(bytes.len() as u64);
         }
@@ -690,8 +688,7 @@ impl FileService {
             .join(format!("part-{number:05}-chunk-{offset:010}.body"))
     }
     fn read_manifest(&self, upload: FileUploadId) -> Result<UploadManifest, FileFailureCode> {
-        let bytes = std::fs::read(self.manifest_path(upload))
-            .map_err(|error| map_io(&error))?;
+        let bytes = std::fs::read(self.manifest_path(upload)).map_err(|error| map_io(&error))?;
         serde_json::from_slice(&bytes).map_err(|_| FileFailureCode::Conflict)
     }
     fn write_manifest(&self, manifest: &UploadManifest) -> Result<(), FileFailureCode> {
@@ -753,7 +750,9 @@ fn open_read_nofollow(path: &Path) -> Result<File, std::io::Error> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
+        let nofollow = i32::try_from(rustix::fs::OFlags::NOFOLLOW.bits())
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+        options.custom_flags(nofollow);
     }
     options.open(path)
 }
@@ -778,7 +777,8 @@ fn hash_file(file: &mut File) -> Result<ContentHash, FileFailureCode> {
 fn hash_file_parts(
     file: &mut File,
 ) -> Result<(ContentHash, Vec<FilePartReceipt>), FileFailureCode> {
-    file.seek(std::io::SeekFrom::Start(0)).map_err(map_io)?;
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(|error| map_io(&error))?;
     let mut whole = sha2::Sha256::new();
     let mut part = sha2::Sha256::new();
     let mut parts = Vec::new();
@@ -786,7 +786,7 @@ fn hash_file_parts(
     let mut offset = 0u64;
     let mut buffer = vec![0u8; 64 * 1024];
     loop {
-        let read = file.read(&mut buffer).map_err(map_io)?;
+        let read = file.read(&mut buffer).map_err(|error| map_io(&error))?;
         if read == 0 {
             break;
         }
@@ -796,7 +796,6 @@ fn hash_file_parts(
             let take = usize::try_from(available)
                 .map_err(|_| FileFailureCode::InvalidRequest)?
                 .min(read - consumed);
-            use sha2::Digest as _;
             whole.update(&buffer[consumed..consumed + take]);
             part.update(&buffer[consumed..consumed + take]);
             part_bytes = part_bytes.saturating_add(take as u32);
@@ -817,7 +816,6 @@ fn hash_file_parts(
         }
     }
     if part_bytes != 0 {
-        use sha2::Digest as _;
         let number = u32::try_from(parts.len() + 1).map_err(|_| FileFailureCode::LimitExceeded)?;
         parts.push(FilePartReceipt {
             part_number: number,
@@ -826,8 +824,8 @@ fn hash_file_parts(
             sha256: ContentHash::from_bytes(part.finalize().into()),
         });
     }
-    file.seek(std::io::SeekFrom::Start(0)).map_err(map_io)?;
-    use sha2::Digest as _;
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(|error| map_io(&error))?;
     Ok((ContentHash::from_bytes(whole.finalize().into()), parts))
 }
 
@@ -838,13 +836,14 @@ fn file_version(metadata: &std::fs::Metadata, sha256: ContentHash) -> ContentHas
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
+        for value in [metadata.dev(), metadata.ino()] {
+            evidence.extend_from_slice(&value.to_be_bytes());
+        }
         for value in [
-            metadata.dev(),
-            metadata.ino(),
-            metadata.mtime() as u64,
-            metadata.mtime_nsec() as u64,
-            metadata.ctime() as u64,
-            metadata.ctime_nsec() as u64,
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+            metadata.ctime(),
+            metadata.ctime_nsec(),
         ] {
             evidence.extend_from_slice(&value.to_be_bytes());
         }
