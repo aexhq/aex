@@ -1787,7 +1787,7 @@
       "responseSchema": "ProviderCredential",
       "safeRetry": true,
       "scenarios": [
-        "SC-SESSION-ADMIT"
+        "SC-BYOK-CUSTODY"
       ],
       "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
@@ -1823,7 +1823,7 @@
       "responseSchema": "ProviderCredential",
       "safeRetry": false,
       "scenarios": [
-        "SC-SESSION-ADMIT"
+        "SC-BYOK-CUSTODY"
       ],
       "servedArtifact": "regional-secret-api",
       "servingArtifact": "regional-secret-api",
@@ -1858,7 +1858,7 @@
       "responseSchema": "ProviderCredential",
       "safeRetry": false,
       "scenarios": [
-        "SC-SESSION-ADMIT"
+        "SC-BYOK-CUSTODY"
       ],
       "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
@@ -1895,7 +1895,7 @@
       "responseSchema": "ProviderCredentialPage",
       "safeRetry": true,
       "scenarios": [
-        "SC-SESSION-ADMIT"
+        "SC-BYOK-CUSTODY"
       ],
       "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",

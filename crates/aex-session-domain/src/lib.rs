@@ -63,8 +63,8 @@ pub use journal::{
     fold_control, validate_append,
 };
 pub use lifecycle::{
-    ActiveMessage, IDLE_SUSPEND_AFTER_SECONDS, LifecycleError, LifecycleRevision, LifecycleStatus,
-    MAXIMUM_LIFETIME_SECONDS, SessionLifecycle, TerminationReason,
+    ActiveMessage, IDLE_SUSPEND_AFTER_SECONDS, LifecycleRevision, LifecycleStatus,
+    MAXIMUM_LIFETIME_SECONDS, SessionLifecycle, SessionLifecycleError, TerminationReason,
 };
 pub use lineage::{Lineage, Origin, detach};
 pub use message::{

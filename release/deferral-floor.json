@@ -75,6 +75,7 @@
     "deferred": [
       "SC-AUTHZ-ASSERTION",
       "SC-BRAIN-TURN",
+      "SC-BYOK-CUSTODY",
       "SC-CONTENT-LIFECYCLE",
       "SC-CONTROL-WORKSPACE",
       "SC-FINANCE-INVOICE",

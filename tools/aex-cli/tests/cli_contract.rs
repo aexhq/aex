@@ -22,13 +22,12 @@ fn clap_tree_is_closed_and_valid() {
         "key",
         "session",
         "message",
-        "run",
         "approval",
         "operation",
         "file",
         "registry",
         "upload",
-        "secret",
+        "provider-credential",
         "limit",
         "observe",
         "telemetry",
@@ -52,6 +51,8 @@ fn clap_tree_is_closed_and_valid() {
         "otel",
         "inspect",
         "agents",
+        "run",
+        "secret",
         "self-update",
     ] {
         assert!(

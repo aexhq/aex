@@ -134,6 +134,14 @@ id = "cargo-runtimes"
 prefix = "runtimes/"
 kind = "derive-cargo"
 
+# Preserve ownership while the removed prelaunch companion remains visible in
+# change ranges. Its deleted paths still exercise the retained internal app.
+[[rule]]
+id = "retired-tool-executor-live-companion"
+prefix = "tests/live/aex-live-tool-executor/"
+kind = "node"
+node = "cargo:tool-executor"
+
 [[rule]]
 id = "cargo-live-companions"
 prefix = "tests/live/"

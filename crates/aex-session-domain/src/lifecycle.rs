@@ -123,7 +123,7 @@ pub struct LifecycleRevision(pub u64);
 
 /// Why a session lifecycle transition was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum LifecycleError {
+pub enum SessionLifecycleError {
     /// The launch instant cannot express its eight-hour expiry.
     #[error("the session launch instant cannot express its lifecycle deadlines")]
     TimestampOverflow,
@@ -146,6 +146,8 @@ pub enum LifecycleError {
     #[error("the session must terminate before irreversible deletion begins")]
     TerminationRequired,
 }
+
+type LifecycleError = SessionLifecycleError;
 
 impl SessionLifecycle {
     /// Starts an idle, launched generation with exact suspend and expiry rows.

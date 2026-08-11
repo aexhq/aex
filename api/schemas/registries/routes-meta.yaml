@@ -59,7 +59,7 @@ scenarioOwners:
   regional.observations: { servingArtifact: regional-observation-api, scenarios: [SC-OBSERVATION-QUERY] }
   regional.operations: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-TERMINAL] }
   regional.otlp: { servingArtifact: regional-otlp, scenarios: [SC-OBSERVATION-ADMIT] }
-  regional.provider-credentials: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT] }
+  regional.provider-credentials: { servingArtifact: session-stream-api, scenarios: [SC-BYOK-CUSTODY] }
   regional.registry: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT] }
   regional.sessions: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT, SC-SESSION-TERMINAL] }
   regional.telemetry-lifecycle: { servingArtifact: regional-observation-api, scenarios: [SC-OBSERVATION-EXPORT, SC-OBSERVATION-GAP] }
@@ -85,7 +85,7 @@ operationOwners:
   observations_telemetry_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
   observations_traces_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
   observations_traces_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  provider_credential_register: { servingArtifact: regional-secret-api, scenarios: [SC-SESSION-ADMIT] }
+  provider_credential_register: { servingArtifact: regional-secret-api, scenarios: [SC-BYOK-CUSTODY] }
   session_observations_events_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
   session_observations_events_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
   session_observations_logs_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }

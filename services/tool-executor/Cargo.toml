@@ -18,8 +18,8 @@ owner = "brain-core"
 role = "application"
 artifact = "none"
 layers = ["unit"]
-concerns = ["contract", "fault", "security", "performance"]
-seams = ["aws.dynamodb.condition", "aws.dynamodb.transact_write", "aws.iam.denial"]
+concerns = ["contract", "property", "fault", "security", "performance"]
+seams = []
 security_tier = "secret"
 risk = ["iam", "untrusted_input"]
 scenarios = []
@@ -29,6 +29,9 @@ admission = "unit"
 composition = "unit"
 spend = "unit"
 performance_contract = "e2e"
+
+[package.metadata.aex.not_applicable]
+live_suite = "retained internal application code; the prelaunch product has no deployable tool-executor unit"
 
 [[bin]]
 name = "tool-executor"

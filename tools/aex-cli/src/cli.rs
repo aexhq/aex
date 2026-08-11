@@ -99,10 +99,6 @@ pub enum Command {
         #[command(subcommand)]
         command: MessageCommand,
     },
-    Run {
-        #[command(subcommand)]
-        command: RunCommand,
-    },
     Approval {
         #[command(subcommand)]
         command: ApprovalCommand,
@@ -123,9 +119,9 @@ pub enum Command {
         #[command(subcommand)]
         command: UploadCommand,
     },
-    Secret {
+    ProviderCredential {
         #[command(subcommand)]
-        command: SecretCommand,
+        command: ProviderCredentialCommand,
     },
     Limit {
         #[command(subcommand)]
@@ -265,30 +261,22 @@ pub enum SessionCommand {
     Get {
         session: String,
     },
-    Stop {
+    Cancel {
         session: String,
     },
-    Persist {
+    Suspend {
         session: String,
     },
-    Trash {
+    Resume {
         session: String,
     },
-    Restore {
+    Terminate {
         session: String,
     },
-    Purge {
+    Delete {
         session: String,
         #[arg(long)]
         confirm: String,
-    },
-    Discard {
-        session: String,
-    },
-    Rebind {
-        session: String,
-        #[arg(long)]
-        secret: Vec<String>,
     },
 }
 #[derive(Debug, Args)]
@@ -316,12 +304,6 @@ pub enum MessageCommand {
     },
 }
 #[derive(Debug, Subcommand)]
-pub enum RunCommand {
-    List { session: String },
-    Get { session: String, run: String },
-    Wait { session: String, run: String },
-}
-#[derive(Debug, Subcommand)]
 pub enum ApprovalCommand {
     List {
         session: String,
@@ -347,10 +329,6 @@ pub enum OperationCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum FileCommand {
-    Persisted {
-        #[command(subcommand)]
-        command: FileModeCommand,
-    },
     Live {
         #[command(subcommand)]
         command: FileModeCommand,
@@ -378,37 +356,6 @@ pub enum RegistryCommand {
     File {
         #[command(subcommand)]
         command: RegistryFileCommand,
-    },
-    Skill {
-        #[command(subcommand)]
-        command: RegistryCrudCommand,
-    },
-    Tool {
-        #[command(subcommand)]
-        command: RegistryCrudCommand,
-    },
-    Instruction {
-        #[command(subcommand)]
-        command: RegistryCrudCommand,
-    },
-    McpServer {
-        #[command(subcommand)]
-        command: RegistryCrudCommand,
-    },
-}
-#[derive(Debug, Subcommand)]
-pub enum RegistryCrudCommand {
-    List,
-    Get {
-        name: String,
-    },
-    Set {
-        name: String,
-        #[arg(long)]
-        request: String,
-    },
-    Delete {
-        name: String,
     },
 }
 #[derive(Debug, Subcommand)]
@@ -462,23 +409,20 @@ pub enum UploadCommand {
     },
 }
 #[derive(Debug, Subcommand)]
-pub enum SecretCommand {
+pub enum ProviderCredentialCommand {
     List,
     Get {
-        name: String,
+        credential: String,
     },
-    Set {
-        name: String,
+    Register {
+        provider: String,
         #[arg(long)]
         value: Option<String>,
         #[arg(long)]
         value_stdin: bool,
     },
-    Delete {
-        name: String,
-    },
     Revoke {
-        name: String,
+        credential: String,
     },
 }
 #[derive(Debug, Subcommand)]

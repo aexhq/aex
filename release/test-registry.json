@@ -10,8 +10,8 @@
   "totals": {
     "awaiting_owner": 33,
     "capacity_gates": 19,
-    "live_targets": 37,
-    "packages": 150,
+    "live_targets": 36,
+    "packages": 149,
     "seams_claimed": 34,
     "seams_declared": 36,
     "workloads": 11
@@ -3064,41 +3064,34 @@
       "kind": "cargo",
       "meta": {
         "owner": "brain-core",
-        "role": "deployable",
-        "artifact": "oci_image",
-        "deployable": "tool-executor",
-        "live_suite": "aex-live-tool-executor",
+        "role": "application",
+        "artifact": "none",
         "layers": [
-          "unit",
-          "smoke",
-          "e2e"
+          "unit"
         ],
         "concerns": [
           "contract",
+          "property",
           "fault",
           "security",
           "performance"
         ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.dynamodb.transact_write",
-          "aws.iam.denial"
-        ],
+        "seams": [],
         "security_tier": "secret",
         "risk": [
           "iam",
           "untrusted_input"
         ],
-        "scenarios": [
-          "SC-BRAIN-TURN"
-        ],
+        "scenarios": [],
         "targets": {
           "admission": "unit",
           "composition": "unit",
           "performance_contract": "e2e",
           "spend": "unit"
         },
-        "not_applicable": {}
+        "not_applicable": {
+          "live_suite": "retained internal application code; the prelaunch product has no deployable tool-executor unit"
+        }
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -4269,41 +4262,6 @@
       "unmapped_targets": [],
       "awaiting_owner": true
     },
-    "tests/live/aex-live-tool-executor": {
-      "name": "aex-live-tool-executor",
-      "kind": "cargo",
-      "meta": {
-        "owner": "brain-core",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "tool-executor",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.dynamodb.transact_write",
-          "aws.iam.denial"
-        ],
-        "security_tier": "secret",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {
-          "live": "e2e"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
     "tests/live/aex-live-usage-compute-worker": {
       "name": "aex-live-usage-compute-worker",
       "kind": "cargo",
@@ -4592,6 +4550,7 @@
         "targets": {
           "canonical_agreement": "unit",
           "determinism": "unit",
+          "session_product": "unit",
           "surface": "unit",
           "typescript": "unit"
         },
@@ -5463,7 +5422,6 @@
     "aex-live-site",
     "aex-live-stripe-command-edge",
     "aex-live-stripe-webhook-edge",
-    "aex-live-tool-executor",
     "aex-live-usage-compute-worker",
     "aex-live-usage-receipt-dispatcher",
     "aex-live-usage-storage-worker",
@@ -5496,7 +5454,6 @@
       "aex-live-runtime-control-worker",
       "aex-live-session-operation-worker",
       "aex-live-session-stream-api",
-      "aex-live-tool-executor",
       "aex-live-usage-compute-worker",
       "aex-live-usage-storage-worker",
       "aex-live-usage-transfer-worker"
@@ -5519,8 +5476,7 @@
       "aex-live-regional-observation-api",
       "aex-live-regional-otlp",
       "aex-live-session-operation-worker",
-      "aex-live-session-stream-api",
-      "aex-live-tool-executor"
+      "aex-live-session-stream-api"
     ],
     "aws.dynamodb.ttl": [
       "aex-live-content-lifecycle-worker",
@@ -5565,7 +5521,6 @@
       "aex-live-session-stream-api",
       "aex-live-stripe-command-edge",
       "aex-live-stripe-webhook-edge",
-      "aex-live-tool-executor",
       "aex-live-usage-compute-worker",
       "aex-live-usage-receipt-dispatcher",
       "aex-live-usage-storage-worker",

@@ -78,6 +78,11 @@ pub fn typescript_sdk_routes(ir: &ContractIr, digest: &str) -> String {
         "  readonly transport: {};\n",
         union_of(distinct(&operations, |operation| &operation.transport))
     ));
+    out.push_str("  /** How the request body is encoded. */\n");
+    out.push_str(&format!(
+        "  readonly bodyClass: {};\n",
+        union_of(distinct(&operations, |operation| &operation.body_class))
+    ));
     out.push_str("  /** Path placeholders, in the order the contract declares them. */\n");
     out.push_str("  readonly pathParams: readonly string[];\n");
     out.push_str("  /** The closed set of query parameters the operation accepts. */\n");
@@ -113,6 +118,10 @@ pub fn typescript_sdk_routes(ir: &ContractIr, digest: &str) -> String {
         out.push_str(&format!(
             "    transport: {},\n",
             quoted(&operation.transport)
+        ));
+        out.push_str(&format!(
+            "    bodyClass: {},\n",
+            quoted(&operation.body_class)
         ));
         out.push_str(&format!(
             "    pathParams: {},\n",

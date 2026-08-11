@@ -95,6 +95,11 @@ fn the_sdk_route_table_carries_every_operation_the_contract_declares() {
             "{} has no SDK path",
             operation.id
         );
+        assert!(
+            source.contains(&format!("    bodyClass: \"{}\",\n", operation.body_class)),
+            "{} has no SDK request body class",
+            operation.id
+        );
     }
 }
 
