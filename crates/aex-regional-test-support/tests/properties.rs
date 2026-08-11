@@ -106,7 +106,12 @@ fn session_delete_worker_can_remove_only_one_sessions_terminal_runtime_rows() {
         .expect("one deletion grant");
     assert_eq!(
         grant.actions,
-        ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:DeleteItem"]
+        [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:DeleteItem",
+            "dynamodb:TransactWriteItems",
+        ]
     );
     assert_eq!(grant.resources, ["table"]);
     assert_eq!(
