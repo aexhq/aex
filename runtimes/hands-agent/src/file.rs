@@ -258,8 +258,9 @@ impl FileService {
             return Err(FileFailureCode::Conflict);
         }
         let mut part = self.read_part_manifest(upload, part_number)?;
+        let chunk_size = u32::try_from(bytes.len()).map_err(|_| FileFailureCode::InvalidRequest)?;
         let chunk_end = chunk_offset
-            .checked_add(u32::try_from(bytes.len()).map_err(|_| FileFailureCode::InvalidRequest)?)
+            .checked_add(chunk_size)
             .ok_or(FileFailureCode::InvalidRequest)?;
         let expected_size = part
             .receipt
@@ -269,8 +270,8 @@ impl FileService {
         if bytes.is_empty()
             || bytes.len() > FILE_FRAME_BYTES as usize
             || chunk_offset >= part.receipt.size_bytes
-            || chunk_offset % FILE_FRAME_BYTES != 0
-            || bytes.len() as u32 != expected_size
+            || !chunk_offset.is_multiple_of(FILE_FRAME_BYTES)
+            || chunk_size != expected_size
             || chunk_end > part.receipt.size_bytes
             || ContentHash::of(bytes) != sha256
         {
@@ -278,7 +279,7 @@ impl FileService {
         }
         let receipt = ChunkReceipt {
             offset: chunk_offset,
-            size_bytes: bytes.len() as u32,
+            size_bytes: chunk_size,
             sha256,
         };
         if let Some(existing) = part
@@ -327,7 +328,9 @@ impl FileService {
         }
         let part = self.read_part_manifest(upload, part_number)?;
         let expected_chunks = part.receipt.size_bytes.div_ceil(FILE_FRAME_BYTES);
-        if part.chunks.len() as u32 != expected_chunks {
+        if u32::try_from(part.chunks.len()).map_err(|_| FileFailureCode::InvalidRequest)?
+            != expected_chunks
+        {
             return Err(FileFailureCode::InvalidRequest);
         }
         for (index, chunk) in part.chunks.iter().enumerate() {
@@ -348,7 +351,9 @@ impl FileService {
         for chunk in &part.chunks {
             let bytes = std::fs::read(self.chunk_path(upload, part_number, chunk.offset))
                 .map_err(|error| map_io(&error))?;
-            if bytes.len() as u32 != chunk.size_bytes || ContentHash::of(&bytes) != chunk.sha256 {
+            if u32::try_from(bytes.len()) != Ok(chunk.size_bytes)
+                || ContentHash::of(&bytes) != chunk.sha256
+            {
                 let _ = std::fs::remove_file(&temporary);
                 return Err(FileFailureCode::Conflict);
             }
@@ -798,7 +803,8 @@ fn hash_file_parts(
                 .min(read - consumed);
             whole.update(&buffer[consumed..consumed + take]);
             part.update(&buffer[consumed..consumed + take]);
-            part_bytes = part_bytes.saturating_add(take as u32);
+            let take_bytes = u32::try_from(take).map_err(|_| FileFailureCode::InvalidRequest)?;
+            part_bytes = part_bytes.saturating_add(take_bytes);
             consumed += take;
             if part_bytes == FILE_TRANSFER_PART_BYTES {
                 let number =
@@ -908,6 +914,53 @@ mod tests {
         GuestPath::parse(root, &format!("{}/{value}", root.0)).expect("contained path")
     }
 
+    fn open_part(
+        service: &FileService,
+        upload: FileUploadId,
+        part_number: u32,
+        offset: u64,
+        bytes: &[u8],
+    ) {
+        assert!(matches!(
+            service.answer(FileRequest::UploadPartOpen {
+                upload,
+                part_number,
+                offset,
+                size_bytes: u32::try_from(bytes.len()).expect("bounded part"),
+                sha256: ContentHash::of(bytes),
+            }),
+            FileResponse::Upload { .. }
+        ));
+    }
+
+    fn write_part_chunks(
+        service: &FileService,
+        upload: FileUploadId,
+        part_number: u32,
+        bytes: &[u8],
+    ) {
+        for (index, frame) in bytes.chunks(FILE_FRAME_BYTES as usize).enumerate() {
+            let chunk_offset = u32::try_from(index).expect("bounded frames") * FILE_FRAME_BYTES;
+            assert!(matches!(
+                service.answer(FileRequest::UploadPartChunk {
+                    upload,
+                    part_number,
+                    chunk_offset,
+                    sha256: ContentHash::of(frame),
+                    bytes: frame.to_vec(),
+                }),
+                FileResponse::Upload { .. }
+            ));
+        }
+        assert!(matches!(
+            service.answer(FileRequest::UploadPartComplete {
+                upload,
+                part_number,
+            }),
+            FileResponse::Upload { .. }
+        ));
+    }
+
     #[test]
     fn multipart_upload_replays_parts_and_publishes_only_after_whole_sha_verification() {
         let directory = tempfile::tempdir().expect("temporary root");
@@ -924,7 +977,7 @@ mod tests {
             service.answer(FileRequest::UploadOpen {
                 upload: identity,
                 path: destination,
-                size_bytes: bytes.len() as u64,
+                size_bytes: u64::try_from(bytes.len()).expect("bounded fixture"),
                 sha256: ContentHash::of(&bytes),
                 mode: FileMode::ReadWrite,
             }),
@@ -932,16 +985,7 @@ mod tests {
         ));
         assert!(!workspace.join("artifact.bin").exists());
         let first_part = &bytes[..FILE_TRANSFER_PART_BYTES as usize];
-        assert!(matches!(
-            service.answer(FileRequest::UploadPartOpen {
-                upload: identity,
-                part_number: 1,
-                offset: 0,
-                size_bytes: FILE_TRANSFER_PART_BYTES,
-                sha256: ContentHash::of(first_part),
-            }),
-            FileResponse::Upload { .. }
-        ));
+        open_part(&service, identity, 1, 0, first_part);
         let first_frame = FileRequest::UploadPartChunk {
             upload: identity,
             part_number: 1,
@@ -960,57 +1004,15 @@ mod tests {
             service.answer(first_frame),
             FileResponse::Upload { .. }
         ));
-        for (index, frame) in first_part[FILE_FRAME_BYTES as usize..]
-            .chunks(FILE_FRAME_BYTES as usize)
-            .enumerate()
-        {
-            let offset =
-                FILE_FRAME_BYTES + u32::try_from(index).expect("bounded frames") * FILE_FRAME_BYTES;
-            assert!(matches!(
-                service.answer(FileRequest::UploadPartChunk {
-                    upload: identity,
-                    part_number: 1,
-                    chunk_offset: offset,
-                    sha256: ContentHash::of(frame),
-                    bytes: frame.to_vec(),
-                }),
-                FileResponse::Upload { .. }
-            ));
-        }
-        assert!(matches!(
-            service.answer(FileRequest::UploadPartComplete {
-                upload: identity,
-                part_number: 1,
-            }),
-            FileResponse::Upload { .. }
-        ));
-        assert!(matches!(
-            service.answer(FileRequest::UploadPartOpen {
-                upload: identity,
-                part_number: 2,
-                offset: u64::from(FILE_TRANSFER_PART_BYTES),
-                size_bytes: 4,
-                sha256: ContentHash::of(b"tail"),
-            }),
-            FileResponse::Upload { .. }
-        ));
-        assert!(matches!(
-            service.answer(FileRequest::UploadPartChunk {
-                upload: identity,
-                part_number: 2,
-                chunk_offset: 0,
-                sha256: ContentHash::of(b"tail"),
-                bytes: b"tail".to_vec(),
-            }),
-            FileResponse::Upload { .. }
-        ));
-        assert!(matches!(
-            service.answer(FileRequest::UploadPartComplete {
-                upload: identity,
-                part_number: 2,
-            }),
-            FileResponse::Upload { .. }
-        ));
+        write_part_chunks(&service, identity, 1, first_part);
+        open_part(
+            &service,
+            identity,
+            2,
+            u64::from(FILE_TRANSFER_PART_BYTES),
+            b"tail",
+        );
+        write_part_chunks(&service, identity, 2, b"tail");
         assert!(matches!(
             service.answer(FileRequest::UploadComplete { upload: identity }),
             FileResponse::UploadComplete { .. }
