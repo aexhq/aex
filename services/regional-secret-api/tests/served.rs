@@ -208,9 +208,9 @@ impl SecretCustodyStore for FakeCustody {
                                     .and_then(|delete| delete.condition_expression())
                             })
                             .or_else(|| {
-                                action
-                                    .condition_check()
-                                    .map(|check| check.condition_expression())
+                                action.condition_check().map(
+                                    aws_sdk_dynamodb::types::ConditionCheck::condition_expression,
+                                )
                             })
                             .is_some()
                     })
