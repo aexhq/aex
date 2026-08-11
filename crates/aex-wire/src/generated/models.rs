@@ -2629,7 +2629,7 @@ pub enum LimitValue {
 }
 
 /// One exact-generation descriptor-pinned multipart download. It carries no object-store URL: every
-/// part is read directly from the retained MicroVM.
+/// part is read directly from the retained `MicroVM`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LiveFileDownload {
@@ -2776,8 +2776,8 @@ pub struct LiveFileStatRequest {
     pub path: FilePath,
 }
 
-/// One resumable upload held only by the session's exact MicroVM generation. Suspension retains it;
-/// termination or runtime loss destroys it.
+/// One resumable upload held only by the session's exact `MicroVM` generation. Suspension retains
+/// it; termination or runtime loss destroys it.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LiveFileUpload {
@@ -2827,7 +2827,7 @@ pub struct LiveFileUploadCreateRequest {
     pub size_bytes: DecimalU128,
 }
 
-/// One verified logical part retained by the exact MicroVM generation.
+/// One verified logical part retained by the exact `MicroVM` generation.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LiveFileUploadPart {
@@ -2847,7 +2847,7 @@ pub struct LiveFileUploadPart {
 pub enum LiveFileUploadState {
     /// Logical parts may still be written.
     Staging,
-    /// The file was atomically published in the MicroVM.
+    /// The file was atomically published in the `MicroVM`.
     Complete,
 }
 

@@ -628,7 +628,7 @@ export const LiveFileStatRequestSchema = z.object({
 }).strict();
 export type LiveFileStatRequest = z.infer<typeof LiveFileStatRequestSchema>;
 
-/** One verified logical part retained by the exact MicroVM generation. */
+/** One verified logical part retained by the exact `MicroVM` generation. */
 export const LiveFileUploadPartSchema = z.object({
   "offset": decimal,
   "partNumber": z.number().int().min(1).max(1280),
@@ -1742,7 +1742,7 @@ export const WorkspaceAccessSchema = z.object({
 }).strict();
 export type WorkspaceAccess = z.infer<typeof WorkspaceAccessSchema>;
 
-/** One exact-generation descriptor-pinned multipart download. It carries no object-store URL: every part is read directly from the retained MicroVM. */
+/** One exact-generation descriptor-pinned multipart download. It carries no object-store URL: every part is read directly from the retained `MicroVM`. */
 export const LiveFileDownloadSchema = z.object({
   "expiresAt": timestamp,
   "generationId": z.string().refine((value) => isId("generation", value), { message: "must be a valid UUIDv7 identifier" }),
@@ -1775,7 +1775,7 @@ export const LiveFileEntryPageSchema = z.object({
 }).strict();
 export type LiveFileEntryPage = z.infer<typeof LiveFileEntryPageSchema>;
 
-/** One resumable upload held only by the session's exact MicroVM generation. Suspension retains it; termination or runtime loss destroys it. */
+/** One resumable upload held only by the session's exact `MicroVM` generation. Suspension retains it; termination or runtime loss destroys it. */
 export const LiveFileUploadSchema = z.object({
   "expiresAt": timestamp,
   "generationId": z.string().refine((value) => isId("generation", value), { message: "must be a valid UUIDv7 identifier" }),

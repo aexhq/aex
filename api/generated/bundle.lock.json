@@ -34,7 +34,7 @@
     "api/schemas/common/core.yaml": "sha256:344a79c2903c99d82e162fd98aae195a7d2deede7ae157a2bce65e94cbd08ddd",
     "api/schemas/observation/observation.yaml": "sha256:a3ccba8365bed63b8e5f770409b9abe2e1e17ae8996dc455ded562d5473dafbd",
     "api/schemas/provider/provider.yaml": "sha256:4f98083e209d7e309c89cd001acd96095ca27898e97cc995b0fc7cf477d9447a",
-    "api/schemas/regional/content.yaml": "sha256:9f9f177fc2a9983dd23ec36e9a72a49aab1a4cb1be642f5296526de72d013bc2",
+    "api/schemas/regional/content.yaml": "sha256:4cb55e619f3c8c3b5d984afd929120aca0981a6a053780ef0cfe87192e880b63",
     "api/schemas/regional/sessions.yaml": "sha256:b74c4a6f04667f21de4380a82524922a91f5fa6addf885d2d003f87da7080050",
     "api/schemas/registries/errors.yaml": "sha256:e9b62f465a1a980a46cb6ae4d7aa525f46565cef2b68f017262938eb0d2f22c0",
     "api/schemas/registries/evolution.yaml": "sha256:d744c5441ff29e0b96b72dd0397362db1c9ac4c3afa6275843240455f8da02e0",

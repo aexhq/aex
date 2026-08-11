@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/LiveFileUploadPart.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One verified logical part retained by the exact MicroVM generation.",
+  "description": "One verified logical part retained by the exact `MicroVM` generation.",
   "properties": {
     "offset": {
       "description": "The first byte in the complete file.",

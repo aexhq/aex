@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/LiveFileDownload.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One exact-generation descriptor-pinned multipart download. It carries no object-store URL: every part is read directly from the retained MicroVM.",
+  "description": "One exact-generation descriptor-pinned multipart download. It carries no object-store URL: every part is read directly from the retained `MicroVM`.",
   "properties": {
     "expiresAt": {
       "description": "When the descriptor is closed if the client abandons it.",

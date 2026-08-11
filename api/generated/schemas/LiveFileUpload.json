@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/LiveFileUpload.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One resumable upload held only by the session's exact MicroVM generation. Suspension retains it; termination or runtime loss destroys it.",
+  "description": "One resumable upload held only by the session's exact `MicroVM` generation. Suspension retains it; termination or runtime loss destroys it.",
   "properties": {
     "expiresAt": {
       "description": "The provider-generation expiry; never later than eight hours after launch.",
