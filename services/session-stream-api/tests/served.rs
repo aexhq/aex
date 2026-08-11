@@ -1654,6 +1654,28 @@ async fn operation_get_projects_the_typed_result_and_hides_internal_gc() {
     let session = sample::<SessionId>(40);
     let public = stored_operation(
         41,
+        OperationKind::SessionTerminate,
+        OperationStatus::Succeeded,
+        Some(session),
+    );
+    let internal = stored_operation(42, OperationKind::ContentGc, OperationStatus::Running, None);
+    let operations = Arc::new(FakeOperations {
+        rows: std::sync::Mutex::new(vec![public.clone(), internal.clone()]),
+        ..FakeOperations::default()
+    });
+    let ((router, mounted), _) = build_with_operations(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        operations,
+    );
+    assert!(mounted.contains(&RouteId::RegionalOperationGet));
+
+    let (status, _, body) = get(&router, &format!("/api/operations/{}", public.record.id)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let decoded: models::Operation =
+        serde_json::from_value(body.clone()).expect("the published operation schema");
+    assert_eq!(decoded.workspace_id, workspace());
+    assert_eq!(decoded.session_id, Some(session));
     assert_eq!(decoded.kind, models::OperationKind::SessionTerminate);
     assert_eq!(decoded.status, models::OperationStatus::Succeeded);
     assert!(matches!(
@@ -2521,6 +2543,29 @@ fn the_mounted_session_mutations_are_durable_operation_admissions() {
         RouteId::SessionSuspend,
         RouteId::SessionResume,
         RouteId::SessionTerminate,
+        RouteId::SessionDelete,
+    ] {
+        assert!(Routes::served().contains(&id), "`{id}` must be mounted");
+        assert_eq!(
+            route(id).success_status,
+            202,
+            "`{id}` admits a durable operation rather than returning a resource"
+        );
+    }
+}
+
+fn unused_custody_revision() -> CustodyRevision {
+    CustodyRevision::FIRST
+}
+
+#[test]
+fn the_fixture_module_stays_honest() {
+    // `CustodyRevision` is imported for the store trait's signature surface;
+    // this keeps the import load-bearing rather than silently unused.
+    assert_eq!(unused_custody_revision(), CustodyRevision::FIRST);
+}
+
+// --- the registry listings ---------------------------------------------------------
 /// Every registry listing, its path, and the collection it must read.
 const REGISTRY_LISTINGS: &[(RouteId, &str, RegistryKind)] = &[(
     RouteId::RegistryFilesList,

@@ -298,7 +298,7 @@ pub fn replay_session_create_receipt(
                 }));
             }
             Ok(PrepareSessionCreateOutcome::Replayed {
-                session,
+                session: Box::new(session),
                 canonical_response: bytes.to_vec(),
             })
         }

@@ -11,8 +11,8 @@ use aex_session_app::testing::{
     CountingIds, FixedClock, PortCall, ScriptedPorts, message_identity_under,
 };
 use aex_session_app::{
-    AppError, CommitTerminal, MAX_ACTIONS, MessageAdmissionOutcome, Planned, SendMessage,
-    SessionTransaction, admit_message, commit_terminal, replay_message_receipt,
+    CommitTerminal, MAX_ACTIONS, MessageAdmissionOutcome, Planned, SendMessage, SessionTransaction,
+    admit_message, commit_terminal, replay_message_receipt,
 };
 use aex_session_domain::testing::{id, moment, running_session, session_fixture, terminal_attempt};
 use aex_session_domain::{
@@ -259,8 +259,8 @@ async fn admission_is_atomic() {
     assert!(has_message && has_sealed_projection && has_run && has_head);
     assert_eq!(
         plan.validate().expect("valid admission").actions,
-        12,
-        "the BYOK revision/state fence is a distinct cross-table action"
+        13,
+        "the receipt directory plus BYOK revision/state fence are distinct cross-table actions"
     );
     assert!(
         plan.conditions

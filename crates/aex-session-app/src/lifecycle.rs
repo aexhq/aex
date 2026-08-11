@@ -33,6 +33,16 @@ use crate::ports::{AppContext, PortError, RootAdmissionState};
 const LIFECYCLE_WORK_PRIORITY: u16 = 0;
 const LIFECYCLE_MAX_ATTEMPTS: u16 = 5;
 
+fn lowercase_hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
 /// One caller-minted lifecycle operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LifecycleCommand {
@@ -719,7 +729,7 @@ fn cancellation_wake(
     digest.update(command.operation.to_string().as_bytes());
     Ok(crate::plan::AgentWake {
         work_id: format!("wrk_cancel{suffix}"),
-        dedupe_key: format!("{:x}", digest.finalize()),
+        dedupe_key: lowercase_hex(&digest.finalize()),
         session: command.session,
         agent: root.agent,
         from: root.journal_tail,
@@ -810,7 +820,7 @@ mod tests {
                     revision: aex_session_domain::AgentRevision(3),
                     journal_tail: aex_session_domain::JournalSeq(7),
                     limits_revision: 4,
-                    max_run_duration_ms: 3_600_000,
+                    max_run_duration_ms: 28_800_000,
                     idle: false,
                 }
             });
@@ -1056,7 +1066,7 @@ mod tests {
     fn deletion_settlement_writes_only_the_minimal_tombstone_and_terminal_authorities() {
         let session = aex_session_domain::testing::session_fixture();
         let admitted = planned(OperationKind::SessionDelete, &session);
-        let deleting = planned_head(&admitted.plan).clone();
+        let deleting = *planned_deletion_head(&admitted.plan);
         let claim = LifecycleWorkClaim {
             work_id: WorkId(admitted.projected.id.uuid7()).to_string(),
             fence: 9,
@@ -1081,7 +1091,7 @@ mod tests {
                 _ => None,
             })
             .expect("minimal tombstone");
-        assert_eq!(tombstone.session, deleting.id);
+        assert_eq!(tombstone.session, deleting.session);
         assert_eq!(tombstone.workspace, deleting.workspace);
         assert_eq!(tombstone.deleted_by, admitted.projected.id);
         assert_eq!(tombstone.deleted_at, at);
@@ -1103,7 +1113,7 @@ mod tests {
     fn deletion_settlement_refuses_one_missing_owner_evidence() {
         let session = aex_session_domain::testing::session_fixture();
         let admitted = planned(OperationKind::SessionDelete, &session);
-        let deleting = planned_head(&admitted.plan).clone();
+        let deleting = *planned_deletion_head(&admitted.plan);
         let claim = LifecycleWorkClaim {
             work_id: WorkId(admitted.projected.id.uuid7()).to_string(),
             fence: 9,

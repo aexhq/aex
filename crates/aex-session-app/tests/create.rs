@@ -82,7 +82,7 @@ async fn root_start_uses_only_the_revisioned_launch_limit_maps() {
     assert_eq!(config.limits.max_turns, 32);
     assert_eq!(config.limits.max_steps_per_turn, 16);
     assert_eq!(config.limits.turn_deadline_ms, 600_000);
-    assert_eq!(config.limits.max_run_duration_ms, 3_600_000);
+    assert_eq!(config.limits.max_run_duration_ms, 28_800_000);
     assert_eq!(config.limits.max_depth, 4);
     assert_eq!(config.limits.max_fanout, 32);
     assert_eq!(

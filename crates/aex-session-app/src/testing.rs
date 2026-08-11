@@ -172,7 +172,7 @@ impl ScriptedPorts {
                     revision: root.revision,
                     journal_tail: root.journal_tail,
                     limits_revision: 4,
-                    max_run_duration_ms: 3_600_000,
+                    max_run_duration_ms: 28_800_000,
                     idle: true,
                 },
             },
@@ -594,7 +594,7 @@ impl LimitsReader for ScriptedPorts {
                 max_fanout: 32,
             },
             run_budget: crate::ports::RunBudgetLimits {
-                max_run_duration_ms: 3_600_000,
+                max_run_duration_ms: 28_800_000,
                 total_children_created: 128,
                 provider_calls: 96,
                 hands_calls: 64,

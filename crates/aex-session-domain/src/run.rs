@@ -437,18 +437,18 @@ mod tests {
     }
 
     #[test]
-    fn omitted_deadline_is_capped_by_the_revisioned_run_duration() {
+    fn omitted_deadline_uses_the_remaining_eight_hour_session_lifetime() {
         let resolved =
-            resolve_message_bounds(None, None, moment(1_000), moment(28_800_000), 3_600_000)
-                .expect("the one-hour run fence is still in the future");
-        assert_eq!(resolved.deadline, moment(3_601_000));
+            resolve_message_bounds(None, None, moment(1_000), moment(28_800_000), 28_800_000)
+                .expect("the session lifetime is still in the future");
+        assert_eq!(resolved.deadline, moment(28_800_000));
         assert_eq!(
             resolve_message_bounds(
                 None,
-                Some(moment(3_601_001)),
+                Some(moment(28_800_001)),
                 moment(1_000),
                 moment(28_800_000),
-                3_600_000,
+                28_800_000,
             ),
             Err(MessageBoundsError::DeadlineAfterSessionFence)
         );

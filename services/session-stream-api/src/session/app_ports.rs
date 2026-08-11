@@ -351,7 +351,7 @@ mod tests {
             }),
             LimitId::SessionRunBudget => LimitValue::Map(LimitMapValue {
                 values: [
-                    ("max_run_duration_ms", 3_600_000),
+                    ("max_run_duration_ms", 28_800_000),
                     ("total_children_created", 128),
                     ("provider_calls", 96),
                     ("hands_calls", 64),
@@ -397,7 +397,7 @@ mod tests {
         assert_eq!(projected.agent_execution.turn_deadline_ms, 600_000);
         assert_eq!(projected.agent_execution.max_depth, 4);
         assert_eq!(projected.agent_execution.max_fanout, 32);
-        assert_eq!(projected.run_budget.max_run_duration_ms, 3_600_000);
+        assert_eq!(projected.run_budget.max_run_duration_ms, 28_800_000);
         assert_eq!(projected.run_budget.total_children_created, 128);
         assert_eq!(projected.run_budget.provider_calls, 96);
         assert_eq!(projected.run_budget.hands_calls, 64);

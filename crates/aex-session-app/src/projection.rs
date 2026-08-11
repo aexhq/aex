@@ -14,7 +14,7 @@
 use aex_session_domain::{
     Message, MessagePart, MessageRole, MessageState, Session, SessionStatus, TerminationReason,
 };
-use aex_wire::canonical::{CanonicalError, to_jcs_bytes};
+use aex_wire::canonical::CanonicalError;
 use aex_wire::models;
 use aex_wire::types::Cents;
 
@@ -125,7 +125,9 @@ pub fn public_session(session: &Session) -> Result<models::Session, CanonicalErr
 /// Returns [`CanonicalError`] as [`public_session`] does, or when the rendered
 /// resource cannot be canonicalized.
 pub fn canonical_session_bytes(session: &Session) -> Result<Vec<u8>, CanonicalError> {
-    to_jcs_bytes(&public_session(session)?)
+    serde_json::to_vec(&public_session(session)?).map_err(|error| CanonicalError::Malformed {
+        reason: error.to_string(),
+    })
 }
 
 /// Projects one complete sealed message without exposing its internal run id.

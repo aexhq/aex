@@ -31,7 +31,7 @@
     {
       "id": "session.run_budget",
       "value": {
-        "max_run_duration_ms": 3600000,
+        "max_run_duration_ms": 28800000,
         "total_children_created": 128,
         "provider_calls": 96,
         "hands_calls": 64,

@@ -1139,7 +1139,7 @@ impl SessionTransaction {
         Ok(())
     }
 
-    /// Enforces the fixed 12-action message-admission authority.
+    /// Enforces the fixed 13-action message-admission authority.
     ///
     /// Eleven immutable/update rows carry the message, its sealed projection,
     /// internal Brain execution facts, durable wake, public event, and exact
@@ -1309,9 +1309,9 @@ impl SessionTransaction {
         let mut targets = BTreeSet::new();
         targets.extend(self.conditions.iter().map(Condition::target));
         targets.extend(self.writes.iter().map(Write::target));
-        if targets.len() != 12 {
+        if targets.len() != 13 {
             return Err(message_admission_error(
-                "admission is exactly twelve physical actions after guard merging",
+                "admission is exactly thirteen physical actions after guard merging",
             ));
         }
         Ok(())
