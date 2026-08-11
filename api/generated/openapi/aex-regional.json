@@ -3635,7 +3635,6 @@
           "user",
           "lifetime_expired",
           "provider_credential_revoked",
-          "account_paused",
           "runtime_lost"
         ],
         "type": "string"
@@ -10237,7 +10236,6 @@
     },
     "/api/sessions/{sessionId}/files/live/downloads": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_files_live_download_create",
         "parameters": [
           {
@@ -10284,16 +10282,6 @@
             "description": "Error."
           },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "402": {
             "content": {
               "application/json": {
                 "schema": {
@@ -10363,16 +10351,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "502": {
             "content": {
               "application/json": {
@@ -10400,7 +10378,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -10408,21 +10385,20 @@
           "idempotency_conflict",
           "invalid_request",
           "limit_exceeded",
+          "session_terminated",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
           "resource_conflict",
           "file_not_found",
-          "account_paused",
           "precondition_failed",
           "wrong_workspace_region",
           "upstream_error",
-          "commit_outcome_unknown",
-          "not_implemented"
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
-        "x-aex-pause-exempt": false,
+        "x-aex-pause-exempt": true,
         "x-aex-safe-retry": false,
         "x-aex-scope": "files:live",
         "x-aex-transport": "unary"
@@ -10430,7 +10406,6 @@
     },
     "/api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}": {
       "delete": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_files_live_download_delete",
         "parameters": [
           {
@@ -10511,16 +10486,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "502": {
             "content": {
               "application/json": {
@@ -10538,18 +10503,17 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
           "not_found",
+          "session_terminated",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
           "resource_conflict",
           "wrong_workspace_region",
-          "upstream_error",
-          "not_implemented"
+          "upstream_error"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
@@ -10561,7 +10525,6 @@
     },
     "/api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}/completion": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_files_live_download_complete",
         "parameters": [
           {
@@ -10628,16 +10591,6 @@
             },
             "description": "Error."
           },
-          "402": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "403": {
             "content": {
               "application/json": {
@@ -10688,16 +10641,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "502": {
             "content": {
               "application/json": {
@@ -10725,27 +10668,25 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
           "not_found",
           "idempotency_conflict",
           "invalid_request",
+          "session_terminated",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
           "resource_conflict",
-          "account_paused",
           "precondition_failed",
           "wrong_workspace_region",
           "upstream_error",
-          "commit_outcome_unknown",
-          "not_implemented"
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
-        "x-aex-pause-exempt": false,
+        "x-aex-pause-exempt": true,
         "x-aex-safe-retry": false,
         "x-aex-scope": "files:live",
         "x-aex-transport": "unary"
@@ -10753,7 +10694,6 @@
     },
     "/api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}/parts/{partNumber}": {
       "get": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_files_live_download_part_get",
         "parameters": [
           {
@@ -10833,16 +10773,6 @@
             },
             "description": "Error."
           },
-          "402": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "403": {
             "content": {
               "application/json": {
@@ -10893,16 +10823,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "502": {
             "content": {
               "application/json": {
@@ -10920,26 +10840,24 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
           "not_found",
           "invalid_request",
+          "session_terminated",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
           "resource_conflict",
           "file_not_found",
-          "account_paused",
           "precondition_failed",
           "wrong_workspace_region",
-          "upstream_error",
-          "not_implemented"
+          "upstream_error"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
+        "x-aex-pause-exempt": true,
         "x-aex-safe-retry": true,
         "x-aex-scope": "files:live",
         "x-aex-transport": "binary"
@@ -10947,7 +10865,6 @@
     },
     "/api/sessions/{sessionId}/files/live/list": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_files_live_list",
         "parameters": [
           {
@@ -10994,16 +10911,6 @@
             "description": "Error."
           },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "402": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11073,16 +10980,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "502": {
             "content": {
               "application/json": {
@@ -11100,7 +10997,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -11108,19 +11004,18 @@
           "invalid_request",
           "invalid_cursor",
           "limit_exceeded",
+          "session_terminated",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
           "resource_conflict",
-          "account_paused",
           "precondition_failed",
           "wrong_workspace_region",
-          "upstream_error",
-          "not_implemented"
+          "upstream_error"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
+        "x-aex-pause-exempt": true,
         "x-aex-safe-retry": true,
         "x-aex-scope": "files:live",
         "x-aex-transport": "unary"
@@ -11128,7 +11023,6 @@
     },
     "/api/sessions/{sessionId}/files/live/stat": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_files_live_stat",
         "parameters": [
           {
@@ -11175,16 +11069,6 @@
             "description": "Error."
           },
           "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "402": {
             "content": {
               "application/json": {
                 "schema": {
@@ -11244,16 +11128,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "502": {
             "content": {
               "application/json": {
@@ -11271,26 +11145,24 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
           "not_found",
           "invalid_request",
+          "session_terminated",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
           "resource_conflict",
           "file_not_found",
-          "account_paused",
           "precondition_failed",
           "wrong_workspace_region",
-          "upstream_error",
-          "not_implemented"
+          "upstream_error"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
+        "x-aex-pause-exempt": true,
         "x-aex-safe-retry": true,
         "x-aex-scope": "files:live",
         "x-aex-transport": "unary"
@@ -11298,7 +11170,6 @@
     },
     "/api/sessions/{sessionId}/files/live/uploads": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_files_live_upload_create",
         "parameters": [
           {
@@ -11424,16 +11295,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "502": {
             "content": {
               "application/json": {
@@ -11461,7 +11322,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -11469,6 +11329,7 @@
           "idempotency_conflict",
           "invalid_request",
           "limit_exceeded",
+          "session_terminated",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
@@ -11477,8 +11338,7 @@
           "precondition_failed",
           "wrong_workspace_region",
           "upstream_error",
-          "commit_outcome_unknown",
-          "not_implemented"
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
@@ -11490,7 +11350,6 @@
     },
     "/api/sessions/{sessionId}/files/live/uploads/{fileUploadId}": {
       "delete": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_files_live_upload_delete",
         "parameters": [
           {
@@ -11571,16 +11430,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "502": {
             "content": {
               "application/json": {
@@ -11598,18 +11447,17 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
           "not_found",
+          "session_terminated",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
           "resource_conflict",
           "wrong_workspace_region",
-          "upstream_error",
-          "not_implemented"
+          "upstream_error"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
@@ -11619,7 +11467,6 @@
         "x-aex-transport": "unary"
       },
       "get": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_files_live_upload_get",
         "parameters": [
           {
@@ -11727,16 +11574,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "502": {
             "content": {
               "application/json": {
@@ -11754,11 +11591,11 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
           "not_found",
+          "session_terminated",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
@@ -11766,8 +11603,7 @@
           "account_paused",
           "precondition_failed",
           "wrong_workspace_region",
-          "upstream_error",
-          "not_implemented"
+          "upstream_error"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
@@ -11779,7 +11615,6 @@
     },
     "/api/sessions/{sessionId}/files/live/uploads/{fileUploadId}/completion": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_files_live_upload_complete",
         "parameters": [
           {
@@ -11897,16 +11732,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "502": {
             "content": {
               "application/json": {
@@ -11934,13 +11759,13 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
           "not_found",
           "idempotency_conflict",
           "invalid_request",
+          "session_terminated",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
@@ -11950,8 +11775,7 @@
           "precondition_failed",
           "wrong_workspace_region",
           "upstream_error",
-          "commit_outcome_unknown",
-          "not_implemented"
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
@@ -11963,7 +11787,6 @@
     },
     "/api/sessions/{sessionId}/files/live/uploads/{fileUploadId}/parts/{partNumber}": {
       "put": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_files_live_upload_part_put",
         "parameters": [
           {
@@ -12142,16 +11965,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "502": {
             "content": {
               "application/json": {
@@ -12169,7 +11982,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "binary",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -12178,6 +11990,7 @@
           "unsupported_media_type",
           "payload_too_large",
           "limit_exceeded",
+          "session_terminated",
           "workspace_activation_required",
           "session_deleting",
           "session_deleted",
@@ -12185,8 +11998,7 @@
           "account_paused",
           "precondition_failed",
           "wrong_workspace_region",
-          "upstream_error",
-          "not_implemented"
+          "upstream_error"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",

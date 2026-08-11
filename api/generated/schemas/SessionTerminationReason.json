@@ -6,7 +6,6 @@
     "user",
     "lifetime_expired",
     "provider_credential_revoked",
-    "account_paused",
     "runtime_lost"
   ],
   "title": "SessionTerminationReason",

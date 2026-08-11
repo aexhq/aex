@@ -11,6 +11,11 @@
       "shape": "scalar"
     },
     {
+      "description": "Largest aggregate byte size of registered workspace files materialized synchronously before session creation returns ready.",
+      "id": "session.initial_files_bytes",
+      "shape": "scalar"
+    },
+    {
       "description": "Largest accepted encoded JSON request body.",
       "id": "api.json_body",
       "shape": "scalar"

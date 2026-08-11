@@ -163,7 +163,7 @@ pub fn typescript_sdk_routes(ir: &ContractIr, digest: &str) -> String {
 
 /// Renders `packages/sdk/src/generated/resources.ts`.
 ///
-/// One method per **served unary** operation, and nothing else. A method the
+/// One method per **served finite** operation, and nothing else. A method the
 /// contract declares and no deployable serves would be a method that can only
 /// fail, and publishing one puts the platform's answer in the client, where it
 /// goes stale the day the route lands. The long-lived NDJSON reads are absent

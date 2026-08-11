@@ -3,7 +3,7 @@
 //! The effective-limit registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:e2561cc03501325b6673ce07a84a8b2abfed58597cbad3f2c13297cba3542665`.
+//! `sha256:57883d5e21d6fb5bae6d9fb3709d9b29b01aa22fbc5d66dd43edea2e94dd9150`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -34,6 +34,10 @@ pub enum LimitId {
     /// session.
     #[serde(rename = "session.materialized_agents")]
     SessionMaterializedAgents,
+    /// `session.initial_files_bytes` — Largest aggregate byte size of registered workspace files
+    /// materialized synchronously before session creation returns ready.
+    #[serde(rename = "session.initial_files_bytes")]
+    SessionInitialFilesBytes,
     /// `api.json_body` — Largest accepted encoded JSON request body.
     #[serde(rename = "api.json_body")]
     ApiJsonBody,
@@ -78,6 +82,7 @@ impl LimitId {
     pub const ALL: &'static [LimitId] = &[
         LimitId::ContextToolResultBytes,
         LimitId::SessionMaterializedAgents,
+        LimitId::SessionInitialFilesBytes,
         LimitId::ApiJsonBody,
         LimitId::TelemetryBatch,
         LimitId::TelemetryIngestRate,
@@ -97,6 +102,7 @@ impl LimitId {
         match self {
             Self::ContextToolResultBytes => "context.tool_result_bytes",
             Self::SessionMaterializedAgents => "session.materialized_agents",
+            Self::SessionInitialFilesBytes => "session.initial_files_bytes",
             Self::ApiJsonBody => "api.json_body",
             Self::TelemetryBatch => "telemetry.batch",
             Self::TelemetryIngestRate => "telemetry.ingest_rate",
@@ -117,6 +123,7 @@ impl LimitId {
         match self {
             Self::ContextToolResultBytes => LimitShape::Scalar,
             Self::SessionMaterializedAgents => LimitShape::Scalar,
+            Self::SessionInitialFilesBytes => LimitShape::Scalar,
             Self::ApiJsonBody => LimitShape::Scalar,
             Self::TelemetryBatch => LimitShape::Map,
             Self::TelemetryIngestRate => LimitShape::Map,
@@ -137,6 +144,7 @@ impl LimitId {
         match self {
             Self::ContextToolResultBytes => &[],
             Self::SessionMaterializedAgents => &[],
+            Self::SessionInitialFilesBytes => &[],
             Self::ApiJsonBody => &[],
             Self::TelemetryBatch => &[
                 "encoded_bytes",

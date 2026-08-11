@@ -2282,23 +2282,21 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "not_found",
             "idempotency_conflict",
             "invalid_request",
+            "session_terminated",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",
             "resource_conflict",
-            "account_paused",
             "precondition_failed",
             "wrong_workspace_region",
             "upstream_error",
-            "commit_outcome_unknown",
-            "not_implemented"
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2310,7 +2308,7 @@
             "sessionId",
             "fileDownloadId"
           ],
-          "pauseExempt": false,
+          "pauseExempt": true,
           "plane": "regional",
           "queryParams": [],
           "requestSchema": "LiveFileDownloadCompleteRequest",
@@ -2324,7 +2322,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2332,17 +2329,16 @@
             "idempotency_conflict",
             "invalid_request",
             "limit_exceeded",
+            "session_terminated",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",
             "resource_conflict",
             "file_not_found",
-            "account_paused",
             "precondition_failed",
             "wrong_workspace_region",
             "upstream_error",
-            "commit_outcome_unknown",
-            "not_implemented"
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2353,7 +2349,7 @@
           "pathParams": [
             "sessionId"
           ],
-          "pauseExempt": false,
+          "pauseExempt": true,
           "plane": "regional",
           "queryParams": [],
           "requestSchema": "LiveFileDownloadRequest",
@@ -2367,18 +2363,17 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "not_found",
+            "session_terminated",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",
             "resource_conflict",
             "wrong_workspace_region",
-            "upstream_error",
-            "not_implemented"
+            "upstream_error"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2404,22 +2399,20 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "not_found",
             "invalid_request",
+            "session_terminated",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",
             "resource_conflict",
             "file_not_found",
-            "account_paused",
             "precondition_failed",
             "wrong_workspace_region",
-            "upstream_error",
-            "not_implemented"
+            "upstream_error"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2432,7 +2425,7 @@
             "fileDownloadId",
             "partNumber"
           ],
-          "pauseExempt": false,
+          "pauseExempt": true,
           "plane": "regional",
           "queryParams": [
             "version"
@@ -2448,7 +2441,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2456,15 +2448,14 @@
             "invalid_request",
             "invalid_cursor",
             "limit_exceeded",
+            "session_terminated",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",
             "resource_conflict",
-            "account_paused",
             "precondition_failed",
             "wrong_workspace_region",
-            "upstream_error",
-            "not_implemented"
+            "upstream_error"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2475,7 +2466,7 @@
           "pathParams": [
             "sessionId"
           ],
-          "pauseExempt": false,
+          "pauseExempt": true,
           "plane": "regional",
           "queryParams": [],
           "requestSchema": "LiveFileListRequest",
@@ -2489,22 +2480,20 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "not_found",
             "invalid_request",
+            "session_terminated",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",
             "resource_conflict",
             "file_not_found",
-            "account_paused",
             "precondition_failed",
             "wrong_workspace_region",
-            "upstream_error",
-            "not_implemented"
+            "upstream_error"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2515,7 +2504,7 @@
           "pathParams": [
             "sessionId"
           ],
-          "pauseExempt": false,
+          "pauseExempt": true,
           "plane": "regional",
           "queryParams": [],
           "requestSchema": "LiveFileStatRequest",
@@ -2529,13 +2518,13 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "not_found",
             "idempotency_conflict",
             "invalid_request",
+            "session_terminated",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",
@@ -2545,8 +2534,7 @@
             "precondition_failed",
             "wrong_workspace_region",
             "upstream_error",
-            "commit_outcome_unknown",
-            "not_implemented"
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2572,7 +2560,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2580,6 +2567,7 @@
             "idempotency_conflict",
             "invalid_request",
             "limit_exceeded",
+            "session_terminated",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",
@@ -2588,8 +2576,7 @@
             "precondition_failed",
             "wrong_workspace_region",
             "upstream_error",
-            "commit_outcome_unknown",
-            "not_implemented"
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2614,18 +2601,17 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "not_found",
+            "session_terminated",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",
             "resource_conflict",
             "wrong_workspace_region",
-            "upstream_error",
-            "not_implemented"
+            "upstream_error"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2651,11 +2637,11 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "not_found",
+            "session_terminated",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",
@@ -2663,8 +2649,7 @@
             "account_paused",
             "precondition_failed",
             "wrong_workspace_region",
-            "upstream_error",
-            "not_implemented"
+            "upstream_error"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2690,7 +2675,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "binary",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2699,6 +2683,7 @@
             "unsupported_media_type",
             "payload_too_large",
             "limit_exceeded",
+            "session_terminated",
             "workspace_activation_required",
             "session_deleting",
             "session_deleted",
@@ -2706,8 +2691,7 @@
             "account_paused",
             "precondition_failed",
             "wrong_workspace_region",
-            "upstream_error",
-            "not_implemented"
+            "upstream_error"
           ],
           "etag": "none",
           "fragment": "files",
@@ -5184,6 +5168,11 @@
         {
           "description": "Root-plus-subagents concurrently materialized in one session.",
           "id": "session.materialized_agents",
+          "shape": "scalar"
+        },
+        {
+          "description": "Largest aggregate byte size of registered workspace files materialized synchronously before session creation returns ready.",
+          "id": "session.initial_files_bytes",
           "shape": "scalar"
         },
         {
@@ -10025,7 +10014,6 @@
         "user",
         "lifetime_expired",
         "provider_credential_revoked",
-        "account_paused",
         "runtime_lost"
       ],
       "type": "string"

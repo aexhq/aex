@@ -23,6 +23,7 @@
 {"class":"validation","code":"unsupported_media_type","precedenceStage":"transport_envelope","retryable":false,"status":415}
 {"class":"quota","code":"limit_exceeded","precedenceStage":"domain_state","retryable":true,"status":429}
 {"class":"state","code":"session_not_idle","precedenceStage":"domain_state","retryable":true,"status":409}
+{"class":"state","code":"session_terminated","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"state","code":"workspace_activation_required","precedenceStage":"domain_state","retryable":true,"status":409}
 {"class":"state","code":"workspace_not_live","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"state","code":"session_deleting","precedenceStage":"tombstone_and_parent","retryable":false,"status":409}

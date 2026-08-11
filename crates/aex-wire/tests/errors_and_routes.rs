@@ -408,8 +408,9 @@ fn route_obligations_are_internally_consistent() {
 
 #[test]
 fn pause_exempt_routes_are_exactly_the_declared_exemptions() {
-    // Security revocation, stop, discard, destructive deletion, account and
-    // workspace state, billing, safe control reads, and the credential ceremony.
+    // Security revocation, current-work cancellation, stop, discard,
+    // destructive deletion, account and workspace state, billing, safe control
+    // reads, and the credential ceremony.
     // Anything else that claims exemption is a bug in the fragment, not a policy
     // question.
     //
@@ -420,6 +421,15 @@ fn pause_exempt_routes_are_exactly_the_declared_exemptions() {
     for descriptor in ROUTES.iter().filter(|r| r.pause_exempt) {
         let operation = descriptor.operation_id;
         let exempt = operation.starts_with("dashboard_session")
+            || matches!(
+                operation,
+                "session_cancel"
+                    | "session_suspend"
+                    | "session_terminate"
+                    | "session_files_live_list"
+                    | "session_files_live_stat"
+            )
+            || operation.starts_with("session_files_live_download")
             || operation.contains("revocation")
             || operation.contains("revoke")
             || operation.contains("delete")

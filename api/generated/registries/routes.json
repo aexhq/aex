@@ -2452,24 +2452,21 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The exact-generation live download completion authority is awaiting integration.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
         "idempotency_conflict",
         "invalid_request",
+        "session_terminated",
         "workspace_activation_required",
         "session_deleting",
         "session_deleted",
         "resource_conflict",
-        "account_paused",
         "precondition_failed",
         "wrong_workspace_region",
         "upstream_error",
-        "commit_outcome_unknown",
-        "not_implemented"
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "files",
@@ -2481,7 +2478,7 @@
         "sessionId",
         "fileDownloadId"
       ],
-      "pauseExempt": false,
+      "pauseExempt": true,
       "plane": "regional",
       "queryParams": [],
       "requestSchema": "LiveFileDownloadCompleteRequest",
@@ -2491,6 +2488,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Re-stat, re-hash, and close an exact live-file download after SDK verification.",
@@ -2499,8 +2497,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The session root, content decryption, and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2508,17 +2504,16 @@
         "idempotency_conflict",
         "invalid_request",
         "limit_exceeded",
+        "session_terminated",
         "workspace_activation_required",
         "session_deleting",
         "session_deleted",
         "resource_conflict",
         "file_not_found",
-        "account_paused",
         "precondition_failed",
         "wrong_workspace_region",
         "upstream_error",
-        "commit_outcome_unknown",
-        "not_implemented"
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "files",
@@ -2529,7 +2524,7 @@
       "pathParams": [
         "sessionId"
       ],
-      "pauseExempt": false,
+      "pauseExempt": true,
       "plane": "regional",
       "queryParams": [],
       "requestSchema": "LiveFileDownloadRequest",
@@ -2539,6 +2534,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Open one exact-version live file directly from the retained generation, auto-resuming it.",
@@ -2547,19 +2543,17 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferred": true,
-      "deferredReason": "The exact-generation live download close authority is awaiting integration.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
+        "session_terminated",
         "workspace_activation_required",
         "session_deleting",
         "session_deleted",
         "resource_conflict",
         "wrong_workspace_region",
-        "upstream_error",
-        "not_implemented"
+        "upstream_error"
       ],
       "etag": "none",
       "fragment": "files",
@@ -2581,6 +2575,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Close an abandoned live-file descriptor, auto-resuming the same generation.",
@@ -2589,23 +2584,20 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferred": true,
-      "deferredReason": "The exact-generation raw download transport is awaiting integration.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
         "invalid_request",
+        "session_terminated",
         "workspace_activation_required",
         "session_deleting",
         "session_deleted",
         "resource_conflict",
         "file_not_found",
-        "account_paused",
         "precondition_failed",
         "wrong_workspace_region",
-        "upstream_error",
-        "not_implemented"
+        "upstream_error"
       ],
       "etag": "none",
       "fragment": "files",
@@ -2618,7 +2610,7 @@
         "fileDownloadId",
         "partNumber"
       ],
-      "pauseExempt": false,
+      "pauseExempt": true,
       "plane": "regional",
       "queryParams": [
         "version"
@@ -2630,6 +2622,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one raw exact-version range directly from the retained generation.",
@@ -2638,8 +2631,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The guest answers this from lstat with no digest; session-stream-api composes no authenticated guest transport or provider endpoint token to ask it.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2647,15 +2638,14 @@
         "invalid_request",
         "invalid_cursor",
         "limit_exceeded",
+        "session_terminated",
         "workspace_activation_required",
         "session_deleting",
         "session_deleted",
         "resource_conflict",
-        "account_paused",
         "precondition_failed",
         "wrong_workspace_region",
-        "upstream_error",
-        "not_implemented"
+        "upstream_error"
       ],
       "etag": "none",
       "fragment": "files",
@@ -2666,7 +2656,7 @@
       "pathParams": [
         "sessionId"
       ],
-      "pauseExempt": false,
+      "pauseExempt": true,
       "plane": "regional",
       "queryParams": [],
       "requestSchema": "LiveFileListRequest",
@@ -2676,6 +2666,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List the exact live generation, auto-resuming that same generation when suspended.",
@@ -2684,23 +2675,20 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The guest answers this from lstat with no digest; session-stream-api composes no authenticated guest transport or provider endpoint token to ask it.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
         "invalid_request",
+        "session_terminated",
         "workspace_activation_required",
         "session_deleting",
         "session_deleted",
         "resource_conflict",
         "file_not_found",
-        "account_paused",
         "precondition_failed",
         "wrong_workspace_region",
-        "upstream_error",
-        "not_implemented"
+        "upstream_error"
       ],
       "etag": "none",
       "fragment": "files",
@@ -2711,7 +2699,7 @@
       "pathParams": [
         "sessionId"
       ],
-      "pauseExempt": false,
+      "pauseExempt": true,
       "plane": "regional",
       "queryParams": [],
       "requestSchema": "LiveFileStatRequest",
@@ -2721,6 +2709,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stat one live path without following a symlink, auto-resuming the same generation.",
@@ -2729,14 +2718,13 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferred": true,
-      "deferredReason": "The exact-generation live upload completion authority is awaiting integration.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
         "idempotency_conflict",
         "invalid_request",
+        "session_terminated",
         "workspace_activation_required",
         "session_deleting",
         "session_deleted",
@@ -2746,8 +2734,7 @@
         "precondition_failed",
         "wrong_workspace_region",
         "upstream_error",
-        "commit_outcome_unknown",
-        "not_implemented"
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "files",
@@ -2769,6 +2756,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Verify every part and atomically publish one live file in the same generation.",
@@ -2777,8 +2765,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The exact-generation live upload admission authority is awaiting integration.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2786,6 +2772,7 @@
         "idempotency_conflict",
         "invalid_request",
         "limit_exceeded",
+        "session_terminated",
         "workspace_activation_required",
         "session_deleting",
         "session_deleted",
@@ -2794,8 +2781,7 @@
         "precondition_failed",
         "wrong_workspace_region",
         "upstream_error",
-        "commit_outcome_unknown",
-        "not_implemented"
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "files",
@@ -2816,6 +2802,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Create a resumable upload in the exact live generation, auto-resuming it when suspended.",
@@ -2824,19 +2811,17 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferred": true,
-      "deferredReason": "The exact-generation live upload abort authority is awaiting integration.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
+        "session_terminated",
         "workspace_activation_required",
         "session_deleting",
         "session_deleted",
         "resource_conflict",
         "wrong_workspace_region",
-        "upstream_error",
-        "not_implemented"
+        "upstream_error"
       ],
       "etag": "none",
       "fragment": "files",
@@ -2858,6 +2843,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Abort a partial upload, auto-resuming the same generation to remove its temporary bytes.",
@@ -2866,12 +2852,11 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferred": true,
-      "deferredReason": "The exact-generation live upload read authority is awaiting integration.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
+        "session_terminated",
         "workspace_activation_required",
         "session_deleting",
         "session_deleted",
@@ -2879,8 +2864,7 @@
         "account_paused",
         "precondition_failed",
         "wrong_workspace_region",
-        "upstream_error",
-        "not_implemented"
+        "upstream_error"
       ],
       "etag": "none",
       "fragment": "files",
@@ -2902,6 +2886,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read resumable live-upload state, auto-resuming the same generation.",
@@ -2910,8 +2895,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "binary",
-      "deferred": true,
-      "deferredReason": "The exact-generation raw upload transport is awaiting integration.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2920,6 +2903,7 @@
         "unsupported_media_type",
         "payload_too_large",
         "limit_exceeded",
+        "session_terminated",
         "workspace_activation_required",
         "session_deleting",
         "session_deleted",
@@ -2927,8 +2911,7 @@
         "account_paused",
         "precondition_failed",
         "wrong_workspace_region",
-        "upstream_error",
-        "not_implemented"
+        "upstream_error"
       ],
       "etag": "none",
       "fragment": "files",
@@ -2953,6 +2936,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Put one exact logical part directly into the retained generation.",

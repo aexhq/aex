@@ -47,7 +47,7 @@
 {"kind":"session","reason":"non_crockford_character","text":"ses_01kyw2qa4we4ib6d1n6rvkge9t"}
 {"kind":"session","reason":"uppercase_suffix","text":"ses_01KYW2QA4WE4SB6D1N6RVKGE9T"}
 {"kind":"session","reason":"not_uuid_v7","text":"ses_01kyw2qa4w84sb6d1n6rvkge9t"}
-{"kind":"message","reason":"wrong_prefix","text":"run_01kyw2qa4xf0wvmesw7mz3yg21"}
+{"kind":"message","reason":"wrong_prefix","text":"agt_01kyw2qa4xf0wvmesw7mz3yg21"}
 {"kind":"message","reason":"short_suffix","text":"msg_01kyw2qa4xf0wvmesw7mz3yg2"}
 {"kind":"message","reason":"long_suffix","text":"msg_01kyw2qa4xf0wvmesw7mz3yg21i"}
 {"kind":"message","reason":"non_crockford_character","text":"msg_01kyw2qa4xf0ivmesw7mz3yg21"}
@@ -77,7 +77,7 @@
 {"kind":"approval","reason":"non_crockford_character","text":"apr_01kyw2qa52fdi9tqjzc1gp4rv4"}
 {"kind":"approval","reason":"uppercase_suffix","text":"apr_01KYW2QA52FDE9TQJZC1GP4RV4"}
 {"kind":"approval","reason":"not_uuid_v7","text":"apr_01kyw2qa529de9tqjzc1gp4rv4"}
-{"kind":"generation","reason":"wrong_prefix","text":"obs_01kyw2qa53e9ht8sb6cxm6jtkb"}
+{"kind":"generation","reason":"wrong_prefix","text":"ful_01kyw2qa53e9ht8sb6cxm6jtkb"}
 {"kind":"generation","reason":"short_suffix","text":"gen_01kyw2qa53e9ht8sb6cxm6jtk"}
 {"kind":"generation","reason":"long_suffix","text":"gen_01kyw2qa53e9ht8sb6cxm6jtkbi"}
 {"kind":"generation","reason":"non_crockford_character","text":"gen_01kyw2qa53e9it8sb6cxm6jtkb"}
