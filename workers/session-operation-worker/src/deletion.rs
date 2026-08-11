@@ -22,7 +22,7 @@ use aex_session_dynamodb::deletion::{
 };
 use aex_session_dynamodb::error::{Idempotence, Resolution, StoreError, classify};
 use aex_session_dynamodb::plan::{RegionalTables, TransactionPlan};
-use aex_wire::ids::{AgentId, OperationId, PrefixedId as _, SessionId, WorkspaceId};
+use aex_wire::ids::{AgentId, OperationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::types::AttributeValue;
 
@@ -1019,7 +1019,7 @@ fn runtime_error(error: aex_runtime_control::store::RuntimeStoreError) -> StoreE
 #[cfg(test)]
 mod tests {
     use aex_operation_domain::DeletionEpoch;
-    use aex_wire::ids::{OperationId, PrefixedId as _, SessionId, Uuid7, WorkspaceId};
+    use aex_wire::ids::{OperationId, SessionId, Uuid7, WorkspaceId};
 
     use super::*;
 
