@@ -1,6 +1,5 @@
-//! `aex-workspace-domain` owns the pure workspace, named-registry, upload, grant and
-//! registry and content model: monotone revisions, `ETag` semantics,
-//! single-use uploads, and grant pins.
+//! `aex-workspace-domain` owns the pure workspace named-registry, upload, and grant
+//! model: monotone revisions, `ETag` semantics, single-use uploads, and grant pins.
 //!
 //! # Invariants
 //!

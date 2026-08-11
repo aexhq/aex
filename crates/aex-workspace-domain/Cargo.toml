@@ -1,7 +1,7 @@
 [package]
 name = "aex-workspace-domain"
 version = "0.1.0"
-description = "`aex-workspace-domain` owns the pure workspace, named-registry, upload, grant and persist model: monotone revisions, `ETag` semantics, single-use uploads, grant pins and the persist mirror."
+description = "`aex-workspace-domain` owns the pure workspace named-registry, upload, and grant model: monotone revisions, `ETag` semantics, single-use uploads, and grant pins."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -1,7 +1,7 @@
 [package]
 name = "aex-content-domain"
 version = "0.1.0"
-description = "`aex-content-domain` owns the pure content descriptor, Merkle page, ownership-closure and deletion model."
+description = "`aex-content-domain` owns registered content descriptors, reachability, and deletion."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
