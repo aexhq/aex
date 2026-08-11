@@ -69,6 +69,21 @@ resource "aws_lambda_alias" "this" {
   function_version = aws_lambda_function.this.version
 }
 
+# Public function URLs are opt-in and alias-qualified. With AWS provider 6.x,
+# `authorization_type = "NONE"` creates the two public resource-policy
+# statements AWS requires: InvokeFunctionUrl is conditioned on auth type NONE,
+# and InvokeFunction is conditioned on InvokedViaFunctionUrl. Qualifying this
+# resource with the immutable alias keeps both statements off the unqualified
+# function and prevents direct public InvokeFunction access.
+resource "aws_lambda_function_url" "public" {
+  count = var.public_function_url_enabled ? 1 : 0
+
+  function_name      = aws_lambda_function.this.function_name
+  qualifier          = aws_lambda_alias.this.name
+  authorization_type = "NONE"
+  invoke_mode        = "BUFFERED"
+}
+
 resource "aws_lambda_function_event_invoke_config" "this" {
   count = var.async_failure_destination_arn == null ? 0 : 1
 

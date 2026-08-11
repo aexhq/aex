@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import {
   HANDLED_EVENT_TYPES,
@@ -8,18 +9,19 @@ import {
   verifyWithRotatingSecrets,
 } from "../src/edge.js";
 
+const endpointPolicy = JSON.parse(
+  readFileSync(new URL("../../../release/stripe-endpoint.json", import.meta.url), "utf8"),
+);
+
 describe("raw webhook boundary", () => {
-  test("has the exact closed event allowlist", () => {
-    expect(HANDLED_EVENT_TYPES).toEqual([
-      "payment_intent.succeeded",
-      "payment_intent.payment_failed",
-      "payment_intent.canceled",
-      "charge.dispute.created",
-      "charge.dispute.closed",
-      "refund.created",
-      "refund.updated",
-      "refund.failed",
-    ]);
+  test("shares one endpoint policy with provider provisioning", () => {
+    expect(endpointPolicy).toEqual({
+      schema: "aex.stripe-webhook-endpoint-policy.v1",
+      apiVersion: "2026-06-24.dahlia",
+      connect: false,
+      enabledEvents: [...HANDLED_EVENT_TYPES],
+    });
+    expect(new Set(endpointPolicy.enabledEvents).size).toBe(endpointPolicy.enabledEvents.length);
   });
 
   test("preserves ordinary and base64 bodies byte for byte", () => {

@@ -189,6 +189,12 @@ variable "alias_name" {
   }
 }
 
+variable "public_function_url_enabled" {
+  type        = bool
+  default     = false
+  description = "Whether to expose the immutable alias through an unauthenticated, buffered HTTPS Function URL. The handler must authenticate the request at the application boundary."
+}
+
 variable "async_failure_destination_arn" {
   type        = string
   default     = null

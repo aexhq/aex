@@ -29,6 +29,7 @@ the bytes S3 is holding are not the bytes the release manifest pins.
 | `log_kms_key_arn` | `string` | Optional log-group key. |
 | `code_signing_config_arn` | `string` | Optional code-signing configuration. |
 | `alias_name` | `string` | Alias every caller targets; defaults to `live`. |
+| `public_function_url_enabled` | `bool` | Opt-in alias-qualified unauthenticated buffered Function URL; defaults to `false`. |
 | `async_failure_destination_arn` | `string` | Optional unconsumed SQS failure destination; setting it enables the alias-qualified async policy. |
 | `async_max_event_age_seconds` | `number` | Async event age, 60-21600; defaults to 21600. |
 | `async_max_retry_attempts` | `number` | Function-error retries, 0-2; defaults to 2. |
@@ -45,6 +46,7 @@ expressed the way S3 returns it. The envelope carries `sha256:<hex>`; S3
 | `function_arn` | Unqualified function ARN. |
 | `version` | Published version minted by this deployment. |
 | `alias_arn` | Alias ARN; this is what event sources and callers target. |
+| `public_function_url` | Alias-qualified HTTPS URL, or `null` when disabled. |
 | `log_group_name` | Log group name. |
 
 ## Policy asserted
@@ -60,6 +62,11 @@ expressed the way S3 returns it. The envelope carries `sha256:<hex>`; S3
 - The artifact key must be digest-addressed; a mutable key such as `latest.zip`
   is rejected.
 - The alias is never `$LATEST`.
+- Public HTTPS ingress is opt-in, targets the alias, uses the buffered Function
+  URL request contract and adds no browser CORS policy. AWS provider 6.x creates
+  the two required alias resource-policy statements: `InvokeFunctionUrl` is
+  conditioned on auth type `NONE`, while `InvokeFunction` is restricted by
+  `InvokedViaFunctionUrl`. The live release readback verifies both statements.
 - When an asynchronous failure destination is supplied, its retry/age policy
   qualifies the immutable alias and sends exhausted events to that SQS queue.
 

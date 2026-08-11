@@ -87,6 +87,34 @@ run "the_alias_targets_the_published_version" {
   }
 }
 
+run "public_function_url_is_opt_in_and_alias_qualified" {
+  command = plan
+
+  variables {
+    public_function_url_enabled = true
+  }
+
+  assert {
+    condition     = one(aws_lambda_function_url.public).function_name == aws_lambda_function.this.function_name
+    error_message = "The Function URL must target this module's function."
+  }
+
+  assert {
+    condition     = one(aws_lambda_function_url.public).qualifier == aws_lambda_alias.this.name
+    error_message = "The Function URL and its public policy must be scoped to the immutable alias."
+  }
+
+  assert {
+    condition     = one(aws_lambda_function_url.public).authorization_type == "NONE" && one(aws_lambda_function_url.public).invoke_mode == "BUFFERED"
+    error_message = "Webhook ingress must use the buffered Function URL contract and application-level authentication."
+  }
+
+  assert {
+    condition     = length(one(aws_lambda_function_url.public).cors) == 0
+    error_message = "A server-to-server webhook must not expose an unnecessary browser CORS policy."
+  }
+}
+
 run "async_failures_use_the_alias_policy_and_unconsumed_dlq" {
   command = plan
 
