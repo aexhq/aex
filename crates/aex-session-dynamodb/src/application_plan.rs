@@ -561,6 +561,22 @@ fn compile_owned(
             compile_session_write(tables, intent, action, session, binding, output)?;
             Ok(true)
         }
+        Write::PutTombstone(tombstone) => {
+            if Some(tombstone.session) != binding.session
+                || tombstone.workspace != binding.workspace
+            {
+                return Err(cross_tenant());
+            }
+            output.put(
+                Participant::SESSION_HEAD,
+                conditional_put(
+                    &tables.session_authority,
+                    crate::authority_codec::encode_session_tombstone(tombstone),
+                    compile_conditions(&action.conditions)?,
+                )?,
+            )?;
+            Ok(true)
+        }
         Write::PutMessage(message) => {
             compile_message_write(tables, intent, action, message, binding, output)?;
             Ok(true)

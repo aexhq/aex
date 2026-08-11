@@ -6,14 +6,15 @@
 //! must observe the exact retained generation before it publishes a terminal
 //! operation result.
 
+use aex_operation_domain::operation::OperationVersion;
 use aex_operation_domain::{
     AdmissionOutcome, AdmitRequest, DedupIdentity, FailureClass, Operation, OperationFailure,
-    OperationKind, OperationResult, OperationScope, OperationVersion, WorkId, WorkItem, WorkState,
-    admit, fail, succeed,
+    OperationKind, OperationResult, OperationScope, WorkId, WorkItem, WorkState, admit, fail,
+    succeed,
 };
 use aex_session_domain::{
-    CancelCause, CommandClass, Session, TerminationReason, acquire_mutation_guard, begin_delete,
-    cancel_session_fence, pause_gate,
+    CancelCause, CommandClass, DeleteEvidence, Session, TerminationReason, acquire_mutation_guard,
+    begin_delete, cancel_session_fence, complete_delete, pause_gate,
 };
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
@@ -175,6 +176,75 @@ pub fn settle_lifecycle_operation(
         ],
         writes: vec![
             Write::PutSessionHead(Box::new(head)),
+            Write::PutOperation(Box::new(succeeded.clone())),
+            Write::CompleteWorkItem(Box::new(WorkCompletion {
+                work_id: claim.work_id.clone(),
+                fence: claim.fence,
+                owner: claim.owner.clone(),
+                at: now,
+            })),
+        ],
+        after_commit: Vec::new(),
+    };
+    plan.validate()?;
+    Ok(Planned {
+        plan,
+        projected: succeeded,
+    })
+}
+
+/// Atomically publishes the minimal irreversible-deletion tombstone.
+///
+/// Every payload owner must have made its completion evidence durable before
+/// this barrier is planned. The session head is replaced by the tombstone in
+/// the store adapter while the exact operation and work claim terminalize in
+/// the same transaction.
+pub fn settle_session_delete(
+    session: &Session,
+    operation: &Operation,
+    operation_version: OperationVersion,
+    claim: &LifecycleWorkClaim,
+    evidence: &DeleteEvidence,
+    now: Timestamp,
+) -> Result<Planned<Operation>, AppError> {
+    if operation.workspace != session.workspace
+        || operation.session != Some(session.id)
+        || operation.scope != OperationScope::Session(session.id)
+        || operation.kind != OperationKind::SessionDelete
+        || claim.work_id != WorkId(operation.id.uuid7()).to_string()
+    {
+        return Err(AppError::Port(PortError::Corrupt {
+            kind: "session deletion settlement",
+            reason: "session, operation and work binding disagree",
+        }));
+    }
+    aex_session_domain::release_mutation_guard(session, operation.id)?;
+    let tombstone = complete_delete(&session.deletion, session.workspace, evidence, now)?;
+    let result = canonical_result(&models::SessionTombstone {
+        deleted_at: tombstone.deleted_at,
+        id: tombstone.session,
+        operation_id: tombstone.deleted_by,
+        workspace_id: tombstone.workspace,
+    })?;
+    let succeeded = succeed(operation, result, now)?.operation;
+    let plan = SessionTransaction {
+        intent: TransactionIntent::SettleLifecycle,
+        conditions: vec![
+            Condition::SessionRevision {
+                session: session.id,
+                expected: session.revision,
+            },
+            Condition::MutationGuardHeldBy {
+                session: session.id,
+                holder: operation.id,
+            },
+            Condition::OperationVersion {
+                operation: operation.id,
+                expected: operation_version,
+            },
+        ],
+        writes: vec![
+            Write::PutTombstone(Box::new(tombstone)),
             Write::PutOperation(Box::new(succeeded.clone())),
             Write::CompleteWorkItem(Box::new(WorkCompletion {
                 work_id: claim.work_id.clone(),
@@ -534,7 +604,7 @@ const fn not_session_kind() -> AppError {
 #[cfg(test)]
 mod tests {
     use aex_operation_domain::OperationKind;
-    use aex_session_domain::{LifecycleStatus, WorkAdmission};
+    use aex_session_domain::{DeleteEvidence, LifecycleStatus, WorkAdmission};
     use aex_wire::idempotency::IntentDigest;
     use aex_wire::ids::{OperationId, PrefixedId as _, Uuid7};
 
@@ -573,6 +643,19 @@ mod tests {
                 _ => None,
             })
             .expect("head write")
+    }
+
+    fn complete_delete_evidence() -> DeleteEvidence {
+        DeleteEvidence {
+            generation_terminated: true,
+            session_content_removed: true,
+            messages_removed: true,
+            brain_user_content_removed: true,
+            observations_removed: true,
+            export_objects_removed: true,
+            billing_aggregate_retained: true,
+            audit_fact_retained: true,
+        }
     }
 
     #[test]
@@ -687,6 +770,78 @@ mod tests {
             matches!(write, Write::CompleteWorkItem(completion) if completion.work_id == claim.work_id && completion.fence == claim.fence)
         }));
         assert_eq!(settled.plan.validate().expect("valid").actions, 3);
+    }
+
+    #[test]
+    fn deletion_settlement_writes_only_the_minimal_tombstone_and_terminal_authorities() {
+        let session = aex_session_domain::testing::session_fixture();
+        let admitted = planned(OperationKind::SessionDelete, &session);
+        let deleting = planned_head(&admitted.plan).clone();
+        let claim = LifecycleWorkClaim {
+            work_id: WorkId(admitted.projected.id.uuid7()).to_string(),
+            fence: 9,
+            owner: "session-operation-worker:test".to_owned(),
+        };
+        let at = aex_session_domain::testing::moment(20);
+        let settled = settle_session_delete(
+            &deleting,
+            &admitted.projected,
+            OperationVersion::FIRST,
+            &claim,
+            &complete_delete_evidence(),
+            at,
+        )
+        .expect("settles complete deletion evidence");
+        let tombstone = settled
+            .plan
+            .writes
+            .iter()
+            .find_map(|write| match write {
+                Write::PutTombstone(tombstone) => Some(tombstone.as_ref()),
+                _ => None,
+            })
+            .expect("minimal tombstone");
+        assert_eq!(tombstone.session, deleting.id);
+        assert_eq!(tombstone.workspace, deleting.workspace);
+        assert_eq!(tombstone.deleted_by, admitted.projected.id);
+        assert_eq!(tombstone.deleted_at, at);
+        assert!(
+            !settled
+                .plan
+                .writes
+                .iter()
+                .any(|write| matches!(write, Write::PutSessionHead(_)))
+        );
+        assert_eq!(settled.plan.validate().expect("valid").actions, 3);
+        assert_eq!(
+            settled.projected.status,
+            aex_operation_domain::OperationStatus::Succeeded
+        );
+    }
+
+    #[test]
+    fn deletion_settlement_refuses_one_missing_owner_evidence() {
+        let session = aex_session_domain::testing::session_fixture();
+        let admitted = planned(OperationKind::SessionDelete, &session);
+        let deleting = planned_head(&admitted.plan).clone();
+        let claim = LifecycleWorkClaim {
+            work_id: WorkId(admitted.projected.id.uuid7()).to_string(),
+            fence: 9,
+            owner: "session-operation-worker:test".to_owned(),
+        };
+        let mut evidence = complete_delete_evidence();
+        evidence.observations_removed = false;
+        assert!(
+            settle_session_delete(
+                &deleting,
+                &admitted.projected,
+                OperationVersion::FIRST,
+                &claim,
+                &evidence,
+                aex_session_domain::testing::moment(20),
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -807,6 +807,60 @@ pub fn encode_session(session: &Session) -> Result<Item, CodecError> {
         .build())
 }
 
+/// Encodes the minimal irreversible-deletion marker at the session HEAD key.
+#[must_use]
+pub fn encode_session_tombstone(tombstone: &aex_session_domain::SessionTombstone) -> Item {
+    let key = keys::head(tombstone.session);
+    ItemBuilder::new(codec::SESSION_TOMBSTONE)
+        .set(crate::attr::PK, s(key.pk))
+        .set(crate::attr::SK, s(key.sk))
+        .set("sessionId", s(tombstone.session.to_string()))
+        .set("workspaceId", s(tombstone.workspace.to_string()))
+        .set("operationId", s(tombstone.deleted_by.to_string()))
+        .set("deletionEpoch", n(tombstone.epoch.0))
+        .set("deletedAt", crate::attr::stamp(tombstone.deleted_at))
+        .build()
+}
+
+/// Validates whether an item is the exact asserted session tombstone.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] when a declared tombstone is malformed or belongs to
+/// another workspace.
+pub fn is_session_tombstone(
+    item: &Item,
+    asserted: WorkspaceId,
+    session: SessionId,
+) -> Result<bool, CodecError> {
+    if item
+        .get(crate::attr::ITEM_TYPE)
+        .and_then(|value| value.as_s().ok())
+        .map(String::as_str)
+        != Some(codec::SESSION_TOMBSTONE)
+    {
+        return Ok(false);
+    }
+    let row = Row::bind(item, codec::SESSION_TOMBSTONE)?;
+    row.owned_by("workspaceId", &asserted.to_string())?;
+    let stored_session = row.id::<SessionId>("sessionId")?;
+    let _operation = row.id::<OperationId>("operationId")?;
+    let deletion_epoch = row.u64("deletionEpoch")?;
+    let head = keys::head(session);
+    if stored_session != session
+        || deletion_epoch == 0
+        || row.string(crate::attr::PK)? != head.pk
+        || row.string(crate::attr::SK)? != head.sk
+    {
+        return Err(malformed(
+            "sessionId",
+            "the tombstone does not match its session head key",
+        ));
+    }
+    row.timestamp("deletedAt")?;
+    Ok(true)
+}
+
 /// Decodes a canonical session head read from the base table.
 ///
 /// # Errors
@@ -1290,7 +1344,8 @@ mod tests {
     use super::{
         AUTHORITY_DOCUMENT, AUTHORITY_SCHEMA, decode_domain_message, decode_domain_run,
         decode_sealed_message, decode_session, decode_session_projection, encode_domain_message,
-        encode_domain_run, encode_sealed_message, encode_session,
+        encode_domain_run, encode_sealed_message, encode_session, encode_session_tombstone,
+        is_session_tombstone,
     };
 
     #[test]
@@ -1347,6 +1402,36 @@ mod tests {
         assert_eq!(
             decode_session_projection(&projection, session.workspace),
             Ok(session)
+        );
+    }
+
+    #[test]
+    fn deletion_tombstone_is_minimal_tenant_bound_and_replaces_head() {
+        let session = session_fixture();
+        let tombstone = aex_session_domain::SessionTombstone {
+            session: session.id,
+            workspace: session.workspace,
+            deleted_by: id::<OperationId>(41),
+            epoch: aex_session_domain::DeletionEpoch(1),
+            deleted_at: moment(20),
+        };
+        let item = encode_session_tombstone(&tombstone);
+        let head = crate::keys::head(session.id);
+        assert_eq!(
+            item.get("pk").and_then(|value| value.as_s().ok()),
+            Some(&head.pk)
+        );
+        assert_eq!(
+            item.get("sk").and_then(|value| value.as_s().ok()),
+            Some(&head.sk)
+        );
+        assert_eq!(item.len(), 8, "no session metadata survives the tombstone");
+        assert_eq!(
+            is_session_tombstone(&item, session.workspace, session.id),
+            Ok(true)
+        );
+        assert!(
+            is_session_tombstone(&item, id::<aex_wire::ids::WorkspaceId>(99), session.id,).is_err()
         );
     }
 

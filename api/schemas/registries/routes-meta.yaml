@@ -103,7 +103,6 @@ operationOwners:
 # Deferral is not mount evidence and is emitted only into the delivery registry.
 deferredOperations:
   session_create: "The complete session authority and create use case are not implemented."
-  session_delete: "The irreversible cross-plane session/user-content/telemetry deletion authority is not implemented."
   session_message_send: "The wire and domain message vocabularies and durable command path are not reconciled."
 
 # Actual public mount authority. `scenarioOwners` and `operationOwners` plan
@@ -228,6 +227,7 @@ servedOperations:
     - session_files_live_upload_delete
     - session_files_live_upload_get
     - session_files_live_upload_part_put
+    - session_delete
     - session_get
     - session_messages_list
     - session_cancel

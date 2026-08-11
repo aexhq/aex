@@ -9,12 +9,13 @@ use std::sync::Arc;
 
 use aex_observation_store_dynamodb::{
     SessionObservationDeletion, SessionObservationDeletionError, SessionObservationDeletionRequest,
+    SessionObservationDeletionStatus,
 };
 use aex_operation_domain::{OperationKind, OperationStatus};
 use aex_session_dynamodb::StoreError;
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::transactions::{OperationStepCancel, operation_cancelled};
-use aex_wire::ids::{OperationId, PrefixedId, SessionId, WorkspaceId};
+use aex_wire::ids::{AgentId, OperationId, PrefixedId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aex_work_dynamodb::WorkClaim;
 use aex_work_dynamodb::codec::ReconciliationCursor;
@@ -536,6 +537,286 @@ impl DynamoLifecyclePort {
             })?;
         Ok(())
     }
+
+    async fn partition_page(
+        &self,
+        table: &str,
+        partition: &str,
+        prefix: Option<&str>,
+        limit: i32,
+    ) -> Result<Vec<(String, String)>, StoreError> {
+        use aws_sdk_dynamodb::types::AttributeValue;
+
+        let mut query = self
+            .dynamodb
+            .query()
+            .table_name(table)
+            .consistent_read(true)
+            .key_condition_expression(if prefix.is_some() {
+                "pk = :pk AND begins_with(sk, :prefix)"
+            } else {
+                "pk = :pk"
+            })
+            .expression_attribute_values(":pk", AttributeValue::S(partition.to_owned()))
+            .limit(limit);
+        if let Some(prefix) = prefix {
+            query =
+                query.expression_attribute_values(":prefix", AttributeValue::S(prefix.to_owned()));
+        }
+        let output = query
+            .send()
+            .await
+            .map_err(|error| StoreError::Unavailable {
+                detail: format!("the deletion participant could not query `{table}`: {error}"),
+            })?;
+        output
+            .items
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| {
+                let pk = item.get("pk").and_then(|value| value.as_s().ok()).cloned();
+                let sk = item.get("sk").and_then(|value| value.as_s().ok()).cloned();
+                pk.zip(sk).ok_or_else(|| StoreError::Invalid {
+                    detail: "a deletion query returned a row without string pk/sk".to_owned(),
+                })
+            })
+            .collect()
+    }
+
+    async fn delete_rows(
+        &self,
+        table: &str,
+        rows: Vec<(String, String)>,
+    ) -> Result<bool, StoreError> {
+        use aws_sdk_dynamodb::types::AttributeValue;
+
+        let changed = !rows.is_empty();
+        for (pk, sk) in rows {
+            self.dynamodb
+                .delete_item()
+                .table_name(table)
+                .key("pk", AttributeValue::S(pk))
+                .key("sk", AttributeValue::S(sk))
+                .send()
+                .await
+                .map_err(|error| StoreError::Unavailable {
+                    detail: format!(
+                        "the deletion participant could not delete from `{table}`: {error}"
+                    ),
+                })?;
+        }
+        Ok(changed)
+    }
+
+    async fn delete_prefix(
+        &self,
+        table: &str,
+        partition: &str,
+        prefix: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        let rows = self.partition_page(table, partition, prefix, 25).await?;
+        self.delete_rows(table, rows).await
+    }
+
+    async fn prepare_runtime_delete(
+        &self,
+        session: &aex_session_domain::Session,
+    ) -> Result<LifecycleReadiness, StoreError> {
+        use aex_runtime_control::store::RuntimeActivityStore as _;
+
+        let generation_partition = aex_runtime_activity_dynamodb::keys::generation_partition_for_id(
+            session.lifecycle.generation,
+        );
+        let generation_head = self
+            .partition_page(
+                &self.tables.runtime_activity,
+                &generation_partition,
+                Some("HEAD"),
+                1,
+            )
+            .await?
+            .into_iter()
+            .next();
+        if let Some(generation_head) = generation_head {
+            let view = self.runtime_view(session).await?;
+            if !view.head.state.is_terminal() {
+                self.dispatch(aex_runtime_control_aws::RuntimeCommand::SessionTerminate {
+                    session: session.id,
+                    generation: session.lifecycle.generation,
+                })
+                .await?;
+                return Ok(LifecycleReadiness::Deferred);
+            }
+            if !self
+                .partition_page(
+                    &self.tables.runtime_activity,
+                    &generation_partition,
+                    Some("USAGE#"),
+                    1,
+                )
+                .await?
+                .is_empty()
+            {
+                // Usage/accounting authority must consume the outbox before
+                // its operational source row can disappear.
+                return Ok(LifecycleReadiness::Deferred);
+            }
+            for prefix in ["INTENT#", "OPERATION#", "PROBE#", "RECEIPT#"] {
+                if self
+                    .delete_prefix(
+                        &self.tables.runtime_activity,
+                        &generation_partition,
+                        Some(prefix),
+                    )
+                    .await?
+                {
+                    return Ok(LifecycleReadiness::Deferred);
+                }
+            }
+            let remaining = self
+                .partition_page(
+                    &self.tables.runtime_activity,
+                    &generation_partition,
+                    None,
+                    2,
+                )
+                .await?;
+            if remaining.as_slice() != [generation_head.clone()] {
+                return Err(StoreError::Invalid {
+                    detail: "session deletion found an unowned retained runtime row".to_owned(),
+                });
+            }
+            self.delete_rows(&self.tables.runtime_activity, vec![generation_head])
+                .await?;
+            return Ok(LifecycleReadiness::Deferred);
+        }
+        if let Some(current) = self
+            .runtime
+            .load_current(session.id)
+            .await
+            .map_err(runtime_store_error)?
+        {
+            if current.generation != session.lifecycle.generation {
+                return Err(StoreError::Invalid {
+                    detail: "the deletion fence observed a different current generation".to_owned(),
+                });
+            }
+            let key = aex_runtime_activity_dynamodb::keys::current(session.id);
+            self.delete_rows(&self.tables.runtime_activity, vec![(key.pk, key.sk)])
+                .await?;
+            return Ok(LifecycleReadiness::Deferred);
+        }
+
+        Ok(LifecycleReadiness::Ready)
+    }
+
+    async fn prepare_session_content_delete(
+        &self,
+        session: SessionId,
+    ) -> Result<LifecycleReadiness, StoreError> {
+        let session_partition = aex_session_dynamodb::keys::session_partition(session);
+        for prefix in [
+            "APPROVAL#",
+            "CLONE#",
+            "EVT#",
+            "MSG#",
+            "OP#",
+            "OUTBOX#",
+            "RUN#",
+            "SEALEDMSG#",
+        ] {
+            if self
+                .delete_prefix(
+                    &self.tables.session_authority,
+                    &session_partition,
+                    Some(prefix),
+                )
+                .await?
+            {
+                return Ok(LifecycleReadiness::Deferred);
+            }
+        }
+
+        Ok(LifecycleReadiness::Ready)
+    }
+
+    async fn prepare_brain_content_delete(
+        &self,
+        session: SessionId,
+    ) -> Result<LifecycleReadiness, StoreError> {
+        let session_partition = aex_session_dynamodb::keys::session_partition(session);
+        let agent_indexes = self
+            .partition_page(
+                &self.tables.session_authority,
+                &session_partition,
+                Some("AGENT#"),
+                1,
+            )
+            .await?;
+        if let Some((_, index_sk)) = agent_indexes.first() {
+            let agent = index_sk
+                .strip_prefix("AGENT#")
+                .and_then(|value| value.parse::<AgentId>().ok())
+                .ok_or_else(|| StoreError::Invalid {
+                    detail: "a session agent index carries no valid agent identity".to_owned(),
+                })?;
+            for partition in [
+                aex_session_dynamodb::keys::agent_partition(session, agent),
+                format!("BRAINAGENT#{session}#{agent}"),
+            ] {
+                if self
+                    .delete_prefix(&self.tables.session_authority, &partition, None)
+                    .await?
+                {
+                    return Ok(LifecycleReadiness::Deferred);
+                }
+            }
+            self.delete_rows(
+                &self.tables.session_authority,
+                vec![(session_partition.clone(), index_sk.clone())],
+            )
+            .await?;
+            return Ok(LifecycleReadiness::Deferred);
+        }
+        if self
+            .delete_prefix(
+                &self.tables.session_authority,
+                &session_partition,
+                Some(aex_session_dynamodb::keys::BRAIN_PREFIX),
+            )
+            .await?
+        {
+            return Ok(LifecycleReadiness::Deferred);
+        }
+        let remaining = self
+            .partition_page(&self.tables.session_authority, &session_partition, None, 2)
+            .await?;
+        if remaining.as_slice() != [(session_partition, "HEAD".to_owned())] {
+            return Err(StoreError::Invalid {
+                detail: "session deletion found an unowned retained payload row".to_owned(),
+            });
+        }
+        Ok(LifecycleReadiness::Ready)
+    }
+
+    async fn prepare_session_delete(
+        &self,
+        session: &aex_session_domain::Session,
+    ) -> Result<LifecycleReadiness, StoreError> {
+        let readiness = self.prepare_runtime_delete(session).await?;
+        if readiness != LifecycleReadiness::Ready {
+            return Ok(readiness);
+        }
+        let readiness = self.prepare_session_content_delete(session.id).await?;
+        if readiness != LifecycleReadiness::Ready {
+            return Ok(readiness);
+        }
+        let readiness = self.prepare_brain_content_delete(session.id).await?;
+        if readiness != LifecycleReadiness::Ready {
+            return Ok(readiness);
+        }
+        Ok(LifecycleReadiness::Ready)
+    }
 }
 
 #[async_trait::async_trait]
@@ -548,10 +829,10 @@ impl LifecyclePort for DynamoLifecyclePort {
         if step.kind == OperationKind::SessionCancel {
             return Ok(LifecycleReadiness::Ready);
         }
-        if step.kind == OperationKind::SessionDelete {
-            return Ok(LifecycleReadiness::Unowned);
-        }
         let session = self.session(step).await?;
+        if step.kind == OperationKind::SessionDelete {
+            return self.prepare_session_delete(&session).await;
+        }
         let view = self.runtime_view(&session).await?;
         use aex_runtime_control::generation::GenerationState;
         let ready = match step.kind {
@@ -621,7 +902,10 @@ impl LifecyclePort for DynamoLifecyclePort {
                 detail: "the lifecycle operation changed binding before settlement".to_owned(),
             });
         }
-        let runtime = if step.kind == OperationKind::SessionCancel {
+        let runtime = if matches!(
+            step.kind,
+            OperationKind::SessionCancel | OperationKind::SessionDelete
+        ) {
             None
         } else {
             Some(self.runtime_view(&session).await?)
@@ -648,7 +932,25 @@ impl LifecyclePort for DynamoLifecyclePort {
             fence: hold.fence,
             owner: hold.owner.clone(),
         };
-        let planned = if matches!(
+        let planned = if step.kind == OperationKind::SessionDelete {
+            aex_session_app::settle_session_delete(
+                &session,
+                &stored.record,
+                aex_operation_domain::operation::OperationVersion(stored.version),
+                &claim,
+                &aex_session_domain::DeleteEvidence {
+                    generation_terminated: true,
+                    session_content_removed: true,
+                    messages_removed: true,
+                    brain_user_content_removed: true,
+                    observations_removed: true,
+                    export_objects_removed: true,
+                    billing_aggregate_retained: true,
+                    audit_fact_retained: true,
+                },
+                now,
+            )
+        } else if matches!(
             step.kind,
             OperationKind::SessionSuspend | OperationKind::SessionResume
         ) && runtime
@@ -667,7 +969,7 @@ impl LifecyclePort for DynamoLifecyclePort {
             aex_session_app::settle_lifecycle_loss(
                 &session,
                 &stored.record,
-                aex_operation_domain::OperationVersion(stored.version),
+                aex_operation_domain::operation::OperationVersion(stored.version),
                 &claim,
                 reason,
                 at,
@@ -676,7 +978,7 @@ impl LifecyclePort for DynamoLifecyclePort {
             aex_session_app::settle_lifecycle_operation(
                 &session,
                 &stored.record,
-                aex_operation_domain::OperationVersion(stored.version),
+                aex_operation_domain::operation::OperationVersion(stored.version),
                 &claim,
                 now,
             )
@@ -918,17 +1220,6 @@ where
             .await?
             .ok_or(ReconcileError::MissingOperation)?;
         binding.verify(&operation)?;
-        if !operation.status.is_terminal() && operation.kind == OperationKind::SessionDelete {
-            self.observation_deletions
-                .request(SessionObservationDeletionRequest {
-                    workspace: binding.workspace,
-                    session: binding.session,
-                    operation: binding.operation,
-                    now,
-                })
-                .await?;
-            return Ok(ReconcileDisposition::EffectScheduled);
-        }
         let cancelling = operation.status == OperationStatus::Running
             && operation.cancel_requested
             && operation.committed_at.is_none();
@@ -945,6 +1236,24 @@ where
                 LifecycleReadiness::Ready => {}
                 LifecycleReadiness::Deferred | LifecycleReadiness::Unowned => {
                     return Ok(ReconcileDisposition::Deferred);
+                }
+            }
+            if step.kind == OperationKind::SessionDelete {
+                self.observation_deletions
+                    .request(SessionObservationDeletionRequest {
+                        workspace: binding.workspace,
+                        session: binding.session,
+                        operation: binding.operation,
+                        now,
+                    })
+                    .await?;
+                if self
+                    .observation_deletions
+                    .status(binding.workspace, binding.session, binding.operation)
+                    .await?
+                    != SessionObservationDeletionStatus::Complete
+                {
+                    return Ok(ReconcileDisposition::EffectScheduled);
                 }
             }
         }

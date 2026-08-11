@@ -202,6 +202,7 @@ const SESSION_STREAM_MOUNTS: &[&str] = &[
     "registry_files_list",
     "registry_files_put",
     "session_cancel",
+    "session_delete",
     "session_files_live_download_complete",
     "session_files_live_download_create",
     "session_files_live_download_delete",

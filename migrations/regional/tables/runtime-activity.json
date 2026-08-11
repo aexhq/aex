@@ -112,8 +112,21 @@
     },
     {
       "role": "session-operation-worker",
-      "actions": ["dynamodb:GetItem"],
-      "resources": ["table"]
+      "actions": ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:DeleteItem"],
+      "resources": ["table"],
+      "itemTypes": [
+        "hands_generation",
+        "lifecycle_intent",
+        "lifecycle_receipt",
+        "idle_probe",
+        "current_generation",
+        "hands_operation_admission"
+      ],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["GEN#*", "SESSIONGEN#*"]
+      }
     }
   ],
   "tags": { "aex:plane": "regional", "aex:component": "runtime-activity", "aex:data-class": "authority" }

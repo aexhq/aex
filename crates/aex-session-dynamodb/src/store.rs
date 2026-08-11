@@ -1233,6 +1233,14 @@ impl SessionReads {
         let Some(item) = head_item else {
             return Ok((SessionScoped::Missing, child_item));
         };
+        match crate::authority_codec::is_session_tombstone(&item, workspace, session) {
+            Ok(true) => return Ok((SessionScoped::Deleted, child_item)),
+            Ok(false) => {}
+            Err(CodecError::WrongTenant { .. }) => {
+                return Ok((SessionScoped::Missing, child_item));
+            }
+            Err(error) => return Err(StoreError::Corrupt(error)),
+        }
         let decoded = match crate::authority_codec::decode_session(&item, workspace) {
             Ok(decoded) => decoded,
             Err(CodecError::WrongTenant { .. }) => {
@@ -1256,6 +1264,12 @@ impl SessionReads {
         let Some(item) = self.get(&key.pk, &key.sk).await? else {
             return Ok(SessionScoped::Missing);
         };
+        match crate::authority_codec::is_session_tombstone(&item, workspace, session) {
+            Ok(true) => return Ok(SessionScoped::Deleted),
+            Ok(false) => {}
+            Err(CodecError::WrongTenant { .. }) => return Ok(SessionScoped::Missing),
+            Err(error) => return Err(StoreError::Corrupt(error)),
+        }
         let decoded = match crate::authority_codec::decode_session(&item, workspace) {
             Ok(decoded) => decoded,
             Err(CodecError::WrongTenant { .. }) => return Ok(SessionScoped::Missing),
@@ -1288,6 +1302,9 @@ impl SessionReads {
             let Some(item) = self.get(&head.pk, &head.sk).await? else {
                 return Ok(None);
             };
+            if crate::authority_codec::is_session_tombstone(&item, workspace, locator.session)? {
+                return Ok(None);
+            }
             let session = crate::authority_codec::decode_session(&item, workspace)?;
             if session.id != locator.session || session.created_at != locator.created_at {
                 return Err(malformed_session(

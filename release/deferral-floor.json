@@ -4,11 +4,10 @@
   "regenerate": "This file is committed and hand-edited, unlike `release/test-registry.json`. An id enters `routes` or `scenarios` only with the change that defers it, and leaves only with the change that mounts, deletes or un-defers it - moving it to `retired` in the same commit unless the contract deletes it outright.",
   "routes": {
     "floor": 48,
-    "floorNote": "The approved ceiling remains 48. Human approval is deleted from the Bash MVP contract rather than deferred: Bash auto-approves, and interactive approval policy is recorded in the backlog. Session create/message/delete commands and exact-generation live-file routes remain governed by their explicit mount state. Deleted persistence, trash/restore, generic-secret, typed skill/tool/instruction/MCP, public run, and approval routes do not count as deferrals.",
+    "floorNote": "The approved ceiling remains 48. Human approval is deleted from the Bash MVP contract rather than deferred: Bash auto-approves, and interactive approval policy is recorded in the backlog. Session create/message commands and exact-generation live-file routes remain governed by their explicit mount state. Deleted persistence, trash/restore, generic-secret, typed skill/tool/instruction/MCP, public run, and approval routes do not count as deferrals.",
     "deleting": {},
     "deferred": [
       "session_create",
-      "session_delete",
       "session_files_live_download_create",
       "session_files_live_download_complete",
       "session_files_live_download_delete",
@@ -44,6 +43,7 @@
       "registry_tools_put",
       "secret_put",
       "session_cancel",
+      "session_delete",
       "session_get",
       "session_messages_list",
       "session_resume",

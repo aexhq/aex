@@ -55,7 +55,10 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                     // worker removes usage outbox rows, while Brain settles its
                     // own Hands admission marker.
                     "runtime-activity" => {
-                        matches!(grant.role.as_str(), "runtime-control-worker" | "brain-mux")
+                        matches!(
+                            grant.role.as_str(),
+                            "runtime-control-worker" | "brain-mux" | "session-operation-worker"
+                        )
                     }
                     // The reconciler deletes exactly two shapes: an idle series
                     // claim and OBS# revisions under a pinned deletion epoch.
@@ -75,6 +78,44 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
             }
         }
     }
+}
+
+#[test]
+fn session_delete_worker_can_remove_only_one_sessions_terminal_runtime_rows() {
+    let bundle = tables::rebuild().expect("the definitions load");
+    let runtime = bundle
+        .tables
+        .iter()
+        .find(|table| table.table == "runtime-activity")
+        .expect("runtime activity");
+    let grants = runtime
+        .iam
+        .iter()
+        .filter(|grant| grant.role == "session-operation-worker")
+        .collect::<Vec<_>>();
+    assert_eq!(grants.len(), 1);
+    let grant = grants[0];
+    assert_eq!(
+        grant.actions,
+        ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:DeleteItem"]
+    );
+    assert_eq!(grant.resources, ["table"]);
+    assert_eq!(
+        grant.item_types,
+        [
+            "hands_generation",
+            "lifecycle_intent",
+            "lifecycle_receipt",
+            "idle_probe",
+            "current_generation",
+            "hands_operation_admission",
+        ]
+    );
+    assert!(!grant.item_types.iter().any(|item| item == "usage_outbox"));
+    let condition = grant.condition.as_ref().expect("leading-key fence");
+    assert_eq!(condition.operator, "ForAllValues:StringLike");
+    assert_eq!(condition.key, "dynamodb:LeadingKeys");
+    assert_eq!(condition.values, ["GEN#*", "SESSIONGEN#*"]);
 }
 
 #[test]

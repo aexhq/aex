@@ -26,6 +26,8 @@ use crate::wire_pending::{
 
 /// The `itemType` of a session head.
 pub const SESSION_HEAD: &str = "session_head";
+/// The `itemType` of the minimal irreversible-deletion marker replacing HEAD.
+pub const SESSION_TOMBSTONE: &str = "session_tombstone";
 /// The `itemType` of a message.
 pub const MESSAGE: &str = "message";
 /// The `itemType` of an immutable, seal-ordered public message projection.

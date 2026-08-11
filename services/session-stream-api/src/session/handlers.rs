@@ -766,12 +766,15 @@ impl SessionsApi for Routes {
     async fn session_delete(
         &self,
         _cx: &WireContext,
-        _session_id: SessionId,
+        session_id: SessionId,
         _body: models::EmptyRequest,
     ) -> WireResult<Accepted> {
-        // Deletion remains unmounted until the cross-owner payload and
-        // telemetry cascade can prove completion before publishing a tombstone.
-        Err(not_served(RouteId::SessionDelete))
+        self.admit_lifecycle_route(
+            session_id,
+            RouteId::SessionDelete,
+            OperationKind::SessionDelete,
+        )
+        .await
     }
 
     async fn session_get(

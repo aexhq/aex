@@ -255,6 +255,7 @@ struct MemoryOperations {
 #[derive(Default)]
 struct MemoryObservationDeletion {
     requests: Mutex<Vec<SessionObservationDeletionRequest>>,
+    complete: bool,
 }
 
 #[async_trait::async_trait]
@@ -273,7 +274,11 @@ impl SessionObservationDeletion for MemoryObservationDeletion {
         _session: SessionId,
         _operation: OperationId,
     ) -> Result<SessionObservationDeletionStatus, SessionObservationDeletionError> {
-        Ok(SessionObservationDeletionStatus::Deleting)
+        Ok(if self.complete {
+            SessionObservationDeletionStatus::Complete
+        } else {
+            SessionObservationDeletionStatus::Deleting
+        })
     }
 }
 
@@ -375,11 +380,15 @@ fn reconciler(
 
 fn deletion_reconciler(
     status: OperationStatus,
+    observations_complete: bool,
 ) -> OperationReconciler<MemoryWork, MemoryOperations, MemoryObservationDeletion> {
     let work = MemoryWork::new(pending_work());
+    let shared_work = Arc::clone(&work.record);
+    let prepares = Arc::new(Mutex::new(0));
+    let settlements = Arc::new(Mutex::new(0));
     OperationReconciler::new(
         MemoryWork {
-            record: Arc::clone(&work.record),
+            record: Arc::clone(&shared_work),
             complete_faults: work.complete_faults,
         },
         MemoryOperations {
@@ -393,20 +402,28 @@ fn deletion_reconciler(
                 cancel_requested: false,
                 committed_at: None,
             }),
-            work: Arc::clone(&work.record),
+            work: Arc::clone(&shared_work),
             cancellations: Mutex::new(0),
             cancel_faults: Mutex::new(VecDeque::new()),
         },
-        MemoryObservationDeletion::default(),
+        MemoryObservationDeletion {
+            requests: Mutex::new(Vec::new()),
+            complete: observations_complete,
+        },
         "worker-1",
         60_000,
     )
     .expect("valid worker settings")
+    .with_lifecycle(MemoryLifecycle {
+        work: shared_work,
+        prepares,
+        settlements,
+    })
 }
 
 #[tokio::test]
 async fn irreversible_session_delete_schedules_the_exact_observation_participant() {
-    let reconciler = deletion_reconciler(OperationStatus::Queued);
+    let reconciler = deletion_reconciler(OperationStatus::Queued, false);
     assert_eq!(
         reconciler
             .reconcile(&hint(), timestamp(2_000))
@@ -427,6 +444,28 @@ async fn irreversible_session_delete_schedules_the_exact_observation_participant
             operation: operation(),
             now: timestamp(2_000),
         }]
+    );
+}
+
+#[tokio::test]
+async fn session_delete_settles_only_after_observation_deletion_is_complete() {
+    let reconciler = deletion_reconciler(OperationStatus::Queued, true);
+    assert_eq!(
+        reconciler
+            .reconcile(&hint(), timestamp(2_000))
+            .await
+            .expect("complete deletion cascade"),
+        ReconcileDisposition::Retired
+    );
+    assert_eq!(reconciler.work().state().as_deref(), Some("done"));
+    assert_eq!(
+        reconciler
+            .observation_deletions()
+            .requests
+            .lock()
+            .expect("request lock")
+            .len(),
+        1
     );
 }
 

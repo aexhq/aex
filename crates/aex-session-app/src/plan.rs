@@ -701,7 +701,11 @@ impl Write {
                 format!("SECRET#{}", secret.name.as_str()),
             ),
             Self::PutTombstone(tombstone) => {
-                (tombstone.session.to_string(), "TOMBSTONE".to_owned())
+                // The minimal tombstone replaces the public HEAD item. Sharing
+                // its logical target lets the revision and mutation-guard
+                // conditions compile onto the same conditional put; DynamoDB
+                // transactions forbid a separate check and write for one key.
+                (tombstone.session.to_string(), "HEAD".to_owned())
             }
             Self::DeleteItem(key) => return key.clone(),
         };
