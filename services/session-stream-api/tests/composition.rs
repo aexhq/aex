@@ -20,6 +20,36 @@ use aex_wire::server::RouteGroup;
 use session_stream_api::capability;
 use session_stream_api::config::{self, Config, EDGE_COUNT, WakeMode};
 
+fn catalog_json(plane: &str, region: &str, account: &str) -> String {
+    let variants = [
+        ("512mb", 512),
+        ("1gb", 1_024),
+        ("2gb", 2_048),
+        ("4gb", 4_096),
+        ("8gb", 8_192),
+    ];
+    let rows = variants
+        .into_iter()
+        .enumerate()
+        .map(|(index, (variant, memory))| {
+            (
+                variant,
+                serde_json::json!({
+                    "imageArn": format!(
+                        "arn:aws:lambda:{region}:{account}:microvm-image:aex-{plane}-{}",
+                        char::from(b'a' + u8::try_from(index).expect("five rows")).to_string().repeat(52),
+                    ),
+                    "imageVersion": (index + 1).to_string(),
+                    "artifactDigest": format!("sha256:{index:064x}"),
+                    "minimumMemoryMiB": memory,
+                    "browser": false,
+                }),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    serde_json::to_string(&rows).expect("catalog JSON")
+}
+
 /// The complete `poll`-mode environment, which is what dev runs.
 fn polling() -> BTreeMap<&'static str, String> {
     BTreeMap::from([
@@ -86,6 +116,11 @@ fn polling() -> BTreeMap<&'static str, String> {
             "aex-dev-usage-query-projection".to_owned(),
         ),
         (config::CONTENT_BUCKET_OWNER, "000000000000".to_owned()),
+        (
+            config::HANDS_IMAGE_CATALOG,
+            catalog_json("dev", "eu-west-1", "000000000000"),
+        ),
+        (config::HANDS_PUBLIC_INTERNET_EGRESS, "true".to_owned()),
         (
             config::CONTENT_KMS_KEY_ARN,
             "arn:aws:kms:eu-west-1:000000000000:key/11111111-2222-3333-4444-555555555555"
@@ -158,6 +193,49 @@ fn a_complete_environment_is_accepted() {
     assert_eq!(config.limits().query_page_items, 100);
     assert_eq!(config.observation_table, "aex-dev-observation-authority");
     assert_eq!(config.work_table, "aex-dev-regional-work");
+    assert!(config.deployment.public_internet_egress);
+    assert_eq!(config.deployment.images.image_identifiers().len(), 5);
+    assert_eq!(
+        config.deployment.package_ecosystems,
+        [
+            aex_wire::models::PackageEcosystem::Apt,
+            aex_wire::models::PackageEcosystem::Npm,
+            aex_wire::models::PackageEcosystem::Pip,
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
+#[test]
+fn deployment_facts_fail_closed_on_partial_foreign_or_invented_bindings() {
+    let mut partial = polling();
+    let mut catalog: serde_json::Value =
+        serde_json::from_str(&partial[config::HANDS_IMAGE_CATALOG]).expect("catalog");
+    catalog.as_object_mut().expect("object").remove("8gb");
+    partial.insert(config::HANDS_IMAGE_CATALOG, catalog.to_string());
+    assert!(matches!(
+        read(&partial),
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::HANDS_IMAGE_CATALOG
+    ));
+
+    let mut foreign = polling();
+    foreign.insert(
+        config::HANDS_IMAGE_CATALOG,
+        catalog_json("prd", "eu-west-1", "000000000000"),
+    );
+    assert!(matches!(
+        read(&foreign),
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::HANDS_IMAGE_CATALOG
+    ));
+
+    let mut invented_egress = polling();
+    invented_egress.insert(config::HANDS_PUBLIC_INTERNET_EGRESS, "yes".to_owned());
+    assert!(matches!(
+        read(&invented_egress),
+        Err(RegionalHttpConfigError::Invalid { name, .. })
+            if name == config::HANDS_PUBLIC_INTERNET_EGRESS
+    ));
 }
 
 #[test]

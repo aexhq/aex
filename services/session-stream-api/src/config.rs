@@ -108,6 +108,10 @@ pub const PRICING_VERSION: &str = "AEX_PRICING_VERSION";
 pub const USAGE_QUERY_TABLE: &str = "AEX_USAGE_QUERY_TABLE";
 /// The account that must own the content bucket.
 pub const CONTENT_BUCKET_OWNER: &str = "AEX_CONTENT_BUCKET_OWNER";
+/// Exact release-derived five-row Hands image catalog.
+pub const HANDS_IMAGE_CATALOG: &str = "AEX_HANDS_IMAGE_CATALOG";
+/// Whether this plane binds the managed public-internet egress connector.
+pub const HANDS_PUBLIC_INTERNET_EGRESS: &str = "AEX_HANDS_PUBLIC_INTERNET_EGRESS";
 /// The content KMS key. Never the secret key.
 pub const CONTENT_KMS_KEY_ARN: &str = "AEX_CONTENT_KMS_KEY_ARN";
 /// The effective encoded JSON body bound.
@@ -153,7 +157,7 @@ pub const STREAM_CONNECTION_BUFFER_BYTES: &str = "AEX_STREAM_CONNECTION_BUFFER_B
 pub const STREAM_WRITE_STALL_MS: &str = "AEX_STREAM_WRITE_STALL_MS";
 
 /// Every variable a healthy `session-stream-api` requires in `poll` mode.
-pub const REQUIRED: [&str; 41] = [
+pub const REQUIRED: [&str; 43] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
@@ -178,6 +182,8 @@ pub const REQUIRED: [&str; 41] = [
     PRICING_VERSION,
     USAGE_QUERY_TABLE,
     CONTENT_BUCKET_OWNER,
+    HANDS_IMAGE_CATALOG,
+    HANDS_PUBLIC_INTERNET_EGRESS,
     CONTENT_KMS_KEY_ARN,
     MAX_JSON_BODY_BYTES,
     MAX_PAGE_ITEMS,
@@ -314,6 +320,8 @@ pub struct Config {
     pub content_bucket: String,
     /// Expected content-bucket owner account.
     pub content_bucket_owner: String,
+    /// Verified immutable image and deployment capability facts.
+    pub deployment: aex_session_app::DeploymentFacts,
     /// Content KMS key.
     pub content_kms_key: Arn,
     /// Cursor signing key reference.
@@ -386,6 +394,26 @@ impl Config {
                 ),
             });
         }
+        let image_catalog_raw = required(lookup, HANDS_IMAGE_CATALOG)?;
+        let images = aex_runtime_control::HandsImageCatalog::from_release_json(
+            &image_catalog_raw,
+            plane.as_str(),
+            region.as_str(),
+            &content_bucket_owner,
+        )
+        .map_err(|error| RegionalHttpConfigError::Invalid {
+            name: HANDS_IMAGE_CATALOG,
+            reason: error.to_string(),
+        })?;
+        let public_internet_egress =
+            one_of(lookup, HANDS_PUBLIC_INTERNET_EGRESS, &["false", "true"])? == "true";
+        let deployment = aex_session_app::DeploymentFacts {
+            public_internet_egress,
+            images,
+            package_ecosystems: aex_runtime_control::HANDS_PACKAGE_ECOSYSTEMS
+                .into_iter()
+                .collect(),
+        };
         let usage_compute_queue_url = required(lookup, USAGE_COMPUTE_QUEUE_URL)?;
         let usage_storage_queue_url = required(lookup, USAGE_STORAGE_QUEUE_URL)?;
         let queue_prefix = format!("https://sqs.{}.amazonaws.com/", region.as_str());
@@ -576,6 +604,7 @@ impl Config {
             dynamodb_streams_endpoint_url,
             content_bucket: required(lookup, CONTENT_BUCKET)?,
             content_bucket_owner,
+            deployment,
             content_kms_key,
             cursor_signing_key_ref: required(lookup, CURSOR_SIGNING_KEY_REF)?,
             observation_index_settle_ms: i64::try_from(observation_index_settle_ms).map_err(

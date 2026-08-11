@@ -32,7 +32,7 @@ use aex_observation_domain::keys::ScopeKey;
 use aex_regional_http::authz::{ParameterStore, RegionalProjection, SecretStore, TrustError};
 use aex_regional_http::capability::{CompositionError, Declares, StreamSocket, WorkClaim};
 use aex_regional_http::config::RegionalHttpConfigError;
-use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
+use aex_regional_http::edge::{EdgeBinding, EdgeClock as _, RegionalEdge, SystemClock};
 use aex_regional_http::health::{Readiness, ReadinessError};
 use aex_regional_http::mount::{MountError, mount_unary};
 use aex_session_dynamodb::stream_keys::SessionReadState;
@@ -130,6 +130,9 @@ enum SessionStreamApiRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
     Config(#[from] RegionalHttpConfigError),
+    /// The build-bound signed model catalog could not become admission authority.
+    #[error(transparent)]
+    Catalog(#[from] session_stream_api::release_catalog::ReleaseCatalogError),
     /// The declared capability manifest did not admit the resolved configuration.
     #[error(transparent)]
     Composition(#[from] CompositionError),
@@ -207,6 +210,9 @@ async fn run(
     // resources must agree. This is the fail-closed half of the guarantee the
     // stream's `AEX_WORK_TABLE` refusal used to carry on its own.
     session_stream_api::capability::admit(config)?;
+    let catalog = Arc::new(session_stream_api::release_catalog::load(
+        SystemClock.now(),
+    )?);
 
     telemetry.emit(
         aex_platform_telemetry::Record::event(
@@ -403,6 +409,8 @@ async fn run(
         ),
     );
     let dispatcher = Dispatcher::new(Arc::new(Shared {
+        catalog,
+        deployment: config.deployment.clone(),
         live_files,
         live_transfers,
         custody: Arc::new(stores.custody.clone()),

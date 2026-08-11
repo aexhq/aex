@@ -14,7 +14,7 @@
 //! on the decision, and a deployment-tunable threshold would make the boundary a
 //! property of an environment variable rather than of the model.
 
-use aex_runtime_control::catalog::{HandsImageCatalog, HandsImageCatalogEntry};
+use aex_runtime_control::catalog::HandsImageCatalog;
 use aex_runtime_control::store::PageBudget;
 use aex_wire::types::Region;
 
@@ -247,45 +247,12 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, IMAGE_CATALOG_VAR)?;
-    let entries =
-        serde_json::from_str::<std::collections::BTreeMap<String, HandsImageCatalogEntry>>(&raw)
-            .map_err(|error| RuntimeControlWorkerConfigError::Invalid {
-                name: IMAGE_CATALOG_VAR,
-                reason: format!("expected the closed release JSON catalog: {error}"),
-            })?;
-    let catalog = HandsImageCatalog::from_entries(entries).map_err(|error| {
-        RuntimeControlWorkerConfigError::Invalid {
+    HandsImageCatalog::from_release_json(&raw, plane, region.as_str(), account_id).map_err(
+        |error| RuntimeControlWorkerConfigError::Invalid {
             name: IMAGE_CATALOG_VAR,
             reason: error.to_string(),
-        }
-    })?;
-    let prefix = format!(
-        "arn:aws:lambda:{}:{account_id}:microvm-image:aex-{plane}-",
-        region.as_str()
-    );
-    for identifier in catalog.image_identifiers() {
-        let Some(suffix) = identifier.0.strip_prefix(&prefix) else {
-            return Err(RuntimeControlWorkerConfigError::Invalid {
-                name: IMAGE_CATALOG_VAR,
-                reason: format!(
-                    "image ARN `{}` is outside plane `{plane}`, account `{account_id}` or region `{}`",
-                    identifier.0,
-                    region.as_str()
-                ),
-            });
-        };
-        if suffix.len() != 52
-            || !suffix
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || (b'2'..=b'7').contains(&byte))
-        {
-            return Err(RuntimeControlWorkerConfigError::Invalid {
-                name: IMAGE_CATALOG_VAR,
-                reason: format!("image ARN `{}` is not content-addressed", identifier.0),
-            });
-        }
-    }
-    Ok(catalog)
+        },
+    )
 }
 
 /// Why a forbidden variable is forbidden.

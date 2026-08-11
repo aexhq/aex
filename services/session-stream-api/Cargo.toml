@@ -63,6 +63,7 @@ bytes.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["net"] }
 aex-content-domain = { path = "../../crates/aex-content-domain" }
+aex-model-catalog = { path = "../../crates/aex-model-catalog" }
 aex-brain-hands = { path = "../../crates/aex-brain-hands" }
 aex-brain-app = { path = "../../crates/aex-brain-app" }
 aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
@@ -121,6 +122,13 @@ http-body-util.workspace = true
 time.workspace = true
 tower.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+
+[build-dependencies]
+hex.workspace = true
+p256.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 
 [[test]]
 name = "admission"

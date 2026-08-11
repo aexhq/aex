@@ -33,6 +33,7 @@
 pub mod capability;
 pub mod config;
 pub mod frontier;
+pub mod release_catalog;
 pub mod session;
 pub mod stream;
 

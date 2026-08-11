@@ -79,6 +79,10 @@ use aex_work_dynamodb::WorkApplicationCompiler;
 /// which is what lets a handler be constructed for one request by cloning two
 /// `Arc`s.
 pub struct Shared {
+    /// Build-bound, signature-verified model admission authority.
+    pub catalog: Arc<dyn aex_session_app::ModelQualifier>,
+    /// Release-derived Hands image and plane capability facts.
+    pub deployment: aex_session_app::DeploymentFacts,
     /// Exact-generation authenticated guest transport for ephemeral live files.
     pub live_files: Arc<dyn aex_brain_hands::LiveFileBackend>,
     /// Durable transfer election, ownership and replay authority.
@@ -423,6 +427,8 @@ impl Routes {
                     == aex_regional_http::context::AccountState::Paused,
                 observed_at: now,
             },
+            catalog: Arc::clone(&self.shared.catalog),
+            deployment: self.shared.deployment.clone(),
         })
     }
 
@@ -684,6 +690,8 @@ struct CommandBindings {
     reads: SessionCommandReads,
     accounts: AuthorizedAccount,
     credentials: ProviderCredentialReads,
+    catalog: Arc<dyn aex_session_app::ModelQualifier>,
+    deployment: aex_session_app::DeploymentFacts,
 }
 
 impl CommandBindings {
@@ -697,8 +705,8 @@ impl CommandBindings {
             // inventing an answer; see `crate::session::app_ports`.
             registry: &self.unowned,
             credentials: &self.credentials,
-            catalog: None,
-            deployment: None,
+            catalog: Some(self.catalog.as_ref()),
+            deployment: Some(&self.deployment),
             limits: &self.unowned,
             live: &self.unowned,
         }

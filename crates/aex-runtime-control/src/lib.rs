@@ -27,7 +27,10 @@ pub mod shape;
 pub mod store;
 pub mod usage;
 
-pub use catalog::{CatalogError, HANDS_IMAGE_VARIANTS, HandsImageCatalog, HandsImageCatalogEntry};
+pub use catalog::{
+    CatalogError, HANDS_IMAGE_VARIANTS, HANDS_PACKAGE_ECOSYSTEMS, HandsImageCatalog,
+    HandsImageCatalogEntry, ReleaseCatalogError,
+};
 pub use clock::{millis_between, minus_millis, plus_millis};
 pub use generation::{
     AdmissionRefused, Admitted, FenceVerdict, GUEST_ROOT, GenerationHead, GenerationState,

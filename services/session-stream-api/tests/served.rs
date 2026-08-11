@@ -1276,6 +1276,8 @@ fn shared_with_workspace(
     placements: Arc<FakePlacements>,
 ) -> Arc<Shared> {
     Arc::new(Shared {
+        catalog: Arc::new(aex_session_app::testing::ScriptedPorts::idle()),
+        deployment: aex_session_app::testing::deployment_facts(),
         live_files: Arc::new(NoLiveFiles),
         live_transfers: Arc::new(
             session_stream_api::session::live_transfer::LiveTransferDynamoStore::new(
@@ -2511,6 +2513,8 @@ impl UsageProjectionReads for FakeUsage {
 
 fn usage_router(usage: Arc<FakeUsage>) -> axum::Router {
     let shared = Arc::new(Shared {
+        catalog: Arc::new(aex_session_app::testing::ScriptedPorts::idle()),
+        deployment: aex_session_app::testing::deployment_facts(),
         live_files: Arc::new(NoLiveFiles),
         live_transfers: Arc::new(
             session_stream_api::session::live_transfer::LiveTransferDynamoStore::new(

@@ -110,13 +110,8 @@ fn recipes_name_the_real_build_output_instead_of_guessing_from_the_unit_id() {
 }
 
 #[test]
-fn the_brain_release_recipe_records_the_exact_catalog_build_bindings() {
+fn every_catalog_consumer_records_the_exact_catalog_build_bindings() {
     let units = shipped_units();
-    let brain = units
-        .units
-        .iter()
-        .find(|unit| unit.id == "brain-mux")
-        .expect("brain-mux unit");
     let signing = p256::ecdsa::SigningKey::from_slice(&[7; 32]).expect("fixture key");
     let trust_roots_json = canon::to_string(&serde_json::json!({
         "keys": [{
@@ -134,30 +129,37 @@ fn the_brain_release_recipe_records_the_exact_catalog_build_bindings() {
         tool_catalog_sha256:
             "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
     };
-    let unstamped = plan(brain).expect("ordinary plan");
-    let stamped = plan_with_model_catalog(brain, Some(&inputs)).expect("release plan");
+    for id in ["brain-mux", "session-stream-api"] {
+        let unit = units
+            .units
+            .iter()
+            .find(|unit| unit.id == id)
+            .unwrap_or_else(|| panic!("{id} unit"));
+        let unstamped = plan(unit).expect("ordinary plan");
+        let stamped = plan_with_model_catalog(unit, Some(&inputs)).expect("release plan");
 
-    assert_eq!(
-        stamped.env[MODEL_CATALOG_TRUST_ROOTS_JSON_VAR],
-        inputs.trust_roots_json
-    );
-    assert_eq!(
-        stamped.env[MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR],
-        inputs.trust_roots_sha256
-    );
-    assert_eq!(
-        stamped.env[MODEL_CATALOG_COLLECTION_FILE_VAR],
-        inputs.collection_file
-    );
-    assert_eq!(
-        stamped.env[MODEL_CATALOG_COLLECTION_SHA256_VAR],
-        inputs.collection_sha256
-    );
-    assert_eq!(
-        stamped.env[aex_release_tool::artifact::TOOL_CATALOG_SHA256_VAR],
-        inputs.tool_catalog_sha256
-    );
-    assert_ne!(stamped.digest, unstamped.digest);
+        assert_eq!(
+            stamped.env[MODEL_CATALOG_TRUST_ROOTS_JSON_VAR],
+            inputs.trust_roots_json
+        );
+        assert_eq!(
+            stamped.env[MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR],
+            inputs.trust_roots_sha256
+        );
+        assert_eq!(
+            stamped.env[MODEL_CATALOG_COLLECTION_FILE_VAR],
+            inputs.collection_file
+        );
+        assert_eq!(
+            stamped.env[MODEL_CATALOG_COLLECTION_SHA256_VAR],
+            inputs.collection_sha256
+        );
+        assert_eq!(
+            stamped.env[aex_release_tool::artifact::TOOL_CATALOG_SHA256_VAR],
+            inputs.tool_catalog_sha256
+        );
+        assert_ne!(stamped.digest, unstamped.digest, "{id} was not stamped");
+    }
 }
 
 #[test]

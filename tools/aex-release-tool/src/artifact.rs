@@ -342,8 +342,9 @@ pub fn kind_requires_signature(kind: &str) -> bool {
     matches!(kind, "rust-binary" | "npm-package")
 }
 
-/// Derives a plan whose recorded environment exactly binds `brain-mux` to a
-/// publisher trust-root set and collection. Other units ignore these inputs.
+/// Derives a plan whose recorded environment exactly binds every model-catalog
+/// consumer to one publisher trust-root set and collection. Other units ignore
+/// these inputs.
 ///
 /// # Errors
 ///
@@ -353,7 +354,7 @@ pub fn plan_with_model_catalog(
     catalog: Option<&ModelCatalogBuildInputs>,
 ) -> Result<BuildPlan> {
     let mut build = plan(unit)?;
-    if unit.id != "brain-mux" {
+    if !requires_model_catalog(unit) {
         return Ok(build);
     }
     if let Some(catalog) = catalog {
@@ -517,7 +518,7 @@ fn model_catalog_inputs(
 ///
 /// Propagates release-input and recipe failures.
 pub fn release_plan(unit: &Unit, workspace_root: &Path) -> Result<BuildPlan> {
-    let catalog = if unit.id == "brain-mux" {
+    let catalog = if requires_model_catalog(unit) {
         model_catalog_inputs_from_environment(workspace_root)?
     } else {
         None
@@ -525,14 +526,14 @@ pub fn release_plan(unit: &Unit, workspace_root: &Path) -> Result<BuildPlan> {
     plan_with_model_catalog(unit, catalog.as_ref())
 }
 
-/// Produces a publication plan and refuses an unbound `brain-mux` before build.
+/// Produces a publication plan and refuses an unbound catalog consumer before build.
 ///
 /// # Errors
 ///
-/// Propagates release-input and recipe failures. `brain-mux` also fails when
-/// the real release trust roots and signed collection are absent.
+/// Propagates release-input and recipe failures. Catalog consumers also fail
+/// when the real release trust roots and signed collection are absent.
 pub fn publication_plan(unit: &Unit, workspace_root: &Path) -> Result<BuildPlan> {
-    let catalog = if unit.id == "brain-mux" {
+    let catalog = if requires_model_catalog(unit) {
         model_catalog_inputs_from_environment(workspace_root)?
     } else {
         None
@@ -544,15 +545,22 @@ fn publication_plan_with_model_catalog(
     unit: &Unit,
     catalog: Option<&ModelCatalogBuildInputs>,
 ) -> Result<BuildPlan> {
-    if unit.id == "brain-mux" && catalog.is_none() {
+    if requires_model_catalog(unit) && catalog.is_none() {
         return Err(ToolError::single(
             Exit::Usage,
             "model-catalog-build-binding-missing",
-            "brain-mux publication requires the real build-bound publisher trust-root set and \
-             signed catalog collection",
+            format!(
+                "{} publication requires the real build-bound publisher trust-root set and \
+                 signed catalog collection",
+                unit.id
+            ),
         ));
     }
     plan_with_model_catalog(unit, catalog)
+}
+
+fn requires_model_catalog(unit: &Unit) -> bool {
+    matches!(unit.id.as_str(), "brain-mux" | "session-stream-api")
 }
 
 fn nonempty_environment(name: &str) -> Option<String> {
@@ -2019,6 +2027,14 @@ alarm_spec = "regional-session-api"
         brain
     }
 
+    fn session_stream_unit() -> Unit {
+        let mut session = unit("rust-oci-service");
+        session.id = "session-stream-api".to_owned();
+        session.package = "session-stream-api".to_owned();
+        session.bin = Some("session-stream-api".to_owned());
+        session
+    }
+
     fn trust_roots() -> String {
         let signing = p256::ecdsa::SigningKey::from_slice(&[7; 32]).expect("fixture key");
         canon::to_string(&serde_json::json!({
@@ -2115,10 +2131,17 @@ alarm_spec = "regional-session-api"
     }
 
     #[test]
-    fn publication_refuses_an_unbound_brain_before_build_planning() {
-        let error = publication_plan_with_model_catalog(&brain_unit(), None)
-            .expect_err("publication must fail closed");
-        assert_eq!(error.rules(), vec!["model-catalog-build-binding-missing"]);
+    fn publication_refuses_every_unbound_catalog_consumer_before_build_planning() {
+        for unit in [brain_unit(), session_stream_unit()] {
+            let error = publication_plan_with_model_catalog(&unit, None)
+                .expect_err("publication must fail closed");
+            assert_eq!(
+                error.rules(),
+                vec!["model-catalog-build-binding-missing"],
+                "{}",
+                unit.id
+            );
+        }
     }
 
     #[test]

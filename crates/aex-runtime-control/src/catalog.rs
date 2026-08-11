@@ -20,6 +20,13 @@ use serde::{Deserialize, Serialize};
 use crate::generation::{ImageCapability, ImageIdentifier, ImagePin, ImageVersion};
 use crate::shape::ShapeCapacity as _;
 
+/// Package managers installed in every published Hands image variant.
+pub const HANDS_PACKAGE_ECOSYSTEMS: [aex_wire::models::PackageEcosystem; 3] = [
+    aex_wire::models::PackageEcosystem::Apt,
+    aex_wire::models::PackageEcosystem::Npm,
+    aex_wire::models::PackageEcosystem::Pip,
+];
+
 /// The published release variant keys, in deterministic selection order.
 ///
 /// This must equal the `hands-image-*` unit set in `release/units.toml`. It
@@ -86,7 +93,74 @@ pub enum CatalogError {
     },
 }
 
+/// Why release-derived image deployment facts could not become selection authority.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ReleaseCatalogError {
+    /// The release fact was not the closed JSON catalog.
+    #[error("expected the closed release JSON catalog: {0}")]
+    Decode(String),
+    /// The decoded catalog violated the exact published variant contract.
+    #[error(transparent)]
+    Catalog(#[from] CatalogError),
+    /// An image belongs to another plane, account, or region.
+    #[error(
+        "image ARN `{identifier}` is outside plane `{plane}`, account `{account}` or region `{region}`"
+    )]
+    ForeignBinding {
+        /// Provider image identity.
+        identifier: String,
+        /// Expected plane.
+        plane: String,
+        /// Expected account.
+        account: String,
+        /// Expected region.
+        region: String,
+    },
+    /// An image ARN was not named by its immutable base32 content identity.
+    #[error("image ARN `{0}` is not content-addressed")]
+    NotContentAddressed(String),
+}
+
 impl HandsImageCatalog {
+    /// Parses the exact release-derived catalog and binds every image ARN to
+    /// the process plane, account, and region.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReleaseCatalogError`] for malformed/partial catalogs, foreign
+    /// provider identities, or mutable/non-content-addressed image names.
+    pub fn from_release_json(
+        raw: &str,
+        plane: &str,
+        region: &str,
+        account: &str,
+    ) -> Result<Self, ReleaseCatalogError> {
+        let entries = serde_json::from_str::<BTreeMap<String, HandsImageCatalogEntry>>(raw)
+            .map_err(|error| ReleaseCatalogError::Decode(error.to_string()))?;
+        let catalog = Self::from_entries(entries)?;
+        let prefix = format!("arn:aws:lambda:{region}:{account}:microvm-image:aex-{plane}-");
+        for identifier in catalog.image_identifiers() {
+            let Some(suffix) = identifier.0.strip_prefix(&prefix) else {
+                return Err(ReleaseCatalogError::ForeignBinding {
+                    identifier: identifier.0.clone(),
+                    plane: plane.to_owned(),
+                    account: account.to_owned(),
+                    region: region.to_owned(),
+                });
+            };
+            if suffix.len() != 52
+                || !suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || (b'2'..=b'7').contains(&byte))
+            {
+                return Err(ReleaseCatalogError::NotContentAddressed(
+                    identifier.0.clone(),
+                ));
+            }
+        }
+        Ok(catalog)
+    }
+
     /// Validates a decoded environment document as the exact release catalog.
     ///
     /// # Errors
