@@ -27,7 +27,6 @@ schemas:
       - { value: user, doc: "The customer explicitly terminated it." }
       - { value: lifetime_expired, doc: "The eight-hour provider lifetime ended." }
       - { value: provider_credential_revoked, doc: "Its pinned BYOK provider credential was revoked." }
-      - { value: account_paused, doc: "The owning account became paused." }
       - { value: runtime_lost, doc: "The retained runtime was lost; crash recovery is not part of this release." }
 
   NetworkMode:

@@ -63,9 +63,8 @@ pub use journal::{
     fold_control, validate_append,
 };
 pub use lifecycle::{
-    ActiveMessage, AutomaticTransition, IDLE_SUSPEND_AFTER_SECONDS, LifecycleError,
-    LifecycleRevision, LifecycleStatus, MAXIMUM_LIFETIME_SECONDS, ScheduledLifecycleEvent,
-    ScheduledLifecycleKind, ScheduledLifecycleOutcome, SessionLifecycle, TerminationReason,
+    ActiveMessage, IDLE_SUSPEND_AFTER_SECONDS, LifecycleError, LifecycleRevision, LifecycleStatus,
+    MAXIMUM_LIFETIME_SECONDS, SessionLifecycle, TerminationReason,
 };
 pub use lineage::{Lineage, Origin, detach};
 pub use message::{
@@ -81,9 +80,9 @@ pub use run::{
     resolve_message_bounds, start,
 };
 pub use session::{
-    MutationGuard, PinnedRuntime, PinnedRuntimeError, ResolvedConfigAuthority,
-    ResolvedConfigDigest, ResolvedConfigError, Session, SessionError, SessionMetadata,
-    SessionMetadataError, SessionStatus, WorkAdmission, acquire_mutation_guard,
+    MutationGuard, PinnedRuntime, PinnedRuntimeError, ProviderCredentialPin,
+    ResolvedConfigAuthority, ResolvedConfigDigest, ResolvedConfigError, Session, SessionError,
+    SessionMetadata, SessionMetadataError, SessionStatus, WorkAdmission, acquire_mutation_guard,
     release_mutation_guard,
 };
 pub use terminal::{

@@ -3,10 +3,9 @@
 //! This state machine deliberately exposes no run or turn resource. An
 //! internal run identity is carried only while Brain owns the current message;
 //! every completion or cancellation returns the session to `Idle`, ready for a
-//! later message. Automatic work is driven by one exact, durable delayed event
-//! from [`SessionLifecycle::scheduled_event`], so no minute-by-minute workspace
-//! scan is needed. The event is bound to the immutable generation and current
-//! lifecycle revision; a stale delivery conditionally does nothing.
+//! later message. Provider-native idle suspension and maximum-duration policy
+//! own automatic timing; API activity reconciles observed provider state. No
+//! periodic scan or platform timer is part of the product.
 
 use aex_internal_contracts::RunId;
 use aex_wire::ids::{GenerationId, MessageId};
@@ -76,8 +75,6 @@ pub enum TerminationReason {
     LifetimeExpired,
     /// The pinned provider credential was revoked.
     ProviderCredentialRevoked,
-    /// The account was paused.
-    AccountPaused,
     /// The runtime was lost; crash recovery is not part of this release.
     RuntimeLost,
 }
@@ -110,7 +107,7 @@ pub struct SessionLifecycle {
     pub expires_at: Timestamp,
     /// When the session most recently became idle.
     pub idle_since: Option<Timestamp>,
-    /// Exact idle deadline projected into the due index.
+    /// Exact provider-native idle-suspension threshold for the current idle interval.
     pub suspend_at: Option<Timestamp>,
     /// When this generation most recently suspended.
     pub suspended_at: Option<Timestamp>,
@@ -120,51 +117,9 @@ pub struct SessionLifecycle {
     pub termination_reason: Option<TerminationReason>,
 }
 
-/// One automatic transition elected by an exact due row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AutomaticTransition {
-    /// Idle compute should be suspended.
-    Suspend,
-    /// The provider generation reached its immutable lifetime fence.
-    Terminate,
-}
-
 /// Monotonic lifecycle concurrency token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LifecycleRevision(pub u64);
-
-/// The kind of delayed lifecycle work projected from a session head.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ScheduledLifecycleKind {
-    /// Suspend this still-idle generation.
-    Suspend,
-    /// Permanently terminate this exact generation at its provider fence.
-    Terminate,
-}
-
-/// One exact delayed event; at most one exists for a lifecycle revision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ScheduledLifecycleEvent {
-    /// The immutable generation this event may control.
-    pub generation: GenerationId,
-    /// The lifecycle head revision this event observed.
-    pub expected_revision: LifecycleRevision,
-    /// Which transition was due at that revision.
-    pub kind: ScheduledLifecycleKind,
-    /// The exact delivery time.
-    pub due_at: Timestamp,
-}
-
-/// Result of conditionally applying one delayed event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScheduledLifecycleOutcome {
-    /// Activity or generation changed after this event was written.
-    Stale,
-    /// The matching event arrived before its exact due instant.
-    NotDue,
-    /// The matching transition was elected.
-    Applied(AutomaticTransition),
-}
 
 /// Why a session lifecycle transition was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -218,48 +173,6 @@ impl SessionLifecycle {
             terminated_at: None,
             termination_reason: None,
         })
-    }
-
-    /// The one exact durable delayed event this revision owns.
-    ///
-    /// The writer replaces this event in the same transaction as every head
-    /// transition. Delivery uses [`SessionLifecycle::apply_scheduled`], not a
-    /// periodic scan.
-    #[must_use]
-    pub fn scheduled_event(&self) -> Option<ScheduledLifecycleEvent> {
-        match self.status {
-            LifecycleStatus::Idle => {
-                let (kind, due_at) = self.suspend_at.map_or(
-                    (ScheduledLifecycleKind::Terminate, self.expires_at),
-                    |suspend| {
-                        if suspend < self.expires_at {
-                            (ScheduledLifecycleKind::Suspend, suspend)
-                        } else {
-                            (ScheduledLifecycleKind::Terminate, self.expires_at)
-                        }
-                    },
-                );
-                Some(ScheduledLifecycleEvent {
-                    generation: self.generation,
-                    expected_revision: self.revision,
-                    kind,
-                    due_at,
-                })
-            }
-            LifecycleStatus::Running
-            | LifecycleStatus::AwaitingApproval
-            | LifecycleStatus::Suspending
-            | LifecycleStatus::Suspended
-            | LifecycleStatus::Resuming => Some(ScheduledLifecycleEvent {
-                generation: self.generation,
-                expected_revision: self.revision,
-                kind: ScheduledLifecycleKind::Terminate,
-                due_at: self.expires_at,
-            }),
-            LifecycleStatus::Terminating
-            | LifecycleStatus::Terminated
-            | LifecycleStatus::Deleting => None,
-        }
     }
 
     /// Admits one message, automatically resuming the same suspended generation.
@@ -436,39 +349,6 @@ impl SessionLifecycle {
         Ok(())
     }
 
-    /// Conditionally applies one durable delayed event.
-    ///
-    /// An event written for an older generation or lifecycle revision, or one
-    /// whose kind/time no longer matches the head's single projection, is a
-    /// successful no-op. This is the worker's stale-delivery condition, not an
-    /// error and not a reason to retry.
-    pub fn apply_scheduled(
-        &mut self,
-        event: ScheduledLifecycleEvent,
-        now: Timestamp,
-    ) -> Result<ScheduledLifecycleOutcome, LifecycleError> {
-        if self.scheduled_event() != Some(event) {
-            return Ok(ScheduledLifecycleOutcome::Stale);
-        }
-        if now < event.due_at {
-            return Ok(ScheduledLifecycleOutcome::NotDue);
-        }
-        match event.kind {
-            ScheduledLifecycleKind::Suspend => {
-                self.begin_suspend()?;
-                Ok(ScheduledLifecycleOutcome::Applied(
-                    AutomaticTransition::Suspend,
-                ))
-            }
-            ScheduledLifecycleKind::Terminate => {
-                self.begin_terminate(TerminationReason::LifetimeExpired)?;
-                Ok(ScheduledLifecycleOutcome::Applied(
-                    AutomaticTransition::Terminate,
-                ))
-            }
-        }
-    }
-
     fn become_idle(&mut self, now: Timestamp) -> Result<(), LifecycleError> {
         if now >= self.expires_at {
             return Err(LifecycleError::LifetimeExpired);
@@ -544,10 +424,6 @@ mod tests {
         let lifecycle = SessionLifecycle::launched(generation(1), at(1_000)).expect("launch");
         assert_eq!(lifecycle.suspend_at, Some(at(181_000)));
         assert_eq!(lifecycle.expires_at, at(28_801_000));
-        assert_eq!(
-            lifecycle.scheduled_event().map(|event| event.due_at),
-            lifecycle.suspend_at
-        );
     }
 
     #[test]
@@ -587,32 +463,19 @@ mod tests {
     }
 
     #[test]
-    fn exact_delayed_events_replace_a_minute_scheduler_and_stale_deliveries_no_op() {
+    fn provider_native_automatic_state_is_reconciled_without_a_platform_timer() {
         let mut lifecycle = SessionLifecycle::launched(generation(1), at(0)).expect("launch");
-        let idle_event = lifecycle.scheduled_event().expect("idle event");
-        assert_eq!(
-            lifecycle.apply_scheduled(idle_event, at(179_999)),
-            Ok(ScheduledLifecycleOutcome::NotDue)
-        );
-        assert_eq!(
-            lifecycle.apply_scheduled(idle_event, at(180_000)),
-            Ok(ScheduledLifecycleOutcome::Applied(
-                AutomaticTransition::Suspend
-            ))
-        );
+        assert_eq!(lifecycle.suspend_at, Some(at(180_000)));
+        lifecycle
+            .begin_suspend()
+            .expect("provider reports auto-suspend");
         lifecycle.complete_suspend(at(180_001)).expect("suspended");
-        assert_eq!(
-            lifecycle.apply_scheduled(idle_event, at(180_002)),
-            Ok(ScheduledLifecycleOutcome::Stale)
-        );
-        let expiry = lifecycle.scheduled_event().expect("expiry event");
-        assert_eq!(expiry.due_at, at(28_800_000));
-        assert_eq!(
-            lifecycle.apply_scheduled(expiry, at(28_800_000)),
-            Ok(ScheduledLifecycleOutcome::Applied(
-                AutomaticTransition::Terminate
-            ))
-        );
+        lifecycle
+            .begin_terminate(TerminationReason::LifetimeExpired)
+            .expect("provider reports native maximum duration");
+        lifecycle
+            .complete_terminate(at(28_800_000))
+            .expect("terminated");
         assert_eq!(
             lifecycle.termination_reason,
             Some(TerminationReason::LifetimeExpired)
