@@ -7,8 +7,8 @@
 //! operation result.
 
 use aex_operation_domain::{
-    AdmissionOutcome, AdmitRequest, DedupIdentity, Operation, OperationKind, OperationScope,
-    WorkId, WorkItem, WorkState, admit,
+    AdmissionOutcome, AdmitRequest, DedupIdentity, Operation, OperationKind, OperationResult,
+    OperationScope, OperationVersion, WorkId, WorkItem, WorkState, admit, succeed,
 };
 use aex_session_domain::{
     CancelCause, CommandClass, Session, TerminationReason, acquire_mutation_guard, begin_delete,
@@ -17,9 +17,12 @@ use aex_session_domain::{
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{OperationId, PrefixedId as _, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
+use aex_wire::{CanonicalJson, canonical::to_jcs_string, models};
 
 use crate::error::AppError;
-use crate::plan::{Condition, Hint, Planned, SessionTransaction, TransactionIntent, Write};
+use crate::plan::{
+    Condition, Hint, Planned, SessionTransaction, TransactionIntent, WorkCompletion, Write,
+};
 use crate::ports::{AppContext, PortError};
 
 // `regional-work` has five bounded priority bands, zero highest. Customer
@@ -49,6 +52,149 @@ pub enum LifecycleAdmissionOutcome {
     Planned(Planned<Operation>),
     /// The identity was already elected with the same scope, kind and intent.
     Replayed(Operation),
+}
+
+/// The exact regional-work claim held while a lifecycle effect is settled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleWorkClaim {
+    /// Canonical work identity.
+    pub work_id: String,
+    /// Monotonic claim fence.
+    pub fence: u64,
+    /// Exact claim owner.
+    pub owner: String,
+}
+
+/// Atomically publishes one completed lifecycle effect.
+///
+/// The provider/runtime authority is observed before this planner runs. This
+/// transaction is the session-facing consistency barrier: it advances the
+/// public head, terminalizes the operation, releases the mutation guard and
+/// retires the exact fenced work row together.
+pub fn settle_lifecycle_operation(
+    session: &Session,
+    operation: &Operation,
+    operation_version: OperationVersion,
+    claim: &LifecycleWorkClaim,
+    now: Timestamp,
+) -> Result<Planned<Operation>, AppError> {
+    if operation.workspace != session.workspace
+        || operation.session != Some(session.id)
+        || operation.scope != OperationScope::Session(session.id)
+        || claim.work_id != WorkId(operation.id.uuid7()).to_string()
+    {
+        return Err(AppError::Port(PortError::Corrupt {
+            kind: "lifecycle operation settlement",
+            reason: "session, operation and work binding disagree",
+        }));
+    }
+    aex_session_domain::release_mutation_guard(session, operation.id)?;
+
+    let mut head = session.clone();
+    let result = match operation.kind {
+        OperationKind::SessionCancel => {
+            let changed = head.lifecycle.cancel_current(now)?;
+            head.active_run = None;
+            head.work_admission = aex_session_domain::WorkAdmission::Open;
+            canonical_result(&models::SessionCancelResult {
+                changed,
+                session_id: session.id,
+                session_revision: session.revision.next().0,
+            })?
+        }
+        OperationKind::SessionSuspend => {
+            let changed = head.lifecycle.status == aex_session_domain::LifecycleStatus::Suspending;
+            if changed {
+                head.lifecycle.complete_suspend(now)?;
+            }
+            canonical_result(&models::SessionSuspendResult {
+                changed,
+                session_id: session.id,
+                session_revision: session.revision.next().0,
+                suspended_at: head.lifecycle.suspended_at.unwrap_or(now),
+            })?
+        }
+        OperationKind::SessionResume => {
+            let changed = head.lifecycle.status == aex_session_domain::LifecycleStatus::Resuming;
+            if changed {
+                head.lifecycle.complete_resume(now)?;
+            }
+            canonical_result(&models::SessionResumeResult {
+                changed,
+                resumed_at: now,
+                session_id: session.id,
+                session_revision: session.revision.next().0,
+                status: crate::projection::public_status(head.lifecycle.status),
+            })?
+        }
+        OperationKind::SessionTerminate => {
+            let changed = head.lifecycle.status == aex_session_domain::LifecycleStatus::Terminating;
+            if changed {
+                head.lifecycle.complete_terminate(now)?;
+            }
+            canonical_result(&models::SessionTerminateResult {
+                changed,
+                session_id: session.id,
+                session_revision: session.revision.next().0,
+                terminated_at: head.lifecycle.terminated_at.unwrap_or(now),
+            })?
+        }
+        OperationKind::SessionDelete => {
+            return Err(AppError::Port(PortError::Unowned {
+                kind: "lifecycle operation settlement",
+                seam: "session deletion requires its bounded multi-owner evidence cascade",
+            }));
+        }
+        OperationKind::WorkspaceDelete
+        | OperationKind::TelemetryExport
+        | OperationKind::ContentGc => return Err(not_session_kind()),
+    };
+
+    head.status = head.lifecycle.status;
+    head.revision = session.revision.next();
+    head.mutation_guard = None;
+    head.updated_at = now;
+    let succeeded = succeed(operation, result, now)?.operation;
+    let plan = SessionTransaction {
+        intent: TransactionIntent::SettleLifecycle,
+        conditions: vec![
+            Condition::SessionRevision {
+                session: session.id,
+                expected: session.revision,
+            },
+            Condition::MutationGuardHeldBy {
+                session: session.id,
+                holder: operation.id,
+            },
+            Condition::OperationVersion {
+                operation: operation.id,
+                expected: operation_version,
+            },
+        ],
+        writes: vec![
+            Write::PutSessionHead(Box::new(head)),
+            Write::PutOperation(Box::new(succeeded.clone())),
+            Write::CompleteWorkItem(Box::new(WorkCompletion {
+                work_id: claim.work_id.clone(),
+                fence: claim.fence,
+                owner: claim.owner.clone(),
+                at: now,
+            })),
+        ],
+        after_commit: Vec::new(),
+    };
+    plan.validate()?;
+    Ok(Planned {
+        plan,
+        projected: succeeded,
+    })
+}
+
+fn canonical_result(value: &impl serde::Serialize) -> Result<OperationResult, AppError> {
+    Ok(OperationResult {
+        measurement: None,
+        content: Some(CanonicalJson::parse(&to_jcs_string(value)?)?),
+    })
 }
 
 /// Resolves replay first, then plans one lifecycle admission.
@@ -425,5 +571,60 @@ mod tests {
                 .map(Write::family),
             Some(crate::plan::TableFamily::WorkAuthority)
         );
+    }
+
+    #[test]
+    fn lifecycle_success_releases_the_guard_and_retires_the_same_work_claim() {
+        let session = aex_session_domain::testing::session_fixture();
+        let admitted = planned(OperationKind::SessionSuspend, &session);
+        let transitional = planned_head(&admitted.plan).clone();
+        let claim = LifecycleWorkClaim {
+            work_id: WorkId(admitted.projected.id.uuid7()).to_string(),
+            fence: 3,
+            owner: "session-operation-worker:test".to_owned(),
+        };
+        let settled = settle_lifecycle_operation(
+            &transitional,
+            &admitted.projected,
+            OperationVersion::FIRST,
+            &claim,
+            aex_session_domain::testing::moment(20),
+        )
+        .expect("settles");
+        let head = planned_head(&settled.plan);
+        assert_eq!(head.lifecycle.status, LifecycleStatus::Suspended);
+        assert_eq!(head.mutation_guard, None);
+        assert_eq!(
+            settled.projected.status,
+            aex_operation_domain::OperationStatus::Succeeded
+        );
+        assert!(settled.plan.writes.iter().any(|write| {
+            matches!(write, Write::CompleteWorkItem(completion) if completion.work_id == claim.work_id && completion.fence == claim.fence)
+        }));
+        assert_eq!(settled.plan.validate().expect("valid").actions, 3);
+    }
+
+    #[test]
+    fn cancellation_returns_the_same_session_to_idle() {
+        let (running, _, _, _) = aex_session_domain::testing::running_session();
+        let admitted = planned(OperationKind::SessionCancel, &running);
+        let transitional = planned_head(&admitted.plan).clone();
+        let claim = LifecycleWorkClaim {
+            work_id: WorkId(admitted.projected.id.uuid7()).to_string(),
+            fence: 1,
+            owner: "session-operation-worker:test".to_owned(),
+        };
+        let settled = settle_lifecycle_operation(
+            &transitional,
+            &admitted.projected,
+            OperationVersion::FIRST,
+            &claim,
+            aex_session_domain::testing::moment(20),
+        )
+        .expect("settles");
+        let head = planned_head(&settled.plan);
+        assert_eq!(head.lifecycle.status, LifecycleStatus::Idle);
+        assert_eq!(head.active_run, None);
+        assert_eq!(head.work_admission, WorkAdmission::Open);
     }
 }

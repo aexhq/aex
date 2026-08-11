@@ -427,6 +427,7 @@ const fn write_tag(write: &Write) -> &'static str {
         Write::PutOperation(_) => "PutOperation",
         Write::RedactOperationResult(_) => "RedactOperationResult",
         Write::PutWorkItem(_) => "PutWorkItem",
+        Write::CompleteWorkItem(_) => "CompleteWorkItem",
         Write::PutOutboxEvent(_) => "PutOutboxEvent",
         Write::PutPin(_) => "PutPin",
         Write::DeletePin(_) => "DeletePin",

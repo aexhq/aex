@@ -28,24 +28,61 @@ impl ExternalActionCompiler for WorkApplicationCompiler {
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
-        let Some(Write::PutWorkItem(work)) = action.write else {
-            return Err(StoreError::Invalid {
-                detail: "the work-authority family carries runnable-work writes only".to_owned(),
-            });
-        };
-        if action.conditions.len() != 1
-            || !matches!(action.conditions[0].1, Condition::ItemAbsent(target) if *target == action.target)
-        {
-            return Err(StoreError::Invalid {
-                detail: "a new runnable-work row must carry its exact item-absent election"
-                    .to_owned(),
-            });
+        match action.write {
+            Some(Write::PutWorkItem(work)) => {
+                if action.conditions.len() != 1
+                    || !matches!(action.conditions[0].1, Condition::ItemAbsent(target) if *target == action.target)
+                {
+                    return Err(StoreError::Invalid {
+                        detail: "a new runnable-work row must carry its exact item-absent election"
+                            .to_owned(),
+                    });
+                }
+                let record = record_of(binding, work)?;
+                output.put(
+                    Participant::WORK_OPERATION_STEP,
+                    crate::claim::enqueue(&tables.regional_work, &record)?,
+                )?;
+            }
+            Some(Write::CompleteWorkItem(completion)) => {
+                if !action.conditions.is_empty() {
+                    return Err(StoreError::Invalid {
+                        detail: "a fenced work completion carries its condition in the claim"
+                            .to_owned(),
+                    });
+                }
+                if binding.session.is_none() {
+                    return Err(StoreError::Invalid {
+                        detail: "operation work completion requires a session binding".to_owned(),
+                    });
+                }
+                if completion.work_id != action.target.partition
+                    || action.target.sort != "STATE"
+                    || completion.owner.is_empty()
+                {
+                    return Err(StoreError::Invalid {
+                        detail: "the work completion does not match its canonical claim target"
+                            .to_owned(),
+                    });
+                }
+                output.update(
+                    Participant::WORK_WAKE_DONE,
+                    crate::claim::complete_fenced(
+                        &tables.regional_work,
+                        &completion.work_id,
+                        completion.fence,
+                        &completion.owner,
+                        completion.at,
+                    )?,
+                )?;
+            }
+            _ => {
+                return Err(StoreError::Invalid {
+                    detail: "the work-authority family carries runnable-work writes only"
+                        .to_owned(),
+                });
+            }
         }
-        let record = record_of(binding, work)?;
-        output.put(
-            Participant::WORK_OPERATION_STEP,
-            crate::claim::enqueue(&tables.regional_work, &record)?,
-        )?;
         Ok(())
     }
 }
@@ -132,7 +169,7 @@ fn dedupe_key(work: &WorkItem) -> String {
 #[cfg(test)]
 mod tests {
     use aex_operation_domain::{DedupIdentity, OperationKind, WorkId, WorkItem, WorkState};
-    use aex_session_app::plan::{Condition, Write};
+    use aex_session_app::plan::{Condition, WorkCompletion, Write};
     use aex_session_dynamodb::application_plan::{
         AuthorityBinding, ExternalActionCompiler, LogicalAction,
     };
@@ -218,6 +255,36 @@ mod tests {
             WorkApplicationCompiler
                 .compile_action(&tables, binding, &action, &mut output)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn an_exact_claim_completion_becomes_one_fenced_retirement() {
+        let write = Write::CompleteWorkItem(Box::new(WorkCompletion {
+            work_id: "wrk_00000000000000000000000001".to_owned(),
+            fence: 7,
+            owner: "session-operation-worker:test".to_owned(),
+            at: stamp(),
+        }));
+        let action = LogicalAction {
+            target: write.target(),
+            conditions: Vec::new(),
+            write: Some(&write),
+        };
+        let binding = AuthorityBinding {
+            workspace: id::<WorkspaceId>(2),
+            organization: id::<OrganizationId>(3),
+            session: Some(id::<SessionId>(4)),
+        };
+        let tables = RegionalTables::composed("dev", "eu-west-1");
+        let mut output = TransactionPlan::new("work-completion-test");
+        WorkApplicationCompiler
+            .compile_action(&tables, binding, &action, &mut output)
+            .expect("compiles");
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output.participants(),
+            &[aex_session_dynamodb::plan::Participant::WORK_WAKE_DONE]
         );
     }
 }

@@ -83,8 +83,9 @@ pub struct QueueRecord {
 
 /// The work domains this worker is the sole handler for.
 ///
-/// `runtime.evaluate` is the due-index reaper's own redelivery, not a public work
-/// domain; the two customer-visible domains are the other arms.
+/// `runtime.evaluate` is the due-index reaper's own redelivery. Public session
+/// lifecycle operations arrive through their fenced operation worker, but this
+/// remains the only engine that dispatches provider control effects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "domain", rename_all_fields = "camelCase")]
 pub enum RuntimeCommand {
@@ -104,6 +105,30 @@ pub enum RuntimeCommand {
         /// The generation the sender observed.
         generation: GenerationId,
     },
+    /// Manually suspend an idle session's exact retained generation.
+    #[serde(rename = "runtime.session_suspend")]
+    SessionSuspend {
+        /// The session that owns the generation.
+        session: SessionId,
+        /// The generation elected by session admission.
+        generation: GenerationId,
+    },
+    /// Manually resume the same retained generation.
+    #[serde(rename = "runtime.session_resume")]
+    SessionResume {
+        /// The session that owns the generation.
+        session: SessionId,
+        /// The generation elected by session admission.
+        generation: GenerationId,
+    },
+    /// Permanently terminate compute and live files for one session.
+    #[serde(rename = "runtime.session_terminate")]
+    SessionTerminate {
+        /// The session that owns the generation.
+        session: SessionId,
+        /// The generation elected by session admission.
+        generation: GenerationId,
+    },
     /// The workspace was discarded; the generation and its snapshot go with it.
     #[serde(rename = "runtime.workspace_discard")]
     WorkspaceDiscard {
@@ -121,6 +146,9 @@ impl RuntimeCommand {
         match self {
             Self::Evaluate { .. } => "runtime.evaluate",
             Self::LiveWorkspaceWake { .. } => "runtime.live_workspace_wake",
+            Self::SessionSuspend { .. } => "runtime.session_suspend",
+            Self::SessionResume { .. } => "runtime.session_resume",
+            Self::SessionTerminate { .. } => "runtime.session_terminate",
             Self::WorkspaceDiscard { .. } => "runtime.workspace_discard",
         }
     }
@@ -131,6 +159,9 @@ impl RuntimeCommand {
         match self {
             Self::Evaluate { session, .. }
             | Self::LiveWorkspaceWake { session, .. }
+            | Self::SessionSuspend { session, .. }
+            | Self::SessionResume { session, .. }
+            | Self::SessionTerminate { session, .. }
             | Self::WorkspaceDiscard { session, .. } => session,
         }
     }
@@ -141,6 +172,9 @@ impl RuntimeCommand {
         match self {
             Self::Evaluate { generation, .. }
             | Self::LiveWorkspaceWake { generation, .. }
+            | Self::SessionSuspend { generation, .. }
+            | Self::SessionResume { generation, .. }
+            | Self::SessionTerminate { generation, .. }
             | Self::WorkspaceDiscard { generation, .. } => generation,
         }
     }
@@ -632,11 +666,45 @@ impl RuntimeControl {
         match command {
             RuntimeCommand::Evaluate { .. } => self.evaluate(&view, now).await,
             RuntimeCommand::LiveWorkspaceWake { .. } => self.wake(&view, now).await,
+            RuntimeCommand::SessionSuspend { .. } => self.manual_suspend(&view, now).await,
+            RuntimeCommand::SessionResume { .. } => self.wake(&view, now).await,
+            RuntimeCommand::SessionTerminate { .. } => {
+                self.discard(&view, now, LifecycleAction::Terminate, false)
+                    .await
+            }
             RuntimeCommand::WorkspaceDiscard { .. } => {
                 self.discard(&view, now, LifecycleAction::Terminate, false)
                     .await
             }
         }
+    }
+
+    /// Manually suspends a running exact generation without waiting for the
+    /// native idle threshold. The admission authority has already established
+    /// that the public session is idle; the existing authoritative Hands-effect
+    /// recount is still performed before any provider call.
+    async fn manual_suspend(&self, view: &GenerationView, now: Timestamp) -> CommandOutcome {
+        if view.head.state == GenerationState::Suspended {
+            return CommandOutcome::Settled(Settled::Suspended);
+        }
+        if view.head.state.is_terminal() {
+            return CommandOutcome::Settled(Settled::AlreadyTerminal {
+                state: view.head.state,
+            });
+        }
+        if view.head.state != GenerationState::Running {
+            return CommandOutcome::Retry {
+                reason: format!(
+                    "generation {} is {:?}; manual suspend requires running",
+                    view.head.generation, view.head.state
+                ),
+            };
+        }
+        let Some(microvm) = view.microvm.as_ref() else {
+            return CommandOutcome::Settled(Settled::NotMaterialized);
+        };
+        self.suspend(view, microvm, next_fence(view.head.fence), now)
+            .await
     }
 
     /// Advances one unresolved lifecycle intent without ever repeating its
@@ -2847,6 +2915,38 @@ mod tests {
         }
     }
 
+    fn manual_suspend() -> RuntimeCommand {
+        RuntimeCommand::SessionSuspend {
+            session: session(),
+            generation: generation(),
+        }
+    }
+
+    #[tokio::test]
+    async fn manual_suspend_uses_the_existing_fenced_provider_authority() {
+        let fixture = fixture(
+            FakeStore::with(view(GenerationState::Running, 0)),
+            FakeProvider::running(),
+            0,
+        );
+        assert_eq!(
+            fixture
+                .control
+                .handle_command(manual_suspend(), at(LAUNCHED_AT + 1_000))
+                .await,
+            CommandOutcome::Settled(Settled::Suspended)
+        );
+        assert_eq!(
+            fixture
+                .provider
+                .calls()
+                .into_iter()
+                .filter(|call| *call == "suspend")
+                .count(),
+            1
+        );
+    }
+
     #[tokio::test]
     async fn native_resume_closes_usage_at_the_immutable_provider_expiry() {
         let mut native = view(GenerationState::Resuming, 1);
@@ -3795,6 +3895,21 @@ mod tests {
         for (command, domain) in [
             (evaluate(), "runtime.evaluate"),
             (wake(), "runtime.live_workspace_wake"),
+            (manual_suspend(), "runtime.session_suspend"),
+            (
+                RuntimeCommand::SessionResume {
+                    session: session(),
+                    generation: generation(),
+                },
+                "runtime.session_resume",
+            ),
+            (
+                RuntimeCommand::SessionTerminate {
+                    session: session(),
+                    generation: generation(),
+                },
+                "runtime.session_terminate",
+            ),
             (
                 RuntimeCommand::WorkspaceDiscard {
                     session: session(),

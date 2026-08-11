@@ -35,7 +35,10 @@ pub use create::{
     prepare_session_create, publish_ready_session,
 };
 pub use error::AppError;
-pub use lifecycle::{LifecycleAdmissionOutcome, LifecycleCommand, admit_lifecycle_operation};
+pub use lifecycle::{
+    LifecycleAdmissionOutcome, LifecycleCommand, LifecycleWorkClaim, admit_lifecycle_operation,
+    settle_lifecycle_operation,
+};
 pub use outcome::{Attempted, Observed, ProviderAnswer, Resolution, resolve};
 pub use plan::{
     Condition, ConditionId, Hint, ItemKey, MAX_ACTIONS, MAX_BYTES, PlanError, PlanShape, Planned,

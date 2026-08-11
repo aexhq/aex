@@ -128,7 +128,26 @@ pub fn complete(
     hold: &WorkClaim,
     now: Timestamp,
 ) -> Result<UpdateBuilder, StoreError> {
-    let work_key = keys::work(&hold.work_id)?;
+    complete_fenced(table, &hold.work_id, hold.fence, &hold.owner, now)
+}
+
+/// Builds a fenced retirement from the minimal durable claim identity.
+///
+/// Cross-family application plans intentionally do not depend on this
+/// adapter's full lease vocabulary. The work identity, monotonic fence and
+/// exact owner are the complete condition that authorizes retirement.
+///
+/// # Errors
+///
+/// As [`complete`].
+pub fn complete_fenced(
+    table: &str,
+    work_id: &str,
+    fence: u64,
+    owner: &str,
+    now: Timestamp,
+) -> Result<UpdateBuilder, StoreError> {
+    let work_key = keys::work(work_id)?;
     Ok(aws_sdk_dynamodb::types::Update::builder()
         .table_name(table)
         .set_key(Some(key(&work_key.pk, &work_key.sk)))
@@ -138,8 +157,8 @@ pub fn complete(
              REMOVE dueShardPk, dueShardSk",
         )
         .expression_attribute_names("#state", "state")
-        .expression_attribute_values(":fence", n(hold.fence))
-        .expression_attribute_values(":owner", s(hold.owner.clone()))
+        .expression_attribute_values(":fence", n(fence))
+        .expression_attribute_values(":owner", s(owner.to_owned()))
         .expression_attribute_values(":claimed", s("claimed"))
         .expression_attribute_values(":done", s("done"))
         .expression_attribute_values(":now", stamp(now))

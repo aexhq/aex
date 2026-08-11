@@ -52,6 +52,14 @@ impl WorkId {
     }
 }
 
+impl core::fmt::Display for WorkId {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let suffix = self.0.encode_suffix();
+        let suffix = core::str::from_utf8(&suffix).map_err(|_| core::fmt::Error)?;
+        write!(formatter, "wrk_{suffix}")
+    }
+}
+
 /// The producer-derived deduplication identity of a work item.
 ///
 /// A hint that arrives twice must not become two units of work, so the identity

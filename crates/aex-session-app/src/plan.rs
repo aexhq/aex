@@ -52,6 +52,8 @@ pub enum TransactionIntent {
     TerminateSession,
     /// Irreversibly delete session user content.
     DeleteSession,
+    /// Atomically publish a lifecycle effect, operation result and work retirement.
+    SettleLifecycle,
     /// Start an admitted run.
     StartRun,
     /// Settle a run.
@@ -411,6 +413,20 @@ impl Condition {
     }
 }
 
+/// One exact regional-work claim retired by the authority that decided its
+/// application outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkCompletion {
+    /// Canonical `regional-work` identity.
+    pub work_id: String,
+    /// Monotonic claim fence.
+    pub fence: u64,
+    /// Exact claim owner.
+    pub owner: String,
+    /// Settlement instant.
+    pub at: Timestamp,
+}
+
 /// One durable change the transaction makes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Write {
@@ -468,6 +484,8 @@ pub enum Write {
     RedactOperationResult(OperationId),
     /// Replace a durable work item.
     PutWorkItem(Box<aex_operation_domain::WorkItem>),
+    /// Retire one exact fenced regional-work claim.
+    CompleteWorkItem(Box<WorkCompletion>),
     /// Append a native outbox event.
     PutOutboxEvent(Box<OutboxEvent>),
     /// Add a pin.
@@ -508,7 +526,7 @@ impl Write {
             Self::PutOperation(_) | Self::RedactOperationResult(_) => {
                 TableFamily::OperationAuthority
             }
-            Self::PutWorkItem(_) => TableFamily::WorkAuthority,
+            Self::PutWorkItem(_) | Self::CompleteWorkItem(_) => TableFamily::WorkAuthority,
             Self::PutOutboxEvent(_) => TableFamily::Outbox,
             Self::PutPin(_) | Self::DeletePin(_) | Self::PutGrant(_) => {
                 TableFamily::ContentAuthority
@@ -566,7 +584,8 @@ impl Write {
             ),
             Self::PutOperation(operation) => (operation.id.to_string(), "OPERATION".to_owned()),
             Self::RedactOperationResult(id) => (id.to_string(), "OPERATION".to_owned()),
-            Self::PutWorkItem(item) => (item.operation.to_string(), format!("WORK#{}", item.id.0)),
+            Self::PutWorkItem(item) => (item.id.to_string(), "STATE".to_owned()),
+            Self::CompleteWorkItem(item) => (item.work_id.clone(), "STATE".to_owned()),
             Self::PutOutboxEvent(event) => {
                 (event.session.to_string(), format!("OUTBOX#{}", event.run))
             }
@@ -823,6 +842,7 @@ impl SessionTransaction {
                 | Write::PutOperation(_)
                 | Write::RedactOperationResult(_)
                 | Write::PutWorkItem(_)
+                | Write::CompleteWorkItem(_)
                 | Write::PutOutboxEvent(_)
                 | Write::PutPin(_)
                 | Write::DeletePin(_)
