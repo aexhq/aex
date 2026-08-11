@@ -2364,16 +2364,13 @@ fn renewal_observes_session_cancellation_during_a_pending_effect() {
     assert_session_authority_loss_stops_mid_effect(false);
 }
 
-/// A public cancellation is stronger than an unclassified epoch loss: it installs a
-/// durable stop latch and a session operation guard before the predecessor is fenced. The
-/// successor preserves possibly-sent provider evidence but closes the public current work
-/// as cancelled, never interrupted and never re-dispatched.
-#[test]
-fn public_session_cancellation_closes_an_ambiguous_provider_effect_as_cancelled() {
-    let mut harness = Harness::new(Vec::new());
-    harness.policy.renew_interval = core::time::Duration::from_secs(1);
-    let provider = Arc::new(GatedProvider::default());
-
+fn seed_public_cancellation_root(
+    harness: &mut Harness,
+) -> (
+    aex_session_domain::Session,
+    aex_session_domain::Run,
+    AgentKey,
+) {
     let (mut session, mut run, _, _) = aex_session_domain::testing::running_session();
     let generation = session
         .generation
@@ -2413,6 +2410,41 @@ fn public_session_cancellation_closes_an_ambiguous_provider_effect_as_cancelled(
     let mut wake = wake_for(root, "wrk-public-cancel");
     wake.tenant = session.workspace.to_string();
     harness.queue.project(wake);
+    (session, run, root)
+}
+
+fn request_public_cancellation(
+    harness: &Harness,
+    root: AgentKey,
+    mut session: aex_session_domain::Session,
+    run: aex_session_domain::Run,
+) {
+    let operation = OperationId::from_uuid7(Uuid7::compose(
+        u64::try_from(START).expect("the fixture instant is positive"),
+        [24; 10],
+    ));
+    session.cancellation = session.cancellation.next();
+    session.revision = session.revision.next();
+    session.mutation_guard = Some(aex_session_domain::MutationGuard {
+        holder: operation,
+        kind: aex_operation_domain::OperationKind::SessionCancel,
+        acquired_at: aex_session_domain::testing::moment(START + 2),
+    });
+    harness
+        .store
+        .request_root_cancellation(root, root_authority(session, run));
+}
+
+/// A public cancellation is stronger than an unclassified epoch loss: it installs a
+/// durable stop latch and a session operation guard before the predecessor is fenced. The
+/// successor preserves possibly-sent provider evidence but closes the public current work
+/// as cancelled, never interrupted and never re-dispatched.
+#[test]
+fn public_session_cancellation_closes_an_ambiguous_provider_effect_as_cancelled() {
+    let mut harness = Harness::new(Vec::new());
+    harness.policy.renew_interval = core::time::Duration::from_secs(1);
+    let provider = Arc::new(GatedProvider::default());
+    let (session, run, root) = seed_public_cancellation_root(&mut harness);
 
     let mut ports = harness.ports();
     ports.provider = Arc::clone(&provider) as Arc<_>;
@@ -2431,20 +2463,7 @@ fn public_session_cancellation_closes_an_ambiguous_provider_effect_as_cancelled(
     let mut context = core::task::Context::from_waker(core::task::Waker::noop());
     assert!(first.as_mut().poll(&mut context).is_pending());
 
-    let operation = OperationId::from_uuid7(Uuid7::compose(
-        u64::try_from(START).expect("the fixture instant is positive"),
-        [24; 10],
-    ));
-    session.cancellation = session.cancellation.next();
-    session.revision = session.revision.next();
-    session.mutation_guard = Some(aex_session_domain::MutationGuard {
-        holder: operation,
-        kind: aex_operation_domain::OperationKind::SessionCancel,
-        acquired_at: aex_session_domain::testing::moment(START + 2),
-    });
-    harness
-        .store
-        .request_root_cancellation(root, root_authority(session, run));
+    request_public_cancellation(&harness, root, session, run);
 
     let core::task::Poll::Ready(lost) = first.as_mut().poll(&mut context) else {
         panic!("the predecessor observes the cancellation fence");
