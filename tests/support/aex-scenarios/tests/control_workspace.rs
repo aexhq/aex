@@ -35,9 +35,10 @@ mod support;
 use std::sync::Mutex;
 
 use aex_control_app::ports::{
-    AuthorizationReader as _, BeginWorkspaceProvisionTx, CreateApiKeyTx, CreateOrganizationTx,
-    DeleteWorkspaceRequest, DeleteWorkspaceResponse, EffectError, IdempotencyRecordKey,
-    ProvisionWorkspaceRequest, ProvisionWorkspaceResponse, RegionalControlPort,
+    ApplyAccountPauseRequest, ApplyAccountPauseResponse, AuthorizationReader as _,
+    BeginWorkspaceProvisionTx, CreateApiKeyTx, CreateOrganizationTx, DeleteWorkspaceRequest,
+    DeleteWorkspaceResponse, EffectError, IdempotencyRecordKey, ProvisionWorkspaceRequest,
+    ProvisionWorkspaceResponse, RegionalControlPort,
 };
 use aex_control_app::use_cases::{CreateApiKey, CreateOrganization, CreateWorkspace};
 use aex_control_aurora::{AuroraAuthorizationReader, AuroraControlStore};
@@ -106,6 +107,18 @@ impl RegionalControlPort for RecordingRegion {
         // pass without the region ever being asked.
         Err(EffectError::Rejected {
             code: "scenario_does_not_delete",
+            retryable: false,
+        })
+    }
+
+    async fn apply_account_pause(
+        &self,
+        _request: &ApplyAccountPauseRequest,
+    ) -> Result<ApplyAccountPauseResponse, EffectError> {
+        // No case here pauses an account. Rejecting the effect keeps a future
+        // control-path expansion visible instead of silently accepting it.
+        Err(EffectError::Rejected {
+            code: "scenario_does_not_pause",
             retryable: false,
         })
     }

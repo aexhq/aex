@@ -24,13 +24,14 @@ use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use aex_control_app::ports::{
-    AcceptInvitationsTx, AccountProjection, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
-    ClaimDueOperations, ClaimOutbox, CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore,
-    CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx, DeleteWorkspaceRequest,
-    DeleteWorkspaceResponse, EffectError, FinishWorkspaceProvisionTx, GcExpired, GcReport,
-    ListApiKeys, ListOperations, ListOrganizations, ListWorkspaces, MembershipView, OperationView,
-    OrganizationView, Page, PageRequest, ProvisionWorkspaceRequest, ProvisionWorkspaceResponse,
-    RegionalControlPort, RevokeApiKeyTx, StoreError, TxOutcome, UserIdentity, WorkspaceView,
+    AcceptInvitationsTx, AccountProjection, ApplyAccountPauseRequest, ApplyAccountPauseResponse,
+    BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx, ClaimDueOperations, ClaimOutbox,
+    CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore, CreateApiKeyTx,
+    CreateInvitationTx, CreateOrganizationTx, DeleteWorkspaceRequest, DeleteWorkspaceResponse,
+    EffectError, FinishWorkspaceProvisionTx, GcExpired, GcReport, ListApiKeys, ListOperations,
+    ListOrganizations, ListWorkspaces, MembershipView, OperationView, OrganizationView, Page,
+    PageRequest, ProvisionWorkspaceRequest, ProvisionWorkspaceResponse, RegionalControlPort,
+    RevokeApiKeyTx, StoreError, TxOutcome, UserIdentity, WorkspaceView,
 };
 use aex_control_domain::{
     AccountState, ApiKey, CursorSecret, Invitation, InvitationStatus, MAX_ACCEPTABLE_INVITATIONS,
@@ -491,6 +492,13 @@ impl RegionalControlPort for NoRegion {
         &self,
         _request: &DeleteWorkspaceRequest,
     ) -> Result<DeleteWorkspaceResponse, EffectError> {
+        unreachable!("acceptance never leaves the central plane")
+    }
+
+    async fn apply_account_pause(
+        &self,
+        _request: &ApplyAccountPauseRequest,
+    ) -> Result<ApplyAccountPauseResponse, EffectError> {
         unreachable!("acceptance never leaves the central plane")
     }
 }
