@@ -713,9 +713,8 @@ impl RegistryStore for RegistryDynamoStore {
     ) -> Result<SetCommitted, StoreError> {
         let pointer = &commit.commit.pointer;
         let mut plan = TransactionPlan::new(format!(
-            "rst-{}-{}",
-            pointer.row.kind.as_str(),
-            pointer.row.etag
+            "registry.set:{workspace}:{}:{}:{}",
+            commit.receipt.scope, commit.receipt.key_sha256, commit.receipt.intent
         ));
         let pointer_put = match commit.from_revision {
             None => expressions::create_pointer(&self.table, pointer)?,

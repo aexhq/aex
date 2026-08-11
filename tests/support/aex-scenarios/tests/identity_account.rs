@@ -322,7 +322,7 @@ async fn a_redeemed_grant_cannot_be_redeemed_a_second_time_into_a_second_token()
     let digest = parse(CredentialKind::DeviceCode, started.device_code.expose())
         .expect("the device code parses")
         .digest;
-    let first = PollDevice::run(
+    PollDevice::run(
         &world.deps(),
         &world.context("poll-1"),
         started.grant.id,
@@ -336,12 +336,20 @@ async fn a_redeemed_grant_cannot_be_redeemed_a_second_time_into_a_second_token()
         started.grant.id,
         PresentedDigest::from_bytes(*digest.as_bytes()),
     )
-    .await
-    .expect("the second redemption replays rather than minting again");
+    .await;
 
+    assert!(
+        matches!(second, Err(IdentityError::Unauthenticated)),
+        "a consumed one-time grant must not return another credential: {second:?}"
+    );
+    let mut connection = plane.superuser().await;
+    let tokens = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM identity.account_token")
+        .fetch_one(&mut connection)
+        .await
+        .expect("the account-token table is readable");
     assert_eq!(
-        second.record.token.id, first.record.token.id,
-        "a replayed redemption answers with the token the first one minted"
+        tokens, 1,
+        "a second redemption must not mint a second token"
     );
 }
 

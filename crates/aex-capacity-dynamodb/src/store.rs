@@ -312,8 +312,7 @@ fn authority_put(
         .build();
     let mut put = aws_sdk_dynamodb::types::Put::builder()
         .table_name(table)
-        .set_item(Some(item))
-        .expression_attribute_names("#pk", "pk");
+        .set_item(Some(item));
     if let Some(current) = current {
         put = put
             .condition_expression(REPLACE_CONDITION)
@@ -324,7 +323,9 @@ fn authority_put(
             .expression_attribute_values(":workspace_id", s(state.workspace_id.to_string()))
             .expression_attribute_values(":expected_revision", n(current.revision));
     } else {
-        put = put.condition_expression(CREATE_CONDITION);
+        put = put
+            .condition_expression(CREATE_CONDITION)
+            .expression_attribute_names("#pk", "pk");
     }
     Ok(put)
 }
@@ -509,6 +510,38 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_replacement_condition_declares_only_the_attribute_names_it_uses() {
+        let state = plan_capacity_change(
+            None,
+            &canonical_defaults().expect("defaults"),
+            &CapacityCommand::Bootstrap {
+                workspace_id: workspace(),
+            },
+            Timestamp::from_unix_millis(1).expect("timestamp"),
+        )
+        .expect("plan")
+        .state;
+        let action = super::authority_put("authority-table", Some(&state), &state)
+            .expect("put")
+            .build()
+            .expect("complete");
+        let condition = action
+            .condition_expression()
+            .expect("a replacement has a condition");
+
+        for name in action
+            .expression_attribute_names()
+            .expect("a replacement declares attribute names")
+            .keys()
+        {
+            assert!(
+                condition.contains(name),
+                "DynamoDB rejects the unused expression attribute name `{name}`"
+            );
+        }
     }
 
     #[test]

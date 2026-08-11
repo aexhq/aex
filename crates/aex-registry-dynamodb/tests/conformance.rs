@@ -9,8 +9,8 @@ use aex_session_dynamodb::paging::PageBudget;
 use aex_workspace_domain::upload::UploadState;
 
 use support::{
-    DEFINITION, TABLE, captured_body, capturing_client, created_commit, pointer, receipt_for,
-    replaced_commit, upload, upload_id, workspace,
+    DEFINITION, TABLE, captured_body, capturing_client, created_commit, name, pointer, receipt_for,
+    receipt_for_attempt, replaced_commit, upload, upload_id, workspace,
 };
 
 fn definition() -> serde_json::Value {
@@ -121,6 +121,59 @@ async fn a_first_write_of_a_name_is_one_transaction_conditional_on_its_absence()
         actions[2]["Put"]["ConditionExpression"].as_str(),
         Some("attribute_not_exists(pk)"),
         "the receipt is what a replay loses against"
+    );
+}
+
+#[tokio::test]
+async fn distinct_set_intents_have_distinct_transport_identities() {
+    let (first_client, first_receiver) = capturing_client();
+    let first_store = RegistryDynamoStore::new(first_client, TABLE);
+    let first = created_commit();
+    let first_receipt = receipt_for_attempt(
+        &first,
+        aex_workspace_domain::registry::SetOutcome::Created,
+        1,
+    );
+    let _ignored = first_store
+        .commit_set(
+            workspace(),
+            SetCommit {
+                commit: &first,
+                from_revision: None,
+                entries_cap: 1_000,
+                creates: true,
+                receipt: &first_receipt,
+            },
+        )
+        .await;
+    let first_body = captured_body(first_receiver);
+
+    let (second_client, second_receiver) = capturing_client();
+    let second_store = RegistryDynamoStore::new(second_client, TABLE);
+    let mut second = created_commit();
+    second.pointer.row.name = name("another-name");
+    let second_receipt = receipt_for_attempt(
+        &second,
+        aex_workspace_domain::registry::SetOutcome::Created,
+        2,
+    );
+    let _ignored = second_store
+        .commit_set(
+            workspace(),
+            SetCommit {
+                commit: &second,
+                from_revision: None,
+                entries_cap: 1_000,
+                creates: true,
+                receipt: &second_receipt,
+            },
+        )
+        .await;
+    let second_body = captured_body(second_receiver);
+
+    assert_ne!(
+        first_body["ClientRequestToken"], second_body["ClientRequestToken"],
+        "DynamoDB treats one token with different transaction parameters as an error"
     );
 }
 
