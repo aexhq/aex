@@ -88,11 +88,11 @@ fn invalid() -> StoreError {
 
 #[cfg(test)]
 mod tests {
-    use aex_session_app::plan::{Condition, SessionTransaction, TableFamily, TransactionIntent};
+    use aex_session_app::plan::{Condition, ConditionId};
     use aex_session_dynamodb::application_plan::{
-        FamilyCompilers, SessionBinding, compile_application_transaction,
+        AuthorityBinding, ExternalActionCompiler, LogicalAction,
     };
-    use aex_session_dynamodb::plan::{Participant, RegionalTables};
+    use aex_session_dynamodb::plan::{Participant, RegionalTables, TransactionPlan};
     use aex_wire::ids::{
         OrganizationId, PrefixedId as _, ProviderCredentialId, SessionId, Uuid7, WorkspaceId,
     };
@@ -107,47 +107,40 @@ mod tests {
         let organization = OrganizationId::from_uuid7(id(2));
         let session = SessionId::from_uuid7(id(3));
         let credential = ProviderCredentialId::from_uuid7(id(8));
-        let plan = SessionTransaction {
-            intent: TransactionIntent::AdmitMessage,
-            conditions: vec![Condition::ProviderCredentialReady {
-                workspace,
-                provider: ProviderId::Openai,
-                credential,
-                source_generation: 4,
-                revision: 9,
-            }],
-            writes: Vec::new(),
-            after_commit: Vec::new(),
+        let condition = Condition::ProviderCredentialReady {
+            workspace,
+            provider: ProviderId::Openai,
+            credential,
+            source_generation: 4,
+            revision: 9,
+        };
+        let action = LogicalAction {
+            target: condition.target(),
+            conditions: vec![(ConditionId(0), &condition)],
+            write: None,
         };
         let custody = ProviderCredentialAdmissionCompiler;
-        let compilers = FamilyCompilers::new().with(TableFamily::SecretCustody, &custody);
-        let compiled = compile_application_transaction(
-            &RegionalTables::composed("dev", "eu-west-1"),
-            &plan,
-            SessionBinding {
-                workspace,
-                organization,
-                session,
-            },
-            &compilers,
-        )
-        .expect("the exact credential fence compiles");
+        let mut transaction = TransactionPlan::new("credential-admission-test");
+        custody
+            .compile_action(
+                &RegionalTables::composed("dev", "eu-west-1"),
+                AuthorityBinding {
+                    workspace,
+                    organization,
+                    session: Some(session),
+                },
+                &action,
+                &mut transaction,
+            )
+            .expect("the exact credential fence compiles");
         assert_eq!(
-            compiled.transaction.participants(),
+            transaction.participants(),
             [Participant::CUSTODY_PROVIDER_CREDENTIAL]
         );
-        let check = compiled.transaction.actions()[0]
+        let check = transaction.actions()[0]
             .condition_check()
             .expect("read-only guard");
-        assert!(
-            check
-                .condition_expression()
-                .is_some_and(|expression| expression.contains("sourceGeneration"))
-        );
-        assert!(
-            check
-                .condition_expression()
-                .is_some_and(|expression| expression.contains("#state = :ready"))
-        );
+        assert!(check.condition_expression().contains("sourceGeneration"));
+        assert!(check.condition_expression().contains("#state = :ready"));
     }
 }

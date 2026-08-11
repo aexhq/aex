@@ -83,7 +83,9 @@ aex-capacity-dynamodb = { path = "../../crates/aex-capacity-dynamodb" }
 aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }
 aex-registry-dynamodb = { path = "../../crates/aex-registry-dynamodb" }
 aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
-aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb" }
+# Session admission composes the provider-credential readiness condition into
+# the session transaction; other custody consumers do not link that bridge.
+aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb", features = ["session-admission"] }
 aex-work-dynamodb = { path = "../../crates/aex-work-dynamodb" }
 aex-observation-domain = { path = "../../crates/aex-observation-domain" }
 aex-observation-query = { path = "../../crates/aex-observation-query" }

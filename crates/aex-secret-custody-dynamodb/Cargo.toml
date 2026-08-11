@@ -35,6 +35,11 @@ security = "unit"
 integration = "integration"
 
 [features]
+# The provider-credential condition compiler used by session admission. The
+# default custody adapter stays independent of session-authority rows; only the
+# serving owner that composes cross-table session transactions enables this
+# bridge.
+session-admission = ["aex-session-dynamodb/session-authority"]
 # Engine-backed targets. The unit lane neither builds nor links any of it, so
 # the per-stream gate still runs on a machine with no container runtime.
 integration-engines = ["dep:tokio", "aex-test-harness/containers"]
@@ -51,8 +56,8 @@ aex-secret-domain = { path = "../aex-secret-domain" }
 # adapter projects metadata only and never exposes credential material.
 aex-session-app = { path = "../aex-session-app" }
 aex-wire = { path = "../aex-wire" }
-# The shared regional store machinery only. `default-features = false` keeps the
-# session-authority row codec and the projection reader out of the link graph.
+# The shared regional store machinery only. `session-admission` explicitly adds
+# the application-plan compiler's session-authority vocabulary for its owner.
 aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false }
 
 tokio = { workspace = true, optional = true }

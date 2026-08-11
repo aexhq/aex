@@ -20,6 +20,7 @@
 //! - custody policy (`aex-secret-domain`)
 
 pub mod app_custody;
+#[cfg(feature = "session-admission")]
 pub mod application_plan;
 pub mod codec;
 pub mod expressions;
@@ -27,6 +28,7 @@ pub mod keys;
 pub mod store;
 
 pub use app_custody::ProviderCredentialReads;
+#[cfg(feature = "session-admission")]
 pub use application_plan::ProviderCredentialAdmissionCompiler;
 pub use codec::{
     CallAuthorization, CredentialState, CustodyBinding, CustodyHead, ProviderCredential,
