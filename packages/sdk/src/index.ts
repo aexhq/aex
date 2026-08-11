@@ -34,6 +34,21 @@ export type { AexTransport, WireRequest, WireResponse } from "./transport/transp
 export { Page } from "./transport/pagination.js";
 export { Download, MAX_SINGLE_GET_BYTES, planDownloadRanges } from "./downloads/download.js";
 export type { DownloadGrant, DownloadRange } from "./downloads/download.js";
+export {
+  DEFAULT_LIVE_FILE_CONCURRENCY,
+  LIVE_FILE_PART_BYTES,
+  MAX_LIVE_FILE_BYTES,
+  MAX_LIVE_FILE_CONCURRENCY,
+  SessionFiles,
+} from "./session-files/session-files.js";
+export type {
+  DownloadLiveFileOptions,
+  LiveFileDownload,
+  LiveFilePart,
+  LiveFileUpload,
+  UploadLiveFileOptions,
+  WorkspaceAccess,
+} from "./session-files/session-files.js";
 export { parseNdjsonFrames } from "./observations/stream.js";
 export { ERROR_METADATA } from "./generated/errors.js";
 export type { ErrorClass } from "./generated/errors.js";

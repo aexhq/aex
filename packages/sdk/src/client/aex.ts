@@ -3,6 +3,7 @@ import { resolveCentralBaseUrl, resolveRegionalBaseUrl } from "./routing.js";
 import { FetchTransport, type AexTransport, type WireRequest } from "../transport/transport.js";
 import { CONTRACT_DIGEST, ROUTES, type RouteId } from "../generated/routes.js";
 import { GeneratedResources, type ExecuteOptions } from "../generated/resources.js";
+import { SessionFiles } from "../session-files/session-files.js";
 
 const SDK_VERSION = "0.50.1";
 
@@ -27,6 +28,8 @@ export interface AexOptions {
  */
 export class Aex extends GeneratedResources {
   readonly transport: AexTransport;
+  /** Bounded direct-to-MicroVM upload and exact-version download flows. */
+  readonly sessionFiles: SessionFiles = new SessionFiles(this);
   readonly #credential: ParsedCredential;
   readonly #signal: AbortSignal | undefined;
 
