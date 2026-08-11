@@ -290,7 +290,7 @@ impl SessionAuthorityExternal {
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
         let (participant, physical) = match action.target.family {
-            TableFamily::WorkAuthority => {
+            TableFamily::OperationAuthority => {
                 let operation = operation_of(action)?;
                 (
                     Participant::SESSION_OPERATION,
@@ -685,8 +685,11 @@ impl<S: HintSink> AuthorityCommitter for DynamoAuthorityCommitter<S> {
             organization: self.binding.organization,
             session,
         };
+        let operations = SessionAuthorityExternal::new(session_binding);
+        let families = crate::application_plan::FamilyCompilers::new()
+            .with(TableFamily::OperationAuthority, &operations);
         let compiled = self
-            .compile_with(plan, &SessionAuthorityExternal::new(session_binding))
+            .compile_with(plan, &families)
             .map_err(|error| store_to_commit(&error, plan))?;
 
         let request = compiled

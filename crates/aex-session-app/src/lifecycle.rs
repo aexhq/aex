@@ -6,9 +6,6 @@
 //! must observe the exact retained generation before it publishes a terminal
 //! operation result.
 
-use std::num::NonZeroU16;
-
-use aex_operation_domain::due::shard_of;
 use aex_operation_domain::{
     AdmissionOutcome, AdmitRequest, DedupIdentity, Operation, OperationKind, OperationScope,
     WorkId, WorkItem, WorkState, admit,
@@ -25,8 +22,9 @@ use crate::error::AppError;
 use crate::plan::{Condition, Hint, Planned, SessionTransaction, TransactionIntent, Write};
 use crate::ports::{AppContext, PortError};
 
-const WORK_SHARDS: NonZeroU16 = NonZeroU16::new(64).expect("the work shard count is positive");
-const LIFECYCLE_WORK_PRIORITY: u16 = 100;
+// `regional-work` has five bounded priority bands, zero highest. Customer
+// lifecycle control must outrank background cleanup and reconciliation.
+const LIFECYCLE_WORK_PRIORITY: u16 = 0;
 const LIFECYCLE_MAX_ATTEMPTS: u16 = 5;
 
 /// One caller-minted lifecycle operation.
@@ -187,7 +185,6 @@ fn plan_lifecycle_admission(
         id: work_id,
         operation: command.operation,
         kind: command.kind,
-        shard: shard_of(&work_id, WORK_SHARDS),
         due_at: now,
         priority: LIFECYCLE_WORK_PRIORITY,
         attempt: 0,
@@ -415,5 +412,18 @@ mod tests {
         assert_eq!(work.dedup.operation, command.operation);
         assert_eq!(work.dedup.step, 0);
         assert_eq!(work.state, WorkState::Runnable);
+        assert!(planned.plan.writes.iter().any(|write| {
+            matches!(write, Write::PutOperation(_))
+                && write.family() == crate::plan::TableFamily::OperationAuthority
+        }));
+        assert_eq!(
+            planned
+                .plan
+                .writes
+                .iter()
+                .find(|write| matches!(write, Write::PutWorkItem(_)))
+                .map(Write::family),
+            Some(crate::plan::TableFamily::WorkAuthority)
+        );
     }
 }

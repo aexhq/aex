@@ -47,15 +47,19 @@ integration-engines = ["aex-test-harness/containers"]
 async-trait.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-smithy-types.workspace = true
+hex.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
+aex-operation-domain = { path = "../aex-operation-domain" }
+aex-session-app = { path = "../aex-session-app" }
 aex-wire = { path = "../aex-wire" }
 # The shared regional store machinery only: key components, the typed row
 # reader, item measurement, the plan compiler, the error vocabulary and the
 # replay combinator. `default-features = false` keeps the session-authority row
 # codec and the projection reader out of this crate's link graph entirely.
-aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false }
+aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false, features = ["session-authority"] }
 
 [dev-dependencies]
 aws-config.workspace = true

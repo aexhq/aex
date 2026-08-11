@@ -1,0 +1,223 @@
+//! Compilation of application-owned runnable work into `regional-work`.
+//!
+//! This module is the only bridge from `aex-operation-domain::WorkItem` to the
+//! physical work row. The session transaction compiler delegates the whole
+//! logical item here, preserving the one-action-per-item invariant.
+
+use sha2::Digest as _;
+
+use aex_operation_domain::{OperationKind, OperationVersion, WorkItem, WorkState};
+use aex_session_app::plan::{Condition, Write};
+use aex_session_dynamodb::application_plan::{
+    AuthorityBinding, ExternalActionCompiler, LogicalAction,
+};
+use aex_session_dynamodb::error::StoreError;
+use aex_session_dynamodb::plan::{Participant, RegionalTables, TransactionPlan};
+
+use crate::codec::{DeliveryEvidence, Payload, WorkRecord};
+
+/// The production compiler for [`aex_session_app::plan::TableFamily::WorkAuthority`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WorkApplicationCompiler;
+
+impl ExternalActionCompiler for WorkApplicationCompiler {
+    fn compile_action(
+        &self,
+        tables: &RegionalTables,
+        binding: AuthorityBinding,
+        action: &LogicalAction<'_>,
+        output: &mut TransactionPlan,
+    ) -> Result<(), StoreError> {
+        let Some(Write::PutWorkItem(work)) = action.write else {
+            return Err(StoreError::Invalid {
+                detail: "the work-authority family carries runnable-work writes only".to_owned(),
+            });
+        };
+        if action.conditions.len() != 1
+            || !matches!(action.conditions[0].1, Condition::ItemAbsent(target) if *target == action.target)
+        {
+            return Err(StoreError::Invalid {
+                detail: "a new runnable-work row must carry its exact item-absent election"
+                    .to_owned(),
+            });
+        }
+        let record = record_of(binding, work)?;
+        output.put(
+            Participant::WORK_OPERATION_STEP,
+            crate::claim::enqueue(&tables.regional_work, &record)?,
+        )?;
+        Ok(())
+    }
+}
+
+fn record_of(binding: AuthorityBinding, work: &WorkItem) -> Result<WorkRecord, StoreError> {
+    let session = binding.session.ok_or_else(|| StoreError::Invalid {
+        detail: "operation work requires a session-scoped authenticated binding".to_owned(),
+    })?;
+    if work.state != WorkState::Runnable
+        || work.attempt != 0
+        || work.lease.is_some()
+        || work.cancel_requested
+        || work.dedup.operation != work.operation
+        || work.dedup.step != 0
+    {
+        return Err(StoreError::Invalid {
+            detail: "the application compiler admits only a fresh deterministic operation step"
+                .to_owned(),
+        });
+    }
+    if !matches!(
+        work.kind,
+        OperationKind::SessionCancel
+            | OperationKind::SessionSuspend
+            | OperationKind::SessionResume
+            | OperationKind::SessionTerminate
+            | OperationKind::SessionDelete
+    ) {
+        return Err(StoreError::Invalid {
+            detail: "the session API may enqueue only a public session lifecycle operation"
+                .to_owned(),
+        });
+    }
+    let priority = u8::try_from(work.priority).map_err(|_| StoreError::Invalid {
+        detail: "the work priority does not fit the regional-work priority band".to_owned(),
+    })?;
+    if usize::from(priority) >= crate::keys::PRIORITY_LEAD_SECONDS.len() {
+        return Err(StoreError::Invalid {
+            detail: "the work priority is outside the closed regional-work priority bands"
+                .to_owned(),
+        });
+    }
+    let suffix = work.id.0.encode_suffix();
+    let suffix = std::str::from_utf8(&suffix).map_err(|_| StoreError::Invalid {
+        detail: "the internal work UUID did not render as Crockford ASCII".to_owned(),
+    })?;
+    let work_id = format!("wrk_{suffix}");
+    let dedupe_key = dedupe_key(work);
+    Ok(WorkRecord {
+        work_id,
+        workspace: binding.workspace,
+        organization: binding.organization,
+        session: Some(session),
+        agent: None,
+        kind: "operation.step".to_owned(),
+        priority,
+        due_at: work.due_at,
+        state: "pending".to_owned(),
+        attempt: u64::from(work.attempt),
+        max_attempts: u64::from(work.max_attempts),
+        fence: 0,
+        claim_owner: None,
+        lease_expires_at: None,
+        dedupe_key,
+        payload: Payload::new()
+            .set("operationId", work.operation.to_string())
+            .set("sessionId", session.to_string())
+            .set("version", OperationVersion::FIRST.0.to_string()),
+        delivery: DeliveryEvidence::default(),
+        created_at: work.due_at,
+        updated_at: work.due_at,
+    })
+}
+
+fn dedupe_key(work: &WorkItem) -> String {
+    let mut hash = sha2::Sha256::new();
+    hash.update(b"aex.operation.step.v1\0");
+    hash.update(work.operation.to_string().as_bytes());
+    hash.update(b"\0");
+    hash.update(work.dedup.step.to_be_bytes());
+    hex::encode(hash.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use aex_operation_domain::{DedupIdentity, OperationKind, WorkId, WorkItem, WorkState};
+    use aex_session_app::plan::{Condition, Write};
+    use aex_session_dynamodb::application_plan::{
+        AuthorityBinding, ExternalActionCompiler, LogicalAction,
+    };
+    use aex_session_dynamodb::plan::{RegionalTables, TransactionPlan};
+    use aex_wire::ids::{
+        OperationId, OrganizationId, PrefixedId as _, SessionId, Uuid7, WorkspaceId,
+    };
+    use aex_wire::types::Timestamp;
+
+    use super::*;
+
+    fn id<T: aex_wire::ids::PrefixedId>(tag: u8) -> T {
+        T::from_uuid7(Uuid7::compose(1, [tag; 10]))
+    }
+
+    fn stamp() -> Timestamp {
+        Timestamp::from_unix_millis(10).expect("in range")
+    }
+
+    fn work() -> WorkItem {
+        let operation = id::<OperationId>(1);
+        let id = WorkId(operation.uuid7());
+        WorkItem {
+            id,
+            operation,
+            kind: OperationKind::SessionSuspend,
+            due_at: stamp(),
+            priority: 0,
+            attempt: 0,
+            max_attempts: 5,
+            lease: None,
+            state: WorkState::Runnable,
+            dedup: DedupIdentity { operation, step: 0 },
+            cancel_requested: false,
+        }
+    }
+
+    #[test]
+    fn a_fresh_operation_step_becomes_one_typed_immutable_work_row() {
+        let work = work();
+        let write = Write::PutWorkItem(Box::new(work));
+        let target = write.target();
+        let condition = Condition::ItemAbsent(target.clone());
+        let action = LogicalAction {
+            target,
+            conditions: vec![(aex_session_app::plan::ConditionId(0), &condition)],
+            write: Some(&write),
+        };
+        let binding = AuthorityBinding {
+            workspace: id::<WorkspaceId>(2),
+            organization: id::<OrganizationId>(3),
+            session: Some(id::<SessionId>(4)),
+        };
+        let tables = RegionalTables::composed("dev", "eu-west-1");
+        let mut output = TransactionPlan::new("work-compiler-test");
+        WorkApplicationCompiler
+            .compile_action(&tables, binding, &action, &mut output)
+            .expect("compiles");
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output.participants(),
+            &[aex_session_dynamodb::plan::Participant::WORK_OPERATION_STEP]
+        );
+    }
+
+    #[test]
+    fn a_non_elected_work_write_is_refused() {
+        let write = Write::PutWorkItem(Box::new(work()));
+        let target = write.target();
+        let action = LogicalAction {
+            target,
+            conditions: Vec::new(),
+            write: Some(&write),
+        };
+        let binding = AuthorityBinding {
+            workspace: id::<WorkspaceId>(2),
+            organization: id::<OrganizationId>(3),
+            session: Some(id::<SessionId>(4)),
+        };
+        let tables = RegionalTables::composed("dev", "eu-west-1");
+        let mut output = TransactionPlan::new("work-compiler-test");
+        assert!(
+            WorkApplicationCompiler
+                .compile_action(&tables, binding, &action, &mut output)
+                .is_err()
+        );
+    }
+}

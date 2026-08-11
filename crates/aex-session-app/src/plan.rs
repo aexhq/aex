@@ -97,7 +97,9 @@ pub struct ItemKey {
 pub enum TableFamily {
     /// The session authority.
     SessionAuthority,
-    /// The durable work and operation records.
+    /// Public asynchronous operation records stored with the session authority.
+    OperationAuthority,
+    /// Runnable regional work records.
     WorkAuthority,
     /// Content descriptors, pins and owner edges.
     ContentAuthority,
@@ -334,7 +336,7 @@ impl Condition {
             Self::RegistryEtag { .. } | Self::UploadState { .. } => TableFamily::Registry,
             Self::OperationFence { .. }
             | Self::OperationCursorAt { .. }
-            | Self::OperationVersion { .. } => TableFamily::WorkAuthority,
+            | Self::OperationVersion { .. } => TableFamily::OperationAuthority,
             Self::ContentOwned { .. } | Self::GrantUnexpired { .. } => {
                 TableFamily::ContentAuthority
             }
@@ -503,9 +505,10 @@ impl Write {
             | Self::CancelAgent { .. }
             | Self::PutTombstone(_) => TableFamily::SessionAuthority,
             Self::PutIdempotencyReceipt(_) => TableFamily::Idempotency,
-            Self::PutOperation(_) | Self::RedactOperationResult(_) | Self::PutWorkItem(_) => {
-                TableFamily::WorkAuthority
+            Self::PutOperation(_) | Self::RedactOperationResult(_) => {
+                TableFamily::OperationAuthority
             }
+            Self::PutWorkItem(_) => TableFamily::WorkAuthority,
             Self::PutOutboxEvent(_) => TableFamily::Outbox,
             Self::PutPin(_) | Self::DeletePin(_) | Self::PutGrant(_) => {
                 TableFamily::ContentAuthority

@@ -11,7 +11,6 @@ use aex_wire::types::Timestamp;
 use time::Duration;
 
 use crate::cursor::ContinuationCursor;
-use crate::due::DueShard;
 use crate::operation::{FailureClass, OperationFailure, OperationKind, OperationResult, Progress};
 
 /// The monotone ownership fence.
@@ -118,8 +117,6 @@ pub struct WorkItem {
     pub operation: OperationId,
     /// What that operation does.
     pub kind: OperationKind,
-    /// The due-scan shard it lives in.
-    pub shard: DueShard,
     /// When it becomes claimable.
     pub due_at: Timestamp,
     /// Scheduling priority; lower runs first.
@@ -459,7 +456,6 @@ mod tests {
         ClaimDenial, ClaimOutcome, DedupIdentity, Fence, FenceRejection, Lease, OwnerId,
         StepOutcome, WorkId, WorkItem, WorkState, claim, complete, renew,
     };
-    use crate::due::DueShard;
     use crate::operation::{FailureClass, OperationFailure, OperationKind, OperationResult};
 
     fn moment(millis: i64) -> Timestamp {
@@ -476,7 +472,6 @@ mod tests {
             id: WorkId(Uuid7::compose(1, [2; 10])),
             operation,
             kind: OperationKind::ContentGc,
-            shard: DueShard(0),
             due_at: moment(0),
             priority: 0,
             attempt: 0,

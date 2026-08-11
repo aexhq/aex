@@ -61,9 +61,11 @@ pub trait ExternalActionCompiler: Sync {
 /// makes the gap a named composition error instead.
 ///
 /// The session adapter owns `session-authority`, so it ships the compilers for
-/// the two families whose rows live there — [`TableFamily::Idempotency`] and
-/// [`TableFamily::Outbox`] — pre-registered. Every other family belongs to the
-/// adapter that owns its table and must be registered by the composition.
+/// the two binding-free families whose rows live there —
+/// [`TableFamily::Idempotency`] and [`TableFamily::Outbox`] — pre-registered.
+/// [`TableFamily::OperationAuthority`] also lives in that table, but its
+/// compiler is session-bound and must be registered by the composition. Every
+/// other family belongs to the adapter that owns its table.
 pub struct FamilyCompilers<'a> {
     owners: BTreeMap<TableFamily, &'a dyn ExternalActionCompiler>,
 }

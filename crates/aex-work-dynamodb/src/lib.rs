@@ -24,10 +24,13 @@
 //! - the queue, the pipe or the stream consumer (`regional-stream`, the workers)
 //! - session, content, secret or runtime rows
 
+pub mod application_plan;
 pub mod claim;
 pub mod codec;
 pub mod keys;
 pub mod store;
+
+pub use application_plan::WorkApplicationCompiler;
 
 pub use claim::WorkClaim;
 pub use codec::{Payload, PayloadError, WorkRecord};

@@ -100,6 +100,8 @@ impl Participant {
     pub const WORK_ROOT_WAKE: Self = Self::new("work.root_wake");
     /// An agent's next wake.
     pub const WORK_NEXT_WAKE: Self = Self::new("work.next_wake");
+    /// A public session lifecycle operation's first runnable step.
+    pub const WORK_OPERATION_STEP: Self = Self::new("work.operation_step");
     /// The durable "one wake outstanding" claim.
     pub const WORK_DEDUPE: Self = Self::new("work.dedupe");
     /// The wake being retired by a fenced commit.

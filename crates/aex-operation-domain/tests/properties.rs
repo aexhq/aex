@@ -61,7 +61,6 @@ fn runnable_item(max_attempts: u16) -> WorkItem {
         id: work(2),
         operation: operation_id(1),
         kind: OperationKind::ContentGc,
-        shard: shard_of(&work(2), NonZeroU16::new(64).expect("non-zero")),
         due_at: moment(0),
         priority: 0,
         attempt: 0,
