@@ -376,7 +376,14 @@ pub enum BundleError {
 
 #[cfg(test)]
 mod tests {
-    use super::{PHASES, parse_header};
+    use super::{MigrationBundle, PHASES, parse_header};
+
+    #[test]
+    fn every_embedded_migration_byte_matches_the_reviewed_bundle_lock() {
+        let bundle = MigrationBundle::embedded()
+            .expect("every SQLx migration byte matches its reviewed lock identity");
+        assert_eq!(bundle.head(), 20_260_801_001_400);
+    }
 
     #[test]
     fn the_header_carries_three_unordered_fields_and_no_identity() {
