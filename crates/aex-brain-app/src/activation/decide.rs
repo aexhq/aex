@@ -454,6 +454,11 @@ pub fn settle_root_tool_call(
 }
 
 /// Appends a root Bash result after the caller has written its effect settlement.
+///
+/// # Panics
+///
+/// Panics if the closed [`ToolResultPart`] vocabulary cannot be serialized to an
+/// in-memory JSON buffer.
 #[allow(
     clippy::too_many_arguments,
     reason = "the arguments are the closed ToolResult journal shape plus its root-run binding"
@@ -472,29 +477,29 @@ pub fn append_root_tool_result(
     let public_call = public_tool_call_id(run, &call);
     let result_bytes = serde_json::to_vec(&content)
         .expect("the closed canonical tool-result vocabulary always serializes");
-    draft.append(JournalRecord::ToolResult {
-        public_message: Some(public_message),
-        call,
-        content: content.clone(),
-        is_error,
-        executed_on,
-        duration_ms,
-        effect,
-    });
     let mut parts = content
         .iter()
-        .filter_map(|part| match part {
-            ToolResultPart::Text { text } => Some(PublicMessagePart::Text {
+        .map(|part| match part {
+            ToolResultPart::Text { text } => PublicMessagePart::Text {
                 text: text.as_str().to_owned(),
-            }),
-            ToolResultPart::Json { value } => Some(PublicMessagePart::Text {
+            },
+            ToolResultPart::Json { value } => PublicMessagePart::Text {
                 text: value.as_str().to_owned(),
-            }),
+            },
         })
         .collect::<Vec<_>>();
     parts.push(PublicMessagePart::ToolResult {
         id: public_call,
         result: WireContentHash::of(&result_bytes),
+    });
+    draft.append(JournalRecord::ToolResult {
+        public_message: Some(public_message),
+        call,
+        content,
+        is_error,
+        executed_on,
+        duration_ms,
+        effect,
     });
     draft.messages.push(PublicMessageAppend {
         id: public_message,
