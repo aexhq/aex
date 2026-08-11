@@ -117,6 +117,19 @@ pub struct RootStarted {
     pub occurred_at: Timestamp,
 }
 
+/// Strongly verified physical sequence-zero readiness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DurableRootStarted {
+    /// Control revision after the initial append.
+    pub revision: u64,
+    /// Exact immutable journal position, always zero for root creation.
+    pub journal_tail: u64,
+    /// BLAKE3 identity of the canonical `AgentStarted` body.
+    pub journal_tail_hash: [u8; 32],
+    /// Timestamp stored on the immutable journal record.
+    pub occurred_at: Timestamp,
+}
+
 /// Why create preparation cannot be persisted or published.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CreatePreparationError {
@@ -651,6 +664,66 @@ impl CreatePreparationStore {
         decode_elected_preparation(&header, &files, workspace, intent).map(Some)
     }
 
+    /// Commits and strongly verifies the elected root `AgentStarted` record.
+    ///
+    /// A conditional loss or ambiguous result is never retried blindly. The
+    /// exact control and sequence-zero journal rows are read and accepted only
+    /// when they prove the elected record already committed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CreatePreparationError`] when the append fails, remains
+    /// unresolved, or the durable rows disagree with the election.
+    pub async fn commit_root_started(
+        &self,
+        prepared: &CreatePreparation,
+        started: RootStarted,
+    ) -> Result<DurableRootStarted, CreatePreparationError> {
+        let plan = root_started_plan(&self.table, prepared, &started)?;
+        match self.commit(&plan).await {
+            Ok(()) => self.load_root_started(prepared).await,
+            Err(StoreError::PreconditionFailed { .. })
+            | Err(StoreError::CommitAmbiguous { .. })
+            | Err(StoreError::Contended) => self.load_root_started(prepared).await,
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Strongly reads the exact control and initial journal rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CreatePreparationError`] when either row is absent or does
+    /// not prove the elected `AgentStarted` transition.
+    pub async fn load_root_started(
+        &self,
+        prepared: &CreatePreparation,
+    ) -> Result<DurableRootStarted, CreatePreparationError> {
+        let control_key = crate::keys::agent_control(prepared.session, prepared.root_agent);
+        let journal_key = crate::keys::journal(prepared.session, prepared.root_agent, 0);
+        let (control, journal) = futures::try_join!(
+            self.get(&control_key.pk, &control_key.sk),
+            self.get(&journal_key.pk, &journal_key.sk),
+        )?;
+        let control = control.ok_or_else(|| corrupt("the elected root control is absent"))?;
+        let journal = journal.ok_or_else(|| corrupt("the root AgentStarted row is absent"))?;
+        decode_root_started(&control, &journal, prepared)
+    }
+
+    async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, StoreError> {
+        Ok(self
+            .client
+            .get_item()
+            .table_name(&self.table)
+            .key(crate::attr::PK, s(pk))
+            .key(crate::attr::SK, s(sk))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?
+            .item)
+    }
+
     async fn commit(&self, plan: &TransactionPlan) -> Result<(), StoreError> {
         let request = plan.compile(&self.client)?;
         match request.send().await {
@@ -667,6 +740,85 @@ impl CreatePreparationStore {
             }
         }
     }
+}
+
+/// Verifies the exact post-append control and journal pair.
+///
+/// # Errors
+///
+/// Returns [`CreatePreparationError`] for any binding, state, position, body,
+/// or digest disagreement.
+pub fn decode_root_started(
+    control: &Item,
+    journal: &Item,
+    prepared: &CreatePreparation,
+) -> Result<DurableRootStarted, CreatePreparationError> {
+    let summary = prepared.validate()?;
+    let control = Row::bind(control, AGENT_CONTROL).map_err(StoreError::from)?;
+    let expected_hash = summary.root_entry_id.to_hex();
+    if control
+        .id::<WorkspaceId>("workspaceId")
+        .map_err(StoreError::from)?
+        != prepared.workspace
+        || control
+            .id::<SessionId>("sessionId")
+            .map_err(StoreError::from)?
+            != prepared.session
+        || control.id::<AgentId>("agentId").map_err(StoreError::from)? != prepared.root_agent
+        || control
+            .id::<GenerationId>("generationId")
+            .map_err(StoreError::from)?
+            != prepared.generation
+        || control.string("status").map_err(StoreError::from)? != "idle"
+        || !control.boolean("hasJournal").map_err(StoreError::from)?
+        || control.u64("journalTail").map_err(StoreError::from)? != 0
+        || control
+            .string("journalTailHash")
+            .map_err(StoreError::from)?
+            != expected_hash
+        || control
+            .string("createSelectionDigest")
+            .map_err(StoreError::from)?
+            != summary.selection_digest.to_wire()
+        || control
+            .string("createCoordinator")
+            .map_err(StoreError::from)?
+            != prepared.coordinator.to_string()
+    {
+        return Err(corrupt(
+            "the root control does not prove the elected sequence-zero append",
+        ));
+    }
+    let revision = control.u64("revision").map_err(StoreError::from)?;
+    if revision != 1 {
+        return Err(corrupt(format!(
+            "the initial root control revision is {revision}, not one"
+        )));
+    }
+
+    let journal = Row::bind(journal, JOURNAL_ENTRY).map_err(StoreError::from)?;
+    let canonical = prepared
+        .root_record
+        .canonical_bytes()
+        .map_err(|error| CreatePreparationError::Canonical(error.to_string()))?;
+    if journal.u64("seq").map_err(StoreError::from)? != 0
+        || journal.string("entryId").map_err(StoreError::from)? != expected_hash
+        || journal.string("kind").map_err(StoreError::from)? != "agent_started"
+        || journal.bytes("bodyInline").map_err(StoreError::from)? != canonical.as_slice()
+        || journal.u64("bodyBytes").map_err(StoreError::from)?
+            != u64::try_from(canonical.len())
+                .map_err(|error| corrupt(format!("root body length does not fit u64: {error}")))?
+    {
+        return Err(corrupt(
+            "the immutable sequence-zero journal row disagrees with the elected root record",
+        ));
+    }
+    Ok(DurableRootStarted {
+        revision,
+        journal_tail: 0,
+        journal_tail_hash: summary.root_entry_id.0,
+        occurred_at: journal.timestamp("occurredAt").map_err(StoreError::from)?,
+    })
 }
 
 /// Decodes a strongly read elected header and its exact ordered selection rows.

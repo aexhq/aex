@@ -6,7 +6,8 @@ use aex_brain_domain::journal::JournalRecord;
 use aex_brain_domain::wire_pending::{AgentLimits, ResolvedAgentConfig, SessionCredentialPin};
 use aex_session_dynamodb::create_preparation::{
     CreatePreparation, CreatePreparationError, PreparedFile, RootStarted, STARTUP_FILE_MAX_BYTES,
-    STARTUP_FILE_MAX_COUNT, decode_elected_preparation, elect_plan, root_started_plan, stage_plans,
+    STARTUP_FILE_MAX_COUNT, decode_elected_preparation, decode_root_started, elect_plan,
+    root_started_plan, stage_plans,
 };
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{
@@ -241,4 +242,44 @@ fn sequence_zero_agent_started_is_durable_readiness_not_an_absent_journal() {
             .map(String::as_str),
         Some("agent_started")
     );
+}
+
+#[test]
+fn the_post_append_control_and_journal_pair_proves_root_readiness() {
+    let prepared = preparation(vec![file(0, 8)]);
+    let summary = prepared.validate().expect("valid");
+    let election = elect_plan("dev-session-authority", &prepared).expect("election plan");
+    let mut control = election.actions()[1]
+        .put()
+        .expect("root control")
+        .item()
+        .clone();
+    control.insert("revision".to_owned(), aex_session_dynamodb::attr::n(1));
+    control.insert("journalTail".to_owned(), aex_session_dynamodb::attr::n(0));
+    control.insert(
+        "journalTailHash".to_owned(),
+        aex_session_dynamodb::attr::s(summary.root_entry_id.to_hex()),
+    );
+    control.insert(
+        "hasJournal".to_owned(),
+        aex_session_dynamodb::attr::boolean(true),
+    );
+    control.insert("status".to_owned(), aex_session_dynamodb::attr::s("idle"));
+    let root =
+        root_started_plan("dev-session-authority", &prepared, &started()).expect("root-start plan");
+    let journal = root.actions()[1].put().expect("initial journal").item();
+    let evidence =
+        decode_root_started(&control, journal, &prepared).expect("the exact pair proves readiness");
+    assert_eq!(evidence.revision, 1);
+    assert_eq!(evidence.journal_tail, 0);
+    assert_eq!(evidence.journal_tail_hash, summary.root_entry_id.0);
+
+    control.insert(
+        "generationId".to_owned(),
+        aex_session_dynamodb::attr::s(GenerationId::from_uuid7(uuid(99)).to_string()),
+    );
+    assert!(matches!(
+        decode_root_started(&control, journal, &prepared),
+        Err(CreatePreparationError::Corrupt { .. })
+    ));
 }
