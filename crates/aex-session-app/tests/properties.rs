@@ -567,3 +567,31 @@ async fn a_closed_admission_yields_no_plan_at_all() {
     assert!(outcome.is_err(), "a closed admission must not plan");
     assert!(!ports.recorded_a_write());
 }
+
+// ---------------------------------------------------------------------------
+// 39 — replay lookup precedes mutable admission dependencies
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_fresh_paused_request_checks_replay_before_the_pause_gate() {
+    let ports = ScriptedPorts::idle().paused();
+    let clock = clock();
+    let ids = CountingIds::default();
+    let context = ports.context(&clock, &ids);
+
+    let outcome = admit_message(&context, &send_message()).await;
+    let error = outcome.expect_err("a paused account must be denied");
+    assert_eq!(error.code(), ErrorCode::AccountPaused);
+
+    let calls = ports.calls();
+    let receipt = calls
+        .iter()
+        .position(|call| matches!(call, PortCall::Read("load_receipt")))
+        .expect("checks replay");
+    let account = calls
+        .iter()
+        .position(|call| matches!(call, PortCall::Read("projection")))
+        .expect("checks account admission");
+    assert!(receipt < account, "the strong receipt lookup runs first");
+    assert!(!ports.recorded_a_write());
+}

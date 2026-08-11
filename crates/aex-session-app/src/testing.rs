@@ -593,7 +593,6 @@ impl AccountStateReader for ScriptedPorts {
 }
 
 #[async_trait::async_trait]
-#[async_trait::async_trait]
 impl LiveWorkspaceReader for ScriptedPorts {
     async fn list(
         &self,

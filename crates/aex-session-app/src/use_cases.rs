@@ -620,17 +620,6 @@ pub async fn commit_terminal(
     })
 }
 
-/// The largest number of agent rows one stop step examines.
-///
-/// Derived from the transaction budget rather than chosen (D-4): a step also
-/// writes the operation row and the session head, so its agent batch may never
-/// exceed `MAX_ACTIONS - 2`. The landed use case read a flat 100 and could
-/// therefore build a 101-action plan that `validate` rejected as an internal
-/// fault.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "`MAX_ACTIONS` is `DynamoDB`'s hard ceiling of 100 and the static assertion below               refuses any value a `u16` could not hold"
-)]
 /// The statuses a read command accepts. Present so a condition table can name
 /// one value instead of building a set inline at each call site.
 #[must_use]

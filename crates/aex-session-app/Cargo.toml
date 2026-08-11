@@ -1,7 +1,7 @@
 [package]
 name = "aex-session-app"
 version = "0.1.0"
-description = "`aex-session-app` owns session admission and continuation use cases: transactional admission, trash/restore/purge coordination and the authority ports."
+description = "`aex-session-app` owns transactional session admission, settlement, live reads, and the authority ports."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -26,7 +26,6 @@ scenarios = []
 [package.metadata.aex.targets]
 properties = "unit"
 faults = "unit"
-continuations = "unit"
 live_files = "unit"
 create = "unit"
 
