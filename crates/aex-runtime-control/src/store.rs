@@ -215,23 +215,46 @@ pub struct GenerationCommit {
 }
 
 /// One conditional increment of the authoritative open-operation count.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperationAdmissionPlan {
     /// The exact generation admitting work.
     pub generation: GenerationId,
     /// The deterministic operation identity. Admission is idempotent on this
     /// value, not merely on a head revision.
     pub operation: aex_hands_protocol::rpc::HandsOperationId,
-    /// The lifecycle fence presented by Brain.
-    pub fence: Fence,
+    /// The lifecycle state the caller observed.
+    pub expected_state: GenerationState,
+    /// The lifecycle fence presented by the caller.
+    pub expected_fence: Fence,
     /// The head revision Brain read.
     pub expected_revision: Revision,
     /// The count after admission.
     pub open_operations: u32,
     /// The revision after admission.
     pub next_revision: Revision,
+    /// The lifecycle state to land with admission.
+    pub next_state: GenerationState,
+    /// The lifecycle fence to land with admission.
+    pub next_fence: Fence,
+    /// Native-resume evidence to record in the same transaction. Absent for an
+    /// ordinary already-running admission.
+    pub native_resume: Option<NativeResumeAdmissionPlan>,
     /// The authoritative busy instant.
     pub last_busy_at: Timestamp,
+}
+
+/// Evidence recorded atomically when authenticated endpoint traffic is elected
+/// to wake one provider-suspended generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeResumeAdmissionPlan {
+    /// Deterministic lifecycle evidence identity.
+    pub intent_id: LifecycleIntentId,
+    /// The exact provider MicroVM the native policy will wake.
+    pub microvm: MicrovmId,
+    /// The start of provider-native suspended residence. For a lazily observed
+    /// suspension this is derived from the last authoritative guest traffic and
+    /// the immutable 180-second provider idle threshold.
+    pub suspended_at: Timestamp,
 }
 
 /// One conditional decrement of the authoritative open-operation count.

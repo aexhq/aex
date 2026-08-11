@@ -177,7 +177,7 @@ pub fn await_step(
 ) -> AwaitVerdict {
     let mapped = observed.map_onto(recorded);
     match action {
-        LifecycleAction::Launch | LifecycleAction::Resume => {
+        LifecycleAction::Launch | LifecycleAction::Resume | LifecycleAction::NativeResume => {
             let budget = if action == LifecycleAction::Launch {
                 LAUNCH_AWAIT_MS
             } else {
@@ -226,7 +226,9 @@ pub const fn poll_interval_ms(action: LifecycleAction) -> u64 {
     match action {
         LifecycleAction::Launch => LAUNCH_POLL_MS,
         LifecycleAction::Suspend => SUSPEND_POLL_MS,
-        LifecycleAction::Resume | LifecycleAction::Terminate => RESUME_POLL_MS,
+        LifecycleAction::Resume | LifecycleAction::NativeResume | LifecycleAction::Terminate => {
+            RESUME_POLL_MS
+        }
     }
 }
 

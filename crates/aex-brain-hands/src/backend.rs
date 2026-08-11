@@ -38,6 +38,7 @@ use aex_internal_contracts::SchemaVersion;
 use aex_runtime_control::generation::{
     AdmissionRefused, GenerationState, HandsGeneration, ImageCapability, next_fence,
 };
+use aex_runtime_control::idle::TRUE_IDLE_THRESHOLD_MS;
 use aex_runtime_control::lifecycle::{
     IntentState, LifecycleAction, LifecycleIntentId, MicrovmId, ProviderCall, ProviderState,
     client_token,
@@ -49,7 +50,7 @@ use aex_runtime_control::store::{
     RuntimeStoreError,
 };
 use aex_runtime_control_aws::{
-    AWAIT_BUDGET_MS, CommandOutcome, RuntimeCommand, RuntimeControl, Settled, intent_id,
+    AWAIT_BUDGET_MS, CommandOutcome, RuntimeControl, Settled, intent_id,
 };
 use aex_wire::ids::{ContentHash, GenerationId, PrefixedId as _, SessionId, Uuid7};
 use aex_wire::types::Timestamp;
@@ -58,7 +59,7 @@ use tokio::sync::Mutex;
 use crate::lease::{EndpointLeaseCache, GuestObservation, LeaseHandle, LeaseIdentity};
 use crate::{
     AuthenticatedGuestEndpoint, GuestReply, HttpGuestTransport, MAX_FRAME_BYTES,
-    MAX_RESULT_BODY_BYTES, ResultAssembly, admit, launch_backoff_ms, settle,
+    MAX_RESULT_BODY_BYTES, ResultAssembly, admit, admit_native_resume, launch_backoff_ms, settle,
 };
 
 mod attached;
@@ -71,6 +72,12 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 const RESULT_CHUNK_BYTES: u64 = 180_000;
 const RESULT_PULL_ATTEMPTS: usize = 32;
 const ENDPOINT_LEASE_CACHE_CAPACITY: usize = 128;
+
+struct ActivityAdmission {
+    view: GenerationView,
+    endpoint: LeaseHandle<AuthenticatedGuestEndpoint>,
+    native_resume: bool,
+}
 
 /// The first poll interval after a start or for a young operation.
 const POLL_FLOOR_MS: u64 = 250;
@@ -191,32 +198,31 @@ impl ProductionHandsBackend {
         Ok(())
     }
 
-    async fn materialize(
+    async fn prepare_generation(
         &self,
         session: SessionId,
         generation: GenerationId,
-    ) -> Result<(GenerationView, LeaseHandle<AuthenticatedGuestEndpoint>), HandsError> {
+    ) -> Result<GenerationView, HandsError> {
         let flight = self.flight(generation).await;
         let _guard = flight.lock().await;
         for attempt in 0..MATERIALIZE_ATTEMPTS {
             let view = self.load_view(generation, ReadConsistency::Strong).await?;
             Self::require_view(&view, session, generation)?;
             match view.head.state {
-                GenerationState::Running | GenerationState::LifetimeDraining => {
-                    let lease = self.connect(&view).await?;
-                    return Ok((view, lease));
-                }
+                GenerationState::Running
+                | GenerationState::Suspended
+                | GenerationState::LifetimeDraining => return Ok(view),
                 GenerationState::Requested => {
                     // A completed launch hands back the running description and
                     // an endpoint token, so the lease is built without another
                     // provider probe. `None` means another writer holds the
                     // launch; loop and observe it.
                     if let Some((description, token)) = self.launch(&view).await?
-                        && let Some(connected) = self
+                        && let Some((ready, _)) = self
                             .lease_from_launch(session, generation, description, token)
                             .await?
                     {
-                        return Ok(connected);
+                        return Ok(ready);
                     }
                 }
                 GenerationState::Launching | GenerationState::Unknown
@@ -226,20 +232,25 @@ impl ProductionHandsBackend {
                         .is_some_and(|intent| intent.action == LifecycleAction::Launch) =>
                 {
                     let (description, token) = self.recover_launch(&view).await?;
-                    if let Some(connected) = self
+                    if let Some((ready, _)) = self
                         .lease_from_launch(session, generation, description, token)
                         .await?
                     {
-                        return Ok(connected);
+                        return Ok(ready);
                     }
+                }
+                GenerationState::Resuming
+                    if view
+                        .open_intent
+                        .as_ref()
+                        .is_some_and(|intent| intent.action == LifecycleAction::NativeResume) =>
+                {
+                    self.reconcile_native_resume(&view).await?;
                 }
                 GenerationState::Launching
                 | GenerationState::Resuming
                 | GenerationState::Suspending => {
                     tokio::time::sleep(Duration::from_millis(launch_backoff_ms(attempt))).await;
-                }
-                GenerationState::Suspended => {
-                    self.resume(&view).await?;
                 }
                 GenerationState::Terminating
                 | GenerationState::Terminated
@@ -259,6 +270,22 @@ impl ProductionHandsBackend {
             ProviderFailureKind::Timeout,
             "the generation did not become reachable within the bounded materialization wait",
         ))
+    }
+
+    async fn materialize(
+        &self,
+        session: SessionId,
+        generation: GenerationId,
+    ) -> Result<(GenerationView, LeaseHandle<AuthenticatedGuestEndpoint>), HandsError> {
+        let view = self.prepare_generation(session, generation).await?;
+        if view.head.state != GenerationState::Running {
+            return Err(pre_dispatch(
+                ProviderFailureKind::InvalidRequest,
+                "a suspended generation requires a durable activity identity before native resume",
+            ));
+        }
+        let endpoint = self.connect(&view).await?;
+        Ok((view, endpoint))
     }
 
     async fn launch(
@@ -542,43 +569,74 @@ impl ProductionHandsBackend {
             .map_err(possibly_sent_store)
     }
 
-    async fn resume(&self, view: &GenerationView) -> Result<(), HandsError> {
+    async fn reconcile_native_resume(&self, view: &GenerationView) -> Result<(), HandsError> {
+        let microvm = view.microvm.as_ref().ok_or_else(|| {
+            dispatched(
+                ProviderFailureKind::ProtocolViolation,
+                "a native-resuming generation has no provider identity",
+            )
+        })?;
+        let description = self
+            .provider
+            .get(microvm)
+            .await
+            .map_err(|call| provider_error(&call, view.head.generation, false))?;
+        if description.microvm != *microvm {
+            return Err(dispatched(
+                ProviderFailureKind::ProtocolViolation,
+                "native resume observation answered for a different MicroVM",
+            ));
+        }
         match self
             .runtime
-            .handle_command(
-                RuntimeCommand::LiveWorkspaceWake {
-                    session: view.session,
-                    generation: view.head.generation,
-                },
-                now()?,
-            )
+            .observe_native_resume(view, description.state, now()?)
             .await
         {
-            CommandOutcome::Settled(Settled::Resumed | Settled::Raced | Settled::Held { .. }) => {
-                Ok(())
+            CommandOutcome::Settled(Settled::Resumed | Settled::Raced) => Ok(()),
+            CommandOutcome::Settled(Settled::Lost | Settled::AlreadyTerminal { .. }) => {
+                Err(HandsError::GenerationLost {
+                    generation: view.head.generation,
+                })
             }
-            CommandOutcome::Settled(
-                Settled::Lost
-                | Settled::NoGeneration
-                | Settled::Superseded { .. }
-                | Settled::AlreadyTerminal { .. }
-                | Settled::ResumeRefused { .. },
-            ) => Err(HandsError::GenerationLost {
-                generation: view.head.generation,
-            }),
-            CommandOutcome::Settled(Settled::Reconciling) => Err(dispatched(
-                ProviderFailureKind::Transport,
-                "the resume outcome is under durable reconciliation",
-            )),
             CommandOutcome::Retry { .. } => Err(pre_dispatch(
                 ProviderFailureKind::ServerError,
-                "runtime control could not resume the generation",
+                "native resume observation lost its bounded authority race",
             )),
             CommandOutcome::Poison { .. } => Err(pre_dispatch(
                 ProviderFailureKind::ProtocolViolation,
-                "runtime control rejected the generation state",
+                "runtime control rejected native resume evidence",
             )),
-            CommandOutcome::Settled(_) => Ok(()),
+            CommandOutcome::Settled(_) => Err(dispatched(
+                ProviderFailureKind::ProtocolViolation,
+                "runtime control returned an incoherent native resume outcome",
+            )),
+        }
+    }
+
+    async fn settle_native_activity(&self, view: &GenerationView) -> Result<(), HandsError> {
+        match self
+            .runtime
+            .observe_native_resume(view, ProviderState::Running, now()?)
+            .await
+        {
+            CommandOutcome::Settled(Settled::Resumed | Settled::Raced) => Ok(()),
+            CommandOutcome::Settled(Settled::Lost | Settled::AlreadyTerminal { .. }) => {
+                Err(HandsError::GenerationLost {
+                    generation: view.head.generation,
+                })
+            }
+            CommandOutcome::Retry { .. } => Err(dispatched(
+                ProviderFailureKind::ServerError,
+                "native resume usage settlement lost its bounded authority race",
+            )),
+            CommandOutcome::Poison { .. } => Err(dispatched(
+                ProviderFailureKind::ProtocolViolation,
+                "native resume response could not settle its durable evidence",
+            )),
+            CommandOutcome::Settled(_) => Err(dispatched(
+                ProviderFailureKind::ProtocolViolation,
+                "native resume response produced an incoherent settlement",
+            )),
         }
     }
 
@@ -742,25 +800,160 @@ impl ProductionHandsBackend {
         }
     }
 
+    /// Executes one bounded exact-generation guest activity under the shared
+    /// native-resume authority used by live-file HTTP calls.
+    ///
+    /// The caller supplies the one [`HandsOperationId`] allocated for the HTTP
+    /// action. Admission is durable before the guest effect; a provider-suspended
+    /// generation is resumed only by this endpoint traffic; and a successful
+    /// authenticated response closes both the native lifecycle receipt/usage and
+    /// the activity marker before the response is exposed.
+    pub(crate) async fn call_native_activity<Request, Response>(
+        &self,
+        session: SessionId,
+        generation: GenerationId,
+        activity: HandsOperationId,
+        verb: Verb,
+        request: &Request,
+        timeout: Duration,
+    ) -> Result<(GuestReply<Response>, bool), HandsError>
+    where
+        Request: serde::Serialize + ?Sized,
+        Response: serde::de::DeserializeOwned,
+    {
+        let prepared = self.prepare_generation(session, generation).await?;
+        let admitted = self.admit_operation(generation, activity, prepared).await?;
+        let reply = match self
+            .call_guest(&admitted.endpoint, verb, request, timeout)
+            .await
+        {
+            Ok(reply) => reply,
+            Err(
+                error @ HandsError::Transport {
+                    proof: DispatchProof::NotSent,
+                    ..
+                },
+            ) => {
+                self.settle_operation(generation, activity).await?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
+        self.observe_guest(&admitted.endpoint, &reply).await?;
+        if admitted.native_resume {
+            self.settle_native_activity(&admitted.view).await?;
+        }
+        self.settle_operation(generation, activity).await?;
+        Ok((reply, admitted.native_resume))
+    }
+
     async fn endpoint_for(
         &self,
         generation: GenerationId,
-    ) -> Result<(GenerationView, LeaseHandle<AuthenticatedGuestEndpoint>), HandsError> {
-        // Every status, cancel and result call lands here, so the read is
-        // eventually consistent: the guest's generation and fence check
-        // rejects anything a stale head could mis-route.
-        let view = self
-            .load_view(generation, ReadConsistency::Eventual)
-            .await?;
-        if !matches!(
-            view.head.state,
-            GenerationState::Running | GenerationState::LifetimeDraining
-        ) {
-            self.leases.lock().await.invalidate(generation);
-            return Err(HandsError::GenerationLost { generation });
+        operation: HandsOperationId,
+    ) -> Result<ActivityAdmission, HandsError> {
+        let first = self.load_view(generation, ReadConsistency::Strong).await?;
+        let prepared = self.prepare_generation(first.session, generation).await?;
+        if prepared.head.state == GenerationState::LifetimeDraining {
+            let endpoint = self.connect(&prepared).await?;
+            return Ok(ActivityAdmission {
+                view: prepared,
+                endpoint,
+                native_resume: false,
+            });
         }
-        let endpoint = self.connect(&view).await?;
-        Ok((view, endpoint))
+        self.admit_operation(generation, operation, prepared).await
+    }
+
+    async fn observe_provider_for_activity(
+        &self,
+        view: &GenerationView,
+    ) -> Result<(MicrovmDescription, EndpointToken), HandsError> {
+        let microvm = view.microvm.as_ref().ok_or_else(|| {
+            dispatched(
+                ProviderFailureKind::ProtocolViolation,
+                "a materialized generation has no provider identity",
+            )
+        })?;
+        let (described, token) = tokio::join!(
+            self.provider.get(microvm),
+            self.provider
+                .auth_token(microvm, TOKEN_TTL_SECONDS, &[AGENT_PORT])
+        );
+        let description =
+            described.map_err(|call| provider_error(&call, view.head.generation, false))?;
+        if description.microvm != *microvm {
+            return Err(dispatched(
+                ProviderFailureKind::ProtocolViolation,
+                "activity observation answered for a different provider identity",
+            ));
+        }
+        let token = token.map_err(|call| provider_error(&call, view.head.generation, false))?;
+        Ok((description, token))
+    }
+
+    fn native_suspended_at(
+        view: &GenerationView,
+        observed_at: Timestamp,
+    ) -> Result<Timestamp, HandsError> {
+        let mut suspended_at = match (view.head.state, view.suspended_at, view.head.idle_since) {
+            (GenerationState::Suspended, Some(suspended_at), _) => suspended_at,
+            (GenerationState::Running, None, Some(idle_since)) => {
+                aex_runtime_control::clock::plus_millis(idle_since, TRUE_IDLE_THRESHOLD_MS)
+            }
+            (GenerationState::Running, None, None) => aex_runtime_control::clock::plus_millis(
+                view.head.last_busy_at,
+                TRUE_IDLE_THRESHOLD_MS,
+            ),
+            _ => {
+                return Err(dispatched(
+                    ProviderFailureKind::ProtocolViolation,
+                    "provider suspension has no durable idle or suspended boundary",
+                ));
+            }
+        };
+        if let Some(lifetime) = view.lifetime {
+            let expires_at = lifetime.expires_at();
+            if observed_at >= expires_at {
+                return Err(HandsError::GenerationLost {
+                    generation: view.head.generation,
+                });
+            }
+            if suspended_at > expires_at {
+                suspended_at = expires_at;
+            }
+        }
+        if suspended_at > observed_at {
+            return Err(dispatched(
+                ProviderFailureKind::ProtocolViolation,
+                "provider suspended before the immutable 180-second idle boundary",
+            ));
+        }
+        Ok(suspended_at)
+    }
+
+    fn lease_from_observation(
+        &self,
+        view: &GenerationView,
+        description: MicrovmDescription,
+        token: EndpointToken,
+    ) -> Result<AuthenticatedGuestEndpoint, HandsError> {
+        if !matches!(
+            description.state,
+            ProviderState::Running | ProviderState::Suspended
+        ) {
+            return Err(dispatched(
+                ProviderFailureKind::ProtocolViolation,
+                "activity endpoint is neither running nor provider-suspended",
+            ));
+        }
+        let endpoint = description.endpoint.ok_or_else(|| {
+            dispatched(
+                ProviderFailureKind::ProtocolViolation,
+                "the exact MicroVM has no authenticated endpoint",
+            )
+        })?;
+        AuthenticatedGuestEndpoint::new(view.head.generation, view.head.fence, endpoint, token)
     }
 
     async fn admit_operation(
@@ -768,7 +961,7 @@ impl ProductionHandsBackend {
         generation: GenerationId,
         operation: HandsOperationId,
         first: GenerationView,
-    ) -> Result<GenerationView, HandsError> {
+    ) -> Result<ActivityAdmission, HandsError> {
         // The first attempt reuses the view the caller already loaded; only a
         // lost conditional write pays for a fresh strong read.
         let mut view = first;
@@ -776,16 +969,122 @@ impl ProductionHandsBackend {
             if attempt > 0 {
                 view = self.load_view(generation, ReadConsistency::Strong).await?;
             }
-            let plan = admit(
-                &view.head,
-                operation,
-                view.head.fence,
-                view.head.revision,
-                now()?,
-            )
-            .map_err(admission_error)?;
+            if view.head.state == GenerationState::Resuming
+                && view
+                    .open_intent
+                    .as_ref()
+                    .is_some_and(|intent| intent.action == LifecycleAction::NativeResume)
+            {
+                self.reconcile_native_resume(&view).await?;
+                continue;
+            }
+            if !matches!(
+                view.head.state,
+                GenerationState::Running | GenerationState::Suspended
+            ) {
+                return Err(admission_error(AdmissionRefused::NotRunning {
+                    state: view.head.state,
+                }));
+            }
+            let at = now()?;
+            // A durable open-operation count may conservatively over-count after
+            // a crash, so it cannot prove the provider is still running. One
+            // on-demand exact-identity read avoids both a periodic scanner and an
+            // unrecorded implicit resume.
+            let observed = Some(self.observe_provider_for_activity(&view).await?);
+            let provider_suspended = observed
+                .as_ref()
+                .is_some_and(|(description, _)| description.state == ProviderState::Suspended);
+            if observed.as_ref().is_some_and(|(description, _)| {
+                matches!(
+                    description.state,
+                    ProviderState::Terminated | ProviderState::Terminating
+                )
+            }) {
+                return Err(HandsError::GenerationLost { generation });
+            }
+            if observed.as_ref().is_some_and(|(description, _)| {
+                !matches!(
+                    description.state,
+                    ProviderState::Running | ProviderState::Suspended
+                )
+            }) {
+                return Err(pre_dispatch(
+                    ProviderFailureKind::Transport,
+                    "the provider is between native lifecycle states; retry exact-generation admission",
+                ));
+            }
+            let native_resume = view.head.state == GenerationState::Suspended || provider_suspended;
+            let plan = if native_resume {
+                let microvm = view.microvm.clone().ok_or_else(|| {
+                    dispatched(
+                        ProviderFailureKind::ProtocolViolation,
+                        "native resume has no provider identity",
+                    )
+                })?;
+                admit_native_resume(
+                    &view.head,
+                    operation,
+                    microvm,
+                    Self::native_suspended_at(&view, at)?,
+                    at,
+                )
+                .map_err(admission_error)?
+            } else {
+                admit(
+                    &view.head,
+                    operation,
+                    view.head.fence,
+                    view.head.revision,
+                    at,
+                )
+                .map_err(admission_error)?
+            };
             match self.store.admit_operation(&plan).await {
-                Ok(()) => return Ok(view),
+                Ok(()) => {
+                    let admitted = self.load_view(generation, ReadConsistency::Strong).await?;
+                    let expected_admitted_state = if native_resume {
+                        GenerationState::Resuming
+                    } else {
+                        GenerationState::Running
+                    };
+                    if admitted.head.state != expected_admitted_state {
+                        continue;
+                    }
+                    let endpoint = match observed {
+                        Some((description, token)) => {
+                            let endpoint =
+                                self.lease_from_observation(&admitted, description, token)?;
+                            let identity = LeaseIdentity {
+                                generation,
+                                fence: admitted.head.fence,
+                                microvm: admitted.microvm.clone().ok_or_else(|| {
+                                    dispatched(
+                                        ProviderFailureKind::ProtocolViolation,
+                                        "admitted activity lost its provider identity",
+                                    )
+                                })?,
+                            };
+                            let expires_at = endpoint.lease_expires_at();
+                            self.leases
+                                .lock()
+                                .await
+                                .insert(identity, expires_at, endpoint)
+                        }
+                        None => self.connect(&admitted).await?,
+                    };
+                    if native_resume && endpoint.value.generation != admitted.head.generation {
+                        return Err(dispatched(
+                            ProviderFailureKind::ProtocolViolation,
+                            "native activity endpoint names another generation",
+                        ));
+                    }
+                    return Ok(ActivityAdmission {
+                        view: admitted,
+                        endpoint,
+                        native_resume,
+                    });
+                }
                 Err(RuntimeStoreError::RevisionConflict { .. }) => {}
                 Err(error) => return Err(store_error(error)),
             }
@@ -862,8 +1161,8 @@ impl crate::HandsBackend for ProductionHandsBackend {
             // read immutable fields, and admission seeds its first conditional
             // write from it. The retired shape loaded the same head three
             // times serially per start.
-            let (view, _endpoint) = self.materialize(session, generation).await?;
             let operation = wire_operation(&start.operation)?;
+            let prepared = self.prepare_generation(session, generation).await?;
             let request: OperationRequest =
                 serde_json::from_value(start.request.clone()).map_err(|_| {
                     pre_dispatch(
@@ -871,9 +1170,9 @@ impl crate::HandsBackend for ProductionHandsBackend {
                         "the Hands operation request does not match the strict protocol",
                     )
                 })?;
-            if view.workspace != ticket.workspace()
-                || view.organization != ticket.organization()
-                || view.session != session
+            if prepared.workspace != ticket.workspace()
+                || prepared.organization != ticket.organization()
+                || prepared.session != session
             {
                 return Err(pre_dispatch(
                     ProviderFailureKind::Authentication,
@@ -881,7 +1180,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 ));
             }
             if request.requires_browser()
-                && !view.definition.image.carries(ImageCapability::Browser)
+                && !prepared.definition.image.carries(ImageCapability::Browser)
             {
                 return Err(pre_dispatch(
                     ProviderFailureKind::InvalidRequest,
@@ -894,32 +1193,36 @@ impl crate::HandsBackend for ProductionHandsBackend {
                     "the browser request has an incoherent session target",
                 ));
             }
-            let admitted = self.admit_operation(generation, operation, view).await?;
-            let endpoint = match self.connect(&admitted).await {
-                Ok(endpoint) => endpoint,
-                Err(error) => {
-                    self.settle_operation(generation, operation).await?;
-                    return Err(error);
-                }
-            };
+            let admitted = self
+                .admit_operation(generation, operation, prepared)
+                .await?;
+            let view = &admitted.view;
             let delivery = delivery_for(start.bounds.timeout_ms);
             let call = StartRequest {
-                binding: binding(&admitted),
+                binding: binding(view),
                 operation,
                 call_hash: CallHash(ContentHash::from_bytes(start.call_hash.0)),
                 request,
-                bounds: operation_bounds(&admitted, &start.bounds),
+                bounds: operation_bounds(view, &start.bounds),
                 deadline: wire_timestamp(start.deadline)?,
                 delivery,
             };
             let timeout = Duration::from_millis(u64::from(start.bounds.timeout_ms));
             if delivery == DeliveryMode::Attached {
                 return self
-                    .start_attached(&endpoint, generation, operation, start, &call, timeout)
+                    .start_attached(
+                        &admitted.endpoint,
+                        admitted.native_resume.then_some(view),
+                        generation,
+                        operation,
+                        start,
+                        &call,
+                        timeout,
+                    )
                     .await;
             }
             let reply = match self
-                .call_guest(&endpoint, Verb::Start, &call, timeout)
+                .call_guest(&admitted.endpoint, Verb::Start, &call, timeout)
                 .await
             {
                 Ok(reply) => reply,
@@ -934,7 +1237,10 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 }
                 Err(error) => return Err(error),
             };
-            self.observe_guest(&endpoint, &reply).await?;
+            self.observe_guest(&admitted.endpoint, &reply).await?;
+            if admitted.native_resume {
+                self.settle_native_activity(view).await?;
+            }
             match reply.payload {
                 StartResponse::Accepted {
                     operation: found,
@@ -992,10 +1298,11 @@ impl crate::HandsBackend for ProductionHandsBackend {
     ) -> BoxFuture<'a, Result<HandsOperationStatus, HandsError>> {
         Box::pin(async move {
             let wire = wire_operation(operation)?;
-            let (view, endpoint) = self.endpoint_for(generation).await?;
+            let admitted = self.endpoint_for(generation, wire).await?;
+            let view = &admitted.view;
             let reply = self
                 .call_guest::<_, StatusResponse>(
-                    &endpoint,
+                    &admitted.endpoint,
                     Verb::Status,
                     &StatusRequest {
                         binding: binding(&view),
@@ -1004,7 +1311,10 @@ impl crate::HandsBackend for ProductionHandsBackend {
                     STATUS_TIMEOUT,
                 )
                 .await?;
-            self.observe_guest(&endpoint, &reply).await?;
+            self.observe_guest(&admitted.endpoint, &reply).await?;
+            if admitted.native_resume {
+                self.settle_native_activity(view).await?;
+            }
             let unknown = matches!(&reply.payload, StatusResponse::Unknown { .. });
             let status = status(reply.payload, wire, now()?)?;
             if unknown {
@@ -1022,10 +1332,11 @@ impl crate::HandsBackend for ProductionHandsBackend {
     ) -> BoxFuture<'a, Result<(), HandsError>> {
         Box::pin(async move {
             let wire = wire_operation(operation)?;
-            let (view, endpoint) = self.endpoint_for(generation).await?;
+            let admitted = self.endpoint_for(generation, wire).await?;
+            let view = &admitted.view;
             let reply = self
                 .call_guest::<_, CancelResponse>(
-                    &endpoint,
+                    &admitted.endpoint,
                     Verb::Cancel,
                     &CancelRequest {
                         binding: binding(&view),
@@ -1035,7 +1346,10 @@ impl crate::HandsBackend for ProductionHandsBackend {
                     STATUS_TIMEOUT,
                 )
                 .await?;
-            self.observe_guest(&endpoint, &reply).await?;
+            self.observe_guest(&admitted.endpoint, &reply).await?;
+            if admitted.native_resume {
+                self.settle_native_activity(view).await?;
+            }
             let terminal = matches!(&reply.payload, CancelResponse::AlreadyTerminal { .. });
             let unknown = matches!(&reply.payload, CancelResponse::Unknown { .. });
             let outcome = match reply.payload {
@@ -1065,7 +1379,9 @@ impl crate::HandsBackend for ProductionHandsBackend {
     ) -> BoxFuture<'a, Result<HandsResult, HandsError>> {
         Box::pin(async move {
             let wire = wire_operation(operation)?;
-            let (view, endpoint) = self.endpoint_for(generation).await?;
+            let admitted = self.endpoint_for(generation, wire).await?;
+            let view = &admitted.view;
+            let mut native_resume = admitted.native_resume;
             let maximum = u64::try_from(bounds.max_bytes)
                 .unwrap_or(u64::MAX)
                 .min(MAX_RESULT_BODY_BYTES);
@@ -1076,7 +1392,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 let remaining = maximum.saturating_sub(offset);
                 let reply = self
                     .call_guest::<_, ResultResponse>(
-                        &endpoint,
+                        &admitted.endpoint,
                         Verb::Result,
                         &ResultRequest {
                             binding: binding(&view),
@@ -1087,7 +1403,11 @@ impl crate::HandsBackend for ProductionHandsBackend {
                         Duration::from_millis(u64::from(bounds.timeout_ms)),
                     )
                     .await?;
-                self.observe_guest(&endpoint, &reply).await?;
+                self.observe_guest(&admitted.endpoint, &reply).await?;
+                if native_resume {
+                    self.settle_native_activity(view).await?;
+                    native_resume = false;
+                }
                 match reply.payload {
                     ResultResponse::Terminal {
                         terminal: found_terminal,

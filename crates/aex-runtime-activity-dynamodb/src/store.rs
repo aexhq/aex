@@ -7,7 +7,9 @@
 
 use aex_hands_protocol::rpc::Fence;
 use aex_runtime_control::generation::{GenerationHead, GenerationState, Revision, TransportMode};
-use aex_runtime_control::lifecycle::{IntentRecord, IntentState, MicrovmId, RECONCILE_ATTEMPTS};
+use aex_runtime_control::lifecycle::{
+    IntentRecord, IntentState, LifecycleAction, MicrovmId, RECONCILE_ATTEMPTS,
+};
 use aex_runtime_control::store::{
     GenerationCommit, GenerationPlan, GenerationPointer, GenerationView,
     IdleProbe as CanonicalIdleProbe, LifecycleIntentCommit, LifecycleIntentPlan,
@@ -446,37 +448,116 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                     "an operation admission plan is internally inconsistent",
                 ));
             }
+            match &plan.native_resume {
+                None if plan.expected_state == GenerationState::Running
+                    && plan.next_state == GenerationState::Running
+                    && plan.next_fence == plan.expected_fence => {}
+                Some(native)
+                    if matches!(
+                        plan.expected_state,
+                        GenerationState::Running | GenerationState::Suspended
+                    ) && plan.next_state == GenerationState::Resuming
+                        && plan.next_fence
+                            == aex_runtime_control::generation::next_fence(plan.expected_fence)
+                        && native.suspended_at <= plan.last_busy_at => {}
+                _ => {
+                    return Err(malformed(
+                        "an operation admission has an incoherent lifecycle transition",
+                    ));
+                }
+            }
             let row = self.load_canonical_row(plan.generation).await?.ok_or(
                 RuntimeStoreError::NoSuchGeneration {
                     generation: plan.generation,
                 },
             )?;
-            if self
+            let already_admitted = self
                 .operation_is_admitted(plan.generation, plan.operation)
-                .await?
-            {
+                .await?;
+            if already_admitted && plan.native_resume.is_none() {
                 return Ok(());
             }
             let expected_open = plan.open_operations - 1;
+            let next_open = if already_admitted {
+                expected_open
+            } else {
+                plan.open_operations
+            };
             let target = keys::head_for_generation(plan.generation);
-            let head = Update::builder()
+            let mut head_expression = String::from(
+                "SET #state = :nextState, fence = :nextFence, openOperations = :open, revision = :nextRevision, lastBusyAt = :at, updatedAt = :at",
+            );
+            let mut head_builder = Update::builder()
                 .table_name(&self.table)
                 .set_key(Some(key(&target.pk, &target.sk)))
                 .condition_expression(
-                    "generationId = :generation AND #state = :running AND fence = :fence AND revision = :expectedRevision AND openOperations = :expectedOpen",
-                )
-                .update_expression(
-                    "SET openOperations = :open, revision = :nextRevision, lastBusyAt = :at, updatedAt = :at REMOVE idleSince",
+                    "generationId = :generation AND #state = :expectedState AND fence = :expectedFence AND revision = :expectedRevision AND openOperations = :expectedOpen AND attribute_not_exists(openIntent)",
                 )
                 .expression_attribute_names("#state", "state")
                 .expression_attribute_values(":generation", s(plan.generation.to_string()))
-                .expression_attribute_values(":running", s(keys::state_str(GenerationState::Running)))
-                .expression_attribute_values(":fence", n(plan.fence.0))
+                .expression_attribute_values(
+                    ":expectedState",
+                    s(keys::state_str(plan.expected_state)),
+                )
+                .expression_attribute_values(":expectedFence", n(plan.expected_fence.0))
                 .expression_attribute_values(":expectedRevision", n(plan.expected_revision.value()))
                 .expression_attribute_values(":expectedOpen", n(u64::from(expected_open)))
-                .expression_attribute_values(":open", n(u64::from(plan.open_operations)))
+                .expression_attribute_values(":nextState", s(keys::state_str(plan.next_state)))
+                .expression_attribute_values(":nextFence", n(plan.next_fence.0))
+                .expression_attribute_values(":open", n(u64::from(next_open)))
                 .expression_attribute_values(":nextRevision", n(plan.next_revision.value()))
-                .expression_attribute_values(":at", stamp(plan.last_busy_at))
+                .expression_attribute_values(":at", stamp(plan.last_busy_at));
+            let mut durable_intent = None;
+            if let Some(native) = &plan.native_resume {
+                if row.microvm.as_ref() != Some(&native.microvm) {
+                    return Err(malformed(
+                        "native resume names a different provider MicroVM than the generation",
+                    ));
+                }
+                let record = IntentRecord {
+                    intent_id: native.intent_id.clone(),
+                    generation: plan.generation,
+                    microvm: Some(native.microvm.clone()),
+                    action: LifecycleAction::NativeResume,
+                    fence: plan.next_fence,
+                    state: IntentState::Dispatched,
+                    provider_request_id: None,
+                    attempts: 0,
+                    dispatched_at: plan.last_busy_at,
+                };
+                let encoded = serde_json::to_string(&record)
+                    .map_err(|error| malformed(&error.to_string()))?;
+                head_expression.push_str(
+                    ", openIntent = :intent, suspendedAt = :suspendedAt, providerVmId = :microvm",
+                );
+                head_builder = head_builder
+                    .expression_attribute_values(":intent", s(encoded))
+                    .expression_attribute_values(":suspendedAt", stamp(native.suspended_at))
+                    .expression_attribute_values(":microvm", s(native.microvm.0.clone()));
+                let durable = LifecycleIntent {
+                    session: row.session,
+                    workspace: row.workspace,
+                    generation: plan.generation,
+                    intent_id: native.intent_id.0.clone(),
+                    action: action_str(LifecycleAction::NativeResume).to_owned(),
+                    requested_fence: plan.next_fence,
+                    state: "dispatched".to_owned(),
+                    provider_request_id: None,
+                    requested_at: plan.last_busy_at,
+                    dispatched_at: Some(plan.last_busy_at),
+                    reconcile_attempts: 0,
+                    last_reconciled_at: None,
+                };
+                durable_intent = Some(
+                    expressions::record_intent(&self.table, &durable)
+                        .map_err(|error| runtime_error(error, None))?
+                        .build()
+                        .map_err(|error| malformed(&error.to_string()))?,
+                );
+            }
+            head_expression.push_str(" REMOVE idleSince");
+            let head = head_builder
+                .update_expression(head_expression)
                 .build()
                 .map_err(|error| malformed(&error.to_string()))?;
             let current = keys::current(row.session);
@@ -484,37 +565,46 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 .table_name(&self.table)
                 .set_key(Some(key(&current.pk, &current.sk)))
                 .condition_expression(
-                    "generationId = :generation AND fence = :fence AND revision = :expectedRevision",
+                    "generationId = :generation AND fence = :expectedFence AND revision = :expectedRevision",
                 )
-                .update_expression("SET revision = :nextRevision, updatedAt = :at")
+                .update_expression(
+                    "SET fence = :nextFence, revision = :nextRevision, updatedAt = :at",
+                )
                 .expression_attribute_values(":generation", s(plan.generation.to_string()))
-                .expression_attribute_values(":fence", n(plan.fence.0))
+                .expression_attribute_values(":expectedFence", n(plan.expected_fence.0))
                 .expression_attribute_values(":expectedRevision", n(plan.expected_revision.value()))
+                .expression_attribute_values(":nextFence", n(plan.next_fence.0))
                 .expression_attribute_values(":nextRevision", n(plan.next_revision.value()))
                 .expression_attribute_values(":at", stamp(plan.last_busy_at))
                 .build()
                 .map_err(|error| malformed(&error.to_string()))?;
-            let marker = keys::operation_admission(plan.generation, plan.operation);
-            let marker = ItemBuilder::new(HANDS_OPERATION_ADMISSION)
-                .set(PK, s(marker.pk))
-                .set(SK, s(marker.sk))
-                .set("generationId", s(plan.generation.to_string()))
-                .set("operationId", s(plan.operation.0.to_string()))
-                .set("admittedAt", stamp(plan.last_busy_at))
-                .build();
-            let marker = Put::builder()
-                .table_name(&self.table)
-                .set_item(Some(marker))
-                .condition_expression("attribute_not_exists(pk)")
-                .build()
-                .map_err(|error| malformed(&error.to_string()))?;
+            let mut transaction = vec![
+                TransactWriteItem::builder().update(head).build(),
+                TransactWriteItem::builder().update(pointer).build(),
+            ];
+            if !already_admitted {
+                let marker = keys::operation_admission(plan.generation, plan.operation);
+                let marker = ItemBuilder::new(HANDS_OPERATION_ADMISSION)
+                    .set(PK, s(marker.pk))
+                    .set(SK, s(marker.sk))
+                    .set("generationId", s(plan.generation.to_string()))
+                    .set("operationId", s(plan.operation.0.to_string()))
+                    .set("admittedAt", stamp(plan.last_busy_at))
+                    .build();
+                let marker = Put::builder()
+                    .table_name(&self.table)
+                    .set_item(Some(marker))
+                    .condition_expression("attribute_not_exists(pk)")
+                    .build()
+                    .map_err(|error| malformed(&error.to_string()))?;
+                transaction.insert(0, TransactWriteItem::builder().put(marker).build());
+            }
+            if let Some(intent) = durable_intent {
+                transaction.push(TransactWriteItem::builder().put(intent).build());
+            }
             let outcome = self
                 .transact(
-                    vec![
-                        TransactWriteItem::builder().put(marker).build(),
-                        TransactWriteItem::builder().update(head).build(),
-                        TransactWriteItem::builder().update(pointer).build(),
-                    ],
+                    transaction,
                     transaction_token(
                         "operation-admit",
                         plan.generation,
@@ -522,12 +612,27 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                     ),
                 )
                 .await;
-            if outcome.is_err()
-                && self
+            if outcome.is_err() {
+                if let Some(native) = &plan.native_resume {
+                    let landed =
+                        self.load_canonical_row(plan.generation)
+                            .await?
+                            .is_some_and(|row| {
+                                row.state == GenerationState::Resuming
+                                    && row.open_intent.as_ref().is_some_and(|intent| {
+                                        intent.intent_id == native.intent_id
+                                            && intent.action == LifecycleAction::NativeResume
+                                    })
+                            });
+                    if landed {
+                        return Ok(());
+                    }
+                } else if self
                     .operation_is_admitted(plan.generation, plan.operation)
                     .await?
-            {
-                return Ok(());
+                {
+                    return Ok(());
+                }
             }
             outcome
         })
@@ -1764,6 +1869,7 @@ const fn action_str(action: aex_runtime_control::lifecycle::LifecycleAction) -> 
         aex_runtime_control::lifecycle::LifecycleAction::Launch => "launch",
         aex_runtime_control::lifecycle::LifecycleAction::Suspend => "suspend",
         aex_runtime_control::lifecycle::LifecycleAction::Resume => "resume",
+        aex_runtime_control::lifecycle::LifecycleAction::NativeResume => "native_resume",
         aex_runtime_control::lifecycle::LifecycleAction::Terminate => "terminate",
     }
 }

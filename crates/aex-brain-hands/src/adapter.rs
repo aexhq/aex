@@ -29,6 +29,8 @@ use aex_runtime_control::generation::{
     AdmissionRefused, GenerationHead, GenerationState, Revision, TransportMode,
 };
 use aex_runtime_control::lifecycle::client_token;
+use aex_runtime_control::lifecycle::{LifecycleIntentId, MicrovmId};
+use aex_runtime_control::store::NativeResumeAdmissionPlan;
 pub use aex_runtime_control::store::{
     OperationAdmissionPlan as AdmitPlan, OperationSettlementPlan as SettlePlan,
 };
@@ -191,10 +193,52 @@ pub fn admit(
     Ok(AdmitPlan {
         generation: head.generation,
         operation,
-        fence,
+        expected_state: GenerationState::Running,
+        expected_fence: fence,
         expected_revision: revision,
         open_operations: admitted.open_operations,
         next_revision: admitted.revision,
+        next_state: GenerationState::Running,
+        next_fence: fence,
+        native_resume: None,
+        last_busy_at: now,
+    })
+}
+
+/// Builds the single conditional write that elects provider-native resume and
+/// admits the triggering activity before any authenticated guest request.
+///
+/// # Errors
+///
+/// Returns [`AdmissionRefused`] when the source head, fence, revision, suspend
+/// lock or concurrency authority does not permit the activity.
+pub fn admit_native_resume(
+    head: &GenerationHead,
+    operation: aex_hands_protocol::rpc::HandsOperationId,
+    microvm: MicrovmId,
+    suspended_at: Timestamp,
+    now: Timestamp,
+) -> Result<AdmitPlan, AdmissionRefused> {
+    let admitted = head.admit_native_resume(head.fence, head.revision, now)?;
+    let intent_id = LifecycleIntentId(format!(
+        "native-resume:{}:{}:{}",
+        head.generation, operation.0, admitted.fence.0
+    ));
+    Ok(AdmitPlan {
+        generation: head.generation,
+        operation,
+        expected_state: head.state,
+        expected_fence: head.fence,
+        expected_revision: head.revision,
+        open_operations: admitted.open_operations,
+        next_revision: admitted.revision,
+        next_state: GenerationState::Resuming,
+        next_fence: admitted.fence,
+        native_resume: Some(NativeResumeAdmissionPlan {
+            intent_id,
+            microvm,
+            suspended_at,
+        }),
         last_busy_at: now,
     })
 }
@@ -283,14 +327,14 @@ impl HandsError {
 mod tests {
     use super::{
         AdmitPlan, Alpn, CONNECTION_IDLE_MS, HandsError, LAUNCH_POLL_MAX_MS, MaterializeStep,
-        admit, launch_backoff_ms, materialize_step, max_in_flight, pool_size, settle,
-        transport_mode,
+        admit, admit_native_resume, launch_backoff_ms, materialize_step, max_in_flight, pool_size,
+        settle, transport_mode,
     };
     use aex_hands_protocol::rpc::{Fence, HandsOperationId};
     use aex_runtime_control::generation::{
         AdmissionRefused, GenerationHead, GenerationState, Revision, TransportMode,
     };
-    use aex_runtime_control::lifecycle::client_token;
+    use aex_runtime_control::lifecycle::{MicrovmId, client_token};
     use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
     use aex_wire::types::{ComputeSize, Timestamp};
 
@@ -431,10 +475,14 @@ mod tests {
             AdmitPlan {
                 generation: generation(),
                 operation: operation(),
-                fence: Fence(3),
+                expected_state: GenerationState::Running,
+                expected_fence: Fence(3),
                 expected_revision: Revision::new(11),
                 open_operations: 1,
                 next_revision: Revision::new(12),
+                next_state: GenerationState::Running,
+                next_fence: Fence(3),
+                native_resume: None,
                 last_busy_at: at(2_000),
             }
         );
@@ -460,6 +508,27 @@ mod tests {
             ),
             Err(AdmissionRefused::Fenced { .. })
         ));
+    }
+
+    #[test]
+    fn native_resume_admission_records_one_exact_activity_and_advances_the_guest_fence() {
+        let plan = admit_native_resume(
+            &head(GenerationState::Suspended, 0),
+            operation(),
+            MicrovmId("mvm-7".to_owned()),
+            at(1_500),
+            at(2_000),
+        )
+        .expect("a suspended generation elects native resume");
+        assert_eq!(plan.expected_state, GenerationState::Suspended);
+        assert_eq!(plan.next_state, GenerationState::Resuming);
+        assert_eq!(plan.expected_fence, Fence(3));
+        assert_eq!(plan.next_fence, Fence(4));
+        assert_eq!(plan.open_operations, 1);
+        let evidence = plan.native_resume.expect("native resume evidence");
+        assert_eq!(evidence.microvm, MicrovmId("mvm-7".to_owned()));
+        assert_eq!(evidence.suspended_at, at(1_500));
+        assert!(evidence.intent_id.0.contains(&operation().0.to_string()));
     }
 
     #[test]

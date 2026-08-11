@@ -381,6 +381,18 @@ pub struct Admitted {
     pub revision: Revision,
 }
 
+/// The state/fence authority landed when activity wakes a provider-suspended
+/// generation through native endpoint traffic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeResumeAdmitted {
+    /// The open-operation count the conditional write must land.
+    pub open_operations: u32,
+    /// The revision the conditional write must land.
+    pub revision: Revision,
+    /// The lifecycle fence the resumed guest request must carry.
+    pub fence: Fence,
+}
+
 /// Why an operation was not admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum AdmissionRefused {
@@ -481,6 +493,65 @@ impl GenerationHead {
         })
     }
 
+    /// Admits one activity that will wake the exact provider-suspended
+    /// generation through native endpoint traffic.
+    ///
+    /// A lazy provider observation may find `SUSPENDED` while the durable head
+    /// still says `running`; both that state and an already reconciled
+    /// `suspended` head are valid sources. The one conditional store write moves
+    /// either source to `resuming`, advances the guest fence, increments the
+    /// operation count and records the native-resume intent before any guest
+    /// request is sent.
+    ///
+    /// # Errors
+    ///
+    /// See [`AdmissionRefused`].
+    pub fn admit_native_resume(
+        &self,
+        presented_fence: Fence,
+        presented_revision: Revision,
+        now: Timestamp,
+    ) -> Result<NativeResumeAdmitted, AdmissionRefused> {
+        if self.state.is_terminal() {
+            return Err(AdmissionRefused::Terminal { state: self.state });
+        }
+        if !matches!(
+            self.state,
+            GenerationState::Running | GenerationState::Suspended
+        ) {
+            return Err(AdmissionRefused::NotRunning { state: self.state });
+        }
+        if presented_fence != self.fence {
+            return Err(AdmissionRefused::Fenced {
+                presented: presented_fence,
+                current: self.fence,
+            });
+        }
+        if presented_revision != self.revision {
+            return Err(AdmissionRefused::StaleRevision {
+                presented: presented_revision,
+                current: self.revision,
+            });
+        }
+        if let Some(until) = self.suspend_lock_expires_at
+            && until > now
+        {
+            return Err(AdmissionRefused::SuspendLocked { until });
+        }
+        let limit = self.size.max_concurrent_operations();
+        if self.open_operations >= limit {
+            return Err(AdmissionRefused::ConcurrencyExhausted {
+                open: self.open_operations,
+                limit,
+            });
+        }
+        Ok(NativeResumeAdmitted {
+            open_operations: self.open_operations + 1,
+            revision: self.revision.next(),
+            fence: next_fence(self.fence),
+        })
+    }
+
     /// F3: settlement follows the Brain journal commit and can only lower the
     /// counter, so an increment-then-crash leaves an over-count.
     ///
@@ -558,8 +629,9 @@ pub fn supersedes(candidate: GenerationId, incumbent: GenerationId) -> bool {
 mod tests {
     use super::{
         AdmissionRefused, Admitted, FenceVerdict, GenerationHead, GenerationState, ImageCapability,
-        ImageIdentifier, ImagePin, ImageVersion, Revision, TransportMode, evaluate_request_binding,
-        guest_root, is_canonical_root, may_incorporate_result, next_fence, supersedes,
+        ImageIdentifier, ImagePin, ImageVersion, NativeResumeAdmitted, Revision, TransportMode,
+        evaluate_request_binding, guest_root, is_canonical_root, may_incorporate_result,
+        next_fence, supersedes,
     };
     use crate::shape::ShapeCapacity as _;
     use aex_hands_protocol::operation::GuestRoot;
@@ -715,6 +787,32 @@ mod tests {
                 }
                 other => panic!("{state:?} refused with {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn native_resume_admission_accepts_only_running_or_suspended_and_advances_the_fence() {
+        for state in [GenerationState::Running, GenerationState::Suspended] {
+            assert_eq!(
+                head(state, 0).admit_native_resume(Fence(3), Revision::new(11), at(2_000)),
+                Ok(NativeResumeAdmitted {
+                    open_operations: 1,
+                    revision: Revision::new(12),
+                    fence: Fence(4),
+                }),
+                "{state:?}"
+            );
+        }
+        for state in GenerationState::ALL {
+            if matches!(state, GenerationState::Running | GenerationState::Suspended) {
+                continue;
+            }
+            assert!(
+                head(state, 0)
+                    .admit_native_resume(Fence(3), Revision::new(11), at(2_000))
+                    .is_err(),
+                "{state:?} must not start a second native resume"
+            );
         }
     }
 

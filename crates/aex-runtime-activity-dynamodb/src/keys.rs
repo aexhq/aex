@@ -49,7 +49,14 @@ pub const STATES: &[&str] = &[
 ];
 
 /// Every lifecycle action.
-pub const ACTIONS: &[&str] = &["launch", "suspend", "resume", "terminate", "snapshot"];
+pub const ACTIONS: &[&str] = &[
+    "launch",
+    "suspend",
+    "resume",
+    "native_resume",
+    "terminate",
+    "snapshot",
+];
 
 /// Every lifecycle intent state.
 pub const INTENT_STATES: &[&str] = &[

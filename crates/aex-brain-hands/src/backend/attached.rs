@@ -30,6 +30,7 @@ impl ProductionHandsBackend {
     pub(super) async fn start_attached(
         &self,
         endpoint: &LeaseHandle<AuthenticatedGuestEndpoint>,
+        native_resume: Option<&super::GenerationView>,
         generation: GenerationId,
         operation: HandsOperationId,
         start: &HandsOperationStart,
@@ -53,6 +54,9 @@ impl ProductionHandsBackend {
             Err(error) => return Err(error),
         };
         self.observe_guest(endpoint, &reply).await?;
+        if let Some(view) = native_resume {
+            self.settle_native_activity(view).await?;
+        }
         match reply.payload {
             AttachResponse::Terminal {
                 operation: found,

@@ -364,6 +364,136 @@ impl RuntimeControl {
         &self.settings
     }
 
+    /// Settles a provider-native same-generation resume after an authenticated
+    /// guest response proves the exact generation and advanced fence are
+    /// serving.
+    ///
+    /// No provider resume API is called. The triggering activity already wrote
+    /// the native-resume intent and `resuming` head before endpoint traffic. This
+    /// method closes the running/suspended accounting interval, lifecycle
+    /// receipt and bounded usage outbox in the existing atomic settlement.
+    pub async fn observe_native_resume(
+        &self,
+        view: &GenerationView,
+        observed: ProviderState,
+        now: Timestamp,
+    ) -> CommandOutcome {
+        let Some(intent) = view.open_intent.as_ref() else {
+            return CommandOutcome::Poison {
+                reason: "native resume settlement has no durable intent".to_owned(),
+            };
+        };
+        if intent.action != LifecycleAction::NativeResume
+            || view.head.state != GenerationState::Resuming
+            || intent.fence != view.head.fence
+        {
+            return CommandOutcome::Poison {
+                reason: format!(
+                    "native resume settlement found {:?}/{:?} at fence {}",
+                    view.head.state, intent.action, view.head.fence.0
+                ),
+            };
+        }
+        let Some(microvm) = view.microvm.as_ref() else {
+            return CommandOutcome::Poison {
+                reason: "native resume settlement has no exact provider MicroVM".to_owned(),
+            };
+        };
+        let Some(suspended_at) = view.suspended_at else {
+            return CommandOutcome::Poison {
+                reason: "native resume settlement has no suspended boundary".to_owned(),
+            };
+        };
+        if observed == ProviderState::Suspended {
+            let plan = LifecycleReceiptPlan {
+                intent_id: intent.intent_id.clone(),
+                generation: view.head.generation,
+                next_intent_state: IntentState::Settled,
+                provider_request_id: None,
+                observed_state: Some(ProviderState::Suspended),
+                snapshot: None,
+                usage: Vec::new(),
+                generation_commit: Some(GenerationPlan {
+                    generation: view.head.generation,
+                    expected_state: GenerationState::Resuming,
+                    expected_fence: view.head.fence,
+                    expected_revision: view.head.revision,
+                    next_state: GenerationState::Suspended,
+                    next_fence: view.head.fence,
+                    microvm: Some(microvm.clone()),
+                    transport_mode: view.head.transport_mode,
+                    accounting: None,
+                    at: now,
+                }),
+                settled_at: now,
+            };
+            return match self.ports.store.settle_intent(&plan).await {
+                Ok(_) => CommandOutcome::Settled(Settled::Raced),
+                Err(error) => store_outcome(&error),
+            };
+        }
+        if !matches!(
+            observed,
+            ProviderState::Running | ProviderState::Terminated | ProviderState::Terminating
+        ) {
+            return CommandOutcome::Poison {
+                reason: format!("native resume observed impossible provider state {observed:?}"),
+            };
+        }
+        let terminal_observed = matches!(
+            observed,
+            ProviderState::Terminated | ProviderState::Terminating
+        );
+        let expired = terminal_observed
+            || view
+                .lifetime
+                .is_some_and(|lifetime| now >= lifetime.expires_at());
+        let settled_at = view.lifetime.map_or(now, |lifetime| {
+            let expires_at = lifetime.expires_at();
+            if now > expires_at { expires_at } else { now }
+        });
+        if settled_at < view.accounted_from
+            || suspended_at < view.accounted_from
+            || suspended_at > settled_at
+        {
+            return CommandOutcome::Poison {
+                reason: "native resume accounting boundaries are not monotonic".to_owned(),
+            };
+        }
+        let residence = SnapshotResidence {
+            lifecycle_id: snapshot_lifecycle_id(microvm, view.snapshot_ordinal),
+            generation: u64::from(view.snapshot_ordinal),
+            bytes: view.snapshot_bytes,
+            suspended_at,
+            released_at: settled_at,
+            terminal: expired,
+            io: SnapshotIo::default(),
+        };
+        let closure = Closure {
+            view,
+            from: &view.head,
+            microvm,
+            intent_id: &intent.intent_id,
+            action: LifecycleAction::NativeResume,
+            next_state: if expired {
+                GenerationState::Lost
+            } else {
+                GenerationState::Running
+            },
+            observed,
+            request: None,
+            residence: Some(residence),
+            charge_residence: true,
+            running_ms: millis_between(view.accounted_from, suspended_at),
+            suspended_ms: millis_between(suspended_at, settled_at),
+        };
+        match self.close(closure, settled_at).await {
+            Ok(()) if expired => CommandOutcome::Settled(Settled::Lost),
+            Ok(()) => CommandOutcome::Settled(Settled::Resumed),
+            Err(outcome) => outcome,
+        }
+    }
+
     /// The queue entry point.
     ///
     /// The response names **exactly** the identifiers that must be redriven.
@@ -650,6 +780,14 @@ impl RuntimeControl {
         observed: ProviderState,
         now: Timestamp,
     ) -> CommandOutcome {
+        let now = if intent.action == LifecycleAction::NativeResume {
+            view.lifetime.map_or(now, |lifetime| {
+                let expires_at = lifetime.expires_at();
+                if now > expires_at { expires_at } else { now }
+            })
+        } else {
+            now
+        };
         let elapsed = millis_between(view.accounted_from, now);
         let (next_state, residence, charge_residence, running_ms, suspended_ms) =
             match intent.action {
@@ -693,6 +831,31 @@ impl RuntimeControl {
                         elapsed,
                     )
                 }
+                LifecycleAction::NativeResume => {
+                    let Some(suspended_at) = view.suspended_at else {
+                        return CommandOutcome::Poison {
+                            reason: format!(
+                                "native resume intent {} has no retained-snapshot start",
+                                intent.intent_id
+                            ),
+                        };
+                    };
+                    (
+                        GenerationState::Running,
+                        Some(SnapshotResidence {
+                            lifecycle_id: snapshot_lifecycle_id(microvm, view.snapshot_ordinal),
+                            generation: u64::from(view.snapshot_ordinal),
+                            bytes: view.snapshot_bytes,
+                            suspended_at,
+                            released_at: now,
+                            terminal: false,
+                            io: SnapshotIo::default(),
+                        }),
+                        true,
+                        millis_between(view.accounted_from, suspended_at),
+                        millis_between(suspended_at, now),
+                    )
+                }
                 LifecycleAction::Terminate => {
                     let was_suspended = view.suspended_at.is_some();
                     (
@@ -730,7 +893,9 @@ impl RuntimeControl {
         match self.close(closure, now).await {
             Ok(()) => match intent.action {
                 LifecycleAction::Suspend => CommandOutcome::Settled(Settled::Suspended),
-                LifecycleAction::Resume => CommandOutcome::Settled(Settled::Resumed),
+                LifecycleAction::Resume | LifecycleAction::NativeResume => {
+                    CommandOutcome::Settled(Settled::Resumed)
+                }
                 LifecycleAction::Terminate => CommandOutcome::Settled(Settled::Terminated {
                     continuity_lost: false,
                     remaining_ms: view
@@ -2046,12 +2211,29 @@ mod tests {
         fn admit_operation<'a>(&'a self, plan: &'a OperationAdmissionPlan) -> StoreFuture<'a, ()> {
             let mut state = self.lock();
             if let Some(view) = state.view.as_mut() {
+                view.head.state = plan.next_state;
+                view.head.fence = plan.next_fence;
                 view.head.open_operations = plan.open_operations;
                 view.head.revision = plan.next_revision;
                 view.head.last_busy_at = plan.last_busy_at;
                 view.head.idle_since = None;
+                if let Some(native) = &plan.native_resume {
+                    view.suspended_at = Some(native.suspended_at);
+                    view.open_intent = Some(IntentRecord {
+                        intent_id: native.intent_id.clone(),
+                        generation: plan.generation,
+                        microvm: Some(native.microvm.clone()),
+                        action: LifecycleAction::NativeResume,
+                        fence: plan.next_fence,
+                        state: IntentState::Dispatched,
+                        provider_request_id: None,
+                        attempts: 0,
+                        dispatched_at: plan.last_busy_at,
+                    });
+                }
             }
             if let Some(pointer) = state.pointer.as_mut() {
+                pointer.fence = plan.next_fence;
                 pointer.revision = plan.next_revision;
             }
             Box::pin(async { Ok(()) })
@@ -2269,7 +2451,9 @@ mod tests {
                     })
                 });
             }
-            let action = if plan.intent_id.0.contains(":resume:") {
+            let action = if plan.intent_id.0.contains("native-resume:") {
+                LifecycleAction::NativeResume
+            } else if plan.intent_id.0.contains(":resume:") {
                 LifecycleAction::Resume
             } else if plan.intent_id.0.contains(":terminate:") {
                 LifecycleAction::Terminate
@@ -2661,6 +2845,72 @@ mod tests {
             session: session(),
             generation: generation(),
         }
+    }
+
+    #[tokio::test]
+    async fn native_resume_closes_usage_at_the_immutable_provider_expiry() {
+        let mut native = view(GenerationState::Resuming, 1);
+        native.head.fence = Fence(4);
+        native.head.revision = Revision::new(12);
+        native.suspended_at = Some(at(LAUNCHED_AT + 180_000));
+        native.open_intent = Some(IntentRecord {
+            intent_id: aex_runtime_control::lifecycle::LifecycleIntentId(format!(
+                "native-resume:{}:activity:4",
+                generation()
+            )),
+            generation: generation(),
+            microvm: Some(microvm()),
+            action: LifecycleAction::NativeResume,
+            fence: Fence(4),
+            state: IntentState::Dispatched,
+            provider_request_id: None,
+            attempts: 0,
+            dispatched_at: at(LAUNCHED_AT + 180_001),
+        });
+        let store = FakeStore::with(native);
+        let fixture = fixture(store.clone(), FakeProvider::running(), 1);
+        let expires_at = Lifetime {
+            launched_at: at(LAUNCHED_AT),
+        }
+        .expires_at();
+
+        let observed = store.lock().view.clone().expect("view");
+        assert_eq!(
+            fixture
+                .control
+                .observe_native_resume(
+                    &observed,
+                    ProviderState::Running,
+                    aex_runtime_control::clock::plus_millis(expires_at, 60_000),
+                )
+                .await,
+            CommandOutcome::Settled(Settled::Lost)
+        );
+        let state = store.lock();
+        let receipt = state.receipts.last().expect("native receipt");
+        assert_eq!(receipt.settled_at, expires_at);
+        assert_eq!(
+            receipt
+                .generation_commit
+                .as_ref()
+                .map(|commit| commit.next_state),
+            Some(GenerationState::Lost)
+        );
+        assert_eq!(
+            receipt
+                .generation_commit
+                .as_ref()
+                .and_then(|commit| commit.accounting)
+                .map(|accounting| accounting.accounted_from),
+            Some(expires_at)
+        );
+        assert_eq!(
+            receipt
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.released_at),
+            Some(expires_at)
+        );
     }
 
     #[tokio::test]

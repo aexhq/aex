@@ -175,13 +175,22 @@ pub enum LifecycleAction {
     Suspend,
     /// `ResumeMicrovm`.
     Resume,
+    /// Provider-native same-generation resume caused by authenticated endpoint
+    /// traffic. No `ResumeMicrovm` request exists for this action.
+    NativeResume,
     /// `TerminateMicrovm`.
     Terminate,
 }
 
 impl LifecycleAction {
     /// Every modelled action.
-    pub const ALL: [Self; 4] = [Self::Launch, Self::Suspend, Self::Resume, Self::Terminate];
+    pub const ALL: [Self; 5] = [
+        Self::Launch,
+        Self::Suspend,
+        Self::Resume,
+        Self::NativeResume,
+        Self::Terminate,
+    ];
 
     /// The receipt-identity component this action contributes.
     #[must_use]
@@ -190,6 +199,7 @@ impl LifecycleAction {
             Self::Launch => "run",
             Self::Suspend => "suspend",
             Self::Resume => "resume",
+            Self::NativeResume => "native_resume",
             Self::Terminate => "terminate",
         }
     }
@@ -848,6 +858,7 @@ mod tests {
             (LifecycleAction::Launch, "run"),
             (LifecycleAction::Suspend, "suspend"),
             (LifecycleAction::Resume, "resume"),
+            (LifecycleAction::NativeResume, "native_resume"),
             (LifecycleAction::Terminate, "terminate"),
         ] {
             assert_eq!(action.as_str(), expected);

@@ -32,8 +32,9 @@ pub use clock::{millis_between, minus_millis, plus_millis};
 pub use generation::{
     AdmissionRefused, Admitted, FenceVerdict, GUEST_ROOT, GenerationHead, GenerationState,
     HandsGeneration, ImageCapability, ImageIdentifier, ImagePin, ImageVersion, InvalidTransition,
-    LimitsRevision, NetworkPolicy, Revision, TransportMode, evaluate_request_binding, guest_root,
-    is_canonical_root, may_incorporate_result, next_fence, supersedes,
+    LimitsRevision, NativeResumeAdmitted, NetworkPolicy, Revision, TransportMode,
+    evaluate_request_binding, guest_root, is_canonical_root, may_incorporate_result, next_fence,
+    supersedes,
 };
 pub use idle::{
     IDLE_EVALUATION_JITTER_MS, IdleAssessment, KEEPALIVE_MAX_MS, KeepaliveRefused,
@@ -56,9 +57,9 @@ pub use shape::{
 pub use store::{
     CommandBinding, GenerationAccountingPlan, GenerationCommit, GenerationPlan, GenerationPointer,
     GenerationView, IdleProbe, LifecycleIntentCommit, LifecycleIntentPlan, LifecycleReceipt,
-    LifecycleReceiptPlan, LifecycleReconcilePlan, LifecycleRequestPlan, OpenEffectCounter,
-    PageBudget, RuntimeActivityStore, RuntimeDuePage, RuntimeShard, RuntimeStoreError, StoreFuture,
-    UsageOutboxEntry, UsageOutboxPlan, bind_command,
+    LifecycleReceiptPlan, LifecycleReconcilePlan, LifecycleRequestPlan, NativeResumeAdmissionPlan,
+    OpenEffectCounter, PageBudget, RuntimeActivityStore, RuntimeDuePage, RuntimeShard,
+    RuntimeStoreError, StoreFuture, UsageOutboxEntry, UsageOutboxPlan, bind_command,
 };
 pub use usage::{
     DerivationError, FactContext, HandsUsage, SinkError, SnapshotIo, SnapshotResidence,
