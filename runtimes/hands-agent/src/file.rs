@@ -99,8 +99,8 @@ impl FileService {
                 recursive,
                 limit,
                 after,
-            } => self.list(path, recursive, limit, after),
-            FileRequest::Stat { path } => self.stat(path),
+            } => self.list(&path, recursive, limit, after.as_ref()),
+            FileRequest::Stat { path } => self.stat(&path),
             FileRequest::UploadOpen {
                 upload,
                 path,
@@ -146,34 +146,31 @@ impl FileService {
 
     fn list(
         &self,
-        path: GuestPath,
+        path: &GuestPath,
         recursive: bool,
         limit: u32,
-        after: Option<GuestPath>,
+        after: Option<&GuestPath>,
     ) -> Result<FileResponse, FileFailureCode> {
         self.list_with_visit_ceiling(path, recursive, limit, after, MAX_FILE_LIST_VISITS)
     }
 
     fn list_with_visit_ceiling(
         &self,
-        path: GuestPath,
+        path: &GuestPath,
         recursive: bool,
         limit: u32,
-        after: Option<GuestPath>,
+        after: Option<&GuestPath>,
         visit_ceiling: usize,
     ) -> Result<FileResponse, FileFailureCode> {
         if limit == 0 || limit > MAX_FILE_LIST_ENTRIES {
             return Err(FileFailureCode::InvalidRequest);
         }
         let child_prefix = format!("{}/", path.as_str().trim_end_matches('/'));
-        if after
-            .as_ref()
-            .is_some_and(|after| !after.as_str().starts_with(&child_prefix))
-        {
+        if after.is_some_and(|after| !after.as_str().starts_with(&child_prefix)) {
             return Err(FileFailureCode::InvalidRequest);
         }
         let fs = crate::host::HostFs::new(self.root.clone(), self.workspace.clone());
-        let root_meta = fs.lstat(&path).map_err(map_fs)?;
+        let root_meta = fs.lstat(path).map_err(|error| map_fs(&error))?;
         if root_meta.kind != EntryKind::Directory {
             return Err(FileFailureCode::InvalidPath);
         }
@@ -183,7 +180,7 @@ impl FileService {
         push_children(
             &fs,
             &self.root,
-            &path,
+            path,
             visit_ceiling,
             &mut visited,
             &mut pending,
@@ -192,10 +189,9 @@ impl FileService {
         while let Some(entry) = pending.pop() {
             let entry_path = GuestPath::parse(&self.root, &entry.path)
                 .map_err(|_| FileFailureCode::LimitExceeded)?;
-            let before_or_at_cursor = after
-                .as_ref()
-                .is_some_and(|after| entry_path.as_str() <= after.as_str());
-            let cursor_at_or_inside = after.as_ref().is_some_and(|after| {
+            let before_or_at_cursor =
+                after.is_some_and(|after| entry_path.as_str() <= after.as_str());
+            let cursor_at_or_inside = after.is_some_and(|after| {
                 after == &entry_path
                     || after
                         .as_str()
@@ -242,9 +238,10 @@ impl FileService {
         })
     }
 
-    fn stat(&self, path: GuestPath) -> Result<FileResponse, FileFailureCode> {
+    fn stat(&self, path: &GuestPath) -> Result<FileResponse, FileFailureCode> {
         let fs = crate::host::HostFs::new(self.root.clone(), self.workspace.clone());
-        let entry = aex_hands_tools::filesystem::stat_path(&fs, &path).map_err(map_fs)?;
+        let entry =
+            aex_hands_tools::filesystem::stat_path(&fs, path).map_err(|error| map_fs(&error))?;
         Ok(FileResponse::Entry {
             entry: live_entry(&self.root, entry)?,
         })
@@ -895,7 +892,7 @@ fn push_children(
         .ok_or(FileFailureCode::LimitExceeded)?;
     let children = fs
         .read_dir_bounded(directory, remaining)
-        .map_err(map_fs)?
+        .map_err(|error| map_fs(&error))?
         .ok_or(FileFailureCode::LimitExceeded)?;
     *visited = visited
         .checked_add(children.len())
@@ -1094,7 +1091,7 @@ fn map_io(error: &std::io::Error) -> FileFailureCode {
     }
 }
 
-fn map_fs(error: FsError) -> FileFailureCode {
+fn map_fs(error: &FsError) -> FileFailureCode {
     match error {
         FsError::NotFound { .. } => FileFailureCode::NotFound,
         FsError::IsADirectory { .. } | FsError::NotADirectory { .. } => {
@@ -1120,9 +1117,10 @@ fn live_entry(root: &GuestRoot, entry: ListEntry) -> Result<LiveFileEntry, FileF
             Some(target)
         }
         (LiveFileEntryKind::Symlink, Some(_)) => return Err(FileFailureCode::LimitExceeded),
-        (LiveFileEntryKind::Symlink, None) => return Err(FileFailureCode::Unavailable),
+        (LiveFileEntryKind::Symlink, None) | (_, Some(_)) => {
+            return Err(FileFailureCode::Unavailable);
+        }
         (_, None) => None,
-        (_, Some(_)) => return Err(FileFailureCode::Unavailable),
     };
     Ok(LiveFileEntry {
         path,

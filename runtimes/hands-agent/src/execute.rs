@@ -500,23 +500,18 @@ impl Executor {
             // for the browser capability, and — for a registered tool — an
             // implementation inside the image. Every one fails closed with the
             // reason named, before anything is spawned.
-            OperationRequest::Materialize { .. } => Ok(Dispatch::Terminal(Box::new(failed(
+            OperationRequest::Materialize { .. } => Ok(Self::unavailable_workspace_capability(
                 meta,
                 now,
-                "capability_unavailable",
                 "workspace materialize runs over presigned HTTPS, which needs a \
                      TLS client the guest does not carry; see the recorded gap",
-            )))),
-            OperationRequest::Browser { .. } => Ok(Dispatch::Terminal(Box::new(failed(
+            )),
+            OperationRequest::Browser { .. } => {
+                Ok(Self::unavailable_workspace_capability(meta, now, "browser"))
+            }
+            OperationRequest::RegisteredTool { .. } => Ok(Self::unavailable_workspace_capability(
                 meta,
                 now,
-                "capability_unavailable",
-                "browser",
-            )))),
-            OperationRequest::RegisteredTool { .. } => Ok(Dispatch::Terminal(Box::new(failed(
-                meta,
-                now,
-                "capability_unavailable",
                 // The retired message claimed Brain resolved a registered tool
                 // into an Exec. Brain does that for the *built-in* catalogue
                 // rows — `aex_brain_hands::encode` maps each one onto a
@@ -527,9 +522,22 @@ impl Executor {
                 "this image carries no implementation for that registered tool, and the guest \
                  resolves no tool manifest of its own; the built-in catalogue is mapped onto the \
                  structured operations before dispatch",
-            )))),
+            )),
             _ => unreachable!("dispatch routes the remaining workspace arms elsewhere"),
         }
+    }
+
+    fn unavailable_workspace_capability(
+        meta: &OperationMeta,
+        now: Timestamp,
+        message: &str,
+    ) -> Dispatch {
+        Dispatch::Terminal(Box::new(failed(
+            meta,
+            now,
+            "capability_unavailable",
+            message,
+        )))
     }
 
     /// Writes a text body into the journal and returns its terminal record.
