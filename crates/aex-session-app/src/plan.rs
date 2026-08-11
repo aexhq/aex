@@ -42,6 +42,16 @@ pub enum TransactionIntent {
     CreateSession,
     /// Admit a message and its run.
     AdmitMessage,
+    /// Cancel the session's current work.
+    CancelSession,
+    /// Suspend the exact retained generation.
+    SuspendSession,
+    /// Resume the exact retained generation.
+    ResumeSession,
+    /// Permanently terminate compute and live files.
+    TerminateSession,
+    /// Irreversibly delete session user content.
+    DeleteSession,
     /// Start an admitted run.
     StartRun,
     /// Settle a run.

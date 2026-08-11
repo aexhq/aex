@@ -48,6 +48,8 @@ pub enum ConflictCode {
     WrongWorkspace,
     /// The same operation id names a different kind.
     WrongKind,
+    /// The same operation id names another resource.
+    WrongScope,
 }
 
 impl ConflictCode {
@@ -59,7 +61,7 @@ impl ConflictCode {
                 ErrorCode::OperationIdempotencyConflict
             }
             // A foreign workspace is never told the record exists.
-            Self::WrongWorkspace => ErrorCode::NotFound,
+            Self::WrongWorkspace | Self::WrongScope => ErrorCode::NotFound,
         }
     }
 }
@@ -103,6 +105,9 @@ pub fn admit(
         }
         if existing.kind != request.kind {
             return AdmissionOutcome::Conflict(ConflictCode::WrongKind);
+        }
+        if existing.session != request.session || existing.scope != request.scope {
+            return AdmissionOutcome::Conflict(ConflictCode::WrongScope);
         }
         if existing.intent != request.intent {
             return AdmissionOutcome::Conflict(ConflictCode::OperationIdempotencyConflict);
@@ -286,6 +291,27 @@ mod tests {
         assert_eq!(
             admit(Some(&existing), None, &different, moment(2)),
             AdmissionOutcome::Conflict(ConflictCode::OperationIdempotencyConflict)
+        );
+    }
+
+    #[test]
+    fn an_operation_identity_never_replays_across_sessions() {
+        let existing = match admit(
+            None,
+            None,
+            &request(OperationKind::SessionCancel),
+            moment(1),
+        ) {
+            AdmissionOutcome::Inserted(created) => *created,
+            other => panic!("expected an insert, got {other:?}"),
+        };
+        let mut foreign = request(OperationKind::SessionCancel);
+        let foreign_session = SessionId::from_uuid7(Uuid7::compose(2, [8; 10]));
+        foreign.session = Some(foreign_session);
+        foreign.scope = OperationScope::Session(foreign_session);
+        assert_eq!(
+            admit(Some(&existing), None, &foreign, moment(2)),
+            AdmissionOutcome::Conflict(ConflictCode::WrongScope)
         );
     }
 }

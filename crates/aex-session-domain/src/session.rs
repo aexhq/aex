@@ -429,7 +429,14 @@ pub fn acquire_mutation_guard(
             holder: existing.holder,
         });
     }
-    if let Some(run) = session.active_run {
+    if let Some(run) = session.active_run
+        && !matches!(
+            kind,
+            OperationKind::SessionCancel
+                | OperationKind::SessionTerminate
+                | OperationKind::SessionDelete
+        )
+    {
         return Err(SessionError::NotIdle { run });
     }
     Ok(MutationGuard {
@@ -592,5 +599,16 @@ mod tests {
             ),
             Err(SessionError::NotIdle { run })
         );
+
+        for kind in [
+            OperationKind::SessionCancel,
+            OperationKind::SessionTerminate,
+            OperationKind::SessionDelete,
+        ] {
+            assert!(
+                acquire_mutation_guard(&session, operation(2), kind, moment(1)).is_ok(),
+                "{kind:?} must be able to stop active work"
+            );
+        }
     }
 }
