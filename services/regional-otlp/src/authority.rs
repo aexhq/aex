@@ -882,12 +882,12 @@ impl AdmissionAuthority {
         signals: SignalSet,
     ) -> Result<(Vec<Allocation>, Vec<Allocation>), AuthorityError> {
         let ordered: Vec<Signal> = signals.iter().collect();
+        let reads_workspace = request.scope.session().is_some();
+        let workspace_scope = ScopeKey::Workspace(request.workspace);
         let mut reads: Vec<_> = ordered
             .iter()
             .map(|signal| self.frontier(&request.scope, *signal))
             .collect();
-        let reads_workspace = request.scope.session().is_some();
-        let workspace_scope = ScopeKey::Workspace(request.workspace);
         if reads_workspace {
             reads.extend(
                 ordered
@@ -914,7 +914,7 @@ impl AdmissionAuthority {
         staged: &[StagedRecord],
     ) -> Result<Vec<String>, AuthorityError> {
         let expires = seconds_from_now(limits::OBS_PREPARE_TTL_MS);
-        let mut items = Vec::new();
+        let mut writes = Vec::new();
         let mut digests = Vec::with_capacity(pages.len());
         for (ordinal, span) in pages.iter().enumerate() {
             let encoded = staged_page_bytes(span, staged);

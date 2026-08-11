@@ -3022,8 +3022,10 @@ mod tests {
     use aex_observation_domain::frontier::DeletionState;
     use aex_observation_domain::keys::{self, ControlDomain, ScopeKey};
     use aex_observation_domain::limits;
+    use aex_observation_domain::signal::Signal;
     use aex_observation_store_dynamodb::expressions::{Index, PK, SK, is_safe_expression};
     use aex_observation_store_dynamodb::spool::{GateState, Pending, SpoolChunk};
+    use aex_wire::PrefixedId;
     use aex_wire::ids::{SessionId, TelemetryBatchId, Uuid7, WorkspaceId};
     use aex_wire::types::{Region, Timestamp};
     use aws_sdk_dynamodb::types::AttributeValue;

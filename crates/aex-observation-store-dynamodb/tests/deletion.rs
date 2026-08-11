@@ -6,6 +6,7 @@ use aex_observation_store_dynamodb::{
     SessionObservationDeletionRequest, SessionObservationDeletionStatus,
     SessionObservationDeletionStore,
 };
+use aex_wire::PrefixedId;
 use aex_wire::ids::{OperationId, SessionId, Uuid7, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
