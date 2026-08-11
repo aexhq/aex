@@ -547,137 +547,171 @@ impl DynamoDeletionCoordinator {
     ) -> Result<LifecycleReadiness, StoreError> {
         let session_partition =
             aex_session_dynamodb::keys::session_partition(snapshot.progress.session);
+        if self
+            .delete_create_preparation_page(snapshot, &session_partition)
+            .await?
+        {
+            return Ok(LifecycleReadiness::Deferred);
+        }
+        if self
+            .delete_operation_page(snapshot, &session_partition)
+            .await?
+        {
+            return Ok(LifecycleReadiness::Deferred);
+        }
+        self.delete_session_partition_page(snapshot, &session_partition, now)
+            .await
+    }
+
+    async fn delete_create_preparation_page(
+        &self,
+        snapshot: &SessionDeletionSnapshot,
+        session_partition: &str,
+    ) -> Result<bool, StoreError> {
         let preparation_edges = self
             .query(
                 &self.tables.session_authority,
-                &session_partition,
+                session_partition,
                 Some(aex_session_dynamodb::keys::CREATE_PREPARATION_EDGE_SK),
                 1,
             )
             .await?;
-        if let Some(edge) = preparation_edges.first() {
-            let edge_target = self.validated_target(
-                &self.tables.session_authority,
-                edge,
-                &session_partition,
-                snapshot.progress.workspace,
-                snapshot.progress.session,
-            )?;
-            if edge_target.item_type != "session_create_preparation_edge"
-                || edge_target.sk != aex_session_dynamodb::keys::CREATE_PREPARATION_EDGE_SK
-            {
-                return Err(StoreError::Invalid {
-                    detail: "a create-preparation locator has the wrong authority shape".to_owned(),
-                });
-            }
-            let preparation_partition = string(edge, "preparationPk")?;
-            validate_create_preparation_partition(
-                preparation_partition,
-                snapshot.progress.workspace,
-            )?;
-            let rows = self
-                .query(
-                    &self.tables.session_authority,
-                    preparation_partition,
-                    None,
-                    DELETE_PAGE,
-                )
-                .await?;
-            if !rows.is_empty() {
-                let targets = rows
-                    .iter()
-                    .map(|item| {
-                        self.validated_target(
-                            &self.tables.session_authority,
-                            item,
-                            preparation_partition,
-                            snapshot.progress.workspace,
-                            snapshot.progress.session,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                if targets.iter().any(|target| {
-                    !matches!(
-                        target.item_type.as_str(),
-                        "session_create_preparation" | "session_create_prepared_file"
-                    )
-                }) {
-                    return Err(StoreError::Invalid {
-                        detail: "a create-preparation partition contains an unowned row".to_owned(),
-                    });
-                }
-                self.commit(&compile_guarded_deletes(
-                    &self.tables.session_authority,
-                    snapshot.progress,
-                    &targets,
-                )?)
-                .await?;
-                return Ok(LifecycleReadiness::Deferred);
-            }
-            self.commit(&compile_guarded_deletes(
-                &self.tables.session_authority,
-                snapshot.progress,
-                &[edge_target],
-            )?)
-            .await?;
-            return Ok(LifecycleReadiness::Deferred);
+        let Some(edge) = preparation_edges.first() else {
+            return Ok(false);
+        };
+        let edge_target = self.validated_target(
+            &self.tables.session_authority,
+            edge,
+            session_partition,
+            snapshot.progress.workspace,
+            snapshot.progress.session,
+        )?;
+        if edge_target.item_type != "session_create_preparation_edge"
+            || edge_target.sk != aex_session_dynamodb::keys::CREATE_PREPARATION_EDGE_SK
+        {
+            return Err(StoreError::Invalid {
+                detail: "a create-preparation locator has the wrong authority shape".to_owned(),
+            });
         }
-        let edges = self
+        let preparation_partition = string(edge, "preparationPk")?;
+        validate_create_preparation_partition(preparation_partition, snapshot.progress.workspace)?;
+        let rows = self
             .query(
                 &self.tables.session_authority,
-                &session_partition,
-                Some("OP#"),
-                1,
+                preparation_partition,
+                None,
+                DELETE_PAGE,
             )
             .await?;
-        if let Some(edge) = edges.first() {
-            let edge_target = self.validated_target(
-                &self.tables.session_authority,
-                edge,
-                &session_partition,
-                snapshot.progress.workspace,
-                snapshot.progress.session,
-            )?;
-            if edge_target.item_type != aex_session_dynamodb::codec::SESSION_OPERATION_EDGE {
-                return Err(StoreError::Invalid {
-                    detail: "a session operation locator has the wrong authority shape".to_owned(),
-                });
-            }
-            let operation = string(edge, "operationId")?
-                .parse::<OperationId>()
-                .map_err(|_| StoreError::Invalid {
-                    detail: "a deletion operation edge carries a malformed operationId".to_owned(),
-                })?;
-            let mut targets = Vec::with_capacity(2);
-            if operation != snapshot.progress.operation {
-                let key = aex_session_dynamodb::keys::operation(operation);
-                if let Some(item) = self
-                    .get(&self.tables.session_authority, &key.pk, &key.sk)
-                    .await?
-                {
-                    targets.push(self.validated_target(
+        if !rows.is_empty() {
+            let targets = rows
+                .iter()
+                .map(|item| {
+                    self.validated_target(
                         &self.tables.session_authority,
-                        &item,
-                        &key.pk,
+                        item,
+                        preparation_partition,
                         snapshot.progress.workspace,
                         snapshot.progress.session,
-                    )?);
-                }
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if targets.iter().any(|target| {
+                !matches!(
+                    target.item_type.as_str(),
+                    "session_create_preparation" | "session_create_prepared_file"
+                )
+            }) {
+                return Err(StoreError::Invalid {
+                    detail: "a create-preparation partition contains an unowned row".to_owned(),
+                });
             }
-            targets.push(edge_target);
             self.commit(&compile_guarded_deletes(
                 &self.tables.session_authority,
                 snapshot.progress,
                 &targets,
             )?)
             .await?;
-            return Ok(LifecycleReadiness::Deferred);
+            return Ok(true);
         }
+        self.commit(&compile_guarded_deletes(
+            &self.tables.session_authority,
+            snapshot.progress,
+            &[edge_target],
+        )?)
+        .await?;
+        Ok(true)
+    }
 
+    async fn delete_operation_page(
+        &self,
+        snapshot: &SessionDeletionSnapshot,
+        session_partition: &str,
+    ) -> Result<bool, StoreError> {
+        let edges = self
+            .query(
+                &self.tables.session_authority,
+                session_partition,
+                Some("OP#"),
+                1,
+            )
+            .await?;
+        let Some(edge) = edges.first() else {
+            return Ok(false);
+        };
+        let edge_target = self.validated_target(
+            &self.tables.session_authority,
+            edge,
+            session_partition,
+            snapshot.progress.workspace,
+            snapshot.progress.session,
+        )?;
+        if edge_target.item_type != aex_session_dynamodb::codec::SESSION_OPERATION_EDGE {
+            return Err(StoreError::Invalid {
+                detail: "a session operation locator has the wrong authority shape".to_owned(),
+            });
+        }
+        let operation = string(edge, "operationId")?
+            .parse::<OperationId>()
+            .map_err(|_| StoreError::Invalid {
+                detail: "a deletion operation edge carries a malformed operationId".to_owned(),
+            })?;
+        let mut targets = Vec::with_capacity(2);
+        if operation != snapshot.progress.operation {
+            let key = aex_session_dynamodb::keys::operation(operation);
+            if let Some(item) = self
+                .get(&self.tables.session_authority, &key.pk, &key.sk)
+                .await?
+            {
+                targets.push(self.validated_target(
+                    &self.tables.session_authority,
+                    &item,
+                    &key.pk,
+                    snapshot.progress.workspace,
+                    snapshot.progress.session,
+                )?);
+            }
+        }
+        targets.push(edge_target);
+        self.commit(&compile_guarded_deletes(
+            &self.tables.session_authority,
+            snapshot.progress,
+            &targets,
+        )?)
+        .await?;
+        Ok(true)
+    }
+
+    async fn delete_session_partition_page(
+        &self,
+        snapshot: &SessionDeletionSnapshot,
+        session_partition: &str,
+        now: Timestamp,
+    ) -> Result<LifecycleReadiness, StoreError> {
         let rows = self
             .query(
                 &self.tables.session_authority,
-                &session_partition,
+                session_partition,
                 None,
                 VERIFY_PAGE,
             )
@@ -700,7 +734,7 @@ impl DynamoDeletionCoordinator {
             targets.push(self.validated_target(
                 &self.tables.session_authority,
                 item,
-                &session_partition,
+                session_partition,
                 snapshot.progress.workspace,
                 snapshot.progress.session,
             )?);

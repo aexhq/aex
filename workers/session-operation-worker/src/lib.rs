@@ -9,6 +9,7 @@ use xxhash_rust::xxh3::xxh3_64;
 use std::sync::Arc;
 
 use aex_operation_domain::{OperationKind, OperationStatus};
+use aex_runtime_control::generation::GenerationState;
 use aex_session_dynamodb::StoreError;
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::transactions::{OperationStepCancel, operation_cancelled};
@@ -83,6 +84,11 @@ pub use aex_internal_contracts::operation::SessionOperationWake as WorkHint;
 ///
 /// Every field is rechecked against a strongly consistent base-table read
 /// before the hint can authorize a state change.
+///
+/// # Errors
+///
+/// Returns [`ReconcileError::InvalidHint`] when `body` does not decode as a
+/// [`WorkHint`] or its work identity is empty.
 pub fn decode_work_hint(body: &str) -> Result<WorkHint, ReconcileError> {
     let hint: WorkHint = serde_json::from_str(body).map_err(|_| ReconcileError::InvalidHint)?;
     if hint.work_id.is_empty() {
@@ -444,7 +450,11 @@ pub struct DynamoLifecyclePort {
 impl DynamoLifecyclePort {
     /// Binds the session, work, runtime and observation authorities plus the
     /// runtime-control hint queue.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the observation deletion duty-shard count is
+    /// zero and therefore cannot address its due index.
     pub fn new(
         dynamodb: aws_sdk_dynamodb::Client,
         sqs: aws_sdk_sqs::Client,
@@ -545,6 +555,55 @@ impl DynamoLifecyclePort {
             })?;
         Ok(())
     }
+
+    async fn settlement_operation(
+        &self,
+        step: &LifecycleStep,
+    ) -> Result<aex_session_dynamodb::wire_pending::StoredOperation, StoreError> {
+        let stored = aex_session_dynamodb::store::OperationAuthority::load(
+            &self.operations,
+            step.workspace,
+            step.operation,
+        )
+        .await?
+        .ok_or_else(|| StoreError::Invalid {
+            detail: "the lifecycle operation disappeared before settlement".to_owned(),
+        })?;
+        if stored.record.kind != step.kind
+            || stored.record.session != Some(step.session)
+            || stored.version < step.admitted_version
+        {
+            return Err(StoreError::Invalid {
+                detail: "the lifecycle operation changed binding before settlement".to_owned(),
+            });
+        }
+        Ok(stored)
+    }
+
+    async fn settlement_runtime(
+        &self,
+        step: &LifecycleStep,
+        session: &aex_session_domain::Session,
+    ) -> Result<Option<aex_runtime_control::store::GenerationView>, StoreError> {
+        if step.kind == OperationKind::SessionCancel {
+            return Ok(None);
+        }
+        let view = self.runtime_view(session).await?;
+        let ready = match step.kind {
+            OperationKind::SessionSuspend => {
+                view.head.state == GenerationState::Suspended || view.head.state.is_terminal()
+            }
+            OperationKind::SessionResume => {
+                view.head.state == GenerationState::Running || view.head.state.is_terminal()
+            }
+            OperationKind::SessionTerminate => view.head.state.is_terminal(),
+            _ => false,
+        };
+        if !ready {
+            return Err(StoreError::Contended);
+        }
+        Ok(Some(view))
+    }
 }
 
 #[async_trait::async_trait]
@@ -572,7 +631,6 @@ impl LifecyclePort for DynamoLifecyclePort {
         }
         let session = self.session(step).await?;
         let view = self.runtime_view(&session).await?;
-        use aex_runtime_control::generation::GenerationState;
         let ready = match step.kind {
             OperationKind::SessionSuspend => view.head.state == GenerationState::Suspended,
             OperationKind::SessionResume => view.head.state == GenerationState::Running,
@@ -626,45 +684,8 @@ impl LifecyclePort for DynamoLifecyclePort {
             return self.deletion.settle(step, hold, now).await;
         }
         let session = self.session(step).await?;
-        let stored = aex_session_dynamodb::store::OperationAuthority::load(
-            &self.operations,
-            step.workspace,
-            step.operation,
-        )
-        .await?
-        .ok_or_else(|| StoreError::Invalid {
-            detail: "the lifecycle operation disappeared before settlement".to_owned(),
-        })?;
-        if stored.record.kind != step.kind
-            || stored.record.session != Some(step.session)
-            || stored.version < step.admitted_version
-        {
-            return Err(StoreError::Invalid {
-                detail: "the lifecycle operation changed binding before settlement".to_owned(),
-            });
-        }
-        let runtime = if step.kind == OperationKind::SessionCancel {
-            None
-        } else {
-            Some(self.runtime_view(&session).await?)
-        };
-        if let Some(view) = runtime.as_ref() {
-            let ready = match step.kind {
-                OperationKind::SessionSuspend => {
-                    view.head.state == aex_runtime_control::generation::GenerationState::Suspended
-                        || view.head.state.is_terminal()
-                }
-                OperationKind::SessionResume => {
-                    view.head.state == aex_runtime_control::generation::GenerationState::Running
-                        || view.head.state.is_terminal()
-                }
-                OperationKind::SessionTerminate => view.head.state.is_terminal(),
-                _ => false,
-            };
-            if !ready {
-                return Err(StoreError::Contended);
-            }
-        }
+        let stored = self.settlement_operation(step).await?;
+        let runtime = self.settlement_runtime(step, &session).await?;
         let claim = aex_session_app::LifecycleWorkClaim {
             work_id: hold.work_id.clone(),
             fence: hold.fence,
@@ -938,7 +959,7 @@ where
             && operation.cancel_requested
             && operation.committed_at.is_none();
         let lifecycle_step =
-            (!operation.status.is_terminal() && !cancelling).then(|| LifecycleStep {
+            (!operation.status.is_terminal() && !cancelling).then_some(LifecycleStep {
                 workspace: binding.workspace,
                 session: binding.session,
                 operation: binding.operation,
