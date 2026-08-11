@@ -1,6 +1,6 @@
 //! The one scope vocabulary.
 //!
-//! [`Scope`] is `aex_wire::scopes::ScopeId` — the generated 30-entry registry —
+//! [`Scope`] is `aex_wire::scopes::ScopeId` — the generated 27-entry registry —
 //! re-exported rather than redefined. This module adds the *set* algebra the
 //! authorization decision needs: a `u64` bitset whose bit `n` is
 //! `ScopeId::ALL[n]`, which makes an intersection one instruction and makes the
@@ -18,13 +18,13 @@ use aex_wire::scopes::ScopeId;
 pub type Scope = ScopeId;
 
 /// How many scopes the registry holds, as a shift width.
-const REGISTRY_LEN: u32 = 30;
+const REGISTRY_LEN: u32 = 27;
 
 /// The registry is a `u64` bitset, so it can never exceed 64 entries.
 const _: () = assert!(ScopeId::ALL.len() <= 64);
 const _: () = assert!(ScopeId::ALL.len() == REGISTRY_LEN as usize);
 /// The launch registry size, asserted so an added scope is a visible diff.
-const _: () = assert!(ScopeId::ALL.len() == 30);
+const _: () = assert!(ScopeId::ALL.len() == 27);
 
 /// Why a scope list was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -100,14 +100,11 @@ impl ScopeSet {
         Scope::SessionsRead,
         Scope::SessionsWrite,
         Scope::SessionsDelete,
-        Scope::FilesRead,
-        Scope::FilesWrite,
         Scope::FilesLive,
         Scope::ResourcesRead,
         Scope::ResourcesWrite,
-        Scope::SecretsRead,
-        Scope::SecretsWrite,
-        Scope::SecretsRevoke,
+        Scope::ProviderCredentialsRead,
+        Scope::ProviderCredentialsWrite,
         Scope::TelemetryRead,
         Scope::TelemetryWrite,
     ]);

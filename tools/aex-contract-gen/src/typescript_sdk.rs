@@ -73,11 +73,6 @@ pub fn typescript_sdk_routes(ir: &ContractIr, digest: &str) -> String {
         "  readonly idempotency: {};\n",
         union_of(distinct(&operations, |operation| &operation.idempotency))
     ));
-    out.push_str("  /** How the request body is interpreted. */\n");
-    out.push_str(&format!(
-        "  readonly bodyClass: {};\n",
-        union_of(distinct(&operations, |operation| &operation.body_class))
-    ));
     out.push_str("  /** How the response is delivered. */\n");
     out.push_str(&format!(
         "  readonly transport: {};\n",
@@ -119,10 +114,6 @@ pub fn typescript_sdk_routes(ir: &ContractIr, digest: &str) -> String {
         out.push_str(&format!(
             "    idempotency: {},\n",
             quoted(&operation.idempotency)
-        ));
-        out.push_str(&format!(
-            "    bodyClass: {},\n",
-            quoted(&operation.body_class)
         ));
         out.push_str(&format!(
             "    transport: {},\n",

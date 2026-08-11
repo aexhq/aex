@@ -7,8 +7,8 @@
 use aex_operation_domain::TransitionError;
 use aex_operation_domain::cursor::CursorError;
 use aex_session_domain::{
-    ApprovalRejection, DeletionRejection, LifecycleError, PauseRejection, SessionDomainRunError,
-    SessionError, TerminalRejection,
+    ApprovalRejection, DeletionRejection, PauseRejection, SessionDomainRunError, SessionError,
+    SessionLifecycleError, TerminalRejection,
 };
 use aex_wire::canonical::CanonicalError;
 use aex_wire::error::ErrorCode;
@@ -50,7 +50,7 @@ pub enum AppError {
     Cursor(#[from] CursorError),
     /// The retained-generation lifecycle refused a transition.
     #[error(transparent)]
-    Lifecycle(#[from] LifecycleError),
+    Lifecycle(#[from] SessionLifecycleError),
     /// A typed public operation result could not be canonicalized.
     #[error(transparent)]
     Canonical(#[from] CanonicalError),
@@ -79,7 +79,7 @@ impl AppError {
             | Self::Canonical(_) => ErrorCode::InternalError,
             Self::Paused(rejection) => rejection.code,
             Self::Session(SessionError::NotIdle { .. })
-            | Self::Lifecycle(LifecycleError::SessionBusy) => ErrorCode::SessionNotIdle,
+            | Self::Lifecycle(SessionLifecycleError::SessionBusy) => ErrorCode::SessionNotIdle,
             Self::Session(SessionError::Deleted(_))
             | Self::Deletion(DeletionRejection::Deleted(_)) => ErrorCode::SessionDeleted,
             Self::Approval(ApprovalRejection::NotFound) => ErrorCode::ApprovalNotFound,

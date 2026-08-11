@@ -26,6 +26,7 @@ scenarios = ["SC-REGIONAL-ADMISSION", "SC-REGISTRY-RESOURCES", "SC-SESSION-LIVE-
 
 [package.metadata.aex.targets]
 e2e = "e2e"
+live-files = "e2e"
 load = "e2e"
 
 [features]

@@ -249,7 +249,7 @@ pub struct OperationAdmissionPlan {
 pub struct NativeResumeAdmissionPlan {
     /// Deterministic lifecycle evidence identity.
     pub intent_id: LifecycleIntentId,
-    /// The exact provider MicroVM the native policy will wake.
+    /// The exact provider `MicroVM` the native policy will wake.
     pub microvm: MicrovmId,
     /// The start of provider-native suspended residence. For a lazily observed
     /// suspension this is derived from the last authoritative guest traffic and

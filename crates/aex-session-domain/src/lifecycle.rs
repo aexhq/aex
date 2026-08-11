@@ -147,7 +147,7 @@ pub enum SessionLifecycleError {
     TerminationRequired,
 }
 
-type LifecycleError = SessionLifecycleError;
+pub(crate) type LifecycleError = SessionLifecycleError;
 
 impl SessionLifecycle {
     /// Starts an idle, launched generation with exact suspend and expiry rows.
@@ -219,6 +219,11 @@ impl SessionLifecycle {
     }
 
     /// Marks the active message as awaiting an approval.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a non-running lifecycle, a different active owner, or an
+    /// exhausted lifecycle revision.
     pub fn await_approval(&mut self, run: RunId) -> Result<(), LifecycleError> {
         if self.status != LifecycleStatus::Running {
             return Err(LifecycleError::InvalidState(self.status));
@@ -230,6 +235,11 @@ impl SessionLifecycle {
     }
 
     /// Completes the active message and returns the session to idle.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an inactive lifecycle, a different active owner, an elapsed
+    /// lifetime, an unrepresentable suspend deadline, or an exhausted revision.
     pub fn complete_message(&mut self, run: RunId, now: Timestamp) -> Result<(), LifecycleError> {
         if !self.status.is_active() {
             return Err(LifecycleError::InvalidState(self.status));
@@ -239,6 +249,11 @@ impl SessionLifecycle {
     }
 
     /// Cancels current work. An already-idle/suspended session is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a terminal transition state, an elapsed lifetime, an
+    /// unrepresentable suspend deadline, or an exhausted lifecycle revision.
     pub fn cancel_current(&mut self, now: Timestamp) -> Result<bool, LifecycleError> {
         if self.status.is_active() {
             self.become_idle(now)?;
@@ -254,6 +269,11 @@ impl SessionLifecycle {
     }
 
     /// Begins manual or automatic suspension. Active work is never paused.
+    ///
+    /// # Errors
+    ///
+    /// Refuses active work, any other invalid lifecycle state, or an exhausted
+    /// lifecycle revision.
     pub fn begin_suspend(&mut self) -> Result<bool, LifecycleError> {
         match self.status {
             LifecycleStatus::Idle => {
@@ -271,6 +291,11 @@ impl SessionLifecycle {
     }
 
     /// Records that compute stopped while retaining this exact generation.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a lifecycle that is not suspending or an exhausted lifecycle
+    /// revision.
     pub fn complete_suspend(&mut self, now: Timestamp) -> Result<(), LifecycleError> {
         if self.status != LifecycleStatus::Suspending {
             return Err(LifecycleError::InvalidState(self.status));
@@ -284,6 +309,11 @@ impl SessionLifecycle {
     }
 
     /// Begins manual resume of the retained generation.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a lifecycle that is neither suspended nor idle, or an exhausted
+    /// lifecycle revision.
     pub fn begin_resume(&mut self) -> Result<bool, LifecycleError> {
         match self.status {
             LifecycleStatus::Suspended => {
@@ -300,6 +330,11 @@ impl SessionLifecycle {
     ///
     /// A manual resume becomes idle. An automatic message-triggered resume
     /// starts the already-admitted message only after compute is available.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a lifecycle that is not resuming, an elapsed lifetime, an
+    /// unrepresentable suspend deadline, or an exhausted lifecycle revision.
     pub fn complete_resume(&mut self, now: Timestamp) -> Result<(), LifecycleError> {
         if self.status != LifecycleStatus::Resuming {
             return Err(LifecycleError::InvalidState(self.status));
@@ -314,6 +349,10 @@ impl SessionLifecycle {
     }
 
     /// Begins permanent termination and clears any active work.
+    ///
+    /// # Errors
+    ///
+    /// Refuses deletion already in progress or an exhausted lifecycle revision.
     pub fn begin_terminate(&mut self, reason: TerminationReason) -> Result<bool, LifecycleError> {
         match self.status {
             LifecycleStatus::Terminating | LifecycleStatus::Terminated => Ok(false),
@@ -331,6 +370,11 @@ impl SessionLifecycle {
     }
 
     /// Records that compute and live files were permanently destroyed.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a lifecycle that is not terminating or an exhausted lifecycle
+    /// revision.
     pub fn complete_terminate(&mut self, now: Timestamp) -> Result<(), LifecycleError> {
         if self.status != LifecycleStatus::Terminating {
             return Err(LifecycleError::InvalidState(self.status));
@@ -342,6 +386,11 @@ impl SessionLifecycle {
     }
 
     /// Starts irreversible user-content deletion after termination is proven.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a lifecycle that is not terminated or an exhausted lifecycle
+    /// revision.
     pub fn begin_delete(&mut self) -> Result<(), LifecycleError> {
         if self.status != LifecycleStatus::Terminated {
             return Err(LifecycleError::TerminationRequired);

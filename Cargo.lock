@@ -768,6 +768,7 @@ version = "0.1.0"
 dependencies = [
  "aex-load-harness",
  "aex-test-harness",
+ "aex-wire",
  "reqwest",
  "serde_json",
  "sha2 0.11.0",
@@ -7288,11 +7289,15 @@ dependencies = [
 name = "session-stream-api"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-app",
+ "aex-brain-hands",
  "aex-capacity-dynamodb",
  "aex-content-aws",
  "aex-content-domain",
  "aex-content-dynamodb",
  "aex-control-domain",
+ "aex-hands-control-aws",
+ "aex-hands-protocol",
  "aex-identity-domain",
  "aex-internal-contracts",
  "aex-observation-domain",
@@ -7303,6 +7308,8 @@ dependencies = [
  "aex-regional-http",
  "aex-registry-dynamodb",
  "aex-runtime-activity-dynamodb",
+ "aex-runtime-control",
+ "aex-runtime-control-aws",
  "aex-secret-custody-dynamodb",
  "aex-secret-domain",
  "aex-session-app",
@@ -7318,8 +7325,10 @@ dependencies = [
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-dynamodbstreams",
+ "aws-sdk-lambdamicrovms",
  "aws-sdk-s3",
  "aws-sdk-secretsmanager",
+ "aws-sdk-sqs",
  "aws-sdk-ssm",
  "aws-smithy-http-client",
  "aws-smithy-types",
