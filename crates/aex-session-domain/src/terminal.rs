@@ -25,7 +25,7 @@ use crate::session::{Session, SessionStatus};
 ///
 /// The application commits four fixed rows plus both the mutable base row and
 /// immutable sealed projection for each message. Forty-eight therefore fills,
-/// but never exceeds, DynamoDB's 100-action transaction envelope.
+/// but never exceeds, `DynamoDB`'s 100-action transaction envelope.
 pub const MAX_OPEN_MESSAGES_PER_RUN: usize = 48;
 
 /// One attempt to settle a run.

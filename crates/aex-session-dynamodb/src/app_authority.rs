@@ -633,6 +633,11 @@ impl<S: HintSink> DynamoAuthorityCommitter<S> {
     /// The shared replay combinator needs that participant to distinguish a
     /// receipt race from a grant collision. Transport ambiguity resolves only
     /// through the receipt; this method never retries an unknown write.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when compilation refuses the participant set or
+    /// the provider cannot establish a committed outcome.
     pub async fn commit_replayable(
         &self,
         plan: &SessionTransaction,

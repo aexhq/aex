@@ -8,7 +8,7 @@
 
 use aex_content_aws::errors::ContentObjectError;
 use aex_content_aws::object_key::{ObjectKey, PRESIGN_EXPIRY};
-use aex_content_domain::{ContentDigest, ContentObjectKey, GrantId, MediaType};
+use aex_content_domain::{ContentDigest, ContentObjectKey, GrantId, MediaType, Pin};
 use aex_regional_http::projection::{self, authority_failure};
 use aex_session_app::plan::{Condition, SessionTransaction, TableFamily, TransactionIntent, Write};
 use aex_session_domain::{
@@ -26,12 +26,12 @@ use aex_session_dynamodb::replay::{
 };
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::idempotency::{IntentDigest, ReplayIdentity};
-use aex_wire::ids::{MeasurementId, PrefixedId as _, ResourceName};
+use aex_wire::ids::{MeasurementId, OrganizationId, PrefixedId as _, ResourceName, WorkspaceId};
 use aex_wire::models;
-use aex_wire::types::{DecimalU128, HttpsUrl};
+use aex_wire::types::{DecimalU128, ETag, HttpsUrl, Timestamp};
 use aex_workspace_domain::{
-    ByteRange, ContentObjectLocation, GrantContentDescriptor, GrantRejection, GrantSubject,
-    ObjectChecksum, RegistrySelector, mint_grant,
+    ByteRange, ContentObjectLocation, DownloadGrant, GrantContentDescriptor, GrantRejection,
+    GrantSubject, ObjectChecksum, RegistrySelector, mint_grant,
 };
 
 use super::handlers::Routes;
@@ -71,6 +71,27 @@ impl GrantContentDescriptor for GrantContent {
 /// The canonical public response stored on the receipt.
 #[derive(Debug, Clone, PartialEq)]
 struct DownloadResponse(models::DownloadGrant);
+
+struct DownloadAttempt<'a> {
+    name: &'a ResourceName,
+    workspace: WorkspaceId,
+    organization: OrganizationId,
+    requested: Option<ByteRange>,
+    wire_range: Option<aex_wire::types::ByteRange>,
+    identity: IdempotencyIdentity,
+    scope: String,
+    intent: IntentDigest,
+    now: Timestamp,
+}
+
+struct ResolvedFile {
+    etag: ETag,
+    digest: ContentDigest,
+    size_bytes: u64,
+    media_type: Option<MediaType>,
+    object_key: ObjectKey,
+    location: ContentObjectLocation,
+}
 
 impl DecodeReceipt for DownloadResponse {
     fn decode_receipt(receipt: &Receipt) -> Result<Self, StoreError> {
@@ -133,175 +154,223 @@ impl Routes {
                 now,
             },
             || {
-                let identity = replay_identity(self, replay, intent);
-                let scope = scope.render();
-                async move {
-                    // Mutable authority is consulted only after the receipt
-                    // reader elects this request to try the transaction. A
-                    // replay therefore neither resolves a current name nor
-                    // presigns a replacement URL.
-                    let pointer = self
-                        .shared()
-                        .registry
-                        .load_pointer(
-                            workspace,
-                            aex_content_domain::RegistryKind::File,
-                            name.as_str(),
-                        )
-                        .await?
-                        .ok_or_else(|| missing(Participant::REGISTRY_POINTER))?;
-                    let registered = projection::registered_file(&pointer).map_err(|error| {
-                        StoreError::Invalid {
-                            detail: format!("a registered file pointer is malformed: {error}"),
-                        }
-                    })?;
-                    let digest = registered.value.content.sha256;
-                    let size = u64::try_from(registered.value.content.size_bytes.get())
-                        .map_err(|_| missing(Participant::CONTENT_DESCRIPTOR))?;
-                    let descriptor = self
-                        .shared()
-                        .content
-                        .load_descriptor(workspace, &digest)
-                        .await?
-                        .ok_or_else(|| missing(Participant::CONTENT_DESCRIPTOR))?;
-                    if descriptor.workspace != workspace
-                        || descriptor.organization != organization
-                        || descriptor.digest != digest
-                        || descriptor.size_bytes != size
-                        || descriptor.state != "committed"
-                    {
-                        return Err(missing(Participant::CONTENT_DESCRIPTOR));
-                    }
-                    let object = descriptor
-                        .object
-                        .as_ref()
-                        .ok_or_else(|| missing(Participant::CONTENT_DESCRIPTOR))?;
-                    let object_key = ObjectKey::parse(&object.key)
-                        .map_err(|_| missing(Participant::CONTENT_DESCRIPTOR))?;
-                    if object_key != ObjectKey::new(workspace, &digest) {
-                        return Err(missing(Participant::CONTENT_DESCRIPTOR));
-                    }
-                    let domain_key = ContentObjectKey::parse(&object.key)
-                        .map_err(|_| missing(Participant::CONTENT_DESCRIPTOR))?;
-                    let checksum = if !object.checksum_crc64_nvme.is_empty() {
-                        ObjectChecksum::Crc64Nvme(object.checksum_crc64_nvme.clone())
-                    } else if !object.checksum_sha256.is_empty() {
-                        ObjectChecksum::Sha256(object.checksum_sha256.clone())
-                    } else {
-                        return Err(missing(Participant::CONTENT_DESCRIPTOR));
-                    };
-                    let content = GrantContent {
-                        digest,
-                        size_bytes: size,
-                        media_type: MediaType::parse(&descriptor.media_type).ok(),
-                    };
-                    let (grant, pin) = mint_grant(
-                        GrantSubject {
-                            workspace,
-                            session: None,
-                        },
-                        &content,
-                        &ContentObjectLocation {
-                            key: domain_key,
-                            checksum,
-                        },
-                        requested,
-                        GrantId(new_uuid7()),
-                        MeasurementId::from_uuid7(new_uuid7()),
-                        now,
-                    )
-                    .map_err(invalid_grant)?;
-                    let signed_range = presign_range(grant.range, size)?;
-                    let presigned = self
-                        .shared()
-                        .content_objects
-                        .presign_get(&object_key, signed_range)
-                        .await
-                        .map_err(object_failure)?;
-                    validate_presign(&presigned, signed_range)?;
-                    let response = models::DownloadGrant {
-                        authorized_bytes: DecimalU128::new(u128::from(grant.authorized_bytes)),
-                        expires_at: grant.expires_at,
-                        measurement_id: grant.measurement,
-                        range: wire_range,
-                        sha256: grant.whole_sha256,
-                        size_bytes: DecimalU128::new(u128::from(size)),
-                        url: HttpsUrl::parse(presigned.url.expose()).map_err(|error| {
-                            StoreError::Invalid {
-                                detail: format!("a presigned URL is not a wire URL: {error}"),
-                            }
-                        })?,
-                    };
-                    let canonical =
-                        serde_json::to_vec(&response).map_err(|error| StoreError::Invalid {
-                            detail: format!("a download grant could not be serialized: {error}"),
-                        })?;
-                    let receipt = IdempotencyReceipt {
-                        key: ReceiptKey::of(&scope, &identity).map_err(|error| {
-                            StoreError::Invalid {
-                                detail: format!("a download receipt key is invalid: {error}"),
-                            }
-                        })?,
-                        identity,
-                        intent,
-                        outcome: ReceiptOutcome::Resource {
-                            kind: ResourceKind::Grant,
-                            id: ResourceId(grant.id.0.to_string()),
-                            response: ResponseBody::of(&canonical),
-                        },
-                        created_at: now,
-                        // The replay row and URL share one explicit fence. The
-                        // compiler may replace the stale row after this instant
-                        // even while DynamoDB TTL reclamation is still pending.
-                        expires_at: Some(grant.expires_at),
-                    };
-                    let plan = SessionTransaction {
-                        intent: TransactionIntent::RegistryDownload,
-                        conditions: vec![
-                            Condition::RegistryEtag {
-                                selector: RegistrySelector {
-                                    workspace,
-                                    kind: aex_content_domain::RegistryKind::File,
-                                    name: name.clone(),
-                                },
-                                expected: pointer.row.etag,
-                            },
-                            Condition::ContentOwned { workspace, digest },
-                        ],
-                        writes: vec![
-                            Write::PutGrant(Box::new(grant)),
-                            Write::PutPin(Box::new(pin)),
-                            Write::PutIdempotencyReceipt(Box::new(receipt)),
-                        ],
-                        after_commit: Vec::new(),
-                    };
-                    let content = aex_content_dynamodb::application_plan::ContentAuthorityCompiler;
-                    let registry =
-                        aex_registry_dynamodb::application_plan::RegistryAuthorityCompiler;
-                    let registry_receipts = IdempotencyCompiler::registry();
-                    let compilers = FamilyCompilers::new()
-                        .with(TableFamily::ContentAuthority, &content)
-                        .with(TableFamily::Registry, &registry)
-                        .with(TableFamily::Idempotency, &registry_receipts);
-                    let committer = DynamoAuthorityCommitter::new_workspace(
-                        self.shared().authority.clone(),
-                        self.shared().tables.clone(),
-                        WorkspaceBinding {
-                            workspace,
-                            organization,
-                        },
-                        now,
-                        ApiHintSink,
-                    );
-                    retry_stale_authority(committer.commit_replayable(&plan, &compilers).await)?;
-                    Ok(DownloadResponse(response))
-                }
+                let attempt = DownloadAttempt {
+                    name,
+                    workspace,
+                    organization,
+                    requested,
+                    wire_range,
+                    identity: replay_identity(self, replay, intent),
+                    scope: scope.render(),
+                    intent,
+                    now,
+                };
+                async move { self.attempt_registry_download(attempt).await }
             },
         )
         .await
         .map_err(download_failure)?;
         Ok(outcome.into_inner().0)
     }
+
+    async fn attempt_registry_download(
+        &self,
+        attempt: DownloadAttempt<'_>,
+    ) -> Result<DownloadResponse, StoreError> {
+        // Mutable authority is consulted only after the receipt reader elects
+        // this request. A replay neither resolves a name nor signs another URL.
+        let resolved = self.resolve_registry_file(&attempt).await?;
+        let (grant, pin, response) = self.prepare_download(&attempt, &resolved).await?;
+        let canonical = serde_json::to_vec(&response).map_err(|error| StoreError::Invalid {
+            detail: format!("a download grant could not be serialized: {error}"),
+        })?;
+        let plan = download_plan(&attempt, &resolved, grant, pin, &canonical)?;
+        self.commit_registry_download(&attempt, &plan).await?;
+        Ok(DownloadResponse(response))
+    }
+
+    async fn resolve_registry_file(
+        &self,
+        attempt: &DownloadAttempt<'_>,
+    ) -> Result<ResolvedFile, StoreError> {
+        let pointer = self
+            .shared()
+            .registry
+            .load_pointer(
+                attempt.workspace,
+                aex_content_domain::RegistryKind::File,
+                attempt.name.as_str(),
+            )
+            .await?
+            .ok_or_else(|| missing(Participant::REGISTRY_POINTER))?;
+        let registered =
+            projection::registered_file(&pointer).map_err(|error| StoreError::Invalid {
+                detail: format!("a registered file pointer is malformed: {error}"),
+            })?;
+        let digest = registered.value.content.sha256;
+        let size_bytes = u64::try_from(registered.value.content.size_bytes.get())
+            .map_err(|_| missing(Participant::CONTENT_DESCRIPTOR))?;
+        let descriptor = self
+            .shared()
+            .content
+            .load_descriptor(attempt.workspace, &digest)
+            .await?
+            .ok_or_else(|| missing(Participant::CONTENT_DESCRIPTOR))?;
+        if descriptor.workspace != attempt.workspace
+            || descriptor.organization != attempt.organization
+            || descriptor.digest != digest
+            || descriptor.size_bytes != size_bytes
+            || descriptor.state != "committed"
+        {
+            return Err(missing(Participant::CONTENT_DESCRIPTOR));
+        }
+        let object = descriptor
+            .object
+            .as_ref()
+            .ok_or_else(|| missing(Participant::CONTENT_DESCRIPTOR))?;
+        let object_key =
+            ObjectKey::parse(&object.key).map_err(|_| missing(Participant::CONTENT_DESCRIPTOR))?;
+        if object_key != ObjectKey::new(attempt.workspace, &digest) {
+            return Err(missing(Participant::CONTENT_DESCRIPTOR));
+        }
+        let key = ContentObjectKey::parse(&object.key)
+            .map_err(|_| missing(Participant::CONTENT_DESCRIPTOR))?;
+        let checksum = if !object.checksum_crc64_nvme.is_empty() {
+            ObjectChecksum::Crc64Nvme(object.checksum_crc64_nvme.clone())
+        } else if !object.checksum_sha256.is_empty() {
+            ObjectChecksum::Sha256(object.checksum_sha256.clone())
+        } else {
+            return Err(missing(Participant::CONTENT_DESCRIPTOR));
+        };
+        Ok(ResolvedFile {
+            etag: pointer.row.etag,
+            digest,
+            size_bytes,
+            media_type: MediaType::parse(&descriptor.media_type).ok(),
+            object_key,
+            location: ContentObjectLocation { key, checksum },
+        })
+    }
+
+    async fn prepare_download(
+        &self,
+        attempt: &DownloadAttempt<'_>,
+        resolved: &ResolvedFile,
+    ) -> Result<(DownloadGrant, Pin, models::DownloadGrant), StoreError> {
+        let content = GrantContent {
+            digest: resolved.digest,
+            size_bytes: resolved.size_bytes,
+            media_type: resolved.media_type.clone(),
+        };
+        let (grant, pin) = mint_grant(
+            GrantSubject {
+                workspace: attempt.workspace,
+                session: None,
+            },
+            &content,
+            &resolved.location,
+            attempt.requested,
+            GrantId(new_uuid7()),
+            MeasurementId::from_uuid7(new_uuid7()),
+            attempt.now,
+        )
+        .map_err(invalid_grant)?;
+        let signed_range = presign_range(grant.range, resolved.size_bytes)?;
+        let presigned = self
+            .shared()
+            .content_objects
+            .presign_get(&resolved.object_key, signed_range)
+            .await
+            .map_err(|error| object_failure(&error))?;
+        validate_presign(&presigned, signed_range)?;
+        let response = models::DownloadGrant {
+            authorized_bytes: DecimalU128::new(u128::from(grant.authorized_bytes)),
+            expires_at: grant.expires_at,
+            measurement_id: grant.measurement,
+            range: attempt.wire_range,
+            sha256: grant.whole_sha256,
+            size_bytes: DecimalU128::new(u128::from(resolved.size_bytes)),
+            url: HttpsUrl::parse(presigned.url.expose()).map_err(|error| StoreError::Invalid {
+                detail: format!("a presigned URL is not a wire URL: {error}"),
+            })?,
+        };
+        Ok((grant, pin, response))
+    }
+
+    async fn commit_registry_download(
+        &self,
+        attempt: &DownloadAttempt<'_>,
+        plan: &SessionTransaction,
+    ) -> Result<(), StoreError> {
+        let content = aex_content_dynamodb::application_plan::ContentAuthorityCompiler;
+        let registry = aex_registry_dynamodb::application_plan::RegistryAuthorityCompiler;
+        let registry_receipts = IdempotencyCompiler::registry();
+        let compilers = FamilyCompilers::new()
+            .with(TableFamily::ContentAuthority, &content)
+            .with(TableFamily::Registry, &registry)
+            .with(TableFamily::Idempotency, &registry_receipts);
+        let committer = DynamoAuthorityCommitter::new_workspace(
+            self.shared().authority.clone(),
+            self.shared().tables.clone(),
+            WorkspaceBinding {
+                workspace: attempt.workspace,
+                organization: attempt.organization,
+            },
+            attempt.now,
+            ApiHintSink,
+        );
+        retry_stale_authority(committer.commit_replayable(plan, &compilers).await)
+    }
+}
+
+fn download_plan(
+    attempt: &DownloadAttempt<'_>,
+    resolved: &ResolvedFile,
+    grant: DownloadGrant,
+    pin: Pin,
+    canonical: &[u8],
+) -> Result<SessionTransaction, StoreError> {
+    let receipt = IdempotencyReceipt {
+        key: ReceiptKey::of(&attempt.scope, &attempt.identity).map_err(|error| {
+            StoreError::Invalid {
+                detail: format!("a download receipt key is invalid: {error}"),
+            }
+        })?,
+        identity: attempt.identity.clone(),
+        intent: attempt.intent,
+        outcome: ReceiptOutcome::Resource {
+            kind: ResourceKind::Grant,
+            id: ResourceId(grant.id.0.to_string()),
+            response: ResponseBody::of(canonical),
+        },
+        created_at: attempt.now,
+        // The replay row and URL share one explicit fence. The compiler may
+        // replace this row while asynchronous TTL cleanup is still pending.
+        expires_at: Some(grant.expires_at),
+    };
+    Ok(SessionTransaction {
+        intent: TransactionIntent::RegistryDownload,
+        conditions: vec![
+            Condition::RegistryEtag {
+                selector: RegistrySelector {
+                    workspace: attempt.workspace,
+                    kind: aex_content_domain::RegistryKind::File,
+                    name: attempt.name.clone(),
+                },
+                expected: resolved.etag.clone(),
+            },
+            Condition::ContentOwned {
+                workspace: attempt.workspace,
+                digest: resolved.digest,
+            },
+        ],
+        writes: vec![
+            Write::PutGrant(Box::new(grant)),
+            Write::PutPin(Box::new(pin)),
+            Write::PutIdempotencyReceipt(Box::new(receipt)),
+        ],
+        after_commit: Vec::new(),
+    })
 }
 
 fn replay_identity(
@@ -390,22 +459,19 @@ fn retry_stale_authority(result: Result<(), StoreError>) -> Result<(), StoreErro
         // The pointer/descriptor changed after resolution, or an opaque grant
         // id collided with an immutable row. No URL has escaped; elect again
         // under the bounded policy and derive against fresh authority/ids.
-        Err(StoreError::PreconditionFailed { participant, .. })
-            if matches!(
-                participant,
+        Err(StoreError::PreconditionFailed {
+            participant:
                 Participant::REGISTRY_POINTER
-                    | Participant::CONTENT_DESCRIPTOR
-                    | Participant::CONTENT_GRANT
-                    | Participant::CONTENT_GRANT_PIN
-            ) =>
-        {
-            Err(StoreError::Contended)
-        }
+                | Participant::CONTENT_DESCRIPTOR
+                | Participant::CONTENT_GRANT
+                | Participant::CONTENT_GRANT_PIN,
+            ..
+        }) => Err(StoreError::Contended),
         other => other,
     }
 }
 
-fn object_failure(error: ContentObjectError) -> StoreError {
+fn object_failure(error: &ContentObjectError) -> StoreError {
     StoreError::Invalid {
         detail: format!("the content object could not be presigned: {error}"),
     }
@@ -499,11 +565,11 @@ mod tests {
         }
     }
 
-    fn request<'a>(
+    fn request(
         workspace: WorkspaceId,
-        key: &'a IdempotencyKey,
+        key: &IdempotencyKey,
         intent: IntentDigest,
-    ) -> ReplayRequest<'a> {
+    ) -> ReplayRequest<'_> {
         ReplayRequest {
             workspace,
             scope: IdempotencyScope::new("registry.download", Some("file")).expect("a scope"),

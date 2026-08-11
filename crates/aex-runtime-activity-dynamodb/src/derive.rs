@@ -146,7 +146,9 @@ mod tests {
         GenerationState, HandsGeneration, ImageIdentifier, ImagePin, ImageVersion, LimitsRevision,
         NetworkPolicy, guest_root,
     };
-    use aex_wire::ids::{GenerationId, OrganizationId, SessionId, Uuid7, WorkspaceId};
+    use aex_wire::ids::{
+        GenerationId, OrganizationId, PrefixedId as _, SessionId, Uuid7, WorkspaceId,
+    };
     use aex_wire::types::{ComputeSize, Timestamp};
 
     use super::derived_generation;

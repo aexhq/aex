@@ -69,7 +69,7 @@ pub fn message_prefix() -> &'static str {
 
 /// One immutable sealed-message projection, ordered by seal instant and then
 /// by message identity.
-///
+#[must_use]
 pub fn sealed_message(
     session: SessionId,
     sealed_at: aex_wire::types::Timestamp,

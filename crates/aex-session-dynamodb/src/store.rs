@@ -175,8 +175,8 @@ struct SessionLocator {
 fn session_locator(
     pk: &str,
     sk: &str,
-    index_pk: &str,
-    index_sk: &str,
+    index_partition: &str,
+    index_sort: &str,
     workspace: WorkspaceId,
     snapshot: Timestamp,
 ) -> Result<SessionLocator, &'static str> {
@@ -187,20 +187,20 @@ fn session_locator(
     if pk != keys::head(session).pk || sk != keys::head(session).sk {
         return Err("the base key is not the located session head");
     }
-    if index_pk != keys::workspace_index::session_partition(workspace) {
+    if index_partition != keys::workspace_index::session_partition(workspace) {
         return Err("the index partition does not match the asserted workspace");
     }
-    let (created_at, indexed_session) = index_sk
+    let (created_at, indexed_session) = index_sort
         .rsplit_once('#')
         .ok_or("the index sort key is not a creation instant and session identity")?;
     let created_at = Timestamp::parse(created_at)
         .map_err(|_| "the index sort key has an invalid creation instant")?;
     if indexed_session != session.to_string()
-        || index_sk != keys::workspace_index::session_sort(created_at, session)
+        || index_sort != keys::workspace_index::session_sort(created_at, session)
     {
         return Err("the index sort key disagrees with the located session");
     }
-    if index_sk > keys::workspace_index::session_snapshot_sort(snapshot).as_str() {
+    if index_sort > keys::workspace_index::session_snapshot_sort(snapshot).as_str() {
         return Err("the continuation is beyond the pinned session snapshot");
     }
     Ok(SessionLocator {
@@ -239,12 +239,12 @@ fn validate_session_list_position(
     workspace: WorkspaceId,
     snapshot: Timestamp,
 ) -> Result<(), StoreError> {
-    let Some(index_pk) = position.index_pk.as_deref() else {
+    let Some(index_partition) = position.index_pk.as_deref() else {
         return Err(StoreError::Invalid {
             detail: "a session continuation carries no workspace-index partition".to_owned(),
         });
     };
-    let Some(index_sk) = position.index_sk.as_deref() else {
+    let Some(index_sort) = position.index_sk.as_deref() else {
         return Err(StoreError::Invalid {
             detail: "a session continuation carries no workspace-index sort key".to_owned(),
         });
@@ -252,8 +252,8 @@ fn validate_session_list_position(
     session_locator(
         &position.pk,
         &position.sk,
-        index_pk,
-        index_sk,
+        index_partition,
+        index_sort,
         workspace,
         snapshot,
     )

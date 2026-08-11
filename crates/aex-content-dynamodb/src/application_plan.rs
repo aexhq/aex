@@ -367,41 +367,21 @@ mod tests {
         .expect("the three-family plan compiles");
 
         assert_eq!(compiled.transaction.len(), 5);
-        assert!(
-            compiled
-                .transaction
-                .participants()
-                .contains(&Participant::REGISTRY_POINTER)
-        );
-        assert!(
-            compiled
-                .transaction
-                .participants()
-                .contains(&Participant::CONTENT_DESCRIPTOR)
-        );
-        assert!(
-            compiled
-                .transaction
-                .participants()
-                .contains(&Participant::CONTENT_GRANT)
-        );
-        assert!(
-            compiled
-                .transaction
-                .participants()
-                .contains(&Participant::CONTENT_GRANT_PIN)
-        );
-        assert!(
-            compiled
-                .transaction
-                .participants()
-                .contains(&Participant::REGISTRY_IDEMPOTENCY)
+        assert_eq!(
+            compiled.transaction.participants(),
+            [
+                Participant::REGISTRY_POINTER,
+                Participant::CONTENT_DESCRIPTOR,
+                Participant::CONTENT_GRANT,
+                Participant::CONTENT_GRANT_PIN,
+                Participant::REGISTRY_IDEMPOTENCY,
+            ]
         );
         let addressed = compiled
             .transaction
             .actions()
             .iter()
-            .filter_map(|action| action.put().map(|put| put.table_name()))
+            .filter_map(|action| action.put().map(aws_sdk_dynamodb::types::Put::table_name))
             .collect::<Vec<_>>();
         assert_eq!(
             addressed

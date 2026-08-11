@@ -2,7 +2,7 @@
 //!
 //! The workspace GSI is only an ordered locator. Every selected head is read
 //! strongly before lifecycle/status filtering, and the continuation remains
-//! the complete four-part DynamoDB position owned by the regional edge.
+//! the complete four-part `DynamoDB` position owned by the regional edge.
 
 mod support;
 
