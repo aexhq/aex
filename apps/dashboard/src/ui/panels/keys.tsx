@@ -18,6 +18,7 @@ import type { ApiKey, NewApiKey, Page } from "../wire";
 const COMMON_SCOPES = [
   "sessions:read",
   "sessions:write",
+  "files:live",
   "telemetry:read",
   "provider_credentials:read",
   "provider_credentials:write",
