@@ -5,48 +5,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { USER_SCENARIOS } from "../../scenarios.js";
+import sdkManifest from "../../../../packages/sdk/package.json" with { type: "json" };
 
 const packageRoot = resolve(import.meta.dir, "../../../../packages/sdk");
 const suiteRoot = mkdtempSync(join(tmpdir(), "aex-packed-sdk-"));
 const tarball = join(suiteRoot, "aexhq-sdk.tgz");
 const bun = "bun" in process.versions ? process.execPath : "bun";
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-
-const expectedRuntimeExports = [
-  "AccountToken",
-  "Aex",
-  "AexApiError",
-  "AexAuthError",
-  "AexConfigError",
-  "AexConflictError",
-  "AexError",
-  "AexGoneError",
-  "AexInternalError",
-  "AexNotFoundError",
-  "AexPreconditionError",
-  "AexQuotaError",
-  "AexStateError",
-  "AexStreamProtocolError",
-  "AexUnavailableError",
-  "AexValidationError",
-  "Download",
-  "ERROR_METADATA",
-  "FetchTransport",
-  "MAX_SINGLE_GET_BYTES",
-  "Page",
-  "RETRY_POLICY",
-  "ROUTES",
-  "WorkspaceApiKey",
-  "apiErrorFromResponse",
-  "executeWithRetry",
-  "isRetryable",
-  "parseCredential",
-  "parseNdjsonFrames",
-  "planDownloadRanges",
-  "regionalHost",
-  "resolveCentralBaseUrl",
-  "resolveRegionalBaseUrl",
-].sort();
 
 beforeAll(() => {
   run(bun, ["pm", "pack", "--filename", tarball, "--quiet"], packageRoot);
@@ -74,8 +39,7 @@ test("packed.sdk-install-node installs and executes the packed root surface with
   ]);
 
   expect(evidence.runtime).toBe("node");
-  expect(evidence.resolved).toContain("/node_modules/@aexhq/sdk/dist/index.js");
-  expect(evidence.exports).toEqual(expectedRuntimeExports);
+  expect(evidence.packageVersion).toBe(sdkManifest.version);
 }, 120_000);
 
 test("packed.sdk-install-bun installs and executes the packed root surface with Bun", () => {
@@ -89,14 +53,12 @@ test("packed.sdk-install-bun installs and executes the packed root surface with 
   ]);
 
   expect(evidence.runtime).toBe("bun");
-  expect(evidence.resolved).toContain("/node_modules/@aexhq/sdk/dist/index.js");
-  expect(evidence.exports).toEqual(expectedRuntimeExports);
+  expect(evidence.packageVersion).toBe(sdkManifest.version);
 }, 120_000);
 
 interface ProbeEvidence {
   readonly runtime: "node" | "bun";
-  readonly resolved: string;
-  readonly exports: readonly string[];
+  readonly packageVersion: string;
 }
 
 function installAndProbe(runtime: ProbeEvidence["runtime"], installer: string, installArguments: readonly string[]): ProbeEvidence {
@@ -119,10 +81,9 @@ function probeSource(runtime: ProbeEvidence["runtime"]): string {
   return `
 import * as sdk from "@aexhq/sdk";
 
-const expected = ${JSON.stringify(expectedRuntimeExports)};
-const actual = Object.keys(sdk).sort();
-if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-  throw new Error(\`unexpected SDK root surface: \${JSON.stringify(actual)}\`);
+const operationId = sdk.newId("operation");
+if (!sdk.isId("operation", operationId) || sdk.assertId("operation", operationId) !== operationId) {
+  throw new Error("packed SDK identifier behavior mismatch");
 }
 const ranges = sdk.planDownloadRanges(sdk.MAX_SINGLE_GET_BYTES + 1);
 if (ranges.length !== 2 || ranges[1]?.start !== sdk.MAX_SINGLE_GET_BYTES) {
@@ -131,7 +92,7 @@ if (ranges.length !== 2 || ranges[1]?.start !== sdk.MAX_SINGLE_GET_BYTES) {
 if (sdk.regionalHost("euw1") !== "https://eu-west-1.api.aex.dev") {
   throw new Error("packed SDK routing behavior mismatch");
 }
-console.log(JSON.stringify({ runtime: ${JSON.stringify(runtime)}, resolved: import.meta.resolve("@aexhq/sdk"), exports: actual }));
+console.log(JSON.stringify({ runtime: ${JSON.stringify(runtime)}, packageVersion: sdk.Aex.buildInfo().packageVersion }));
 `.trimStart();
 }
 

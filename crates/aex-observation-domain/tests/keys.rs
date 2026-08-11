@@ -5,7 +5,7 @@ use aex_observation_domain::keys::{
     self, BucketHour, KeyError, ObservationWakeKey, SEQ_WIDTH, ScopeKey,
 };
 use aex_observation_domain::signal::Signal;
-use aex_wire::ids::PrefixedId;
+use aex_wire::ids::{ExportId, PrefixedId, TelemetryBatchId, Uuid7};
 use aex_wire::types::Timestamp;
 use proptest::prelude::*;
 
@@ -232,10 +232,8 @@ fn every_key_template_round_trips_its_components() {
     assert_eq!(keys::frontier_sk(Signal::Metrics), "SIG#metrics");
     assert_eq!(keys::DELETION_SK, "DELETION");
 
-    let batch =
-        PrefixedId::parse("bch_0000000004g82840g2081040g2").expect("fixture batch id parses");
-    let export =
-        PrefixedId::parse("exp_0000000005gm2ga1850m2ga185").expect("fixture export id parses");
+    let batch = TelemetryBatchId::from_uuid7(Uuid7::compose(4, [4; 10]));
+    let export = ExportId::from_uuid7(Uuid7::compose(5, [5; 10]));
     assert_eq!(
         keys::scope_batch_pk(&scope),
         format!("BATCHS#S#wsp_{SUFFIX_W}#ses_{SUFFIX_A}")

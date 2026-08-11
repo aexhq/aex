@@ -59,9 +59,9 @@ proptest! {
             name: identity.clone(),
         };
         let outcome = keys::pin(workspace(), &digest(1), &owner);
-        let admissible = !identity.is_empty()
-            && identity.len() <= 256
-            && !identity.chars().any(|character| {
+        let rendered_identity = owner.id();
+        let admissible = rendered_identity.len() <= 256
+            && !rendered_identity.chars().any(|character| {
                 character == '#'
                     || character.is_control()
                     || character == '\u{ffff}'
