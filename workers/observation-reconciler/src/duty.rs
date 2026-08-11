@@ -344,6 +344,21 @@ struct DeletionDrain {
     pending: bool,
 }
 
+/// The validated identity and owned keys carried by a scope-to-batch row.
+struct ScopeBatchDirectory {
+    batch: TelemetryBatchId,
+    batch_pk: String,
+    key: ItemKey,
+    spool_key: Option<ItemKey>,
+}
+
+/// The validated identity and owned keys carried by a scope-to-export row.
+struct ScopeExportDirectory {
+    export: ExportId,
+    key: ItemKey,
+    extension: &'static str,
+}
+
 impl DeletionDrain {
     fn add(&mut self, other: Self) {
         self.removed = self.removed.saturating_add(other.removed);
@@ -1348,124 +1363,92 @@ impl DutyEngine {
             if *budget == 0 {
                 break;
             }
-            if string(&directory, "scopeKey") != Some(scope.to_key().as_str()) {
-                return Err(DutyError::Malformed {
-                    item: "scope_batch",
-                    attribute: "scopeKey",
-                });
-            }
-            let batch =
-                TelemetryBatchId::parse(require_string(&directory, "batchId", "scope_batch")?)
-                    .map_err(|_| DutyError::Malformed {
-                        item: "scope_batch",
-                        attribute: "batchId",
-                    })?;
-            let batch_pk = require_string(&directory, "batchPk", "scope_batch")?;
-            let directory_key = item_key(&directory).ok_or(DutyError::Malformed {
-                item: "scope_batch",
-                attribute: PK,
-            })?;
-            if batch_pk != keys::batch_pk(scope.workspace(), batch)
-                || directory_key.pk != keys::scope_batch_pk(scope)
-                || directory_key.sk != keys::scope_batch_sk(batch)
-                || session_body_prefix(scope).is_some_and(|prefix| {
-                    string(&directory, "bodyPrefix") != Some(prefix.trim_end_matches('/'))
-                })
-            {
-                return Err(DutyError::Malformed {
-                    item: "scope_batch",
-                    attribute: "batchPk",
-                });
-            }
-            let receipt_key = ItemKey {
-                pk: batch_pk.to_owned(),
-                sk: keys::RECEIPT_SK.to_owned(),
-            };
-            let receipt = self.get(&receipt_key).await?;
-            if let Some(receipt) = &receipt
-                && (string(receipt, "scopeKey") != Some(scope.to_key().as_str())
-                    || string(receipt, "batchId") != Some(batch.to_string().as_str()))
-            {
-                return Err(DutyError::Malformed {
-                    item: "admission_receipt",
-                    attribute: "scopeKey",
-                });
-            }
-            if receipt
-                .as_ref()
-                .is_some_and(|item| string(item, STATE) == Some("preparing"))
-            {
-                // This request may still be staging S3 bodies. Transaction C
-                // must lose to the fence, but deletion cannot prove the prefix
-                // quiet until batch.expire has terminalized the preparer.
-                drain.pending = true;
-                continue;
-            }
-
-            if let (Some(spool_pk), Some(spool_sk)) =
-                (string(&directory, "spoolPk"), string(&directory, "spoolSk"))
-            {
-                let spool_key = ItemKey {
-                    pk: spool_pk.to_owned(),
-                    sk: spool_sk.to_owned(),
-                };
-                if let Some(spool) = self.get(&spool_key).await? {
-                    if string(&spool, "scopeKey") != Some(scope.to_key().as_str())
-                        || string(&spool, "batchId") != Some(batch.to_string().as_str())
-                    {
-                        return Err(DutyError::Malformed {
-                            item: "spool_chunk",
-                            attribute: "scopeKey",
-                        });
-                    }
-                    if pending_of(&spool).contains(&Pending::Outbox) {
-                        // The aggregate storage fact survives session payload
-                        // deletion and must be delivered before its source hint
-                        // can be removed.
-                        drain.pending = true;
-                        continue;
-                    }
-                    self.delete_key(&spool_key).await?;
-                    drain.removed = drain.removed.saturating_add(1);
-                    *budget = budget.saturating_sub(1);
-                    if *budget == 0 {
-                        break;
-                    }
-                }
-            }
-
-            let ledgers = self.page_prefix(batch_pk, "MAT#").await?;
-            if let Some(ledger) = ledgers.first() {
-                drain.removed = drain.removed.saturating_add(
-                    self.purge_materialization_ledger(scope, batch, ledger, budget)
-                        .await?,
-                );
-                continue;
-            }
-
-            if let Some(receipt) = receipt.as_ref()
-                && string(receipt, STATE) == Some("committed")
-                && !receipt.contains_key("materializedAt")
-            {
-                self.settle_abandoned_workspace_frontiers(scope, batch, receipt, now)
-                    .await?;
-            }
-
-            let items = self.page_of(batch_pk).await?;
-            if !items.is_empty() {
-                let keys: Vec<ItemKey> = items.iter().take(*budget).filter_map(item_key).collect();
-                self.delete_keys(&keys).await?;
-                drain.removed = drain
-                    .removed
-                    .saturating_add(u64::try_from(keys.len()).unwrap_or(u64::MAX));
-                *budget = budget.saturating_sub(keys.len());
-                continue;
-            }
-
-            self.delete_key(&directory_key).await?;
-            drain.removed = drain.removed.saturating_add(1);
-            *budget = budget.saturating_sub(1);
+            drain.add(
+                self.purge_scope_batch(scope, &directory, now, budget)
+                    .await?,
+            );
         }
+        Ok(drain)
+    }
+
+    /// Drains the rows owned by one validated scope-to-batch directory entry.
+    async fn purge_scope_batch(
+        &self,
+        scope: &ScopeKey,
+        directory: &HashMap<String, AttributeValue>,
+        now: Timestamp,
+        budget: &mut usize,
+    ) -> Result<DeletionDrain, DutyError> {
+        let entry = scope_batch_directory(scope, directory)?;
+        let receipt_key = ItemKey {
+            pk: entry.batch_pk.clone(),
+            sk: keys::RECEIPT_SK.to_owned(),
+        };
+        let receipt = self.get(&receipt_key).await?;
+        validate_batch_receipt(scope, entry.batch, receipt.as_ref())?;
+        if receipt
+            .as_ref()
+            .is_some_and(|item| string(item, STATE) == Some("preparing"))
+        {
+            // This request may still be staging S3 bodies. Transaction C must
+            // lose to the fence, but deletion cannot prove the prefix quiet
+            // until batch.expire has terminalized the preparer.
+            return Ok(DeletionDrain {
+                pending: true,
+                ..DeletionDrain::default()
+            });
+        }
+
+        let mut drain = DeletionDrain::default();
+        if let Some(spool_key) = entry.spool_key
+            && let Some(spool) = self.get(&spool_key).await?
+        {
+            validate_batch_spool(scope, entry.batch, &spool)?;
+            if pending_of(&spool).contains(&Pending::Outbox) {
+                // The aggregate storage fact survives session payload deletion
+                // and must be delivered before its source hint can be removed.
+                drain.pending = true;
+                return Ok(drain);
+            }
+            self.delete_key(&spool_key).await?;
+            drain.removed = 1;
+            *budget = budget.saturating_sub(1);
+            if *budget == 0 {
+                return Ok(drain);
+            }
+        }
+
+        let ledgers = self.page_prefix(&entry.batch_pk, "MAT#").await?;
+        if let Some(ledger) = ledgers.first() {
+            drain.removed = drain.removed.saturating_add(
+                self.purge_materialization_ledger(scope, entry.batch, ledger, budget)
+                    .await?,
+            );
+            return Ok(drain);
+        }
+
+        if let Some(receipt) = receipt.as_ref()
+            && string(receipt, STATE) == Some("committed")
+            && !receipt.contains_key("materializedAt")
+        {
+            self.settle_abandoned_workspace_frontiers(scope, entry.batch, receipt, now)
+                .await?;
+        }
+
+        let items = self.page_of(&entry.batch_pk).await?;
+        if !items.is_empty() {
+            let item_keys: Vec<ItemKey> = items.iter().take(*budget).filter_map(item_key).collect();
+            self.delete_keys(&item_keys).await?;
+            drain.removed = drain
+                .removed
+                .saturating_add(u64::try_from(item_keys.len()).unwrap_or(u64::MAX));
+            *budget = budget.saturating_sub(item_keys.len());
+            return Ok(drain);
+        }
+
+        self.delete_key(&entry.key).await?;
+        drain.removed = drain.removed.saturating_add(1);
+        *budget = budget.saturating_sub(1);
         Ok(drain)
     }
 
@@ -1554,78 +1537,8 @@ impl DutyEngine {
                 item: "materialization_ledger",
                 attribute: "segments",
             })?;
-        let mut actions = Vec::with_capacity(contributions.len().saturating_add(1));
-        let mut seen = BTreeSet::new();
         let aggregate_scope = ScopeKey::Workspace(*workspace);
-        for contribution in contributions {
-            let map = contribution.as_m().map_err(|_| DutyError::Malformed {
-                item: "materialization_ledger",
-                attribute: "segments",
-            })?;
-            let axis = require_string(map, "axis", "materialization_ledger")?;
-            let signal = Signal::parse(require_string(map, "signal", "materialization_ledger")?)
-                .filter(|signal| signal.in_observation_authority())
-                .ok_or(DutyError::Malformed {
-                    item: "materialization_ledger",
-                    attribute: "signal",
-                })?;
-            let bucket =
-                BucketHour::parse(require_string(map, "bucket", "materialization_ledger")?)
-                    .map_err(|_| DutyError::Malformed {
-                        item: "materialization_ledger",
-                        attribute: "bucket",
-                    })?;
-            let count = required_number(map, "count", "materialization_ledger")?;
-            let logical_bytes = required_number(map, "logicalBytes", "materialization_ledger")?;
-            if count == 0 || !seen.insert((axis.to_owned(), signal, bucket)) {
-                return Err(DutyError::Malformed {
-                    item: "materialization_ledger",
-                    attribute: "segments",
-                });
-            }
-            let partition = match axis {
-                "accepted" => keys::segment_pk(&aggregate_scope, signal),
-                "event_time" => keys::time_segment_pk(&aggregate_scope, signal),
-                _ => {
-                    return Err(DutyError::Malformed {
-                        item: "materialization_ledger",
-                        attribute: "axis",
-                    });
-                }
-            };
-            let mut builder = ExpressionBuilder::new();
-            let item_type = builder.name("itemType");
-            let scope_name = builder.name("scopeKey");
-            let signal_name = builder.name("signal");
-            let bucket_name = builder.name("bucket");
-            let count_name = builder.name("count");
-            let bytes_name = builder.name("logicalBytes");
-            let segment_type = builder.string("segment");
-            let scope_value = builder.string(aggregate_scope.to_key());
-            let signal_value = builder.string(signal.as_str());
-            let bucket_value = builder.string(bucket.as_str());
-            let count_value = builder.number(count);
-            let bytes_value = builder.number(logical_bytes);
-            let count_delta = builder.number(-i128::from(count));
-            let bytes_delta = builder.number(-i128::from(logical_bytes));
-            let update = Update::builder()
-                .table_name(&self.settings.table)
-                .key(PK, AttributeValue::S(partition))
-                .key(SK, AttributeValue::S(bucket.as_str().to_owned()))
-                .update_expression(format!(
-                    "ADD {count_name} {count_delta}, {bytes_name} {bytes_delta}"
-                ))
-                .condition_expression(format!(
-                    "{item_type} = {segment_type} AND {scope_name} = {scope_value} AND \
-                     {signal_name} = {signal_value} AND {bucket_name} = {bucket_value} AND \
-                     {count_name} >= {count_value} AND {bytes_name} >= {bytes_value}"
-                ))
-                .set_expression_attribute_names(Some(builder.names()))
-                .set_expression_attribute_values(Some(builder.values()))
-                .build()
-                .map_err(|error| DutyError::provider("TransactWriteItems", error))?;
-            actions.push(TransactWriteItem::builder().update(update).build());
-        }
+        let mut actions = self.workspace_segment_decrements(&aggregate_scope, contributions)?;
         if actions.len().saturating_add(1) > limits::DDB_TRANSACT_MAX_ACTIONS {
             return Err(DutyError::Malformed {
                 item: "materialization_ledger",
@@ -1669,6 +1582,86 @@ impl DutyEngine {
         }
     }
 
+    /// Builds the atomic decrements for one session materialization ledger.
+    fn workspace_segment_decrements(
+        &self,
+        aggregate_scope: &ScopeKey,
+        contributions: &[AttributeValue],
+    ) -> Result<Vec<TransactWriteItem>, DutyError> {
+        let mut actions = Vec::with_capacity(contributions.len().saturating_add(1));
+        let mut seen = BTreeSet::new();
+        for contribution in contributions {
+            let map = contribution.as_m().map_err(|_| DutyError::Malformed {
+                item: "materialization_ledger",
+                attribute: "segments",
+            })?;
+            let axis = require_string(map, "axis", "materialization_ledger")?;
+            let signal = Signal::parse(require_string(map, "signal", "materialization_ledger")?)
+                .filter(|signal| signal.in_observation_authority())
+                .ok_or(DutyError::Malformed {
+                    item: "materialization_ledger",
+                    attribute: "signal",
+                })?;
+            let bucket =
+                BucketHour::parse(require_string(map, "bucket", "materialization_ledger")?)
+                    .map_err(|_| DutyError::Malformed {
+                        item: "materialization_ledger",
+                        attribute: "bucket",
+                    })?;
+            let count = required_number(map, "count", "materialization_ledger")?;
+            let logical_bytes = required_number(map, "logicalBytes", "materialization_ledger")?;
+            if count == 0 || !seen.insert((axis.to_owned(), signal, bucket)) {
+                return Err(DutyError::Malformed {
+                    item: "materialization_ledger",
+                    attribute: "segments",
+                });
+            }
+            let partition = match axis {
+                "accepted" => keys::segment_pk(aggregate_scope, signal),
+                "event_time" => keys::time_segment_pk(aggregate_scope, signal),
+                _ => {
+                    return Err(DutyError::Malformed {
+                        item: "materialization_ledger",
+                        attribute: "axis",
+                    });
+                }
+            };
+            let mut builder = ExpressionBuilder::new();
+            let item_type = builder.name("itemType");
+            let scope_name = builder.name("scopeKey");
+            let signal_name = builder.name("signal");
+            let bucket_name = builder.name("bucket");
+            let stored_count = builder.name("count");
+            let stored_bytes = builder.name("logicalBytes");
+            let segment_type = builder.string("segment");
+            let scope_value = builder.string(aggregate_scope.to_key());
+            let signal_value = builder.string(signal.as_str());
+            let bucket_value = builder.string(bucket.as_str());
+            let minimum_count = builder.number(count);
+            let minimum_bytes = builder.number(logical_bytes);
+            let count_decrement = builder.number(-i128::from(count));
+            let bytes_decrement = builder.number(-i128::from(logical_bytes));
+            let update = Update::builder()
+                .table_name(&self.settings.table)
+                .key(PK, AttributeValue::S(partition))
+                .key(SK, AttributeValue::S(bucket.as_str().to_owned()))
+                .update_expression(format!(
+                    "ADD {stored_count} {count_decrement}, {stored_bytes} {bytes_decrement}"
+                ))
+                .condition_expression(format!(
+                    "{item_type} = {segment_type} AND {scope_name} = {scope_value} AND \
+                     {signal_name} = {signal_value} AND {bucket_name} = {bucket_value} AND \
+                     {stored_count} >= {minimum_count} AND {stored_bytes} >= {minimum_bytes}"
+                ))
+                .set_expression_attribute_names(Some(builder.names()))
+                .set_expression_attribute_values(Some(builder.values()))
+                .build()
+                .map_err(|error| DutyError::provider("TransactWriteItems", error))?;
+            actions.push(TransactWriteItem::builder().update(update).build());
+        }
+        Ok(actions)
+    }
+
     /// Releases aggregate workspace visibility blocked by a committed session
     /// admission that lost its finalization race to deletion.
     ///
@@ -1686,38 +1679,7 @@ impl DutyEngine {
         let ScopeKey::Session { workspace, .. } = scope else {
             return Ok(());
         };
-        let allocations = receipt
-            .get("allocations")
-            .and_then(|value| value.as_l().ok())
-            .ok_or(DutyError::Malformed {
-                item: "admission_receipt",
-                attribute: "allocations",
-            })?;
-        let mut signals = BTreeSet::new();
-        for allocation in allocations {
-            let map = allocation.as_m().map_err(|_| DutyError::Malformed {
-                item: "admission_receipt",
-                attribute: "allocations",
-            })?;
-            let signal = Signal::parse(require_string(map, "signal", "admission_receipt")?)
-                .filter(|signal| signal.in_observation_authority())
-                .ok_or(DutyError::Malformed {
-                    item: "admission_receipt",
-                    attribute: "allocations.signal",
-                })?;
-            if !signals.insert(signal) {
-                return Err(DutyError::Malformed {
-                    item: "admission_receipt",
-                    attribute: "allocations.signal",
-                });
-            }
-        }
-        if signals.is_empty() || signals.len() > Signal::AUTHORITY.len() {
-            return Err(DutyError::Malformed {
-                item: "admission_receipt",
-                attribute: "allocations",
-            });
-        }
+        let signals = allocation_signals(receipt)?;
         let mut actions = Vec::with_capacity(signals.len().saturating_add(1));
         let mut marker = ExpressionBuilder::new();
         let state_name = marker.name(STATE);
@@ -1803,102 +1765,83 @@ impl DutyEngine {
             if *budget == 0 {
                 break;
             }
-            if string(&directory, "scopeKey") != Some(scope.to_key().as_str()) {
-                return Err(DutyError::Malformed {
-                    item: "scope_export",
-                    attribute: "scopeKey",
-                });
-            }
-            let workspace = scope.workspace();
-            let export = ExportId::parse(require_string(&directory, "exportId", "scope_export")?)
-                .map_err(|_| DutyError::Malformed {
-                item: "scope_export",
-                attribute: "exportId",
-            })?;
-            OperationId::parse(require_string(&directory, "operationId", "scope_export")?)
-                .map_err(|_| DutyError::Malformed {
-                    item: "scope_export",
-                    attribute: "operationId",
-                })?;
-            let directory_key = item_key(&directory).ok_or(DutyError::Malformed {
-                item: "scope_export",
-                attribute: PK,
-            })?;
-            if directory_key.pk != keys::scope_export_pk(scope)
-                || directory_key.sk != keys::scope_export_sk(export)
-                || string(&directory, "workspaceId") != Some(workspace.to_string().as_str())
-            {
-                return Err(DutyError::Malformed {
-                    item: "scope_export",
-                    attribute: PK,
-                });
-            }
-            let extension = export_extension(require_string(&directory, "format", "scope_export")?)
-                .ok_or(DutyError::Malformed {
-                    item: "scope_export",
-                    attribute: "format",
-                })?;
-            let export_key = ItemKey {
-                pk: keys::export_pk(workspace),
-                sk: keys::export_sk(export),
-            };
-            let checkpoint_key = ItemKey {
-                pk: keys::export_pk(workspace),
-                sk: keys::export_checkpoint_sk(export),
-            };
-            let export_item = self.get(&export_key).await?;
-            let checkpoint = self.get(&checkpoint_key).await?;
-            let had_pair_rows = export_item.is_some() || checkpoint.is_some();
+            drain.add(
+                self.purge_scope_export(&pairs, scope, &directory, now, budget)
+                    .await?,
+            );
+        }
+        Ok(drain)
+    }
 
-            if export_item.is_some() {
-                match pairs.revoke(workspace, export, *scope, now).await {
-                    Ok(_) | Err(ExportPairError::NotFound) => {}
-                    Err(error) => {
-                        return Err(DutyError::unresolved(
-                            self.settings.duty,
-                            format!("the export pair could not be revoked: {error}"),
-                        ));
-                    }
+    /// Revokes and removes the resources named by one scope-to-export row.
+    async fn purge_scope_export(
+        &self,
+        pairs: &ExportPairStore,
+        scope: &ScopeKey,
+        directory: &HashMap<String, AttributeValue>,
+        now: Timestamp,
+        budget: &mut usize,
+    ) -> Result<DeletionDrain, DutyError> {
+        let entry = scope_export_directory(scope, directory)?;
+        let workspace = scope.workspace();
+        let export_key = ItemKey {
+            pk: keys::export_pk(workspace),
+            sk: keys::export_sk(entry.export),
+        };
+        let checkpoint_key = ItemKey {
+            pk: keys::export_pk(workspace),
+            sk: keys::export_checkpoint_sk(entry.export),
+        };
+        let canonical_export = self.get(&export_key).await?;
+        let resume_checkpoint = self.get(&checkpoint_key).await?;
+        let had_pair_rows = canonical_export.is_some() || resume_checkpoint.is_some();
+
+        if canonical_export.is_some() {
+            match pairs.revoke(workspace, entry.export, *scope, now).await {
+                Ok(_) | Err(ExportPairError::NotFound) => {}
+                Err(error) => {
+                    return Err(DutyError::unresolved(
+                        self.settings.duty,
+                        format!("the export pair could not be revoked: {error}"),
+                    ));
                 }
             }
-
-            let prefix = format!("exports/{workspace}/{export}");
-            let artifact = export_item
-                .as_ref()
-                .and_then(|item| string(item, "objectKey"))
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("{prefix}.{extension}"));
-            if let Some(upload_id) = checkpoint
-                .as_ref()
-                .and_then(|item| string(item, "uploadId"))
-            {
-                self.abort_upload(&format!("{prefix}.{extension}"), upload_id)
-                    .await?;
-            }
-            let (aborted, truncated) = self.abort_uploads_with_prefix(&prefix).await?;
-            let object_present = self.object_exists(&artifact).await?;
-            if object_present {
-                self.delete_object(&artifact).await?;
-            }
-            if had_pair_rows {
-                self.delete_keys(&[checkpoint_key, export_key]).await?;
-                drain.removed = drain.removed.saturating_add(1);
-            }
-
-            // Keep the exact export identity for a later quiet pass whenever
-            // this pass revoked/deleted anything or filled a bounded multipart
-            // page. The next pass strongly lists and heads the prefix after the
-            // pair is gone, so directory absence is durable proof of external
-            // S3 quiescence rather than merely proof that DeleteObject returned.
-            if had_pair_rows || aborted > 0 || truncated || object_present {
-                drain.pending = true;
-                *budget = budget.saturating_sub(1);
-                continue;
-            }
-            self.delete_key(&directory_key).await?;
-            drain.removed = drain.removed.saturating_add(1);
-            *budget = budget.saturating_sub(1);
         }
+
+        let prefix = format!("exports/{workspace}/{}", entry.export);
+        let artifact = canonical_export
+            .as_ref()
+            .and_then(|item| string(item, "objectKey"))
+            .map_or_else(|| format!("{prefix}.{}", entry.extension), str::to_owned);
+        if let Some(upload_id) = resume_checkpoint
+            .as_ref()
+            .and_then(|item| string(item, "uploadId"))
+        {
+            self.abort_upload(&format!("{prefix}.{}", entry.extension), upload_id)
+                .await?;
+        }
+        let (aborted, truncated) = self.abort_uploads_with_prefix(&prefix).await?;
+        let object_present = self.object_exists(&artifact).await?;
+        if object_present {
+            self.delete_object(&artifact).await?;
+        }
+        let mut drain = DeletionDrain::default();
+        if had_pair_rows {
+            self.delete_keys(&[checkpoint_key, export_key]).await?;
+            drain.removed = 1;
+        }
+
+        // Keep the exact export identity for a later quiet pass whenever this
+        // pass revoked/deleted anything or filled a bounded multipart page. The
+        // next pass strongly lists and heads the prefix after the pair is gone,
+        // so directory absence proves external S3 quiescence.
+        if had_pair_rows || aborted > 0 || truncated || object_present {
+            drain.pending = true;
+        } else {
+            self.delete_key(&entry.key).await?;
+            drain.removed = drain.removed.saturating_add(1);
+        }
+        *budget = budget.saturating_sub(1);
         Ok(drain)
     }
 
@@ -2063,8 +2006,8 @@ impl DutyEngine {
         let at = builder.string(now.to_wire());
         let update = match to {
             DeletionState::Verifying => {
-                let control_pk = builder.name(Index::Control.partition_key());
-                let control_sk = builder.name(Index::Control.sort_key());
+                let partition_attribute = builder.name(Index::Control.partition_key());
+                let sort_attribute = builder.name(Index::Control.sort_key());
                 let attempts = builder.name(ATTEMPTS);
                 let claimed = builder.name(CLAIMED_AT);
                 let next_attempt = builder.name(NEXT_ATTEMPT_AT);
@@ -2075,20 +2018,22 @@ impl DutyEngine {
                 let due = builder.string(keys::control_sk(now, item.id.as_str()));
                 let zero = builder.number(0u64);
                 format!(
-                    "SET {state} = {next}, {changed_at} = {at}, {control_pk} = {partition}, \
-                     {control_sk} = {due}, {attempts} = {zero} REMOVE {claimed}, {next_attempt}"
+                    "SET {state} = {next}, {changed_at} = {at}, \
+                     {partition_attribute} = {partition}, {sort_attribute} = {due}, \
+                     {attempts} = {zero} REMOVE {claimed}, {next_attempt}"
                 )
             }
             DeletionState::Complete => {
                 let completed = builder.name("completedAt");
-                let control_pk = builder.name(Index::Control.partition_key());
-                let control_sk = builder.name(Index::Control.sort_key());
+                let partition_attribute = builder.name(Index::Control.partition_key());
+                let sort_attribute = builder.name(Index::Control.sort_key());
                 let attempts = builder.name(ATTEMPTS);
                 let claimed = builder.name(CLAIMED_AT);
                 let next_attempt = builder.name(NEXT_ATTEMPT_AT);
                 format!(
                     "SET {state} = {next}, {changed_at} = {at}, {completed} = {at} \
-                     REMOVE {control_pk}, {control_sk}, {attempts}, {claimed}, {next_attempt}"
+                     REMOVE {partition_attribute}, {sort_attribute}, {attempts}, {claimed}, \
+                     {next_attempt}"
                 )
             }
             _ => {
@@ -2686,6 +2631,181 @@ impl DutyEngine {
 }
 
 // --- item readers -----------------------------------------------------------
+
+/// Validates and decodes one scope-to-batch directory row.
+fn scope_batch_directory(
+    scope: &ScopeKey,
+    directory: &HashMap<String, AttributeValue>,
+) -> Result<ScopeBatchDirectory, DutyError> {
+    let scope_key = scope.to_key();
+    if string(directory, "scopeKey") != Some(scope_key.as_str()) {
+        return Err(DutyError::Malformed {
+            item: "scope_batch",
+            attribute: "scopeKey",
+        });
+    }
+    let batch = TelemetryBatchId::parse(require_string(directory, "batchId", "scope_batch")?)
+        .map_err(|_| DutyError::Malformed {
+            item: "scope_batch",
+            attribute: "batchId",
+        })?;
+    let batch_pk = require_string(directory, "batchPk", "scope_batch")?.to_owned();
+    let key = item_key(directory).ok_or(DutyError::Malformed {
+        item: "scope_batch",
+        attribute: PK,
+    })?;
+    if batch_pk != keys::batch_pk(scope.workspace(), batch)
+        || key.pk != keys::scope_batch_pk(scope)
+        || key.sk != keys::scope_batch_sk(batch)
+        || session_body_prefix(scope).is_some_and(|prefix| {
+            string(directory, "bodyPrefix") != Some(prefix.trim_end_matches('/'))
+        })
+    {
+        return Err(DutyError::Malformed {
+            item: "scope_batch",
+            attribute: "batchPk",
+        });
+    }
+    let spool_key = string(directory, "spoolPk")
+        .zip(string(directory, "spoolSk"))
+        .map(|(pk, sk)| ItemKey {
+            pk: pk.to_owned(),
+            sk: sk.to_owned(),
+        });
+    Ok(ScopeBatchDirectory {
+        batch,
+        batch_pk,
+        key,
+        spool_key,
+    })
+}
+
+/// Checks that an admission receipt belongs to the directory that named it.
+fn validate_batch_receipt(
+    scope: &ScopeKey,
+    batch: TelemetryBatchId,
+    receipt: Option<&HashMap<String, AttributeValue>>,
+) -> Result<(), DutyError> {
+    let Some(receipt) = receipt else {
+        return Ok(());
+    };
+    if string(receipt, "scopeKey") != Some(scope.to_key().as_str())
+        || string(receipt, "batchId") != Some(batch.to_string().as_str())
+    {
+        return Err(DutyError::Malformed {
+            item: "admission_receipt",
+            attribute: "scopeKey",
+        });
+    }
+    Ok(())
+}
+
+/// Checks that a spool chunk belongs to the directory that named it.
+fn validate_batch_spool(
+    scope: &ScopeKey,
+    batch: TelemetryBatchId,
+    spool: &HashMap<String, AttributeValue>,
+) -> Result<(), DutyError> {
+    if string(spool, "scopeKey") != Some(scope.to_key().as_str())
+        || string(spool, "batchId") != Some(batch.to_string().as_str())
+    {
+        return Err(DutyError::Malformed {
+            item: "spool_chunk",
+            attribute: "scopeKey",
+        });
+    }
+    Ok(())
+}
+
+/// Decodes and validates the unique observation signals on a receipt.
+fn allocation_signals(
+    receipt: &HashMap<String, AttributeValue>,
+) -> Result<BTreeSet<Signal>, DutyError> {
+    let allocations = receipt
+        .get("allocations")
+        .and_then(|value| value.as_l().ok())
+        .ok_or(DutyError::Malformed {
+            item: "admission_receipt",
+            attribute: "allocations",
+        })?;
+    let mut signals = BTreeSet::new();
+    for allocation in allocations {
+        let map = allocation.as_m().map_err(|_| DutyError::Malformed {
+            item: "admission_receipt",
+            attribute: "allocations",
+        })?;
+        let signal = Signal::parse(require_string(map, "signal", "admission_receipt")?)
+            .filter(|signal| signal.in_observation_authority())
+            .ok_or(DutyError::Malformed {
+                item: "admission_receipt",
+                attribute: "allocations.signal",
+            })?;
+        if !signals.insert(signal) {
+            return Err(DutyError::Malformed {
+                item: "admission_receipt",
+                attribute: "allocations.signal",
+            });
+        }
+    }
+    if signals.is_empty() || signals.len() > Signal::AUTHORITY.len() {
+        return Err(DutyError::Malformed {
+            item: "admission_receipt",
+            attribute: "allocations",
+        });
+    }
+    Ok(signals)
+}
+
+/// Validates and decodes one scope-to-export directory row.
+fn scope_export_directory(
+    scope: &ScopeKey,
+    directory: &HashMap<String, AttributeValue>,
+) -> Result<ScopeExportDirectory, DutyError> {
+    if string(directory, "scopeKey") != Some(scope.to_key().as_str()) {
+        return Err(DutyError::Malformed {
+            item: "scope_export",
+            attribute: "scopeKey",
+        });
+    }
+    let workspace = scope.workspace();
+    let export =
+        ExportId::parse(require_string(directory, "exportId", "scope_export")?).map_err(|_| {
+            DutyError::Malformed {
+                item: "scope_export",
+                attribute: "exportId",
+            }
+        })?;
+    OperationId::parse(require_string(directory, "operationId", "scope_export")?).map_err(
+        |_| DutyError::Malformed {
+            item: "scope_export",
+            attribute: "operationId",
+        },
+    )?;
+    let key = item_key(directory).ok_or(DutyError::Malformed {
+        item: "scope_export",
+        attribute: PK,
+    })?;
+    if key.pk != keys::scope_export_pk(scope)
+        || key.sk != keys::scope_export_sk(export)
+        || string(directory, "workspaceId") != Some(workspace.to_string().as_str())
+    {
+        return Err(DutyError::Malformed {
+            item: "scope_export",
+            attribute: PK,
+        });
+    }
+    let extension = export_extension(require_string(directory, "format", "scope_export")?).ok_or(
+        DutyError::Malformed {
+            item: "scope_export",
+            attribute: "format",
+        },
+    )?;
+    Ok(ScopeExportDirectory {
+        export,
+        key,
+        extension,
+    })
+}
 
 fn export_extension(format: &str) -> Option<&'static str> {
     match format {

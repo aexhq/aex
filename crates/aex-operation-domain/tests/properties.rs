@@ -524,8 +524,8 @@ fn admission_outcomes_are_total() {
                     moment(1),
                 );
                 match (&fresh, guard_state.map(|value| value.state)) {
-                    (AdmissionOutcome::Inserted(_), Some(DeletionState::Live) | None) => {}
-                    (
+                    (AdmissionOutcome::Inserted(_), Some(DeletionState::Live) | None)
+                    | (
                         AdmissionOutcome::DeletionInProgress { .. },
                         Some(DeletionState::Deleting),
                     )
