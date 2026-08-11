@@ -8,6 +8,7 @@ import {
   type WireRequest,
   type WireResponse,
 } from "../../src/index.js";
+import packageManifest from "../../package.json" with { type: "json" };
 
 const KEY = `aex_wk_euw1_0100000000e008000000000001_0100000000e008000000000000_${"A".repeat(42)}A`;
 
@@ -21,6 +22,18 @@ class ScriptedTransport implements AexTransport {
 }
 
 describe("resource routing", () => {
+  test("reports the exact package manifest version in build metadata and requests", async () => {
+    const transport = new ScriptedTransport();
+    const aex = new Aex({ apiKey: KEY, transport });
+
+    await aex.organizations.organizationsList();
+
+    expect(Aex.buildInfo().packageVersion).toBe(packageManifest.version);
+    expect(transport.requests[0]?.headers.get("Aex-Client")).toBe(
+      `aex-sdk/${packageManifest.version}`,
+    );
+  });
+
   test("maps generated resource methods to route ids, paths, headers, and canonical body bytes", async () => {
     const transport = new ScriptedTransport();
     const aex = new Aex({ apiKey: KEY, transport });

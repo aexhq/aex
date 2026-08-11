@@ -4,6 +4,8 @@ import { FetchTransport, type AexTransport, type WireRequest } from "../transpor
 import { CONTRACT_DIGEST, ROUTES, type RouteId } from "../generated/routes.js";
 import { GeneratedResources, type ExecuteOptions } from "../generated/resources.js";
 
+const SDK_VERSION = "0.50.1";
+
 export interface AexOptions {
   readonly apiKey: string;
   readonly centralBaseUrl?: string;
@@ -59,7 +61,7 @@ export class Aex extends GeneratedResources {
     const headers = new Headers({
       authorization: this.#credential.authorizationHeader(),
       accept: "application/json",
-      "Aex-Client": "aex-sdk/0.50.0",
+      "Aex-Client": `aex-sdk/${SDK_VERSION}`,
     });
     if (options.idempotencyKey) headers.set("Idempotency-Key", options.idempotencyKey);
     if (options.operationId) headers.set("Aex-Operation-Id", options.operationId);
@@ -81,7 +83,7 @@ export class Aex extends GeneratedResources {
   }
 
   static buildInfo(): Readonly<{ packageVersion: string; contractDigest: string; sourceSha: string }> {
-    return Object.freeze({ packageVersion: "0.50.0", contractDigest: CONTRACT_DIGEST, sourceSha: "development" });
+    return Object.freeze({ packageVersion: SDK_VERSION, contractDigest: CONTRACT_DIGEST, sourceSha: "development" });
   }
 }
 
