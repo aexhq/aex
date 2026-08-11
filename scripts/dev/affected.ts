@@ -36,6 +36,10 @@ export interface CommandPlan {
   readonly args: readonly string[];
 }
 
+export type NodeDependencyGraph = Readonly<
+  Record<string, readonly string[] | undefined>
+>;
+
 export interface AffectedPlan {
   readonly changedPaths: number;
   readonly commands: readonly CommandPlan[];
@@ -129,7 +133,8 @@ export function mergeChangedPaths(...groups: readonly (readonly string[])[]): st
 export function buildAffectedPlan(
   selection: SelectionDocument,
   actions: readonly Action[],
-  jobs: number
+  jobs: number,
+  nodeDependencies: NodeDependencyGraph = {}
 ): AffectedPlan {
   if (selection.schema !== "aex.selection.v1") {
     throw new Error(`unsupported selection schema: ${selection.schema}`);
@@ -161,7 +166,9 @@ export function buildAffectedPlan(
       if (rustPackages.length > 0) {
         commands.push(cargo("build", rustPackages, ["--locked", "--jobs", `${jobs}`]));
       }
-      addNodeCommand(commands, nodePackages, "build");
+      for (const stage of topologicalNodeBuildStages(nodePackages, nodeDependencies)) {
+        addNodeCommand(commands, stage, "build");
+      }
     } else if (action === "check") {
       if (rustPackages.length > 0) {
         commands.push(
@@ -220,6 +227,47 @@ export function buildAffectedPlan(
     rustPackages,
     scenarios: selection.scenarios.length
   };
+}
+
+/**
+ * Group selected npm packages into deterministic dependency-first build stages.
+ * Packages inside one stage are independent and can still build in parallel.
+ */
+export function topologicalNodeBuildStages(
+  packages: readonly string[],
+  dependencyGraph: NodeDependencyGraph
+): string[][] {
+  const selected = new Set(packages);
+  const remaining = new Map<string, Set<string>>();
+
+  for (const packageName of [...selected].sort()) {
+    const dependencies = dependencyGraph[packageName];
+    if (dependencies === undefined) {
+      throw new Error(`missing workspace dependency metadata for npm package ${packageName}`);
+    }
+    remaining.set(
+      packageName,
+      new Set(dependencies.filter((dependency) => selected.has(dependency)))
+    );
+  }
+
+  const stages: string[][] = [];
+  while (remaining.size > 0) {
+    const ready = [...remaining]
+      .filter(([, dependencies]) =>
+        [...dependencies].every((dependency) => !remaining.has(dependency))
+      )
+      .map(([packageName]) => packageName)
+      .sort();
+    if (ready.length === 0) {
+      throw new Error(
+        `selected npm workspace dependency cycle: ${[...remaining.keys()].sort().join(", ")}`
+      );
+    }
+    stages.push(ready);
+    for (const packageName of ready) remaining.delete(packageName);
+  }
+  return stages;
 }
 
 export function assertExecutionAllowed(plan: AffectedPlan, branch: string): void {

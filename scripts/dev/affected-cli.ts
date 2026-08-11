@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ import {
   parseArguments,
   parseNullSeparated,
   type CommandPlan,
+  type NodeDependencyGraph,
   type SelectionDocument
 } from "./affected.js";
 
@@ -40,7 +41,12 @@ try {
     ? process.env
     : { ...process.env, CARGO_TARGET_DIR: targetDir };
   const selection = select(changedPaths, options.releaseTool, environment);
-  const plan = buildAffectedPlan(selection, options.actions, options.jobs);
+  const plan = buildAffectedPlan(
+    selection,
+    options.actions,
+    options.jobs,
+    loadNodeDependencyGraph()
+  );
   const branch = gitText(["branch", "--show-current"]);
 
   printPlan(plan, targetDir);
@@ -74,6 +80,56 @@ function git(args: readonly string[]): string {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
   });
+}
+
+interface NodeManifest {
+  readonly name?: unknown;
+  readonly dependencies?: unknown;
+  readonly devDependencies?: unknown;
+  readonly peerDependencies?: unknown;
+}
+
+function loadNodeDependencyGraph(): NodeDependencyGraph {
+  const manifests = new Map<string, NodeManifest>();
+  const paths = gitPaths([
+    "ls-files",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    "*package.json"
+  ]);
+
+  for (const path of paths) {
+    const manifestPath = join(repoRoot, path);
+    if (!existsSync(manifestPath)) continue;
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as NodeManifest;
+    if (typeof manifest.name !== "string") continue;
+    if (manifests.has(manifest.name)) {
+      throw new Error(`duplicate npm workspace package name ${manifest.name}`);
+    }
+    manifests.set(manifest.name, manifest);
+  }
+
+  const names = new Set(manifests.keys());
+  const graph: Record<string, string[]> = {};
+  for (const [name, manifest] of manifests) {
+    const dependencies = [
+      ...dependencyNames(manifest.dependencies),
+      ...dependencyNames(manifest.devDependencies),
+      ...dependencyNames(manifest.peerDependencies)
+    ];
+    graph[name] = [...new Set(dependencies)]
+      .filter((dependency) => names.has(dependency))
+      .sort();
+  }
+  return graph;
+}
+
+function dependencyNames(value: unknown): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.keys(value);
 }
 
 function select(

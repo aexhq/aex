@@ -5,6 +5,7 @@ import {
   mergeChangedPaths,
   parseArguments,
   parseNullSeparated,
+  topologicalNodeBuildStages,
   type SelectionDocument
 } from "../dev/affected.js";
 
@@ -225,5 +226,30 @@ describe("affected execution plan", () => {
 
     expect(() => assertExecutionAllowed(broad, "topic/change")).toThrow("local main");
     expect(() => assertExecutionAllowed(broad, "main")).not.toThrow();
+  });
+
+  it("stages npm builds after selected workspace dependencies", () => {
+    const dependencies = {
+      "@demo/app": ["@demo/sdk", "@demo/wire"],
+      "@demo/docs": [],
+      "@demo/sdk": ["@demo/wire"],
+      "@demo/wire": []
+    };
+    const stages = topologicalNodeBuildStages(
+      ["@demo/app", "@demo/docs", "@demo/sdk", "@demo/wire"],
+      dependencies
+    );
+    const stageOf = new Map(
+      stages.flatMap((stage, index) => stage.map((packageName) => [packageName, index] as const))
+    );
+    const stage = (packageName: string): number => {
+      const index = stageOf.get(packageName);
+      if (index === undefined) throw new Error(`missing build stage for ${packageName}`);
+      return index;
+    };
+
+    expect(stage("@demo/sdk")).toBeGreaterThan(stage("@demo/wire"));
+    expect(stage("@demo/app")).toBeGreaterThan(stage("@demo/sdk"));
+    expect(stage("@demo/docs")).toBe(stage("@demo/wire"));
   });
 });
