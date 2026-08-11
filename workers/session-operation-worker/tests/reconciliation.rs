@@ -64,10 +64,7 @@ fn pending_work() -> WorkRecord {
 }
 
 fn hint() -> WorkHint {
-    WorkHint {
-        work_id: pending_work().work_id,
-        workspace: workspace(),
-    }
+    WorkHint::new(workspace(), pending_work().work_id).expect("valid wake")
 }
 
 struct MemoryWork {
@@ -567,10 +564,7 @@ async fn the_projection_body_is_only_a_hint_and_the_authoritative_row_must_match
     let wrong_workspace = WorkspaceId::from_uuid7(Uuid7::compose(1_754_051_696_789, [9; 10]));
     let error = reconciler
         .reconcile(
-            &WorkHint {
-                work_id: hint().work_id,
-                workspace: wrong_workspace,
-            },
+            &WorkHint::new(wrong_workspace, hint().work_id).expect("valid wake"),
             timestamp(2_000),
         )
         .await

@@ -87,6 +87,18 @@ use tower::ServiceExt as _;
 
 struct NoLiveFiles;
 
+struct NoOperationWorker;
+
+#[async_trait::async_trait]
+impl session_stream_api::session::operation_worker::OperationWorkerInvoker for NoOperationWorker {
+    async fn invoke(
+        &self,
+        _wake: &aex_internal_contracts::operation::SessionOperationWake,
+    ) -> Result<(), session_stream_api::session::operation_worker::InvokeError> {
+        Ok(())
+    }
+}
+
 impl aex_brain_hands::LiveFileBackend for NoLiveFiles {
     fn ensure_ready<'a>(
         &'a self,
@@ -1345,6 +1357,7 @@ fn shared_with_workspace(
         registry_value_bytes: 65_536,
         sessions: sessions as Arc<dyn SessionQueries>,
         operations: operations as Arc<dyn OperationApiStore>,
+        operation_worker: Arc::new(NoOperationWorker),
         commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(
             offline_dynamodb(),
             SESSION_TABLE,
@@ -2544,6 +2557,7 @@ fn usage_router(usage: Arc<FakeUsage>) -> axum::Router {
         registry_value_bytes: 65_536,
         sessions: Arc::new(FakeSessions::default()) as Arc<dyn SessionQueries>,
         operations: Arc::new(FakeOperations::default()) as Arc<dyn OperationApiStore>,
+        operation_worker: Arc::new(NoOperationWorker),
         commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(
             offline_dynamodb(),
             SESSION_TABLE,

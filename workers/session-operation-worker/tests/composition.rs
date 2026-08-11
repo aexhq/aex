@@ -112,7 +112,14 @@ fn a_zero_shard_count_refuses_the_process() {
 }
 
 #[test]
-fn an_sqs_batch_and_a_due_scan_are_told_apart_structurally() {
+fn direct_queue_and_due_scan_triggers_are_told_apart_structurally() {
+    let direct = serde_json::json!({
+        "schemaVersion": 1,
+        "workspace": "wsp_01j0000000000000000000000",
+        "workId": "wrk_01j0000000000000000000000"
+    });
+    assert_eq!(Trigger::classify(&direct), Trigger::Direct);
+
     let batch = serde_json::json!({ "Records": [] });
     assert_eq!(Trigger::classify(&batch), Trigger::Queue);
 

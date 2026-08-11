@@ -3,7 +3,7 @@
 pub mod config;
 mod deletion;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use xxhash_rust::xxh3::xxh3_64;
 
 use std::sync::Arc;
@@ -20,17 +20,19 @@ use aex_work_dynamodb::store::{DuePage, WorkAuthority};
 
 pub use config::Config;
 
-/// Which of the worker's two triggers an invocation carries.
+/// Which trigger an invocation carries.
 ///
-/// The classification is structural rather than a configured mode: an SQS batch
-/// always carries `Records`, and the scheduled due scan always carries the
-/// `aex.due_scan` detail type. Anything else is a failure, because a worker that
-/// answers success to a payload it did not understand drains its queue without
-/// doing any work.
+/// The classification is structural rather than a configured mode: a direct
+/// API wake carries the strict internal schema, an SQS batch carries `Records`,
+/// and the scheduled due scan carries the `aex.due_scan` detail type. Anything
+/// else is a failure, because a worker that answers success to a payload it did
+/// not understand can silently lose durable work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trigger {
     /// An SQS hint batch.
     Queue,
+    /// A direct asynchronous invoke from `session-stream-api`.
+    Direct,
     /// The scheduled sharded due scan.
     DueScan,
     /// Neither.
@@ -46,6 +48,15 @@ impl Trigger {
             .is_some_and(serde_json::Value::is_array)
         {
             return Self::Queue;
+        }
+        if payload
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            == Some(1)
+            && payload.get("workId").is_some()
+            && payload.get("workspace").is_some()
+        {
+            return Self::Direct;
         }
         if payload
             .get("detail-type")
@@ -64,34 +75,20 @@ pub const DUE_SCAN_DETAIL_TYPE: &str = "aex.due_scan";
 /// Maximum scheduled shard pipelines allowed to hold AWS requests in flight.
 pub const DUE_SHARD_CONCURRENCY: usize = 16;
 
-/// Non-authoritative routing fields projected from a committed
-/// `regional-work` row onto SQS.
+/// Non-authoritative, versioned routing fields shared by the API's direct
+/// invoke and the regional-work stream projection.
+pub use aex_internal_contracts::operation::SessionOperationWake as WorkHint;
+
+/// Decodes one strict internal operation wake.
 ///
 /// Every field is rechecked against a strongly consistent base-table read
 /// before the hint can authorize a state change.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkHint {
-    /// Durable work identity.
-    pub work_id: String,
-    /// Tenant used for the authority read.
-    pub workspace: WorkspaceId,
-}
-
-impl WorkHint {
-    /// Decodes the `EventBridge` Pipe projection carried in an SQS body.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ReconcileError::InvalidHint`] for malformed JSON or an empty
-    /// work identity.
-    pub fn decode(body: &str) -> Result<Self, ReconcileError> {
-        let hint: Self = serde_json::from_str(body).map_err(|_| ReconcileError::InvalidHint)?;
-        if hint.work_id.is_empty() {
-            return Err(ReconcileError::InvalidHint);
-        }
-        Ok(hint)
+pub fn decode_work_hint(body: &str) -> Result<WorkHint, ReconcileError> {
+    let hint: WorkHint = serde_json::from_str(body).map_err(|_| ReconcileError::InvalidHint)?;
+    if hint.work_id.is_empty() {
+        return Err(ReconcileError::InvalidHint);
     }
+    Ok(hint)
 }
 
 /// The work-table operations required by terminal reconciliation.

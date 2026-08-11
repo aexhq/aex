@@ -84,6 +84,8 @@ pub const REGIONAL_API_URL: &str = "AEX_REGIONAL_API_URL";
 /// Reaching this table requires a `Grant<WorkClaim>`; binding the name here does
 /// not by itself give any route a write.
 pub const WORK_TABLE: &str = "AEX_WORK_TABLE";
+/// Exact live alias of the isolated session operation worker.
+pub const SESSION_OPERATION_WORKER_FUNCTION_ARN: &str = "AEX_SESSION_OPERATION_WORKER_FUNCTION_ARN";
 /// The `regional-content` table.
 pub const CONTENT_TABLE: &str = "AEX_CONTENT_TABLE";
 /// The `regional-registry` table.
@@ -157,7 +159,7 @@ pub const STREAM_CONNECTION_BUFFER_BYTES: &str = "AEX_STREAM_CONNECTION_BUFFER_B
 pub const STREAM_WRITE_STALL_MS: &str = "AEX_STREAM_WRITE_STALL_MS";
 
 /// Every variable a healthy `session-stream-api` requires in `poll` mode.
-pub const REQUIRED: [&str; 43] = [
+pub const REQUIRED: [&str; 44] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
@@ -170,6 +172,7 @@ pub const REQUIRED: [&str; 43] = [
     CURSOR_SIGNING_KEY_REF,
     REGIONAL_API_URL,
     WORK_TABLE,
+    SESSION_OPERATION_WORKER_FUNCTION_ARN,
     CONTENT_TABLE,
     REGISTRY_TABLE,
     SECRET_CUSTODY_TABLE,
@@ -205,11 +208,11 @@ pub const REQUIRED: [&str; 43] = [
 
 /// Variables this binary must never be bound to, with the reason.
 ///
-/// All three were forbidden by *both* merged halves, so merging did not weaken
-/// them. The binary publishes no queue message — the SQS hint is derived from
-/// the `regional-work` stream after the transaction commits, so a queue URL
-/// bound here would mean somebody reintroduced a pre-commit hint — and it holds
-/// no secret KMS key, because it reads ciphertext metadata and never decrypts.
+/// The binary publishes no queue message: after committing durable work it
+/// asynchronously invokes the exact operation-worker Lambda alias. The worker
+/// owns its queue, retries and deletion fan-out; binding that queue here would
+/// give the public edge a second dispatch path. It also holds no secret KMS key,
+/// because it reads ciphertext metadata and never decrypts.
 ///
 /// `AEX_WORK_TABLE` is deliberately absent: the session half requires it. The
 /// guarantee it used to carry for the stream half is now [`crate::capability`]'s
@@ -288,6 +291,8 @@ pub struct Config {
     pub session_table: String,
     /// `regional-work` table.
     pub work_table: String,
+    /// Exact qualified session-operation-worker Lambda ARN.
+    pub session_operation_worker: Arn,
     /// `regional-content` table.
     pub content_table: String,
     /// `regional-registry` table.
@@ -384,6 +389,25 @@ impl Config {
                 }
             })?;
         let content_kms_key = arn_in_region(lookup, CONTENT_KMS_KEY_ARN, region, "kms")?;
+        let session_operation_worker = arn_in_region(
+            lookup,
+            SESSION_OPERATION_WORKER_FUNCTION_ARN,
+            region,
+            "lambda",
+        )?;
+        let expected_worker = format!(
+            "function:aex-{}-session-operation-worker:live",
+            plane.as_str()
+        );
+        if session_operation_worker.resource != expected_worker {
+            return Err(RegionalHttpConfigError::Invalid {
+                name: SESSION_OPERATION_WORKER_FUNCTION_ARN,
+                reason: format!(
+                    "expected exact live alias `{expected_worker}`, got `{}`",
+                    session_operation_worker.resource
+                ),
+            });
+        }
         let content_bucket_owner = required(lookup, CONTENT_BUCKET_OWNER)?;
         if content_bucket_owner != content_kms_key.account {
             return Err(RegionalHttpConfigError::Invalid {
@@ -392,6 +416,12 @@ impl Config {
                     "bucket owner `{content_bucket_owner}` differs from the content key account `{}`",
                     content_kms_key.account
                 ),
+            });
+        }
+        if session_operation_worker.account != content_bucket_owner {
+            return Err(RegionalHttpConfigError::Invalid {
+                name: SESSION_OPERATION_WORKER_FUNCTION_ARN,
+                reason: "worker alias and regional resources must share one account".to_owned(),
             });
         }
         let image_catalog_raw = required(lookup, HANDS_IMAGE_CATALOG)?;
@@ -585,6 +615,7 @@ impl Config {
             authz_projection_table: required(lookup, AUTHZ_PROJECTION_TABLE)?,
             session_table: required(lookup, SESSION_TABLE)?,
             work_table: required(lookup, WORK_TABLE)?,
+            session_operation_worker,
             content_table: required(lookup, CONTENT_TABLE)?,
             registry_table: required(lookup, REGISTRY_TABLE)?,
             secret_custody_table: required(lookup, SECRET_CUSTODY_TABLE)?,

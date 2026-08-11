@@ -43,14 +43,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use aex_regional_http::capability::{
     Capability as _, CapabilityBinding, CompositionError, CompositionManifest, ContentEncrypt,
-    Declares, DeployableId, ResolvedConfig, StreamSocket, WorkClaim,
+    Declares, DeployableId, ResolvedConfig, SessionOperationInvoke, StreamSocket, WorkClaim,
 };
 
 use crate::config::{self, Config};
 
 /// This binary's capability declaration.
 ///
-/// Two capabilities, and deliberately not a third. There is no
+/// Four capabilities, and deliberately no secret-decrypt capability. There is no
 /// `SecretPlaintextAdmission` and no `SecretDecrypt`: this edge reads ciphertext
 /// metadata and never decrypts, which is why `AEX_SECRET_KMS_KEY_ARN` stays in
 /// [`crate::config::FORBIDDEN`].
@@ -61,6 +61,7 @@ use crate::config::{self, Config};
 pub struct Composition;
 
 impl Declares<WorkClaim> for Composition {}
+impl Declares<SessionOperationInvoke> for Composition {}
 impl Declares<StreamSocket> for Composition {}
 impl Declares<ContentEncrypt> for Composition {}
 
@@ -73,11 +74,20 @@ impl Declares<ContentEncrypt> for Composition {}
 pub fn manifest() -> Result<CompositionManifest, CompositionError> {
     Ok(CompositionManifest {
         deployable: DeployableId::new(config::DEPLOYABLE)?,
-        capabilities: BTreeSet::from([WorkClaim::ID, StreamSocket::ID, ContentEncrypt::ID]),
+        capabilities: BTreeSet::from([
+            WorkClaim::ID,
+            SessionOperationInvoke::ID,
+            StreamSocket::ID,
+            ContentEncrypt::ID,
+        ]),
         bindings: vec![
             // The one write handle in the process. Naming it here is what makes
             // "which resource is the write" answerable without reading handlers.
             CapabilityBinding::resource(config::WORK_TABLE, WorkClaim::ID),
+            CapabilityBinding::arn(
+                config::SESSION_OPERATION_WORKER_FUNCTION_ARN,
+                SessionOperationInvoke::ID,
+            ),
             // The sockets' authority. A stream reads it; nothing writes it here.
             CapabilityBinding::resource(config::OBSERVATION_TABLE, StreamSocket::ID),
             CapabilityBinding::arn(config::CONTENT_KMS_KEY_ARN, ContentEncrypt::ID),
@@ -100,6 +110,10 @@ pub fn resolved(config: &Config) -> ResolvedConfig {
         account_id: config.content_bucket_owner.clone(),
         values: BTreeMap::from([
             (config::WORK_TABLE.to_owned(), config.work_table.clone()),
+            (
+                config::SESSION_OPERATION_WORKER_FUNCTION_ARN.to_owned(),
+                config.session_operation_worker.value.clone(),
+            ),
             (
                 config::OBSERVATION_TABLE.to_owned(),
                 config.observation_table.clone(),

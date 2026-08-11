@@ -10,7 +10,8 @@
 use std::collections::BTreeMap;
 
 use aex_regional_http::capability::{
-    Capability as _, CompositionError, ContentEncrypt, StreamSocket, WorkClaim,
+    Capability as _, CompositionError, ContentEncrypt, SessionOperationInvoke, StreamSocket,
+    WorkClaim,
 };
 use aex_regional_http::config::RegionalHttpConfigError;
 use aex_regional_http::drain::MAX_DRAIN_DEADLINE_MS;
@@ -86,6 +87,11 @@ fn polling() -> BTreeMap<&'static str, String> {
             "https://eu-west-1.api.aex.test".to_owned(),
         ),
         (config::WORK_TABLE, "aex-dev-regional-work".to_owned()),
+        (
+            config::SESSION_OPERATION_WORKER_FUNCTION_ARN,
+            "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-session-operation-worker:live"
+                .to_owned(),
+        ),
         (config::CONTENT_TABLE, "aex-dev-regional-content".to_owned()),
         (
             config::REGISTRY_TABLE,
@@ -337,6 +343,26 @@ fn a_bucket_owned_by_another_account_refuses_the_process() {
 }
 
 #[test]
+fn the_operation_worker_must_be_the_exact_same_plane_live_alias() {
+    for arn in [
+        "arn:aws:lambda:eu-west-1:000000000000:function:aex-prd-session-operation-worker:live",
+        "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-session-operation-worker",
+        "arn:aws:lambda:eu-west-1:999999999999:function:aex-dev-session-operation-worker:live",
+    ] {
+        let mut vars = polling();
+        vars.insert(
+            config::SESSION_OPERATION_WORKER_FUNCTION_ARN,
+            arn.to_owned(),
+        );
+        assert!(matches!(
+            read(&vars),
+            Err(RegionalHttpConfigError::Invalid { name, .. })
+                if name == config::SESSION_OPERATION_WORKER_FUNCTION_ARN
+        ));
+    }
+}
+
+#[test]
 fn a_page_bound_outside_the_registry_range_refuses_the_process() {
     let mut vars = polling();
     vars.insert(config::MAX_PAGE_ITEMS, "1001".to_owned());
@@ -530,6 +556,7 @@ fn the_work_table_is_required_rather_than_forbidden_and_the_capability_names_it(
     // manifest is what a reader consults to answer "where is the write".
     let manifest = capability::manifest().expect("the deployable id is well formed");
     assert!(manifest.capabilities.contains(WorkClaim::ID));
+    assert!(manifest.capabilities.contains(SessionOperationInvoke::ID));
     assert!(manifest.capabilities.contains(StreamSocket::ID));
     assert!(manifest.capabilities.contains(ContentEncrypt::ID));
 }

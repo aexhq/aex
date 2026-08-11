@@ -430,20 +430,25 @@ fn the_terminal_outbox_event_decodes_on_this_side_of_the_boundary() {
 }
 
 #[test]
-fn the_outbox_run_status_spells_every_value_the_public_wire_does() {
-    // Two enums exist by design — one public rendering, one internal envelope —
-    // so the thing that must not drift is the spelling. Asserting it here means
-    // a rename on either side is a red test rather than a silent mismatch in the
-    // materializer.
+fn the_internal_outbox_run_status_vocabulary_is_stable() {
+    // Public run resources no longer exist, but the private execution barrier
+    // remains durable input to usage and observation materialization.
     let internal: Vec<String> = RunStatus::ALL
         .iter()
         .map(|status| serde_json::to_string(status).expect("serialize"))
         .collect();
-    let public: Vec<String> = aex_wire::models::RunStatus::ALL
-        .iter()
-        .map(|status| serde_json::to_string(status).expect("serialize"))
-        .collect();
-    assert_eq!(internal, public);
+    assert_eq!(
+        internal,
+        [
+            "\"queued\"",
+            "\"running\"",
+            "\"succeeded\"",
+            "\"failed\"",
+            "\"timed_out\"",
+            "\"cancelled\"",
+            "\"interrupted\"",
+        ]
+    );
     assert_eq!(
         RunStatus::ALL
             .iter()

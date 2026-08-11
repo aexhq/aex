@@ -13,6 +13,7 @@ pub mod handlers;
 pub mod live_composition;
 pub mod live_files;
 pub mod live_transfer;
+pub mod operation_worker;
 pub mod registry;
 pub mod registry_download;
 pub mod routes;

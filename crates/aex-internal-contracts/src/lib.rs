@@ -26,6 +26,7 @@ pub mod ids;
 pub mod journal;
 pub mod money;
 pub mod observation;
+pub mod operation;
 pub mod outbox;
 pub mod release;
 pub mod tool_exec;

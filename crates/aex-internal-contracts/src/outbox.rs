@@ -10,10 +10,9 @@
 //! envelope whose members live in a crate the readers do not depend on is not
 //! decodable, which is the whole point of moving it.
 //!
-//! [`RunStatus`] deliberately stays distinct from the public
-//! `aex_wire::models::RunStatus`. One is the internal envelope, the other is the
-//! customer rendering; what must never drift is their spelling, and a test in
-//! `tests/boundaries.rs` asserts the two agree value for value.
+//! [`RunStatus`] is deliberately internal. Public run resources were removed in
+//! the session-centric MVP, while this private status still closes execution,
+//! usage and observation authorities. A boundary test pins its stored spelling.
 
 use core::fmt;
 

@@ -25,6 +25,7 @@ seams = [
     "aws.dynamodb.transact_write",
     "aws.dynamodb.condition",
     "aws.dynamodb.streams",
+    "aws.lambda.async_invoke",
     "aws.s3.conditional_put",
     "aws.iam.denial",
     "aws.alb.framing",
@@ -49,6 +50,7 @@ aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-dynamodbstreams.workspace = true
 aws-sdk-lambdamicrovms.workspace = true
+aws-sdk-lambda.workspace = true
 aws-sdk-s3.workspace = true
 aws-sdk-sqs.workspace = true
 # The two cold-start reads, one store each: Secrets Manager holds the credential

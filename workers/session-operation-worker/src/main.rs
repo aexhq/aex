@@ -1,12 +1,14 @@
 //! `session-operation-worker` composition root (Rust Lambda ZIP).
 //!
-//! Exclusive responsibility: the genuinely cross-invocation legs — the
-//! `session_delete` purge and the `workspace_delete` regional purge. Everything else terminalizes inline
-//! at admission or in the Brain/runtime work domain (RS-07).
+//! Exclusive responsibility: asynchronous session lifecycle continuation.
+//! Admission remains in `session-stream-api`; this worker claims committed work,
+//! coordinates runtime effects, cancellation barriers and deletion fan-out, and
+//! atomically terminalizes the public operation.
 //!
-//! Two triggers, one binary: an SQS hint batch and a scheduled due scan. The
-//! scan is what makes the queue an optimisation rather than a dependency — if
-//! every hint is lost, the sharded due index still recovers the work.
+//! Three triggers, one binary: a direct asynchronous API wake, an SQS redrive
+//! batch and a scheduled due scan. The scan makes either wake path an
+//! optimisation rather than a correctness dependency: pending work remains
+//! recoverable from the sharded due index.
 
 use std::process::ExitCode;
 
@@ -20,7 +22,7 @@ use session_operation_worker::config::Config;
 use session_operation_worker::{
     BatchItem, DUE_SHARD_CONCURRENCY, DynamoLifecyclePort, DynamoOperationPort,
     OperationReconciler, ReconcileDisposition, Trigger, WorkHint, WorkPort, batch_response,
-    due_shards, next_due_cursor,
+    decode_work_hint, due_shards, next_due_cursor,
 };
 
 /// Bounded work rows read from each due shard in one scheduled invocation.
@@ -176,9 +178,20 @@ impl Worker {
                 let response = self.drain(&event).await?;
                 Ok(serde_json::to_value(response)?)
             }
+            Trigger::Direct => {
+                let hint: WorkHint = serde_json::from_value(payload)?;
+                match self.reconcile(&hint, now()?).await? {
+                    ReconcileDisposition::Retired | ReconcileDisposition::AlreadyRetired => {
+                        Ok(serde_json::json!({ "accepted": true }))
+                    }
+                    ReconcileDisposition::Deferred => Err(LambdaError::from(
+                        "the durable session operation remains pending",
+                    )),
+                }
+            }
             Trigger::DueScan => self.scan_due().await,
             Trigger::Unknown => Err(LambdaError::from(
-                "unrecognised trigger payload: this worker serves an SQS batch or a due scan",
+                "unrecognised trigger payload: this worker serves a direct wake, an SQS batch, or a due scan",
             )),
         }
     }
@@ -207,7 +220,7 @@ impl Worker {
                 .body
                 .as_deref()
                 .ok_or(session_operation_worker::ReconcileError::InvalidHint)
-                .and_then(WorkHint::decode);
+                .and_then(decode_work_hint);
             let item = match outcome {
                 Ok(hint) => match self.reconcile(&hint, now).await {
                     Ok(ReconcileDisposition::Retired | ReconcileDisposition::AlreadyRetired) => {
@@ -314,10 +327,8 @@ impl Worker {
             if due.kind != "operation.step" {
                 continue;
             }
-            let hint = WorkHint {
-                work_id: due.work_id,
-                workspace: due.workspace,
-            };
+            let hint = WorkHint::new(due.workspace, due.work_id)
+                .map_err(|error| LambdaError::from(error.to_string()))?;
             match self.reconcile(&hint, now).await {
                 Ok(ReconcileDisposition::Retired) => outcome.retired += 1,
                 Ok(ReconcileDisposition::AlreadyRetired) => outcome.already_retired += 1,

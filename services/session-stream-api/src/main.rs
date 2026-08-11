@@ -456,6 +456,12 @@ async fn run(
             dynamodb.clone(),
             stores.session_table.clone(),
         )),
+        operation_worker: Arc::new(
+            session_stream_api::session::operation_worker::LambdaOperationWorkerInvoker::new(
+                aws_sdk_lambda::Client::new(&aws),
+                config.session_operation_worker.value.clone(),
+            ),
+        ),
         // The command path: an eventually consistent reader, the physical table
         // names its one transaction compiles against, and the client that
         // submits it. This is the whole of what composing `aex-session-app`

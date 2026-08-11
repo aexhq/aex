@@ -894,15 +894,14 @@ pub trait HintSink: Send + Sync {
     fn dispatch(&self, hint: &Hint);
 }
 
-/// The finite API's hint sink: no I/O at all, by construction.
+/// The transaction committer's API hint sink: no I/O at all, by construction.
 ///
 /// `AEX_OPERATION_QUEUE_URL` and `AEX_CONTENT_QUEUE_URL` are in
 /// `session-stream-api`'s forbidden configuration set, so the API is
-/// structurally unable to send a queue message. The durable `WorkItem` row is
-/// the delivery, projected by the DynamoDB-Streams pipe the worker already
-/// treats as a hint, with the scheduled due scan as the backstop. This is a
-/// different delivery mechanism, not a dropped hint, and it is written down
-/// here so nobody "fixes" the missing dispatch by adding a queue URL (D-9).
+/// structurally unable to send a queue message. Lifecycle routes explicitly
+/// invoke the isolated operation-worker Lambda only after this committer has
+/// returned an authoritative commit or replay result. Keeping this sink inert
+/// prevents any pre-commit notification from escaping the transaction boundary.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ApiHintSink;
 

@@ -152,6 +152,11 @@ pub struct Shared {
     pub api_url: aex_wire::types::HttpsUrl,
     /// The durable-operation point, list and conditional cancellation authority.
     pub operations: Arc<dyn OperationApiStore>,
+    /// Asynchronous continuation boundary for committed lifecycle operations.
+    ///
+    /// The API holds only Lambda invoke authority. Runtime/provider calls and
+    /// deletion fan-out remain isolated in `session-operation-worker`.
+    pub operation_worker: Arc<dyn crate::session::operation_worker::OperationWorkerInvoker>,
     /// The eventually consistent command-path view of the session authority.
     ///
     /// Separate from `sessions` on purpose: the read routes above are strongly
@@ -637,6 +642,13 @@ impl Routes {
                     .await?
             }
         };
+        crate::session::operation_worker::invoke_pending(
+            self.shared.operation_worker.as_ref(),
+            self.cx.auth.workspace_id,
+            &projected,
+        )
+        .await
+        .map_err(|_| WireError::new(ErrorCode::CommitOutcomeUnknown))?;
         let operation = projected
             .public()
             .map_err(|_| WireError::new(ErrorCode::InternalError))?

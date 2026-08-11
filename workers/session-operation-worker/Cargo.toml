@@ -36,6 +36,7 @@ name = "session-operation-worker"
 path = "src/main.rs"
 
 [dependencies]
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 async-trait.workspace = true
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true

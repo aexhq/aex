@@ -32,6 +32,7 @@ capability!(KeystoreAdminister, "keystore.administer");
 capability!(ContentObjectDelete, "content.object_delete");
 capability!(ContentEncrypt, "content.encrypt");
 capability!(WorkClaim, "work.claim");
+capability!(SessionOperationInvoke, "session.operation_invoke");
 capability!(StreamSocket, "stream.socket");
 
 /// Unforgeable-by-construction token passed to a privileged adapter.

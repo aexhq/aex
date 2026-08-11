@@ -7276,6 +7276,7 @@ name = "session-operation-worker"
 version = "0.1.0"
 dependencies = [
  "aex-identity-domain",
+ "aex-internal-contracts",
  "aex-observation-store-dynamodb",
  "aex-operation-domain",
  "aex-platform-telemetry",
@@ -7346,6 +7347,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-dynamodbstreams",
+ "aws-sdk-lambda",
  "aws-sdk-lambdamicrovms",
  "aws-sdk-s3",
  "aws-sdk-secretsmanager",
