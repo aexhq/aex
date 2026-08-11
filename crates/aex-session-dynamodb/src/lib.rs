@@ -52,6 +52,8 @@ pub mod authority_codec;
 pub mod component;
 #[cfg(feature = "create-preparation")]
 pub mod create_preparation;
+#[cfg(feature = "session-authority")]
+pub mod deletion;
 pub mod error;
 pub mod measure;
 pub mod paging;

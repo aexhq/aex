@@ -1434,7 +1434,7 @@ mod tests {
             Ok(true)
         );
         assert!(
-            is_session_tombstone(&item, id::<aex_wire::ids::WorkspaceId>(99), session.id,).is_err()
+            is_session_tombstone(&item, id::<aex_wire::ids::WorkspaceId>(99), session.id).is_err()
         );
     }
 

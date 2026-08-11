@@ -38,6 +38,15 @@ pub const BRAIN_PREFIX: &str = "BRAIN#";
 /// The partition prefix reserved for Brain's per-agent items.
 pub const BRAIN_AGENT_PARTITION_PREFIX: &str = "BRAINAGENT#";
 
+/// The one deletion-progress row under a session partition.
+pub const DELETION_PROGRESS_SK: &str = "DELETE#PROGRESS";
+
+/// Immutable owner evidence rows under a session partition.
+pub const DELETION_EVIDENCE_PREFIX: &str = "DELETE#EVIDENCE#";
+
+/// Enumerable locators for separately keyed idempotency receipts.
+pub const RECEIPT_DIRECTORY_PREFIX: &str = "DELETE#RECEIPT#";
+
 /// `SESSION#{session_id}`.
 #[must_use]
 pub fn session_partition(session: SessionId) -> String {
@@ -54,6 +63,30 @@ pub fn agent_partition(session: SessionId, agent: AgentId) -> String {
 #[must_use]
 pub fn head(session: SessionId) -> Key {
     Key::new(session_partition(session), "HEAD".to_owned())
+}
+
+/// The operation-bound irreversible-deletion progress authority.
+#[must_use]
+pub fn deletion_progress(session: SessionId) -> Key {
+    Key::new(session_partition(session), DELETION_PROGRESS_SK.to_owned())
+}
+
+/// One immutable deletion-owner evidence row.
+#[must_use]
+pub fn deletion_evidence(session: SessionId, owner: &str) -> Key {
+    Key::new(
+        session_partition(session),
+        format!("{DELETION_EVIDENCE_PREFIX}{owner}"),
+    )
+}
+
+/// One locator for a separately keyed idempotency receipt.
+#[must_use]
+pub fn receipt_directory(session: SessionId, target_sha256_hex: &str) -> Key {
+    Key::new(
+        session_partition(session),
+        format!("{RECEIPT_DIRECTORY_PREFIX}{target_sha256_hex}"),
+    )
 }
 
 /// One message.
@@ -359,6 +392,12 @@ pub const OUTBOX_STATES: &[&str] = &["pending", "delivered"];
 /// `migrations/regional/tables/session-authority.json`.
 pub const ITEM_TYPES: &[&str] = &[
     "session_head",
+    "session_tombstone",
+    "session_deletion_progress",
+    "session_deletion_evidence",
+    "session_receipt_directory",
+    "session_create_preparation",
+    "session_create_prepared_file",
     "message",
     "sealed_message",
     "run",

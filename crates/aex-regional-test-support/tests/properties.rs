@@ -51,9 +51,10 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                     "usage-storage-authority" => grant.role == "usage-storage-worker",
                     "usage-compute-authority" => grant.role == "usage-compute-worker",
                     "usage-transfer-authority" => grant.role == "usage-transfer-worker",
-                    // Runtime activity has two narrow deleters: the control
-                    // worker removes usage outbox rows, while Brain settles its
-                    // own Hands admission marker.
+                    // Runtime activity has three narrow deleters: the control
+                    // worker removes usage outbox rows, Brain settles its own
+                    // Hands admission marker, and session deletion removes
+                    // only an already-terminal exact generation.
                     "runtime-activity" => {
                         matches!(
                             grant.role.as_str(),

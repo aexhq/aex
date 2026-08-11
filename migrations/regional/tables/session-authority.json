@@ -95,6 +95,10 @@
   },
   "itemTypes": [
     "session_head",
+    "session_tombstone",
+    "session_deletion_progress",
+    "session_deletion_evidence",
+    "session_receipt_directory",
     "session_create_preparation",
     "session_create_prepared_file",
     "message",
@@ -136,6 +140,7 @@
       "actions": [
         "dynamodb:GetItem",
         "dynamodb:Query",
+        "dynamodb:TransactGetItems",
         "dynamodb:TransactWriteItems",
         "dynamodb:UpdateItem",
         "dynamodb:PutItem",
