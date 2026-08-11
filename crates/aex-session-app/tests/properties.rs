@@ -167,6 +167,7 @@ fn condition_tag(condition: &Condition) -> &'static str {
         Condition::AgentFence { .. } => "AgentFence",
         Condition::JournalTail { .. } => "JournalTail",
         Condition::RootAgentIdle { .. } => "RootAgentIdle",
+        Condition::JournalTailHash { .. } => "JournalTailHash",
         Condition::RunNonTerminal { .. } => "RunNonTerminal",
         Condition::AccountRevisionAtLeast { .. } => "AccountRevisionAtLeast",
         Condition::ProviderCredentialReady { .. } => "ProviderCredentialReady",

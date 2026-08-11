@@ -39,6 +39,8 @@
 //!   revocation producer.
 //! - `capacity-limit-projection-write`: the regional capacity authority's
 //!   effective-limit transport. It owns no defaults or override policy.
+//! - `create-preparation`: the private synchronous-create election and exact
+//!   selected-file metadata authority.
 
 #[cfg(feature = "session-authority")]
 pub mod app_authority;
@@ -48,6 +50,8 @@ pub mod attr;
 #[cfg(feature = "session-authority")]
 pub mod authority_codec;
 pub mod component;
+#[cfg(feature = "create-preparation")]
+pub mod create_preparation;
 pub mod error;
 pub mod measure;
 pub mod paging;
@@ -59,7 +63,7 @@ pub mod stream_keys;
 pub mod codec;
 #[cfg(any(feature = "session-authority", feature = "authz-projection"))]
 pub mod event;
-#[cfg(feature = "session-authority")]
+#[cfg(any(feature = "session-authority", feature = "create-preparation"))]
 pub mod keys;
 #[cfg(feature = "session-authority")]
 pub mod regional_control;

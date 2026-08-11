@@ -1321,6 +1321,7 @@ dependencies = [
 name = "aex-session-dynamodb"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-domain",
  "aex-content-domain",
  "aex-internal-contracts",
  "aex-observation-domain",

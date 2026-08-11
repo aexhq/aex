@@ -35,6 +35,7 @@ security = "unit"
 limit_projection = "unit"
 integration = "integration"
 session_listing = "unit"
+create_preparation = "unit"
 
 [features]
 default = ["session-authority", "authz-projection"]
@@ -57,6 +58,10 @@ authz-projection-write = []
 # The regional capacity authority's workspace-limit projection producer. This
 # is transport only: it owns no defaults, override policy or production caller.
 capacity-limit-projection-write = []
+# The private synchronous-create preparation authority. This feature is kept
+# independent of the broad session adapter so its exact row and boundary tests
+# remain runnable while unrelated lifecycle surfaces are changing.
+create-preparation = ["dep:aex-brain-domain"]
 # Engine-backed targets. The unit lane does not build them, so a machine with no
 # container runtime still runs the per-stream gate.
 integration-engines = ["dep:tokio", "aex-test-harness/containers"]
@@ -78,6 +83,7 @@ xxhash-rust.workspace = true
 aex-wire = { path = "../aex-wire" }
 aex-observation-domain = { path = "../aex-observation-domain" }
 aex-content-domain = { path = "../aex-content-domain", optional = true }
+aex-brain-domain = { path = "../aex-brain-domain", optional = true }
 aex-operation-domain = { path = "../aex-operation-domain", optional = true }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-runtime-control = { path = "../aex-runtime-control", optional = true }
@@ -132,3 +138,8 @@ required-features = ["integration-engines", "session-authority"]
 name = "session_listing"
 path = "tests/session_listing.rs"
 required-features = ["session-authority"]
+
+[[test]]
+name = "create_preparation"
+path = "tests/create_preparation.rs"
+required-features = ["create-preparation"]

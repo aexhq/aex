@@ -96,6 +96,7 @@ aex-usage-query-dynamodb = { path = "../../crates/aex-usage-query-dynamodb" }
 aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
 aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = [
     "authz-projection",
+    "create-preparation",
     "session-authority",
 ] }
 aex-wire = { path = "../../crates/aex-wire" }

@@ -23,11 +23,10 @@ use std::collections::BTreeMap;
 
 use aex_content_domain::RegistryKind;
 use aex_session_domain::{
-    AgentControl, AgentKind, AgentStatus, CommandClass, DeletionGuard, IdempotencyIdentity,
-    IdempotencyReceipt, OpenEffectSet, PinnedRuntime, ProviderCredentialPin, ReceiptKey,
-    ReceiptOutcome, ReplayDecision, ResolvedConfigAuthority, ResourceId, ResourceKind,
-    ResponseBody, Session, SessionLifecycle, SessionMetadata, SessionRevision, SessionStatus,
-    WorkAdmission, pause_gate, replay,
+    AgentRevision, CommandClass, DeletionGuard, IdempotencyIdentity, IdempotencyReceipt,
+    JournalSeq, PinnedRuntime, ProviderCredentialPin, ReceiptKey, ReceiptOutcome, ReplayDecision,
+    ResolvedConfigAuthority, ResourceId, ResourceKind, ResponseBody, Session, SessionLifecycle,
+    SessionMetadata, SessionRevision, SessionStatus, WorkAdmission, pause_gate, replay,
 };
 use aex_wire::canonical::{CanonicalJson, to_jcs_string};
 use aex_wire::error::ErrorCode;
@@ -137,8 +136,28 @@ pub struct ReadySessionLaunch {
     pub launched_at: aex_wire::types::Timestamp,
     /// Registered names and revisions materialized into the guest, in order.
     pub materialized_files: Vec<(ResourceName, u64)>,
-    /// Root control after its durable `AgentStarted` journal append.
-    pub root_agent: AgentControl,
+    /// Physical root-control evidence after durable `AgentStarted` sequence zero.
+    pub root_started: RootStartedEvidence,
+}
+
+/// Exact physical root-control evidence used to fence public publication.
+///
+/// Sequence zero is a real Brain journal position. `journal_tail_hash` is what
+/// distinguishes it from a fresh control whose numeric tail is also zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RootStartedEvidence {
+    /// Exact root agent.
+    pub agent: AgentId,
+    /// Exact owning session.
+    pub session: SessionId,
+    /// Exact elected generation.
+    pub generation: GenerationId,
+    /// Physical control revision after the append.
+    pub revision: AgentRevision,
+    /// Physical journal tail; sequence zero is valid and expected initially.
+    pub journal_tail: JournalSeq,
+    /// BLAKE3 identity of the exact `AgentStarted` body at the tail.
+    pub journal_tail_hash: [u8; 32],
 }
 
 /// Either a private preparation or the exact stored response of an earlier winner.
@@ -280,11 +299,10 @@ pub fn publish_ready_session(
         .collect::<Vec<_>>();
     if readiness.generation != prepared.generation
         || readiness.materialized_files != expected_files
-        || readiness.root_agent.id != prepared.root_agent
-        || readiness.root_agent.session != prepared.session
-        || readiness.root_agent.generation != Some(prepared.generation)
-        || readiness.root_agent.journal_tail == aex_session_domain::JournalSeq::INITIAL
-        || readiness.root_agent.last_entry.is_none()
+        || readiness.root_started.agent != prepared.root_agent
+        || readiness.root_started.session != prepared.session
+        || readiness.root_started.generation != prepared.generation
+        || readiness.root_started.revision.0 == 0
     {
         return Err(AppError::Port(crate::ports::PortError::Corrupt {
             kind: "session create readiness",
@@ -340,42 +358,13 @@ pub fn publish_ready_session(
         expires_at: None,
     };
 
-    let plan = build_plan(&session, &readiness.root_agent, receipt);
+    let plan = build_plan(&session, &readiness.root_started, receipt);
     plan.validate()?;
 
     Ok(Planned {
         plan,
         projected: session,
     })
-}
-
-/// Builds the root control row the private create claim owns before activation.
-///
-/// Brain appends `AgentStarted` to this exact control/journal authority. Final
-/// publication conditions on the resulting revision and tail and never
-/// overwrites them with an empty root.
-#[must_use]
-pub fn initial_root_agent(prepared: &PreparedSessionCreate) -> AgentControl {
-    AgentControl {
-        id: prepared.root_agent,
-        session: prepared.session,
-        kind: AgentKind::Root,
-        parent: None,
-        depth: 0,
-        status: AgentStatus::Idle,
-        revision: aex_session_domain::AgentRevision::INITIAL,
-        journal_tail: aex_session_domain::JournalSeq::INITIAL,
-        last_entry: None,
-        claim: None,
-        join: None,
-        budget: None,
-        open_effects: OpenEffectSet::default(),
-        pending_approval: None,
-        queue_reason: None,
-        generation: Some(prepared.generation),
-        terminal: None,
-        created_at: prepared.prepared_at,
-    }
 }
 
 struct PreparedCreate<'a> {
@@ -492,7 +481,7 @@ async fn prepare_create<'a>(
 /// The exactly-once transaction.
 fn build_plan(
     session: &Session,
-    root_agent: &AgentControl,
+    root_started: &RootStartedEvidence,
     receipt: IdempotencyReceipt,
 ) -> SessionTransaction {
     // Every guard targets an item this plan also writes, so each merges into
@@ -506,13 +495,18 @@ fn build_plan(
         }),
         Condition::AgentRevision {
             session: session.id,
-            agent: root_agent.id,
-            expected: root_agent.revision,
+            agent: root_started.agent,
+            expected: root_started.revision,
         },
         Condition::JournalTail {
             session: session.id,
-            agent: root_agent.id,
-            expected: root_agent.journal_tail,
+            agent: root_started.agent,
+            expected: root_started.journal_tail,
+        },
+        Condition::JournalTailHash {
+            session: session.id,
+            agent: root_started.agent,
+            expected: root_started.journal_tail_hash,
         },
         Condition::ItemAbsent(ItemKey {
             family: TableFamily::Idempotency,

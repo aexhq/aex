@@ -31,7 +31,7 @@ pub mod use_cases;
 
 pub use create::{
     CREATE_SCOPE, CreateSession, INITIAL_FILES_HARD_MAX_BYTES, PrepareSessionCreateOutcome,
-    PreparedSessionCreate, ReadySessionLaunch, ResolvedInitialFile, initial_root_agent,
+    PreparedSessionCreate, ReadySessionLaunch, ResolvedInitialFile, RootStartedEvidence,
     prepare_session_create, publish_ready_session,
 };
 pub use error::AppError;

@@ -458,15 +458,28 @@ impl SessionAuthorityExternal {
 
     fn read_only(
         tables: &RegionalTables,
+        binding: AuthorityBinding,
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
-        let (participant, physical) = match action.target.family {
+        let (participant, physical, agent_guard) = match action.target.family {
+            TableFamily::SessionAuthority => {
+                let (session, agent) = agent_of(action)?;
+                if Some(session) != binding.session {
+                    return Err(cross_tenant());
+                }
+                (
+                    Participant::AGENT_ROOT_CONTROL,
+                    crate::keys::agent_control(session, agent),
+                    true,
+                )
+            }
             TableFamily::OperationAuthority => {
                 let operation = operation_of(action)?;
                 (
                     Participant::SESSION_OPERATION,
                     crate::keys::operation(operation),
+                    false,
                 )
             }
             _ => {
@@ -480,8 +493,35 @@ impl SessionAuthorityExternal {
             }
         };
         let mut expression = Expression::default();
+        if agent_guard {
+            expression.and_literal("attribute_exists(pk)");
+        }
         for (id, condition) in &action.conditions {
             match condition {
+                Condition::AgentRevision { expected, .. } => {
+                    term_eq_u64(
+                        &mut expression,
+                        &format!("c{}", id.0),
+                        "revision",
+                        expected.0,
+                    );
+                }
+                Condition::JournalTail { expected, .. } => {
+                    term_eq_u64(
+                        &mut expression,
+                        &format!("c{}", id.0),
+                        "journalTail",
+                        expected.0,
+                    );
+                }
+                Condition::JournalTailHash { expected, .. } => {
+                    crate::application_plan::term_eq_string(
+                        &mut expression,
+                        &format!("c{}", id.0),
+                        "journalTailHash",
+                        hex::encode(expected),
+                    );
+                }
                 Condition::OperationCursorAt { expected, .. } => match expected {
                     Some(cursor) => {
                         expression.and_literal("attribute_exists(pk)");
@@ -531,6 +571,27 @@ fn operation_of(action: &LogicalAction<'_>) -> Result<OperationId, StoreError> {
         })
 }
 
+fn agent_of(action: &LogicalAction<'_>) -> Result<(SessionId, AgentId), StoreError> {
+    let mut found = None;
+    for (_, condition) in &action.conditions {
+        let candidate = match condition {
+            Condition::AgentRevision { session, agent, .. }
+            | Condition::JournalTail { session, agent, .. }
+            | Condition::JournalTailHash { session, agent, .. } => (*session, *agent),
+            _ => continue,
+        };
+        if found.is_some_and(|existing| existing != candidate) {
+            return Err(StoreError::Invalid {
+                detail: "one root-readiness guard group names different agents".to_owned(),
+            });
+        }
+        found = Some(candidate);
+    }
+    found.ok_or_else(|| StoreError::Invalid {
+        detail: "a root-readiness guard group has no agent identity".to_owned(),
+    })
+}
+
 fn encoded(cursor: &ContinuationCursor) -> Result<Vec<u8>, StoreError> {
     cursor.encode().map_err(|error| StoreError::Invalid {
         detail: format!("a cursor guard could not be encoded: {error}"),
@@ -569,6 +630,7 @@ const fn condition_tag(condition: &Condition) -> &'static str {
         Condition::AgentFence { .. } => "AgentFence",
         Condition::JournalTail { .. } => "JournalTail",
         Condition::RootAgentIdle { .. } => "RootAgentIdle",
+        Condition::JournalTailHash { .. } => "JournalTailHash",
         Condition::RunNonTerminal { .. } => "RunNonTerminal",
         Condition::AccountRevisionAtLeast { .. } => "AccountRevisionAtLeast",
         Condition::ProviderCredentialReady { .. } => "ProviderCredentialReady",
@@ -644,7 +706,7 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
             return Err(cross_tenant());
         }
         match action.write {
-            None => Self::read_only(tables, action, output),
+            None => Self::read_only(tables, binding, action, output),
             Some(Write::PutOperation(operation)) => {
                 Self::operation_write(tables, binding, action, operation, output)
             }

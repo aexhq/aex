@@ -221,6 +221,15 @@ pub enum Condition {
         /// Root agent.
         agent: AgentId,
     },
+    /// The agent's journal tail has this exact content identity.
+    JournalTailHash {
+        /// The owning session, required to locate the physical agent partition.
+        session: SessionId,
+        /// Which agent.
+        agent: AgentId,
+        /// Exact BLAKE3 identity stored beside `journalTail`.
+        expected: [u8; 32],
+    },
     /// The run has not settled.
     RunNonTerminal {
         /// The owning session, required to locate the physical run row.
@@ -361,6 +370,7 @@ impl Condition {
             | Self::AgentFence { .. }
             | Self::JournalTail { .. }
             | Self::RootAgentIdle { .. }
+            | Self::JournalTailHash { .. }
             | Self::RunNonTerminal { .. }
             | Self::AuthorizationEpochAtLeast { .. } => TableFamily::SessionAuthority,
             Self::AccountRevisionAtLeast { .. } => TableFamily::AuthorizationProjection,
@@ -399,7 +409,8 @@ impl Condition {
             Self::AgentRevision { session, agent, .. }
             | Self::AgentFence { session, agent, .. }
             | Self::JournalTail { session, agent, .. }
-            | Self::RootAgentIdle { session, agent } => {
+            | Self::RootAgentIdle { session, agent }
+            | Self::JournalTailHash { session, agent, .. } => {
                 (format!("{session}#{agent}"), "CONTROL".to_owned())
             }
             Self::RunNonTerminal { session, run } => (session.to_string(), format!("RUN#{run}")),
@@ -1018,9 +1029,13 @@ impl SessionTransaction {
             matches!(condition, Condition::JournalTail { session, agent, .. }
                 if *session == head.id && *agent == head.root_agent)
         });
-        if !has_root_revision || !has_root_tail {
+        let has_root_tail_hash = self.conditions.iter().any(|condition| {
+            matches!(condition, Condition::JournalTailHash { session, agent, .. }
+                if *session == head.id && *agent == head.root_agent)
+        });
+        if !has_root_revision || !has_root_tail || !has_root_tail_hash {
             return Err(create_error(
-                "ready publication must condition on the elected root AgentStarted revision and journal tail",
+                "ready publication must condition on the elected root AgentStarted revision, journal tail and tail hash",
             ));
         }
         Ok(())

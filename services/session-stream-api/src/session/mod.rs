@@ -7,6 +7,7 @@
 
 pub mod admission;
 pub mod app_ports;
+pub mod create_readiness;
 pub mod handlers;
 pub mod live_composition;
 pub mod live_files;
