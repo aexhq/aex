@@ -298,11 +298,23 @@ fn route_obligations_are_internally_consistent() {
                 descriptor.request_schema.is_none(),
                 "{operation} declares an OTLP body and an AEX schema"
             ),
+            BodyClass::Binary => assert!(
+                descriptor.request_schema.is_none(),
+                "{operation} declares a binary body and an AEX schema"
+            ),
         }
 
         // 204 is the only bodyless success, and 202 is only ever an operation.
         if descriptor.response_schema.is_none() {
-            assert_eq!(descriptor.success_status, 204, "{operation}");
+            assert_eq!(
+                descriptor.success_status,
+                if descriptor.transport == TransportKind::Binary {
+                    200
+                } else {
+                    204
+                },
+                "{operation}"
+            );
         }
         if descriptor.success_status == 202 {
             assert_eq!(descriptor.response_schema, Some("Operation"), "{operation}");
@@ -329,6 +341,10 @@ fn route_obligations_are_internally_consistent() {
         if descriptor.transport == TransportKind::Ndjson {
             assert_eq!(descriptor.method, HttpMethod::Post, "{operation}");
             assert!(descriptor.request_schema.is_some(), "{operation}");
+        }
+        if descriptor.transport == TransportKind::Binary {
+            assert_eq!(descriptor.method, HttpMethod::Get, "{operation}");
+            assert!(descriptor.response_schema.is_none(), "{operation}");
         }
 
         // `If-Match` is only meaningful where the resource has an entity tag.

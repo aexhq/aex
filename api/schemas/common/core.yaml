@@ -118,12 +118,11 @@ schemas:
       value: { type: string, min: 1, max: 8192, doc: "The exact value to send." }
 
   WorkspaceAccess:
-    doc: What a live read actually did to the session workspace.
+    doc: Which retained session generation answered a live workspace call.
     type: object
     fields:
-      generationId: { type: id, of: generation, optional: true, doc: "The generation the read observed." }
-      woke: { type: boolean, doc: "Whether the read woke a retained session." }
-      consistency: { type: ref, to: FileConsistency, doc: "The consistency the read achieved." }
+      generationId: { type: id, of: generation, doc: "The exact retained generation that answered." }
+      resumed: { type: boolean, doc: "Whether this call first resumed the suspended generation." }
 
   HostedSession:
     doc: A short-lived hosted provider page.
@@ -143,13 +142,11 @@ schemas:
     doc: Every durable operation the platform admits.
     type: enum
     values:
-      - { value: session_stop, doc: "Stop the running turn." }
-      - { value: session_persist, doc: "Persist the live workspace." }
-      - { value: workspace_discard, doc: "Discard the live workspace." }
-      - { value: session_trash, doc: "Move the session into the recovery window." }
-      - { value: session_restore, doc: "Bring the session back out of the recovery window." }
-      - { value: session_purge, doc: "Destroy the session irreversibly." }
-      - { value: credential_rebind, doc: "Rebind session credentials." }
+      - { value: session_cancel, doc: "Cancel the session's current work and return it to idle." }
+      - { value: session_suspend, doc: "Suspend an idle session's exact retained generation." }
+      - { value: session_resume, doc: "Resume the same retained generation to idle." }
+      - { value: session_terminate, doc: "Destroy session compute and live files while retaining metadata and messages." }
+      - { value: session_delete, doc: "Irreversibly delete session-scoped user content and telemetry." }
       - { value: telemetry_export, doc: "Produce a telemetry export artifact." }
       - { value: workspace_delete, doc: "Delete the workspace across both planes." }
 
@@ -210,12 +207,10 @@ schemas:
     type: union
     tag: kind
     variants:
-      - { value: session_stop, payload: SessionStopResult, doc: "Stop result." }
-      - { value: session_persist, payload: SessionPersistResult, doc: "Persist result." }
-      - { value: workspace_discard, payload: WorkspaceDiscardResult, doc: "Discard result." }
-      - { value: session_trash, payload: SessionTrashResult, doc: "Trash result." }
-      - { value: session_restore, payload: SessionRestoreResult, doc: "Restore result." }
-      - { value: session_purge, payload: SessionTombstone, doc: "Session tombstone." }
-      - { value: credential_rebind, payload: CredentialRebindResult, doc: "Rebind result." }
+      - { value: session_cancel, payload: SessionCancelResult, doc: "Current-work cancellation result." }
+      - { value: session_suspend, payload: SessionSuspendResult, doc: "Manual suspension result." }
+      - { value: session_resume, payload: SessionResumeResult, doc: "Manual resumption result." }
+      - { value: session_terminate, payload: SessionTerminateResult, doc: "Permanent compute/live-file termination result." }
+      - { value: session_delete, payload: SessionTombstone, doc: "Irreversible deletion tombstone." }
       - { value: telemetry_export, payload: TelemetryExportResult, doc: "Export result." }
       - { value: workspace_delete, payload: WorkspaceTombstone, doc: "Workspace tombstone." }

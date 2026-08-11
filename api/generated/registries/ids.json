@@ -55,13 +55,7 @@
       "rust": "MessageId"
     },
     {
-      "description": "One admitted turn of execution.",
-      "kind": "run",
-      "prefix": "run",
-      "rust": "RunId"
-    },
-    {
-      "description": "One agent within a run, root or subagent.",
+      "description": "One internal execution agent, root or subagent.",
       "kind": "agent",
       "prefix": "agt",
       "rust": "AgentId"
@@ -89,6 +83,18 @@
       "kind": "generation",
       "prefix": "gen",
       "rust": "GenerationId"
+    },
+    {
+      "description": "One ephemeral exact-generation live-file upload.",
+      "kind": "file_upload",
+      "prefix": "ful",
+      "rust": "FileUploadId"
+    },
+    {
+      "description": "One ephemeral exact-generation live-file download.",
+      "kind": "file_download",
+      "prefix": "fdl",
+      "rust": "FileDownloadId"
     },
     {
       "description": "One admitted telemetry observation.",

@@ -3,7 +3,7 @@
 //! The identifier registry and its newtypes.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:746909d557013ea5aaf802d74181f53b5d868f79814b0bd9389302208ad0c0f2`.
+//! `sha256:90fdf2649aa0c7151830e06eb94993aeafa67faf7c867042dbff4638af9aafba`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -33,9 +33,7 @@ pub enum IdKind {
     Session,
     /// One message in a session.
     Message,
-    /// One admitted turn of execution.
-    Run,
-    /// One agent within a run, root or subagent.
+    /// One internal execution agent, root or subagent.
     Agent,
     /// One bound tool invocation.
     ToolCall,
@@ -45,6 +43,10 @@ pub enum IdKind {
     Approval,
     /// One exact `MicroVM` generation.
     Generation,
+    /// One ephemeral exact-generation live-file upload.
+    FileUpload,
+    /// One ephemeral exact-generation live-file download.
+    FileDownload,
     /// One admitted telemetry observation.
     Observation,
     /// One admitted OTLP batch.
@@ -73,12 +75,13 @@ impl IdKind {
         IdKind::ProviderCredential,
         IdKind::Session,
         IdKind::Message,
-        IdKind::Run,
         IdKind::Agent,
         IdKind::ToolCall,
         IdKind::Operation,
         IdKind::Approval,
         IdKind::Generation,
+        IdKind::FileUpload,
+        IdKind::FileDownload,
         IdKind::Observation,
         IdKind::TelemetryBatch,
         IdKind::TelemetryGap,
@@ -101,12 +104,13 @@ impl IdKind {
             Self::ProviderCredential => "pcr",
             Self::Session => "ses",
             Self::Message => "msg",
-            Self::Run => "run",
             Self::Agent => "agt",
             Self::ToolCall => "tcl",
             Self::Operation => "op",
             Self::Approval => "apr",
             Self::Generation => "gen",
+            Self::FileUpload => "ful",
+            Self::FileDownload => "fdl",
             Self::Observation => "obs",
             Self::TelemetryBatch => "bch",
             Self::TelemetryGap => "gap",
@@ -130,12 +134,13 @@ impl IdKind {
             Self::ProviderCredential => "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Session => "^ses_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Message => "^msg_[0-9a-hjkmnp-tv-z]{26}$",
-            Self::Run => "^run_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Agent => "^agt_[0-9a-hjkmnp-tv-z]{26}$",
             Self::ToolCall => "^tcl_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Operation => "^op_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Approval => "^apr_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Generation => "^gen_[0-9a-hjkmnp-tv-z]{26}$",
+            Self::FileUpload => "^ful_[0-9a-hjkmnp-tv-z]{26}$",
+            Self::FileDownload => "^fdl_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Observation => "^obs_[0-9a-hjkmnp-tv-z]{26}$",
             Self::TelemetryBatch => "^bch_[0-9a-hjkmnp-tv-z]{26}$",
             Self::TelemetryGap => "^gap_[0-9a-hjkmnp-tv-z]{26}$",
@@ -159,12 +164,13 @@ impl IdKind {
             Self::ProviderCredential => "provider_credential",
             Self::Session => "session",
             Self::Message => "message",
-            Self::Run => "run",
             Self::Agent => "agent",
             Self::ToolCall => "tool_call",
             Self::Operation => "operation",
             Self::Approval => "approval",
             Self::Generation => "generation",
+            Self::FileUpload => "file_upload",
+            Self::FileDownload => "file_download",
             Self::Observation => "observation",
             Self::TelemetryBatch => "telemetry_batch",
             Self::TelemetryGap => "telemetry_gap",
@@ -231,13 +237,7 @@ prefixed_id!(
 );
 
 prefixed_id!(
-    /// One admitted turn of execution.
-    RunId,
-    Run
-);
-
-prefixed_id!(
-    /// One agent within a run, root or subagent.
+    /// One internal execution agent, root or subagent.
     AgentId,
     Agent
 );
@@ -264,6 +264,18 @@ prefixed_id!(
     /// One exact `MicroVM` generation.
     GenerationId,
     Generation
+);
+
+prefixed_id!(
+    /// One ephemeral exact-generation live-file upload.
+    FileUploadId,
+    FileUpload
+);
+
+prefixed_id!(
+    /// One ephemeral exact-generation live-file download.
+    FileDownloadId,
+    FileDownload
 );
 
 prefixed_id!(

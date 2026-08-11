@@ -437,6 +437,7 @@ fn accept_kind(headers: &HeaderMap) -> AcceptKind {
         .and_then(|value| value.to_str().ok())
     {
         Some(value) if value.contains("application/x-ndjson") => AcceptKind::Ndjson,
+        Some(value) if value.contains("application/octet-stream") => AcceptKind::Binary,
         Some(value) if value.contains("application/pdf") => AcceptKind::Pdf,
         _ => AcceptKind::Json,
     }

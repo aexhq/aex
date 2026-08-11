@@ -16,11 +16,11 @@
 //! that the cancellation decoding in [`crate::error`] cannot be exact, and a
 //! caller receives an index instead of a reason.
 
-use aex_internal_contracts::assertion::AudienceSet;
+use aex_internal_contracts::{RunId, assertion::AudienceSet};
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
 use aex_wire::ids::OrganizationId;
 use aex_wire::ids::{
-    AgentId, ApiKeyId, ApprovalId, ContentHash, GenerationId, ObservationId, ResourceName, RunId,
+    AgentId, ApiKeyId, ApprovalId, ContentHash, GenerationId, ObservationId, ResourceName,
     SessionId, ToolCallId, WorkspaceId,
 };
 use aex_wire::scopes::ScopeSet;

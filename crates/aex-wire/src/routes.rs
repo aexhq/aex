@@ -36,6 +36,8 @@ pub enum BodyClass {
     AexJson,
     /// The pinned standard OTLP revision, not an AEX schema.
     Otlp,
+    /// Bounded opaque bytes, interpreted only by the owning file transport.
+    Binary,
 }
 
 /// How a response is delivered.
@@ -46,6 +48,8 @@ pub enum TransportKind {
     Unary,
     /// `application/x-ndjson` discriminated frames.
     Ndjson,
+    /// One bounded `application/octet-stream` body.
+    Binary,
 }
 
 /// What a route does about entity tags.

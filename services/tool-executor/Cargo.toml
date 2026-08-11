@@ -15,16 +15,14 @@ workspace = true
 
 [package.metadata.aex]
 owner = "brain-core"
-role = "deployable"
-artifact = "oci_image"
-deployable = "tool-executor"
-live_suite = "aex-live-tool-executor"
-layers = ["unit", "smoke", "e2e"]
+role = "application"
+artifact = "none"
+layers = ["unit"]
 concerns = ["contract", "fault", "security", "performance"]
 seams = ["aws.dynamodb.condition", "aws.dynamodb.transact_write", "aws.iam.denial"]
 security_tier = "secret"
 risk = ["iam", "untrusted_input"]
-scenarios = ["SC-BRAIN-TURN"]
+scenarios = []
 
 [package.metadata.aex.targets]
 admission = "unit"

@@ -60,15 +60,23 @@ export class Aex extends GeneratedResources {
     if (query) path = `${path}?${query}`;
     const headers = new Headers({
       authorization: this.#credential.authorizationHeader(),
-      accept: "application/json",
+      accept: route.transport as string === "binary" ? "application/octet-stream" : "application/json",
       "Aex-Client": `aex-sdk/${SDK_VERSION}`,
     });
     if (options.idempotencyKey) headers.set("Idempotency-Key", options.idempotencyKey);
     if (options.operationId) headers.set("Aex-Operation-Id", options.operationId);
     let bytes: Uint8Array | undefined;
     if (options.body !== undefined) {
-      headers.set("content-type", "application/json");
-      bytes = encodeCanonicalJson(options.body);
+      if (route.bodyClass as string === "binary") {
+        if (!(options.body instanceof Uint8Array)) {
+          throw new TypeError(`binary route ${routeId} requires a Uint8Array body`);
+        }
+        headers.set("content-type", "application/octet-stream");
+        bytes = options.body;
+      } else {
+        headers.set("content-type", "application/json");
+        bytes = encodeCanonicalJson(options.body);
+      }
     }
     const request: WireRequest = {
       routeId,

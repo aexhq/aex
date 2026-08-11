@@ -2,19 +2,15 @@
   "$id": "https://schemas.aex.dev/v1/SessionCreateRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Create a session. The provider and model pair is explicit and required.",
+  "description": "Create an eight-hour multi-turn session with one explicitly pinned BYOK provider credential.",
   "properties": {
     "approvalPolicy": {
       "$ref": "aex:schema:ApprovalPolicy",
-      "description": "When to ask for a decision."
+      "description": "When to ask for a built-in tool decision."
     },
     "compute": {
       "$ref": "aex:schema:SessionComputeRequest",
       "description": "The baseline compute shape."
-    },
-    "credentials": {
-      "$ref": "aex:schema:SessionCredentials",
-      "description": "Secrets to take custody of."
     },
     "metadata": {
       "additionalProperties": {
@@ -53,14 +49,14 @@
       "description": "The direct BYOK provider."
     },
     "providerCredentialId": {
-      "description": "Which BYOK binding to use. Required: a workspace may hold several bindings for one provider, and this route declares no ambiguity error, so an absent value could only be resolved by guessing.",
+      "description": "The exact BYOK binding; the platform never guesses between bindings.",
       "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "provider_credential"
     },
     "registered": {
       "$ref": "aex:schema:SessionRegisteredSelection",
-      "description": "Registered resources to mount."
+      "description": "Opaque workspace files to mount."
     }
   },
   "required": [

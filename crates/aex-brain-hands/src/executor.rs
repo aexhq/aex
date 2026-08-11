@@ -37,7 +37,7 @@ const DETACHED_PREFIX: &str = "hands.v1";
 /// operation, which the guest refuses; [`ToolExecutor::supports`] therefore reports
 /// it as unimplemented so readiness never advertises it.
 ///
-/// One reinterpretation happens and is deliberate: `run_command`'s `command` is a
+/// One reinterpretation happens and is deliberate: `bash`'s `command` is a
 /// shell line by its own catalogue schema, so it is run by a shell
 /// ([`crate::encode::COMMAND_SHELL`]). Its `argv` form is passed through untouched.
 pub struct HandsToolExecutor {
@@ -772,7 +772,7 @@ mod tests {
     async fn a_command_reaches_the_one_guest_primitive_that_starts_a_process() {
         let (executor, hands) = fixture();
         let mut command = call();
-        command.route.name = ToolName::parse("run_command").expect("tool name");
+        command.route.name = ToolName::parse("bash").expect("tool name");
         command.route.timeout_ms = 600_000;
         command.input =
             aex_wire::CanonicalJson::from_value(&serde_json::json!({"command": "ls -la"}))
@@ -805,7 +805,7 @@ mod tests {
     async fn a_named_timeout_narrows_the_persisted_bound_and_is_never_widened_by_it() {
         let (executor, hands) = fixture();
         let mut command = call();
-        command.route.name = ToolName::parse("run_command").expect("tool name");
+        command.route.name = ToolName::parse("bash").expect("tool name");
         command.route.timeout_ms = 600_000;
         command.input = aex_wire::CanonicalJson::from_value(
             &serde_json::json!({"command": "sleep 1", "timeoutMs": 5_000}),
@@ -851,14 +851,7 @@ mod tests {
     #[test]
     fn only_the_rows_the_guest_can_complete_are_reported_as_supported() {
         let (executor, _) = fixture();
-        for served in [
-            "read_file",
-            "list_dir",
-            "glob",
-            "grep",
-            "run_command",
-            "git",
-        ] {
+        for served in ["read_file", "list_dir", "glob", "grep", "bash", "git"] {
             assert!(
                 executor.supports(&ToolName::parse(served).expect("tool name")),
                 "{served} is encoded into an operation the guest runs"

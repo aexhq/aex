@@ -15,8 +15,8 @@ fn builtin_catalog_has_one_stable_row_per_launch_tool() {
         .iter()
         .map(|entry| entry.descriptor.name.as_str())
         .collect::<BTreeSet<_>>();
-    assert!(!entries.is_empty(), "the built-in catalog has launch tools");
-    assert_eq!(names.len(), entries.len());
+    assert_eq!(names, BTreeSet::from(["bash"]));
+    assert_eq!(entries.len(), 1);
 
     let digest = Sha256::digest(builtin_catalog_bytes().expect("catalog must canonicalize"));
     let mut actual = "sha256:".to_owned();

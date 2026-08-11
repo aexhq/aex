@@ -211,26 +211,6 @@ deferred = "The regional streaming transport has no executable scenario target y
 observes = ["artifact:session-stream-api"]
 
 [[scenario]]
-id = "SC-SECRET-CUSTODY"
-owner = "regional-stores"
-deferred = "The custody lifecycle is now reachable end to end — every route of it is served — but no executable live target exists yet: aex-live-regional-secret-api claims no scenario and needs a deployed plane and a customer-supplied test key to run against."
-observes = [
-  "artifact:regional-secret-api",
-  "artifact:regional-secret-key-admin",
-  "artifact:session-stream-api",
-]
-
-[scenario.prd]
-rule = "secret_path"
-provisions = [
-  "organization",
-  "workspace",
-  "api_key",
-  "secret_generation",
-  "kms_key",
-]
-
-[[scenario]]
 id = "SC-CONTENT-LIFECYCLE"
 owner = "regional-stores"
 deferred = "The complete upload, persisted-content, and garbage-collection lifecycle has no executable live target yet."
@@ -297,23 +277,14 @@ observes = ["artifact:observation-reconciler", "artifact:regional-observation-ap
 
 # --- runtime ---------------------------------------------------------------------
 
-# The tool executor folds in here rather than taking a scenario of its own.
-#
-# A deployable no scenario observes fails `graph verify`, so it needed one, and a
-# separate `SC-TOOL-EXEC` would have been a scenario that could only ever be
-# driven through a Brain turn: the executor's sole caller is `brain-mux`, and its
-# admission refuses anything a scenario could send directly. Folding it in keeps
-# the observation honest -- what is proved is a turn that reaches a
-# platform-destination tool, which is the only way the executor is reachable at
-# all.
 [[scenario]]
 id = "SC-BRAIN-TURN"
 owner = "brain-core"
-deferred = "No executable live target yet proves a complete Brain turn across mux, session authority and the platform tool executor."
+deferred = "No executable live target yet proves a complete Bash-only Brain turn across mux, session authority and the retained Hands generation."
 observes = [
   "artifact:brain-mux",
   "artifact:session-stream-api",
-  "artifact:tool-executor",
+  "artifact:hands-agent",
 ]
 
 [[scenario]]

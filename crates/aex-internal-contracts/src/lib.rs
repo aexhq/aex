@@ -22,6 +22,7 @@ pub mod assertion;
 pub mod capacity;
 pub mod catalog;
 pub mod control;
+pub mod ids;
 pub mod journal;
 pub mod money;
 pub mod observation;
@@ -30,6 +31,8 @@ pub mod release;
 pub mod tool_exec;
 pub mod usage;
 pub mod wake;
+
+pub use ids::RunId;
 
 use serde::{Deserialize, Serialize};
 

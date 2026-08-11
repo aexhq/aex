@@ -3,7 +3,7 @@
 //! The low-level client: one request builder and one method per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:746909d557013ea5aaf802d74181f53b5d868f79814b0bd9389302208ad0c0f2`.
+//! `sha256:90fdf2649aa0c7151830e06eb94993aeafa67faf7c867042dbff4638af9aafba`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -18,6 +18,7 @@ use crate::client::ToParam;
 use crate::client::Transport;
 use crate::client::WireClient;
 use crate::client::WireRequest;
+use crate::client::decode_binary;
 use crate::client::decode_ndjson;
 use crate::client::decode_no_content;
 use crate::client::decode_response;
@@ -29,6 +30,8 @@ use crate::ids::AgentId;
 use crate::ids::ApiKeyId;
 use crate::ids::ApprovalId;
 use crate::ids::ExportId;
+use crate::ids::FileDownloadId;
+use crate::ids::FileUploadId;
 use crate::ids::GenerationId;
 use crate::ids::InvitationId;
 use crate::ids::MeasurementId;
@@ -39,7 +42,6 @@ use crate::ids::OperationId;
 use crate::ids::OrganizationId;
 use crate::ids::ProviderCredentialId;
 use crate::ids::ResourceName;
-use crate::ids::RunId;
 use crate::ids::SessionId;
 use crate::ids::StatementId;
 use crate::ids::TelemetryBatchId;
@@ -77,21 +79,19 @@ use crate::models::DownloadGrant;
 use crate::models::EffectiveWorkspaceLimit;
 use crate::models::EffectiveWorkspaceLimitPage;
 use crate::models::EmptyRequest;
-use crate::models::FileDownloadRequest;
-use crate::models::FileEntry;
-use crate::models::FileEntryPage;
-use crate::models::FileListRequest;
-use crate::models::FileStatRequest;
 use crate::models::HostedSession;
 use crate::models::Invitation;
 use crate::models::InvitationAcceptResult;
 use crate::models::InvitationCreateRequest;
-use crate::models::LiveDownloadGrant;
+use crate::models::LiveFileDownload;
+use crate::models::LiveFileDownloadCompleteRequest;
 use crate::models::LiveFileDownloadRequest;
 use crate::models::LiveFileEntry;
 use crate::models::LiveFileEntryPage;
 use crate::models::LiveFileListRequest;
 use crate::models::LiveFileStatRequest;
+use crate::models::LiveFileUpload;
+use crate::models::LiveFileUploadCreateRequest;
 use crate::models::MembershipPage;
 use crate::models::MembershipsListQuery;
 use crate::models::MessagePage;
@@ -122,42 +122,16 @@ use crate::models::RegionalOperationsListQuery;
 use crate::models::RegisteredFile;
 use crate::models::RegisteredFilePage;
 use crate::models::RegisteredFileValue;
-use crate::models::RegisteredInstruction;
-use crate::models::RegisteredInstructionPage;
-use crate::models::RegisteredInstructionValue;
-use crate::models::RegisteredMcpServer;
-use crate::models::RegisteredMcpServerPage;
-use crate::models::RegisteredMcpServerValue;
-use crate::models::RegisteredSkill;
-use crate::models::RegisteredSkillPage;
-use crate::models::RegisteredSkillValue;
-use crate::models::RegisteredTool;
-use crate::models::RegisteredToolPage;
-use crate::models::RegisteredToolValue;
 use crate::models::RegistryDownloadRequest;
 use crate::models::RegistryFilesListQuery;
-use crate::models::RegistryInstructionsListQuery;
-use crate::models::RegistryMcpServersListQuery;
-use crate::models::RegistrySkillsListQuery;
-use crate::models::RegistryToolsListQuery;
-use crate::models::Run;
-use crate::models::RunPage;
-use crate::models::SecretMetadata;
-use crate::models::SecretMetadataPage;
-use crate::models::SecretPutRequest;
-use crate::models::SecretRevocation;
-use crate::models::SecretsListQuery;
 use crate::models::Session;
 use crate::models::SessionApprovalsListQuery;
 use crate::models::SessionCreateRequest;
-use crate::models::SessionCredentialRebindRequest;
+use crate::models::SessionFilesLiveDownloadPartGetQuery;
+use crate::models::SessionFilesLiveUploadPartPutQuery;
 use crate::models::SessionListPage;
 use crate::models::SessionMessagesListQuery;
-use crate::models::SessionPersistRequest;
-use crate::models::SessionPurgeRequest;
-use crate::models::SessionRunsListQuery;
 use crate::models::SessionStatus;
-use crate::models::SessionWorkspaceDiscardRequest;
 use crate::models::SessionsListQuery;
 use crate::models::Statement;
 use crate::models::StatementSummaryPage;
@@ -210,12 +184,13 @@ to_param_display!(
     ProviderCredentialId,
     SessionId,
     MessageId,
-    RunId,
     AgentId,
     ToolCallId,
     OperationId,
     ApprovalId,
     GenerationId,
+    FileUploadId,
+    FileDownloadId,
     ObservationId,
     TelemetryBatchId,
     TelemetryGapId,
@@ -1417,7 +1392,7 @@ pub fn otlp_traces_ingest_request(
 }
 
 /// `GET /api/workspace/provider-credentials/{providerCredentialId}`
-/// Read one provider-credential binding.
+/// Read one BYOK provider-credential binding.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -1440,8 +1415,8 @@ pub fn provider_credential_get_request(
     })
 }
 
-/// `POST /api/secrets/provider-credentials`
-/// Register a BYOK provider credential; carries plaintext.
+/// `POST /api/workspace/provider-credentials`
+/// Register a dedicated BYOK provider credential; carries plaintext once.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -1465,7 +1440,7 @@ pub fn provider_credential_register_request(
 }
 
 /// `POST /api/workspace/provider-credentials/{providerCredentialId}/revocations`
-/// Revoke a provider-credential binding.
+/// Revoke a BYOK provider-credential binding.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -1491,7 +1466,7 @@ pub fn provider_credential_revoke_request(
 }
 
 /// `GET /api/workspace/provider-credentials`
-/// List provider-credential binding metadata.
+/// List BYOK provider-credential binding metadata.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -1596,7 +1571,7 @@ pub fn regional_operations_list_request(
 }
 
 /// `DELETE /api/workspace/files/{name}`
-/// Delete one registered entry from files.
+/// Delete one registered workspace file.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -1621,7 +1596,7 @@ pub fn registry_files_delete_request(
 }
 
 /// `POST /api/workspace/files/{name}/downloads`
-/// Mint a download grant for a registered file.
+/// Mint a download grant for a registered workspace file.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -1647,7 +1622,7 @@ pub fn registry_files_download_create_request(
 }
 
 /// `GET /api/workspace/files/{name}`
-/// Read one registered entry from files.
+/// Read one registered workspace file.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -1669,7 +1644,7 @@ pub fn registry_files_get_request(name: &ResourceName) -> Result<WireRequest, Cl
 }
 
 /// `GET /api/workspace/files`
-/// List registered files.
+/// List registered workspace files.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -1695,7 +1670,7 @@ pub fn registry_files_list_request(
 }
 
 /// `PUT /api/workspace/files/{name}`
-/// Replace one registered entry in files.
+/// Replace one registered workspace file.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -1718,530 +1693,6 @@ pub fn registry_files_put_request(
         query: String::new(),
         headers: request_headers(route, Some(idempotency_key), None, if_match),
         body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `DELETE /api/workspace/instructions/{name}`
-/// Delete one registered entry from instructions.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_instructions_delete_request(
-    name: &ResourceName,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryInstructionsDelete;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Delete,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, if_match),
-        body: None,
-    })
-}
-
-/// `GET /api/workspace/instructions/{name}`
-/// Read one registered entry from instructions.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_instructions_get_request(name: &ResourceName) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryInstructionsGet;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `GET /api/workspace/instructions`
-/// List registered instructions.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_instructions_list_request(
-    query: &RegistryInstructionsListQuery,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryInstructionsList;
-    let path = PathWriter::new(route);
-    let mut writer = QueryWriter::new();
-    writer.put_option("cursor", query.cursor.as_ref());
-    writer.put_option("limit", query.limit.as_ref());
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: writer.finish(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `PUT /api/workspace/instructions/{name}`
-/// Replace one registered entry in instructions.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_instructions_put_request(
-    name: &ResourceName,
-    body: &RegisteredInstructionValue,
-    idempotency_key: &IdempotencyKey,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryInstructionsPut;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Put,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, Some(idempotency_key), None, if_match),
-        body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `DELETE /api/workspace/mcp-servers/{name}`
-/// Delete one registered entry from MCP servers.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_mcp_servers_delete_request(
-    name: &ResourceName,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryMcpServersDelete;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Delete,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, if_match),
-        body: None,
-    })
-}
-
-/// `GET /api/workspace/mcp-servers/{name}`
-/// Read one registered entry from MCP servers.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_mcp_servers_get_request(name: &ResourceName) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryMcpServersGet;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `GET /api/workspace/mcp-servers`
-/// List registered MCP servers.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_mcp_servers_list_request(
-    query: &RegistryMcpServersListQuery,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryMcpServersList;
-    let path = PathWriter::new(route);
-    let mut writer = QueryWriter::new();
-    writer.put_option("cursor", query.cursor.as_ref());
-    writer.put_option("limit", query.limit.as_ref());
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: writer.finish(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `PUT /api/workspace/mcp-servers/{name}`
-/// Replace one registered entry in MCP servers.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_mcp_servers_put_request(
-    name: &ResourceName,
-    body: &RegisteredMcpServerValue,
-    idempotency_key: &IdempotencyKey,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryMcpServersPut;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Put,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, Some(idempotency_key), None, if_match),
-        body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `DELETE /api/workspace/skills/{name}`
-/// Delete one registered entry from skills.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_skills_delete_request(
-    name: &ResourceName,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistrySkillsDelete;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Delete,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, if_match),
-        body: None,
-    })
-}
-
-/// `GET /api/workspace/skills/{name}`
-/// Read one registered entry from skills.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_skills_get_request(name: &ResourceName) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistrySkillsGet;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `GET /api/workspace/skills`
-/// List registered skills.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_skills_list_request(
-    query: &RegistrySkillsListQuery,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistrySkillsList;
-    let path = PathWriter::new(route);
-    let mut writer = QueryWriter::new();
-    writer.put_option("cursor", query.cursor.as_ref());
-    writer.put_option("limit", query.limit.as_ref());
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: writer.finish(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `PUT /api/workspace/skills/{name}`
-/// Replace one registered entry in skills.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_skills_put_request(
-    name: &ResourceName,
-    body: &RegisteredSkillValue,
-    idempotency_key: &IdempotencyKey,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistrySkillsPut;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Put,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, Some(idempotency_key), None, if_match),
-        body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `DELETE /api/workspace/tools/{name}`
-/// Delete one registered entry from tools.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_tools_delete_request(
-    name: &ResourceName,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryToolsDelete;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Delete,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, if_match),
-        body: None,
-    })
-}
-
-/// `GET /api/workspace/tools/{name}`
-/// Read one registered entry from tools.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_tools_get_request(name: &ResourceName) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryToolsGet;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `GET /api/workspace/tools`
-/// List registered tools.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_tools_list_request(
-    query: &RegistryToolsListQuery,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryToolsList;
-    let path = PathWriter::new(route);
-    let mut writer = QueryWriter::new();
-    writer.put_option("cursor", query.cursor.as_ref());
-    writer.put_option("limit", query.limit.as_ref());
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: writer.finish(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `PUT /api/workspace/tools/{name}`
-/// Replace one registered entry in tools.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn registry_tools_put_request(
-    name: &ResourceName,
-    body: &RegisteredToolValue,
-    idempotency_key: &IdempotencyKey,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::RegistryToolsPut;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Put,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, Some(idempotency_key), None, if_match),
-        body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `DELETE /api/secrets/{name}`
-/// Delete a secret, affecting future admission only.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn secret_delete_request(
-    name: &ResourceName,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SecretDelete;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Delete,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, if_match),
-        body: None,
-    })
-}
-
-/// `GET /api/workspace/secrets/{name}`
-/// Read one secret metadata record.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn secret_get_request(name: &ResourceName) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SecretGet;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `PUT /api/secrets/{name}`
-/// Set a secret value for future admission.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn secret_put_request(
-    name: &ResourceName,
-    body: &SecretPutRequest,
-    idempotency_key: &IdempotencyKey,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SecretPut;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Put,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, Some(idempotency_key), None, if_match),
-        body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `POST /api/secrets/{name}/revocations`
-/// Revoke a secret and cancel current custody.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn secret_revoke_request(
-    name: &ResourceName,
-    body: &EmptyRequest,
-    idempotency_key: &IdempotencyKey,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SecretRevoke;
-    let mut path = PathWriter::new(route);
-    path.bind(name);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Post,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, Some(idempotency_key), None, None),
-        body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `GET /api/workspace/secrets`
-/// List secret metadata; values are never readable.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn secrets_list_request(query: &SecretsListQuery) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SecretsList;
-    let path = PathWriter::new(route);
-    let mut writer = QueryWriter::new();
-    writer.put_option("cursor", query.cursor.as_ref());
-    writer.put_option("limit", query.limit.as_ref());
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: writer.finish(),
-        headers: request_headers(route, None, None, None),
-        body: None,
     })
 }
 
@@ -2326,8 +1777,34 @@ pub fn session_approvals_list_request(
     })
 }
 
+/// `POST /api/sessions/{sessionId}/cancellations`
+/// Cancel current work and return the session to idle.
+///
+/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
+/// a recorded fixture — can take the request and run it.
+///
+/// # Errors
+/// Returns [`ClientError::Encode`] when the request cannot be rendered.
+pub fn session_cancel_request(
+    session_id: SessionId,
+    body: &EmptyRequest,
+    operation_id: OperationId,
+) -> Result<WireRequest, ClientError> {
+    let route = RouteId::SessionCancel;
+    let mut path = PathWriter::new(route);
+    path.bind(&session_id);
+    Ok(WireRequest {
+        route,
+        method: HttpMethod::Post,
+        path: path.finish()?,
+        query: String::new(),
+        headers: request_headers(route, None, Some(operation_id), None),
+        body: Some(encode_body(route, body)?),
+    })
+}
+
 /// `POST /api/sessions`
-/// Create a session.
+/// Create an eight-hour multi-turn session.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -2350,20 +1827,21 @@ pub fn session_create_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/credential-rebinds`
-/// Admit the durable credential-rebind operation.
+/// `POST /api/sessions/{sessionId}/deletions`
+/// Irreversibly delete the session and session-scoped user content, observations, telemetry, and
+/// export objects. Independent registered workspace files remain.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
 ///
 /// # Errors
 /// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_credential_rebind_request(
+pub fn session_delete_request(
     session_id: SessionId,
-    body: &SessionCredentialRebindRequest,
+    body: &EmptyRequest,
     operation_id: OperationId,
 ) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionCredentialRebind;
+    let route = RouteId::SessionDelete;
     let mut path = PathWriter::new(route);
     path.bind(&session_id);
     Ok(WireRequest {
@@ -2376,8 +1854,36 @@ pub fn session_credential_rebind_request(
     })
 }
 
+/// `POST /api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}/completion`
+/// Re-stat, re-hash, and close an exact live-file download after SDK verification.
+///
+/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
+/// a recorded fixture — can take the request and run it.
+///
+/// # Errors
+/// Returns [`ClientError::Encode`] when the request cannot be rendered.
+pub fn session_files_live_download_complete_request(
+    session_id: SessionId,
+    file_download_id: FileDownloadId,
+    body: &LiveFileDownloadCompleteRequest,
+    idempotency_key: &IdempotencyKey,
+) -> Result<WireRequest, ClientError> {
+    let route = RouteId::SessionFilesLiveDownloadComplete;
+    let mut path = PathWriter::new(route);
+    path.bind(&session_id);
+    path.bind(&file_download_id);
+    Ok(WireRequest {
+        route,
+        method: HttpMethod::Post,
+        path: path.finish()?,
+        query: String::new(),
+        headers: request_headers(route, Some(idempotency_key), None, None),
+        body: Some(encode_body(route, body)?),
+    })
+}
+
 /// `POST /api/sessions/{sessionId}/files/live/downloads`
-/// Mint a download grant for a live workspace file.
+/// Open one exact-version live file directly from the retained generation, auto-resuming it.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -2402,8 +1908,65 @@ pub fn session_files_live_download_create_request(
     })
 }
 
+/// `DELETE /api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}`
+/// Close an abandoned live-file descriptor, auto-resuming the same generation.
+///
+/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
+/// a recorded fixture — can take the request and run it.
+///
+/// # Errors
+/// Returns [`ClientError::Encode`] when the request cannot be rendered.
+pub fn session_files_live_download_delete_request(
+    session_id: SessionId,
+    file_download_id: FileDownloadId,
+) -> Result<WireRequest, ClientError> {
+    let route = RouteId::SessionFilesLiveDownloadDelete;
+    let mut path = PathWriter::new(route);
+    path.bind(&session_id);
+    path.bind(&file_download_id);
+    Ok(WireRequest {
+        route,
+        method: HttpMethod::Delete,
+        path: path.finish()?,
+        query: String::new(),
+        headers: request_headers(route, None, None, None),
+        body: None,
+    })
+}
+
+/// `GET /api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}/parts/{partNumber}`
+/// Read one raw exact-version range directly from the retained generation.
+///
+/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
+/// a recorded fixture — can take the request and run it.
+///
+/// # Errors
+/// Returns [`ClientError::Encode`] when the request cannot be rendered.
+pub fn session_files_live_download_part_get_request(
+    session_id: SessionId,
+    file_download_id: FileDownloadId,
+    part_number: u32,
+    query: &SessionFilesLiveDownloadPartGetQuery,
+) -> Result<WireRequest, ClientError> {
+    let route = RouteId::SessionFilesLiveDownloadPartGet;
+    let mut path = PathWriter::new(route);
+    path.bind(&session_id);
+    path.bind(&file_download_id);
+    path.bind(&part_number);
+    let mut writer = QueryWriter::new();
+    writer.put("version", &query.version);
+    Ok(WireRequest {
+        route,
+        method: HttpMethod::Get,
+        path: path.finish()?,
+        query: writer.finish(),
+        headers: request_headers(route, None, None, None),
+        body: None,
+    })
+}
+
 /// `POST /api/sessions/{sessionId}/files/live/list`
-/// List live workspace files, optionally waking a retained session.
+/// List the exact live generation, auto-resuming that same generation when suspended.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -2428,7 +1991,7 @@ pub fn session_files_live_list_request(
 }
 
 /// `POST /api/sessions/{sessionId}/files/live/stat`
-/// Stat one live workspace file.
+/// Stat one live path without following a symlink, auto-resuming the same generation.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -2452,20 +2015,47 @@ pub fn session_files_live_stat_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/files/persisted/downloads`
-/// Mint a download grant for a persisted session file.
+/// `POST /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}/completion`
+/// Verify every part and atomically publish one live file in the same generation.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
 ///
 /// # Errors
 /// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_files_persisted_download_create_request(
+pub fn session_files_live_upload_complete_request(
     session_id: SessionId,
-    body: &FileDownloadRequest,
+    file_upload_id: FileUploadId,
     idempotency_key: &IdempotencyKey,
 ) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionFilesPersistedDownloadCreate;
+    let route = RouteId::SessionFilesLiveUploadComplete;
+    let mut path = PathWriter::new(route);
+    path.bind(&session_id);
+    path.bind(&file_upload_id);
+    Ok(WireRequest {
+        route,
+        method: HttpMethod::Post,
+        path: path.finish()?,
+        query: String::new(),
+        headers: request_headers(route, Some(idempotency_key), None, None),
+        body: None,
+    })
+}
+
+/// `POST /api/sessions/{sessionId}/files/live/uploads`
+/// Create a resumable upload in the exact live generation, auto-resuming it when suspended.
+///
+/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
+/// a recorded fixture — can take the request and run it.
+///
+/// # Errors
+/// Returns [`ClientError::Encode`] when the request cannot be rendered.
+pub fn session_files_live_upload_create_request(
+    session_id: SessionId,
+    body: &LiveFileUploadCreateRequest,
+    idempotency_key: &IdempotencyKey,
+) -> Result<WireRequest, ClientError> {
+    let route = RouteId::SessionFilesLiveUploadCreate;
     let mut path = PathWriter::new(route);
     path.bind(&session_id);
     Ok(WireRequest {
@@ -2478,58 +2068,92 @@ pub fn session_files_persisted_download_create_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/files/persisted/list`
-/// List persisted session files; an observational read.
+/// `DELETE /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}`
+/// Abort a partial upload, auto-resuming the same generation to remove its temporary bytes.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
 ///
 /// # Errors
 /// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_files_persisted_list_request(
+pub fn session_files_live_upload_delete_request(
     session_id: SessionId,
-    body: &FileListRequest,
+    file_upload_id: FileUploadId,
 ) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionFilesPersistedList;
+    let route = RouteId::SessionFilesLiveUploadDelete;
     let mut path = PathWriter::new(route);
     path.bind(&session_id);
+    path.bind(&file_upload_id);
     Ok(WireRequest {
         route,
-        method: HttpMethod::Post,
+        method: HttpMethod::Delete,
         path: path.finish()?,
         query: String::new(),
         headers: request_headers(route, None, None, None),
-        body: Some(encode_body(route, body)?),
+        body: None,
     })
 }
 
-/// `POST /api/sessions/{sessionId}/files/persisted/stat`
-/// Stat one persisted session file.
+/// `GET /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}`
+/// Read resumable live-upload state, auto-resuming the same generation.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
 ///
 /// # Errors
 /// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_files_persisted_stat_request(
+pub fn session_files_live_upload_get_request(
     session_id: SessionId,
-    body: &FileStatRequest,
+    file_upload_id: FileUploadId,
 ) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionFilesPersistedStat;
+    let route = RouteId::SessionFilesLiveUploadGet;
     let mut path = PathWriter::new(route);
     path.bind(&session_id);
+    path.bind(&file_upload_id);
     Ok(WireRequest {
         route,
-        method: HttpMethod::Post,
+        method: HttpMethod::Get,
         path: path.finish()?,
         query: String::new(),
         headers: request_headers(route, None, None, None),
-        body: Some(encode_body(route, body)?),
+        body: None,
+    })
+}
+
+/// `PUT /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}/parts/{partNumber}`
+/// Put one exact logical part directly into the retained generation.
+///
+/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
+/// a recorded fixture — can take the request and run it.
+///
+/// # Errors
+/// Returns [`ClientError::Encode`] when the request cannot be rendered.
+pub fn session_files_live_upload_part_put_request(
+    session_id: SessionId,
+    file_upload_id: FileUploadId,
+    part_number: u32,
+    query: &SessionFilesLiveUploadPartPutQuery,
+    body: &[u8],
+) -> Result<WireRequest, ClientError> {
+    let route = RouteId::SessionFilesLiveUploadPartPut;
+    let mut path = PathWriter::new(route);
+    path.bind(&session_id);
+    path.bind(&file_upload_id);
+    path.bind(&part_number);
+    let mut writer = QueryWriter::new();
+    writer.put("sha256", &query.sha256);
+    Ok(WireRequest {
+        route,
+        method: HttpMethod::Put,
+        path: path.finish()?,
+        query: writer.finish(),
+        headers: request_headers(route, None, None, None),
+        body: Some(body.to_vec()),
     })
 }
 
 /// `GET /api/sessions/{sessionId}`
-/// Read one session, its deleting resource, or its tombstone.
+/// Read session metadata, including automatic lifecycle state, or its minimal deletion tombstone.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -2551,7 +2175,8 @@ pub fn session_get_request(session_id: SessionId) -> Result<WireRequest, ClientE
 }
 
 /// `POST /api/sessions/{sessionId}/messages`
-/// Admit a message and queue or start its run.
+/// Send text and start the session's next work, automatically resuming the same suspended
+/// generation.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -3105,47 +2730,20 @@ pub fn session_observations_traces_stream_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/persists`
-/// Admit the durable persist operation.
+/// `POST /api/sessions/{sessionId}/resumptions`
+/// Resume the same retained generation to idle.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
 ///
 /// # Errors
 /// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_persist_request(
+pub fn session_resume_request(
     session_id: SessionId,
-    body: &SessionPersistRequest,
-    operation_id: OperationId,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionPersist;
-    let mut path = PathWriter::new(route);
-    path.bind(&session_id);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Post,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, Some(operation_id), if_match),
-        body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `POST /api/sessions/{sessionId}/purges`
-/// Admit the durable purge operation. Purge is irreversible.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_purge_request(
-    session_id: SessionId,
-    body: &SessionPurgeRequest,
+    body: &EmptyRequest,
     operation_id: OperationId,
 ) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionPurge;
+    let route = RouteId::SessionResume;
     let mut path = PathWriter::new(route);
     path.bind(&session_id);
     Ok(WireRequest {
@@ -3158,100 +2756,20 @@ pub fn session_purge_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/restores`
-/// Admit the durable restore operation, which is legal only inside the recovery window.
+/// `POST /api/sessions/{sessionId}/suspensions`
+/// Suspend an idle session while retaining its exact generation; cancel active work first.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
 ///
 /// # Errors
 /// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_restore_request(
+pub fn session_suspend_request(
     session_id: SessionId,
     body: &EmptyRequest,
     operation_id: OperationId,
 ) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionRestore;
-    let mut path = PathWriter::new(route);
-    path.bind(&session_id);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Post,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, Some(operation_id), None),
-        body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `GET /api/sessions/{sessionId}/runs/{runId}`
-/// Read one run.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_run_get_request(
-    session_id: SessionId,
-    run_id: RunId,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionRunGet;
-    let mut path = PathWriter::new(route);
-    path.bind(&session_id);
-    path.bind(&run_id);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `GET /api/sessions/{sessionId}/runs`
-/// List the runs of a session.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_runs_list_request(
-    session_id: SessionId,
-    query: &SessionRunsListQuery,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionRunsList;
-    let mut path = PathWriter::new(route);
-    path.bind(&session_id);
-    let mut writer = QueryWriter::new();
-    writer.put_option("cursor", query.cursor.as_ref());
-    writer.put_option("limit", query.limit.as_ref());
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Get,
-        path: path.finish()?,
-        query: writer.finish(),
-        headers: request_headers(route, None, None, None),
-        body: None,
-    })
-}
-
-/// `POST /api/sessions/{sessionId}/stops`
-/// Admit the durable stop operation.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_stop_request(
-    session_id: SessionId,
-    body: &EmptyRequest,
-    operation_id: OperationId,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionStop;
+    let route = RouteId::SessionSuspend;
     let mut path = PathWriter::new(route);
     path.bind(&session_id);
     Ok(WireRequest {
@@ -3423,46 +2941,20 @@ pub fn session_telemetry_gaps_query_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/trashes`
-/// Admit the durable trash operation, which starts the recovery window.
+/// `POST /api/sessions/{sessionId}/terminations`
+/// Permanently destroy compute and live files while retaining metadata and sealed messages.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
 ///
 /// # Errors
 /// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_trash_request(
+pub fn session_terminate_request(
     session_id: SessionId,
     body: &EmptyRequest,
     operation_id: OperationId,
 ) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionTrash;
-    let mut path = PathWriter::new(route);
-    path.bind(&session_id);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Post,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, Some(operation_id), None),
-        body: Some(encode_body(route, body)?),
-    })
-}
-
-/// `POST /api/sessions/{sessionId}/workspace/discards`
-/// Admit the durable workspace-discard operation.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_workspace_discard_request(
-    session_id: SessionId,
-    body: &SessionWorkspaceDiscardRequest,
-    operation_id: OperationId,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionWorkspaceDiscard;
+    let route = RouteId::SessionTerminate;
     let mut path = PathWriter::new(route);
     path.bind(&session_id);
     Ok(WireRequest {
@@ -4741,7 +4233,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `GET /api/workspace/provider-credentials/{providerCredentialId}`
-    /// Read one provider-credential binding.
+    /// Read one BYOK provider-credential binding.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -4756,8 +4248,8 @@ impl<T: Transport> WireClient<T> {
         decode_response_with_etag(RouteId::ProviderCredentialGet, &response)
     }
 
-    /// `POST /api/secrets/provider-credentials`
-    /// Register a BYOK provider credential; carries plaintext.
+    /// `POST /api/workspace/provider-credentials`
+    /// Register a dedicated BYOK provider credential; carries plaintext once.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -4774,7 +4266,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `POST /api/workspace/provider-credentials/{providerCredentialId}/revocations`
-    /// Revoke a provider-credential binding.
+    /// Revoke a BYOK provider-credential binding.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -4793,7 +4285,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `GET /api/workspace/provider-credentials`
-    /// List provider-credential binding metadata.
+    /// List BYOK provider-credential binding metadata.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -4858,7 +4350,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `DELETE /api/workspace/files/{name}`
-    /// Delete one registered entry from files.
+    /// Delete one registered workspace file.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -4875,7 +4367,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `POST /api/workspace/files/{name}/downloads`
-    /// Mint a download grant for a registered file.
+    /// Mint a download grant for a registered workspace file.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -4893,7 +4385,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `GET /api/workspace/files/{name}`
-    /// Read one registered entry from files.
+    /// Read one registered workspace file.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -4909,7 +4401,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `GET /api/workspace/files`
-    /// List registered files.
+    /// List registered workspace files.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -4925,7 +4417,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `PUT /api/workspace/files/{name}`
-    /// Replace one registered entry in files.
+    /// Replace one registered workspace file.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -4941,364 +4433,6 @@ impl<T: Transport> WireClient<T> {
         let request = registry_files_put_request(name, body, idempotency_key, if_match)?;
         let response = self.send(request).await?;
         decode_response_with_etag(RouteId::RegistryFilesPut, &response)
-    }
-
-    /// `DELETE /api/workspace/instructions/{name}`
-    /// Delete one registered entry from instructions.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_instructions_delete(
-        &self,
-        name: &ResourceName,
-        if_match: Option<&ETag>,
-    ) -> Result<(), ClientError> {
-        let request = registry_instructions_delete_request(name, if_match)?;
-        let response = self.send(request).await?;
-        decode_no_content(RouteId::RegistryInstructionsDelete, &response)
-    }
-
-    /// `GET /api/workspace/instructions/{name}`
-    /// Read one registered entry from instructions.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_instructions_get(
-        &self,
-        name: &ResourceName,
-    ) -> Result<WithETag<RegisteredInstruction>, ClientError> {
-        let request = registry_instructions_get_request(name)?;
-        let response = self.send(request).await?;
-        decode_response_with_etag(RouteId::RegistryInstructionsGet, &response)
-    }
-
-    /// `GET /api/workspace/instructions`
-    /// List registered instructions.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_instructions_list(
-        &self,
-        query: &RegistryInstructionsListQuery,
-    ) -> Result<RegisteredInstructionPage, ClientError> {
-        let request = registry_instructions_list_request(query)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::RegistryInstructionsList, &response)
-    }
-
-    /// `PUT /api/workspace/instructions/{name}`
-    /// Replace one registered entry in instructions.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_instructions_put(
-        &self,
-        name: &ResourceName,
-        body: &RegisteredInstructionValue,
-        idempotency_key: &IdempotencyKey,
-        if_match: Option<&ETag>,
-    ) -> Result<WithETag<RegisteredInstruction>, ClientError> {
-        let request = registry_instructions_put_request(name, body, idempotency_key, if_match)?;
-        let response = self.send(request).await?;
-        decode_response_with_etag(RouteId::RegistryInstructionsPut, &response)
-    }
-
-    /// `DELETE /api/workspace/mcp-servers/{name}`
-    /// Delete one registered entry from MCP servers.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_mcp_servers_delete(
-        &self,
-        name: &ResourceName,
-        if_match: Option<&ETag>,
-    ) -> Result<(), ClientError> {
-        let request = registry_mcp_servers_delete_request(name, if_match)?;
-        let response = self.send(request).await?;
-        decode_no_content(RouteId::RegistryMcpServersDelete, &response)
-    }
-
-    /// `GET /api/workspace/mcp-servers/{name}`
-    /// Read one registered entry from MCP servers.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_mcp_servers_get(
-        &self,
-        name: &ResourceName,
-    ) -> Result<WithETag<RegisteredMcpServer>, ClientError> {
-        let request = registry_mcp_servers_get_request(name)?;
-        let response = self.send(request).await?;
-        decode_response_with_etag(RouteId::RegistryMcpServersGet, &response)
-    }
-
-    /// `GET /api/workspace/mcp-servers`
-    /// List registered MCP servers.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_mcp_servers_list(
-        &self,
-        query: &RegistryMcpServersListQuery,
-    ) -> Result<RegisteredMcpServerPage, ClientError> {
-        let request = registry_mcp_servers_list_request(query)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::RegistryMcpServersList, &response)
-    }
-
-    /// `PUT /api/workspace/mcp-servers/{name}`
-    /// Replace one registered entry in MCP servers.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_mcp_servers_put(
-        &self,
-        name: &ResourceName,
-        body: &RegisteredMcpServerValue,
-        idempotency_key: &IdempotencyKey,
-        if_match: Option<&ETag>,
-    ) -> Result<WithETag<RegisteredMcpServer>, ClientError> {
-        let request = registry_mcp_servers_put_request(name, body, idempotency_key, if_match)?;
-        let response = self.send(request).await?;
-        decode_response_with_etag(RouteId::RegistryMcpServersPut, &response)
-    }
-
-    /// `DELETE /api/workspace/skills/{name}`
-    /// Delete one registered entry from skills.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_skills_delete(
-        &self,
-        name: &ResourceName,
-        if_match: Option<&ETag>,
-    ) -> Result<(), ClientError> {
-        let request = registry_skills_delete_request(name, if_match)?;
-        let response = self.send(request).await?;
-        decode_no_content(RouteId::RegistrySkillsDelete, &response)
-    }
-
-    /// `GET /api/workspace/skills/{name}`
-    /// Read one registered entry from skills.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_skills_get(
-        &self,
-        name: &ResourceName,
-    ) -> Result<WithETag<RegisteredSkill>, ClientError> {
-        let request = registry_skills_get_request(name)?;
-        let response = self.send(request).await?;
-        decode_response_with_etag(RouteId::RegistrySkillsGet, &response)
-    }
-
-    /// `GET /api/workspace/skills`
-    /// List registered skills.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_skills_list(
-        &self,
-        query: &RegistrySkillsListQuery,
-    ) -> Result<RegisteredSkillPage, ClientError> {
-        let request = registry_skills_list_request(query)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::RegistrySkillsList, &response)
-    }
-
-    /// `PUT /api/workspace/skills/{name}`
-    /// Replace one registered entry in skills.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_skills_put(
-        &self,
-        name: &ResourceName,
-        body: &RegisteredSkillValue,
-        idempotency_key: &IdempotencyKey,
-        if_match: Option<&ETag>,
-    ) -> Result<WithETag<RegisteredSkill>, ClientError> {
-        let request = registry_skills_put_request(name, body, idempotency_key, if_match)?;
-        let response = self.send(request).await?;
-        decode_response_with_etag(RouteId::RegistrySkillsPut, &response)
-    }
-
-    /// `DELETE /api/workspace/tools/{name}`
-    /// Delete one registered entry from tools.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_tools_delete(
-        &self,
-        name: &ResourceName,
-        if_match: Option<&ETag>,
-    ) -> Result<(), ClientError> {
-        let request = registry_tools_delete_request(name, if_match)?;
-        let response = self.send(request).await?;
-        decode_no_content(RouteId::RegistryToolsDelete, &response)
-    }
-
-    /// `GET /api/workspace/tools/{name}`
-    /// Read one registered entry from tools.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_tools_get(
-        &self,
-        name: &ResourceName,
-    ) -> Result<WithETag<RegisteredTool>, ClientError> {
-        let request = registry_tools_get_request(name)?;
-        let response = self.send(request).await?;
-        decode_response_with_etag(RouteId::RegistryToolsGet, &response)
-    }
-
-    /// `GET /api/workspace/tools`
-    /// List registered tools.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_tools_list(
-        &self,
-        query: &RegistryToolsListQuery,
-    ) -> Result<RegisteredToolPage, ClientError> {
-        let request = registry_tools_list_request(query)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::RegistryToolsList, &response)
-    }
-
-    /// `PUT /api/workspace/tools/{name}`
-    /// Replace one registered entry in tools.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn registry_tools_put(
-        &self,
-        name: &ResourceName,
-        body: &RegisteredToolValue,
-        idempotency_key: &IdempotencyKey,
-        if_match: Option<&ETag>,
-    ) -> Result<WithETag<RegisteredTool>, ClientError> {
-        let request = registry_tools_put_request(name, body, idempotency_key, if_match)?;
-        let response = self.send(request).await?;
-        decode_response_with_etag(RouteId::RegistryToolsPut, &response)
-    }
-
-    /// `DELETE /api/secrets/{name}`
-    /// Delete a secret, affecting future admission only.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn secret_delete(
-        &self,
-        name: &ResourceName,
-        if_match: Option<&ETag>,
-    ) -> Result<(), ClientError> {
-        let request = secret_delete_request(name, if_match)?;
-        let response = self.send(request).await?;
-        decode_no_content(RouteId::SecretDelete, &response)
-    }
-
-    /// `GET /api/workspace/secrets/{name}`
-    /// Read one secret metadata record.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn secret_get(
-        &self,
-        name: &ResourceName,
-    ) -> Result<WithETag<SecretMetadata>, ClientError> {
-        let request = secret_get_request(name)?;
-        let response = self.send(request).await?;
-        decode_response_with_etag(RouteId::SecretGet, &response)
-    }
-
-    /// `PUT /api/secrets/{name}`
-    /// Set a secret value for future admission.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn secret_put(
-        &self,
-        name: &ResourceName,
-        body: &SecretPutRequest,
-        idempotency_key: &IdempotencyKey,
-        if_match: Option<&ETag>,
-    ) -> Result<WithETag<SecretMetadata>, ClientError> {
-        let request = secret_put_request(name, body, idempotency_key, if_match)?;
-        let response = self.send(request).await?;
-        decode_response_with_etag(RouteId::SecretPut, &response)
-    }
-
-    /// `POST /api/secrets/{name}/revocations`
-    /// Revoke a secret and cancel current custody.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn secret_revoke(
-        &self,
-        name: &ResourceName,
-        body: &EmptyRequest,
-        idempotency_key: &IdempotencyKey,
-    ) -> Result<SecretRevocation, ClientError> {
-        let request = secret_revoke_request(name, body, idempotency_key)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::SecretRevoke, &response)
-    }
-
-    /// `GET /api/workspace/secrets`
-    /// List secret metadata; values are never readable.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn secrets_list(
-        &self,
-        query: &SecretsListQuery,
-    ) -> Result<SecretMetadataPage, ClientError> {
-        let request = secrets_list_request(query)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::SecretsList, &response)
     }
 
     /// `GET /api/sessions/{sessionId}/approvals/{approvalId}`
@@ -5353,8 +4487,26 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionApprovalsList, &response)
     }
 
+    /// `POST /api/sessions/{sessionId}/cancellations`
+    /// Cancel current work and return the session to idle.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
+    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
+    /// not match the contract.
+    pub async fn session_cancel(
+        &self,
+        session_id: SessionId,
+        body: &EmptyRequest,
+        operation_id: OperationId,
+    ) -> Result<Operation, ClientError> {
+        let request = session_cancel_request(session_id, body, operation_id)?;
+        let response = self.send(request).await?;
+        decode_response(RouteId::SessionCancel, &response)
+    }
+
     /// `POST /api/sessions`
-    /// Create a session.
+    /// Create an eight-hour multi-turn session.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -5370,26 +4522,51 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionCreate, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/credential-rebinds`
-    /// Admit the durable credential-rebind operation.
+    /// `POST /api/sessions/{sessionId}/deletions`
+    /// Irreversibly delete the session and session-scoped user content, observations, telemetry,
+    /// and export objects. Independent registered workspace files remain.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
     /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
     /// not match the contract.
-    pub async fn session_credential_rebind(
+    pub async fn session_delete(
         &self,
         session_id: SessionId,
-        body: &SessionCredentialRebindRequest,
+        body: &EmptyRequest,
         operation_id: OperationId,
     ) -> Result<Operation, ClientError> {
-        let request = session_credential_rebind_request(session_id, body, operation_id)?;
+        let request = session_delete_request(session_id, body, operation_id)?;
         let response = self.send(request).await?;
-        decode_response(RouteId::SessionCredentialRebind, &response)
+        decode_response(RouteId::SessionDelete, &response)
+    }
+
+    /// `POST /api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}/completion`
+    /// Re-stat, re-hash, and close an exact live-file download after SDK verification.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
+    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
+    /// not match the contract.
+    pub async fn session_files_live_download_complete(
+        &self,
+        session_id: SessionId,
+        file_download_id: FileDownloadId,
+        body: &LiveFileDownloadCompleteRequest,
+        idempotency_key: &IdempotencyKey,
+    ) -> Result<LiveFileDownload, ClientError> {
+        let request = session_files_live_download_complete_request(
+            session_id,
+            file_download_id,
+            body,
+            idempotency_key,
+        )?;
+        let response = self.send(request).await?;
+        decode_response(RouteId::SessionFilesLiveDownloadComplete, &response)
     }
 
     /// `POST /api/sessions/{sessionId}/files/live/downloads`
-    /// Mint a download grant for a live workspace file.
+    /// Open one exact-version live file directly from the retained generation, auto-resuming it.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -5400,15 +4577,56 @@ impl<T: Transport> WireClient<T> {
         session_id: SessionId,
         body: &LiveFileDownloadRequest,
         idempotency_key: &IdempotencyKey,
-    ) -> Result<LiveDownloadGrant, ClientError> {
+    ) -> Result<LiveFileDownload, ClientError> {
         let request =
             session_files_live_download_create_request(session_id, body, idempotency_key)?;
         let response = self.send(request).await?;
         decode_response(RouteId::SessionFilesLiveDownloadCreate, &response)
     }
 
+    /// `DELETE /api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}`
+    /// Close an abandoned live-file descriptor, auto-resuming the same generation.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
+    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
+    /// not match the contract.
+    pub async fn session_files_live_download_delete(
+        &self,
+        session_id: SessionId,
+        file_download_id: FileDownloadId,
+    ) -> Result<(), ClientError> {
+        let request = session_files_live_download_delete_request(session_id, file_download_id)?;
+        let response = self.send(request).await?;
+        decode_no_content(RouteId::SessionFilesLiveDownloadDelete, &response)
+    }
+
+    /// `GET /api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}/parts/{partNumber}`
+    /// Read one raw exact-version range directly from the retained generation.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
+    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
+    /// not match the contract.
+    pub async fn session_files_live_download_part_get(
+        &self,
+        session_id: SessionId,
+        file_download_id: FileDownloadId,
+        part_number: u32,
+        query: &SessionFilesLiveDownloadPartGetQuery,
+    ) -> Result<Vec<u8>, ClientError> {
+        let request = session_files_live_download_part_get_request(
+            session_id,
+            file_download_id,
+            part_number,
+            query,
+        )?;
+        let response = self.send(request).await?;
+        decode_binary(RouteId::SessionFilesLiveDownloadPartGet, response)
+    }
+
     /// `POST /api/sessions/{sessionId}/files/live/list`
-    /// List live workspace files, optionally waking a retained session.
+    /// List the exact live generation, auto-resuming that same generation when suspended.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -5425,7 +4643,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `POST /api/sessions/{sessionId}/files/live/stat`
-    /// Stat one live workspace file.
+    /// Stat one live path without following a symlink, auto-resuming the same generation.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -5441,61 +4659,109 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionFilesLiveStat, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/files/persisted/downloads`
-    /// Mint a download grant for a persisted session file.
+    /// `POST /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}/completion`
+    /// Verify every part and atomically publish one live file in the same generation.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
     /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
     /// not match the contract.
-    pub async fn session_files_persisted_download_create(
+    pub async fn session_files_live_upload_complete(
         &self,
         session_id: SessionId,
-        body: &FileDownloadRequest,
+        file_upload_id: FileUploadId,
         idempotency_key: &IdempotencyKey,
-    ) -> Result<DownloadGrant, ClientError> {
-        let request =
-            session_files_persisted_download_create_request(session_id, body, idempotency_key)?;
+    ) -> Result<LiveFileUpload, ClientError> {
+        let request = session_files_live_upload_complete_request(
+            session_id,
+            file_upload_id,
+            idempotency_key,
+        )?;
         let response = self.send(request).await?;
-        decode_response(RouteId::SessionFilesPersistedDownloadCreate, &response)
+        decode_response(RouteId::SessionFilesLiveUploadComplete, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/files/persisted/list`
-    /// List persisted session files; an observational read.
+    /// `POST /api/sessions/{sessionId}/files/live/uploads`
+    /// Create a resumable upload in the exact live generation, auto-resuming it when suspended.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
     /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
     /// not match the contract.
-    pub async fn session_files_persisted_list(
+    pub async fn session_files_live_upload_create(
         &self,
         session_id: SessionId,
-        body: &FileListRequest,
-    ) -> Result<FileEntryPage, ClientError> {
-        let request = session_files_persisted_list_request(session_id, body)?;
+        body: &LiveFileUploadCreateRequest,
+        idempotency_key: &IdempotencyKey,
+    ) -> Result<LiveFileUpload, ClientError> {
+        let request = session_files_live_upload_create_request(session_id, body, idempotency_key)?;
         let response = self.send(request).await?;
-        decode_response(RouteId::SessionFilesPersistedList, &response)
+        decode_response(RouteId::SessionFilesLiveUploadCreate, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/files/persisted/stat`
-    /// Stat one persisted session file.
+    /// `DELETE /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}`
+    /// Abort a partial upload, auto-resuming the same generation to remove its temporary bytes.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
     /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
     /// not match the contract.
-    pub async fn session_files_persisted_stat(
+    pub async fn session_files_live_upload_delete(
         &self,
         session_id: SessionId,
-        body: &FileStatRequest,
-    ) -> Result<FileEntry, ClientError> {
-        let request = session_files_persisted_stat_request(session_id, body)?;
+        file_upload_id: FileUploadId,
+    ) -> Result<(), ClientError> {
+        let request = session_files_live_upload_delete_request(session_id, file_upload_id)?;
         let response = self.send(request).await?;
-        decode_response(RouteId::SessionFilesPersistedStat, &response)
+        decode_no_content(RouteId::SessionFilesLiveUploadDelete, &response)
+    }
+
+    /// `GET /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}`
+    /// Read resumable live-upload state, auto-resuming the same generation.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
+    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
+    /// not match the contract.
+    pub async fn session_files_live_upload_get(
+        &self,
+        session_id: SessionId,
+        file_upload_id: FileUploadId,
+    ) -> Result<LiveFileUpload, ClientError> {
+        let request = session_files_live_upload_get_request(session_id, file_upload_id)?;
+        let response = self.send(request).await?;
+        decode_response(RouteId::SessionFilesLiveUploadGet, &response)
+    }
+
+    /// `PUT /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}/parts/{partNumber}`
+    /// Put one exact logical part directly into the retained generation.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
+    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
+    /// not match the contract.
+    pub async fn session_files_live_upload_part_put(
+        &self,
+        session_id: SessionId,
+        file_upload_id: FileUploadId,
+        part_number: u32,
+        query: &SessionFilesLiveUploadPartPutQuery,
+        body: &[u8],
+    ) -> Result<LiveFileUpload, ClientError> {
+        let request = session_files_live_upload_part_put_request(
+            session_id,
+            file_upload_id,
+            part_number,
+            query,
+            body,
+        )?;
+        let response = self.send(request).await?;
+        decode_response(RouteId::SessionFilesLiveUploadPartPut, &response)
     }
 
     /// `GET /api/sessions/{sessionId}`
-    /// Read one session, its deleting resource, or its tombstone.
+    /// Read session metadata, including automatic lifecycle state, or its minimal deletion
+    /// tombstone.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -5511,7 +4777,8 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `POST /api/sessions/{sessionId}/messages`
-    /// Admit a message and queue or start its run.
+    /// Send text and start the session's next work, automatically resuming the same suspended
+    /// generation.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -5885,111 +5152,40 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsTracesStream, response)
     }
 
-    /// `POST /api/sessions/{sessionId}/persists`
-    /// Admit the durable persist operation.
+    /// `POST /api/sessions/{sessionId}/resumptions`
+    /// Resume the same retained generation to idle.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
     /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
     /// not match the contract.
-    pub async fn session_persist(
-        &self,
-        session_id: SessionId,
-        body: &SessionPersistRequest,
-        operation_id: OperationId,
-        if_match: Option<&ETag>,
-    ) -> Result<Operation, ClientError> {
-        let request = session_persist_request(session_id, body, operation_id, if_match)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::SessionPersist, &response)
-    }
-
-    /// `POST /api/sessions/{sessionId}/purges`
-    /// Admit the durable purge operation. Purge is irreversible.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn session_purge(
-        &self,
-        session_id: SessionId,
-        body: &SessionPurgeRequest,
-        operation_id: OperationId,
-    ) -> Result<Operation, ClientError> {
-        let request = session_purge_request(session_id, body, operation_id)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::SessionPurge, &response)
-    }
-
-    /// `POST /api/sessions/{sessionId}/restores`
-    /// Admit the durable restore operation, which is legal only inside the recovery window.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn session_restore(
+    pub async fn session_resume(
         &self,
         session_id: SessionId,
         body: &EmptyRequest,
         operation_id: OperationId,
     ) -> Result<Operation, ClientError> {
-        let request = session_restore_request(session_id, body, operation_id)?;
+        let request = session_resume_request(session_id, body, operation_id)?;
         let response = self.send(request).await?;
-        decode_response(RouteId::SessionRestore, &response)
+        decode_response(RouteId::SessionResume, &response)
     }
 
-    /// `GET /api/sessions/{sessionId}/runs/{runId}`
-    /// Read one run.
+    /// `POST /api/sessions/{sessionId}/suspensions`
+    /// Suspend an idle session while retaining its exact generation; cancel active work first.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
     /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
     /// not match the contract.
-    pub async fn session_run_get(
-        &self,
-        session_id: SessionId,
-        run_id: RunId,
-    ) -> Result<Run, ClientError> {
-        let request = session_run_get_request(session_id, run_id)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::SessionRunGet, &response)
-    }
-
-    /// `GET /api/sessions/{sessionId}/runs`
-    /// List the runs of a session.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn session_runs_list(
-        &self,
-        session_id: SessionId,
-        query: &SessionRunsListQuery,
-    ) -> Result<RunPage, ClientError> {
-        let request = session_runs_list_request(session_id, query)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::SessionRunsList, &response)
-    }
-
-    /// `POST /api/sessions/{sessionId}/stops`
-    /// Admit the durable stop operation.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn session_stop(
+    pub async fn session_suspend(
         &self,
         session_id: SessionId,
         body: &EmptyRequest,
         operation_id: OperationId,
     ) -> Result<Operation, ClientError> {
-        let request = session_stop_request(session_id, body, operation_id)?;
+        let request = session_suspend_request(session_id, body, operation_id)?;
         let response = self.send(request).await?;
-        decode_response(RouteId::SessionStop, &response)
+        decode_response(RouteId::SessionSuspend, &response)
     }
 
     /// `POST /api/observations/{sessionId}/telemetry/exports`
@@ -6105,40 +5301,22 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionTelemetryGapsQuery, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/trashes`
-    /// Admit the durable trash operation, which starts the recovery window.
+    /// `POST /api/sessions/{sessionId}/terminations`
+    /// Permanently destroy compute and live files while retaining metadata and sealed messages.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
     /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
     /// not match the contract.
-    pub async fn session_trash(
+    pub async fn session_terminate(
         &self,
         session_id: SessionId,
         body: &EmptyRequest,
         operation_id: OperationId,
     ) -> Result<Operation, ClientError> {
-        let request = session_trash_request(session_id, body, operation_id)?;
+        let request = session_terminate_request(session_id, body, operation_id)?;
         let response = self.send(request).await?;
-        decode_response(RouteId::SessionTrash, &response)
-    }
-
-    /// `POST /api/sessions/{sessionId}/workspace/discards`
-    /// Admit the durable workspace-discard operation.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn session_workspace_discard(
-        &self,
-        session_id: SessionId,
-        body: &SessionWorkspaceDiscardRequest,
-        operation_id: OperationId,
-    ) -> Result<Operation, ClientError> {
-        let request = session_workspace_discard_request(session_id, body, operation_id)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::SessionWorkspaceDiscard, &response)
+        decode_response(RouteId::SessionTerminate, &response)
     }
 
     /// `GET /api/sessions`

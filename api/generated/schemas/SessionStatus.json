@@ -6,6 +6,11 @@
     "idle",
     "running",
     "awaiting_approval",
+    "suspending",
+    "suspended",
+    "resuming",
+    "terminating",
+    "terminated",
     "deleting"
   ],
   "title": "SessionStatus",

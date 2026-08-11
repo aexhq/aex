@@ -416,6 +416,7 @@ where
             BodyClass::None => None,
             BodyClass::AexJson => Some(limits.json_body_bytes),
             BodyClass::Otlp => Some(limits.otlp_body_bytes),
+            BodyClass::Binary => Some(aex_wire::dispatch::RequestLimits::DEFAULT_BINARY_BODY_BYTES),
         };
         if body_limit.is_some_and(|limit| request.body.len() > limit) {
             return Err(refused(

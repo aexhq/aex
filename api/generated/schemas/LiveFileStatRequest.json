@@ -2,12 +2,8 @@
   "$id": "https://schemas.aex.dev/v1/LiveFileStatRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Stat one live workspace file.",
+  "description": "Stat one live workspace file, auto-resuming the same retained generation if suspended.",
   "properties": {
-    "consistency": {
-      "$ref": "aex:schema:FileConsistency",
-      "description": "How coherent the read must be."
-    },
     "ifGenerationId": {
       "description": "Only read this exact generation.",
       "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
@@ -19,10 +15,6 @@
       "maxLength": 4096,
       "type": "string",
       "x-aex-path": "posix"
-    },
-    "wake": {
-      "$ref": "aex:schema:FileWakePolicy",
-      "description": "Whether a retained session may be woken."
     }
   },
   "required": [

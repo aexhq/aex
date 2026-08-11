@@ -9,11 +9,11 @@ use aex_session_app::testing::{CountingIds, FixedClock, ScriptedPorts, fixture_s
 use aex_session_app::{
     AppError, CommitError, PortError, SendMessage, SessionCommand, admit_message, stop_session,
 };
-use aex_session_domain::testing::{id, moment, session_fixture};
+use aex_session_domain::testing::{id, moment, run_id, session_fixture};
 use aex_session_domain::{MessagePart, WorkAdmission};
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
-use aex_wire::ids::{MessageId, OperationId, RunId};
+use aex_wire::ids::{MessageId, OperationId};
 
 fn clock() -> FixedClock {
     FixedClock(moment(1_000))
@@ -25,7 +25,7 @@ fn send_message() -> SendMessage {
         workspace: session.workspace,
         session: session.id,
         message: id::<MessageId>(20),
-        run: id::<RunId>(21),
+        run: run_id(21),
         parts: vec![MessagePart::Text {
             text: "hello".to_owned(),
         }],

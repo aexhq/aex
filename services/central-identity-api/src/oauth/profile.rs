@@ -21,32 +21,10 @@ const CLOCK_SKEW: Duration = Duration::from_mins(1);
 const MAX_NAME_CHARS: usize = 128;
 
 #[derive(Debug, Deserialize)]
-struct GithubTokenResponse {
-    access_token: Option<String>,
-    error: Option<String>,
-    error_description: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct GoogleTokenResponse {
     id_token: Option<String>,
     error: Option<String>,
     error_description: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubUser {
-    // GitHub's stable numeric identifier. A login is renameable.
-    id: u64,
-    name: Option<String>,
-    avatar_url: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubEmail {
-    email: String,
-    primary: bool,
-    verified: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,54 +38,6 @@ struct GoogleClaims {
     email_verified: Option<bool>,
     name: Option<String>,
     picture: Option<String>,
-}
-
-/// Reads GitHub's token response.
-///
-/// GitHub reports a refused code with HTTP 200 and an `error` member, so the
-/// successful-status body is still checked after all non-success statuses fail
-/// closed.
-pub(super) fn parse_github_token(
-    status: reqwest::StatusCode,
-    body: &[u8],
-    secret: &str,
-) -> Result<String, HandshakeError> {
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(HandshakeError::RateLimited);
-    }
-    if status.is_client_error() {
-        let detail = serde_json::from_slice::<GithubTokenResponse>(body)
-            .ok()
-            .and_then(|response| {
-                response
-                    .error
-                    .map(|error| describe(&error, response.error_description.as_deref()))
-            })
-            .unwrap_or_else(|| format!("GitHub refused the token request with {status}"));
-        return Err(HandshakeError::Refused(redact(&detail, secret)));
-    }
-    if !status.is_success() {
-        return Err(HandshakeError::Unreachable(format!(
-            "GitHub's token endpoint answered {status}"
-        )));
-    }
-    let parsed: GithubTokenResponse = serde_json::from_slice(body).map_err(|_| {
-        HandshakeError::Unreachable(format!(
-            "GitHub answered {status} with a body that is not a token response"
-        ))
-    })?;
-    if let Some(error) = parsed.error {
-        return Err(HandshakeError::Refused(redact(
-            &describe(&error, parsed.error_description.as_deref()),
-            secret,
-        )));
-    }
-    parsed
-        .access_token
-        .filter(|it| !it.is_empty())
-        .ok_or_else(|| {
-            HandshakeError::Unusable("GitHub answered without an access token".to_owned())
-        })
 }
 
 /// Reads Google's token response, returning the ID token.
@@ -155,52 +85,6 @@ pub(super) fn parse_google_token(
 
 fn describe(error: &str, description: Option<&str>) -> String {
     description.map_or_else(|| error.to_owned(), |detail| format!("{error}: {detail}"))
-}
-
-/// Refuses a non-`2xx` GitHub profile read.
-pub(super) fn check_read(
-    status: reqwest::StatusCode,
-    body: &[u8],
-    token: &str,
-) -> Result<(), HandshakeError> {
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(HandshakeError::RateLimited);
-    }
-    if status.is_success() {
-        return Ok(());
-    }
-    Err(HandshakeError::Unreachable(redact(
-        &format!(
-            "GitHub answered {status}: {}",
-            String::from_utf8_lossy(body)
-        ),
-        token,
-    )))
-}
-
-/// Builds a person from GitHub's two reads.
-pub(super) fn github_profile(user: &[u8], emails: &[u8]) -> Result<OauthProfile, HandshakeError> {
-    let user: GithubUser = serde_json::from_slice(user).map_err(|_| {
-        HandshakeError::Unusable("GitHub's user is not the documented shape".to_owned())
-    })?;
-    let emails: Vec<GithubEmail> = serde_json::from_slice(emails).map_err(|_| {
-        HandshakeError::Unusable("GitHub's email list is not the documented shape".to_owned())
-    })?;
-    let address = emails
-        .iter()
-        .find(|it| it.primary && it.verified)
-        .ok_or_else(|| {
-            HandshakeError::Unusable(
-                "GitHub asserts no verified primary address for this account".to_owned(),
-            )
-        })?;
-    profile(
-        Provider::Github,
-        &user.id.to_string(),
-        &address.email,
-        user.name,
-        user.avatar_url,
-    )
 }
 
 /// Builds a person from a Google ID token.

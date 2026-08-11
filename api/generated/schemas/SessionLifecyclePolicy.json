@@ -1,0 +1,36 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionLifecyclePolicy.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The immutable automatic lifecycle behavior applied to this session.",
+  "properties": {
+    "idleSuspendAfterSeconds": {
+      "description": "Idle sessions automatically suspend after exactly three minutes.",
+      "maximum": 180,
+      "minimum": 180,
+      "type": "integer"
+    },
+    "maximumLifetimeSeconds": {
+      "description": "The provider generation expires exactly eight hours after `launchedAt`.",
+      "maximum": 28800,
+      "minimum": 28800,
+      "type": "integer"
+    },
+    "resumeOnLiveFileAccess": {
+      "description": "A live-file request automatically resumes this same suspended generation.",
+      "type": "boolean"
+    },
+    "resumeOnMessage": {
+      "description": "A message automatically resumes this same suspended generation.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "idleSuspendAfterSeconds",
+    "maximumLifetimeSeconds",
+    "resumeOnLiveFileAccess",
+    "resumeOnMessage"
+  ],
+  "title": "SessionLifecyclePolicy",
+  "type": "object"
+}

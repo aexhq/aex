@@ -6,11 +6,12 @@
 //! discard, rebind — takes so two of them cannot interleave.
 
 use aex_content_domain::ContentRoot;
+use aex_internal_contracts::RunId;
 use aex_operation_domain::{DeletionGuard, DeletionState, OperationKind};
 use aex_secret_domain::CustodyRevision;
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{
-    AgentId, ContentHash, GenerationId, OperationId, OrganizationId, RunId, SessionId, WorkspaceId,
+    AgentId, ContentHash, GenerationId, OperationId, OrganizationId, SessionId, WorkspaceId,
 };
 use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
@@ -496,9 +497,10 @@ pub fn release_mutation_guard(session: &Session, holder: OperationId) -> Result<
 
 #[cfg(test)]
 mod tests {
+    use aex_internal_contracts::RunId;
     use aex_operation_domain::OperationKind;
     use aex_wire::CanonicalJson;
-    use aex_wire::ids::{OperationId, PrefixedId as _, RunId, Uuid7};
+    use aex_wire::ids::{OperationId, PrefixedId as _, Uuid7};
     use aex_wire::provider::ProviderId;
 
     use super::{

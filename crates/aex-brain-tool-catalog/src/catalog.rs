@@ -23,7 +23,7 @@ pub const BUILTIN_CATALOG_DIGEST: &str =
 /// Returns a build error if a compiled name, schema, credential, or invariant
 /// is invalid. Such an error is a build/startup defect, never a runtime skip.
 pub fn builtin_entries() -> Result<Vec<ToolManifestEntry>, CatalogBuildError> {
-    let mut entries = SPECS
+    let mut entries = [BASH_SPEC]
         .iter()
         .map(build_entry)
         .collect::<Result<Vec<_>, _>>()?;
@@ -108,13 +108,9 @@ pub fn select_effect(
 }
 
 fn build_entry(spec: &Spec) -> Result<ToolManifestEntry, CatalogBuildError> {
-    // Platform tools are platform-paid: BYOK is an LLM-provider arrangement and
-    // never a tool one, so no built-in requires a customer credential. Managed
-    // web keeps `CredentialClass::None`, the same class `web_fetch` carries, and
-    // the platform supplies the search key out of band. Requiring a workspace
-    // secret here made `web_search` unadvertisable to every tenant, because
-    // readiness drops an entry whose named secret did not resolve and nothing in
-    // the workspace resolves one.
+    // MVP exposes only Bash inside the customer's session MicroVM. It uses the
+    // authenticated Hands endpoint and is charged as session compute; hosted
+    // credential-backed tools return in a later release.
     let credential = if is_hands(spec.boundary) {
         CredentialClass::HandsEndpointToken
     } else {
@@ -253,6 +249,26 @@ macro_rules! spec {
     };
 }
 
+const BASH_SPEC: Spec = spec!(
+    "bash",
+    HandsDevelopment,
+    HandsDevelopment,
+    NonReplayable,
+    InterruptOnAmbiguity,
+    WhenPolicyRequires,
+    262_144,
+    1_000_000,
+    65_536,
+    600_000,
+    4,
+    NONE,
+    None
+);
+
+#[allow(
+    dead_code,
+    reason = "retained as backlog source for post-MVP built-ins"
+)]
 const SPECS: &[Spec] = &[
     spec!(
         "todo_read",
@@ -936,6 +952,7 @@ fn input_schema(name: &str) -> Value {
                 ("limit", integer(Some(1), Some(2_000))),
             ],
         ),
+        "bash" => bash_input(),
         "run_command" => run_command_input(),
         "run_code" => object(
             &["language", "code"],
@@ -1256,7 +1273,7 @@ fn result_schema(name: &str) -> Value {
                 ("truncated", json!({"type":"boolean"})),
             ],
         ),
-        "run_command" | "run_code" | "git" => command_result(),
+        "bash" | "run_command" | "run_code" | "git" => command_result(),
         "install_packages" => object(
             &["ecosystem", "installed"],
             vec![
@@ -1511,6 +1528,22 @@ fn run_command_input() -> Value {
     );
     root.as_object_mut().expect("object helper").insert("oneOf".to_owned(), json!([{"required":["command"],"not":{"required":["argv"]}},{"required":["argv"],"not":{"required":["command"]}}]));
     root
+}
+
+fn bash_input() -> Value {
+    object(
+        &["command"],
+        vec![
+            ("command", text(1, 200_000)),
+            ("cwd", text(0, 4_096)),
+            (
+                "env",
+                json!({"type":"object","maxProperties":64,"additionalProperties":{"type":"string","maxLength":32768}}),
+            ),
+            ("stdin", text(0, 200_000)),
+            ("timeoutMs", integer(Some(1_000), Some(600_000))),
+        ],
+    )
 }
 
 fn browser_action() -> Value {

@@ -10,7 +10,9 @@
 //! entry pass through the authority fold as "something else", and an authority
 //! that folds over values it does not understand is not an authority.
 
-use aex_wire::ids::{AgentId, GenerationId, MessageId, RunId, SessionId, ToolCallId};
+use aex_wire::ids::{AgentId, GenerationId, MessageId, SessionId, ToolCallId};
+
+use crate::RunId;
 use aex_wire::types::{DecimalU128, Timestamp};
 use serde::{Deserialize, Serialize};
 

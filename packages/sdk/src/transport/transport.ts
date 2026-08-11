@@ -37,7 +37,12 @@ export class FetchTransport implements AexTransport {
       ...(request.signal ? { signal: request.signal } : {}),
       redirect: "error",
     });
-    const body = response.status === 204 ? undefined : await response.json();
+    const binary = ROUTES[request.routeId].transport as string === "binary";
+    const body = response.status === 204
+      ? undefined
+      : response.ok && binary
+        ? new Uint8Array(await response.arrayBuffer())
+        : await response.json();
     return { status: response.status, headers: response.headers, body: body as T };
   }
 }

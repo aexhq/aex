@@ -8,7 +8,8 @@
 
 use std::collections::BTreeSet;
 
-use aex_wire::ids::{AgentId, ApprovalId, GenerationId, RunId, SessionId};
+use aex_internal_contracts::RunId;
+use aex_wire::ids::{AgentId, ApprovalId, GenerationId, SessionId};
 use aex_wire::limits::LimitId;
 use aex_wire::types::Timestamp;
 

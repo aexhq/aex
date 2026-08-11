@@ -408,37 +408,6 @@
         ],
         "type": "object"
       },
-      "CredentialRebindResult": {
-        "additionalProperties": false,
-        "properties": {
-          "custodyRevision": {
-            "description": "The custody revision after the rebind.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "secrets": {
-            "description": "The bound secrets.",
-            "items": {
-              "$ref": "aex:schema:SecretRef"
-            },
-            "maxItems": 64,
-            "type": "array"
-          },
-          "sessionId": {
-            "description": "The session.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          }
-        },
-        "required": [
-          "custodyRevision",
-          "secrets",
-          "sessionId"
-        ],
-        "type": "object"
-      },
       "Currency": {
         "enum": [
           "USD"
@@ -1038,7 +1007,6 @@
       },
       "IdentityProvider": {
         "enum": [
-          "github",
           "google"
         ],
         "type": "string"
@@ -1402,13 +1370,11 @@
       },
       "OperationKind": {
         "enum": [
-          "session_stop",
-          "session_persist",
-          "workspace_discard",
-          "session_trash",
-          "session_restore",
-          "session_purge",
-          "credential_rebind",
+          "session_cancel",
+          "session_suspend",
+          "session_resume",
+          "session_terminate",
+          "session_delete",
           "telemetry_export",
           "workspace_delete"
         ],
@@ -1465,32 +1431,24 @@
       "OperationResult": {
         "oneOf": [
           {
-            "$ref": "aex:schema:SessionStopResult",
-            "x-aex-discriminator-value": "session_stop"
+            "$ref": "aex:schema:SessionCancelResult",
+            "x-aex-discriminator-value": "session_cancel"
           },
           {
-            "$ref": "aex:schema:SessionPersistResult",
-            "x-aex-discriminator-value": "session_persist"
+            "$ref": "aex:schema:SessionSuspendResult",
+            "x-aex-discriminator-value": "session_suspend"
           },
           {
-            "$ref": "aex:schema:WorkspaceDiscardResult",
-            "x-aex-discriminator-value": "workspace_discard"
+            "$ref": "aex:schema:SessionResumeResult",
+            "x-aex-discriminator-value": "session_resume"
           },
           {
-            "$ref": "aex:schema:SessionTrashResult",
-            "x-aex-discriminator-value": "session_trash"
-          },
-          {
-            "$ref": "aex:schema:SessionRestoreResult",
-            "x-aex-discriminator-value": "session_restore"
+            "$ref": "aex:schema:SessionTerminateResult",
+            "x-aex-discriminator-value": "session_terminate"
           },
           {
             "$ref": "aex:schema:SessionTombstone",
-            "x-aex-discriminator-value": "session_purge"
-          },
-          {
-            "$ref": "aex:schema:CredentialRebindResult",
-            "x-aex-discriminator-value": "credential_rebind"
+            "x-aex-discriminator-value": "session_delete"
           },
           {
             "$ref": "aex:schema:TelemetryExportResult",
@@ -1640,132 +1598,11 @@
         "required": [],
         "type": "object"
       },
-      "SecretRef": {
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "description": "The secret name.",
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "type": "object"
-      },
-      "SessionPersistResult": {
-        "additionalProperties": false,
-        "properties": {
-          "added": {
-            "description": "Entries added.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string"
-          },
-          "bytesMoved": {
-            "description": "Bytes written to durable content.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string"
-          },
-          "changed": {
-            "description": "Whether the tree actually changed.",
-            "type": "boolean"
-          },
-          "deleted": {
-            "description": "Entries removed.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string"
-          },
-          "lastPersistedAt": {
-            "description": "When the persist committed.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "persistRevision": {
-            "description": "The revision after the persist.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "rootHash": {
-            "description": "The persisted root.",
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
-          },
-          "sessionId": {
-            "description": "The session.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          },
-          "updated": {
-            "description": "Entries replaced.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "added",
-          "bytesMoved",
-          "changed",
-          "deleted",
-          "lastPersistedAt",
-          "persistRevision",
-          "rootHash",
-          "sessionId",
-          "updated"
-        ],
-        "type": "object"
-      },
-      "SessionRestoreResult": {
-        "additionalProperties": false,
-        "properties": {
-          "restoredAt": {
-            "description": "When the restore committed.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "sessionId": {
-            "description": "The session.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          },
-          "sessionRevision": {
-            "description": "The revision after the restore.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "status": {
-            "$ref": "aex:schema:SessionStatus",
-            "description": "What the session is doing now."
-          }
-        },
-        "required": [
-          "restoredAt",
-          "sessionId",
-          "sessionRevision",
-          "status"
-        ],
-        "type": "object"
-      },
-      "SessionStatus": {
-        "enum": [
-          "idle",
-          "running",
-          "awaiting_approval",
-          "deleting"
-        ],
-        "type": "string"
-      },
-      "SessionStopResult": {
+      "SessionCancelResult": {
         "additionalProperties": false,
         "properties": {
           "changed": {
-            "description": "Whether anything was actually stopped.",
+            "description": "Whether work was active and got cancelled.",
             "type": "boolean"
           },
           "sessionId": {
@@ -1775,7 +1612,7 @@
             "x-aex-id": "session"
           },
           "sessionRevision": {
-            "description": "The revision after the stop.",
+            "description": "The revision after cancellation.",
             "maximum": 9007199254740991,
             "minimum": 0,
             "type": "integer"
@@ -1788,13 +1625,130 @@
         ],
         "type": "object"
       },
+      "SessionResumeResult": {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "description": "Whether the retained generation was resumed.",
+            "type": "boolean"
+          },
+          "resumedAt": {
+            "description": "When the retained generation resumed.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          },
+          "sessionId": {
+            "description": "The session.",
+            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "session"
+          },
+          "sessionRevision": {
+            "description": "The revision after resumption.",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "aex:schema:SessionStatus",
+            "description": "Always `idle` after a successful resume."
+          }
+        },
+        "required": [
+          "changed",
+          "resumedAt",
+          "sessionId",
+          "sessionRevision",
+          "status"
+        ],
+        "type": "object"
+      },
+      "SessionStatus": {
+        "enum": [
+          "idle",
+          "running",
+          "awaiting_approval",
+          "suspending",
+          "suspended",
+          "resuming",
+          "terminating",
+          "terminated",
+          "deleting"
+        ],
+        "type": "string"
+      },
+      "SessionSuspendResult": {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "description": "Whether the session transitioned to suspended.",
+            "type": "boolean"
+          },
+          "sessionId": {
+            "description": "The session.",
+            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "session"
+          },
+          "sessionRevision": {
+            "description": "The revision after suspension.",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "suspendedAt": {
+            "description": "When the generation suspended.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          }
+        },
+        "required": [
+          "changed",
+          "sessionId",
+          "sessionRevision",
+          "suspendedAt"
+        ],
+        "type": "object"
+      },
+      "SessionTerminateResult": {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "description": "Whether live compute or files existed and were destroyed.",
+            "type": "boolean"
+          },
+          "sessionId": {
+            "description": "The session.",
+            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "session"
+          },
+          "sessionRevision": {
+            "description": "The revision after termination.",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "terminatedAt": {
+            "description": "When permanent termination committed.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          }
+        },
+        "required": [
+          "changed",
+          "sessionId",
+          "sessionRevision",
+          "terminatedAt"
+        ],
+        "type": "object"
+      },
       "SessionTombstone": {
         "additionalProperties": false,
         "properties": {
-          "cascaded": {
-            "description": "Whether descendants were deleted too.",
-            "type": "boolean"
-          },
           "deletedAt": {
             "description": "When deletion committed.",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
@@ -1821,47 +1775,10 @@
           }
         },
         "required": [
-          "cascaded",
           "deletedAt",
           "id",
           "operationId",
           "workspaceId"
-        ],
-        "type": "object"
-      },
-      "SessionTrashResult": {
-        "additionalProperties": false,
-        "properties": {
-          "recoveryDeadline": {
-            "description": "After this instant restore is refused.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "sessionId": {
-            "description": "The session.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          },
-          "sessionRevision": {
-            "description": "The revision after the trash.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "trashedAt": {
-            "description": "When the trash committed.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          }
-        },
-        "required": [
-          "recoveryDeadline",
-          "sessionId",
-          "sessionRevision",
-          "trashedAt"
         ],
         "type": "object"
       },
@@ -2191,38 +2108,6 @@
         ],
         "type": "object"
       },
-      "WorkspaceContinuity": {
-        "additionalProperties": false,
-        "properties": {
-          "lastPersistedAt": {
-            "description": "When the workspace was last persisted.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "liveGenerationId": {
-            "description": "The live generation, when one exists.",
-            "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "generation"
-          },
-          "persistRevision": {
-            "description": "Monotonic persist revision.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "rootHash": {
-            "description": "The persisted workspace root.",
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "persistRevision"
-        ],
-        "type": "object"
-      },
       "WorkspaceCreateRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2269,31 +2154,6 @@
         },
         "required": [
           "confirmation"
-        ],
-        "type": "object"
-      },
-      "WorkspaceDiscardResult": {
-        "additionalProperties": false,
-        "properties": {
-          "changed": {
-            "description": "Whether a live workspace was actually discarded.",
-            "type": "boolean"
-          },
-          "continuity": {
-            "$ref": "aex:schema:WorkspaceContinuity",
-            "description": "Continuity after the discard."
-          },
-          "sessionId": {
-            "description": "The session.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          }
-        },
-        "required": [
-          "changed",
-          "continuity",
-          "sessionId"
         ],
         "type": "object"
       },

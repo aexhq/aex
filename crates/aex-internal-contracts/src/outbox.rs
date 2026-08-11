@@ -18,7 +18,9 @@
 use core::fmt;
 
 use aex_wire::Uuid7;
-use aex_wire::ids::{RunId, SessionId};
+use aex_wire::ids::SessionId;
+
+use crate::RunId;
 use aex_wire::types::Timestamp;
 use serde::{Deserialize, Serialize};
 

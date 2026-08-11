@@ -20,16 +20,13 @@ scopes:
   - { scope: "operations:read", doc: "Read durable operation records." }
   - { scope: "operations:write", doc: "Request cancellation of a durable operation." }
   - { scope: "workspace:read", doc: "Read the current workspace and its effective limits." }
-  - { scope: "sessions:read", doc: "Read sessions, messages, runs and approvals." }
-  - { scope: "sessions:write", doc: "Create sessions, send messages, and admit session operations." }
-  - { scope: "sessions:delete", doc: "Admit the durable session-deletion operation." }
-  - { scope: "files:read", doc: "Read persisted session files and mint their download grants." }
-  - { scope: "files:write", doc: "Admit the persist operation." }
-  - { scope: "files:live", doc: "Read live workspace files, which may wake a retained session." }
-  - { scope: "resources:read", doc: "Read registered files, skills, tools, instructions and MCP servers." }
-  - { scope: "resources:write", doc: "Replace and delete registered resources and stage uploads." }
-  - { scope: "secrets:read", doc: "Read secret metadata; values are never readable." }
-  - { scope: "secrets:write", doc: "Set and delete secrets and register provider credentials." }
-  - { scope: "secrets:revoke", doc: "Revoke a secret, cancelling current custody." }
+  - { scope: "sessions:read", doc: "Read sessions, sealed messages and approvals." }
+  - { scope: "sessions:write", doc: "Create sessions, send messages, and cancel, suspend, resume or terminate a session." }
+  - { scope: "sessions:delete", doc: "Admit irreversible session deletion." }
+  - { scope: "files:live", doc: "Access live session files, automatically resuming the same suspended generation." }
+  - { scope: "resources:read", doc: "Read registered opaque workspace files and mint their download grants." }
+  - { scope: "resources:write", doc: "Replace and delete registered opaque workspace files and stage uploads." }
+  - { scope: "provider_credentials:read", doc: "Read dedicated BYOK provider-credential binding metadata." }
+  - { scope: "provider_credentials:write", doc: "Register and revoke dedicated BYOK provider credentials." }
   - { scope: "telemetry:read", doc: "Query observations, gaps and exports." }
   - { scope: "telemetry:write", doc: "Admit customer OTLP batches." }

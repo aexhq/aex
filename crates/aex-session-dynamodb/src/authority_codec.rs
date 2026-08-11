@@ -7,6 +7,7 @@
 use std::num::NonZeroU64;
 
 use aex_content_domain::{ContentDigest, ContentRoot};
+use aex_internal_contracts::RunId;
 use aex_operation_domain::{DeletionEpoch, DeletionGuard, DeletionState, OperationKind};
 use aex_secret_domain::CustodyRevision;
 use aex_session_domain::{
@@ -17,7 +18,7 @@ use aex_session_domain::{
 };
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{
-    AgentId, FilePath, GenerationId, MessageId, OperationId, OrganizationId, RunId, SessionId,
+    AgentId, FilePath, GenerationId, MessageId, OperationId, OrganizationId, SessionId,
     TelemetryGapId, ToolCallId, Uuid7, WorkspaceId,
 };
 use aex_wire::provider::ProviderId;
@@ -754,7 +755,7 @@ fn decode_session_row(row: Row<'_>, asserted: WorkspaceId) -> Result<Session, Co
         || row.u64("revision")? != session.revision.0
         || row.u64("deletionEpoch")? != session.deletion.epoch.0
         || row.u64("cancelEpoch")? != session.cancellation.0
-        || row.opt_id::<RunId>("activeRunId")? != session.active_run
+        || row.opt_run_id("activeRunId")? != session.active_run
         || row.id::<AgentId>("rootAgentId")? != session.root_agent
         || row.opt_id::<OperationId>("mutationGuardOperationId")?
             != session.mutation_guard.map(|guard| guard.holder)
@@ -850,7 +851,7 @@ pub fn decode_domain_message(item: &Item, asserted: WorkspaceId) -> Result<Messa
     let _organization = row.id::<OrganizationId>("organizationId")?;
     if row.id::<AgentId>("agentId")? != message.agent
         || row.string("state")? != message_state(message.state)
-        || row.opt_id::<RunId>("runId")? != message.run
+        || row.opt_run_id("runId")? != message.run
         || row.timestamp("createdAt")? != message.created_at
     {
         return Err(malformed(
@@ -942,7 +943,7 @@ pub fn decode_sealed_message(item: &Item, asserted: WorkspaceId) -> Result<Messa
     )?;
     let _organization = row.id::<OrganizationId>("organizationId")?;
     if row.id::<AgentId>("agentId")? != message.agent
-        || row.opt_id::<RunId>("runId")? != message.run
+        || row.opt_run_id("runId")? != message.run
         || row.timestamp("createdAt")? != message.created_at
         || row.timestamp("sealedAt")? != sealed_at
     {
@@ -989,7 +990,7 @@ pub fn decode_domain_run(item: &Item, asserted: WorkspaceId) -> Result<Run, Code
     let row = Row::bind(item, codec::RUN)?;
     row.owned_by("workspaceId", &asserted.to_string())?;
     require_schema(&row)?;
-    let expected_id = row.id::<RunId>("runId")?;
+    let expected_id = row.run_id("runId")?;
     let expected_session = row.id::<SessionId>("sessionId")?;
     let stored: RunV1 = decode_document(row.string(AUTHORITY_DOCUMENT)?)?;
     if stored.id != expected_id || stored.session != expected_session {

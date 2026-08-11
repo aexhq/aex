@@ -2,25 +2,29 @@
   "$id": "https://schemas.aex.dev/v1/MessageSendRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Admit a message and start or queue its run.",
+  "description": "Admit one text message. Omitting `maxSpendCents` selects the 1000-cent default; an explicit positive value may be higher or lower. Omitting `deadline` uses the session's remaining lifetime/drain fence; an explicit deadline may only shorten it.",
   "properties": {
-    "content": {
-      "description": "The parts.",
-      "items": {
-        "$ref": "aex:schema:MessagePart"
-      },
-      "maxItems": 256,
-      "type": "array"
+    "deadline": {
+      "description": "An earlier absolute deadline. It must be in the future and cannot exceed the session's remaining `expiresAt`/drain fence.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
     },
     "maxSpendCents": {
-      "description": "Spend ceiling for the resulting run.",
+      "description": "The current-message spend ceiling. Omission means 1000 cents; the platform does not reserve account funds.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string",
       "x-aex-money": "cents"
+    },
+    "text": {
+      "description": "The complete user text.",
+      "maxLength": 1048576,
+      "minLength": 1,
+      "type": "string"
     }
   },
   "required": [
-    "content"
+    "text"
   ],
   "title": "MessageSendRequest",
   "type": "object"

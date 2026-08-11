@@ -17,7 +17,7 @@ use aex_wire::client::{
 };
 use aex_wire::dispatch::{
     DispatchOutcome, FromParam, QueryReader, RawRequest, RequestIdentity, RequestLimits,
-    canonical_intent, percent_decode, request_identity,
+    binary_body, canonical_intent, percent_decode, request_identity,
 };
 use aex_wire::error::{ErrorCode, ErrorDetails, WireError, WireResult};
 use aex_wire::idempotency::{IdempotencyKey, IdempotencyKind, PrincipalScope};
@@ -469,6 +469,42 @@ fn a_body_over_the_bound_is_refused_before_it_is_parsed() {
     ))
     .expect_err("an oversize body is a 413");
     assert_eq!(failure.code, ErrorCode::PayloadTooLarge);
+}
+
+#[test]
+fn a_binary_body_is_borrowed_and_bounded_at_one_logical_part() {
+    let bytes = vec![0xa5; RequestLimits::DEFAULT_BINARY_BODY_BYTES];
+    let request = raw(RouteId::WorkspacesList, "/api/workspaces", "", &bytes);
+    let borrowed = binary_body(&request, RequestLimits::DEFAULT).expect("one part is accepted");
+    assert_eq!(
+        borrowed.as_ptr(),
+        bytes.as_ptr(),
+        "the decoder copied the part"
+    );
+
+    let too_large = vec![0; RequestLimits::DEFAULT_BINARY_BODY_BYTES + 1];
+    let request = raw(RouteId::WorkspacesList, "/api/workspaces", "", &too_large);
+    let failure = binary_body(&request, RequestLimits::DEFAULT).expect_err("oversize part");
+    assert_eq!(failure.code, ErrorCode::PayloadTooLarge);
+}
+
+#[test]
+fn a_binary_response_preserves_every_byte_and_uses_the_exact_media_type() {
+    let bytes = vec![0, 1, 0xff, 2];
+    let raw = aex_wire::dispatch::RawResponse::binary(200, bytes.clone());
+    assert_eq!(raw.content_type, Some("application/octet-stream"));
+    assert_eq!(raw.body, bytes);
+
+    let decoded = aex_wire::client::decode_binary(
+        RouteId::WorkspacesList,
+        WireResponse {
+            status: 200,
+            etag: None,
+            body: vec![0, 1, 0xff, 2],
+        },
+    )
+    .expect("declared status");
+    assert_eq!(decoded, vec![0, 1, 0xff, 2]);
 }
 
 #[test]

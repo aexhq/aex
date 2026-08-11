@@ -1113,7 +1113,7 @@ pub trait SessionQueries: Send + Sync + 'static {
         &self,
         workspace: WorkspaceId,
         session: SessionId,
-        run: aex_wire::ids::RunId,
+        run: aex_internal_contracts::RunId,
     ) -> Result<SessionScoped<Option<Run>>, StoreError>;
 
     /// Lists canonical runs under one live session fence.
@@ -1406,7 +1406,7 @@ mod canonical_read_tests {
             sk: format!(
                 "{}{}",
                 crate::keys::run_prefix(),
-                aex_session_domain::testing::id::<aex_wire::ids::RunId>(9)
+                aex_session_domain::testing::run_id(9)
             ),
             index_pk: None,
             index_sk: None,
@@ -1448,7 +1448,7 @@ mod canonical_read_tests {
                 sk: format!(
                     "{}{}",
                     crate::keys::run_prefix(),
-                    aex_session_domain::testing::id::<aex_wire::ids::RunId>(9)
+                    aex_session_domain::testing::run_id(9)
                 ),
                 index_pk: Some(index_partition),
                 index_sk: Some(index_sort),
@@ -1627,7 +1627,7 @@ impl SessionQueries for SessionReads {
         &self,
         workspace: WorkspaceId,
         session: SessionId,
-        run: aex_wire::ids::RunId,
+        run: aex_internal_contracts::RunId,
     ) -> Result<SessionScoped<Option<Run>>, StoreError> {
         let child = keys::run(session, run);
         let (scope, item) = self.get_scoped_item(workspace, session, &child).await?;

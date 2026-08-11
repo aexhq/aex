@@ -154,7 +154,6 @@ schemas:
       signal: { type: ref, to: ObservationSignal, doc: "Which signal it belongs to." }
       workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
       sessionId: { type: id, of: session, optional: true, doc: "The owning session, when attributable." }
-      runId: { type: id, of: run, optional: true, doc: "The owning run, when attributable." }
       traceId: { type: trace_id, optional: true, doc: "The W3C trace." }
       spanId: { type: span_id, optional: true, doc: "The W3C span." }
       observedAt: { type: timestamp, doc: "When the producer says it happened." }

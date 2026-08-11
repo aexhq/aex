@@ -18,7 +18,7 @@ const FAILURE: Readonly<Record<SignInFailure, { readonly title: string; readonly
   },
   provider_denied: {
     title: "The provider did not grant access",
-    body: "Nothing was created. You can try again or choose another provider.",
+    body: "Nothing was created. You can try again.",
   },
   exchange_refused: {
     title: "AEX declined that sign-in",
@@ -66,7 +66,7 @@ export default async function SignIn({
           <Notice status="serious" title="No sign-in provider is configured">
             <p className="small">
               This deployment cannot begin a browser sign-in. Use the CLI device flow — <code
-              className="mono">aex auth login</code> — until its public provider client IDs are set.
+              className="mono">aex auth login</code> — until Google sign-in is configured.
             </p>
           </Notice>
         ) : (

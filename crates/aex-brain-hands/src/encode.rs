@@ -17,7 +17,7 @@
 //! | `glob` | `Search` with [`SearchPattern::Glob`] | |
 //! | `grep` | `Search` with [`SearchPattern::Regex`] | the guest matches a regex as a literal (HS-08): narrower than promised, never wider |
 //! | `edit_file` | `EditFile` | one exact-replacement hunk, guarded by `expectedRevision` |
-//! | `run_command` | `Exec` | `argv` verbatim; `command` is handed to [`COMMAND_SHELL`] |
+//! | `bash` | `Exec` | `command` is handed to [`COMMAND_SHELL`] |
 //! | `git` | `Exec` via [`crate::operation::git`] | |
 //! | `install_packages` | `Exec` via [`crate::operation::package_install`] | `apt` selects the image's real manager, `dnf` |
 //! | `process_output` | `ProcessStatus` | the wire arm *is* the bounded output window |
@@ -58,7 +58,7 @@ use serde_json::{Map, Value};
 
 use crate::operation::{ConstructError, ConstructedCommand, PackageManager, git, package_install};
 
-/// The program a `run_command` `command` string is handed to.
+/// The program a `bash` `command` string is handed to.
 ///
 /// The catalogue offers `command` (one shell line) exclusive-or `argv` (an exact
 /// vector). `argv` is passed through untouched; `command` is a shell line and the
@@ -96,8 +96,8 @@ pub enum HandsTool {
     Glob,
     /// `grep`.
     Grep,
-    /// `run_command`.
-    RunCommand,
+    /// `bash`.
+    Bash,
     /// `run_code`.
     RunCode,
     /// `git`.
@@ -139,7 +139,7 @@ impl HandsTool {
         Self::ProcessStop,
         Self::ReadFile,
         Self::RunCode,
-        Self::RunCommand,
+        Self::Bash,
         Self::WriteFile,
     ];
 
@@ -154,7 +154,7 @@ impl HandsTool {
             Self::ListDir => "list_dir",
             Self::Glob => "glob",
             Self::Grep => "grep",
-            Self::RunCommand => "run_command",
+            Self::Bash => "bash",
             Self::RunCode => "run_code",
             Self::Git => "git",
             Self::InstallPackages => "install_packages",
@@ -186,7 +186,7 @@ impl HandsTool {
             | Self::ListDir
             | Self::Glob
             | Self::Grep
-            | Self::RunCommand
+            | Self::Bash
             | Self::Git
             | Self::InstallPackages
             | Self::ProcessOutput
@@ -201,7 +201,7 @@ impl HandsTool {
             ),
             Self::RunCode => Some(
                 "`code_run` builds the argv for a body file under `<root>/.aex/code-exec`, and \
-                 delivering that body needs the write the guest refuses; `run_command` runs an \
+                 delivering that body needs the write the guest refuses; `bash` runs an \
                  interpreter today",
             ),
             Self::ProcessStatus => Some(
@@ -333,30 +333,19 @@ impl HandsTool {
                 };
                 search(args, root, pattern)
             }
-            Self::RunCommand => {
+            Self::Bash => {
                 refuse_field(
                     args,
                     "stdin",
                     "the wire exec takes stdin as a content reference and the guest holds no \
                      credential to resolve one",
                 )?;
-                let vector = match (strings(args, "argv")?, optional_text(args, "command")?) {
-                    (Some(exact), None) => exact,
-                    (None, Some(command)) => COMMAND_SHELL
-                        .iter()
-                        .map(|word| (*word).to_owned())
-                        .chain(std::iter::once(command.to_owned()))
-                        .collect(),
-                    (Some(_), Some(_)) => {
-                        return Err(ToolEncodingError::Malformed {
-                            field: "command",
-                            expected: "exactly one of `command` or `argv`",
-                        });
-                    }
-                    (None, None) => {
-                        return Err(ToolEncodingError::Missing { field: "command" });
-                    }
-                };
+                let command = required_text(args, "command")?;
+                let vector = COMMAND_SHELL
+                    .iter()
+                    .map(|word| (*word).to_owned())
+                    .chain(std::iter::once(command.to_owned()))
+                    .collect();
                 Ok(EncodedOperation {
                     request: OperationRequest::Exec {
                         argv: vector,
@@ -891,21 +880,14 @@ mod tests {
     }
 
     #[test]
-    fn a_shell_line_becomes_one_exec_and_an_argv_is_passed_through() {
+    fn a_bash_command_becomes_one_attached_exec() {
         let OperationRequest::Exec { argv, cwd, .. } =
-            encode("run_command", &json!({"command": "ls -la"}))
+            encode("bash", &json!({"command": "ls -la"}))
         else {
             panic!("a command is an Exec");
         };
         assert_eq!(argv, vec![COMMAND_SHELL[0], COMMAND_SHELL[1], "ls -la"]);
         assert_eq!(cwd.as_str(), "/workspace");
-
-        let OperationRequest::Exec { argv, .. } =
-            encode("run_command", &json!({"argv": ["ls", "-la"]}))
-        else {
-            panic!("an argv is an Exec");
-        };
-        assert_eq!(argv, vec!["ls", "-la"], "an exact vector is never reshaped");
     }
 
     #[test]
@@ -1013,11 +995,7 @@ mod tests {
                 json!({"pattern": "x", "contextLines": 3}),
                 "contextLines",
             ),
-            (
-                "run_command",
-                json!({"command": "cat", "stdin": "hello"}),
-                "stdin",
-            ),
+            ("bash", json!({"command": "cat", "stdin": "hello"}), "stdin"),
         ];
         for (tool, args, field) in cases {
             let error = HandsTool::parse(tool)

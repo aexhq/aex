@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/MessagePartToolCall.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A tool call emitted by the model.",
+  "description": "A built-in tool call emitted by the model.",
   "properties": {
     "argumentsDigest": {
       "description": "The canonical tool-argument digest.",

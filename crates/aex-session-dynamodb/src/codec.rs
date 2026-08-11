@@ -5,6 +5,7 @@
 //! it either produces the value or a [`CodecError`], and there is no arm that
 //! substitutes a default for something the authority is supposed to know.
 
+use aex_internal_contracts::RunId;
 use aex_operation_domain::{
     ContinuationCursor, FailureClass, Operation, OperationFailure, OperationKind, OperationResult,
     OperationScope, OperationStatus, Progress,
@@ -13,7 +14,7 @@ use aex_wire::CanonicalJson;
 use aex_wire::error::ErrorCode;
 use aex_wire::ids::{
     AgentId, ApprovalId, ContentHash, GenerationId, MeasurementId, OperationId, ResourceName,
-    RunId, SessionId, ToolCallId, WorkspaceId,
+    SessionId, ToolCallId, WorkspaceId,
 };
 
 use crate::attr::{CodecError, Item, ItemBuilder, Row, b, boolean, n, s, stamp};
@@ -356,7 +357,7 @@ pub fn decode_approval(item: &Item, asserted: WorkspaceId) -> Result<Approval, C
         workspace: asserted,
         binding: ApprovalBinding {
             session: row.id::<SessionId>("sessionId")?,
-            run: row.id::<RunId>("runId")?,
+            run: row.run_id("runId")?,
             agent: row.id::<AgentId>("agentId")?,
             tool_call: row.id::<ToolCallId>("toolCallId")?,
             tool,
@@ -750,6 +751,7 @@ pub use crate::replay::receipt_is_live;
 
 #[cfg(test)]
 mod tests {
+    use aex_internal_contracts::RunId;
     use aex_operation_domain::{
         FailureClass, Operation, OperationFailure, OperationKind, OperationResult, OperationScope,
         OperationStatus, Progress,
@@ -758,7 +760,7 @@ mod tests {
     use aex_wire::error::ErrorCode;
     use aex_wire::idempotency::IntentDigest;
     use aex_wire::ids::{
-        AgentId, GenerationId, ObservationId, OperationId, PrefixedId, RunId, SessionId, Uuid7,
+        AgentId, GenerationId, ObservationId, OperationId, PrefixedId, SessionId, Uuid7,
         WorkspaceId,
     };
     use aex_wire::types::Timestamp;

@@ -1,6 +1,5 @@
 //! OAuth client configuration and secret loading.
 
-use aex_identity_domain::Provider;
 use serde::Deserialize;
 
 /// One provider's registered OAuth client.
@@ -62,34 +61,6 @@ impl OauthClient {
     #[must_use]
     pub fn id(&self) -> &str {
         &self.id
-    }
-}
-
-/// The registered client for every provider this platform signs people in with.
-///
-/// One field per provider rather than a map: a map can be missing a key at
-/// runtime, and this way a provider added to [`Provider`] does not compile until
-/// somebody decides what client it uses.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OauthClients {
-    github: OauthClient,
-    google: OauthClient,
-}
-
-impl OauthClients {
-    /// Holds the two registered clients.
-    #[must_use]
-    pub const fn new(github: OauthClient, google: OauthClient) -> Self {
-        Self { github, google }
-    }
-
-    /// The client one provider's exchange authenticates as.
-    #[must_use]
-    pub const fn of(&self, provider: Provider) -> &OauthClient {
-        match provider {
-            Provider::Github => &self.github,
-            Provider::Google => &self.google,
-        }
     }
 }
 

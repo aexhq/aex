@@ -7,11 +7,12 @@
 
 use std::collections::BTreeMap;
 
+use aex_internal_contracts::RunId;
 use aex_observation_domain::canonical::{CanonicalValue, attribute_digest};
 use aex_observation_domain::series::SeriesHash;
 use aex_observation_domain::signal::Signal;
 use aex_wire::ids::OrganizationId;
-use aex_wire::ids::{AgentId, RunId, SessionId, WorkspaceId};
+use aex_wire::ids::{AgentId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 
 use crate::decode::DecodedBatch;

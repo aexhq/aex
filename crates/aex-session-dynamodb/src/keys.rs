@@ -9,7 +9,8 @@
 //! partition. Both are reserved here so a future Brain key cannot collide with
 //! a session key.
 
-use aex_wire::ids::{AgentId, ApprovalId, MessageId, OperationId, RunId, SessionId, WorkspaceId};
+use aex_internal_contracts::RunId;
+use aex_wire::ids::{AgentId, ApprovalId, MessageId, OperationId, SessionId, WorkspaceId};
 
 use crate::component::{Component, KeyError, sequence};
 

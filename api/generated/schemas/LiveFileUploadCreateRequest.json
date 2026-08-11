@@ -1,0 +1,41 @@
+{
+  "$id": "https://schemas.aex.dev/v1/LiveFileUploadCreateRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Create or exactly replay a resumable upload in the session's retained generation.",
+  "properties": {
+    "ifGenerationId": {
+      "description": "Require this exact retained generation.",
+      "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "generation"
+    },
+    "mode": {
+      "$ref": "aex:schema:RegisteredFileMode",
+      "description": "The final mode; defaults to 0644."
+    },
+    "path": {
+      "description": "The final normalized workspace path.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-path": "posix"
+    },
+    "sha256": {
+      "description": "The exact complete-file SHA-256.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "sizeBytes": {
+      "description": "The exact complete file size, at most five GiB.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "path",
+    "sha256",
+    "sizeBytes"
+  ],
+  "title": "LiveFileUploadCreateRequest",
+  "type": "object"
+}

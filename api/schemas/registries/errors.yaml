@@ -28,6 +28,7 @@ errors:
   - { code: payload_too_large, status: 413, retryable: false, class: validation, stage: transport_envelope, message: "the encoded body exceeded the effective limit" }
   - { code: limit_exceeded, status: 429, retryable: true, class: quota, stage: domain_state, message: "an effective workspace limit was exceeded" }
   - { code: session_not_idle, status: 409, retryable: true, class: state, stage: domain_state, message: "the session must be idle for this operation" }
+  - { code: session_terminated, status: 409, retryable: false, class: state, stage: domain_state, message: "the session's compute and live files were permanently terminated" }
   - { code: workspace_activation_required, status: 409, retryable: true, class: state, stage: domain_state, message: "the regional workspace is not activated yet" }
   - { code: workspace_not_live, status: 409, retryable: false, class: state, stage: domain_state, message: "the workspace is not live" }
   - { code: session_deleting, status: 409, retryable: false, class: state, stage: tombstone_and_parent, message: "the session is being deleted" }

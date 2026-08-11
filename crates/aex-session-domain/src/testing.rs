@@ -7,13 +7,13 @@
 use std::num::NonZeroU64;
 
 use aex_content_domain::{ContentDigest, ContentRoot};
-use aex_internal_contracts::journal::JournalEntryKind;
+use aex_internal_contracts::{RunId, journal::JournalEntryKind};
 use aex_operation_domain::DeletionGuard;
 use aex_secret_domain::CustodyRevision;
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{
-    AgentId, GenerationId, MessageId, OrganizationId, PrefixedId, RunId, SessionId, ToolCallId,
-    Uuid7, WorkspaceId,
+    AgentId, GenerationId, MessageId, OrganizationId, PrefixedId, SessionId, ToolCallId, Uuid7,
+    WorkspaceId,
 };
 use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
@@ -49,6 +49,12 @@ pub fn moment(millis: i64) -> Timestamp {
 #[must_use]
 pub fn id<T: PrefixedId>(tag: u8) -> T {
     T::from_uuid7(Uuid7::compose(1_700_000_000_000, [tag; 10]))
+}
+
+/// A deterministic private execution identity.
+#[must_use]
+pub fn run_id(tag: u8) -> RunId {
+    RunId::from_uuid7(Uuid7::compose(1_700_000_000_000, [tag; 10]))
 }
 
 /// A deterministic content root.
@@ -256,7 +262,7 @@ const fn fact_tag(fact: AuthorityFact) -> u8 {
 #[must_use]
 pub fn running_session() -> (Session, Run, AgentControl, Message) {
     let mut session = session_fixture();
-    let run_id: RunId = id(6);
+    let run_id = run_id(6);
     session.active_run = Some(run_id);
     session.status = SessionStatus::Running;
 
@@ -311,7 +317,7 @@ pub fn terminal_attempt(session: &Session, run: &Run) -> TerminalAttempt {
 pub fn approval_binding() -> ApprovalBinding {
     ApprovalBinding {
         session: id::<SessionId>(1),
-        run: id::<RunId>(6),
+        run: run_id(6),
         agent: id::<AgentId>(5),
         tool_call: id::<ToolCallId>(12),
         tool: "write_file".to_owned(),
@@ -330,7 +336,7 @@ pub fn drift_field(binding: &ApprovalBinding, field: BindingField) -> ApprovalBi
     let mut drifted = binding.clone();
     match field {
         BindingField::Session => drifted.session = id::<SessionId>(90),
-        BindingField::Run => drifted.run = id::<RunId>(91),
+        BindingField::Run => drifted.run = run_id(91),
         BindingField::Agent => drifted.agent = id::<AgentId>(92),
         BindingField::ToolCall => drifted.tool_call = id::<ToolCallId>(93),
         BindingField::Tool => "read_file".clone_into(&mut drifted.tool),

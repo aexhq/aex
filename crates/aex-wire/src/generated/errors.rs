@@ -3,7 +3,7 @@
 //! The closed v1 public error vocabulary.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:746909d557013ea5aaf802d74181f53b5d868f79814b0bd9389302208ad0c0f2`.
+//! `sha256:90fdf2649aa0c7151830e06eb94993aeafa67faf7c867042dbff4638af9aafba`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -70,6 +70,8 @@ pub enum ErrorCode {
     LimitExceeded,
     /// `session_not_idle` — the session must be idle for this operation
     SessionNotIdle,
+    /// `session_terminated` — the session's compute and live files were permanently terminated
+    SessionTerminated,
     /// `workspace_activation_required` — the regional workspace is not activated yet
     WorkspaceActivationRequired,
     /// `workspace_not_live` — the workspace is not live
@@ -205,6 +207,7 @@ impl ErrorCode {
         ErrorCode::PayloadTooLarge,
         ErrorCode::LimitExceeded,
         ErrorCode::SessionNotIdle,
+        ErrorCode::SessionTerminated,
         ErrorCode::WorkspaceActivationRequired,
         ErrorCode::WorkspaceNotLive,
         ErrorCode::SessionDeleting,
@@ -287,6 +290,7 @@ impl ErrorCode {
             Self::PayloadTooLarge => "payload_too_large",
             Self::LimitExceeded => "limit_exceeded",
             Self::SessionNotIdle => "session_not_idle",
+            Self::SessionTerminated => "session_terminated",
             Self::WorkspaceActivationRequired => "workspace_activation_required",
             Self::WorkspaceNotLive => "workspace_not_live",
             Self::SessionDeleting => "session_deleting",
@@ -370,6 +374,7 @@ impl ErrorCode {
             Self::PayloadTooLarge => 413,
             Self::LimitExceeded => 429,
             Self::SessionNotIdle => 409,
+            Self::SessionTerminated => 409,
             Self::WorkspaceActivationRequired => 409,
             Self::WorkspaceNotLive => 409,
             Self::SessionDeleting => 409,
@@ -453,6 +458,7 @@ impl ErrorCode {
             Self::PayloadTooLarge => false,
             Self::LimitExceeded => true,
             Self::SessionNotIdle => true,
+            Self::SessionTerminated => false,
             Self::WorkspaceActivationRequired => true,
             Self::WorkspaceNotLive => false,
             Self::SessionDeleting => false,
@@ -536,6 +542,7 @@ impl ErrorCode {
             Self::PayloadTooLarge => ErrorClass::Validation,
             Self::LimitExceeded => ErrorClass::Quota,
             Self::SessionNotIdle => ErrorClass::State,
+            Self::SessionTerminated => ErrorClass::State,
             Self::WorkspaceActivationRequired => ErrorClass::State,
             Self::WorkspaceNotLive => ErrorClass::State,
             Self::SessionDeleting => ErrorClass::State,
@@ -619,6 +626,7 @@ impl ErrorCode {
             Self::PayloadTooLarge => PrecedenceStage::TransportEnvelope,
             Self::LimitExceeded => PrecedenceStage::DomainState,
             Self::SessionNotIdle => PrecedenceStage::DomainState,
+            Self::SessionTerminated => PrecedenceStage::DomainState,
             Self::WorkspaceActivationRequired => PrecedenceStage::DomainState,
             Self::WorkspaceNotLive => PrecedenceStage::DomainState,
             Self::SessionDeleting => PrecedenceStage::TombstoneAndParent,
@@ -716,6 +724,9 @@ impl ErrorCode {
             Self::PayloadTooLarge => "the encoded body exceeded the effective limit",
             Self::LimitExceeded => "an effective workspace limit was exceeded",
             Self::SessionNotIdle => "the session must be idle for this operation",
+            Self::SessionTerminated => {
+                "the session's compute and live files were permanently terminated"
+            }
             Self::WorkspaceActivationRequired => "the regional workspace is not activated yet",
             Self::WorkspaceNotLive => "the workspace is not live",
             Self::SessionDeleting => "the session is being deleted",
@@ -817,6 +828,7 @@ impl ErrorCode {
             Self::PayloadTooLarge => None,
             Self::LimitExceeded => None,
             Self::SessionNotIdle => None,
+            Self::SessionTerminated => None,
             Self::WorkspaceActivationRequired => None,
             Self::WorkspaceNotLive => None,
             Self::SessionDeleting => None,

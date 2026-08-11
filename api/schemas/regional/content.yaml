@@ -1,5 +1,5 @@
-# Files, registered resources, uploads, secrets, provider credentials,
-# approvals and effective limits.
+# Live files, registered opaque workspace files, uploads, dedicated BYOK
+# provider credentials, approvals and effective limits.
 module: regional
 schemas:
   FileEntryType:
@@ -9,20 +9,6 @@ schemas:
       - { value: file, doc: "A regular file." }
       - { value: directory, doc: "A directory." }
       - { value: symlink, doc: "A symbolic link." }
-
-  FileWakePolicy:
-    doc: Whether a live read may wake a retained session.
-    type: enum
-    values:
-      - { value: retained, doc: "Wake a retained session if needed." }
-      - { value: never, doc: "Never wake; fail instead." }
-
-  FileConsistency:
-    doc: How coherent a live read has to be.
-    type: enum
-    values:
-      - { value: coherent, doc: "Observe a single consistent generation." }
-      - { value: best_effort, doc: "Accept whatever the current generation reports." }
 
   FileEntry:
     doc: One file entry, identified by its normalized POSIX path.
@@ -34,7 +20,7 @@ schemas:
       sha256: { type: content_hash, optional: true, doc: "Content hash, for regular files." }
       mode: { type: string, min: 4, max: 4, pattern: "^0[0-7]{3}$", doc: "POSIX mode, four octal digits." }
       mtime: { type: timestamp, doc: "Modification time." }
-      target: { type: file_path, optional: true, doc: "Link target, for symlinks." }
+      target: { type: string, min: 1, max: 4096, optional: true, doc: "The exact, unnormalized link text for a symlink." }
 
   FileEntryPage:
     doc: One page of file entries.
@@ -58,64 +44,117 @@ schemas:
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
       workspaceAccess: { type: ref, to: WorkspaceAccess, doc: "What the read did." }
 
-  LiveDownloadGrant:
-    doc: A download grant plus what minting it did to the workspace.
-    type: object
-    fields:
-      grant: { type: ref, to: DownloadGrant, doc: "The grant." }
-      workspaceAccess: { type: ref, to: WorkspaceAccess, doc: "What minting it did." }
+  LiveFileUploadState:
+    doc: The generation-local position of one ephemeral upload.
+    type: enum
+    values:
+      - { value: staging, doc: "Logical parts may still be written." }
+      - { value: complete, doc: "The file was atomically published in the MicroVM." }
 
-  FileListRequest:
-    doc: List persisted files; an observational read that never mutates.
+  LiveFileUploadPart:
+    doc: One verified logical part retained by the exact MicroVM generation.
     type: object
     fields:
-      path: { type: file_path, optional: true, doc: "Subtree to list; defaults to the root." }
-      recursive: { type: boolean, optional: true, doc: "Whether to descend; defaults to false." }
-      limit: { type: integer, min: 1, max: 1000, optional: true, doc: "Page size." }
-      cursor: { type: cursor, optional: true, doc: "Continuation token." }
+      partNumber: { type: integer, min: 1, max: 1280, doc: "The one-based logical part number." }
+      offset: { type: decimal, doc: "The first byte in the complete file." }
+      sizeBytes: { type: integer, min: 1, max: 4194304, doc: "The exact logical-part size." }
+      sha256: { type: content_hash, doc: "SHA-256 of this logical part." }
 
-  FileStatRequest:
-    doc: Stat one persisted file.
+  LiveFileUpload:
+    doc: >-
+      One resumable upload held only by the session's exact MicroVM generation.
+      Suspension retains it; termination or runtime loss destroys it.
     type: object
     fields:
-      path: { type: file_path, doc: "The entry to stat." }
+      id: { type: id, of: file_upload, doc: "The ephemeral upload identity." }
+      sessionId: { type: id, of: session, doc: "The owning session." }
+      generationId: { type: id, of: generation, doc: "The only generation that may accept it." }
+      path: { type: file_path, doc: "The final normalized workspace path." }
+      state: { type: ref, to: LiveFileUploadState, doc: "The upload position." }
+      sizeBytes: { type: decimal, doc: "The exact complete file size." }
+      sha256: { type: content_hash, doc: "The exact complete-file SHA-256." }
+      mode: { type: ref, to: RegisteredFileMode, doc: "The final POSIX mode." }
+      partSizeBytes: { type: integer, min: 4194304, max: 4194304, doc: "The fixed non-final logical-part size." }
+      partCount: { type: integer, min: 0, max: 1280, doc: "How many logical parts the file has; zero for an empty file." }
+      parts: { type: array, max: 1280, items: { type: ref, to: LiveFileUploadPart }, doc: "Verified parts, ascending." }
+      expiresAt: { type: timestamp, doc: "The provider-generation expiry; never later than eight hours after launch." }
+      workspaceAccess: { type: ref, to: WorkspaceAccess, doc: "Which generation answered and whether it resumed." }
 
-  FileDownloadRequest:
-    doc: Mint a download grant for one persisted file.
+  LiveFileUploadCreateRequest:
+    doc: Create or exactly replay a resumable upload in the session's retained generation.
     type: object
     fields:
-      path: { type: file_path, doc: "The entry to download." }
-      range: { type: byte_range, optional: true, doc: "An explicit bounded range." }
+      path: { type: file_path, doc: "The final normalized workspace path." }
+      sizeBytes: { type: decimal, doc: "The exact complete file size, at most five GiB." }
+      sha256: { type: content_hash, doc: "The exact complete-file SHA-256." }
+      mode: { type: ref, to: RegisteredFileMode, optional: true, doc: "The final mode; defaults to 0644." }
+      ifGenerationId: { type: id, of: generation, optional: true, doc: "Require this exact retained generation." }
+
+  LiveFileDownloadState:
+    doc: Whether an exact-version live download is still open or fully verified.
+    type: enum
+    values:
+      - { value: open, doc: "Parts may be read from the pinned descriptor." }
+      - { value: verified, doc: "Final re-stat and whole-file verification succeeded." }
+
+  LiveFileDownloadPart:
+    doc: One fixed range and its expected digest in an exact live-file version.
+    type: object
+    fields:
+      partNumber: { type: integer, min: 1, max: 1280, doc: "The one-based download part." }
+      offset: { type: decimal, doc: "The first byte in the whole file." }
+      sizeBytes: { type: integer, min: 1, max: 4194304, doc: "The exact range size." }
+      sha256: { type: content_hash, doc: "SHA-256 the SDK must verify before retaining the part." }
+
+  LiveFileDownload:
+    doc: >-
+      One exact-generation descriptor-pinned multipart download. It carries no
+      object-store URL: every part is read directly from the retained MicroVM.
+    type: object
+    fields:
+      id: { type: id, of: file_download, doc: "The ephemeral download identity." }
+      sessionId: { type: id, of: session, doc: "The owning session." }
+      generationId: { type: id, of: generation, doc: "The only generation that may answer." }
+      path: { type: file_path, doc: "The normalized workspace path." }
+      state: { type: ref, to: LiveFileDownloadState, doc: "The verification position." }
+      sizeBytes: { type: decimal, doc: "The exact whole-file size." }
+      sha256: { type: content_hash, doc: "The expected whole-file SHA-256." }
+      version: { type: content_hash, doc: "Opaque identity binding the bytes and bounded stat evidence." }
+      partSizeBytes: { type: integer, min: 4194304, max: 4194304, doc: "The fixed non-final range size." }
+      partCount: { type: integer, min: 0, max: 1280, doc: "How many ranged parts the SDK must fetch; zero for an empty file." }
+      parts: { type: array, max: 1280, items: { type: ref, to: LiveFileDownloadPart }, doc: "Expected part ranges and hashes, ascending." }
+      expiresAt: { type: timestamp, doc: "When the descriptor is closed if the client abandons it." }
+      workspaceAccess: { type: ref, to: WorkspaceAccess, doc: "Which generation answered and whether it resumed." }
+
+  LiveFileDownloadRequest:
+    doc: Open one regular file without following a symlink, auto-resuming the same generation.
+    type: object
+    fields:
+      path: { type: file_path, doc: "The regular file to open." }
+      ifGenerationId: { type: id, of: generation, optional: true, doc: "Require this exact retained generation." }
+
+  LiveFileDownloadCompleteRequest:
+    doc: Close an exact live-file descriptor after the SDK verified every part and the whole hash.
+    type: object
+    fields:
+      version: { type: content_hash, doc: "The exact version returned at initiation." }
+      sha256: { type: content_hash, doc: "The whole-file SHA-256 the SDK recomputed." }
 
   LiveFileListRequest:
-    doc: List live workspace files.
+    doc: List live workspace files, auto-resuming the same retained generation if suspended.
     type: object
     fields:
       path: { type: file_path, optional: true, doc: "Subtree to list; defaults to the root." }
       recursive: { type: boolean, optional: true, doc: "Whether to descend; defaults to false." }
       limit: { type: integer, min: 1, max: 1000, optional: true, doc: "Page size." }
       cursor: { type: cursor, optional: true, doc: "Continuation token." }
-      wake: { type: ref, to: FileWakePolicy, optional: true, doc: "Whether a retained session may be woken." }
-      consistency: { type: ref, to: FileConsistency, optional: true, doc: "How coherent the read must be." }
       ifGenerationId: { type: id, of: generation, optional: true, doc: "Only read this exact generation." }
 
   LiveFileStatRequest:
-    doc: Stat one live workspace file.
+    doc: Stat one live workspace file, auto-resuming the same retained generation if suspended.
     type: object
     fields:
       path: { type: file_path, doc: "The entry to stat." }
-      wake: { type: ref, to: FileWakePolicy, optional: true, doc: "Whether a retained session may be woken." }
-      consistency: { type: ref, to: FileConsistency, optional: true, doc: "How coherent the read must be." }
-      ifGenerationId: { type: id, of: generation, optional: true, doc: "Only read this exact generation." }
-
-  LiveFileDownloadRequest:
-    doc: Mint a download grant for one live workspace file.
-    type: object
-    fields:
-      path: { type: file_path, doc: "The entry to download." }
-      range: { type: byte_range, optional: true, doc: "An explicit bounded range." }
-      wake: { type: ref, to: FileWakePolicy, optional: true, doc: "Whether a retained session may be woken." }
-      consistency: { type: ref, to: FileConsistency, optional: true, doc: "How coherent the read must be." }
       ifGenerationId: { type: id, of: generation, optional: true, doc: "Only read this exact generation." }
 
   BlobEncoding:
@@ -162,25 +201,6 @@ schemas:
       - { value: "0644", doc: "Read-write for the owner, read for others." }
       - { value: "0755", doc: "Executable." }
 
-  BundleFormat:
-    doc: The only accepted bundle format.
-    type: enum
-    values:
-      - { value: tar.gz, doc: "A gzipped tar of a normalized POSIX tree." }
-
-  McpTransport:
-    doc: The only accepted MCP transport.
-    type: enum
-    values:
-      - { value: streamable_http, doc: "Streamable HTTP." }
-
-  McpHeader:
-    doc: One MCP request header whose value comes from a workspace secret.
-    type: object
-    fields:
-      name: { type: string, min: 1, max: 128, doc: "The header name." }
-      secretName: { type: resource_name, doc: "The secret whose value is sent." }
-
   ContentRef:
     doc: >-
       A reference to a stored payload. The bytes are never published in a
@@ -199,38 +219,6 @@ schemas:
       mediaType: { type: string, min: 1, max: 255, doc: "Declared media type." }
       mode: { type: ref, to: RegisteredFileMode, doc: "POSIX mode." }
 
-  RegisteredSkillValue:
-    doc: A registered skill bundle containing `SKILL.md`.
-    type: object
-    fields:
-      description: { type: string, min: 1, max: 4096, doc: "What the skill is for." }
-      bundleFormat: { type: ref, to: BundleFormat, doc: "The bundle format." }
-      bundle: { type: ref, to: BlobInput, doc: "The bundle bytes." }
-
-  RegisteredToolValue:
-    doc: A registered custom tool.
-    type: object
-    fields:
-      description: { type: string, min: 1, max: 4096, doc: "What the tool does." }
-      inputSchema: { type: canonical_json, doc: "JSON Schema 2020-12 for the arguments." }
-      entry: { type: string, min: 1, max: 1024, doc: "Relative entry path inside the bundle." }
-      bundleFormat: { type: ref, to: BundleFormat, doc: "The bundle format." }
-      bundle: { type: ref, to: BlobInput, doc: "The bundle bytes." }
-
-  RegisteredInstructionValue:
-    doc: A registered instruction.
-    type: object
-    fields:
-      text: { type: string, min: 1, max: 32768, doc: "The instruction text." }
-
-  RegisteredMcpServerValue:
-    doc: A registered MCP server. Configuration never contains a secret value.
-    type: object
-    fields:
-      url: { type: https_url, doc: "The server endpoint." }
-      transport: { type: ref, to: McpTransport, doc: "The transport." }
-      headers: { type: array, max: 32, items: { type: ref, to: McpHeader }, doc: "Secret-backed headers." }
-
   RegisteredFileRead:
     doc: >-
       What a registered file is, as published. The payload bytes are referenced,
@@ -242,40 +230,6 @@ schemas:
       mode: { type: ref, to: RegisteredFileMode, doc: "POSIX mode." }
       content: { type: ref, to: ContentRef, doc: "The stored bytes." }
 
-  RegisteredSkillRead:
-    doc: What a registered skill is, as published.
-    type: object
-    fields:
-      description: { type: string, min: 1, max: 4096, doc: "What the skill is for." }
-      bundleFormat: { type: ref, to: BundleFormat, doc: "The bundle format." }
-      bundle: { type: ref, to: ContentRef, doc: "The stored bundle." }
-
-  RegisteredToolRead:
-    doc: What a registered tool is, as published.
-    type: object
-    fields:
-      description: { type: string, min: 1, max: 4096, doc: "What the tool does." }
-      inputSchema: { type: canonical_json, doc: "JSON Schema 2020-12 for the arguments." }
-      entry: { type: string, min: 1, max: 1024, doc: "Relative entry path inside the bundle." }
-      bundleFormat: { type: ref, to: BundleFormat, doc: "The bundle format." }
-      bundle: { type: ref, to: ContentRef, doc: "The stored bundle." }
-
-  RegisteredInstructionRead:
-    doc: What a registered instruction is, as published. It has no payload.
-    type: object
-    fields:
-      text: { type: string, min: 1, max: 32768, doc: "The instruction text." }
-
-  RegisteredMcpServerRead:
-    doc: >-
-      What a registered MCP server is, as published. It has no payload, and
-      configuration never contains a secret value.
-    type: object
-    fields:
-      url: { type: https_url, doc: "The server endpoint." }
-      transport: { type: ref, to: McpTransport, doc: "The transport." }
-      headers: { type: array, max: 32, items: { type: ref, to: McpHeader }, doc: "Secret-backed headers." }
-
   RegisteredFile:
     doc: A registered file entry, complete.
     type: object
@@ -286,58 +240,6 @@ schemas:
       sha256: { type: content_hash, doc: "Hash of the canonical value document, not of the payload. The payload's own hash is `value.content.sha256`." }
       sizeBytes: { type: decimal, doc: "Size of the canonical value document in bytes, not of the payload." }
       value: { type: ref, to: RegisteredFileRead, doc: "The complete value." }
-      createdAt: { type: timestamp, doc: "When first written." }
-      updatedAt: { type: timestamp, doc: "When last replaced." }
-
-  RegisteredSkill:
-    doc: A registered skill entry, complete.
-    type: object
-    fields:
-      name: { type: resource_name, doc: "The public identity." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      state: { type: ref, to: RegisteredState, doc: "Always current." }
-      sha256: { type: content_hash, doc: "Hash of the canonical value document, not of the bundle. The bundle's own hash is `value.bundle.sha256`." }
-      sizeBytes: { type: decimal, doc: "Size of the canonical value document in bytes, not of the bundle." }
-      value: { type: ref, to: RegisteredSkillRead, doc: "The complete value." }
-      createdAt: { type: timestamp, doc: "When first written." }
-      updatedAt: { type: timestamp, doc: "When last replaced." }
-
-  RegisteredTool:
-    doc: A registered tool entry, complete.
-    type: object
-    fields:
-      name: { type: resource_name, doc: "The public identity." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      state: { type: ref, to: RegisteredState, doc: "Always current." }
-      sha256: { type: content_hash, doc: "Hash of the canonical value document, not of the bundle. The bundle's own hash is `value.bundle.sha256`." }
-      sizeBytes: { type: decimal, doc: "Size of the canonical value document in bytes, not of the bundle." }
-      value: { type: ref, to: RegisteredToolRead, doc: "The complete value." }
-      createdAt: { type: timestamp, doc: "When first written." }
-      updatedAt: { type: timestamp, doc: "When last replaced." }
-
-  RegisteredInstruction:
-    doc: A registered instruction entry, complete.
-    type: object
-    fields:
-      name: { type: resource_name, doc: "The public identity." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      state: { type: ref, to: RegisteredState, doc: "Always current." }
-      sha256: { type: content_hash, doc: "Hash of the canonical value document." }
-      sizeBytes: { type: decimal, doc: "Size of the canonical value document in bytes." }
-      value: { type: ref, to: RegisteredInstructionRead, doc: "The complete value." }
-      createdAt: { type: timestamp, doc: "When first written." }
-      updatedAt: { type: timestamp, doc: "When last replaced." }
-
-  RegisteredMcpServer:
-    doc: A registered MCP server entry, complete.
-    type: object
-    fields:
-      name: { type: resource_name, doc: "The public identity." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      state: { type: ref, to: RegisteredState, doc: "Always current." }
-      sha256: { type: content_hash, doc: "Hash of the canonical value document." }
-      sizeBytes: { type: decimal, doc: "Size of the canonical value document in bytes." }
-      value: { type: ref, to: RegisteredMcpServerRead, doc: "The complete value." }
       createdAt: { type: timestamp, doc: "When first written." }
       updatedAt: { type: timestamp, doc: "When last replaced." }
 
@@ -355,87 +257,11 @@ schemas:
       createdAt: { type: timestamp, doc: "When first written." }
       updatedAt: { type: timestamp, doc: "When last replaced." }
 
-  RegisteredSkillRow:
-    doc: One registered skill as a collection row.
-    type: object
-    fields:
-      name: { type: resource_name, doc: "The public identity." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      state: { type: ref, to: RegisteredState, doc: "Always current." }
-      sha256: { type: content_hash, doc: "Hash of the canonical value document." }
-      sizeBytes: { type: decimal, doc: "Size of the canonical value document in bytes." }
-      createdAt: { type: timestamp, doc: "When first written." }
-      updatedAt: { type: timestamp, doc: "When last replaced." }
-
-  RegisteredToolRow:
-    doc: One registered tool as a collection row.
-    type: object
-    fields:
-      name: { type: resource_name, doc: "The public identity." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      state: { type: ref, to: RegisteredState, doc: "Always current." }
-      sha256: { type: content_hash, doc: "Hash of the canonical value document." }
-      sizeBytes: { type: decimal, doc: "Size of the canonical value document in bytes." }
-      createdAt: { type: timestamp, doc: "When first written." }
-      updatedAt: { type: timestamp, doc: "When last replaced." }
-
-  RegisteredInstructionRow:
-    doc: One registered instruction as a collection row.
-    type: object
-    fields:
-      name: { type: resource_name, doc: "The public identity." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      state: { type: ref, to: RegisteredState, doc: "Always current." }
-      sha256: { type: content_hash, doc: "Hash of the canonical value document." }
-      sizeBytes: { type: decimal, doc: "Size of the canonical value document in bytes." }
-      createdAt: { type: timestamp, doc: "When first written." }
-      updatedAt: { type: timestamp, doc: "When last replaced." }
-
-  RegisteredMcpServerRow:
-    doc: One registered MCP server as a collection row.
-    type: object
-    fields:
-      name: { type: resource_name, doc: "The public identity." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      state: { type: ref, to: RegisteredState, doc: "Always current." }
-      sha256: { type: content_hash, doc: "Hash of the canonical value document." }
-      sizeBytes: { type: decimal, doc: "Size of the canonical value document in bytes." }
-      createdAt: { type: timestamp, doc: "When first written." }
-      updatedAt: { type: timestamp, doc: "When last replaced." }
-
   RegisteredFilePage:
     doc: One page of registered files.
     type: object
     fields:
       items: { type: array, max: 1000, items: { type: ref, to: RegisteredFileRow }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  RegisteredSkillPage:
-    doc: One page of registered skills.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: RegisteredSkillRow }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  RegisteredToolPage:
-    doc: One page of registered tools.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: RegisteredToolRow }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  RegisteredInstructionPage:
-    doc: One page of registered instructions.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: RegisteredInstructionRow }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  RegisteredMcpServerPage:
-    doc: One page of registered MCP servers.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: RegisteredMcpServerRow }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
   RegistryDownloadRequest:
@@ -524,45 +350,6 @@ schemas:
     fields:
       parts: { type: array, max: 10000, items: { type: ref, to: UploadPart }, doc: "Every written part." }
 
-  SecretState:
-    doc: Whether a secret may still be admitted into custody.
-    type: enum
-    values:
-      - { value: ready, doc: "Admissible." }
-      - { value: revoked, doc: "Revoked; current custody was cancelled too." }
-
-  SecretMetadata:
-    doc: Secret metadata. Values are write-only and never readable.
-    type: object
-    fields:
-      name: { type: resource_name, doc: "The public identity." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      state: { type: ref, to: SecretState, doc: "Whether it is admissible." }
-      createdAt: { type: timestamp, doc: "When first written." }
-      updatedAt: { type: timestamp, doc: "When last replaced." }
-      revokedAt: { type: timestamp, optional: true, doc: "When it was revoked." }
-
-  SecretMetadataPage:
-    doc: One page of secret metadata.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: SecretMetadata }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  SecretPutRequest:
-    doc: Set a secret value. The value is never returned by any read.
-    type: object
-    fields:
-      value: { type: string, min: 1, max: 65536, doc: "The secret value." }
-
-  SecretRevocation:
-    doc: The receipt of a secret revocation.
-    type: object
-    fields:
-      name: { type: resource_name, doc: "The revoked secret." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after revocation." }
-      revokedAt: { type: timestamp, doc: "When revocation committed." }
-
   ProviderCredentialState:
     doc: Whether a BYOK binding may still be selected.
     type: enum
@@ -606,7 +393,7 @@ schemas:
       - { value: pending, doc: "Waiting on a decision." }
       - { value: approved, doc: "Approved; the bound call may run." }
       - { value: denied, doc: "Denied; the bound call will not run." }
-      - { value: cancelled, doc: "Withdrawn by a stop, cancellation, deletion, pause, continuity loss, tool-call cancellation, or binding drift." }
+      - { value: cancelled, doc: "Withdrawn by current-work cancellation, termination, deletion, account pause, runtime loss, tool-call cancellation, or binding drift." }
       - { value: expired, doc: "Its explicit decision deadline elapsed." }
 
   ApprovalDecision:
@@ -620,15 +407,13 @@ schemas:
     doc: The exact call an approval is bound to. Nothing else may run under it.
     type: object
     fields:
-      runId: { type: id, of: run, doc: "The run." }
-      agentId: { type: id, of: agent, doc: "The agent inside the run." }
+      agentId: { type: id, of: agent, doc: "The internal execution agent." }
       toolCallId: { type: id, of: tool_call, doc: "The tool call." }
       toolName: { type: resource_name, doc: "The canonical tool name." }
       argumentsDigest: { type: content_hash, doc: "Canonical digest of the arguments." }
       implementationDigest: { type: content_hash, doc: "Digest of the tool implementation." }
       configDigest: { type: content_hash, doc: "Digest of the resolved tool configuration." }
       expectedGenerationId: { type: id, of: generation, optional: true, doc: "The generation the call must run in." }
-      expectedCustodyRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The credential-custody revision the call expects." }
       expectedConfigRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The configuration revision the call expects." }
 
   Approval:

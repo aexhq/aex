@@ -1,0 +1,38 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionSuspendResult.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The result of manually suspending an idle session's exact retained generation. Active work must be cancelled first.",
+  "properties": {
+    "changed": {
+      "description": "Whether the session transitioned to suspended.",
+      "type": "boolean"
+    },
+    "sessionId": {
+      "description": "The session.",
+      "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "session"
+    },
+    "sessionRevision": {
+      "description": "The revision after suspension.",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "suspendedAt": {
+      "description": "When the generation suspended.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    }
+  },
+  "required": [
+    "changed",
+    "sessionId",
+    "sessionRevision",
+    "suspendedAt"
+  ],
+  "title": "SessionSuspendResult",
+  "type": "object"
+}

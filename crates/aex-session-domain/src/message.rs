@@ -6,7 +6,8 @@
 //! torn assistant message can never be listed.
 
 use aex_content_domain::ContentDigest;
-use aex_wire::ids::{AgentId, FilePath, MessageId, RunId, SessionId, ToolCallId};
+use aex_internal_contracts::RunId;
+use aex_wire::ids::{AgentId, FilePath, MessageId, SessionId, ToolCallId};
 use aex_wire::types::Timestamp;
 
 use crate::ids::AgentFence;

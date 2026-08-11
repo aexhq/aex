@@ -13,12 +13,13 @@ ids:
   - { key: provider_credential, prefix: pcr, rust: ProviderCredentialId, doc: "A BYOK provider-credential binding." }
   - { key: session, prefix: ses, rust: SessionId, doc: "A durable conversation and its workspace." }
   - { key: message, prefix: msg, rust: MessageId, doc: "One message in a session." }
-  - { key: run, prefix: run, rust: RunId, doc: "One admitted turn of execution." }
-  - { key: agent, prefix: agt, rust: AgentId, doc: "One agent within a run, root or subagent." }
+  - { key: agent, prefix: agt, rust: AgentId, doc: "One internal execution agent, root or subagent." }
   - { key: tool_call, prefix: tcl, rust: ToolCallId, doc: "One bound tool invocation." }
   - { key: operation, prefix: op, rust: OperationId, doc: "A durable operation record." }
   - { key: approval, prefix: apr, rust: ApprovalId, doc: "A pending or resolved tool approval." }
   - { key: generation, prefix: gen, rust: GenerationId, doc: "One exact `MicroVM` generation." }
+  - { key: file_upload, prefix: ful, rust: FileUploadId, doc: "One ephemeral exact-generation live-file upload." }
+  - { key: file_download, prefix: fdl, rust: FileDownloadId, doc: "One ephemeral exact-generation live-file download." }
   - { key: observation, prefix: obs, rust: ObservationId, doc: "One admitted telemetry observation." }
   - { key: telemetry_batch, prefix: bch, rust: TelemetryBatchId, doc: "One admitted OTLP batch." }
   - { key: telemetry_gap, prefix: gap, rust: TelemetryGapId, doc: "One recorded telemetry gap." }

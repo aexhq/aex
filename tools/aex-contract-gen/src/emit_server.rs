@@ -378,6 +378,7 @@ fn method_arguments(
             arguments.push(format!("body: {schema}"));
         }
         RequestShape::Otlp => arguments.push("body: &[u8]".to_owned()),
+        RequestShape::Binary => arguments.push("body: &[u8]".to_owned()),
     }
     arguments
 }
@@ -404,6 +405,9 @@ fn record_response_imports(shape: &ResponseShape, imports: &mut BTreeSet<String>
         }
         ResponseShape::Ndjson(_) => {
             imports.insert("crate::server::NdjsonStream".to_owned());
+        }
+        ResponseShape::Binary => {
+            imports.insert("crate::server::BinaryBody".to_owned());
         }
     }
 }
@@ -542,6 +546,11 @@ fn emit_arm(
             body.line("            let body = otlp_body(&raw, limits)?;");
             call.push("body".to_owned());
         }
+        RequestShape::Binary => {
+            imports.insert("crate::dispatch::binary_body".to_owned());
+            body.line("            let body = binary_body(&raw, limits)?;");
+            call.push("body".to_owned());
+        }
     }
 
     let shape = ResponseShape::of(operation);
@@ -583,6 +592,10 @@ fn emit_arm(
             operation.success_status
         ),
         ResponseShape::Ndjson(_) => "DispatchOutcome::Ndjson(answer)".to_owned(),
+        ResponseShape::Binary => format!(
+            "DispatchOutcome::Unary(RawResponse::binary({}, answer.0))",
+            operation.success_status
+        ),
     };
     let single = format!("            Ok({rendered})");
     if single.len() <= crate::rustsrc::MAX_WIDTH {

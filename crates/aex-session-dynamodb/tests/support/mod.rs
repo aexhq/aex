@@ -8,6 +8,7 @@
 #![allow(dead_code, reason = "each test target uses a different subset")]
 #![allow(missing_docs, reason = "the module doc states what these fixtures are")]
 
+use aex_internal_contracts::RunId;
 use aex_session_dynamodb::plan::RegionalTables;
 use aex_session_dynamodb::wire_pending::{
     AgentControl, AgentDecisionPlan, Body, EffectIntent, EffectStage, FanoutPagePlan, HeadGuard,
@@ -15,8 +16,8 @@ use aex_session_dynamodb::wire_pending::{
 };
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
 use aex_wire::ids::{
-    AgentId, GenerationId, ObservationId, OperationId, OrganizationId, PrefixedId, RunId,
-    SessionId, Uuid7, WorkspaceId,
+    AgentId, GenerationId, ObservationId, OperationId, OrganizationId, PrefixedId, SessionId,
+    Uuid7, WorkspaceId,
 };
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;

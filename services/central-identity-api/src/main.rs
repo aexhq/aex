@@ -74,15 +74,12 @@ async fn compose(
             CentralIdentityApiRunError::Dependency("identity-pepper", error.to_string())
         })?;
 
-    // Probe three: both sign-in providers' OAuth clients load and parse. Without
-    // them `dashboard_session_create` can complete no handshake, and a browser
+    // Probe three: Google's sign-in OAuth client loads and parses. Without it
+    // `dashboard_session_create` can complete no handshake, and a browser
     // session is the only thing that can approve a device authorization — so a
     // process that serves without them answers the whole credential ceremony's
     // second step with a `500` for its entire life. Refusing here turns that
     // into one start-up line naming the dependency.
-    let github = oauth::load_oauth_client(&secrets, &config.github_oauth_secret_id)
-        .await
-        .map_err(|reason| CentralIdentityApiRunError::Dependency("github-oauth-client", reason))?;
     let google = oauth::load_oauth_client(&secrets, &config.google_oauth_secret_id)
         .await
         .map_err(|reason| CentralIdentityApiRunError::Dependency("google-oauth-client", reason))?;
@@ -90,7 +87,7 @@ async fn compose(
     // so a provider that stops answering can never outlive its own request.
     let handshake = Arc::new(
         oauth::HttpProviderHandshake::new(
-            oauth::OauthClients::new(github, google),
+            google,
             config.sign_in_redirect_uri.clone(),
             config.http.request_deadline,
         )

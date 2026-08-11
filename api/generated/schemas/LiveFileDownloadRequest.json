@@ -2,31 +2,19 @@
   "$id": "https://schemas.aex.dev/v1/LiveFileDownloadRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Mint a download grant for one live workspace file.",
+  "description": "Open one regular file without following a symlink, auto-resuming the same generation.",
   "properties": {
-    "consistency": {
-      "$ref": "aex:schema:FileConsistency",
-      "description": "How coherent the read must be."
-    },
     "ifGenerationId": {
-      "description": "Only read this exact generation.",
+      "description": "Require this exact retained generation.",
       "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "generation"
     },
     "path": {
-      "description": "The entry to download.",
+      "description": "The regular file to open.",
       "maxLength": 4096,
       "type": "string",
       "x-aex-path": "posix"
-    },
-    "range": {
-      "$ref": "aex:schema:ByteRange",
-      "description": "An explicit bounded range."
-    },
-    "wake": {
-      "$ref": "aex:schema:FileWakePolicy",
-      "description": "Whether a retained session may be woken."
     }
   },
   "required": [

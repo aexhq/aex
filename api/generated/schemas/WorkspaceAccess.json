@@ -2,26 +2,22 @@
   "$id": "https://schemas.aex.dev/v1/WorkspaceAccess.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "What a live read actually did to the session workspace.",
+  "description": "Which retained session generation answered a live workspace call.",
   "properties": {
-    "consistency": {
-      "$ref": "aex:schema:FileConsistency",
-      "description": "The consistency the read achieved."
-    },
     "generationId": {
-      "description": "The generation the read observed.",
+      "description": "The exact retained generation that answered.",
       "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "generation"
     },
-    "woke": {
-      "description": "Whether the read woke a retained session.",
+    "resumed": {
+      "description": "Whether this call first resumed the suspended generation.",
       "type": "boolean"
     }
   },
   "required": [
-    "consistency",
-    "woke"
+    "generationId",
+    "resumed"
   ],
   "title": "WorkspaceAccess",
   "type": "object"

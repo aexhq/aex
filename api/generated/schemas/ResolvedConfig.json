@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/ResolvedConfig.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Everything the platform actually resolved for this session.",
+  "description": "Everything the platform resolved for this session.",
   "properties": {
     "approvalPolicy": {
       "$ref": "aex:schema:ApprovalPolicy",
@@ -18,6 +18,10 @@
     "compute": {
       "$ref": "aex:schema:ResolvedCompute",
       "description": "Resolved capacity."
+    },
+    "lifecycle": {
+      "$ref": "aex:schema:SessionLifecyclePolicy",
+      "description": "Immutable automatic lifecycle behavior."
     },
     "model": {
       "description": "The exact provider-native model id.",
@@ -42,20 +46,21 @@
       "description": "The provider."
     },
     "providerCredentialId": {
-      "description": "The BYOK binding in use. Non-optional from create onward, so nothing downstream has to model an unpinned session.",
+      "description": "The pinned BYOK binding.",
       "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "provider_credential"
     },
     "registered": {
       "$ref": "aex:schema:SessionRegisteredSelection",
-      "description": "Resolved registered selection."
+      "description": "Resolved mounted files."
     }
   },
   "required": [
     "approvalPolicy",
     "catalogRevision",
     "compute",
+    "lifecycle",
     "model",
     "network",
     "packages",

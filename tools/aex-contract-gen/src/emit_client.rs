@@ -169,6 +169,7 @@ fn arguments(
             arguments.push(("body".to_owned(), format!("&{schema}")));
         }
         RequestShape::Otlp => arguments.push(("body".to_owned(), "&[u8]".to_owned())),
+        RequestShape::Binary => arguments.push(("body".to_owned(), "&[u8]".to_owned())),
     }
     match operation.idempotency.as_str() {
         "idempotency_key" => {
@@ -284,6 +285,7 @@ fn emit_builder(
             "Some(encode_body(route, body)?)".to_owned()
         }
         RequestShape::Otlp => "Some(body.to_vec())".to_owned(),
+        RequestShape::Binary => "Some(body.to_vec())".to_owned(),
     };
     body.line("    Ok(WireRequest {");
     body.line("        route,");
@@ -335,6 +337,9 @@ fn emit_method(
             imports.insert("crate::client::decode_ndjson".to_owned());
             imports.insert(format!("crate::models::{frame}"));
         }
+        ResponseShape::Binary => {
+            imports.insert("crate::client::decode_binary".to_owned());
+        }
     }
 
     if index > 0 {
@@ -385,6 +390,9 @@ fn emit_method(
         ResponseShape::Ndjson(_) => {
             format!("decode_ndjson(RouteId::{}, response)", operation.variant)
         }
+        ResponseShape::Binary => {
+            format!("decode_binary(RouteId::{}, response)", operation.variant)
+        }
         _ => format!("decode_response(RouteId::{}, &response)", operation.variant),
     };
     let single = format!("        {decode}");
@@ -393,7 +401,7 @@ fn emit_method(
     } else {
         body.line(&format!("        {}(", decode_name(&shape)));
         body.line(&format!("            RouteId::{},", operation.variant));
-        if matches!(shape, ResponseShape::Ndjson(_)) {
+        if matches!(shape, ResponseShape::Ndjson(_) | ResponseShape::Binary) {
             body.line("            response,");
         } else {
             body.line("            &response,");
@@ -409,6 +417,7 @@ const fn decode_name(shape: &ResponseShape) -> &'static str {
         ResponseShape::NoContent => "decode_no_content",
         ResponseShape::Etagged(_) => "decode_response_with_etag",
         ResponseShape::Ndjson(_) => "decode_ndjson",
+        ResponseShape::Binary => "decode_binary",
         ResponseShape::Accepted | ResponseShape::Created(_) | ResponseShape::Plain(_) => {
             "decode_response"
         }

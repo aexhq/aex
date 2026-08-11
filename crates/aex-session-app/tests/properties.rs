@@ -21,14 +21,16 @@ use aex_session_app::{
     SessionTransaction, StartRun, admit_message, commit_terminal, purge_session,
     rebind_credentials, restore_session, start_run, stop_session, trash_session,
 };
-use aex_session_domain::testing::{id, moment, running_session, session_fixture, terminal_attempt};
+use aex_session_domain::testing::{
+    id, moment, run_id, running_session, session_fixture, terminal_attempt,
+};
 use aex_session_domain::{
     MAX_OPEN_MESSAGES_PER_RUN, Message, MessagePart, MessageRole, MessageState, PurgeCascade,
     SessionStatus, WorkAdmission,
 };
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
-use aex_wire::ids::{MessageId, OperationId, RunId, Uuid7};
+use aex_wire::ids::{MessageId, OperationId, Uuid7};
 use aex_wire::types::Region;
 use proptest::prelude::*;
 
@@ -42,7 +44,7 @@ fn send_message() -> SendMessage {
         workspace: session.workspace,
         session: session.id,
         message: id::<MessageId>(20),
-        run: id::<RunId>(21),
+        run: run_id(21),
         parts: vec![MessagePart::Text {
             text: "hello".to_owned(),
         }],
@@ -548,7 +550,7 @@ async fn restore_needs_a_trashed_session_and_start_needs_an_active_run() {
         &StartRun {
             workspace: session.workspace,
             session: session.id,
-            run: id::<RunId>(21),
+            run: run_id(21),
         },
     )
     .await;

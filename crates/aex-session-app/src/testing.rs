@@ -11,6 +11,7 @@ use std::num::NonZeroU64;
 use aex_content_domain::{
     ContentDigest, ContentOutcome, ContentRoot, PageDigest, TreeNode, TreeView,
 };
+use aex_internal_contracts::RunId;
 use aex_operation_domain::Operation;
 use aex_secret_domain::{SecretName, SessionCustody, TrueIdle, WorkspaceSecret};
 use aex_session_domain::testing::{materialized_state, moment, session_fixture};
@@ -19,8 +20,8 @@ use aex_session_domain::{
     IdempotencyIdentity, IdempotencyReceipt, JournalPage, JournalSeq, Run, Session, create_root,
 };
 use aex_wire::ids::{
-    AgentId, GenerationId, OperationId, OrganizationId, PrefixedId as _, RunId, SessionId,
-    UploadId, Uuid7, WorkspaceId,
+    AgentId, GenerationId, OperationId, OrganizationId, PrefixedId as _, SessionId, UploadId,
+    Uuid7, WorkspaceId,
 };
 use aex_wire::limits::LimitId;
 use aex_wire::types::Timestamp;

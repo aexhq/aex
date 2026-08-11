@@ -1,14 +1,12 @@
 {
-  "$id": "https://schemas.aex.dev/v1/SessionTrashResult.json",
+  "$id": "https://schemas.aex.dev/v1/SessionTerminateResult.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The result of a trash operation. Trash starts the recovery window.",
+  "description": "The result of permanently destroying compute and live files while preserving session metadata and sealed messages.",
   "properties": {
-    "recoveryDeadline": {
-      "description": "After this instant restore is refused.",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-      "type": "string",
-      "x-aex-time": "rfc3339-ms"
+    "changed": {
+      "description": "Whether live compute or files existed and were destroyed.",
+      "type": "boolean"
     },
     "sessionId": {
       "description": "The session.",
@@ -17,24 +15,24 @@
       "x-aex-id": "session"
     },
     "sessionRevision": {
-      "description": "The revision after the trash.",
+      "description": "The revision after termination.",
       "maximum": 9007199254740991,
       "minimum": 0,
       "type": "integer"
     },
-    "trashedAt": {
-      "description": "When the trash committed.",
+    "terminatedAt": {
+      "description": "When permanent termination committed.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     }
   },
   "required": [
-    "recoveryDeadline",
+    "changed",
     "sessionId",
     "sessionRevision",
-    "trashedAt"
+    "terminatedAt"
   ],
-  "title": "SessionTrashResult",
+  "title": "SessionTerminateResult",
   "type": "object"
 }

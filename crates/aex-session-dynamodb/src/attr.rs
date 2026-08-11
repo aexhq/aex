@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 
+use aex_internal_contracts::RunId;
 use aex_wire::ids::{IdParseError, PrefixedId};
 use aex_wire::types::{Timestamp, ValueError};
 use aws_sdk_dynamodb::types::AttributeValue;
@@ -402,6 +403,28 @@ impl<'a> Row<'a> {
     pub fn opt_id<T: PrefixedId>(&self, attribute: &'static str) -> Result<Option<T>, CodecError> {
         if self.item.contains_key(attribute) {
             self.id(attribute).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// A required private execution identifier.
+    ///
+    /// This is deliberately separate from [`Row::id`]: `RunId` is persisted in
+    /// internal rows but no longer belongs to the public ID registry.
+    pub fn run_id(&self, attribute: &'static str) -> Result<RunId, CodecError> {
+        let text = self.string(attribute)?;
+        RunId::parse(text).map_err(|error| CodecError::Malformed {
+            item_type: self.item_type,
+            attribute,
+            reason: error.to_string(),
+        })
+    }
+
+    /// An optional private execution identifier.
+    pub fn opt_run_id(&self, attribute: &'static str) -> Result<Option<RunId>, CodecError> {
+        if self.item.contains_key(attribute) {
+            self.run_id(attribute).map(Some)
         } else {
             Ok(None)
         }

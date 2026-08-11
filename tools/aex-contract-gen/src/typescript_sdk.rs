@@ -193,8 +193,8 @@ pub fn typescript_sdk_resources(ir: &ContractIr, digest: &str) -> String {
     out.push_str("export interface ExecuteOptions {\n");
     out.push_str("  /** Query parameters, already rendered as wire strings. */\n");
     out.push_str("  readonly query?: Readonly<Record<string, string>>;\n");
-    out.push_str("  /** The request body, encoded as canonical JSON by the client. */\n");
-    out.push_str("  readonly body?: unknown;\n");
+    out.push_str("  /** The request body; binary routes require `Uint8Array`, all others use canonical JSON. */\n");
+    out.push_str("  readonly body?: unknown | Uint8Array;\n");
     out.push_str("  /** `Idempotency-Key`, for a route that requires one. */\n");
     out.push_str("  readonly idempotencyKey?: string;\n");
     out.push_str("  /** `Aex-Operation-Id`, for a route that admits a durable operation. */\n");
@@ -249,7 +249,12 @@ fn client_name(fragment: &str) -> String {
 fn resource_method(out: &mut String, operation: &OperationIr) {
     let name = camel_case(&operation.id);
     let query_required = operation.query_params.iter().any(|param| !param.optional);
-    let body = operation.request.is_some() || operation.body_class == "otlp";
+    let body = operation.request.is_some()
+        || operation.body_class == "otlp"
+        || operation.body_class == "binary";
+    let binary_response = operation.transport == "binary";
+    let method_generic = if binary_response { "" } else { "<T = unknown>" };
+    let return_type = if binary_response { "Uint8Array" } else { "T" };
     let idempotency_key = operation.idempotency == "idempotency_key";
     let operation_id = operation.idempotency == "operation_id";
     let required_field = !operation.path_params.is_empty()
@@ -266,7 +271,7 @@ fn resource_method(out: &mut String, operation: &OperationIr) {
         comment_safe(&operation.summary)
     ));
     if has_field {
-        out.push_str(&format!("  async {name}<T = unknown>(params: {{\n"));
+        out.push_str(&format!("  async {name}{method_generic}(params: {{\n"));
         for param in &operation.path_params {
             out.push_str(&format!("    readonly {}: string;\n", param.name));
         }
@@ -285,7 +290,14 @@ fn resource_method(out: &mut String, operation: &OperationIr) {
             out.push_str("    };\n");
         }
         if body {
-            out.push_str("    readonly body: unknown;\n");
+            out.push_str(&format!(
+                "    readonly body: {};\n",
+                if operation.body_class == "binary" {
+                    "Uint8Array"
+                } else {
+                    "unknown"
+                }
+            ));
         }
         if idempotency_key {
             out.push_str("    readonly idempotencyKey: string;\n");
@@ -294,11 +306,13 @@ fn resource_method(out: &mut String, operation: &OperationIr) {
             out.push_str("    readonly operationId: string;\n");
         }
         out.push_str(&format!(
-            "  }}{}): Promise<T> {{\n",
+            "  }}{}): Promise<{return_type}> {{\n",
             if required_field { "" } else { " = {}" }
         ));
     } else {
-        out.push_str(&format!("  async {name}<T = unknown>(): Promise<T> {{\n"));
+        out.push_str(&format!(
+            "  async {name}{method_generic}(): Promise<{return_type}> {{\n"
+        ));
     }
 
     let bindings = operation
@@ -326,7 +340,8 @@ fn resource_method(out: &mut String, operation: &OperationIr) {
         options.push("operationId: params.operationId".to_owned());
     }
     let mut call = format!(
-        "    return this.#executor.execute<T>({}",
+        "    return this.#executor.execute<{}>({}",
+        if binary_response { "Uint8Array" } else { "T" },
         quoted(&operation.id)
     );
     if !bindings.is_empty() || !options.is_empty() {

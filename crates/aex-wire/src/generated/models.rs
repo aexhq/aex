@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:746909d557013ea5aaf802d74181f53b5d868f79814b0bd9389302208ad0c0f2`.
+//! `sha256:90fdf2649aa0c7151830e06eb94993aeafa67faf7c867042dbff4638af9aafba`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -18,7 +18,9 @@ use crate::ids::ApiKeyId;
 use crate::ids::ApprovalId;
 use crate::ids::ContentHash;
 use crate::ids::ExportId;
+use crate::ids::FileDownloadId;
 use crate::ids::FilePath;
+use crate::ids::FileUploadId;
 use crate::ids::GenerationId;
 use crate::ids::InvitationId;
 use crate::ids::MeasurementId;
@@ -29,7 +31,6 @@ use crate::ids::OperationId;
 use crate::ids::OrganizationId;
 use crate::ids::ProviderCredentialId;
 use crate::ids::ResourceName;
-use crate::ids::RunId;
 use crate::ids::SessionId;
 use crate::ids::SpanId;
 use crate::ids::StatementId;
@@ -409,22 +410,18 @@ pub struct DeviceTokenRequest {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentityProvider {
-    /// GitHub.
-    Github,
     /// Google.
     Google,
 }
 
 impl IdentityProvider {
     /// Every value, in declared order.
-    pub const ALL: &'static [IdentityProvider] =
-        &[IdentityProvider::Github, IdentityProvider::Google];
+    pub const ALL: &'static [IdentityProvider] = &[IdentityProvider::Google];
 
     /// The wire spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Github => "github",
             Self::Google => "google",
         }
     }
@@ -1127,20 +1124,16 @@ pub struct OperationFailure {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {
-    /// Stop the running turn.
-    SessionStop,
-    /// Persist the live workspace.
-    SessionPersist,
-    /// Discard the live workspace.
-    WorkspaceDiscard,
-    /// Move the session into the recovery window.
-    SessionTrash,
-    /// Bring the session back out of the recovery window.
-    SessionRestore,
-    /// Destroy the session irreversibly.
-    SessionPurge,
-    /// Rebind session credentials.
-    CredentialRebind,
+    /// Cancel the session's current work and return it to idle.
+    SessionCancel,
+    /// Suspend an idle session's exact retained generation.
+    SessionSuspend,
+    /// Resume the same retained generation to idle.
+    SessionResume,
+    /// Destroy session compute and live files while retaining metadata and messages.
+    SessionTerminate,
+    /// Irreversibly delete session-scoped user content and telemetry.
+    SessionDelete,
     /// Produce a telemetry export artifact.
     TelemetryExport,
     /// Delete the workspace across both planes.
@@ -1150,13 +1143,11 @@ pub enum OperationKind {
 impl OperationKind {
     /// Every value, in declared order.
     pub const ALL: &'static [OperationKind] = &[
-        OperationKind::SessionStop,
-        OperationKind::SessionPersist,
-        OperationKind::WorkspaceDiscard,
-        OperationKind::SessionTrash,
-        OperationKind::SessionRestore,
-        OperationKind::SessionPurge,
-        OperationKind::CredentialRebind,
+        OperationKind::SessionCancel,
+        OperationKind::SessionSuspend,
+        OperationKind::SessionResume,
+        OperationKind::SessionTerminate,
+        OperationKind::SessionDelete,
         OperationKind::TelemetryExport,
         OperationKind::WorkspaceDelete,
     ];
@@ -1165,13 +1156,11 @@ impl OperationKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::SessionStop => "session_stop",
-            Self::SessionPersist => "session_persist",
-            Self::WorkspaceDiscard => "workspace_discard",
-            Self::SessionTrash => "session_trash",
-            Self::SessionRestore => "session_restore",
-            Self::SessionPurge => "session_purge",
-            Self::CredentialRebind => "credential_rebind",
+            Self::SessionCancel => "session_cancel",
+            Self::SessionSuspend => "session_suspend",
+            Self::SessionResume => "session_resume",
+            Self::SessionTerminate => "session_terminate",
+            Self::SessionDelete => "session_delete",
             Self::TelemetryExport => "telemetry_export",
             Self::WorkspaceDelete => "workspace_delete",
         }
@@ -1207,20 +1196,16 @@ pub struct OperationProgress {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperationResult {
-    /// Stop result.
-    SessionStop(SessionStopResult),
-    /// Persist result.
-    SessionPersist(SessionPersistResult),
-    /// Discard result.
-    WorkspaceDiscard(WorkspaceDiscardResult),
-    /// Trash result.
-    SessionTrash(SessionTrashResult),
-    /// Restore result.
-    SessionRestore(SessionRestoreResult),
-    /// Session tombstone.
-    SessionPurge(SessionTombstone),
-    /// Rebind result.
-    CredentialRebind(CredentialRebindResult),
+    /// Current-work cancellation result.
+    SessionCancel(SessionCancelResult),
+    /// Manual suspension result.
+    SessionSuspend(SessionSuspendResult),
+    /// Manual resumption result.
+    SessionResume(SessionResumeResult),
+    /// Permanent compute/live-file termination result.
+    SessionTerminate(SessionTerminateResult),
+    /// Irreversible deletion tombstone.
+    SessionDelete(SessionTombstone),
     /// Export result.
     TelemetryExport(TelemetryExportResult),
     /// Workspace tombstone.
@@ -1276,17 +1261,14 @@ pub struct TimeRange {
     pub lt: Timestamp,
 }
 
-/// What a live read actually did to the session workspace.
+/// Which retained session generation answered a live workspace call.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct WorkspaceAccess {
-    /// The consistency the read achieved.
-    pub consistency: FileConsistency,
-    /// The generation the read observed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub generation_id: Option<GenerationId>,
-    /// Whether the read woke a retained session.
-    pub woke: bool,
+    /// The exact retained generation that answered.
+    pub generation_id: GenerationId,
+    /// Whether this call first resumed the suspended generation.
+    pub resumed: bool,
 }
 
 // --- observation -------------------------------------------------------
@@ -1510,9 +1492,6 @@ pub struct Observation {
     pub id: ObservationId,
     /// When the producer says it happened.
     pub observed_at: Timestamp,
-    /// The owning run, when attributable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<RunId>,
     /// Position in the ordered series.
     pub sequence: DecimalU128,
     /// The owning session, when attributable.
@@ -2281,7 +2260,7 @@ pub struct Approval {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ApprovalBoundCall {
-    /// The agent inside the run.
+    /// The internal execution agent.
     pub agent_id: AgentId,
     /// Canonical digest of the arguments.
     pub arguments_digest: ContentHash,
@@ -2289,15 +2268,11 @@ pub struct ApprovalBoundCall {
     pub config_digest: ContentHash,
     /// The configuration revision the call expects.
     pub expected_config_revision: u64,
-    /// The credential-custody revision the call expects.
-    pub expected_custody_revision: u64,
     /// The generation the call must run in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_generation_id: Option<GenerationId>,
     /// Digest of the tool implementation.
     pub implementation_digest: ContentHash,
-    /// The run.
-    pub run_id: RunId,
     /// The tool call.
     pub tool_call_id: ToolCallId,
     /// The canonical tool name.
@@ -2340,7 +2315,7 @@ pub struct ApprovalPage {
     pub next_cursor: Option<Cursor>,
 }
 
-/// When a bound tool call needs a human decision.
+/// When a bound built-in tool call needs a human decision.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum ApprovalPolicy {
@@ -2350,16 +2325,16 @@ pub enum ApprovalPolicy {
     RequireForTools(ApprovalPolicyRequireForTools),
 }
 
-/// Every tool call runs without an approval.
+/// Every built-in tool call runs without an approval.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ApprovalPolicyAllowAll {}
 
-/// Named tools require an explicit decision before they run.
+/// Named built-in tools require an explicit decision before they run.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ApprovalPolicyRequireForTools {
-    /// Tools that need approval.
+    /// Built-in tools that need approval.
     pub tools: Vec<ResourceName>,
 }
 
@@ -2381,8 +2356,8 @@ pub enum ApprovalStatus {
     Approved,
     /// Denied; the bound call will not run.
     Denied,
-    /// Withdrawn by a stop, cancellation, deletion, pause, continuity loss, tool-call cancellation,
-    /// or binding drift.
+    /// Withdrawn by current-work cancellation, termination, deletion, account pause, runtime loss,
+    /// tool-call cancellation, or binding drift.
     Cancelled,
     /// Its explicit decision deadline elapsed.
     Expired,
@@ -2469,28 +2444,6 @@ pub struct BlobUpload {
     pub upload_id: UploadId,
 }
 
-/// The only accepted bundle format.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BundleFormat {
-    /// A gzipped tar of a normalized POSIX tree.
-    #[serde(rename = "tar.gz")]
-    TarGz,
-}
-
-impl BundleFormat {
-    /// Every value, in declared order.
-    pub const ALL: &'static [BundleFormat] = &[BundleFormat::TarGz];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::TarGz => "tar.gz",
-        }
-    }
-}
-
 /// One resolved compute dimension.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -2512,19 +2465,7 @@ pub struct ContentRef {
     pub size_bytes: DecimalU128,
 }
 
-/// The result of a credential-rebind operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct CredentialRebindResult {
-    /// The custody revision after the rebind.
-    pub custody_revision: u64,
-    /// The bound secrets.
-    pub secrets: Vec<SecretRef>,
-    /// The session.
-    pub session_id: SessionId,
-}
-
-/// A session whose deletion is running; rendered at 410.
+/// A session whose irreversible deletion is running; rendered at 410.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DeletingSession {
@@ -2565,42 +2506,6 @@ pub struct EffectiveWorkspaceLimitPage {
     pub next_cursor: Option<Cursor>,
 }
 
-/// How coherent a live read has to be.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileConsistency {
-    /// Observe a single consistent generation.
-    Coherent,
-    /// Accept whatever the current generation reports.
-    BestEffort,
-}
-
-impl FileConsistency {
-    /// Every value, in declared order.
-    pub const ALL: &'static [FileConsistency] =
-        &[FileConsistency::Coherent, FileConsistency::BestEffort];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Coherent => "coherent",
-            Self::BestEffort => "best_effort",
-        }
-    }
-}
-
-/// Mint a download grant for one persisted file.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct FileDownloadRequest {
-    /// The entry to download.
-    pub path: FilePath,
-    /// An explicit bounded range.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub range: Option<ByteRange>,
-}
-
 /// One file entry, identified by its normalized POSIX path.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -2616,9 +2521,9 @@ pub struct FileEntry {
     pub sha256: Option<ContentHash>,
     /// Size in bytes.
     pub size_bytes: DecimalU128,
-    /// Link target, for symlinks.
+    /// The exact, unnormalized link text for a symlink.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<FilePath>,
+    pub target: Option<String>,
     /// What the entry is.
     pub type_: FileEntryType,
 }
@@ -2661,77 +2566,6 @@ impl FileEntryType {
             Self::File => "file",
             Self::Directory => "directory",
             Self::Symlink => "symlink",
-        }
-    }
-}
-
-/// List persisted files; an observational read that never mutates.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct FileListRequest {
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-    /// Subtree to list; defaults to the root.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<FilePath>,
-    /// Whether to descend; defaults to false.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recursive: Option<bool>,
-}
-
-/// Where a referenced file lives. Only persisted files may be attached.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileSource {
-    /// The persisted workspace tree.
-    Persisted,
-}
-
-impl FileSource {
-    /// Every value, in declared order.
-    pub const ALL: &'static [FileSource] = &[FileSource::Persisted];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Persisted => "persisted",
-        }
-    }
-}
-
-/// Stat one persisted file.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct FileStatRequest {
-    /// The entry to stat.
-    pub path: FilePath,
-}
-
-/// Whether a live read may wake a retained session.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileWakePolicy {
-    /// Wake a retained session if needed.
-    Retained,
-    /// Never wake; fail instead.
-    Never,
-}
-
-impl FileWakePolicy {
-    /// Every value, in declared order.
-    pub const ALL: &'static [FileWakePolicy] = &[FileWakePolicy::Retained, FileWakePolicy::Never];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Retained => "retained",
-            Self::Never => "never",
         }
     }
 }
@@ -2794,34 +2628,97 @@ pub enum LimitValue {
     Map(LimitMapValue),
 }
 
-/// A download grant plus what minting it did to the workspace.
+/// One exact-generation descriptor-pinned multipart download. It carries no object-store URL: every
+/// part is read directly from the retained MicroVM.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveDownloadGrant {
-    /// The grant.
-    pub grant: DownloadGrant,
-    /// What minting it did.
+pub struct LiveFileDownload {
+    /// When the descriptor is closed if the client abandons it.
+    pub expires_at: Timestamp,
+    /// The only generation that may answer.
+    pub generation_id: GenerationId,
+    /// The ephemeral download identity.
+    pub id: FileDownloadId,
+    /// How many ranged parts the SDK must fetch; zero for an empty file.
+    pub part_count: u32,
+    /// The fixed non-final range size.
+    pub part_size_bytes: u32,
+    /// Expected part ranges and hashes, ascending.
+    pub parts: Vec<LiveFileDownloadPart>,
+    /// The normalized workspace path.
+    pub path: FilePath,
+    /// The owning session.
+    pub session_id: SessionId,
+    /// The expected whole-file SHA-256.
+    pub sha256: ContentHash,
+    /// The exact whole-file size.
+    pub size_bytes: DecimalU128,
+    /// The verification position.
+    pub state: LiveFileDownloadState,
+    /// Opaque identity binding the bytes and bounded stat evidence.
+    pub version: ContentHash,
+    /// Which generation answered and whether it resumed.
     pub workspace_access: WorkspaceAccess,
 }
 
-/// Mint a download grant for one live workspace file.
+/// Close an exact live-file descriptor after the SDK verified every part and the whole hash.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LiveFileDownloadCompleteRequest {
+    /// The whole-file SHA-256 the SDK recomputed.
+    pub sha256: ContentHash,
+    /// The exact version returned at initiation.
+    pub version: ContentHash,
+}
+
+/// One fixed range and its expected digest in an exact live-file version.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LiveFileDownloadPart {
+    /// The first byte in the whole file.
+    pub offset: DecimalU128,
+    /// The one-based download part.
+    pub part_number: u32,
+    /// SHA-256 the SDK must verify before retaining the part.
+    pub sha256: ContentHash,
+    /// The exact range size.
+    pub size_bytes: u32,
+}
+
+/// Open one regular file without following a symlink, auto-resuming the same generation.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LiveFileDownloadRequest {
-    /// How coherent the read must be.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub consistency: Option<FileConsistency>,
-    /// Only read this exact generation.
+    /// Require this exact retained generation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub if_generation_id: Option<GenerationId>,
-    /// The entry to download.
+    /// The regular file to open.
     pub path: FilePath,
-    /// An explicit bounded range.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub range: Option<ByteRange>,
-    /// Whether a retained session may be woken.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wake: Option<FileWakePolicy>,
+}
+
+/// Whether an exact-version live download is still open or fully verified.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveFileDownloadState {
+    /// Parts may be read from the pinned descriptor.
+    Open,
+    /// Final re-stat and whole-file verification succeeded.
+    Verified,
+}
+
+impl LiveFileDownloadState {
+    /// Every value, in declared order.
+    pub const ALL: &'static [LiveFileDownloadState] =
+        &[LiveFileDownloadState::Open, LiveFileDownloadState::Verified];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Verified => "verified",
+        }
+    }
 }
 
 /// One live file entry plus what the read did to the workspace.
@@ -2847,13 +2744,10 @@ pub struct LiveFileEntryPage {
     pub workspace_access: WorkspaceAccess,
 }
 
-/// List live workspace files.
+/// List live workspace files, auto-resuming the same retained generation if suspended.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LiveFileListRequest {
-    /// How coherent the read must be.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub consistency: Option<FileConsistency>,
     /// Continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
@@ -2869,55 +2763,105 @@ pub struct LiveFileListRequest {
     /// Whether to descend; defaults to false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recursive: Option<bool>,
-    /// Whether a retained session may be woken.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wake: Option<FileWakePolicy>,
 }
 
-/// Stat one live workspace file.
+/// Stat one live workspace file, auto-resuming the same retained generation if suspended.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LiveFileStatRequest {
-    /// How coherent the read must be.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub consistency: Option<FileConsistency>,
     /// Only read this exact generation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub if_generation_id: Option<GenerationId>,
     /// The entry to stat.
     pub path: FilePath,
-    /// Whether a retained session may be woken.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wake: Option<FileWakePolicy>,
 }
 
-/// One MCP request header whose value comes from a workspace secret.
+/// One resumable upload held only by the session's exact MicroVM generation. Suspension retains it;
+/// termination or runtime loss destroys it.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct McpHeader {
-    /// The header name.
-    pub name: String,
-    /// The secret whose value is sent.
-    pub secret_name: ResourceName,
+pub struct LiveFileUpload {
+    /// The provider-generation expiry; never later than eight hours after launch.
+    pub expires_at: Timestamp,
+    /// The only generation that may accept it.
+    pub generation_id: GenerationId,
+    /// The ephemeral upload identity.
+    pub id: FileUploadId,
+    /// The final POSIX mode.
+    pub mode: RegisteredFileMode,
+    /// How many logical parts the file has; zero for an empty file.
+    pub part_count: u32,
+    /// The fixed non-final logical-part size.
+    pub part_size_bytes: u32,
+    /// Verified parts, ascending.
+    pub parts: Vec<LiveFileUploadPart>,
+    /// The final normalized workspace path.
+    pub path: FilePath,
+    /// The owning session.
+    pub session_id: SessionId,
+    /// The exact complete-file SHA-256.
+    pub sha256: ContentHash,
+    /// The exact complete file size.
+    pub size_bytes: DecimalU128,
+    /// The upload position.
+    pub state: LiveFileUploadState,
+    /// Which generation answered and whether it resumed.
+    pub workspace_access: WorkspaceAccess,
 }
 
-/// The only accepted MCP transport.
+/// Create or exactly replay a resumable upload in the session's retained generation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LiveFileUploadCreateRequest {
+    /// Require this exact retained generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub if_generation_id: Option<GenerationId>,
+    /// The final mode; defaults to 0644.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<RegisteredFileMode>,
+    /// The final normalized workspace path.
+    pub path: FilePath,
+    /// The exact complete-file SHA-256.
+    pub sha256: ContentHash,
+    /// The exact complete file size, at most five GiB.
+    pub size_bytes: DecimalU128,
+}
+
+/// One verified logical part retained by the exact MicroVM generation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LiveFileUploadPart {
+    /// The first byte in the complete file.
+    pub offset: DecimalU128,
+    /// The one-based logical part number.
+    pub part_number: u32,
+    /// SHA-256 of this logical part.
+    pub sha256: ContentHash,
+    /// The exact logical-part size.
+    pub size_bytes: u32,
+}
+
+/// The generation-local position of one ephemeral upload.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum McpTransport {
-    /// Streamable HTTP.
-    StreamableHttp,
+pub enum LiveFileUploadState {
+    /// Logical parts may still be written.
+    Staging,
+    /// The file was atomically published in the MicroVM.
+    Complete,
 }
 
-impl McpTransport {
+impl LiveFileUploadState {
     /// Every value, in declared order.
-    pub const ALL: &'static [McpTransport] = &[McpTransport::StreamableHttp];
+    pub const ALL: &'static [LiveFileUploadState] =
+        &[LiveFileUploadState::Staging, LiveFileUploadState::Complete];
 
     /// The wire spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::StreamableHttp => "streamable_http",
+            Self::Staging => "staging",
+            Self::Complete => "complete",
         }
     }
 }
@@ -2935,9 +2879,6 @@ pub struct Message {
     pub id: MessageId,
     /// Who produced it.
     pub role: MessageRole,
-    /// The run that produced it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<RunId>,
     /// The owning session.
     pub session_id: SessionId,
 }
@@ -2954,31 +2895,17 @@ pub struct MessagePage {
     pub next_cursor: Option<Cursor>,
 }
 
-/// One part of a message.
+/// One part of a complete message. Admission is text-only; assistant and tool messages may contain
+/// canonical built-in tool records.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MessagePart {
     /// Text.
     Text(MessagePartText),
-    /// A persisted file reference.
-    File(MessagePartFile),
-    /// A canonical tool call.
+    /// A canonical built-in tool call.
     ToolCall(MessagePartToolCall),
-    /// A canonical tool result.
+    /// A canonical built-in tool result.
     ToolResult(MessagePartToolResult),
-}
-
-/// A reference to a persisted file.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct MessagePartFile {
-    /// Declared media type.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub media_type: Option<String>,
-    /// The normalized POSIX path.
-    pub path: FilePath,
-    /// Always the persisted tree.
-    pub source: FileSource,
 }
 
 /// A text part.
@@ -2989,7 +2916,7 @@ pub struct MessagePartText {
     pub text: String,
 }
 
-/// A tool call emitted by the model.
+/// A built-in tool call emitted by the model.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessagePartToolCall {
@@ -2999,7 +2926,7 @@ pub struct MessagePartToolCall {
     pub id: ToolCallId,
 }
 
-/// The canonical result of a tool call.
+/// The canonical result of a built-in tool call.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessagePartToolResult {
@@ -3017,7 +2944,7 @@ pub enum MessageRole {
     User,
     /// The model.
     Assistant,
-    /// A tool result.
+    /// A built-in tool result.
     Tool,
 }
 
@@ -3037,25 +2964,32 @@ impl MessageRole {
     }
 }
 
-/// Admit a message and start or queue its run.
+/// Admit one text message. Omitting `maxSpendCents` selects the 1000-cent default; an explicit
+/// positive value may be higher or lower. Omitting `deadline` uses the session's remaining
+/// lifetime/drain fence; an explicit deadline may only shorten it.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessageSendRequest {
-    /// The parts.
-    pub content: Vec<MessagePart>,
-    /// Spend ceiling for the resulting run.
+    /// An earlier absolute deadline. It must be in the future and cannot exceed the session's
+    /// remaining `expiresAt`/drain fence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<Timestamp>,
+    /// The current-message spend ceiling. Omission means 1000 cents; the platform does not reserve
+    /// account funds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_spend_cents: Option<Cents>,
+    /// The complete user text.
+    pub text: String,
 }
 
-/// The admitted message and the run it started.
+/// The admitted user message and the session now processing it.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessageSendResult {
     /// The admitted message.
     pub message: Message,
-    /// The queued or started run.
-    pub run: Run,
+    /// The session with current activity populated.
+    pub session: Session,
 }
 
 /// What the guest may reach.
@@ -3200,31 +3134,6 @@ impl ProviderCredentialState {
     }
 }
 
-/// How a purge treats the session's lineage descendants.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PurgeCascade {
-    /// Clear each descendant's origin link and leave it alive.
-    DetachDescendants,
-    /// Purge the whole lineage-descendant closure.
-    PurgeClosure,
-}
-
-impl PurgeCascade {
-    /// Every value, in declared order.
-    pub const ALL: &'static [PurgeCascade] =
-        &[PurgeCascade::DetachDescendants, PurgeCascade::PurgeClosure];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::DetachDescendants => "detach_descendants",
-            Self::PurgeClosure => "purge_closure",
-        }
-    }
-}
-
 /// A registered file entry, complete.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -3336,231 +3245,6 @@ pub struct RegisteredFileValue {
     pub mount_path: FilePath,
 }
 
-/// A registered instruction entry, complete.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredInstruction {
-    /// When first written.
-    pub created_at: Timestamp,
-    /// The public identity.
-    pub name: ResourceName,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// Hash of the canonical value document.
-    pub sha256: ContentHash,
-    /// Size of the canonical value document in bytes.
-    pub size_bytes: DecimalU128,
-    /// Always current.
-    pub state: RegisteredState,
-    /// When last replaced.
-    pub updated_at: Timestamp,
-    /// The complete value.
-    pub value: RegisteredInstructionRead,
-}
-
-/// One page of registered instructions.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredInstructionPage {
-    /// The page.
-    pub items: Vec<RegisteredInstructionRow>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// What a registered instruction is, as published. It has no payload.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredInstructionRead {
-    /// The instruction text.
-    pub text: String,
-}
-
-/// One registered instruction as a collection row.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredInstructionRow {
-    /// When first written.
-    pub created_at: Timestamp,
-    /// The public identity.
-    pub name: ResourceName,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// Hash of the canonical value document.
-    pub sha256: ContentHash,
-    /// Size of the canonical value document in bytes.
-    pub size_bytes: DecimalU128,
-    /// Always current.
-    pub state: RegisteredState,
-    /// When last replaced.
-    pub updated_at: Timestamp,
-}
-
-/// A registered instruction.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredInstructionValue {
-    /// The instruction text.
-    pub text: String,
-}
-
-/// A registered MCP server entry, complete.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredMcpServer {
-    /// When first written.
-    pub created_at: Timestamp,
-    /// The public identity.
-    pub name: ResourceName,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// Hash of the canonical value document.
-    pub sha256: ContentHash,
-    /// Size of the canonical value document in bytes.
-    pub size_bytes: DecimalU128,
-    /// Always current.
-    pub state: RegisteredState,
-    /// When last replaced.
-    pub updated_at: Timestamp,
-    /// The complete value.
-    pub value: RegisteredMcpServerRead,
-}
-
-/// One page of registered MCP servers.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredMcpServerPage {
-    /// The page.
-    pub items: Vec<RegisteredMcpServerRow>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// What a registered MCP server is, as published. It has no payload, and configuration never
-/// contains a secret value.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredMcpServerRead {
-    /// Secret-backed headers.
-    pub headers: Vec<McpHeader>,
-    /// The transport.
-    pub transport: McpTransport,
-    /// The server endpoint.
-    pub url: HttpsUrl,
-}
-
-/// One registered MCP server as a collection row.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredMcpServerRow {
-    /// When first written.
-    pub created_at: Timestamp,
-    /// The public identity.
-    pub name: ResourceName,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// Hash of the canonical value document.
-    pub sha256: ContentHash,
-    /// Size of the canonical value document in bytes.
-    pub size_bytes: DecimalU128,
-    /// Always current.
-    pub state: RegisteredState,
-    /// When last replaced.
-    pub updated_at: Timestamp,
-}
-
-/// A registered MCP server. Configuration never contains a secret value.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredMcpServerValue {
-    /// Secret-backed headers.
-    pub headers: Vec<McpHeader>,
-    /// The transport.
-    pub transport: McpTransport,
-    /// The server endpoint.
-    pub url: HttpsUrl,
-}
-
-/// A registered skill entry, complete.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredSkill {
-    /// When first written.
-    pub created_at: Timestamp,
-    /// The public identity.
-    pub name: ResourceName,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// Hash of the canonical value document, not of the bundle. The bundle's own hash is
-    /// `value.bundle.sha256`.
-    pub sha256: ContentHash,
-    /// Size of the canonical value document in bytes, not of the bundle.
-    pub size_bytes: DecimalU128,
-    /// Always current.
-    pub state: RegisteredState,
-    /// When last replaced.
-    pub updated_at: Timestamp,
-    /// The complete value.
-    pub value: RegisteredSkillRead,
-}
-
-/// One page of registered skills.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredSkillPage {
-    /// The page.
-    pub items: Vec<RegisteredSkillRow>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// What a registered skill is, as published.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredSkillRead {
-    /// The stored bundle.
-    pub bundle: ContentRef,
-    /// The bundle format.
-    pub bundle_format: BundleFormat,
-    /// What the skill is for.
-    pub description: String,
-}
-
-/// One registered skill as a collection row.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredSkillRow {
-    /// When first written.
-    pub created_at: Timestamp,
-    /// The public identity.
-    pub name: ResourceName,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// Hash of the canonical value document.
-    pub sha256: ContentHash,
-    /// Size of the canonical value document in bytes.
-    pub size_bytes: DecimalU128,
-    /// Always current.
-    pub state: RegisteredState,
-    /// When last replaced.
-    pub updated_at: Timestamp,
-}
-
-/// A registered skill bundle containing `SKILL.md`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredSkillValue {
-    /// The bundle bytes.
-    pub bundle: BlobInput,
-    /// The bundle format.
-    pub bundle_format: BundleFormat,
-    /// What the skill is for.
-    pub description: String,
-}
-
 /// The only state a registered entry has; there is no version history.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -3580,92 +3264,6 @@ impl RegisteredState {
             Self::Current => "current",
         }
     }
-}
-
-/// A registered tool entry, complete.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredTool {
-    /// When first written.
-    pub created_at: Timestamp,
-    /// The public identity.
-    pub name: ResourceName,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// Hash of the canonical value document, not of the bundle. The bundle's own hash is
-    /// `value.bundle.sha256`.
-    pub sha256: ContentHash,
-    /// Size of the canonical value document in bytes, not of the bundle.
-    pub size_bytes: DecimalU128,
-    /// Always current.
-    pub state: RegisteredState,
-    /// When last replaced.
-    pub updated_at: Timestamp,
-    /// The complete value.
-    pub value: RegisteredToolRead,
-}
-
-/// One page of registered tools.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredToolPage {
-    /// The page.
-    pub items: Vec<RegisteredToolRow>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// What a registered tool is, as published.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredToolRead {
-    /// The stored bundle.
-    pub bundle: ContentRef,
-    /// The bundle format.
-    pub bundle_format: BundleFormat,
-    /// What the tool does.
-    pub description: String,
-    /// Relative entry path inside the bundle.
-    pub entry: String,
-    /// JSON Schema 2020-12 for the arguments.
-    pub input_schema: CanonicalJson,
-}
-
-/// One registered tool as a collection row.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredToolRow {
-    /// When first written.
-    pub created_at: Timestamp,
-    /// The public identity.
-    pub name: ResourceName,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// Hash of the canonical value document.
-    pub sha256: ContentHash,
-    /// Size of the canonical value document in bytes.
-    pub size_bytes: DecimalU128,
-    /// Always current.
-    pub state: RegisteredState,
-    /// When last replaced.
-    pub updated_at: Timestamp,
-}
-
-/// A registered custom tool.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegisteredToolValue {
-    /// The bundle bytes.
-    pub bundle: BlobInput,
-    /// The bundle format.
-    pub bundle_format: BundleFormat,
-    /// What the tool does.
-    pub description: String,
-    /// Relative entry path inside the bundle.
-    pub entry: String,
-    /// JSON Schema 2020-12 for the arguments.
-    pub input_schema: CanonicalJson,
 }
 
 /// Mint a download grant for a registered file.
@@ -3695,7 +3293,7 @@ pub struct ResolvedCompute {
     pub size: ComputeSize,
 }
 
-/// Everything the platform actually resolved for this session.
+/// Everything the platform resolved for this session.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ResolvedConfig {
@@ -3705,6 +3303,8 @@ pub struct ResolvedConfig {
     pub catalog_revision: String,
     /// Resolved capacity.
     pub compute: ResolvedCompute,
+    /// Immutable automatic lifecycle behavior.
+    pub lifecycle: SessionLifecyclePolicy,
     /// The exact provider-native model id.
     pub model: String,
     /// Resolved network policy.
@@ -3713,10 +3313,9 @@ pub struct ResolvedConfig {
     pub packages: Vec<PackageRequest>,
     /// The provider.
     pub provider: ProviderId,
-    /// The BYOK binding in use. Non-optional from create onward, so nothing downstream has to model
-    /// an unpinned session.
+    /// The pinned BYOK binding.
     pub provider_credential_id: ProviderCredentialId,
-    /// Resolved registered selection.
+    /// Resolved mounted files.
     pub registered: SessionRegisteredSelection,
 }
 
@@ -3728,209 +3327,31 @@ pub struct ResolvedNetwork {
     pub hands: HandsNetworkRequest,
 }
 
-/// One admitted turn of execution.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Run {
-    /// The terminal failure.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<RunFailure>,
-    /// Identity.
-    pub id: RunId,
-    /// The effective spend ceiling.
-    pub max_spend_cents: Cents,
-    /// The message that admitted it.
-    pub message_id: MessageId,
-    /// Messages it produced.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_message_ids: Option<Vec<MessageId>>,
-    /// When it was admitted.
-    pub queued_at: Timestamp,
-    /// The owning session.
-    pub session_id: SessionId,
-    /// When execution began.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub started_at: Option<Timestamp>,
-    /// Where it ended up.
-    pub status: RunStatus,
-    /// Whether the run has no recorded gaps.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub telemetry_complete: Option<bool>,
-    /// Gaps recorded during the run.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub telemetry_gap_ids: Option<Vec<TelemetryGapId>>,
-    /// When it reached a terminal status.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_at: Option<Timestamp>,
-}
-
-/// A durable run failure with no synthetic request identity.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RunFailure {
-    /// The stable public failure code.
-    pub code: ObservedErrorCode,
-    /// Typed customer-safe detail.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<CanonicalJson>,
-    /// Customer-safe failure detail.
-    pub message: String,
-    /// Whether the same run step may be retried.
-    pub retryable: bool,
-}
-
-/// One page of runs.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RunPage {
-    /// The page.
-    pub items: Vec<Run>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// Where a run ended up.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStatus {
-    /// Admitted, not started.
-    Queued,
-    /// Executing.
-    Running,
-    /// Completed normally.
-    Succeeded,
-    /// Terminal failure.
-    Failed,
-    /// Exceeded its wall bound.
-    TimedOut,
-    /// Stopped by an explicit operation.
-    Cancelled,
-    /// Lost its execution substrate.
-    Interrupted,
-}
-
-impl RunStatus {
-    /// Every value, in declared order.
-    pub const ALL: &'static [RunStatus] = &[
-        RunStatus::Queued,
-        RunStatus::Running,
-        RunStatus::Succeeded,
-        RunStatus::Failed,
-        RunStatus::TimedOut,
-        RunStatus::Cancelled,
-        RunStatus::Interrupted,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Running => "running",
-            Self::Succeeded => "succeeded",
-            Self::Failed => "failed",
-            Self::TimedOut => "timed_out",
-            Self::Cancelled => "cancelled",
-            Self::Interrupted => "interrupted",
-        }
-    }
-}
-
-/// Secret metadata. Values are write-only and never readable.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SecretMetadata {
-    /// When first written.
-    pub created_at: Timestamp,
-    /// The public identity.
-    pub name: ResourceName,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// When it was revoked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub revoked_at: Option<Timestamp>,
-    /// Whether it is admissible.
-    pub state: SecretState,
-    /// When last replaced.
-    pub updated_at: Timestamp,
-}
-
-/// One page of secret metadata.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SecretMetadataPage {
-    /// The page.
-    pub items: Vec<SecretMetadata>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// Set a secret value. The value is never returned by any read.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SecretPutRequest {
-    /// The secret value.
-    pub value: String,
-}
-
-/// A reference to a workspace secret by name. Values never appear here.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SecretRef {
-    /// The secret name.
-    pub name: ResourceName,
-}
-
-/// The receipt of a secret revocation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SecretRevocation {
-    /// The revoked secret.
-    pub name: ResourceName,
-    /// The revision after revocation.
-    pub revision: u64,
-    /// When revocation committed.
-    pub revoked_at: Timestamp,
-}
-
-/// Whether a secret may still be admitted into custody.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SecretState {
-    /// Admissible.
-    Ready,
-    /// Revoked; current custody was cancelled too.
-    Revoked,
-}
-
-impl SecretState {
-    /// Every value, in declared order.
-    pub const ALL: &'static [SecretState] = &[SecretState::Ready, SecretState::Revoked];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Ready => "ready",
-            Self::Revoked => "revoked",
-        }
-    }
-}
-
-/// A durable conversation and the workspace it owns.
+/// A multi-turn conversation backed by at most one retained provider generation. Termination
+/// destroys compute and live files but preserves this metadata and sealed messages until deletion.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Session {
-    /// What survives between runs.
-    pub continuity: WorkspaceContinuity,
-    /// When it was created.
+    /// The internal bounded deadline for the active message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_deadline: Option<Timestamp>,
+    /// The effective current-message spend ceiling: the request value, or 1000 when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_max_spend_cents: Option<Cents>,
+    /// The user message whose work is active. Absent while no message is active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_message_id: Option<MessageId>,
+    /// When metadata was created; this does not determine the provider lifetime.
     pub created_at: Timestamp,
+    /// Exactly 28,800 seconds after `launchedAt`; suspension never extends it.
+    pub expires_at: Timestamp,
     /// Identity.
     pub id: SessionId,
-    /// Immutable provenance.
-    pub lineage: SessionLineage,
+    /// When the session most recently became idle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_since: Option<Timestamp>,
+    /// When the provider generation first launched.
+    pub launched_at: Timestamp,
     /// Caller-defined labels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<BTreeMap<String, MetadataValue>>,
@@ -3940,10 +3361,35 @@ pub struct Session {
     pub revision: u64,
     /// What the session is doing.
     pub status: SessionStatus,
-    /// When it last changed.
+    /// When an idle session will automatically suspend; exactly 180 seconds after `idleSince`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspend_at: Option<Timestamp>,
+    /// When this exact generation most recently suspended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspended_at: Option<Timestamp>,
+    /// When compute and live files were permanently destroyed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminated_at: Option<Timestamp>,
+    /// Why the session permanently terminated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub termination_reason: Option<SessionTerminationReason>,
+    /// When the session last changed.
     pub updated_at: Timestamp,
     /// The owning workspace.
     pub workspace_id: WorkspaceId,
+}
+
+/// The result of cancelling the session's current work. The session is idle afterward and accepts
+/// another message.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionCancelResult {
+    /// Whether work was active and got cancelled.
+    pub changed: bool,
+    /// The session.
+    pub session_id: SessionId,
+    /// The revision after cancellation.
+    pub session_revision: u64,
 }
 
 /// The only customer compute selector.
@@ -3955,19 +3401,16 @@ pub struct SessionComputeRequest {
     pub size: Option<ComputeSize>,
 }
 
-/// Create a session. The provider and model pair is explicit and required.
+/// Create an eight-hour multi-turn session with one explicitly pinned BYOK provider credential.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionCreateRequest {
-    /// When to ask for a decision.
+    /// When to ask for a built-in tool decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_policy: Option<ApprovalPolicy>,
     /// The baseline compute shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compute: Option<SessionComputeRequest>,
-    /// Secrets to take custody of.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credentials: Option<SessionCredentials>,
     /// Caller-defined labels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<BTreeMap<String, MetadataValue>>,
@@ -3981,52 +3424,38 @@ pub struct SessionCreateRequest {
     pub packages: Option<Vec<PackageRequest>>,
     /// The direct BYOK provider.
     pub provider: ProviderId,
-    /// Which BYOK binding to use. Required: a workspace may hold several bindings for one provider,
-    /// and this route declares no ambiguity error, so an absent value could only be resolved by
-    /// guessing.
+    /// The exact BYOK binding; the platform never guesses between bindings.
     pub provider_credential_id: ProviderCredentialId,
-    /// Registered resources to mount.
+    /// Opaque workspace files to mount.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered: Option<SessionRegisteredSelection>,
 }
 
-/// Admit the durable credential-rebind operation.
+/// The immutable automatic lifecycle behavior applied to this session.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionCredentialRebindRequest {
-    /// The new custody set.
-    pub secrets: Vec<SecretRef>,
-}
-
-/// Which workspace secrets the session may hold custody of.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionCredentials {
-    /// The named secrets.
-    pub secrets: Vec<SecretRef>,
-}
-
-/// Immutable provenance. A clone records its origin exactly once.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionLineage {
-    /// The operation that cloned it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub clone_operation_id: Option<OperationId>,
-    /// The source revision cloned from.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cloned_at_persist_revision: Option<u64>,
-    /// The session this was cloned from.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin_session_id: Option<SessionId>,
+pub struct SessionLifecyclePolicy {
+    /// Idle sessions automatically suspend after exactly three minutes.
+    pub idle_suspend_after_seconds: u32,
+    /// The provider generation expires exactly eight hours after `launchedAt`.
+    pub maximum_lifetime_seconds: u32,
+    /// A live-file request automatically resumes this same suspended generation.
+    pub resume_on_live_file_access: bool,
+    /// A message automatically resumes this same suspended generation.
+    pub resume_on_message: bool,
 }
 
 /// The collection projection of a session; `resolvedConfig` is omitted.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionListItem {
-    /// When it was created.
+    /// The active user message, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_message_id: Option<MessageId>,
+    /// When metadata was created.
     pub created_at: Timestamp,
+    /// When the provider generation's eight-hour lifetime ends.
+    pub expires_at: Timestamp,
     /// Identity.
     pub id: SessionId,
     /// The model.
@@ -4037,7 +3466,7 @@ pub struct SessionListItem {
     pub revision: u64,
     /// What the session is doing.
     pub status: SessionStatus,
-    /// When it last changed.
+    /// When the session last changed.
     pub updated_at: Timestamp,
     /// The owning workspace.
     pub workspace_id: WorkspaceId,
@@ -4062,82 +3491,30 @@ pub struct SessionNetworkRequest {
     pub hands: HandsNetworkRequest,
 }
 
-/// Admit the durable persist operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionPersistRequest {
-    /// Selection globs to exclude.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exclude: Option<Vec<String>>,
-    /// Selection globs to include.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub include: Option<Vec<String>>,
-}
-
-/// The result of a persist operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionPersistResult {
-    /// Entries added.
-    pub added: DecimalU128,
-    /// Bytes written to durable content.
-    pub bytes_moved: DecimalU128,
-    /// Whether the tree actually changed.
-    pub changed: bool,
-    /// Entries removed.
-    pub deleted: DecimalU128,
-    /// When the persist committed.
-    pub last_persisted_at: Timestamp,
-    /// The revision after the persist.
-    pub persist_revision: u64,
-    /// The persisted root.
-    pub root_hash: ContentHash,
-    /// The session.
-    pub session_id: SessionId,
-    /// Entries replaced.
-    pub updated: DecimalU128,
-}
-
-/// Admit the durable purge operation. Purge is irreversible.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionPurgeRequest {
-    /// How lineage descendants are treated.
-    pub cascade: PurgeCascade,
-}
-
-/// Which registered resources the session mounts.
+/// Opaque workspace files mounted into the session. Conventional files such as `AGENTS.md` may
+/// carry guidance, skills, tool bundles, MCP configuration or custom instructions; Bash is the only
+/// built-in model tool.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionRegisteredSelection {
-    /// Registered files.
+    /// Registered files to mount.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<ResourceName>>,
-    /// Registered instructions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<Vec<ResourceName>>,
-    /// Registered MCP servers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp_servers: Option<Vec<ResourceName>>,
-    /// Registered skills.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skills: Option<Vec<ResourceName>>,
-    /// Registered tools.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<ResourceName>>,
 }
 
-/// The result of a restore operation.
+/// The result of manually resuming the same retained generation to idle.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionRestoreResult {
-    /// When the restore committed.
-    pub restored_at: Timestamp,
+pub struct SessionResumeResult {
+    /// Whether the retained generation was resumed.
+    pub changed: bool,
+    /// When the retained generation resumed.
+    pub resumed_at: Timestamp,
     /// The session.
     pub session_id: SessionId,
-    /// The revision after the restore.
+    /// The revision after resumption.
     pub session_revision: u64,
-    /// What the session is doing now.
+    /// Always `idle` after a successful resume.
     pub status: SessionStatus,
 }
 
@@ -4145,13 +3522,23 @@ pub struct SessionRestoreResult {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
-    /// No run is in flight.
+    /// Ready for another message.
     Idle,
-    /// A run is executing.
+    /// Processing the active message.
     Running,
-    /// A bound tool call is waiting on a decision.
+    /// The active message is waiting for a bound tool-call decision.
     AwaitingApproval,
-    /// A deletion operation is running.
+    /// Stopping compute while retaining this exact generation.
+    Suspending,
+    /// Compute is stopped and this exact generation may be resumed.
+    Suspended,
+    /// Restarting the retained generation.
+    Resuming,
+    /// Destroying compute and live files.
+    Terminating,
+    /// Compute and live files are gone; metadata and sealed messages remain.
+    Terminated,
+    /// Irreversible metadata deletion is in progress.
     Deleting,
 }
 
@@ -4161,6 +3548,11 @@ impl SessionStatus {
         SessionStatus::Idle,
         SessionStatus::Running,
         SessionStatus::AwaitingApproval,
+        SessionStatus::Suspending,
+        SessionStatus::Suspended,
+        SessionStatus::Resuming,
+        SessionStatus::Terminating,
+        SessionStatus::Terminated,
         SessionStatus::Deleting,
     ];
 
@@ -4171,29 +3563,91 @@ impl SessionStatus {
             Self::Idle => "idle",
             Self::Running => "running",
             Self::AwaitingApproval => "awaiting_approval",
+            Self::Suspending => "suspending",
+            Self::Suspended => "suspended",
+            Self::Resuming => "resuming",
+            Self::Terminating => "terminating",
+            Self::Terminated => "terminated",
             Self::Deleting => "deleting",
         }
     }
 }
 
-/// The result of a stop operation.
+/// The result of manually suspending an idle session's exact retained generation. Active work must
+/// be cancelled first.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionStopResult {
-    /// Whether anything was actually stopped.
+pub struct SessionSuspendResult {
+    /// Whether the session transitioned to suspended.
     pub changed: bool,
     /// The session.
     pub session_id: SessionId,
-    /// The revision after the stop.
+    /// The revision after suspension.
     pub session_revision: u64,
+    /// When the generation suspended.
+    pub suspended_at: Timestamp,
 }
 
-/// What remains of a deleted session; rendered at 410.
+/// The result of permanently destroying compute and live files while preserving session metadata
+/// and sealed messages.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionTerminateResult {
+    /// Whether live compute or files existed and were destroyed.
+    pub changed: bool,
+    /// The session.
+    pub session_id: SessionId,
+    /// The revision after termination.
+    pub session_revision: u64,
+    /// When permanent termination committed.
+    pub terminated_at: Timestamp,
+}
+
+/// Why a session permanently lost its compute and live files.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionTerminationReason {
+    /// The customer explicitly terminated it.
+    User,
+    /// The eight-hour provider lifetime ended.
+    LifetimeExpired,
+    /// Its pinned BYOK provider credential was revoked.
+    ProviderCredentialRevoked,
+    /// The owning account became paused.
+    AccountPaused,
+    /// The retained runtime was lost; crash recovery is not part of this release.
+    RuntimeLost,
+}
+
+impl SessionTerminationReason {
+    /// Every value, in declared order.
+    pub const ALL: &'static [SessionTerminationReason] = &[
+        SessionTerminationReason::User,
+        SessionTerminationReason::LifetimeExpired,
+        SessionTerminationReason::ProviderCredentialRevoked,
+        SessionTerminationReason::AccountPaused,
+        SessionTerminationReason::RuntimeLost,
+    ];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::LifetimeExpired => "lifetime_expired",
+            Self::ProviderCredentialRevoked => "provider_credential_revoked",
+            Self::AccountPaused => "account_paused",
+            Self::RuntimeLost => "runtime_lost",
+        }
+    }
+}
+
+/// The minimal marker left after irreversible deletion. Compute and live files are terminated
+/// first; session, message, Brain user-content, observation, telemetry and export payloads are
+/// removed. Independent registered workspace files and aggregate billing/audit facts remain.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionTombstone {
-    /// Whether descendants were deleted too.
-    pub cascaded: bool,
     /// When deletion committed.
     pub deleted_at: Timestamp,
     /// The deleted session.
@@ -4202,29 +3656,6 @@ pub struct SessionTombstone {
     pub operation_id: OperationId,
     /// The owning workspace.
     pub workspace_id: WorkspaceId,
-}
-
-/// The result of a trash operation. Trash starts the recovery window.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionTrashResult {
-    /// After this instant restore is refused.
-    pub recovery_deadline: Timestamp,
-    /// The session.
-    pub session_id: SessionId,
-    /// The revision after the trash.
-    pub session_revision: u64,
-    /// When the trash committed.
-    pub trashed_at: Timestamp,
-}
-
-/// Admit the durable workspace-discard operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionWorkspaceDiscardRequest {
-    /// Only discard this exact generation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub if_generation_id: Option<GenerationId>,
 }
 
 /// One staged multipart upload. Uploads are transport plumbing, not assets.
@@ -4353,35 +3784,6 @@ impl UploadState {
     }
 }
 
-/// What survives between runs, and from when.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct WorkspaceContinuity {
-    /// When the workspace was last persisted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_persisted_at: Option<Timestamp>,
-    /// The live generation, when one exists.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub live_generation_id: Option<GenerationId>,
-    /// Monotonic persist revision.
-    pub persist_revision: u64,
-    /// The persisted workspace root.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root_hash: Option<ContentHash>,
-}
-
-/// The result of a workspace-discard operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct WorkspaceDiscardResult {
-    /// Whether a live workspace was actually discarded.
-    pub changed: bool,
-    /// Continuity after the discard.
-    pub continuity: WorkspaceContinuity,
-    /// The session.
-    pub session_id: SessionId,
-}
-
 // --- usage -------------------------------------------------------
 
 /// One resource aggregate, discriminated by category.
@@ -4407,9 +3809,6 @@ pub struct UsageAttribution {
     pub operation_id: Option<OperationId>,
     /// Where the usage happened.
     pub region: Region,
-    /// The run, when attributable. Never populated by `usage_query`, as `sessionId`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<RunId>,
     /// The service-time interval.
     pub service_time: TimeRange,
     /// The session, when attributable. Never populated by `usage_query`: that route answers from a
@@ -4877,66 +4276,6 @@ pub struct RegistryFilesListQuery {
     pub limit: Option<u32>,
 }
 
-/// Query parameters of `registry_instructions_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegistryInstructionsListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-}
-
-/// Query parameters of `registry_mcp_servers_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegistryMcpServersListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-}
-
-/// Query parameters of `registry_skills_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegistrySkillsListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-}
-
-/// Query parameters of `registry_tools_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegistryToolsListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-}
-
-/// Query parameters of `secrets_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SecretsListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-}
-
 /// Query parameters of `session_approvals_list`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -4949,22 +4288,26 @@ pub struct SessionApprovalsListQuery {
     pub limit: Option<u32>,
 }
 
+/// Query parameters of `session_files_live_download_part_get`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionFilesLiveDownloadPartGetQuery {
+    /// The exact version returned when the download opened.
+    pub version: ContentHash,
+}
+
+/// Query parameters of `session_files_live_upload_part_put`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionFilesLiveUploadPartPutQuery {
+    /// SHA-256 of the complete logical part.
+    pub sha256: ContentHash,
+}
+
 /// Query parameters of `session_messages_list`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionMessagesListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-}
-
-/// Query parameters of `session_runs_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionRunsListQuery {
     /// Opaque continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,

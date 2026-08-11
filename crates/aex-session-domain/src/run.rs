@@ -8,13 +8,75 @@
 
 use std::num::NonZeroU64;
 
+use aex_internal_contracts::RunId;
 use aex_operation_domain::DeletionState;
 use aex_wire::CanonicalJson;
-use aex_wire::ids::{GenerationId, MessageId, OperationId, RunId, SessionId, TelemetryGapId};
+use aex_wire::ids::{GenerationId, MessageId, OperationId, SessionId, TelemetryGapId};
 use aex_wire::types::Timestamp;
 
 use crate::ids::{CancellationEpoch, EffectId};
 use crate::session::{Session, WorkAdmission};
+
+/// The exact public current-message spend default, in whole cents.
+pub const DEFAULT_MESSAGE_MAX_SPEND_CENTS: NonZeroU64 =
+    NonZeroU64::new(1_000).expect("the launch default is positive");
+
+/// The resolved caller-controlled bounds for one session message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedMessageBounds {
+    /// The caller's explicit positive value, or exactly 1000 when omitted.
+    pub max_spend_cents: NonZeroU64,
+    /// The caller's earlier deadline, or the session lifetime/drain fence.
+    pub deadline: Timestamp,
+}
+
+/// Why public message bounds were refused before an internal run was minted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum MessageBoundsError {
+    /// Explicit zero is never treated as omission.
+    #[error("maxSpendCents must be positive when provided")]
+    ZeroSpend,
+    /// No message may be admitted without remaining execution time.
+    #[error("the effective message deadline is not in the future")]
+    DeadlineNotInFuture,
+    /// A caller may shorten, but never extend, the session's fence.
+    #[error("the requested deadline exceeds the session lifetime or drain fence")]
+    DeadlineAfterSessionFence,
+}
+
+/// Resolves the public optional message bounds without reserving account funds.
+///
+/// `session_fence` is the earlier of the immutable provider `expiresAt` and any
+/// internal drain deadline. Omission uses that exact fence. An explicit
+/// deadline may only shorten it; an explicit positive spend cap is preserved
+/// even when it is above the launch default.
+///
+/// # Errors
+///
+/// Returns [`MessageBoundsError`] for explicit zero, an elapsed fence/deadline,
+/// or a caller deadline later than the session fence.
+pub fn resolve_message_bounds(
+    requested_spend_cents: Option<u64>,
+    requested_deadline: Option<Timestamp>,
+    now: Timestamp,
+    session_fence: Timestamp,
+) -> Result<ResolvedMessageBounds, MessageBoundsError> {
+    let max_spend_cents = match requested_spend_cents {
+        Some(value) => NonZeroU64::new(value).ok_or(MessageBoundsError::ZeroSpend)?,
+        None => DEFAULT_MESSAGE_MAX_SPEND_CENTS,
+    };
+    let deadline = requested_deadline.unwrap_or(session_fence);
+    if deadline > session_fence {
+        return Err(MessageBoundsError::DeadlineAfterSessionFence);
+    }
+    if deadline <= now {
+        return Err(MessageBoundsError::DeadlineNotInFuture);
+    }
+    Ok(ResolvedMessageBounds {
+        max_spend_cents,
+        deadline,
+    })
+}
 
 // Where a run is. The terminal outbox event carries it across a process
 // boundary, so it is owned by the contract crate both readers of that event
@@ -288,10 +350,14 @@ pub fn start(
 mod tests {
     use std::num::NonZeroU64;
 
-    use aex_wire::ids::{MessageId, PrefixedId as _, RunId, Uuid7};
+    use aex_internal_contracts::RunId;
+    use aex_wire::ids::{MessageId, PrefixedId as _, Uuid7};
     use aex_wire::types::Timestamp;
 
-    use super::{QueueRun, RunStatus, SessionDomainRunError, queue, start};
+    use super::{
+        DEFAULT_MESSAGE_MAX_SPEND_CENTS, MessageBoundsError, QueueRun, RunStatus,
+        SessionDomainRunError, queue, resolve_message_bounds, start,
+    };
     use crate::session::WorkAdmission;
     use crate::testing::session_fixture;
 
@@ -352,6 +418,44 @@ mod tests {
         assert_eq!(
             queue(run_id(), &command, &session, moment(0)),
             Err(SessionDomainRunError::DeadlineNotInFuture)
+        );
+    }
+
+    #[test]
+    fn omitted_public_bounds_resolve_to_exact_default_and_session_fence() {
+        let resolved = resolve_message_bounds(None, None, moment(1_000), moment(60_000))
+            .expect("the session has remaining time");
+        assert_eq!(resolved.max_spend_cents, DEFAULT_MESSAGE_MAX_SPEND_CENTS);
+        assert_eq!(resolved.max_spend_cents.get(), 1_000);
+        assert_eq!(resolved.deadline, moment(60_000));
+    }
+
+    #[test]
+    fn caller_may_raise_or_lower_spend_and_only_shorten_the_deadline() {
+        for cents in [1, 999, 1_001, 50_000] {
+            let resolved = resolve_message_bounds(
+                Some(cents),
+                Some(moment(30_000)),
+                moment(1_000),
+                moment(60_000),
+            )
+            .expect("positive spend and earlier deadline are caller-controlled");
+            assert_eq!(resolved.max_spend_cents.get(), cents);
+            assert_eq!(resolved.deadline, moment(30_000));
+        }
+
+        assert_eq!(
+            resolve_message_bounds(Some(0), None, moment(1_000), moment(60_000)),
+            Err(MessageBoundsError::ZeroSpend)
+        );
+        assert_eq!(
+            resolve_message_bounds(
+                Some(2_000),
+                Some(moment(60_001)),
+                moment(1_000),
+                moment(60_000),
+            ),
+            Err(MessageBoundsError::DeadlineAfterSessionFence)
         );
     }
 }

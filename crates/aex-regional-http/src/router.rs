@@ -135,7 +135,7 @@ pub fn route_owner(id: RouteId) -> Option<RouteOwner> {
     match descriptor.serving_artifact {
         "session-stream-api" => Some(match descriptor.transport {
             TransportKind::Ndjson => RouteOwner::Stream,
-            TransportKind::Unary => RouteOwner::SessionApi,
+            TransportKind::Unary | TransportKind::Binary => RouteOwner::SessionApi,
         }),
         "regional-secret-api" => Some(RouteOwner::SecretApi),
         "regional-observation-api" => Some(RouteOwner::ObservationApi),

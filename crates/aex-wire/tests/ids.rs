@@ -38,8 +38,8 @@ fn parse_as(kind: IdKind, text: &str) -> bool {
     use aex_wire::ids::{
         AgentId, ApiKeyId, ApprovalId, ExportId, GenerationId, InvitationId, MeasurementId,
         MembershipId, MessageId, ObservationId, OperationId, OrganizationId, ProviderCredentialId,
-        RunId, SessionId, StatementId, TelemetryBatchId, TelemetryGapId, ToolCallId, UploadId,
-        UserId, WorkspaceId,
+        SessionId, StatementId, TelemetryBatchId, TelemetryGapId, ToolCallId, UploadId, UserId,
+        WorkspaceId,
     };
     match kind {
         IdKind::User => UserId::parse(text).is_ok(),
@@ -51,7 +51,6 @@ fn parse_as(kind: IdKind, text: &str) -> bool {
         IdKind::ProviderCredential => ProviderCredentialId::parse(text).is_ok(),
         IdKind::Session => SessionId::parse(text).is_ok(),
         IdKind::Message => MessageId::parse(text).is_ok(),
-        IdKind::Run => RunId::parse(text).is_ok(),
         IdKind::Agent => AgentId::parse(text).is_ok(),
         IdKind::ToolCall => ToolCallId::parse(text).is_ok(),
         IdKind::Operation => OperationId::parse(text).is_ok(),

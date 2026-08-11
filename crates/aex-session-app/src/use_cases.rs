@@ -12,6 +12,7 @@
 use std::collections::BTreeSet;
 use std::num::NonZeroU64;
 
+use aex_internal_contracts::RunId;
 use aex_operation_domain::cursor::{ContinuationCursor, CursorPosition};
 use aex_operation_domain::operation::{Execution, OperationResult, OperationScope, Progress};
 use aex_operation_domain::{AdmissionOutcome, AdmitRequest, DeletionState, OperationKind};
@@ -26,7 +27,7 @@ use aex_session_domain::{
 use aex_wire::canonical::{CanonicalJson, to_jcs_string};
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
-use aex_wire::ids::{AgentId, GenerationId, MessageId, OperationId, RunId, SessionId, WorkspaceId};
+use aex_wire::ids::{AgentId, GenerationId, MessageId, OperationId, SessionId, WorkspaceId};
 use aex_wire::models::{CredentialRebindResult, SecretRef};
 use aex_wire::types::Timestamp;
 use time::Duration;

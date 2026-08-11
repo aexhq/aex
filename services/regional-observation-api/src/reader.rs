@@ -25,9 +25,7 @@ use aex_observation_query::{ObservationResume, ResumeKey, SegmentResume, Segment
 use aex_observation_store_dynamodb::expressions::{ExpressionBuilder, Index, PK, SK};
 use aex_observation_store_dynamodb::gap::decode as decode_gap;
 use aex_session_dynamodb::measure::DYNAMODB_ITEM_CEILING;
-use aex_wire::ids::{
-    ObservationId, RunId, SessionId, SpanId, TelemetryGapId, TraceId, WorkspaceId,
-};
+use aex_wire::ids::{ObservationId, SessionId, SpanId, TelemetryGapId, TraceId, WorkspaceId};
 use aex_wire::models::{Observation, ObservationSignal};
 use aex_wire::types::{DecimalU128, Timestamp};
 use aws_sdk_dynamodb::types::{AttributeValue, KeysAndAttributes};
@@ -1342,7 +1340,6 @@ impl ObservationReader {
             body,
             id,
             observed_at: time,
-            run_id: string(item, "runId").and_then(|text| text.parse::<RunId>().ok()),
             sequence: DecimalU128::new(u128::from(accepted_seq)),
             session_id: string(item, "sessionId").and_then(|text| text.parse::<SessionId>().ok()),
             signal: signal.to_wire(),

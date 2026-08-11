@@ -32,7 +32,6 @@
     { "unit": "usage-storage-worker", "package": "usage-storage-worker", "class": "property", "layer": "unit", "filterset": "all()" },
     { "unit": "usage-compute-worker", "package": "usage-compute-worker", "class": "property", "layer": "unit", "filterset": "all()" },
     { "unit": "usage-transfer-worker", "package": "usage-transfer-worker", "class": "property", "layer": "unit", "filterset": "all()" },
-    { "unit": "tool-executor", "package": "tool-executor", "class": "property", "layer": "unit", "filterset": "all()" },
     { "unit": "brain-mux", "package": "brain-mux", "class": "property", "layer": "unit", "filterset": "all()" },
     { "unit": "brain-mux", "package": "brain-mux", "class": "contract", "layer": "unit", "filterset": "all()" },
     { "unit": "hands-agent", "package": "hands-agent", "class": "property", "layer": "unit", "filterset": "all()" },

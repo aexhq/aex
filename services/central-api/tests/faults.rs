@@ -161,10 +161,6 @@ fn complete() -> BTreeMap<&'static str, String> {
             "aex/dev/identity-pepper/current".to_owned(),
         ),
         (
-            config::GITHUB_OAUTH_SECRET_ID,
-            "aex/dev/sign-in/github/current".to_owned(),
-        ),
-        (
             config::GOOGLE_OAUTH_SECRET_ID,
             "aex/dev/sign-in/google/current".to_owned(),
         ),

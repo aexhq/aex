@@ -34,10 +34,10 @@
       "type": "string"
     },
     "target": {
-      "description": "Link target, for symlinks.",
+      "description": "The exact, unnormalized link text for a symlink.",
       "maxLength": 4096,
-      "type": "string",
-      "x-aex-path": "posix"
+      "minLength": 1,
+      "type": "string"
     },
     "type": {
       "$ref": "aex:schema:FileEntryType",

@@ -1,8 +1,9 @@
 //! Black-box admission transaction and route-ownership requirements.
 
+use aex_internal_contracts::RunId;
 use aex_regional_http::idempotency::{IdentityContext, identity};
 use aex_wire::idempotency::IdempotencyKey;
-use aex_wire::ids::{MessageId, PrefixedId, RunId, SessionId, Uuid7, WorkspaceId};
+use aex_wire::ids::{MessageId, PrefixedId, SessionId, Uuid7, WorkspaceId};
 use aex_wire::routes::{RouteId, TransportKind, route};
 use aex_wire::types::HttpMethod;
 use session_stream_api::session::admission::{
@@ -19,7 +20,7 @@ fn input() -> AdmissionInput {
         workspace_id: id::<WorkspaceId>(1, 1),
         session_id: id::<SessionId>(2, 2),
         message_id: id::<MessageId>(3, 3),
-        run_id: id::<RunId>(4, 4),
+        run_id: RunId::from_uuid7(Uuid7::compose(4, [4; 10])),
         expected_revision: 17,
         deletion_epoch: 3,
         cancellation_epoch: 9,

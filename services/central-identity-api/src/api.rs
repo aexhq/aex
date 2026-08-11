@@ -276,8 +276,8 @@ fn sign_in_failure(error: &IdentityError) -> WireError {
 ///   means, and it reads the same whether the code was forged, replayed or
 ///   simply stale;
 /// * an answer this platform cannot make a person from is `invalid_request`,
-///   carrying the reason: "GitHub asserts no verified primary address" is
-///   actionable and "internal error" is not;
+///   carrying the provider's reason, which is actionable where "internal error"
+///   is not;
 /// * a provider rate limit is `rate_limited`, so a dashboard backs off against
 ///   the provider's pressure rather than retrying into it;
 /// * a provider that did not answer is `internal_error`. The route declares no
@@ -349,7 +349,6 @@ fn uuid_of(id: Uuid7) -> Uuid {
 /// Narrows the wire provider vocabulary onto the domain's.
 const fn provider_of(provider: IdentityProvider) -> Provider {
     match provider {
-        IdentityProvider::Github => Provider::Github,
         IdentityProvider::Google => Provider::Google,
     }
 }

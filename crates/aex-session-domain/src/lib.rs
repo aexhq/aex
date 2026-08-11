@@ -26,6 +26,7 @@ pub mod idempotency;
 pub mod ids;
 pub mod journal;
 pub mod lineage;
+pub mod lifecycle;
 pub mod message;
 pub mod pause;
 pub mod run;
@@ -64,6 +65,11 @@ pub use journal::{
 pub use lineage::{
     CloneFiles, CloneOutcome, CloneRequest, Lineage, Origin, PurgeCascade, detach, plan_clone,
 };
+pub use lifecycle::{
+    ActiveMessage, AutomaticTransition, IDLE_SUSPEND_AFTER_SECONDS, LifecycleError,
+    LifecycleRevision, LifecycleStatus, MAXIMUM_LIFETIME_SECONDS, ScheduledLifecycleEvent,
+    ScheduledLifecycleKind, ScheduledLifecycleOutcome, SessionLifecycle, TerminationReason,
+};
 pub use message::{
     Message, MessageDelta, MessageError, MessagePart, MessageRole, MessageState, append_part, seal,
 };
@@ -72,8 +78,9 @@ pub use pause::{
     pause_gate, project_account,
 };
 pub use run::{
-    DomainError, InterruptReason, QueueRun, Run, RunCommit, RunOutcome, RunStatus,
-    SessionDomainRunError, queue, start,
+    DEFAULT_MESSAGE_MAX_SPEND_CENTS, DomainError, InterruptReason, MessageBoundsError, QueueRun,
+    ResolvedMessageBounds, Run, RunCommit, RunOutcome, RunStatus, SessionDomainRunError, queue,
+    resolve_message_bounds, start,
 };
 pub use session::{
     MutationGuard, PinnedRuntime, PinnedRuntimeError, ResolvedConfigAuthority,

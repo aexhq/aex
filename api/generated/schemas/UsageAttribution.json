@@ -21,12 +21,6 @@
       ],
       "type": "string"
     },
-    "runId": {
-      "description": "The run, when attributable. Never populated by `usage_query`, as `sessionId`.",
-      "pattern": "^run_[0-9a-hjkmnp-tv-z]{26}$",
-      "type": "string",
-      "x-aex-id": "run"
-    },
     "serviceTime": {
       "$ref": "aex:schema:TimeRange",
       "description": "The service-time interval."

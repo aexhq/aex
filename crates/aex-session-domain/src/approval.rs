@@ -11,8 +11,9 @@
 //! result, lets the model continue, and leaves the run live.
 
 use aex_content_domain::ContentDigest;
+use aex_internal_contracts::RunId;
 use aex_wire::error::ErrorCode;
-use aex_wire::ids::{AgentId, ApprovalId, GenerationId, RunId, SessionId, ToolCallId};
+use aex_wire::ids::{AgentId, ApprovalId, GenerationId, SessionId, ToolCallId};
 use aex_wire::types::Timestamp;
 
 use aex_secret_domain::CustodyRevision;
@@ -702,7 +703,7 @@ mod tests {
 
         // Run-scoped causes need the matching run.
         let wrong_run = CancelScope {
-            run: Some(aex_wire::ids::RunId::from_uuid7(Uuid7::compose(9, [9; 10]))),
+            run: Some(RunId::from_uuid7(Uuid7::compose(9, [9; 10]))),
             ..CancelScope::UNSCOPED
         };
         assert!(

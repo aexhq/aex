@@ -956,6 +956,7 @@ dependencies = [
 name = "aex-otlp-admission"
 version = "0.1.0"
 dependencies = [
+ "aex-internal-contracts",
  "aex-observation-domain",
  "aex-wire",
  "bytes",

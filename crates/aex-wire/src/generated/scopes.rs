@@ -3,7 +3,7 @@
 //! The authorization scope registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:746909d557013ea5aaf802d74181f53b5d868f79814b0bd9389302208ad0c0f2`.
+//! `sha256:90fdf2649aa0c7151830e06eb94993aeafa67faf7c867042dbff4638af9aafba`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -69,39 +69,32 @@ pub enum ScopeId {
     /// `workspace:read` — Read the current workspace and its effective limits.
     #[serde(rename = "workspace:read")]
     WorkspaceRead,
-    /// `sessions:read` — Read sessions, messages, runs and approvals.
+    /// `sessions:read` — Read sessions, sealed messages and approvals.
     #[serde(rename = "sessions:read")]
     SessionsRead,
-    /// `sessions:write` — Create sessions, send messages, and admit session operations.
+    /// `sessions:write` — Create sessions, send messages, and cancel, suspend, resume or terminate
+    /// a session.
     #[serde(rename = "sessions:write")]
     SessionsWrite,
-    /// `sessions:delete` — Admit the durable session-deletion operation.
+    /// `sessions:delete` — Admit irreversible session deletion.
     #[serde(rename = "sessions:delete")]
     SessionsDelete,
-    /// `files:read` — Read persisted session files and mint their download grants.
-    #[serde(rename = "files:read")]
-    FilesRead,
-    /// `files:write` — Admit the persist operation.
-    #[serde(rename = "files:write")]
-    FilesWrite,
-    /// `files:live` — Read live workspace files, which may wake a retained session.
+    /// `files:live` — Access live session files, automatically resuming the same suspended
+    /// generation.
     #[serde(rename = "files:live")]
     FilesLive,
-    /// `resources:read` — Read registered files, skills, tools, instructions and MCP servers.
+    /// `resources:read` — Read registered opaque workspace files and mint their download grants.
     #[serde(rename = "resources:read")]
     ResourcesRead,
-    /// `resources:write` — Replace and delete registered resources and stage uploads.
+    /// `resources:write` — Replace and delete registered opaque workspace files and stage uploads.
     #[serde(rename = "resources:write")]
     ResourcesWrite,
-    /// `secrets:read` — Read secret metadata; values are never readable.
-    #[serde(rename = "secrets:read")]
-    SecretsRead,
-    /// `secrets:write` — Set and delete secrets and register provider credentials.
-    #[serde(rename = "secrets:write")]
-    SecretsWrite,
-    /// `secrets:revoke` — Revoke a secret, cancelling current custody.
-    #[serde(rename = "secrets:revoke")]
-    SecretsRevoke,
+    /// `provider_credentials:read` — Read dedicated BYOK provider-credential binding metadata.
+    #[serde(rename = "provider_credentials:read")]
+    ProviderCredentialsRead,
+    /// `provider_credentials:write` — Register and revoke dedicated BYOK provider credentials.
+    #[serde(rename = "provider_credentials:write")]
+    ProviderCredentialsWrite,
     /// `telemetry:read` — Query observations, gaps and exports.
     #[serde(rename = "telemetry:read")]
     TelemetryRead,
@@ -133,14 +126,11 @@ impl ScopeId {
         ScopeId::SessionsRead,
         ScopeId::SessionsWrite,
         ScopeId::SessionsDelete,
-        ScopeId::FilesRead,
-        ScopeId::FilesWrite,
         ScopeId::FilesLive,
         ScopeId::ResourcesRead,
         ScopeId::ResourcesWrite,
-        ScopeId::SecretsRead,
-        ScopeId::SecretsWrite,
-        ScopeId::SecretsRevoke,
+        ScopeId::ProviderCredentialsRead,
+        ScopeId::ProviderCredentialsWrite,
         ScopeId::TelemetryRead,
         ScopeId::TelemetryWrite,
     ];
@@ -169,14 +159,11 @@ impl ScopeId {
             Self::SessionsRead => "sessions:read",
             Self::SessionsWrite => "sessions:write",
             Self::SessionsDelete => "sessions:delete",
-            Self::FilesRead => "files:read",
-            Self::FilesWrite => "files:write",
             Self::FilesLive => "files:live",
             Self::ResourcesRead => "resources:read",
             Self::ResourcesWrite => "resources:write",
-            Self::SecretsRead => "secrets:read",
-            Self::SecretsWrite => "secrets:write",
-            Self::SecretsRevoke => "secrets:revoke",
+            Self::ProviderCredentialsRead => "provider_credentials:read",
+            Self::ProviderCredentialsWrite => "provider_credentials:write",
             Self::TelemetryRead => "telemetry:read",
             Self::TelemetryWrite => "telemetry:write",
         }

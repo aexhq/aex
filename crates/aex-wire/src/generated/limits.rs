@@ -3,7 +3,7 @@
 //! The effective-limit registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:746909d557013ea5aaf802d74181f53b5d868f79814b0bd9389302208ad0c0f2`.
+//! `sha256:90fdf2649aa0c7151830e06eb94993aeafa67faf7c867042dbff4638af9aafba`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -58,18 +58,12 @@ pub enum LimitId {
     /// `metric.aggregate` — Interval, grouping, calculation, bucket and row aggregation bounds.
     #[serde(rename = "metric.aggregate")]
     MetricAggregate,
-    /// `content.bundle_expand` — Expanded bytes, entries and path length admitted from a bundle.
-    #[serde(rename = "content.bundle_expand")]
-    ContentBundleExpand,
     /// `registry.entries` — Registered names one workspace may hold in one registry.
     #[serde(rename = "registry.entries")]
     RegistryEntries,
     /// `registry.value_bytes` — Largest canonical value document a registered name may carry.
     #[serde(rename = "registry.value_bytes")]
     RegistryValueBytes,
-    /// `tools.io_safety` — Per-tool byte, traversal and listing safety bounds.
-    #[serde(rename = "tools.io_safety")]
-    ToolsIoSafety,
     /// `telemetry.export` — Concurrent non-terminal telemetry exports per workspace, and the widest
     /// observation-time window one export may cover. A cost guard rather than a correctness guard:
     /// the active count is read eventually consistently, so a race may admit one or two over the
@@ -92,10 +86,8 @@ impl LimitId {
         LimitId::QueryPage,
         LimitId::StreamFrame,
         LimitId::MetricAggregate,
-        LimitId::ContentBundleExpand,
         LimitId::RegistryEntries,
         LimitId::RegistryValueBytes,
-        LimitId::ToolsIoSafety,
         LimitId::TelemetryExport,
     ];
 
@@ -113,10 +105,8 @@ impl LimitId {
             Self::QueryPage => "query.page",
             Self::StreamFrame => "stream.frame",
             Self::MetricAggregate => "metric.aggregate",
-            Self::ContentBundleExpand => "content.bundle_expand",
             Self::RegistryEntries => "registry.entries",
             Self::RegistryValueBytes => "registry.value_bytes",
-            Self::ToolsIoSafety => "tools.io_safety",
             Self::TelemetryExport => "telemetry.export",
         }
     }
@@ -135,10 +125,8 @@ impl LimitId {
             Self::QueryPage => LimitShape::Map,
             Self::StreamFrame => LimitShape::Map,
             Self::MetricAggregate => LimitShape::Map,
-            Self::ContentBundleExpand => LimitShape::Map,
             Self::RegistryEntries => LimitShape::Scalar,
             Self::RegistryValueBytes => LimitShape::Scalar,
-            Self::ToolsIoSafety => LimitShape::Map,
             Self::TelemetryExport => LimitShape::Map,
         }
     }
@@ -184,18 +172,8 @@ impl LimitId {
                 "buckets_per_series",
                 "rows",
             ],
-            Self::ContentBundleExpand => &["expanded_bytes", "entries", "path_bytes"],
             Self::RegistryEntries => &[],
             Self::RegistryValueBytes => &[],
-            Self::ToolsIoSafety => &[
-                "web_fetch_bytes",
-                "shell_output_bytes",
-                "grep_input_bytes",
-                "head_tail_input_bytes",
-                "walk_files",
-                "list_entries",
-                "list_depth",
-            ],
             Self::TelemetryExport => &["active", "window_days"],
         }
     }

@@ -69,48 +69,36 @@
       "scope": "workspace:read"
     },
     {
-      "description": "Read sessions, messages, runs and approvals.",
+      "description": "Read sessions, sealed messages and approvals.",
       "scope": "sessions:read"
     },
     {
-      "description": "Create sessions, send messages, and admit session operations.",
+      "description": "Create sessions, send messages, and cancel, suspend, resume or terminate a session.",
       "scope": "sessions:write"
     },
     {
-      "description": "Admit the durable session-deletion operation.",
+      "description": "Admit irreversible session deletion.",
       "scope": "sessions:delete"
     },
     {
-      "description": "Read persisted session files and mint their download grants.",
-      "scope": "files:read"
-    },
-    {
-      "description": "Admit the persist operation.",
-      "scope": "files:write"
-    },
-    {
-      "description": "Read live workspace files, which may wake a retained session.",
+      "description": "Access live session files, automatically resuming the same suspended generation.",
       "scope": "files:live"
     },
     {
-      "description": "Read registered files, skills, tools, instructions and MCP servers.",
+      "description": "Read registered opaque workspace files and mint their download grants.",
       "scope": "resources:read"
     },
     {
-      "description": "Replace and delete registered resources and stage uploads.",
+      "description": "Replace and delete registered opaque workspace files and stage uploads.",
       "scope": "resources:write"
     },
     {
-      "description": "Read secret metadata; values are never readable.",
-      "scope": "secrets:read"
+      "description": "Read dedicated BYOK provider-credential binding metadata.",
+      "scope": "provider_credentials:read"
     },
     {
-      "description": "Set and delete secrets and register provider credentials.",
-      "scope": "secrets:write"
-    },
-    {
-      "description": "Revoke a secret, cancelling current custody.",
-      "scope": "secrets:revoke"
+      "description": "Register and revoke dedicated BYOK provider credentials.",
+      "scope": "provider_credentials:write"
     },
     {
       "description": "Query observations, gaps and exports.",

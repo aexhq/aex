@@ -913,10 +913,10 @@ struct OperationEntry {
     success: Option<String>,
     /// Declared error codes.
     errors: Vec<String>,
-    /// `none`, `aex_json` or `otlp`.
+    /// `none`, `aex_json`, `otlp` or `binary`.
     #[serde(default)]
     body_class: Option<String>,
-    /// `unary` or `ndjson`.
+    /// `unary`, `ndjson` or `binary`.
     #[serde(default)]
     transport: Option<String>,
     /// `none`, `returns`, `optional_if_match` or `required_if_match`.
@@ -936,9 +936,9 @@ struct OperationEntry {
 /// The closed idempotency vocabulary.
 const IDEMPOTENCY_KINDS: [&str; 3] = ["none", "idempotency_key", "operation_id"];
 /// The closed body-class vocabulary.
-const BODY_CLASSES: [&str; 3] = ["none", "aex_json", "otlp"];
+const BODY_CLASSES: [&str; 4] = ["none", "aex_json", "otlp", "binary"];
 /// The closed transport vocabulary.
-const TRANSPORTS: [&str; 2] = ["unary", "ndjson"];
+const TRANSPORTS: [&str; 3] = ["unary", "ndjson", "binary"];
 /// The closed entity-tag vocabulary.
 const ETAG_POLICIES: [&str; 4] = ["none", "returns", "optional_if_match", "required_if_match"];
 /// The closed principal vocabulary.
@@ -1323,6 +1323,11 @@ fn build_operation(
     if !BODY_CLASSES.contains(&body_class.as_str()) {
         return Err(bad(format!("unknown body class `{body_class}`")));
     }
+    if (body_class == "aex_json") != entry.request.is_some() {
+        return Err(bad(
+            "exactly an `aex_json` body class declares a request schema".to_owned(),
+        ));
+    }
     let transport = entry
         .transport
         .clone()
@@ -1374,8 +1379,14 @@ fn build_operation(
         entry
             .success_status
             .unwrap_or(if entry.success.is_some() { 200 } else { 204 });
-    if entry.success.is_none() && success_status != 204 {
+    if transport != "binary" && entry.success.is_none() && success_status != 204 {
         return Err(bad("a bodyless success must be 204".to_owned()));
+    }
+    if transport == "binary" && (entry.success.is_some() || success_status != 200) {
+        return Err(bad(
+            "a binary transport is a bodyless-schema `200 application/octet-stream` success"
+                .to_owned(),
+        ));
     }
     if success_status == 204 && entry.success.is_some() {
         return Err(bad("a 204 declares no success schema".to_owned()));

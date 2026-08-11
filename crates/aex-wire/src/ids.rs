@@ -3,13 +3,13 @@
 //! grammars (resource names, file paths, content hashes, W3C trace and span
 //! ids, workspace API keys).
 //!
-//! The 23 concrete id newtypes and the [`IdKind`] enum are generated from
+//! The concrete id newtypes and the [`IdKind`] enum are generated from
 //! `api/schemas/registries/ids.yaml` into `src/generated/ids.rs`; this module
 //! owns everything they are built from.
 //!
 //! Two properties matter more than the encoding itself. A valid id of one kind
-//! never parses as another, so a `SessionId` cannot be passed where a `RunId` is
-//! expected even through JSON. And the encoder never allocates: [`IdText`] is a
+//! never parses as another, so a `SessionId` cannot be passed where a `MessageId`
+//! is expected even through JSON. And the encoder never allocates: [`IdText`] is a
 //! stack buffer, because id rendering happens on every log line and every
 //! `DynamoDB` key.
 
@@ -19,10 +19,10 @@ use std::str::FromStr;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub use crate::generated::ids::{
-    AgentId, ApiKeyId, ApprovalId, ExportId, GenerationId, IdKind, InvitationId, MeasurementId,
-    MembershipId, MessageId, ObservationId, OperationId, OrganizationId, ProviderCredentialId,
-    RunId, SessionId, StatementId, TelemetryBatchId, TelemetryGapId, ToolCallId, UploadId, UserId,
-    WorkspaceId,
+    AgentId, ApiKeyId, ApprovalId, ExportId, FileDownloadId, FileUploadId, GenerationId, IdKind,
+    InvitationId, MeasurementId, MembershipId, MessageId, ObservationId, OperationId,
+    OrganizationId, ProviderCredentialId, SessionId, StatementId, TelemetryBatchId, TelemetryGapId,
+    ToolCallId, UploadId, UserId, WorkspaceId,
 };
 use crate::types::{Region, ValueError, from_str_field};
 

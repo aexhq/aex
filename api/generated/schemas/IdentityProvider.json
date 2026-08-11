@@ -3,7 +3,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "An external sign-in provider AEX links a person to.",
   "enum": [
-    "github",
     "google"
   ],
   "title": "IdentityProvider",

@@ -376,22 +376,11 @@ fn builtin_catalog_preserves_the_clean_cut_and_runtime_semantics() {
         .iter()
         .map(|entry| entry.descriptor.name.as_str())
         .collect::<Vec<_>>();
-    assert!(!names.is_empty(), "the built-in catalog has launch tools");
-    for retired in [
-        "skills",
-        "head",
-        "tail",
-        "wc",
-        "ls",
-        "subagent",
-        "subagent_result",
-        "code_execution",
-    ] {
-        assert!(
-            !names.contains(&retired),
-            "retired alias `{retired}` survived"
-        );
-    }
+    assert_eq!(
+        names,
+        ["bash"],
+        "Bash is the complete public built-in catalog"
+    );
 
     for entry in entries.iter().filter(|entry| {
         matches!(
@@ -408,19 +397,14 @@ fn builtin_catalog_preserves_the_clean_cut_and_runtime_semantics() {
         );
     }
 
-    let run_command = entries
-        .iter()
-        .find(|entry| entry.descriptor.name.as_str() == "run_command")
-        .expect("run_command descriptor");
-    assert_eq!(run_command.descriptor.variants.len(), 2);
+    let bash = &entries[0];
+    assert!(bash.descriptor.variants.is_empty());
+    assert_eq!(bash.descriptor.effect, EffectClass::NonReplayable);
     assert_eq!(
-        run_command.descriptor.variants[0].effect,
-        EffectClass::NonReplayable
+        bash.descriptor.recovery,
+        RecoveryClass::InterruptOnAmbiguity
     );
-    assert_eq!(
-        run_command.descriptor.variants[1].effect,
-        EffectClass::DurableDetached
-    );
+    assert_eq!(bash.descriptor.boundary, ToolBoundary::HandsDevelopment);
 
     let bytes = builtin_catalog_bytes().expect("catalog canonicalizes");
     let digest = hash(&bytes).to_string();
@@ -434,41 +418,42 @@ fn builtin_catalog_preserves_the_clean_cut_and_runtime_semantics() {
 #[test]
 fn generated_argument_contracts_reject_hostile_shapes() {
     let entries = builtin_entries().expect("compiled catalog");
-    let create = entries
+    let bash = entries
         .iter()
-        .find(|entry| entry.descriptor.name.as_str() == "create_subagent")
-        .expect("create_subagent descriptor");
+        .find(|entry| entry.descriptor.name.as_str() == "bash")
+        .expect("bash descriptor");
 
     for invalid in [
-        serde_json::json!({"prompt":"work","model":"only-model"}),
-        serde_json::json!({"prompt":"work","provider":"openai"}),
-        serde_json::json!({"prompt":"work","unexpected":true}),
+        serde_json::json!({}),
+        serde_json::json!({"command":""}),
+        serde_json::json!({"command":"true","background":true}),
+        serde_json::json!({"command":"true","unexpected":true}),
     ] {
         assert!(matches!(
-            validate_arguments(create, &invalid),
+            validate_arguments(bash, &invalid),
             Err(ArgumentError::Schema { .. })
         ));
     }
     for valid in [
-        serde_json::json!({"prompt":"work"}),
-        serde_json::json!({"prompt":"work","provider":"openai","model":"gpt-test"}),
+        serde_json::json!({"command":"true"}),
+        serde_json::json!({"command":"pwd","cwd":"/workspace","timeoutMs":1000}),
     ] {
-        validate_arguments(create, &valid).expect("valid provider/model pairing");
+        validate_arguments(bash, &valid).expect("valid attached Bash command");
     }
 }
 
 #[test]
-fn run_command_effect_is_selected_from_validated_arguments() {
+fn bash_is_one_attached_non_replayable_effect() {
     let entries = builtin_entries().expect("compiled catalog");
-    let run = entries
+    let bash = entries
         .iter()
-        .find(|entry| entry.descriptor.name.as_str() == "run_command")
-        .expect("run_command descriptor");
+        .find(|entry| entry.descriptor.name.as_str() == "bash")
+        .expect("bash descriptor");
 
-    let attached = validate_arguments(run, &serde_json::json!({"command":"true"}))
-        .expect("attached command validates");
+    let attached = validate_arguments(bash, &serde_json::json!({"command":"true"}))
+        .expect("Bash command validates");
     assert_eq!(
-        select_effect(run, &attached).expect("attached variant"),
+        select_effect(bash, &attached).expect("single effect"),
         (
             EffectClass::NonReplayable,
             RecoveryClass::InterruptOnAmbiguity,
@@ -476,22 +461,11 @@ fn run_command_effect_is_selected_from_validated_arguments() {
         )
     );
 
-    let detached = validate_arguments(
-        run,
-        &serde_json::json!({"argv":["sleep","1"],"background":true}),
-    )
-    .expect("detached command validates");
-    assert_eq!(
-        select_effect(run, &detached).expect("detached variant"),
-        (
-            EffectClass::DurableDetached,
-            RecoveryClass::QueryDurableOperation,
-            43_200_000
-        )
-    );
-
     assert!(matches!(
-        validate_arguments(run, &serde_json::json!({"command":"true","argv":["true"]})),
+        validate_arguments(
+            bash,
+            &serde_json::json!({"command":"true","background":true})
+        ),
         Err(ArgumentError::Schema { .. })
     ));
 }
@@ -591,8 +565,8 @@ fn submit_result_digest_is_canonical_and_budgeted_without_truncation() {
 fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
     let entries = builtin_entries().expect("compiled catalog");
     let executors = ready_executors();
-    let capabilities = CapabilitySet::new([("hands.browser", 1)]);
-    let secrets = ResolvedSecretNames::new(["aex_web_search"]).expect("secret names");
+    let capabilities = CapabilitySet::default();
+    let secrets = ResolvedSecretNames::default();
     let advertised = advertise(ReadinessInput {
         entries: &entries,
         executors: &executors,
@@ -606,9 +580,8 @@ fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
         assert!(advertised.contains(entry.descriptor.name.as_str()));
     }
 
-    // No built-in is withheld for want of a customer key. Platform tools are
-    // platform-paid, so an empty resolved-secret set changes nothing: the whole
-    // compiled surface is still advertised, `web_search` included.
+    // Bash uses only the authenticated session endpoint. No public built-in is
+    // withheld for a workspace secret or optional hosted-tool capability.
     let no_secrets = ResolvedSecretNames::default();
     let advertised = advertise(ReadinessInput {
         entries: &entries,
@@ -623,10 +596,8 @@ fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
         let name = entry.descriptor.name.as_str();
         assert!(advertised.contains(name), "{name}");
     }
-    assert!(
-        advertised.contains("web_search"),
-        "web_search is platform-paid and survives an empty workspace-secret set"
-    );
+    assert_eq!(advertised.entries.len(), 1);
+    assert!(advertised.contains("bash"));
     assert!(
         entries.iter().all(|entry| !matches!(
             entry.descriptor.credential,
@@ -662,11 +633,11 @@ fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
 #[test]
 fn advertisement_fails_closed_on_ambiguous_missing_and_duplicate_routes() {
     let entries = builtin_entries().expect("compiled catalog");
-    let capabilities = CapabilitySet::new([("hands.browser", 1)]);
-    let secrets = ResolvedSecretNames::new(["aex_web_search"]).expect("secret names");
+    let capabilities = CapabilitySet::default();
+    let secrets = ResolvedSecretNames::default();
 
     let mut ambiguous = ready_executors();
-    ambiguous.declare_ready(ExecutorRoute::ManagedWeb);
+    ambiguous.declare_ready(ExecutorRoute::HandsDevelopment);
     assert!(matches!(
         advertise(ReadinessInput {
             entries: &entries,
@@ -677,14 +648,14 @@ fn advertisement_fails_closed_on_ambiguous_missing_and_duplicate_routes() {
             approval_required: &[],
         }),
         Err(ReadinessFailure::AmbiguousRoute {
-            route: ExecutorRoute::ManagedWeb,
+            route: ExecutorRoute::HandsDevelopment,
             candidates: 2,
             ..
         })
     ));
 
     let mut missing = ready_executors();
-    missing.remove(ExecutorRoute::ManagedWeb);
+    missing.remove(ExecutorRoute::HandsDevelopment);
     assert!(matches!(
         advertise(ReadinessInput {
             entries: &entries,
@@ -695,7 +666,7 @@ fn advertisement_fails_closed_on_ambiguous_missing_and_duplicate_routes() {
             approval_required: &[],
         }),
         Err(ReadinessFailure::NoReadyExecutor {
-            route: ExecutorRoute::ManagedWeb,
+            route: ExecutorRoute::HandsDevelopment,
             ..
         })
     ));
@@ -719,18 +690,17 @@ fn advertisement_fails_closed_on_ambiguous_missing_and_duplicate_routes() {
 fn selection_and_approval_names_are_total() {
     let entries = builtin_entries().expect("compiled catalog");
     let executors = ready_executors();
-    let capabilities = CapabilitySet::new([("hands.browser", 1)]);
-    let secrets = ResolvedSecretNames::new(["aex_web_search"]).expect("secret names");
-    let selection = BuiltinSelection::Exact(vec![
-        ToolName::parse("todo_read").expect("fixture tool name"),
-    ]);
+    let capabilities = CapabilitySet::default();
+    let secrets = ResolvedSecretNames::default();
+    let selection =
+        BuiltinSelection::Exact(vec![ToolName::parse("bash").expect("fixture tool name")]);
     let advertised = advertise(ReadinessInput {
         entries: &entries,
         executors: &executors,
         capabilities: &capabilities,
         secrets: &secrets,
         selection: &selection,
-        approval_required: &["todo_read"],
+        approval_required: &["bash"],
     })
     .expect("exact selection");
     assert_eq!(advertised.entries.len(), 1);

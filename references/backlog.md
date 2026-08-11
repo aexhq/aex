@@ -14,6 +14,27 @@ related:
 
 # Public repository backlog
 
+## GitHub browser sign-in
+
+Launch browser sign-in is Google-only. GitHub login is deferred rather than
+shipped dormant: `github` is not a public `IdentityProvider`, the dashboard does
+not advertise or accept it, and neither central deployable loads a GitHub OAuth
+credential. Repository hosting, Actions, release provenance, and other GitHub
+integration are unrelated and remain supported.
+
+Revisit this when customer demand justifies a second login provider and separate
+dev and production GitHub OAuth Apps are ready with the exact dashboard callback
+for each plane. Reimplementation is a coordinated contract and deployment
+change: restore the provider in the identity schema and generated Rust and
+TypeScript wire models; widen the identity-domain and database provider
+constraints; add the dashboard authorization option and provider-specific start
+parameters; restore the server-side code redemption and verified-primary-email
+profile read; add one GitHub client secret binding, capability declaration, IAM
+grant, and startup probe to both central deployables; bind only the public client
+ID in each dashboard environment; and restore focused unit, composition, and
+callback tests. Do not add only the button or only the secret: the provider is
+available when that whole vertical slice is deployable in both planes.
+
 ## Asynchronous supply-chain assurance
 
 Dependency audits, licence inventory, packaged-artifact SBOM generation, and

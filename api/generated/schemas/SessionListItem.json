@@ -4,8 +4,20 @@
   "additionalProperties": false,
   "description": "The collection projection of a session; `resolvedConfig` is omitted.",
   "properties": {
+    "activeMessageId": {
+      "description": "The active user message, when any.",
+      "pattern": "^msg_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "message"
+    },
     "createdAt": {
-      "description": "When it was created.",
+      "description": "When metadata was created.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "expiresAt": {
+      "description": "When the provider generation's eight-hour lifetime ends.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
@@ -37,7 +49,7 @@
       "description": "What the session is doing."
     },
     "updatedAt": {
-      "description": "When it last changed.",
+      "description": "When the session last changed.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
@@ -51,6 +63,7 @@
   },
   "required": [
     "createdAt",
+    "expiresAt",
     "id",
     "model",
     "provider",

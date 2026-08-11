@@ -14,21 +14,18 @@ use uuid::Uuid;
 /// Which identity provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Provider {
-    /// GitHub.
-    Github,
     /// Google.
     Google,
 }
 
 impl Provider {
     /// Every provider.
-    pub const ALL: [Self; 2] = [Self::Github, Self::Google];
+    pub const ALL: [Self; 1] = [Self::Google];
 
     /// The database spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Github => "github",
             Self::Google => "google",
         }
     }
@@ -159,14 +156,14 @@ mod tests {
             id: Uuid::from_u128(id),
             user_id: Uuid::from_u128(user),
             provider,
-            provider_account_id: ProviderAccountId::parse("12345").expect("valid"),
+            provider_account_id: ProviderAccountId::parse(&id.to_string()).expect("valid"),
             linked_at: OffsetDateTime::UNIX_EPOCH,
         }
     }
 
     #[test]
     fn the_last_link_survives_unless_the_email_is_verified() {
-        let links = vec![link(1, 9, Provider::Github)];
+        let links = vec![link(1, 9, Provider::Google)];
         assert_eq!(
             may_unlink(&links, Uuid::from_u128(9), false, Uuid::from_u128(1)),
             Err(UnlinkDenied::LastCredential)
@@ -179,7 +176,7 @@ mod tests {
 
     #[test]
     fn another_link_is_enough() {
-        let links = vec![link(1, 9, Provider::Github), link(2, 9, Provider::Google)];
+        let links = vec![link(1, 9, Provider::Google), link(2, 9, Provider::Google)];
         assert_eq!(
             may_unlink(&links, Uuid::from_u128(9), false, Uuid::from_u128(1)),
             Ok(())
@@ -188,7 +185,7 @@ mod tests {
 
     #[test]
     fn a_link_belonging_to_somebody_else_is_never_unlinkable() {
-        let links = vec![link(1, 9, Provider::Github), link(2, 8, Provider::Google)];
+        let links = vec![link(1, 9, Provider::Google), link(2, 8, Provider::Google)];
         assert_eq!(
             may_unlink(&links, Uuid::from_u128(9), true, Uuid::from_u128(2)),
             Err(UnlinkDenied::NotOwned)

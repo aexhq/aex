@@ -1,0 +1,14 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionTerminationReason.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Why a session permanently lost its compute and live files.",
+  "enum": [
+    "user",
+    "lifetime_expired",
+    "provider_credential_revoked",
+    "account_paused",
+    "runtime_lost"
+  ],
+  "title": "SessionTerminationReason",
+  "type": "string"
+}

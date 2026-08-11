@@ -332,6 +332,9 @@ fn accept_kind(headers: &HeaderMap) -> aex_wire::server::AcceptKind {
         Some(value) if value.contains("application/x-ndjson") => {
             aex_wire::server::AcceptKind::Ndjson
         }
+        Some(value) if value.contains("application/octet-stream") => {
+            aex_wire::server::AcceptKind::Binary
+        }
         Some(value) if value.contains("application/pdf") => aex_wire::server::AcceptKind::Pdf,
         _ => aex_wire::server::AcceptKind::Json,
     }

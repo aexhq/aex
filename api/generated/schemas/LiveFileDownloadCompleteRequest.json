@@ -1,0 +1,24 @@
+{
+  "$id": "https://schemas.aex.dev/v1/LiveFileDownloadCompleteRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Close an exact live-file descriptor after the SDK verified every part and the whole hash.",
+  "properties": {
+    "sha256": {
+      "description": "The whole-file SHA-256 the SDK recomputed.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The exact version returned at initiation.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sha256",
+    "version"
+  ],
+  "title": "LiveFileDownloadCompleteRequest",
+  "type": "object"
+}

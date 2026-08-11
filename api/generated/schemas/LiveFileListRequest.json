@@ -2,12 +2,8 @@
   "$id": "https://schemas.aex.dev/v1/LiveFileListRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "List live workspace files.",
+  "description": "List live workspace files, auto-resuming the same retained generation if suspended.",
   "properties": {
-    "consistency": {
-      "$ref": "aex:schema:FileConsistency",
-      "description": "How coherent the read must be."
-    },
     "cursor": {
       "description": "Continuation token.",
       "maxLength": 4096,
@@ -35,10 +31,6 @@
     "recursive": {
       "description": "Whether to descend; defaults to false.",
       "type": "boolean"
-    },
-    "wake": {
-      "$ref": "aex:schema:FileWakePolicy",
-      "description": "Whether a retained session may be woken."
     }
   },
   "required": [],

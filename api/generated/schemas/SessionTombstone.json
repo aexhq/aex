@@ -2,12 +2,8 @@
   "$id": "https://schemas.aex.dev/v1/SessionTombstone.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "What remains of a deleted session; rendered at 410.",
+  "description": "The minimal marker left after irreversible deletion. Compute and live files are terminated first; session, message, Brain user-content, observation, telemetry and export payloads are removed. Independent registered workspace files and aggregate billing/audit facts remain.",
   "properties": {
-    "cascaded": {
-      "description": "Whether descendants were deleted too.",
-      "type": "boolean"
-    },
     "deletedAt": {
       "description": "When deletion committed.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
@@ -34,7 +30,6 @@
     }
   },
   "required": [
-    "cascaded",
     "deletedAt",
     "id",
     "operationId",

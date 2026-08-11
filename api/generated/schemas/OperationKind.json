@@ -3,13 +3,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Every durable operation the platform admits.",
   "enum": [
-    "session_stop",
-    "session_persist",
-    "workspace_discard",
-    "session_trash",
-    "session_restore",
-    "session_purge",
-    "credential_rebind",
+    "session_cancel",
+    "session_suspend",
+    "session_resume",
+    "session_terminate",
+    "session_delete",
     "telemetry_export",
     "workspace_delete"
   ],

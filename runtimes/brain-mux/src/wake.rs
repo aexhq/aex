@@ -1406,11 +1406,11 @@ mod tests {
     fn catalog_hydration_advertises_only_exact_supported_rows_in_durable_order() {
         let pin = CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"));
         let tools = ProductionToolExecutors {
-            brain_inline: Some(Arc::new(crate::inline_tools::BrainControlExecutor)),
+            brain_inline: None,
             managed_web: None,
             tool_exec: None,
             mcp: None,
-            hands: None,
+            hands: Some(Arc::new(NeverExecutor)),
         }
         .compose([
             pin,
@@ -1424,28 +1424,28 @@ mod tests {
                 .iter()
                 .map(|tool| tool.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["todo_read", "todo_write"]
+            vec!["bash"]
         );
-        assert!(advertised.parallel_safe);
+        assert!(!advertised.parallel_safe);
         assert!(matches!(
             tools.route(&pin, &ToolName::parse("wait").expect("name")),
             Err(aex_brain_app::ports::ToolRoutingError::NotAdmitted { .. })
         ));
         assert!(matches!(
-            tools.route(&pin, &ToolName::parse("read_file").expect("name")),
+            tools.route(&pin, &ToolName::parse("web_search").expect("name")),
             Err(aex_brain_app::ports::ToolRoutingError::NotAdmitted { .. })
         ));
     }
 
     #[test]
-    fn optional_authority_never_becomes_an_advertised_call_time_fallback() {
+    fn deferred_authorities_never_reappear_in_the_bash_only_catalog() {
         let pin = CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"));
         let tools = ProductionToolExecutors {
             brain_inline: Some(Arc::new(crate::inline_tools::BrainControlExecutor)),
             managed_web: Some(Arc::new(NeverExecutor)),
             tool_exec: Some(Arc::new(NeverExecutor)),
             mcp: None,
-            hands: None,
+            hands: Some(Arc::new(NeverExecutor)),
         }
         .compose([pin])
         .expect("optional authorities are filtered before installation");
@@ -1455,21 +1455,15 @@ mod tests {
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<Vec<_>>();
-        assert!(names.contains(&"web_fetch"));
-        // `web_search` is platform-paid and has its own executor route. It does
-        // not share the workspace-managed `web_fetch` custody path.
-        assert!(names.contains(&"web_search"), "platform-paid, not BYOK");
+        assert_eq!(names, vec!["bash"]);
+        assert!(!names.contains(&"web_fetch"));
+        assert!(!names.contains(&"web_search"));
         assert!(!names.iter().any(|name| name.starts_with("mcp__")));
-        assert!(!names.contains(&"read_file"), "Hands claims no typed tool");
+        assert!(!names.contains(&"read_file"));
         assert!(
             !advertised.parallel_safe,
             "managed network work is not safe for us to run concurrently"
         );
-        // The production shape composes the managed-web executor, so `web_fetch`
-        // is advertised on every deployed task. While the two questions shared
-        // one flag, that alone made four of the six dialects refuse to build a
-        // tool-bearing request at all — the deployed surface taking the deployed
-        // providers out of service. What the model may emit follows the model.
         assert!(
             advertised.allows_parallel_emission(CapabilitySet::from_slice(&[
                 Capability::Tools,

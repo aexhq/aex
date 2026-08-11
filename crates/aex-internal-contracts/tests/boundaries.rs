@@ -1,6 +1,5 @@
 //! The invariants that make an internal envelope safe to deploy in stages.
 
-use aex_internal_contracts::SchemaVersion;
 use aex_internal_contracts::assertion::{
     AssertionAudience, AssertionError, AssertionRefusal, AssertionResponse, AudienceSet,
     CredentialDigest, IssuedAssertion, MAX_ASSERTION_TEXT_LEN, ResolveSessionForWorkspace,
@@ -11,8 +10,9 @@ use aex_internal_contracts::journal::JournalEntryKind;
 use aex_internal_contracts::money::{MICROUSD_PER_CENT, Microusd, MicrousdDelta, MoneyError};
 use aex_internal_contracts::outbox::{OutboxEvent, RunStatus, SessionRevision, UsageClosureId};
 use aex_internal_contracts::usage::{AuthorityKind, FactAuthority, FactId, Meter, ServiceTime};
+use aex_internal_contracts::{RunId, SchemaVersion};
 use aex_wire::Uuid7;
-use aex_wire::ids::{OrganizationId, PrefixedId, RunId, SessionId, UserId, WorkspaceId};
+use aex_wire::ids::{OrganizationId, PrefixedId, SessionId, UserId, WorkspaceId};
 use aex_wire::types::{Cents, DecimalU128, Region, Timestamp};
 use base64::Engine as _;
 

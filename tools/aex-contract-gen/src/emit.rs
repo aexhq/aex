@@ -465,12 +465,19 @@ fn openapi_operation(ir: &ContractIr, operation: &OperationIr) -> Value {
         }));
     }
     let mut responses = Map::new();
-    let success = match &operation.success {
-        Some(schema) => json!({
+    let success = if operation.transport == "binary" {
+        json!({
             "description": "Success.",
-            "content": { "application/json": { "schema": { "$ref": format!("aex:schema:{schema}") } } },
-        }),
-        None => json!({ "description": "Success with no body." }),
+            "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } },
+        })
+    } else {
+        match &operation.success {
+            Some(schema) => json!({
+                "description": "Success.",
+                "content": { "application/json": { "schema": { "$ref": format!("aex:schema:{schema}") } } },
+            }),
+            None => json!({ "description": "Success with no body." }),
+        }
     };
     responses.insert(operation.success_status.to_string(), success);
     for code in &operation.errors {
@@ -491,10 +498,17 @@ fn openapi_operation(ir: &ContractIr, operation: &OperationIr) -> Value {
         "summary": operation.summary,
         "tags": [operation.fragment],
         "parameters": parameters,
-        "requestBody": operation.request.as_ref().map(|schema| json!({
-            "required": true,
-            "content": { "application/json": { "schema": { "$ref": format!("aex:schema:{schema}") } } },
-        })),
+        "requestBody": if operation.body_class == "binary" {
+            Some(json!({
+                "required": true,
+                "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } },
+            }))
+        } else {
+            operation.request.as_ref().map(|schema| json!({
+                "required": true,
+                "content": { "application/json": { "schema": { "$ref": format!("aex:schema:{schema}") } } },
+            }))
+        },
         "responses": Value::Object(responses),
         "x-aex-idempotency": operation.idempotency,
         "x-aex-scope": operation.scope,
@@ -662,7 +676,9 @@ fn route_surface_corpus(ir: &ContractIr) -> String {
 fn request_schema(shape: &crate::surface::RequestShape) -> Option<&str> {
     match shape {
         crate::surface::RequestShape::Json(schema) => Some(schema),
-        crate::surface::RequestShape::None | crate::surface::RequestShape::Otlp => None,
+        crate::surface::RequestShape::None
+        | crate::surface::RequestShape::Otlp
+        | crate::surface::RequestShape::Binary => None,
     }
 }
 

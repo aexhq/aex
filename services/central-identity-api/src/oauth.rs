@@ -39,13 +39,13 @@ mod client;
 mod http;
 mod profile;
 
-pub use client::{OauthClient, OauthClientError, OauthClients, load_oauth_client};
+pub use client::{OauthClient, OauthClientError, load_oauth_client};
 pub use http::{ClientBuildError, HttpProviderHandshake};
 
 #[cfg(test)]
-use http::{Endpoints, GITHUB_API_VERSION, form, redact};
+use http::{Endpoints, form, redact};
 #[cfg(test)]
-use profile::{github_profile, google_profile, parse_github_token, parse_google_token};
+use profile::{google_profile, parse_google_token};
 
 /// Why the handshake did not produce a person.
 ///

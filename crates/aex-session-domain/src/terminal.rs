@@ -11,8 +11,9 @@
 //! Observation projection, central settlement and stream delivery are
 //! after-commit hints and can never gate the barrier.
 
+use aex_internal_contracts::RunId;
 use aex_operation_domain::DeletionState;
-use aex_wire::ids::{AgentId, MessageId, RunId};
+use aex_wire::ids::{AgentId, MessageId};
 use aex_wire::types::Timestamp;
 
 use crate::ids::{AgentFence, CancellationEpoch, SessionRevision, UsageClosureId};
@@ -230,7 +231,8 @@ pub fn sealed_ids(commit: &TerminalCommit) -> Vec<MessageId> {
 
 #[cfg(test)]
 mod tests {
-    use aex_wire::ids::{PrefixedId as _, RunId, Uuid7};
+    use aex_internal_contracts::RunId;
+    use aex_wire::ids::{PrefixedId as _, Uuid7};
 
     use super::{MAX_OPEN_MESSAGES_PER_RUN, TerminalRejection, claim_terminal};
     use crate::ids::{AgentFence, CancellationEpoch, SessionRevision};

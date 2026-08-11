@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:746909d557013ea5aaf802d74181f53b5d868f79814b0bd9389302208ad0c0f2`.
+//! `sha256:90fdf2649aa0c7151830e06eb94993aeafa67faf7c867042dbff4638af9aafba`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -19,6 +19,7 @@ use crate::dispatch::QueryReader;
 use crate::dispatch::RawRequest;
 use crate::dispatch::RawResponse;
 use crate::dispatch::RequestLimits;
+use crate::dispatch::binary_body;
 use crate::dispatch::declared;
 use crate::dispatch::decode_body;
 use crate::dispatch::expect_no_body;
@@ -31,6 +32,8 @@ use crate::ids::AgentId;
 use crate::ids::ApiKeyId;
 use crate::ids::ApprovalId;
 use crate::ids::ExportId;
+use crate::ids::FileDownloadId;
+use crate::ids::FileUploadId;
 use crate::ids::GenerationId;
 use crate::ids::InvitationId;
 use crate::ids::MeasurementId;
@@ -41,7 +44,6 @@ use crate::ids::OperationId;
 use crate::ids::OrganizationId;
 use crate::ids::ProviderCredentialId;
 use crate::ids::ResourceName;
-use crate::ids::RunId;
 use crate::ids::SessionId;
 use crate::ids::StatementId;
 use crate::ids::TelemetryBatchId;
@@ -79,21 +81,19 @@ use crate::models::DownloadGrant;
 use crate::models::EffectiveWorkspaceLimit;
 use crate::models::EffectiveWorkspaceLimitPage;
 use crate::models::EmptyRequest;
-use crate::models::FileDownloadRequest;
-use crate::models::FileEntry;
-use crate::models::FileEntryPage;
-use crate::models::FileListRequest;
-use crate::models::FileStatRequest;
 use crate::models::HostedSession;
 use crate::models::Invitation;
 use crate::models::InvitationAcceptResult;
 use crate::models::InvitationCreateRequest;
-use crate::models::LiveDownloadGrant;
+use crate::models::LiveFileDownload;
+use crate::models::LiveFileDownloadCompleteRequest;
 use crate::models::LiveFileDownloadRequest;
 use crate::models::LiveFileEntry;
 use crate::models::LiveFileEntryPage;
 use crate::models::LiveFileListRequest;
 use crate::models::LiveFileStatRequest;
+use crate::models::LiveFileUpload;
+use crate::models::LiveFileUploadCreateRequest;
 use crate::models::MembershipPage;
 use crate::models::MembershipsListQuery;
 use crate::models::MessagePage;
@@ -123,42 +123,16 @@ use crate::models::RegionalOperationsListQuery;
 use crate::models::RegisteredFile;
 use crate::models::RegisteredFilePage;
 use crate::models::RegisteredFileValue;
-use crate::models::RegisteredInstruction;
-use crate::models::RegisteredInstructionPage;
-use crate::models::RegisteredInstructionValue;
-use crate::models::RegisteredMcpServer;
-use crate::models::RegisteredMcpServerPage;
-use crate::models::RegisteredMcpServerValue;
-use crate::models::RegisteredSkill;
-use crate::models::RegisteredSkillPage;
-use crate::models::RegisteredSkillValue;
-use crate::models::RegisteredTool;
-use crate::models::RegisteredToolPage;
-use crate::models::RegisteredToolValue;
 use crate::models::RegistryDownloadRequest;
 use crate::models::RegistryFilesListQuery;
-use crate::models::RegistryInstructionsListQuery;
-use crate::models::RegistryMcpServersListQuery;
-use crate::models::RegistrySkillsListQuery;
-use crate::models::RegistryToolsListQuery;
-use crate::models::Run;
-use crate::models::RunPage;
-use crate::models::SecretMetadata;
-use crate::models::SecretMetadataPage;
-use crate::models::SecretPutRequest;
-use crate::models::SecretRevocation;
-use crate::models::SecretsListQuery;
 use crate::models::Session;
 use crate::models::SessionApprovalsListQuery;
 use crate::models::SessionCreateRequest;
-use crate::models::SessionCredentialRebindRequest;
+use crate::models::SessionFilesLiveDownloadPartGetQuery;
+use crate::models::SessionFilesLiveUploadPartPutQuery;
 use crate::models::SessionListPage;
 use crate::models::SessionMessagesListQuery;
-use crate::models::SessionPersistRequest;
-use crate::models::SessionPurgeRequest;
-use crate::models::SessionRunsListQuery;
 use crate::models::SessionStatus;
-use crate::models::SessionWorkspaceDiscardRequest;
 use crate::models::SessionsListQuery;
 use crate::models::Statement;
 use crate::models::StatementSummaryPage;
@@ -186,6 +160,7 @@ use crate::models::WorkspacesListQuery;
 use crate::routes::Plane;
 use crate::routes::RouteId;
 use crate::server::Accepted;
+use crate::server::BinaryBody;
 use crate::server::Created;
 use crate::server::NdjsonStream;
 use crate::server::NoContent;
@@ -226,8 +201,6 @@ pub enum RouteGroup {
     RegionalOperations,
     /// `registry` on the regional plane, served by `RegistryApi`.
     Registry,
-    /// `secrets` on the regional plane, served by `SecretsApi`.
-    Secrets,
     /// `sessions` on the regional plane, served by `SessionsApi`.
     Sessions,
     /// `telemetry-lifecycle` on the regional plane, served by `TelemetryLifecycleApi`.
@@ -259,7 +232,6 @@ impl RouteGroup {
         RouteGroup::ProviderCredentials,
         RouteGroup::RegionalOperations,
         RouteGroup::Registry,
-        RouteGroup::Secrets,
         RouteGroup::Sessions,
         RouteGroup::TelemetryLifecycle,
         RouteGroup::Uploads,
@@ -286,7 +258,6 @@ impl RouteGroup {
             Self::ProviderCredentials => "regional:provider-credentials",
             Self::RegionalOperations => "regional:operations",
             Self::Registry => "regional:registry",
-            Self::Secrets => "regional:secrets",
             Self::Sessions => "regional:sessions",
             Self::TelemetryLifecycle => "regional:telemetry-lifecycle",
             Self::Uploads => "regional:uploads",
@@ -314,7 +285,6 @@ impl RouteGroup {
             Self::ProviderCredentials => Plane::Regional,
             Self::RegionalOperations => Plane::Regional,
             Self::Registry => Plane::Regional,
-            Self::Secrets => Plane::Regional,
             Self::Sessions => Plane::Regional,
             Self::TelemetryLifecycle => Plane::Regional,
             Self::Uploads => Plane::Regional,
@@ -342,7 +312,6 @@ impl RouteGroup {
             Self::ProviderCredentials => "ProviderCredentialsApi",
             Self::RegionalOperations => "RegionalOperationsApi",
             Self::Registry => "RegistryApi",
-            Self::Secrets => "SecretsApi",
             Self::Sessions => "SessionsApi",
             Self::TelemetryLifecycle => "TelemetryLifecycleApi",
             Self::Uploads => "UploadsApi",
@@ -370,7 +339,6 @@ impl RouteGroup {
             Self::ProviderCredentials => PROVIDER_CREDENTIALS_ROUTES,
             Self::RegionalOperations => REGIONAL_OPERATIONS_ROUTES,
             Self::Registry => REGISTRY_ROUTES,
-            Self::Secrets => SECRETS_ROUTES,
             Self::Sessions => SESSIONS_ROUTES,
             Self::TelemetryLifecycle => TELEMETRY_LIFECYCLE_ROUTES,
             Self::Uploads => UPLOADS_ROUTES,
@@ -428,12 +396,17 @@ pub const CENTRAL_OPERATIONS_ROUTES: &[RouteId] = &[
 
 /// Every route of `regional:files`, in `RouteId` order.
 pub const FILES_ROUTES: &[RouteId] = &[
+    RouteId::SessionFilesLiveDownloadComplete,
     RouteId::SessionFilesLiveDownloadCreate,
+    RouteId::SessionFilesLiveDownloadDelete,
+    RouteId::SessionFilesLiveDownloadPartGet,
     RouteId::SessionFilesLiveList,
     RouteId::SessionFilesLiveStat,
-    RouteId::SessionFilesPersistedDownloadCreate,
-    RouteId::SessionFilesPersistedList,
-    RouteId::SessionFilesPersistedStat,
+    RouteId::SessionFilesLiveUploadComplete,
+    RouteId::SessionFilesLiveUploadCreate,
+    RouteId::SessionFilesLiveUploadDelete,
+    RouteId::SessionFilesLiveUploadGet,
+    RouteId::SessionFilesLiveUploadPartPut,
 ];
 
 /// Every route of `central:identity`, in `RouteId` order.
@@ -521,48 +494,19 @@ pub const REGISTRY_ROUTES: &[RouteId] = &[
     RouteId::RegistryFilesGet,
     RouteId::RegistryFilesList,
     RouteId::RegistryFilesPut,
-    RouteId::RegistryInstructionsDelete,
-    RouteId::RegistryInstructionsGet,
-    RouteId::RegistryInstructionsList,
-    RouteId::RegistryInstructionsPut,
-    RouteId::RegistryMcpServersDelete,
-    RouteId::RegistryMcpServersGet,
-    RouteId::RegistryMcpServersList,
-    RouteId::RegistryMcpServersPut,
-    RouteId::RegistrySkillsDelete,
-    RouteId::RegistrySkillsGet,
-    RouteId::RegistrySkillsList,
-    RouteId::RegistrySkillsPut,
-    RouteId::RegistryToolsDelete,
-    RouteId::RegistryToolsGet,
-    RouteId::RegistryToolsList,
-    RouteId::RegistryToolsPut,
-];
-
-/// Every route of `regional:secrets`, in `RouteId` order.
-pub const SECRETS_ROUTES: &[RouteId] = &[
-    RouteId::SecretDelete,
-    RouteId::SecretGet,
-    RouteId::SecretPut,
-    RouteId::SecretRevoke,
-    RouteId::SecretsList,
 ];
 
 /// Every route of `regional:sessions`, in `RouteId` order.
 pub const SESSIONS_ROUTES: &[RouteId] = &[
+    RouteId::SessionCancel,
     RouteId::SessionCreate,
-    RouteId::SessionCredentialRebind,
+    RouteId::SessionDelete,
     RouteId::SessionGet,
     RouteId::SessionMessageSend,
     RouteId::SessionMessagesList,
-    RouteId::SessionPersist,
-    RouteId::SessionPurge,
-    RouteId::SessionRestore,
-    RouteId::SessionRunGet,
-    RouteId::SessionRunsList,
-    RouteId::SessionStop,
-    RouteId::SessionTrash,
-    RouteId::SessionWorkspaceDiscard,
+    RouteId::SessionResume,
+    RouteId::SessionSuspend,
+    RouteId::SessionTerminate,
     RouteId::SessionsList,
 ];
 
@@ -636,12 +580,17 @@ impl RouteId {
             Self::CentralOperationCancel => RouteGroup::CentralOperations,
             Self::CentralOperationGet => RouteGroup::CentralOperations,
             Self::CentralOperationsList => RouteGroup::CentralOperations,
+            Self::SessionFilesLiveDownloadComplete => RouteGroup::Files,
             Self::SessionFilesLiveDownloadCreate => RouteGroup::Files,
+            Self::SessionFilesLiveDownloadDelete => RouteGroup::Files,
+            Self::SessionFilesLiveDownloadPartGet => RouteGroup::Files,
             Self::SessionFilesLiveList => RouteGroup::Files,
             Self::SessionFilesLiveStat => RouteGroup::Files,
-            Self::SessionFilesPersistedDownloadCreate => RouteGroup::Files,
-            Self::SessionFilesPersistedList => RouteGroup::Files,
-            Self::SessionFilesPersistedStat => RouteGroup::Files,
+            Self::SessionFilesLiveUploadComplete => RouteGroup::Files,
+            Self::SessionFilesLiveUploadCreate => RouteGroup::Files,
+            Self::SessionFilesLiveUploadDelete => RouteGroup::Files,
+            Self::SessionFilesLiveUploadGet => RouteGroup::Files,
+            Self::SessionFilesLiveUploadPartPut => RouteGroup::Files,
             Self::AccountGet => RouteGroup::Identity,
             Self::ObservationsEventsListen => RouteGroup::Observations,
             Self::ObservationsEventsQuery => RouteGroup::Observations,
@@ -703,40 +652,15 @@ impl RouteId {
             Self::RegistryFilesGet => RouteGroup::Registry,
             Self::RegistryFilesList => RouteGroup::Registry,
             Self::RegistryFilesPut => RouteGroup::Registry,
-            Self::RegistryInstructionsDelete => RouteGroup::Registry,
-            Self::RegistryInstructionsGet => RouteGroup::Registry,
-            Self::RegistryInstructionsList => RouteGroup::Registry,
-            Self::RegistryInstructionsPut => RouteGroup::Registry,
-            Self::RegistryMcpServersDelete => RouteGroup::Registry,
-            Self::RegistryMcpServersGet => RouteGroup::Registry,
-            Self::RegistryMcpServersList => RouteGroup::Registry,
-            Self::RegistryMcpServersPut => RouteGroup::Registry,
-            Self::RegistrySkillsDelete => RouteGroup::Registry,
-            Self::RegistrySkillsGet => RouteGroup::Registry,
-            Self::RegistrySkillsList => RouteGroup::Registry,
-            Self::RegistrySkillsPut => RouteGroup::Registry,
-            Self::RegistryToolsDelete => RouteGroup::Registry,
-            Self::RegistryToolsGet => RouteGroup::Registry,
-            Self::RegistryToolsList => RouteGroup::Registry,
-            Self::RegistryToolsPut => RouteGroup::Registry,
-            Self::SecretDelete => RouteGroup::Secrets,
-            Self::SecretGet => RouteGroup::Secrets,
-            Self::SecretPut => RouteGroup::Secrets,
-            Self::SecretRevoke => RouteGroup::Secrets,
-            Self::SecretsList => RouteGroup::Secrets,
+            Self::SessionCancel => RouteGroup::Sessions,
             Self::SessionCreate => RouteGroup::Sessions,
-            Self::SessionCredentialRebind => RouteGroup::Sessions,
+            Self::SessionDelete => RouteGroup::Sessions,
             Self::SessionGet => RouteGroup::Sessions,
             Self::SessionMessageSend => RouteGroup::Sessions,
             Self::SessionMessagesList => RouteGroup::Sessions,
-            Self::SessionPersist => RouteGroup::Sessions,
-            Self::SessionPurge => RouteGroup::Sessions,
-            Self::SessionRestore => RouteGroup::Sessions,
-            Self::SessionRunGet => RouteGroup::Sessions,
-            Self::SessionRunsList => RouteGroup::Sessions,
-            Self::SessionStop => RouteGroup::Sessions,
-            Self::SessionTrash => RouteGroup::Sessions,
-            Self::SessionWorkspaceDiscard => RouteGroup::Sessions,
+            Self::SessionResume => RouteGroup::Sessions,
+            Self::SessionSuspend => RouteGroup::Sessions,
+            Self::SessionTerminate => RouteGroup::Sessions,
             Self::SessionsList => RouteGroup::Sessions,
             Self::SessionTelemetryExportCreate => RouteGroup::TelemetryLifecycle,
             Self::SessionTelemetryExportDownloadCreate => RouteGroup::TelemetryLifecycle,
@@ -790,12 +714,13 @@ from_param_id!(
     ProviderCredentialId,
     SessionId,
     MessageId,
-    RunId,
     AgentId,
     ToolCallId,
     OperationId,
     ApprovalId,
     GenerationId,
+    FileUploadId,
+    FileDownloadId,
     ObservationId,
     TelemetryBatchId,
     TelemetryGapId,
@@ -1359,22 +1284,52 @@ pub async fn dispatch_central_operations<A: CentralOperationsApi + ?Sized>(
 
 // --- regional:files ---------------------------------------------------------------
 
-/// The `files` fragment of the regional plane: 6 operations.
+/// The `files` fragment of the regional plane: 11 operations.
 /// Every method returns a future that is `Send`, so the composition crate can spawn it without
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
 pub trait FilesApi: Send + Sync + 'static {
+    /// `POST /api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}/completion`
+    /// Re-stat, re-hash, and close an exact live-file download after SDK verification.
+    fn session_files_live_download_complete(
+        &self,
+        cx: &RequestContext,
+        session_id: SessionId,
+        file_download_id: FileDownloadId,
+        body: LiveFileDownloadCompleteRequest,
+    ) -> impl Future<Output = WireResult<LiveFileDownload>> + Send;
+
     /// `POST /api/sessions/{sessionId}/files/live/downloads`
-    /// Mint a download grant for a live workspace file.
+    /// Open one exact-version live file directly from the retained generation, auto-resuming it.
     fn session_files_live_download_create(
         &self,
         cx: &RequestContext,
         session_id: SessionId,
         body: LiveFileDownloadRequest,
-    ) -> impl Future<Output = WireResult<Created<LiveDownloadGrant>>> + Send;
+    ) -> impl Future<Output = WireResult<Created<LiveFileDownload>>> + Send;
+
+    /// `DELETE /api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}`
+    /// Close an abandoned live-file descriptor, auto-resuming the same generation.
+    fn session_files_live_download_delete(
+        &self,
+        cx: &RequestContext,
+        session_id: SessionId,
+        file_download_id: FileDownloadId,
+    ) -> impl Future<Output = WireResult<NoContent>> + Send;
+
+    /// `GET /api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}/parts/{partNumber}`
+    /// Read one raw exact-version range directly from the retained generation.
+    fn session_files_live_download_part_get(
+        &self,
+        cx: &RequestContext,
+        session_id: SessionId,
+        file_download_id: FileDownloadId,
+        part_number: u32,
+        query: SessionFilesLiveDownloadPartGetQuery,
+    ) -> impl Future<Output = WireResult<BinaryBody>> + Send;
 
     /// `POST /api/sessions/{sessionId}/files/live/list`
-    /// List live workspace files, optionally waking a retained session.
+    /// List the exact live generation, auto-resuming that same generation when suspended.
     fn session_files_live_list(
         &self,
         cx: &RequestContext,
@@ -1383,7 +1338,7 @@ pub trait FilesApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<LiveFileEntryPage>> + Send;
 
     /// `POST /api/sessions/{sessionId}/files/live/stat`
-    /// Stat one live workspace file.
+    /// Stat one live path without following a symlink, auto-resuming the same generation.
     fn session_files_live_stat(
         &self,
         cx: &RequestContext,
@@ -1391,32 +1346,53 @@ pub trait FilesApi: Send + Sync + 'static {
         body: LiveFileStatRequest,
     ) -> impl Future<Output = WireResult<LiveFileEntry>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/files/persisted/downloads`
-    /// Mint a download grant for a persisted session file.
-    fn session_files_persisted_download_create(
+    /// `POST /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}/completion`
+    /// Verify every part and atomically publish one live file in the same generation.
+    fn session_files_live_upload_complete(
         &self,
         cx: &RequestContext,
         session_id: SessionId,
-        body: FileDownloadRequest,
-    ) -> impl Future<Output = WireResult<Created<DownloadGrant>>> + Send;
+        file_upload_id: FileUploadId,
+    ) -> impl Future<Output = WireResult<LiveFileUpload>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/files/persisted/list`
-    /// List persisted session files; an observational read.
-    fn session_files_persisted_list(
+    /// `POST /api/sessions/{sessionId}/files/live/uploads`
+    /// Create a resumable upload in the exact live generation, auto-resuming it when suspended.
+    fn session_files_live_upload_create(
         &self,
         cx: &RequestContext,
         session_id: SessionId,
-        body: FileListRequest,
-    ) -> impl Future<Output = WireResult<FileEntryPage>> + Send;
+        body: LiveFileUploadCreateRequest,
+    ) -> impl Future<Output = WireResult<Created<LiveFileUpload>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/files/persisted/stat`
-    /// Stat one persisted session file.
-    fn session_files_persisted_stat(
+    /// `DELETE /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}`
+    /// Abort a partial upload, auto-resuming the same generation to remove its temporary bytes.
+    fn session_files_live_upload_delete(
         &self,
         cx: &RequestContext,
         session_id: SessionId,
-        body: FileStatRequest,
-    ) -> impl Future<Output = WireResult<FileEntry>> + Send;
+        file_upload_id: FileUploadId,
+    ) -> impl Future<Output = WireResult<NoContent>> + Send;
+
+    /// `GET /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}`
+    /// Read resumable live-upload state, auto-resuming the same generation.
+    fn session_files_live_upload_get(
+        &self,
+        cx: &RequestContext,
+        session_id: SessionId,
+        file_upload_id: FileUploadId,
+    ) -> impl Future<Output = WireResult<LiveFileUpload>> + Send;
+
+    /// `PUT /api/sessions/{sessionId}/files/live/uploads/{fileUploadId}/parts/{partNumber}`
+    /// Put one exact logical part directly into the retained generation.
+    fn session_files_live_upload_part_put(
+        &self,
+        cx: &RequestContext,
+        session_id: SessionId,
+        file_upload_id: FileUploadId,
+        part_number: u32,
+        query: SessionFilesLiveUploadPartPutQuery,
+        body: &[u8],
+    ) -> impl Future<Output = WireResult<LiveFileUpload>> + Send;
 }
 
 /// Decodes, calls and encodes one `regional:files` request.
@@ -1431,14 +1407,49 @@ pub async fn dispatch_files<A: FilesApi + ?Sized>(
     raw: RawRequest<'_>,
     limits: RequestLimits,
 ) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
-    let _reader = QueryReader::parse(raw.route, raw.query)?;
+    let reader = QueryReader::parse(raw.route, raw.query)?;
     match raw.route {
+        RouteId::SessionFilesLiveDownloadComplete => {
+            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
+            let file_download_id = path_param::<FileDownloadId>(&raw, "fileDownloadId")?;
+            let body = decode_body::<LiveFileDownloadCompleteRequest>(&raw, limits)?;
+            let handled =
+                api.session_files_live_download_complete(cx, session_id, file_download_id, body);
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
+        }
         RouteId::SessionFilesLiveDownloadCreate => {
             let session_id = path_param::<SessionId>(&raw, "sessionId")?;
             let body = decode_body::<LiveFileDownloadRequest>(&raw, limits)?;
             let handled = api.session_files_live_download_create(cx, session_id, body);
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::json(201, &answer.0)?))
+        }
+        RouteId::SessionFilesLiveDownloadDelete => {
+            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
+            let file_download_id = path_param::<FileDownloadId>(&raw, "fileDownloadId")?;
+            expect_no_body(&raw)?;
+            let handled = api.session_files_live_download_delete(cx, session_id, file_download_id);
+            let NoContent = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::no_content()))
+        }
+        RouteId::SessionFilesLiveDownloadPartGet => {
+            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
+            let file_download_id = path_param::<FileDownloadId>(&raw, "fileDownloadId")?;
+            let part_number = path_param::<u32>(&raw, "partNumber")?;
+            let query = SessionFilesLiveDownloadPartGetQuery {
+                version: reader.required("version")?,
+            };
+            expect_no_body(&raw)?;
+            let handled = api.session_files_live_download_part_get(
+                cx,
+                session_id,
+                file_download_id,
+                part_number,
+                query,
+            );
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::binary(200, answer.0)))
         }
         RouteId::SessionFilesLiveList => {
             let session_id = path_param::<SessionId>(&raw, "sessionId")?;
@@ -1454,24 +1465,53 @@ pub async fn dispatch_files<A: FilesApi + ?Sized>(
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
         }
-        RouteId::SessionFilesPersistedDownloadCreate => {
+        RouteId::SessionFilesLiveUploadComplete => {
             let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<FileDownloadRequest>(&raw, limits)?;
-            let handled = api.session_files_persisted_download_create(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(201, &answer.0)?))
-        }
-        RouteId::SessionFilesPersistedList => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<FileListRequest>(&raw, limits)?;
-            let handled = api.session_files_persisted_list(cx, session_id, body);
+            let file_upload_id = path_param::<FileUploadId>(&raw, "fileUploadId")?;
+            expect_no_body(&raw)?;
+            let handled = api.session_files_live_upload_complete(cx, session_id, file_upload_id);
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
         }
-        RouteId::SessionFilesPersistedStat => {
+        RouteId::SessionFilesLiveUploadCreate => {
             let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<FileStatRequest>(&raw, limits)?;
-            let handled = api.session_files_persisted_stat(cx, session_id, body);
+            let body = decode_body::<LiveFileUploadCreateRequest>(&raw, limits)?;
+            let handled = api.session_files_live_upload_create(cx, session_id, body);
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::json(201, &answer.0)?))
+        }
+        RouteId::SessionFilesLiveUploadDelete => {
+            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
+            let file_upload_id = path_param::<FileUploadId>(&raw, "fileUploadId")?;
+            expect_no_body(&raw)?;
+            let handled = api.session_files_live_upload_delete(cx, session_id, file_upload_id);
+            let NoContent = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::no_content()))
+        }
+        RouteId::SessionFilesLiveUploadGet => {
+            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
+            let file_upload_id = path_param::<FileUploadId>(&raw, "fileUploadId")?;
+            expect_no_body(&raw)?;
+            let handled = api.session_files_live_upload_get(cx, session_id, file_upload_id);
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
+        }
+        RouteId::SessionFilesLiveUploadPartPut => {
+            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
+            let file_upload_id = path_param::<FileUploadId>(&raw, "fileUploadId")?;
+            let part_number = path_param::<u32>(&raw, "partNumber")?;
+            let query = SessionFilesLiveUploadPartPutQuery {
+                sha256: reader.required("sha256")?,
+            };
+            let body = binary_body(&raw, limits)?;
+            let handled = api.session_files_live_upload_part_put(
+                cx,
+                session_id,
+                file_upload_id,
+                part_number,
+                query,
+                body,
+            );
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
         }
@@ -2339,15 +2379,15 @@ pub async fn dispatch_otlp<A: OtlpApi + ?Sized>(
 /// declares.
 pub trait ProviderCredentialsApi: Send + Sync + 'static {
     /// `GET /api/workspace/provider-credentials/{providerCredentialId}`
-    /// Read one provider-credential binding.
+    /// Read one BYOK provider-credential binding.
     fn provider_credential_get(
         &self,
         cx: &RequestContext,
         provider_credential_id: ProviderCredentialId,
     ) -> impl Future<Output = WireResult<WithETag<ProviderCredential>>> + Send;
 
-    /// `POST /api/secrets/provider-credentials`
-    /// Register a BYOK provider credential; carries plaintext.
+    /// `POST /api/workspace/provider-credentials`
+    /// Register a dedicated BYOK provider credential; carries plaintext once.
     fn provider_credential_register(
         &self,
         cx: &RequestContext,
@@ -2355,7 +2395,7 @@ pub trait ProviderCredentialsApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<Created<ProviderCredential>>> + Send;
 
     /// `POST /api/workspace/provider-credentials/{providerCredentialId}/revocations`
-    /// Revoke a provider-credential binding.
+    /// Revoke a BYOK provider-credential binding.
     fn provider_credential_revoke(
         &self,
         cx: &RequestContext,
@@ -2364,7 +2404,7 @@ pub trait ProviderCredentialsApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<ProviderCredential>> + Send;
 
     /// `GET /api/workspace/provider-credentials`
-    /// List provider-credential binding metadata.
+    /// List BYOK provider-credential binding metadata.
     fn provider_credentials_list(
         &self,
         cx: &RequestContext,
@@ -2505,13 +2545,13 @@ pub async fn dispatch_regional_operations<A: RegionalOperationsApi + ?Sized>(
 
 // --- regional:registry ---------------------------------------------------------------
 
-/// The `registry` fragment of the regional plane: 21 operations.
+/// The `registry` fragment of the regional plane: 5 operations.
 /// Every method returns a future that is `Send`, so the composition crate can spawn it without
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
 pub trait RegistryApi: Send + Sync + 'static {
     /// `DELETE /api/workspace/files/{name}`
-    /// Delete one registered entry from files.
+    /// Delete one registered workspace file.
     fn registry_files_delete(
         &self,
         cx: &RequestContext,
@@ -2519,7 +2559,7 @@ pub trait RegistryApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<NoContent>> + Send;
 
     /// `POST /api/workspace/files/{name}/downloads`
-    /// Mint a download grant for a registered file.
+    /// Mint a download grant for a registered workspace file.
     fn registry_files_download_create(
         &self,
         cx: &RequestContext,
@@ -2528,7 +2568,7 @@ pub trait RegistryApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<Created<DownloadGrant>>> + Send;
 
     /// `GET /api/workspace/files/{name}`
-    /// Read one registered entry from files.
+    /// Read one registered workspace file.
     fn registry_files_get(
         &self,
         cx: &RequestContext,
@@ -2536,7 +2576,7 @@ pub trait RegistryApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<WithETag<RegisteredFile>>> + Send;
 
     /// `GET /api/workspace/files`
-    /// List registered files.
+    /// List registered workspace files.
     fn registry_files_list(
         &self,
         cx: &RequestContext,
@@ -2544,145 +2584,13 @@ pub trait RegistryApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<RegisteredFilePage>> + Send;
 
     /// `PUT /api/workspace/files/{name}`
-    /// Replace one registered entry in files.
+    /// Replace one registered workspace file.
     fn registry_files_put(
         &self,
         cx: &RequestContext,
         name: ResourceName,
         body: RegisteredFileValue,
     ) -> impl Future<Output = WireResult<WithETag<RegisteredFile>>> + Send;
-
-    /// `DELETE /api/workspace/instructions/{name}`
-    /// Delete one registered entry from instructions.
-    fn registry_instructions_delete(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-    ) -> impl Future<Output = WireResult<NoContent>> + Send;
-
-    /// `GET /api/workspace/instructions/{name}`
-    /// Read one registered entry from instructions.
-    fn registry_instructions_get(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-    ) -> impl Future<Output = WireResult<WithETag<RegisteredInstruction>>> + Send;
-
-    /// `GET /api/workspace/instructions`
-    /// List registered instructions.
-    fn registry_instructions_list(
-        &self,
-        cx: &RequestContext,
-        query: RegistryInstructionsListQuery,
-    ) -> impl Future<Output = WireResult<RegisteredInstructionPage>> + Send;
-
-    /// `PUT /api/workspace/instructions/{name}`
-    /// Replace one registered entry in instructions.
-    fn registry_instructions_put(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-        body: RegisteredInstructionValue,
-    ) -> impl Future<Output = WireResult<WithETag<RegisteredInstruction>>> + Send;
-
-    /// `DELETE /api/workspace/mcp-servers/{name}`
-    /// Delete one registered entry from MCP servers.
-    fn registry_mcp_servers_delete(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-    ) -> impl Future<Output = WireResult<NoContent>> + Send;
-
-    /// `GET /api/workspace/mcp-servers/{name}`
-    /// Read one registered entry from MCP servers.
-    fn registry_mcp_servers_get(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-    ) -> impl Future<Output = WireResult<WithETag<RegisteredMcpServer>>> + Send;
-
-    /// `GET /api/workspace/mcp-servers`
-    /// List registered MCP servers.
-    fn registry_mcp_servers_list(
-        &self,
-        cx: &RequestContext,
-        query: RegistryMcpServersListQuery,
-    ) -> impl Future<Output = WireResult<RegisteredMcpServerPage>> + Send;
-
-    /// `PUT /api/workspace/mcp-servers/{name}`
-    /// Replace one registered entry in MCP servers.
-    fn registry_mcp_servers_put(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-        body: RegisteredMcpServerValue,
-    ) -> impl Future<Output = WireResult<WithETag<RegisteredMcpServer>>> + Send;
-
-    /// `DELETE /api/workspace/skills/{name}`
-    /// Delete one registered entry from skills.
-    fn registry_skills_delete(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-    ) -> impl Future<Output = WireResult<NoContent>> + Send;
-
-    /// `GET /api/workspace/skills/{name}`
-    /// Read one registered entry from skills.
-    fn registry_skills_get(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-    ) -> impl Future<Output = WireResult<WithETag<RegisteredSkill>>> + Send;
-
-    /// `GET /api/workspace/skills`
-    /// List registered skills.
-    fn registry_skills_list(
-        &self,
-        cx: &RequestContext,
-        query: RegistrySkillsListQuery,
-    ) -> impl Future<Output = WireResult<RegisteredSkillPage>> + Send;
-
-    /// `PUT /api/workspace/skills/{name}`
-    /// Replace one registered entry in skills.
-    fn registry_skills_put(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-        body: RegisteredSkillValue,
-    ) -> impl Future<Output = WireResult<WithETag<RegisteredSkill>>> + Send;
-
-    /// `DELETE /api/workspace/tools/{name}`
-    /// Delete one registered entry from tools.
-    fn registry_tools_delete(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-    ) -> impl Future<Output = WireResult<NoContent>> + Send;
-
-    /// `GET /api/workspace/tools/{name}`
-    /// Read one registered entry from tools.
-    fn registry_tools_get(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-    ) -> impl Future<Output = WireResult<WithETag<RegisteredTool>>> + Send;
-
-    /// `GET /api/workspace/tools`
-    /// List registered tools.
-    fn registry_tools_list(
-        &self,
-        cx: &RequestContext,
-        query: RegistryToolsListQuery,
-    ) -> impl Future<Output = WireResult<RegisteredToolPage>> + Send;
-
-    /// `PUT /api/workspace/tools/{name}`
-    /// Replace one registered entry in tools.
-    fn registry_tools_put(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-        body: RegisteredToolValue,
-    ) -> impl Future<Output = WireResult<WithETag<RegisteredTool>>> + Send;
 }
 
 /// Decodes, calls and encodes one `regional:registry` request.
@@ -2741,286 +2649,47 @@ pub async fn dispatch_registry<A: RegistryApi + ?Sized>(
             let rendered = rendered.with_etag(answer.etag);
             Ok(DispatchOutcome::Unary(rendered))
         }
-        RouteId::RegistryInstructionsDelete => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            expect_no_body(&raw)?;
-            let handled = api.registry_instructions_delete(cx, name);
-            let NoContent = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::no_content()))
-        }
-        RouteId::RegistryInstructionsGet => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            expect_no_body(&raw)?;
-            let handled = api.registry_instructions_get(cx, name);
-            let answer = declared(raw.route, handled.await)?;
-            let rendered = RawResponse::json(200, &answer.value)?;
-            let rendered = rendered.with_etag(answer.etag);
-            Ok(DispatchOutcome::Unary(rendered))
-        }
-        RouteId::RegistryInstructionsList => {
-            let query = RegistryInstructionsListQuery {
-                cursor: reader.optional("cursor")?,
-                limit: reader.optional_bounded("limit", 1, 1000)?,
-            };
-            expect_no_body(&raw)?;
-            let handled = api.registry_instructions_list(cx, query);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::RegistryInstructionsPut => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            let body = decode_body::<RegisteredInstructionValue>(&raw, limits)?;
-            let handled = api.registry_instructions_put(cx, name, body);
-            let answer = declared(raw.route, handled.await)?;
-            let rendered = RawResponse::json(200, &answer.value)?;
-            let rendered = rendered.with_etag(answer.etag);
-            Ok(DispatchOutcome::Unary(rendered))
-        }
-        RouteId::RegistryMcpServersDelete => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            expect_no_body(&raw)?;
-            let handled = api.registry_mcp_servers_delete(cx, name);
-            let NoContent = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::no_content()))
-        }
-        RouteId::RegistryMcpServersGet => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            expect_no_body(&raw)?;
-            let handled = api.registry_mcp_servers_get(cx, name);
-            let answer = declared(raw.route, handled.await)?;
-            let rendered = RawResponse::json(200, &answer.value)?;
-            let rendered = rendered.with_etag(answer.etag);
-            Ok(DispatchOutcome::Unary(rendered))
-        }
-        RouteId::RegistryMcpServersList => {
-            let query = RegistryMcpServersListQuery {
-                cursor: reader.optional("cursor")?,
-                limit: reader.optional_bounded("limit", 1, 1000)?,
-            };
-            expect_no_body(&raw)?;
-            let handled = api.registry_mcp_servers_list(cx, query);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::RegistryMcpServersPut => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            let body = decode_body::<RegisteredMcpServerValue>(&raw, limits)?;
-            let handled = api.registry_mcp_servers_put(cx, name, body);
-            let answer = declared(raw.route, handled.await)?;
-            let rendered = RawResponse::json(200, &answer.value)?;
-            let rendered = rendered.with_etag(answer.etag);
-            Ok(DispatchOutcome::Unary(rendered))
-        }
-        RouteId::RegistrySkillsDelete => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            expect_no_body(&raw)?;
-            let handled = api.registry_skills_delete(cx, name);
-            let NoContent = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::no_content()))
-        }
-        RouteId::RegistrySkillsGet => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            expect_no_body(&raw)?;
-            let handled = api.registry_skills_get(cx, name);
-            let answer = declared(raw.route, handled.await)?;
-            let rendered = RawResponse::json(200, &answer.value)?;
-            let rendered = rendered.with_etag(answer.etag);
-            Ok(DispatchOutcome::Unary(rendered))
-        }
-        RouteId::RegistrySkillsList => {
-            let query = RegistrySkillsListQuery {
-                cursor: reader.optional("cursor")?,
-                limit: reader.optional_bounded("limit", 1, 1000)?,
-            };
-            expect_no_body(&raw)?;
-            let handled = api.registry_skills_list(cx, query);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::RegistrySkillsPut => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            let body = decode_body::<RegisteredSkillValue>(&raw, limits)?;
-            let handled = api.registry_skills_put(cx, name, body);
-            let answer = declared(raw.route, handled.await)?;
-            let rendered = RawResponse::json(200, &answer.value)?;
-            let rendered = rendered.with_etag(answer.etag);
-            Ok(DispatchOutcome::Unary(rendered))
-        }
-        RouteId::RegistryToolsDelete => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            expect_no_body(&raw)?;
-            let handled = api.registry_tools_delete(cx, name);
-            let NoContent = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::no_content()))
-        }
-        RouteId::RegistryToolsGet => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            expect_no_body(&raw)?;
-            let handled = api.registry_tools_get(cx, name);
-            let answer = declared(raw.route, handled.await)?;
-            let rendered = RawResponse::json(200, &answer.value)?;
-            let rendered = rendered.with_etag(answer.etag);
-            Ok(DispatchOutcome::Unary(rendered))
-        }
-        RouteId::RegistryToolsList => {
-            let query = RegistryToolsListQuery {
-                cursor: reader.optional("cursor")?,
-                limit: reader.optional_bounded("limit", 1, 1000)?,
-            };
-            expect_no_body(&raw)?;
-            let handled = api.registry_tools_list(cx, query);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::RegistryToolsPut => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            let body = decode_body::<RegisteredToolValue>(&raw, limits)?;
-            let handled = api.registry_tools_put(cx, name, body);
-            let answer = declared(raw.route, handled.await)?;
-            let rendered = RawResponse::json(200, &answer.value)?;
-            let rendered = rendered.with_etag(answer.etag);
-            Ok(DispatchOutcome::Unary(rendered))
-        }
         other => Err(wrong_group(other, "regional:registry")),
-    }
-}
-
-// --- regional:secrets ---------------------------------------------------------------
-
-/// The `secrets` fragment of the regional plane: 5 operations.
-/// Every method returns a future that is `Send`, so the composition crate can spawn it without
-/// wrapping. A method never names a status: the response type it returns is the status the route
-/// declares.
-pub trait SecretsApi: Send + Sync + 'static {
-    /// `DELETE /api/secrets/{name}`
-    /// Delete a secret, affecting future admission only.
-    fn secret_delete(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-    ) -> impl Future<Output = WireResult<NoContent>> + Send;
-
-    /// `GET /api/workspace/secrets/{name}`
-    /// Read one secret metadata record.
-    fn secret_get(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-    ) -> impl Future<Output = WireResult<WithETag<SecretMetadata>>> + Send;
-
-    /// `PUT /api/secrets/{name}`
-    /// Set a secret value for future admission.
-    fn secret_put(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-        body: SecretPutRequest,
-    ) -> impl Future<Output = WireResult<WithETag<SecretMetadata>>> + Send;
-
-    /// `POST /api/secrets/{name}/revocations`
-    /// Revoke a secret and cancel current custody.
-    fn secret_revoke(
-        &self,
-        cx: &RequestContext,
-        name: ResourceName,
-        body: EmptyRequest,
-    ) -> impl Future<Output = WireResult<SecretRevocation>> + Send;
-
-    /// `GET /api/workspace/secrets`
-    /// List secret metadata; values are never readable.
-    fn secrets_list(
-        &self,
-        cx: &RequestContext,
-        query: SecretsListQuery,
-    ) -> impl Future<Output = WireResult<SecretMetadataPage>> + Send;
-}
-
-/// Decodes, calls and encodes one `regional:secrets` request.
-/// Total over `RouteId`: a route from another group is an internal error naming the mismatch, never
-/// a silently wrong handler.
-/// # Errors
-/// Returns the handler's own declared failure, or a decode failure the route declares. A code the
-/// route does not declare is refused at this boundary.
-pub async fn dispatch_secrets<A: SecretsApi + ?Sized>(
-    api: &A,
-    cx: &RequestContext,
-    raw: RawRequest<'_>,
-    limits: RequestLimits,
-) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
-    let reader = QueryReader::parse(raw.route, raw.query)?;
-    match raw.route {
-        RouteId::SecretDelete => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            expect_no_body(&raw)?;
-            let handled = api.secret_delete(cx, name);
-            let NoContent = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::no_content()))
-        }
-        RouteId::SecretGet => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            expect_no_body(&raw)?;
-            let handled = api.secret_get(cx, name);
-            let answer = declared(raw.route, handled.await)?;
-            let rendered = RawResponse::json(200, &answer.value)?;
-            let rendered = rendered.with_etag(answer.etag);
-            Ok(DispatchOutcome::Unary(rendered))
-        }
-        RouteId::SecretPut => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            let body = decode_body::<SecretPutRequest>(&raw, limits)?;
-            let handled = api.secret_put(cx, name, body);
-            let answer = declared(raw.route, handled.await)?;
-            let rendered = RawResponse::json(200, &answer.value)?;
-            let rendered = rendered.with_etag(answer.etag);
-            Ok(DispatchOutcome::Unary(rendered))
-        }
-        RouteId::SecretRevoke => {
-            let name = path_param::<ResourceName>(&raw, "name")?;
-            let body = decode_body::<EmptyRequest>(&raw, limits)?;
-            let handled = api.secret_revoke(cx, name, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SecretsList => {
-            let query = SecretsListQuery {
-                cursor: reader.optional("cursor")?,
-                limit: reader.optional_bounded("limit", 1, 1000)?,
-            };
-            expect_no_body(&raw)?;
-            let handled = api.secrets_list(cx, query);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        other => Err(wrong_group(other, "regional:secrets")),
     }
 }
 
 // --- regional:sessions ---------------------------------------------------------------
 
-/// The `sessions` fragment of the regional plane: 14 operations.
+/// The `sessions` fragment of the regional plane: 10 operations.
 /// Every method returns a future that is `Send`, so the composition crate can spawn it without
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
 pub trait SessionsApi: Send + Sync + 'static {
+    /// `POST /api/sessions/{sessionId}/cancellations`
+    /// Cancel current work and return the session to idle.
+    fn session_cancel(
+        &self,
+        cx: &RequestContext,
+        session_id: SessionId,
+        body: EmptyRequest,
+    ) -> impl Future<Output = WireResult<Accepted>> + Send;
+
     /// `POST /api/sessions`
-    /// Create a session.
+    /// Create an eight-hour multi-turn session.
     fn session_create(
         &self,
         cx: &RequestContext,
         body: SessionCreateRequest,
     ) -> impl Future<Output = WireResult<Created<Session>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/credential-rebinds`
-    /// Admit the durable credential-rebind operation.
-    fn session_credential_rebind(
+    /// `POST /api/sessions/{sessionId}/deletions`
+    /// Irreversibly delete the session and session-scoped user content, observations, telemetry,
+    /// and export objects. Independent registered workspace files remain.
+    fn session_delete(
         &self,
         cx: &RequestContext,
         session_id: SessionId,
-        body: SessionCredentialRebindRequest,
+        body: EmptyRequest,
     ) -> impl Future<Output = WireResult<Accepted>> + Send;
 
     /// `GET /api/sessions/{sessionId}`
-    /// Read one session, its deleting resource, or its tombstone.
+    /// Read session metadata, including automatic lifecycle state, or its minimal deletion
+    /// tombstone.
     fn session_get(
         &self,
         cx: &RequestContext,
@@ -3028,7 +2697,8 @@ pub trait SessionsApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<WithETag<Session>>> + Send;
 
     /// `POST /api/sessions/{sessionId}/messages`
-    /// Admit a message and queue or start its run.
+    /// Send text and start the session's next work, automatically resuming the same suspended
+    /// generation.
     fn session_message_send(
         &self,
         cx: &RequestContext,
@@ -3045,76 +2715,31 @@ pub trait SessionsApi: Send + Sync + 'static {
         query: SessionMessagesListQuery,
     ) -> impl Future<Output = WireResult<MessagePage>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/persists`
-    /// Admit the durable persist operation.
-    fn session_persist(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: SessionPersistRequest,
-    ) -> impl Future<Output = WireResult<Accepted>> + Send;
-
-    /// `POST /api/sessions/{sessionId}/purges`
-    /// Admit the durable purge operation. Purge is irreversible.
-    fn session_purge(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: SessionPurgeRequest,
-    ) -> impl Future<Output = WireResult<Accepted>> + Send;
-
-    /// `POST /api/sessions/{sessionId}/restores`
-    /// Admit the durable restore operation, which is legal only inside the recovery window.
-    fn session_restore(
+    /// `POST /api/sessions/{sessionId}/resumptions`
+    /// Resume the same retained generation to idle.
+    fn session_resume(
         &self,
         cx: &RequestContext,
         session_id: SessionId,
         body: EmptyRequest,
     ) -> impl Future<Output = WireResult<Accepted>> + Send;
 
-    /// `GET /api/sessions/{sessionId}/runs/{runId}`
-    /// Read one run.
-    fn session_run_get(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        run_id: RunId,
-    ) -> impl Future<Output = WireResult<Run>> + Send;
-
-    /// `GET /api/sessions/{sessionId}/runs`
-    /// List the runs of a session.
-    fn session_runs_list(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        query: SessionRunsListQuery,
-    ) -> impl Future<Output = WireResult<RunPage>> + Send;
-
-    /// `POST /api/sessions/{sessionId}/stops`
-    /// Admit the durable stop operation.
-    fn session_stop(
+    /// `POST /api/sessions/{sessionId}/suspensions`
+    /// Suspend an idle session while retaining its exact generation; cancel active work first.
+    fn session_suspend(
         &self,
         cx: &RequestContext,
         session_id: SessionId,
         body: EmptyRequest,
     ) -> impl Future<Output = WireResult<Accepted>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/trashes`
-    /// Admit the durable trash operation, which starts the recovery window.
-    fn session_trash(
+    /// `POST /api/sessions/{sessionId}/terminations`
+    /// Permanently destroy compute and live files while retaining metadata and sealed messages.
+    fn session_terminate(
         &self,
         cx: &RequestContext,
         session_id: SessionId,
         body: EmptyRequest,
-    ) -> impl Future<Output = WireResult<Accepted>> + Send;
-
-    /// `POST /api/sessions/{sessionId}/workspace/discards`
-    /// Admit the durable workspace-discard operation.
-    fn session_workspace_discard(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: SessionWorkspaceDiscardRequest,
     ) -> impl Future<Output = WireResult<Accepted>> + Send;
 
     /// `GET /api/sessions`
@@ -3140,16 +2765,23 @@ pub async fn dispatch_sessions<A: SessionsApi + ?Sized>(
 ) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
     let reader = QueryReader::parse(raw.route, raw.query)?;
     match raw.route {
+        RouteId::SessionCancel => {
+            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
+            let body = decode_body::<EmptyRequest>(&raw, limits)?;
+            let handled = api.session_cancel(cx, session_id, body);
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
+        }
         RouteId::SessionCreate => {
             let body = decode_body::<SessionCreateRequest>(&raw, limits)?;
             let handled = api.session_create(cx, body);
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::json(201, &answer.0)?))
         }
-        RouteId::SessionCredentialRebind => {
+        RouteId::SessionDelete => {
             let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<SessionCredentialRebindRequest>(&raw, limits)?;
-            let handled = api.session_credential_rebind(cx, session_id, body);
+            let body = decode_body::<EmptyRequest>(&raw, limits)?;
+            let handled = api.session_delete(cx, session_id, body);
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
         }
@@ -3180,64 +2812,24 @@ pub async fn dispatch_sessions<A: SessionsApi + ?Sized>(
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
         }
-        RouteId::SessionPersist => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<SessionPersistRequest>(&raw, limits)?;
-            let handled = api.session_persist(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
-        }
-        RouteId::SessionPurge => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<SessionPurgeRequest>(&raw, limits)?;
-            let handled = api.session_purge(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
-        }
-        RouteId::SessionRestore => {
+        RouteId::SessionResume => {
             let session_id = path_param::<SessionId>(&raw, "sessionId")?;
             let body = decode_body::<EmptyRequest>(&raw, limits)?;
-            let handled = api.session_restore(cx, session_id, body);
+            let handled = api.session_resume(cx, session_id, body);
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
         }
-        RouteId::SessionRunGet => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let run_id = path_param::<RunId>(&raw, "runId")?;
-            expect_no_body(&raw)?;
-            let handled = api.session_run_get(cx, session_id, run_id);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionRunsList => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let query = SessionRunsListQuery {
-                cursor: reader.optional("cursor")?,
-                limit: reader.optional_bounded("limit", 1, 100)?,
-            };
-            expect_no_body(&raw)?;
-            let handled = api.session_runs_list(cx, session_id, query);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionStop => {
+        RouteId::SessionSuspend => {
             let session_id = path_param::<SessionId>(&raw, "sessionId")?;
             let body = decode_body::<EmptyRequest>(&raw, limits)?;
-            let handled = api.session_stop(cx, session_id, body);
+            let handled = api.session_suspend(cx, session_id, body);
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
         }
-        RouteId::SessionTrash => {
+        RouteId::SessionTerminate => {
             let session_id = path_param::<SessionId>(&raw, "sessionId")?;
             let body = decode_body::<EmptyRequest>(&raw, limits)?;
-            let handled = api.session_trash(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
-        }
-        RouteId::SessionWorkspaceDiscard => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<SessionWorkspaceDiscardRequest>(&raw, limits)?;
-            let handled = api.session_workspace_discard(cx, session_id, body);
+            let handled = api.session_terminate(cx, session_id, body);
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
         }

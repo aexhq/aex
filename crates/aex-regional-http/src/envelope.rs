@@ -71,6 +71,11 @@ pub fn check_content_type(
                 return Err(EnvelopeError::UnsupportedContentType);
             }
         }
+        BodyClass::Binary => {
+            if value.and_then(|value| value.to_str().ok()) != Some("application/octet-stream") {
+                return Err(EnvelopeError::UnsupportedContentType);
+            }
+        }
     }
     Ok(())
 }

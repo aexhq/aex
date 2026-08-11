@@ -5,7 +5,7 @@
   "description": "The exact call an approval is bound to. Nothing else may run under it.",
   "properties": {
     "agentId": {
-      "description": "The agent inside the run.",
+      "description": "The internal execution agent.",
       "pattern": "^agt_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "agent"
@@ -26,12 +26,6 @@
       "minimum": 0,
       "type": "integer"
     },
-    "expectedCustodyRevision": {
-      "description": "The credential-custody revision the call expects.",
-      "maximum": 9007199254740991,
-      "minimum": 0,
-      "type": "integer"
-    },
     "expectedGenerationId": {
       "description": "The generation the call must run in.",
       "pattern": "^gen_[0-9a-hjkmnp-tv-z]{26}$",
@@ -42,12 +36,6 @@
       "description": "Digest of the tool implementation.",
       "pattern": "^sha256:[0-9a-f]{64}$",
       "type": "string"
-    },
-    "runId": {
-      "description": "The run.",
-      "pattern": "^run_[0-9a-hjkmnp-tv-z]{26}$",
-      "type": "string",
-      "x-aex-id": "run"
     },
     "toolCallId": {
       "description": "The tool call.",
@@ -66,9 +54,7 @@
     "argumentsDigest",
     "configDigest",
     "expectedConfigRevision",
-    "expectedCustodyRevision",
     "implementationDigest",
-    "runId",
     "toolCallId",
     "toolName"
   ],

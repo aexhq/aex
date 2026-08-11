@@ -4,32 +4,24 @@
   "description": "The typed successful result of a durable operation.",
   "oneOf": [
     {
-      "$ref": "aex:schema:SessionStopResult",
-      "x-aex-discriminator-value": "session_stop"
+      "$ref": "aex:schema:SessionCancelResult",
+      "x-aex-discriminator-value": "session_cancel"
     },
     {
-      "$ref": "aex:schema:SessionPersistResult",
-      "x-aex-discriminator-value": "session_persist"
+      "$ref": "aex:schema:SessionSuspendResult",
+      "x-aex-discriminator-value": "session_suspend"
     },
     {
-      "$ref": "aex:schema:WorkspaceDiscardResult",
-      "x-aex-discriminator-value": "workspace_discard"
+      "$ref": "aex:schema:SessionResumeResult",
+      "x-aex-discriminator-value": "session_resume"
     },
     {
-      "$ref": "aex:schema:SessionTrashResult",
-      "x-aex-discriminator-value": "session_trash"
-    },
-    {
-      "$ref": "aex:schema:SessionRestoreResult",
-      "x-aex-discriminator-value": "session_restore"
+      "$ref": "aex:schema:SessionTerminateResult",
+      "x-aex-discriminator-value": "session_terminate"
     },
     {
       "$ref": "aex:schema:SessionTombstone",
-      "x-aex-discriminator-value": "session_purge"
-    },
-    {
-      "$ref": "aex:schema:CredentialRebindResult",
-      "x-aex-discriminator-value": "credential_rebind"
+      "x-aex-discriminator-value": "session_delete"
     },
     {
       "$ref": "aex:schema:TelemetryExportResult",

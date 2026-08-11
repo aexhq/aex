@@ -44,9 +44,7 @@ pub struct RawRequest<'a> {
 
 /// The byte bounds a decoder enforces before it parses anything.
 ///
-/// Two values rather than one because the OTLP routes carry a standard payload
-/// an order of magnitude larger than an AEX JSON body, and one shared number
-/// would have to be the larger of the two.
+/// Each body class states its own fixed envelope ceiling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestLimits {
     /// The ceiling for a `BodyClass::AexJson` body, in encoded bytes.
@@ -60,6 +58,8 @@ impl RequestLimits {
     pub const DEFAULT_JSON_BODY_BYTES: usize = 65_536;
     /// The `api.otlp_body` default: 4 MiB.
     pub const DEFAULT_OTLP_BODY_BYTES: usize = 4 * 1024 * 1024;
+    /// The live-file logical part ceiling: 4 MiB.
+    pub const DEFAULT_BINARY_BODY_BYTES: usize = 4 * 1024 * 1024;
 
     /// The registry defaults.
     ///
@@ -75,6 +75,8 @@ impl RequestLimits {
 pub const CONTENT_TYPE_JSON: &str = "application/json";
 /// The `Content-Type` of a rendered frame stream.
 pub const CONTENT_TYPE_NDJSON: &str = "application/x-ndjson";
+/// The content type of a bounded opaque byte body.
+pub const CONTENT_TYPE_BINARY: &str = "application/octet-stream";
 
 /// A rendered unary response: the status the route declares, its headers, and
 /// its encoded body.
@@ -115,6 +117,18 @@ impl RawResponse {
             location: None,
             body,
         })
+    }
+
+    /// One bounded opaque byte response.
+    #[must_use]
+    pub fn binary(status: u16, body: Vec<u8>) -> Self {
+        Self {
+            status,
+            content_type: Some(CONTENT_TYPE_BINARY),
+            etag: None,
+            location: None,
+            body,
+        }
     }
 
     /// A `204 No Content` response.
@@ -331,6 +345,22 @@ pub fn otlp_body<'a>(raw: &RawRequest<'a>, limits: RequestLimits) -> WireResult<
                 limits.max_otlp_body_bytes
             )),
         );
+    }
+    Ok(raw.body)
+}
+
+/// Bounds an opaque binary body without copying or interpreting it.
+///
+/// # Errors
+///
+/// Returns [`ErrorCode::PayloadTooLarge`] above the fixed logical-part bound.
+pub fn binary_body<'a>(raw: &RawRequest<'a>, limits: RequestLimits) -> WireResult<&'a [u8]> {
+    let _ = limits;
+    if raw.body.len() > RequestLimits::DEFAULT_BINARY_BODY_BYTES {
+        return Err(too_large(
+            raw.body.len(),
+            RequestLimits::DEFAULT_BINARY_BODY_BYTES,
+        ));
     }
     Ok(raw.body)
 }

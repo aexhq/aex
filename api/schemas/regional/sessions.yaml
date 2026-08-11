@@ -1,31 +1,34 @@
-# Sessions, messages and runs.
+# Sessions and their complete, sealed messages.
 #
-# Session create accepts no runtime kind, checkpoint, suspend/resume, runtime
-# profile, ephemeral/durable, region or continuity-policy input. `compute.size`
-# is the only customer compute selector; everything else in `resolvedConfig` is
-# provider-derived.
+# A session is the only public execution resource. Each admitted user message
+# starts the session's current work; completion or cancellation returns it to
+# `idle`, ready for another message. Internal turn/run identities never cross
+# this contract.
 module: regional
 schemas:
   SessionStatus:
     doc: What a session is doing right now.
     type: enum
     values:
-      - { value: idle, doc: "No run is in flight." }
-      - { value: running, doc: "A run is executing." }
-      - { value: awaiting_approval, doc: "A bound tool call is waiting on a decision." }
-      - { value: deleting, doc: "A deletion operation is running." }
+      - { value: idle, doc: "Ready for another message." }
+      - { value: running, doc: "Processing the active message." }
+      - { value: awaiting_approval, doc: "The active message is waiting for a bound tool-call decision." }
+      - { value: suspending, doc: "Stopping compute while retaining this exact generation." }
+      - { value: suspended, doc: "Compute is stopped and this exact generation may be resumed." }
+      - { value: resuming, doc: "Restarting the retained generation." }
+      - { value: terminating, doc: "Destroying compute and live files." }
+      - { value: terminated, doc: "Compute and live files are gone; metadata and sealed messages remain." }
+      - { value: deleting, doc: "Irreversible metadata deletion is in progress." }
 
-  RunStatus:
-    doc: Where a run ended up.
+  SessionTerminationReason:
+    doc: Why a session permanently lost its compute and live files.
     type: enum
     values:
-      - { value: queued, doc: "Admitted, not started." }
-      - { value: running, doc: "Executing." }
-      - { value: succeeded, doc: "Completed normally." }
-      - { value: failed, doc: "Terminal failure." }
-      - { value: timed_out, doc: "Exceeded its wall bound." }
-      - { value: cancelled, doc: "Stopped by an explicit operation." }
-      - { value: interrupted, doc: "Lost its execution substrate." }
+      - { value: user, doc: "The customer explicitly terminated it." }
+      - { value: lifetime_expired, doc: "The eight-hour provider lifetime ended." }
+      - { value: provider_credential_revoked, doc: "Its pinned BYOK provider credential was revoked." }
+      - { value: account_paused, doc: "The owning account became paused." }
+      - { value: runtime_lost, doc: "The retained runtime was lost; crash recovery is not part of this release." }
 
   NetworkMode:
     doc: What the guest may reach.
@@ -50,27 +53,11 @@ schemas:
       name: { type: string, min: 1, max: 214, doc: "The package name." }
       version: { type: string, min: 1, max: 64, doc: "The exact version; ranges are rejected." }
 
-  SecretRef:
-    doc: A reference to a workspace secret by name. Values never appear here.
-    type: object
-    fields:
-      name: { type: resource_name, doc: "The secret name." }
-
-  SessionCredentials:
-    doc: Which workspace secrets the session may hold custody of.
-    type: object
-    fields:
-      secrets: { type: array, max: 64, items: { type: ref, to: SecretRef }, doc: "The named secrets." }
-
   SessionRegisteredSelection:
-    doc: Which registered resources the session mounts.
+    doc: Opaque workspace files mounted into the session. Conventional files such as `AGENTS.md` may carry guidance, skills, tool bundles, MCP configuration or custom instructions; Bash is the only built-in model tool.
     type: object
     fields:
-      files: { type: array, max: 256, optional: true, items: { type: resource_name }, doc: "Registered files." }
-      skills: { type: array, max: 256, optional: true, items: { type: resource_name }, doc: "Registered skills." }
-      tools: { type: array, max: 256, optional: true, items: { type: resource_name }, doc: "Registered tools." }
-      instructions: { type: array, max: 256, optional: true, items: { type: resource_name }, doc: "Registered instructions." }
-      mcpServers: { type: array, max: 64, optional: true, items: { type: resource_name }, doc: "Registered MCP servers." }
+      files: { type: array, max: 256, optional: true, items: { type: resource_name }, doc: "Registered files to mount." }
 
   SessionComputeRequest:
     doc: The only customer compute selector.
@@ -91,18 +78,18 @@ schemas:
       hands: { type: ref, to: HandsNetworkRequest, doc: "The guest policy." }
 
   ApprovalPolicyAllowAll:
-    doc: Every tool call runs without an approval.
+    doc: Every built-in tool call runs without an approval.
     type: object
     fields: {}
 
   ApprovalPolicyRequireForTools:
-    doc: Named tools require an explicit decision before they run.
+    doc: Named built-in tools require an explicit decision before they run.
     type: object
     fields:
-      tools: { type: array, max: 256, items: { type: resource_name }, doc: "Tools that need approval." }
+      tools: { type: array, max: 256, items: { type: resource_name }, doc: "Built-in tools that need approval." }
 
   ApprovalPolicy:
-    doc: When a bound tool call needs a human decision.
+    doc: When a bound built-in tool call needs a human decision.
     type: union
     tag: mode
     variants:
@@ -110,18 +97,17 @@ schemas:
       - { value: require_for_tools, payload: ApprovalPolicyRequireForTools, doc: "Ask for the named tools." }
 
   SessionCreateRequest:
-    doc: Create a session. The provider and model pair is explicit and required.
+    doc: Create an eight-hour multi-turn session with one explicitly pinned BYOK provider credential.
     type: object
     fields:
       provider: { type: provider_id, doc: "The direct BYOK provider." }
       model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
-      providerCredentialId: { type: id, of: provider_credential, doc: "Which BYOK binding to use. Required: a workspace may hold several bindings for one provider, and this route declares no ambiguity error, so an absent value could only be resolved by guessing." }
-      registered: { type: ref, to: SessionRegisteredSelection, optional: true, doc: "Registered resources to mount." }
-      credentials: { type: ref, to: SessionCredentials, optional: true, doc: "Secrets to take custody of." }
+      providerCredentialId: { type: id, of: provider_credential, doc: "The exact BYOK binding; the platform never guesses between bindings." }
+      registered: { type: ref, to: SessionRegisteredSelection, optional: true, doc: "Opaque workspace files to mount." }
       compute: { type: ref, to: SessionComputeRequest, optional: true, doc: "The baseline compute shape." }
       network: { type: ref, to: SessionNetworkRequest, optional: true, doc: "The guest network policy." }
       packages: { type: array, max: 64, optional: true, items: { type: ref, to: PackageRequest }, doc: "Packages to pre-install." }
-      approvalPolicy: { type: ref, to: ApprovalPolicy, optional: true, doc: "When to ask for a decision." }
+      approvalPolicy: { type: ref, to: ApprovalPolicy, optional: true, doc: "When to ask for a built-in tool decision." }
       metadata: { type: map, max: 64, optional: true, items: { type: metadata_value }, doc: "Caller-defined labels." }
 
   ComputeShape:
@@ -148,51 +134,52 @@ schemas:
     fields:
       hands: { type: ref, to: HandsNetworkRequest, doc: "What the guest may reach." }
 
+  SessionLifecyclePolicy:
+    doc: The immutable automatic lifecycle behavior applied to this session.
+    type: object
+    fields:
+      idleSuspendAfterSeconds: { type: integer, min: 180, max: 180, doc: "Idle sessions automatically suspend after exactly three minutes." }
+      maximumLifetimeSeconds: { type: integer, min: 28800, max: 28800, doc: "The provider generation expires exactly eight hours after `launchedAt`." }
+      resumeOnMessage: { type: boolean, doc: "A message automatically resumes this same suspended generation." }
+      resumeOnLiveFileAccess: { type: boolean, doc: "A live-file request automatically resumes this same suspended generation." }
+
   ResolvedConfig:
-    doc: Everything the platform actually resolved for this session.
+    doc: Everything the platform resolved for this session.
     type: object
     fields:
       provider: { type: provider_id, doc: "The provider." }
       model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
-      providerCredentialId: { type: id, of: provider_credential, doc: "The BYOK binding in use. Non-optional from create onward, so nothing downstream has to model an unpinned session." }
+      providerCredentialId: { type: id, of: provider_credential, doc: "The pinned BYOK binding." }
       catalogRevision: { type: string, min: 68, max: 68, pattern: "^mc1_[0-9a-f]{64}$", doc: "The signed model-catalog release that qualified this provider and model pair." }
       compute: { type: ref, to: ResolvedCompute, doc: "Resolved capacity." }
       network: { type: ref, to: ResolvedNetwork, doc: "Resolved network policy." }
-      registered: { type: ref, to: SessionRegisteredSelection, doc: "Resolved registered selection." }
+      registered: { type: ref, to: SessionRegisteredSelection, doc: "Resolved mounted files." }
       approvalPolicy: { type: ref, to: ApprovalPolicy, doc: "Resolved approval policy." }
       packages: { type: array, max: 64, items: { type: ref, to: PackageRequest }, doc: "Resolved packages." }
-
-  WorkspaceContinuity:
-    doc: What survives between runs, and from when.
-    type: object
-    fields:
-      rootHash: { type: content_hash, optional: true, doc: "The persisted workspace root." }
-      persistRevision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic persist revision." }
-      lastPersistedAt: { type: timestamp, optional: true, doc: "When the workspace was last persisted." }
-      liveGenerationId: { type: id, of: generation, optional: true, doc: "The live generation, when one exists." }
-
-  SessionLineage:
-    doc: Immutable provenance. A clone records its origin exactly once.
-    type: object
-    fields:
-      originSessionId: { type: id, of: session, optional: true, doc: "The session this was cloned from." }
-      clonedAtPersistRevision: { type: integer, min: 0, max: 9007199254740991, optional: true, doc: "The source revision cloned from." }
-      cloneOperationId: { type: id, of: operation, optional: true, doc: "The operation that cloned it." }
+      lifecycle: { type: ref, to: SessionLifecyclePolicy, doc: "Immutable automatic lifecycle behavior." }
 
   Session:
-    doc: A durable conversation and the workspace it owns.
+    doc: A multi-turn conversation backed by at most one retained provider generation. Termination destroys compute and live files but preserves this metadata and sealed messages until deletion.
     type: object
     fields:
       id: { type: id, of: session, doc: "Identity." }
       workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
       status: { type: ref, to: SessionStatus, doc: "What the session is doing." }
       revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      continuity: { type: ref, to: WorkspaceContinuity, doc: "What survives between runs." }
-      lineage: { type: ref, to: SessionLineage, doc: "Immutable provenance." }
+      activeMessageId: { type: id, of: message, optional: true, doc: "The user message whose work is active. Absent while no message is active." }
+      activeMaxSpendCents: { type: cents, optional: true, doc: "The effective current-message spend ceiling: the request value, or 1000 when omitted." }
+      activeDeadline: { type: timestamp, optional: true, doc: "The internal bounded deadline for the active message." }
+      launchedAt: { type: timestamp, doc: "When the provider generation first launched." }
+      expiresAt: { type: timestamp, doc: "Exactly 28,800 seconds after `launchedAt`; suspension never extends it." }
+      idleSince: { type: timestamp, optional: true, doc: "When the session most recently became idle." }
+      suspendAt: { type: timestamp, optional: true, doc: "When an idle session will automatically suspend; exactly 180 seconds after `idleSince`." }
+      suspendedAt: { type: timestamp, optional: true, doc: "When this exact generation most recently suspended." }
+      terminatedAt: { type: timestamp, optional: true, doc: "When compute and live files were permanently destroyed." }
+      terminationReason: { type: ref, to: SessionTerminationReason, optional: true, doc: "Why the session permanently terminated." }
       resolvedConfig: { type: ref, to: ResolvedConfig, doc: "Everything the platform resolved." }
       metadata: { type: map, max: 64, optional: true, items: { type: metadata_value }, doc: "Caller-defined labels." }
-      createdAt: { type: timestamp, doc: "When it was created." }
-      updatedAt: { type: timestamp, doc: "When it last changed." }
+      createdAt: { type: timestamp, doc: "When metadata was created; this does not determine the provider lifetime." }
+      updatedAt: { type: timestamp, doc: "When the session last changed." }
 
   SessionListItem:
     doc: The collection projection of a session; `resolvedConfig` is omitted.
@@ -204,8 +191,10 @@ schemas:
       revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
       provider: { type: provider_id, doc: "The provider." }
       model: { type: string, min: 1, max: 256, doc: "The model." }
-      createdAt: { type: timestamp, doc: "When it was created." }
-      updatedAt: { type: timestamp, doc: "When it last changed." }
+      activeMessageId: { type: id, of: message, optional: true, doc: "The active user message, when any." }
+      expiresAt: { type: timestamp, doc: "When the provider generation's eight-hour lifetime ends." }
+      createdAt: { type: timestamp, doc: "When metadata was created." }
+      updatedAt: { type: timestamp, doc: "When the session last changed." }
 
   SessionListPage:
     doc: One page of sessions.
@@ -215,7 +204,7 @@ schemas:
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
   DeletingSession:
-    doc: A session whose deletion is running; rendered at 410.
+    doc: A session whose irreversible deletion is running; rendered at 410.
     type: object
     fields:
       id: { type: id, of: session, doc: "Identity." }
@@ -224,14 +213,13 @@ schemas:
       startedAt: { type: timestamp, doc: "When deletion began." }
 
   SessionTombstone:
-    doc: What remains of a deleted session; rendered at 410.
+    doc: The minimal marker left after irreversible deletion. Compute and live files are terminated first; session, message, Brain user-content, observation, telemetry and export payloads are removed. Independent registered workspace files and aggregate billing/audit facts remain.
     type: object
     fields:
       id: { type: id, of: session, doc: "The deleted session." }
       workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
       deletedAt: { type: timestamp, doc: "When deletion committed." }
       operationId: { type: id, of: operation, doc: "The operation that deleted it." }
-      cascaded: { type: boolean, doc: "Whether descendants were deleted too." }
 
   MessageRole:
     doc: Who produced a message.
@@ -239,13 +227,7 @@ schemas:
     values:
       - { value: user, doc: "The customer." }
       - { value: assistant, doc: "The model." }
-      - { value: tool, doc: "A tool result." }
-
-  FileSource:
-    doc: Where a referenced file lives. Only persisted files may be attached.
-    type: enum
-    values:
-      - { value: persisted, doc: "The persisted workspace tree." }
+      - { value: tool, doc: "A built-in tool result." }
 
   MessagePartText:
     doc: A text part.
@@ -253,37 +235,28 @@ schemas:
     fields:
       text: { type: string, min: 0, max: 1048576, doc: "The text." }
 
-  MessagePartFile:
-    doc: A reference to a persisted file.
-    type: object
-    fields:
-      path: { type: file_path, doc: "The normalized POSIX path." }
-      source: { type: ref, to: FileSource, doc: "Always the persisted tree." }
-      mediaType: { type: string, min: 1, max: 255, optional: true, doc: "Declared media type." }
-
   MessagePartToolCall:
-    doc: A tool call emitted by the model.
+    doc: A built-in tool call emitted by the model.
     type: object
     fields:
       id: { type: id, of: tool_call, doc: "The call identity." }
       argumentsDigest: { type: content_hash, doc: "The canonical tool-argument digest." }
 
   MessagePartToolResult:
-    doc: The canonical result of a tool call.
+    doc: The canonical result of a built-in tool call.
     type: object
     fields:
       id: { type: id, of: tool_call, doc: "The call identity." }
       resultDigest: { type: content_hash, doc: "The canonical tool-result digest." }
 
   MessagePart:
-    doc: One part of a message.
+    doc: One part of a complete message. Admission is text-only; assistant and tool messages may contain canonical built-in tool records.
     type: union
     tag: type
     variants:
       - { value: text, payload: MessagePartText, doc: "Text." }
-      - { value: file, payload: MessagePartFile, doc: "A persisted file reference." }
-      - { value: tool_call, payload: MessagePartToolCall, doc: "A canonical tool call." }
-      - { value: tool_result, payload: MessagePartToolResult, doc: "A canonical tool result." }
+      - { value: tool_call, payload: MessagePartToolCall, doc: "A canonical built-in tool call." }
+      - { value: tool_result, payload: MessagePartToolResult, doc: "A canonical built-in tool result." }
 
   Message:
     doc: One complete, sealed message in a session. `createdAt` is display metadata; collection order is the immutable seal-visibility order and is not derived from this field.
@@ -291,7 +264,6 @@ schemas:
     fields:
       id: { type: id, of: message, doc: "Identity." }
       sessionId: { type: id, of: session, doc: "The owning session." }
-      runId: { type: id, of: run, optional: true, doc: "The run that produced it." }
       role: { type: ref, to: MessageRole, doc: "Who produced it." }
       content: { type: array, max: 256, items: { type: ref, to: MessagePart }, doc: "The parts." }
       createdAt: { type: timestamp, doc: "When it was recorded." }
@@ -304,136 +276,52 @@ schemas:
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
   MessageSendRequest:
-    doc: Admit a message and start or queue its run.
+    doc: Admit one text message. Omitting `maxSpendCents` selects the 1000-cent default; an explicit positive value may be higher or lower. Omitting `deadline` uses the session's remaining lifetime/drain fence; an explicit deadline may only shorten it.
     type: object
     fields:
-      content: { type: array, max: 256, items: { type: ref, to: MessagePart }, doc: "The parts." }
-      maxSpendCents: { type: cents, optional: true, doc: "Spend ceiling for the resulting run." }
+      text: { type: string, min: 1, max: 1048576, doc: "The complete user text." }
+      maxSpendCents: { type: cents, optional: true, doc: "The current-message spend ceiling. Omission means 1000 cents; the platform does not reserve account funds." }
+      deadline: { type: timestamp, optional: true, doc: "An earlier absolute deadline. It must be in the future and cannot exceed the session's remaining `expiresAt`/drain fence." }
 
   MessageSendResult:
-    doc: The admitted message and the run it started.
+    doc: The admitted user message and the session now processing it.
     type: object
     fields:
       message: { type: ref, to: Message, doc: "The admitted message." }
-      run: { type: ref, to: Run, doc: "The queued or started run." }
+      session: { type: ref, to: Session, doc: "The session with current activity populated." }
 
-  RunFailure:
-    doc: A durable run failure with no synthetic request identity.
-    type: object
-    fields:
-      code: { type: error_code, doc: "The stable public failure code." }
-      message: { type: string, min: 1, max: 4096, doc: "Customer-safe failure detail." }
-      detail: { type: canonical_json, optional: true, doc: "Typed customer-safe detail." }
-      retryable: { type: boolean, doc: "Whether the same run step may be retried." }
-
-  Run:
-    doc: One admitted turn of execution.
-    type: object
-    fields:
-      id: { type: id, of: run, doc: "Identity." }
-      sessionId: { type: id, of: session, doc: "The owning session." }
-      messageId: { type: id, of: message, doc: "The message that admitted it." }
-      status: { type: ref, to: RunStatus, doc: "Where it ended up." }
-      maxSpendCents: { type: cents, doc: "The effective spend ceiling." }
-      queuedAt: { type: timestamp, doc: "When it was admitted." }
-      startedAt: { type: timestamp, optional: true, doc: "When execution began." }
-      terminalAt: { type: timestamp, optional: true, doc: "When it reached a terminal status." }
-      outputMessageIds: { type: array, max: 1000, optional: true, items: { type: id, of: message }, doc: "Messages it produced." }
-      error: { type: ref, to: RunFailure, optional: true, doc: "The terminal failure." }
-      telemetryComplete: { type: boolean, optional: true, doc: "Whether the run has no recorded gaps." }
-      telemetryGapIds: { type: array, max: 100, optional: true, items: { type: id, of: telemetry_gap }, doc: "Gaps recorded during the run." }
-
-  RunPage:
-    doc: One page of runs.
-    type: object
-    fields:
-      items: { type: array, max: 100, items: { type: ref, to: Run }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  SessionPersistRequest:
-    doc: Admit the durable persist operation.
-    type: object
-    fields:
-      include: { type: array, max: 256, optional: true, items: { type: string, max: 1024 }, doc: "Selection globs to include." }
-      exclude: { type: array, max: 256, optional: true, items: { type: string, max: 1024 }, doc: "Selection globs to exclude." }
-
-  SessionWorkspaceDiscardRequest:
-    doc: Admit the durable workspace-discard operation.
-    type: object
-    fields:
-      ifGenerationId: { type: id, of: generation, optional: true, doc: "Only discard this exact generation." }
-
-  SessionCredentialRebindRequest:
-    doc: Admit the durable credential-rebind operation.
-    type: object
-    fields:
-      secrets: { type: array, max: 64, items: { type: ref, to: SecretRef }, doc: "The new custody set." }
-
-  PurgeCascade:
-    doc: How a purge treats the session's lineage descendants.
-    type: enum
-    values:
-      - { value: detach_descendants, doc: "Clear each descendant's origin link and leave it alive." }
-      - { value: purge_closure, doc: "Purge the whole lineage-descendant closure." }
-
-  SessionPurgeRequest:
-    doc: Admit the durable purge operation. Purge is irreversible.
-    type: object
-    fields:
-      cascade: { type: ref, to: PurgeCascade, doc: "How lineage descendants are treated." }
-
-  SessionStopResult:
-    doc: The result of a stop operation.
+  SessionCancelResult:
+    doc: The result of cancelling the session's current work. The session is idle afterward and accepts another message.
     type: object
     fields:
       sessionId: { type: id, of: session, doc: "The session." }
-      changed: { type: boolean, doc: "Whether anything was actually stopped." }
-      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after the stop." }
+      changed: { type: boolean, doc: "Whether work was active and got cancelled." }
+      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after cancellation." }
 
-  SessionPersistResult:
-    doc: The result of a persist operation.
+  SessionSuspendResult:
+    doc: The result of manually suspending an idle session's exact retained generation. Active work must be cancelled first.
     type: object
     fields:
       sessionId: { type: id, of: session, doc: "The session." }
-      changed: { type: boolean, doc: "Whether the tree actually changed." }
-      persistRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after the persist." }
-      rootHash: { type: content_hash, doc: "The persisted root." }
-      lastPersistedAt: { type: timestamp, doc: "When the persist committed." }
-      added: { type: decimal, doc: "Entries added." }
-      updated: { type: decimal, doc: "Entries replaced." }
-      deleted: { type: decimal, doc: "Entries removed." }
-      bytesMoved: { type: decimal, doc: "Bytes written to durable content." }
+      changed: { type: boolean, doc: "Whether the session transitioned to suspended." }
+      suspendedAt: { type: timestamp, doc: "When the generation suspended." }
+      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after suspension." }
 
-  SessionTrashResult:
-    doc: The result of a trash operation. Trash starts the recovery window.
+  SessionResumeResult:
+    doc: The result of manually resuming the same retained generation to idle.
     type: object
     fields:
       sessionId: { type: id, of: session, doc: "The session." }
-      trashedAt: { type: timestamp, doc: "When the trash committed." }
-      recoveryDeadline: { type: timestamp, doc: "After this instant restore is refused." }
-      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after the trash." }
+      changed: { type: boolean, doc: "Whether the retained generation was resumed." }
+      status: { type: ref, to: SessionStatus, doc: "Always `idle` after a successful resume." }
+      resumedAt: { type: timestamp, doc: "When the retained generation resumed." }
+      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after resumption." }
 
-  SessionRestoreResult:
-    doc: The result of a restore operation.
+  SessionTerminateResult:
+    doc: The result of permanently destroying compute and live files while preserving session metadata and sealed messages.
     type: object
     fields:
       sessionId: { type: id, of: session, doc: "The session." }
-      restoredAt: { type: timestamp, doc: "When the restore committed." }
-      status: { type: ref, to: SessionStatus, doc: "What the session is doing now." }
-      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after the restore." }
-
-  WorkspaceDiscardResult:
-    doc: The result of a workspace-discard operation.
-    type: object
-    fields:
-      sessionId: { type: id, of: session, doc: "The session." }
-      changed: { type: boolean, doc: "Whether a live workspace was actually discarded." }
-      continuity: { type: ref, to: WorkspaceContinuity, doc: "Continuity after the discard." }
-
-  CredentialRebindResult:
-    doc: The result of a credential-rebind operation.
-    type: object
-    fields:
-      sessionId: { type: id, of: session, doc: "The session." }
-      custodyRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The custody revision after the rebind." }
-      secrets: { type: array, max: 64, items: { type: ref, to: SecretRef }, doc: "The bound secrets." }
+      changed: { type: boolean, doc: "Whether live compute or files existed and were destroyed." }
+      terminatedAt: { type: timestamp, doc: "When permanent termination committed." }
+      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after termination." }

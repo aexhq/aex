@@ -1,11 +1,11 @@
 {
-  "$id": "https://schemas.aex.dev/v1/SessionStopResult.json",
+  "$id": "https://schemas.aex.dev/v1/SessionCancelResult.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The result of a stop operation.",
+  "description": "The result of cancelling the session's current work. The session is idle afterward and accepts another message.",
   "properties": {
     "changed": {
-      "description": "Whether anything was actually stopped.",
+      "description": "Whether work was active and got cancelled.",
       "type": "boolean"
     },
     "sessionId": {
@@ -15,7 +15,7 @@
       "x-aex-id": "session"
     },
     "sessionRevision": {
-      "description": "The revision after the stop.",
+      "description": "The revision after cancellation.",
       "maximum": 9007199254740991,
       "minimum": 0,
       "type": "integer"
@@ -26,6 +26,6 @@
     "sessionId",
     "sessionRevision"
   ],
-  "title": "SessionStopResult",
+  "title": "SessionCancelResult",
   "type": "object"
 }

@@ -23,6 +23,8 @@ pub enum AcceptKind {
     Json,
     /// `application/x-ndjson`.
     Ndjson,
+    /// `application/octet-stream`.
+    Binary,
     /// `application/pdf`; only the statement read offers it.
     Pdf,
 }
@@ -103,6 +105,10 @@ pub struct NoContent;
 /// middleware might forget.
 #[derive(Debug, Clone)]
 pub struct NdjsonStream<F>(pub F);
+
+/// One bounded `application/octet-stream` response body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinaryBody(pub Vec<u8>);
 
 /// What `GET /api/sessions/{sessionId}` resolves to.
 ///

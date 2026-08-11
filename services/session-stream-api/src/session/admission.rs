@@ -1,7 +1,8 @@
 //! Pure message/run admission transaction compilation.
 
+use aex_internal_contracts::RunId;
 use aex_regional_http::idempotency::IdempotencyIdentity;
-use aex_wire::ids::{MessageId, RunId, SessionId, WorkspaceId};
+use aex_wire::ids::{MessageId, SessionId, WorkspaceId};
 use sha2::Digest as _;
 
 use crate::session::wire_pending::TransactionPlan;

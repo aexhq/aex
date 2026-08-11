@@ -218,6 +218,15 @@
     },
     {
       "class": "state",
+      "code": "session_terminated",
+      "message": "the session's compute and live files were permanently terminated",
+      "precedenceStage": "domain_state",
+      "remedy": null,
+      "retryable": false,
+      "status": 409
+    },
+    {
+      "class": "state",
       "code": "workspace_activation_required",
       "message": "the regional workspace is not activated yet",
       "precedenceStage": "domain_state",

@@ -90,7 +90,6 @@ schemas:
       region: { type: region, doc: "Where the usage happened." }
       workspaceId: { type: id, of: workspace, doc: "The workspace." }
       sessionId: { type: id, of: session, optional: true, doc: "The session, when attributable. Never populated by `usage_query`: that route answers from a coarse face that carries no session identity, and its absence is honest rather than an omission." }
-      runId: { type: id, of: run, optional: true, doc: "The run, when attributable. Never populated by `usage_query`, as `sessionId`." }
       operationId: { type: id, of: operation, optional: true, doc: "The operation, when attributable. Never populated by `usage_query`, as `sessionId`." }
       source: { type: string, min: 1, max: 128, doc: "Which authority produced the facts. One of the `UsageAuthority` identifiers, constant per partition." }
       serviceTime: { type: ref, to: TimeRange, doc: "The service-time interval." }

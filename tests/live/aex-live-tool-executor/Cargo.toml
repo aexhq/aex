@@ -14,10 +14,9 @@ workspace = true
 
 [package.metadata.aex]
 owner = "brain-core"
-role = "live_companion"
+role = "test_support"
 artifact = "none"
-deployable = "tool-executor"
-layers = ["smoke", "e2e"]
+layers = ["e2e"]
 concerns = ["fault", "security", "performance"]
 seams = ["aws.dynamodb.condition", "aws.dynamodb.transact_write", "aws.iam.denial"]
 security_tier = "secret"

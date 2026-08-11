@@ -28,12 +28,6 @@
       "$ref": "aex:schema:MessageRole",
       "description": "Who produced it."
     },
-    "runId": {
-      "description": "The run that produced it.",
-      "pattern": "^run_[0-9a-hjkmnp-tv-z]{26}$",
-      "type": "string",
-      "x-aex-id": "run"
-    },
     "sessionId": {
       "description": "The owning session.",
       "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",

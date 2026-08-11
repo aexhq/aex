@@ -359,6 +359,19 @@ pub fn decode_no_content(route: RouteId, response: &WireResponse) -> Result<(), 
     Ok(())
 }
 
+/// Accepts one bounded raw-byte success body.
+///
+/// # Errors
+///
+/// Returns [`ClientError::Api`] for any status other than the declared one.
+pub fn decode_binary(route: RouteId, response: WireResponse) -> Result<Vec<u8>, ClientError> {
+    let expected = crate::routes::route(route).success_status;
+    if response.status != expected {
+        return Err(decode_api_error(route, &response));
+    }
+    Ok(response.body)
+}
+
 /// A buffered `application/x-ndjson` answer.
 ///
 /// The frames are decoded lazily, one line at a time, so a malformed frame names
@@ -454,17 +467,21 @@ pub fn accept_header(id: RouteId) -> (&'static str, String) {
     let media = match route(id).transport {
         crate::routes::TransportKind::Unary => crate::dispatch::CONTENT_TYPE_JSON,
         crate::routes::TransportKind::Ndjson => crate::dispatch::CONTENT_TYPE_NDJSON,
+        crate::routes::TransportKind::Binary => crate::dispatch::CONTENT_TYPE_BINARY,
     };
     (HEADER_ACCEPT, media.to_owned())
 }
 
 /// The `Content-Type` header of a request that carries a body.
 #[must_use]
-pub fn content_type_header() -> (&'static str, String) {
-    (
-        HEADER_CONTENT_TYPE,
-        crate::dispatch::CONTENT_TYPE_JSON.to_owned(),
-    )
+pub fn content_type_header(id: RouteId) -> (&'static str, String) {
+    let media = match route(id).body_class {
+        crate::routes::BodyClass::Binary => crate::dispatch::CONTENT_TYPE_BINARY,
+        crate::routes::BodyClass::None
+        | crate::routes::BodyClass::AexJson
+        | crate::routes::BodyClass::Otlp => crate::dispatch::CONTENT_TYPE_JSON,
+    };
+    (HEADER_CONTENT_TYPE, media.to_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -543,7 +560,7 @@ pub fn request_headers(
 ) -> Vec<(&'static str, String)> {
     let mut headers = vec![accept_header(id)];
     if route(id).body_class != crate::routes::BodyClass::None {
-        headers.push(content_type_header());
+        headers.push(content_type_header(id));
     }
     if let Some(key) = idempotency_key {
         headers.push(idempotency_header(key));

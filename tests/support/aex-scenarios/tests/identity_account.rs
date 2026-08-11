@@ -171,7 +171,7 @@ impl World {
             &self.deps(),
             &self.context("sign-in"),
             OauthProfile {
-                provider: aex_identity_domain::Provider::Github,
+                provider: aex_identity_domain::Provider::Google,
                 provider_account_id: aex_identity_domain::ProviderAccountId::parse(account)
                     .expect("a printable account id"),
                 email: aex_identity_domain::NormalizedEmail::parse(&format!(

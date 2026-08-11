@@ -6,18 +6,11 @@ use aex_identity_app::use_cases::OauthProfile;
 use aex_identity_domain::Provider;
 use time::OffsetDateTime;
 
-use super::client::OauthClients;
-use super::profile::{
-    check_read, github_profile, google_profile, parse_github_token, parse_google_token,
-};
+use super::client::OauthClient;
+use super::profile::{google_profile, parse_google_token};
 use super::{HandshakeError, ProviderHandshake};
 
-const GITHUB_TOKEN_ENDPOINT: &str = "https://github.com/login/oauth/access_token";
-const GITHUB_API_ORIGIN: &str = "https://api.github.com";
 const GOOGLE_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
-
-/// The pinned GitHub REST API version.
-pub(super) const GITHUB_API_VERSION: &str = "2026-03-10";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
@@ -29,16 +22,12 @@ const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 /// client secret.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Endpoints {
-    pub(super) github_token: String,
-    pub(super) github_api: String,
     pub(super) google_token: String,
 }
 
 impl Default for Endpoints {
     fn default() -> Self {
         Self {
-            github_token: GITHUB_TOKEN_ENDPOINT.to_owned(),
-            github_api: GITHUB_API_ORIGIN.to_owned(),
             google_token: GOOGLE_TOKEN_ENDPOINT.to_owned(),
         }
     }
@@ -48,7 +37,7 @@ impl Default for Endpoints {
 #[derive(Debug)]
 pub struct HttpProviderHandshake {
     http: reqwest::Client,
-    clients: OauthClients,
+    client: OauthClient,
     redirect_uri: String,
     endpoints: Endpoints,
     deadline: Duration,
@@ -68,15 +57,15 @@ impl HttpProviderHandshake {
     ///
     /// Returns [`ClientBuildError`] when `reqwest` refuses the pinned policy.
     pub fn new(
-        clients: OauthClients,
+        client: OauthClient,
         redirect_uri: String,
         deadline: Duration,
     ) -> Result<Self, ClientBuildError> {
-        Self::with_endpoints(clients, redirect_uri, deadline, Endpoints::default())
+        Self::with_endpoints(client, redirect_uri, deadline, Endpoints::default())
     }
 
     pub(super) fn with_endpoints(
-        clients: OauthClients,
+        client: OauthClient,
         redirect_uri: String,
         deadline: Duration,
         endpoints: Endpoints,
@@ -95,7 +84,7 @@ impl HttpProviderHandshake {
             .map_err(|_| ClientBuildError)?;
         Ok(Self {
             http,
-            clients,
+            client,
             redirect_uri,
             endpoints,
             deadline,
@@ -120,54 +109,13 @@ impl HttpProviderHandshake {
         Ok((status, body))
     }
 
-    async fn github(&self, code: &str, verifier: &str) -> Result<OauthProfile, HandshakeError> {
-        let client = self.clients.of(Provider::Github);
-        let form = form(&[
-            ("client_id", client.id()),
-            ("client_secret", &client.secret),
-            ("code", code),
-            ("redirect_uri", &self.redirect_uri),
-            ("code_verifier", verifier),
-        ]);
-        let (status, body) = self
-            .send(
-                self.http
-                    .post(&self.endpoints.github_token)
-                    .header(reqwest::header::ACCEPT, "application/json")
-                    .header(
-                        reqwest::header::CONTENT_TYPE,
-                        "application/x-www-form-urlencoded",
-                    )
-                    .body(form),
-                &client.secret,
-            )
-            .await?;
-        let token = parse_github_token(status, &body, &client.secret)?;
-
-        let (status, user) = self.send(self.github_read(&token, "/user"), &token).await?;
-        check_read(status, &user, &token)?;
-        let (status, emails) = self
-            .send(self.github_read(&token, "/user/emails"), &token)
-            .await?;
-        check_read(status, &emails, &token)?;
-        github_profile(&user, &emails)
-    }
-
-    fn github_read(&self, token: &str, path: &str) -> reqwest::RequestBuilder {
-        self.http
-            .get(format!("{}{path}", self.endpoints.github_api))
-            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-            .header("x-github-api-version", GITHUB_API_VERSION)
-            .bearer_auth(token)
-    }
-
     async fn google(
         &self,
         code: &str,
         verifier: &str,
         now: OffsetDateTime,
     ) -> Result<OauthProfile, HandshakeError> {
-        let client = self.clients.of(Provider::Google);
+        let client = &self.client;
         let form = form(&[
             ("client_id", client.id()),
             ("client_secret", &client.secret),
@@ -205,7 +153,6 @@ impl ProviderHandshake for HttpProviderHandshake {
         let now = OffsetDateTime::now_utc();
         let exchange = async {
             match provider {
-                Provider::Github => self.github(code, verifier).await,
                 Provider::Google => self.google(code, verifier, now).await,
             }
         };

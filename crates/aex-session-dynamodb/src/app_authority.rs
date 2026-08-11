@@ -26,6 +26,7 @@
 //! [`CommitError::Ambiguous`] carrying every target the plan would have
 //! written, never a definite failure and never a blind retry (D-10 rows 6-8).
 
+use aex_internal_contracts::RunId;
 use aex_operation_domain::Operation;
 use aex_operation_domain::cursor::ContinuationCursor;
 use aex_operation_domain::operation::OperationVersion;
@@ -41,7 +42,7 @@ use aex_session_domain::{
     AccountProjection, AccountRevision, AccountState, AgentControl, AgentRevision,
     IdempotencyIdentity, IdempotencyReceipt, JournalPage, JournalSeq, PauseReason, Run, Session,
 };
-use aex_wire::ids::{AgentId, OperationId, OrganizationId, RunId, SessionId, WorkspaceId};
+use aex_wire::ids::{AgentId, OperationId, OrganizationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
 

@@ -30,6 +30,7 @@ properties = "unit"
 
 
 [dependencies]
+aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-observation-domain = { path = "../aex-observation-domain" }
 aex-wire = { path = "../aex-wire" }
 bytes.workspace = true

@@ -26,12 +26,6 @@
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     },
-    "runId": {
-      "description": "The owning run, when attributable.",
-      "pattern": "^run_[0-9a-hjkmnp-tv-z]{26}$",
-      "type": "string",
-      "x-aex-id": "run"
-    },
     "sequence": {
       "description": "Position in the ordered series.",
       "pattern": "^(0|[1-9]\\d*)$",

@@ -1,15 +1,11 @@
 {
   "$id": "https://schemas.aex.dev/v1/MessagePart.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "One part of a message.",
+  "description": "One part of a complete message. Admission is text-only; assistant and tool messages may contain canonical built-in tool records.",
   "oneOf": [
     {
       "$ref": "aex:schema:MessagePartText",
       "x-aex-discriminator-value": "text"
-    },
-    {
-      "$ref": "aex:schema:MessagePartFile",
-      "x-aex-discriminator-value": "file"
     },
     {
       "$ref": "aex:schema:MessagePartToolCall",

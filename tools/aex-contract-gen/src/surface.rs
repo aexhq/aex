@@ -120,6 +120,8 @@ pub enum ResponseShape {
     Plain(String),
     /// `200 application/x-ndjson`, a stream of the named frame schema.
     Ndjson(String),
+    /// One bounded `application/octet-stream` body.
+    Binary,
 }
 
 impl ResponseShape {
@@ -140,6 +142,9 @@ impl ResponseShape {
         if operation.transport == "ndjson" {
             return Self::Ndjson(schema());
         }
+        if operation.transport == "binary" {
+            return Self::Binary;
+        }
         match operation.success_status {
             204 => Self::NoContent,
             202 => Self::Accepted,
@@ -159,6 +164,7 @@ impl ResponseShape {
             Self::Etagged(schema) => format!("WithETag<{schema}>"),
             Self::Plain(schema) => schema.clone(),
             Self::Ndjson(_) => "NdjsonStream<Self::FrameStream>".to_owned(),
+            Self::Binary => "BinaryBody".to_owned(),
         }
     }
 
@@ -176,6 +182,7 @@ impl ResponseShape {
                 }
             }
             Self::Ndjson(frame) => format!("NdjsonFrames<{frame}>"),
+            Self::Binary => "Vec<u8>".to_owned(),
         }
     }
 
@@ -184,6 +191,7 @@ impl ResponseShape {
     pub fn schema(&self) -> Option<&str> {
         match self {
             Self::NoContent => None,
+            Self::Binary => None,
             Self::Accepted => Some("Operation"),
             Self::Created(schema)
             | Self::Etagged(schema)
@@ -202,6 +210,7 @@ impl ResponseShape {
             Self::Etagged(_) => "etagged",
             Self::Plain(_) => "plain",
             Self::Ndjson(_) => "ndjson",
+            Self::Binary => "binary",
         }
     }
 }
@@ -215,6 +224,8 @@ pub enum RequestShape {
     Json(String),
     /// The pinned standard OTLP revision, bounded but not interpreted.
     Otlp,
+    /// Bounded opaque bytes.
+    Binary,
 }
 
 impl RequestShape {
@@ -233,6 +244,7 @@ impl RequestShape {
                     .expect("an `aex_json` body declares a schema"),
             ),
             "otlp" => Self::Otlp,
+            "binary" => Self::Binary,
             _ => Self::None,
         }
     }
@@ -244,6 +256,7 @@ impl RequestShape {
             Self::None => "none",
             Self::Json(_) => "aex_json",
             Self::Otlp => "otlp",
+            Self::Binary => "binary",
         }
     }
 }

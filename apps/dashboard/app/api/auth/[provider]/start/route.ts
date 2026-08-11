@@ -23,8 +23,6 @@ export async function GET(request: Request, context: Context): Promise<Response>
 
   const config = signInConfig();
   if (config.kind !== "ready") return new Response(null, { status: 404 });
-  const clientId = config.clientIds[provider];
-  if (clientId === undefined) return new Response(null, { status: 404 });
 
   const verifier = mintToken();
   const challenge = await challengeOf(verifier);
@@ -40,7 +38,7 @@ export async function GET(request: Request, context: Context): Promise<Response>
   return new Response(null, {
     status: 303,
     headers: {
-      location: authorizationUrl(provider, clientId, redirectUri, challenge),
+      location: authorizationUrl(config.clientId, redirectUri, challenge),
       "Cache-Control": "private, no-store",
       "Set-Cookie": signInStateCookie(state, Math.floor(STATE_TTL_MS / 1_000)),
     },

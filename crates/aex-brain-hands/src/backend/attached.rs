@@ -218,7 +218,7 @@ mod tests {
                 "grep",
                 "install_packages",
                 "run_code",
-                "run_command",
+                "bash",
             ]
         );
         for row in [

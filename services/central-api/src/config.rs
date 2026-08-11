@@ -31,9 +31,9 @@
 //!   Two `VERCEL_*` values used to be excluded here on the grounds that the
 //!   browser ceremony exchange was not a route this process mounts. It is one
 //!   now: this composition performs the provider authorization-code exchange
-//!   itself, so it requires each provider's registered OAuth client
-//!   ([`GITHUB_OAUTH_SECRET_ID`], [`GOOGLE_OAUTH_SECRET_ID`]) and the one
-//!   [`SIGN_IN_REDIRECT_URI`] they are registered against, and excludes nothing
+//!   itself, so it requires Google's registered OAuth client
+//!   ([`GOOGLE_OAUTH_SECRET_ID`]) and the one [`SIGN_IN_REDIRECT_URI`] it is
+//!   registered against, and excludes nothing
 //!   on that ground.
 
 use std::collections::BTreeMap;
@@ -90,12 +90,10 @@ pub const REGION: &str = "AEX_CENTRAL_API_REGION";
 pub const REGIONAL_FUNCTION_ARNS: &str = "AEX_CENTRAL_API_REGIONAL_FUNCTION_ARNS";
 /// How long one request may take before the edge gives up.
 pub const REQUEST_DEADLINE_MS: &str = "AEX_CENTRAL_API_REQUEST_DEADLINE_MS";
-/// The secret holding GitHub's registered OAuth client.
+/// The secret holding Google's registered OAuth client.
 ///
 /// A JSON object with `clientId` and `clientSecret`, bound to
 /// [`aex_central_http::capability::SignInHandshake`].
-pub const GITHUB_OAUTH_SECRET_ID: &str = "AEX_CENTRAL_API_GITHUB_OAUTH_SECRET_ID";
-/// The secret holding Google's registered OAuth client, in the same shape.
 pub const GOOGLE_OAUTH_SECRET_ID: &str = "AEX_CENTRAL_API_GOOGLE_OAUTH_SECRET_ID";
 /// Where a provider sends the browser back after a person authorizes.
 ///
@@ -122,7 +120,6 @@ pub const ALL: &[&str] = &[
     DOWNLOAD_GRANT_TTL_MS,
     DRAIN_DEADLINE_MS,
     FINANCE_ROLE,
-    GITHUB_OAUTH_SECRET_ID,
     GOOGLE_OAUTH_SECRET_ID,
     IDENTITY_PEPPER_SECRET_ID,
     MAX_BODY_BYTES,
@@ -175,8 +172,6 @@ pub struct Config {
     pub api_key_pepper_secret_id: String,
     /// The identity pepper secret.
     pub identity_pepper_secret_id: String,
-    /// The secret holding GitHub's registered OAuth client.
-    pub github_oauth_secret_id: String,
     /// The secret holding Google's registered OAuth client.
     pub google_oauth_secret_id: String,
     /// Where a provider sends the browser back after a person authorizes.
@@ -296,7 +291,6 @@ impl Config {
             finance_role: required(&lookup, FINANCE_ROLE)?,
             api_key_pepper_secret_id: required(&lookup, API_KEY_PEPPER_SECRET_ID)?,
             identity_pepper_secret_id: required(&lookup, IDENTITY_PEPPER_SECRET_ID)?,
-            github_oauth_secret_id: required(&lookup, GITHUB_OAUTH_SECRET_ID)?,
             google_oauth_secret_id: required(&lookup, GOOGLE_OAUTH_SECRET_ID)?,
             sign_in_redirect_uri: https_url(&lookup, SIGN_IN_REDIRECT_URI)?,
             cursor_secret_id: required(&lookup, CURSOR_SECRET_ID)?,
@@ -336,10 +330,6 @@ impl Config {
                 (
                     API_KEY_PEPPER_SECRET_ID.to_owned(),
                     self.api_key_pepper_secret_id.clone(),
-                ),
-                (
-                    GITHUB_OAUTH_SECRET_ID.to_owned(),
-                    self.github_oauth_secret_id.clone(),
                 ),
                 (
                     GOOGLE_OAUTH_SECRET_ID.to_owned(),

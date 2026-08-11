@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 
 use aex_content_domain::ContentDigest;
+use aex_internal_contracts::RunId;
 use aex_operation_domain::{DeletionGuard, DeletionState, OperationKind};
 use aex_secret_domain::CloneCredentials;
 use aex_session_domain::testing::{
@@ -24,7 +25,7 @@ use aex_session_domain::{
 };
 use aex_wire::error::ErrorCode;
 use aex_wire::ids::{
-    AgentId, ApprovalId, GenerationId, OperationId, PrefixedId as _, RunId, SessionId, Uuid7,
+    AgentId, ApprovalId, GenerationId, OperationId, PrefixedId as _, SessionId, Uuid7,
 };
 use aex_wire::limits::LimitId;
 use proptest::prelude::*;

@@ -9,7 +9,9 @@
 //! pinned `MessageDeduplicationId` and `business_key` grammar.
 
 use aex_wire::idempotency::IntentDigest;
-use aex_wire::ids::{OperationId, OrganizationId, RunId, SessionId, WorkspaceId};
+use aex_wire::ids::{OperationId, OrganizationId, SessionId, WorkspaceId};
+
+use crate::RunId;
 use aex_wire::types::{DecimalU128, Region, Timestamp};
 use serde::{Deserialize, Serialize};
 

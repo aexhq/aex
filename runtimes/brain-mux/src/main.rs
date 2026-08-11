@@ -22,7 +22,6 @@ pub mod release_catalog;
 pub mod runtime;
 pub mod scale;
 pub mod task_shape;
-pub mod tool_exec;
 pub mod wake;
 
 /// The composed loop's own assertions: one turn end to end, the drain order, and A11-MUX
@@ -72,14 +71,6 @@ pub struct Config {
     pub pricing_version: String,
     /// Maximum concurrently active activations for one task.
     pub budget: u32,
-    /// Private HTTP endpoint for platform-paid tools.
-    pub tool_executor_endpoint: String,
-    /// Secrets Manager id holding the Brain's local Ed25519 signing key.
-    pub tool_exec_signing_secret_id: String,
-    /// Identity of that signing key.
-    pub tool_exec_signing_key_id: uuid::Uuid,
-    /// Matching public key, used for the cold-start self-test.
-    pub tool_exec_signing_public_key: [u8; 32],
 }
 
 /// Why `brain-mux` refused to start.
@@ -173,15 +164,6 @@ pub const RUNTIME_DUE_PAGE_READS_VAR: &str = "AEX_RUNTIME_DUE_PAGE_READS";
 pub const PRICING_VERSION_VAR: &str = "AEX_PRICING_VERSION";
 /// Environment variable naming maximum concurrently active activations for one task.
 pub const BUDGET_VAR: &str = "AEX_MAX_ACTIVE_ACTIVATIONS";
-/// Environment variable naming the private tool-executor route.
-pub const TOOL_EXECUTOR_ENDPOINT_VAR: &str = "AEX_TOOL_EXECUTOR_ENDPOINT";
-/// Environment variable naming Brain's tool-exec signing secret.
-pub const TOOL_EXEC_SIGNING_SECRET_ID_VAR: &str = "AEX_TOOL_EXEC_SIGNING_SECRET_ID";
-/// Environment variable naming Brain's tool-exec signing key id.
-pub const TOOL_EXEC_SIGNING_KEY_ID_VAR: &str = "AEX_TOOL_EXEC_SIGNING_KEY_ID";
-/// Environment variable carrying the matching non-secret public key.
-pub const TOOL_EXEC_SIGNING_PUBLIC_KEY_VAR: &str = "AEX_TOOL_EXEC_SIGNING_PUBLIC_KEY";
-
 /// Planes this deployable may be bound to.
 const PLANES: [&str; 2] = ["dev", "prd"];
 
@@ -276,7 +258,6 @@ impl Config {
                 reason: "expected a positive integer, got `0`".to_owned(),
             });
         }
-        let tool_exec = tool_exec_config(&lookup)?;
         Ok(Self {
             plane,
             region,
@@ -298,10 +279,6 @@ impl Config {
             },
             pricing_version,
             budget,
-            tool_executor_endpoint: tool_exec.endpoint,
-            tool_exec_signing_secret_id: tool_exec.signing_secret_id,
-            tool_exec_signing_key_id: tool_exec.signing_key_id,
-            tool_exec_signing_public_key: tool_exec.signing_public_key,
         })
     }
 
@@ -334,56 +311,6 @@ impl Config {
             std::process::id()
         )
     }
-}
-
-struct ToolExecConfig {
-    endpoint: String,
-    signing_secret_id: String,
-    signing_key_id: uuid::Uuid,
-    signing_public_key: [u8; 32],
-}
-
-fn tool_exec_config<F>(lookup: &F) -> Result<ToolExecConfig, BrainMuxConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    let endpoint = required(lookup, TOOL_EXECUTOR_ENDPOINT_VAR)?;
-    let signing_secret_id = required(lookup, TOOL_EXEC_SIGNING_SECRET_ID_VAR)?;
-    let raw_kid = required(lookup, TOOL_EXEC_SIGNING_KEY_ID_VAR)?;
-    let signing_key_id =
-        uuid::Uuid::parse_str(&raw_kid).map_err(|_| BrainMuxConfigError::Invalid {
-            name: TOOL_EXEC_SIGNING_KEY_ID_VAR,
-            reason: "expected a UUID".to_owned(),
-        })?;
-    let raw_public = required(lookup, TOOL_EXEC_SIGNING_PUBLIC_KEY_VAR)?;
-    let signing_public_key =
-        decode_hex_32(&raw_public).ok_or_else(|| BrainMuxConfigError::Invalid {
-            name: TOOL_EXEC_SIGNING_PUBLIC_KEY_VAR,
-            reason: "expected 32 bytes of lowercase hexadecimal".to_owned(),
-        })?;
-    Ok(ToolExecConfig {
-        endpoint,
-        signing_secret_id,
-        signing_key_id,
-        signing_public_key,
-    })
-}
-
-fn decode_hex_32(text: &str) -> Option<[u8; 32]> {
-    if text.len() != 64
-        || !text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return None;
-    }
-    let mut decoded = [0_u8; 32];
-    for (index, pair) in text.as_bytes().chunks_exact(2).enumerate() {
-        let high = char::from(pair[0]).to_digit(16)?;
-        let low = char::from(pair[1]).to_digit(16)?;
-        decoded[index] = u8::try_from(high * 16 + low).ok()?;
-    }
-    Some(decoded)
 }
 
 fn validate_kms_arn(
@@ -654,25 +581,6 @@ fn resolve_production_ports(
         config.placement_region(),
         &config.credential_cache_partition(),
     );
-    let tool_exec = runtime
-        .block_on(tool_exec::production(
-            &aws.sdk,
-            tool_exec::Binding {
-                endpoint: config.tool_executor_endpoint.clone(),
-                signing_secret_id: config.tool_exec_signing_secret_id.clone(),
-                signing_key_id: config.tool_exec_signing_key_id,
-                signing_public_key: config.tool_exec_signing_public_key,
-                plane: match config.plane.as_str() {
-                    "dev" => aex_identity_domain::assertion::Plane::Dev,
-                    "prd" => aex_identity_domain::assertion::Plane::Prd,
-                    _ => unreachable!("configuration admitted the closed plane set"),
-                },
-                region: config.placement_region(),
-            },
-        ))
-        .map_err(|error| BrainMuxRunError::Runtime {
-            reason: format!("production tool-executor binding failed: {error}"),
-        })?;
     let catalog = bind_release_catalog()?;
     let snapshots = wake::snapshot_binding(
         &aws.sdk,
@@ -708,13 +616,13 @@ fn resolve_production_ports(
         reason: format!("production Hands binding failed: {error}"),
     })?;
 
-    // The earned pure control subset is real, but catalog composition still
-    // refuses startup until every active BrainInline row and MCP authority has
-    // exact executor coverage. A partial executor can never make the task ready.
+    // The MVP catalog is Bash-only. It executes inside the exact session
+    // generation through Hands; hosted paid tools and typed integrations are
+    // deliberately not linked into this release binary.
     let tools = wake::ProductionToolExecutors {
-        brain_inline: Some(std::sync::Arc::new(inline_tools::BrainControlExecutor)),
-        managed_web: Some(std::sync::Arc::clone(&credentials.managed_web)),
-        tool_exec: Some(tool_exec),
+        brain_inline: None,
+        managed_web: None,
+        tool_exec: None,
         mcp: None,
         hands: Some(std::sync::Arc::clone(&hands.executor)),
     }
@@ -1188,9 +1096,8 @@ mod tests {
         CONTENT_KMS_KEY_ARN_VAR, Config, PLANE_VAR, PRICING_VERSION_VAR, REGION_VAR, RESOURCE_VAR,
         RUNTIME_ACTIVITY_TABLE_VAR, RUNTIME_DUE_PAGE_ITEMS_VAR, RUNTIME_DUE_PAGE_READS_VAR,
         RUNTIME_DUE_SHARDS_VAR, SECRET_CUSTODY_TABLE_VAR, SECRET_KMS_KEY_ARN_VAR,
-        TOOL_EXEC_SIGNING_KEY_ID_VAR, TOOL_EXEC_SIGNING_PUBLIC_KEY_VAR,
-        TOOL_EXEC_SIGNING_SECRET_ID_VAR, TOOL_EXECUTOR_ENDPOINT_VAR, USAGE_COMPUTE_QUEUE_VAR,
-        USAGE_STORAGE_QUEUE_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose, emit_due_isolations,
+        USAGE_COMPUTE_QUEUE_VAR, USAGE_STORAGE_QUEUE_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose,
+        emit_due_isolations,
     };
     use aex_brain_app::activation::PollReport;
     use aex_brain_app::kernel::PermitKind;
@@ -1239,19 +1146,6 @@ mod tests {
             (RUNTIME_DUE_PAGE_READS_VAR, "100".to_owned()),
             (PRICING_VERSION_VAR, "synthetic-zero-v1".to_owned()),
             (BUDGET_VAR, "8".to_owned()),
-            (
-                TOOL_EXECUTOR_ENDPOINT_VAR,
-                "http://tool-executor.aex-dev.internal:8080/internal/tool-exec".to_owned(),
-            ),
-            (
-                TOOL_EXEC_SIGNING_SECRET_ID_VAR,
-                "aex/dev/tool-exec/signing".to_owned(),
-            ),
-            (
-                TOOL_EXEC_SIGNING_KEY_ID_VAR,
-                "01923f2a-1c00-7000-8000-0000000000aa".to_owned(),
-            ),
-            (TOOL_EXEC_SIGNING_PUBLIC_KEY_VAR, "07".repeat(32)),
         ])
     }
 
@@ -1361,10 +1255,6 @@ mod tests {
             RUNTIME_DUE_PAGE_READS_VAR,
             PRICING_VERSION_VAR,
             BUDGET_VAR,
-            TOOL_EXECUTOR_ENDPOINT_VAR,
-            TOOL_EXEC_SIGNING_SECRET_ID_VAR,
-            TOOL_EXEC_SIGNING_KEY_ID_VAR,
-            TOOL_EXEC_SIGNING_PUBLIC_KEY_VAR,
         ] {
             let mut vars = complete();
             vars.remove(name);

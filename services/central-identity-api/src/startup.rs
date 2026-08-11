@@ -594,7 +594,6 @@ fn environment(name: &str) -> Option<&'static str> {
             "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-identity"
         }
         "AEX_CENTRAL_IDENTITY_PEPPER_SECRET_ID" => "aex/dev/identity-pepper",
-        "AEX_CENTRAL_IDENTITY_GITHUB_OAUTH_SECRET_ID" => "aex/dev/sign-in/github",
         "AEX_CENTRAL_IDENTITY_GOOGLE_OAUTH_SECRET_ID" => "aex/dev/sign-in/google",
         "AEX_CENTRAL_IDENTITY_SIGN_IN_REDIRECT_URI" => "https://dash.aex.dev/auth/callback",
         "AEX_CENTRAL_IDENTITY_DATABASE" => "aex",
@@ -652,7 +651,7 @@ fn sign_in_request(state: &str, code: &str) -> Request<Body> {
         .method("POST")
         .uri("/api/auth/sessions")
         .body(Body::from(format!(
-            r#"{{"provider":"github","code":"{code}","state":"{state}","codeVerifier":"{VERIFIER}"}}"#
+            r#"{{"provider":"google","code":"{code}","state":"{state}","codeVerifier":"{VERIFIER}"}}"#
         )))
         .expect("a valid request")
 }
