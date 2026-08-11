@@ -5,6 +5,7 @@
 limits:
   - { id: "context.tool_result_bytes", shape: scalar, doc: "Largest tool result admitted into the next model context." }
   - { id: "session.materialized_agents", shape: scalar, doc: "Root-plus-subagents concurrently materialized in one session." }
+  - { id: "session.initial_files_bytes", shape: scalar, doc: "Largest aggregate byte size of registered workspace files materialized synchronously before session creation returns ready." }
   - { id: "api.json_body", shape: scalar, doc: "Largest accepted encoded JSON request body." }
   - { id: "telemetry.batch", shape: map, dimensions: [encoded_bytes, decoded_bytes, records, observation_bytes, attributes, attribute_key_bytes, attribute_value_bytes, array_elements], doc: "Encoded, decoded, record and normalized-observation admission bounds." }
   - { id: "telemetry.ingest_rate", shape: map, dimensions: [sustained_bytes_per_second, burst_bytes, sustained_requests_per_second, burst_requests], doc: "Sustained and burst byte and request rates per workspace." }

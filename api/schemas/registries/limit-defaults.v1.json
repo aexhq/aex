@@ -11,6 +11,10 @@
       "value": 256
     },
     {
+      "id": "session.initial_files_bytes",
+      "value": 536870912
+    },
+    {
       "id": "api.json_body",
       "value": 65536
     },
@@ -76,32 +80,12 @@
       }
     },
     {
-      "id": "content.bundle_expand",
-      "value": {
-        "expanded_bytes": 16777216,
-        "entries": 10000,
-        "path_bytes": 4096
-      }
-    },
-    {
       "id": "registry.entries",
       "value": 1000
     },
     {
       "id": "registry.value_bytes",
       "value": 65536
-    },
-    {
-      "id": "tools.io_safety",
-      "value": {
-        "web_fetch_bytes": 500000,
-        "shell_output_bytes": 1000000,
-        "grep_input_bytes": 25000000,
-        "head_tail_input_bytes": 100000000,
-        "walk_files": 100000,
-        "list_entries": 2000,
-        "list_depth": 10
-      }
     },
     {
       "id": "telemetry.export",

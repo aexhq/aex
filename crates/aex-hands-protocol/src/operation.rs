@@ -365,8 +365,8 @@ pub struct PresignedPlan {
 impl PresignedPlan {
     /// The largest plan or manifest document a grant may cover.
     ///
-    /// Matches `content.bundle_expand`: 16 MiB is the ceiling on the expansion
-    /// plan and on the survey manifest alike.
+    /// This immutable protocol-safety ceiling bounds both the expansion plan
+    /// and the survey manifest. It is not a workspace-adjustable public limit.
     pub const MAX_PLAN_BYTES: u64 = 16 * 1024 * 1024;
 
     /// A grant to fetch one object and verify it against `digest`.

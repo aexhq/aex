@@ -95,6 +95,18 @@ mod tests {
         let rows = document["limits"]
             .as_array()
             .expect("the capacity default document carries limits");
+        let ids = rows
+            .iter()
+            .map(|row| row["id"].as_str().expect("a default row carries an id"))
+            .collect::<BTreeSet<_>>();
+        assert!(!ids.contains("content.bundle_expand"));
+        assert!(!ids.contains("tools.io_safety"));
+        assert_eq!(
+            rows.iter()
+                .find(|row| row["id"] == "session.initial_files_bytes")
+                .and_then(|row| row["value"].as_u64()),
+            Some(536_870_912)
+        );
         assert_eq!(rows.len(), LimitId::ALL.len());
 
         let mut seen = BTreeSet::new();
