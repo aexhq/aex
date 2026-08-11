@@ -377,8 +377,9 @@ fn method_arguments(
             imports.insert(format!("crate::models::{schema}"));
             arguments.push(format!("body: {schema}"));
         }
-        RequestShape::Otlp => arguments.push("body: &[u8]".to_owned()),
-        RequestShape::Binary => arguments.push("body: &[u8]".to_owned()),
+        RequestShape::Otlp | RequestShape::Binary => {
+            arguments.push("body: &[u8]".to_owned());
+        }
     }
     arguments
 }

@@ -190,8 +190,7 @@ impl ResponseShape {
     #[must_use]
     pub fn schema(&self) -> Option<&str> {
         match self {
-            Self::NoContent => None,
-            Self::Binary => None,
+            Self::NoContent | Self::Binary => None,
             Self::Accepted => Some("Operation"),
             Self::Created(schema)
             | Self::Etagged(schema)

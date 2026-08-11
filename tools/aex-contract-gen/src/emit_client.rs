@@ -168,8 +168,9 @@ fn arguments(
             imports.insert(format!("crate::models::{schema}"));
             arguments.push(("body".to_owned(), format!("&{schema}")));
         }
-        RequestShape::Otlp => arguments.push(("body".to_owned(), "&[u8]".to_owned())),
-        RequestShape::Binary => arguments.push(("body".to_owned(), "&[u8]".to_owned())),
+        RequestShape::Otlp | RequestShape::Binary => {
+            arguments.push(("body".to_owned(), "&[u8]".to_owned()));
+        }
     }
     match operation.idempotency.as_str() {
         "idempotency_key" => {
@@ -284,8 +285,7 @@ fn emit_builder(
             imports.insert("crate::client::encode_body".to_owned());
             "Some(encode_body(route, body)?)".to_owned()
         }
-        RequestShape::Otlp => "Some(body.to_vec())".to_owned(),
-        RequestShape::Binary => "Some(body.to_vec())".to_owned(),
+        RequestShape::Otlp | RequestShape::Binary => "Some(body.to_vec())".to_owned(),
     };
     body.line("    Ok(WireRequest {");
     body.line("        route,");
