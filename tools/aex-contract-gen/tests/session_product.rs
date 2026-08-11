@@ -18,6 +18,16 @@ fn generated_json(path: &str) -> serde_json::Value {
     .unwrap_or_else(|error| panic!("`{path}` is not JSON: {error}"))
 }
 
+fn generated_text(path: &str) -> String {
+    let tree = generate_to_memory(&repo_root()).expect("contract generation");
+    std::str::from_utf8(
+        tree.bytes(path)
+            .unwrap_or_else(|| panic!("missing `{path}`")),
+    )
+    .unwrap_or_else(|error| panic!("`{path}` is not UTF-8: {error}"))
+    .to_owned()
+}
+
 fn regional_operations() -> BTreeSet<String> {
     generated_json("api/generated/bundle.json")["planes"]["regional"]["operations"]
         .as_array()
@@ -239,4 +249,20 @@ fn session_lifecycle_is_automatic_but_observable_without_a_turn_resource() {
         lifecycle["properties"]["maximumLifetimeSeconds"]["maximum"],
         28_800
     );
+}
+
+#[test]
+fn generated_rust_live_file_docs_mark_microvm_as_code() {
+    let models = generated_text("crates/aex-wire/src/generated/models.rs");
+    for expected in [
+        "read directly from the retained `MicroVM`.",
+        "session's exact `MicroVM` generation.",
+        "retained by the exact `MicroVM` generation.",
+        "atomically published in the `MicroVM`.",
+    ] {
+        assert!(
+            models.contains(expected),
+            "generated Rust documentation misses `{expected}`"
+        );
+    }
 }
