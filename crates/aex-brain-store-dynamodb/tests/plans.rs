@@ -247,6 +247,8 @@ fn a_decision_guards_the_session_head_without_writing_it() {
 fn a_root_run_boundary_is_one_six_action_session_centric_commit() {
     let (session, run, agent, _) = aex_session_domain::testing::running_session();
     let mut context = context();
+    context.now = Timestamp::from_millis(10);
+    context.lease_expires_at = Timestamp::from_millis(15_000);
     context.authority.workspace = session.workspace;
     context.authority.organization = session.organization;
     context.authority.deletion_epoch = session.deletion.epoch.0;
@@ -324,6 +326,8 @@ fn a_cancelled_root_boundary_consumes_the_durable_stop_latch() {
         acquired_at: aex_session_domain::testing::moment(10),
     });
     let mut context = context();
+    context.now = Timestamp::from_millis(10);
+    context.lease_expires_at = Timestamp::from_millis(15_000);
     context.authority.workspace = session.workspace;
     context.authority.organization = session.organization;
     context.authority.deletion_epoch = session.deletion.epoch.0;

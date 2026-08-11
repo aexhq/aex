@@ -1338,11 +1338,11 @@ mod tests {
         assert!(!advertised.parallel_safe);
         assert!(matches!(
             tools.route(&pin, &ToolName::parse("wait").expect("name")),
-            Err(aex_brain_app::ports::ToolRoutingError::NotAdmitted { .. })
+            Err(aex_brain_app::ports::ToolRoutingError::Unknown { .. })
         ));
         assert!(matches!(
             tools.route(&pin, &ToolName::parse("web_search").expect("name")),
-            Err(aex_brain_app::ports::ToolRoutingError::NotAdmitted { .. })
+            Err(aex_brain_app::ports::ToolRoutingError::Unknown { .. })
         ));
     }
 

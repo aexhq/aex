@@ -170,6 +170,7 @@ dependencies = [
  "aex-brain-app",
  "aex-brain-domain",
  "aex-brain-test-support",
+ "aex-operation-domain",
  "aex-session-domain",
  "aex-session-dynamodb",
  "aex-test-harness",

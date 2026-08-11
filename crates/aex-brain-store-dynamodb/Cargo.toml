@@ -65,6 +65,7 @@ aex-wire = { path = "../aex-wire" }
 tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
+aex-operation-domain = { path = "../aex-operation-domain" }
 aex-brain-test-support = { path = "../aex-brain-test-support" }
 aex-test-harness = { path = "../../tests/support/aex-test-harness" }
 aws-smithy-http-client.workspace = true

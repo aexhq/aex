@@ -102,6 +102,7 @@ async fn load_session_authority(
     Ok(authority)
 }
 
+#[cfg(test)]
 fn session_authority_from_item(
     item: Option<&aex_session_dynamodb::attr::Item>,
     expected_session: SessionId,
@@ -114,6 +115,7 @@ fn session_authority_from_item(
     decode_session_authority(item, expected_session)
 }
 
+#[cfg(test)]
 fn decode_session_authority(
     item: &aex_session_dynamodb::attr::Item,
     expected_session: SessionId,
