@@ -502,7 +502,7 @@ fn the_capability_check_is_fail_closed_in_both_directions() {
 // --- route ownership: unchanged by the merge, on purpose ----------------------
 
 #[test]
-fn the_finite_half_owns_every_regional_unary_route_except_the_peers() {
+fn the_finite_half_owns_every_regional_non_stream_route_except_the_peers() {
     let owned = RouteOwner::SessionApi.routes();
     assert!(
         !owned.is_empty(),
@@ -511,10 +511,12 @@ fn the_finite_half_owns_every_regional_unary_route_except_the_peers() {
     for id in &owned {
         let descriptor = route(*id);
         assert_eq!(descriptor.plane, Plane::Regional, "`{id}`");
-        assert_eq!(
-            descriptor.transport,
-            TransportKind::Unary,
-            "`{id}` is not a frame stream"
+        assert!(
+            matches!(
+                descriptor.transport,
+                TransportKind::Unary | TransportKind::Binary
+            ),
+            "`{id}` is a frame stream"
         );
     }
     // The plaintext-bearing half of the two split fragments belongs to the

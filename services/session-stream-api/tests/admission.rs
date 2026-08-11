@@ -117,6 +117,6 @@ fn session_route_partition_contains_no_secret_plaintext_or_stream_mutation() {
     assert!(
         routes
             .iter()
-            .all(|id| route(*id).transport == TransportKind::Unary)
+            .all(|id| route(*id).transport != TransportKind::Ndjson)
     );
 }

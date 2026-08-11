@@ -10,7 +10,12 @@ pub fn session_route_ids() -> Vec<RouteId> {
         .copied()
         .filter(|id| {
             let descriptor = route(*id);
-            if descriptor.plane != Plane::Regional || descriptor.transport != TransportKind::Unary {
+            if descriptor.plane != Plane::Regional
+                || !matches!(
+                    descriptor.transport,
+                    TransportKind::Unary | TransportKind::Binary
+                )
+            {
                 return false;
             }
             match descriptor.fragment {
