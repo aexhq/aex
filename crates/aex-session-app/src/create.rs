@@ -267,6 +267,11 @@ pub async fn prepare_session_create(
 /// Serving adapters use this after an ambiguous final publication. Keeping the
 /// check here ensures normal replay and commit recovery validate identical
 /// identity, resource and canonical-response facts.
+///
+/// # Errors
+///
+/// Returns [`AppError`] if the identity conflicts with the stored intent or the
+/// receipt does not contain a consistent canonical session response.
 pub fn replay_session_create_receipt(
     stored: &IdempotencyReceipt,
     command: &CreateSession,
@@ -527,6 +532,11 @@ async fn prepare_create<'a>(
 /// The values come only from the revision-bound effective-limit bundle and the
 /// release-qualified configuration. No Brain test default can enter a serving
 /// session through this constructor.
+///
+/// # Errors
+///
+/// Returns [`AppError`] if the resolved configuration or its pinned identifiers
+/// cannot be represented by Brain's immutable launch record.
 pub fn initial_root_record(
     prepared: &PreparedSessionCreate,
 ) -> Result<aex_brain_domain::JournalRecord, AppError> {

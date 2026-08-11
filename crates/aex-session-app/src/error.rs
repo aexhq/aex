@@ -71,7 +71,9 @@ impl AppError {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::Port(PortError::NotFound { .. }) => ErrorCode::NotFound,
-            Self::Port(PortError::Deleted { .. }) => ErrorCode::SessionDeleted,
+            Self::Port(PortError::Deleted { .. })
+            | Self::Session(SessionError::Deleted(_))
+            | Self::Deletion(DeletionRejection::Deleted(_)) => ErrorCode::SessionDeleted,
             Self::Port(PortError::Deleting { .. }) => ErrorCode::SessionDeleting,
             Self::Port(_)
             | Self::Plan(_)
@@ -82,8 +84,6 @@ impl AppError {
             Self::Paused(rejection) => rejection.code,
             Self::Session(SessionError::NotIdle { .. })
             | Self::Lifecycle(SessionLifecycleError::SessionBusy) => ErrorCode::SessionNotIdle,
-            Self::Session(SessionError::Deleted(_))
-            | Self::Deletion(DeletionRejection::Deleted(_)) => ErrorCode::SessionDeleted,
             Self::Approval(ApprovalRejection::NotFound) => ErrorCode::ApprovalNotFound,
             Self::Approval(ApprovalRejection::AlreadyResolved(_)) => {
                 ErrorCode::ApprovalAlreadyResolved

@@ -712,13 +712,9 @@ impl Write {
                 format!("{}#{}", agent.session, agent.id),
                 "CONTROL".to_owned(),
             ),
-            Self::AdmitRootRun { session, agent, .. } => {
-                (format!("{session}#{agent}"), "CONTROL".to_owned())
-            }
-            Self::RequestRootCancellation { session, agent, .. } => {
-                (format!("{session}#{agent}"), "CONTROL".to_owned())
-            }
-            Self::CancelAgent { session, agent, .. } => {
+            Self::AdmitRootRun { session, agent, .. }
+            | Self::RequestRootCancellation { session, agent, .. }
+            | Self::CancelAgent { session, agent, .. } => {
                 (format!("{session}#{agent}"), "CONTROL".to_owned())
             }
             Self::AppendJournalPage { session, page } => (
@@ -834,6 +830,128 @@ const fn registry_kind_tag(kind: RegistryKind) -> u8 {
 
 const fn create_error(detail: &'static str) -> PlanError {
     PlanError::CreateAuthority { detail }
+}
+
+#[derive(Default)]
+struct CreateWrites<'a> {
+    head: Option<&'a Session>,
+    root_writes: usize,
+    receipts: usize,
+    receipt: Option<&'a IdempotencyReceipt>,
+    receipt_directories: usize,
+    receipt_directory_session: Option<SessionId>,
+    directory_receipt: Option<&'a IdempotencyReceipt>,
+}
+
+impl<'a> CreateWrites<'a> {
+    fn collect(writes: &'a [Write]) -> Result<Self, PlanError> {
+        let mut participants = Self::default();
+        for write in writes {
+            participants.observe(write)?;
+        }
+        Ok(participants)
+    }
+
+    fn observe(&mut self, write: &'a Write) -> Result<(), PlanError> {
+        match write {
+            Write::PutSessionHead(session) => {
+                if self.head.replace(session).is_some() {
+                    return Err(create_error("a create writes exactly one session head"));
+                }
+            }
+            Write::PutSessionDeletionHead(_) => {
+                return Err(create_error(
+                    "ready creation cannot publish a deletion coordination head",
+                ));
+            }
+            Write::PutAgentControl(_) => self.root_writes += 1,
+            Write::PutIdempotencyReceipt(value) => {
+                self.receipts += 1;
+                self.receipt = Some(value.as_ref());
+            }
+            Write::PutSessionReceiptDirectory {
+                session,
+                receipt: value,
+            } => {
+                self.receipt_directories += 1;
+                self.receipt_directory_session = Some(*session);
+                self.directory_receipt = Some(value.as_ref());
+            }
+            Write::PutMessage(_)
+            | Write::PutSealedMessage(_)
+            | Write::PutRun(_)
+            | Write::AdmitRootRun { .. }
+            | Write::RequestRootCancellation { .. }
+            | Write::CancelAgent { .. }
+            | Write::AppendJournalPage { .. }
+            | Write::PutApproval(_)
+            | Write::PutOperation(_)
+            | Write::PutSessionOperationEdge { .. }
+            | Write::RedactOperationResult(_)
+            | Write::PutWorkItem(_)
+            | Write::PutAgentWake(_)
+            | Write::PutAgentWakeDedupe(_)
+            | Write::CompleteWorkItem(_)
+            | Write::PutOutboxEvent(_)
+            | Write::PutMessageAdmittedEvent(_)
+            | Write::PutPin(_)
+            | Write::DeletePin(_)
+            | Write::PutRegistryPointer(_)
+            | Write::PutUpload(_)
+            | Write::PutGrant(_)
+            | Write::PutCustody(_)
+            | Write::PutSecret(_)
+            | Write::PutTombstone(_)
+            | Write::DeleteItem(_) => {
+                return Err(create_error(
+                    "ready publication writes only the public head and exact receipt",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate(self) -> Result<&'a Session, PlanError> {
+        let head = self
+            .head
+            .ok_or_else(|| create_error("a create writes exactly one session head"))?;
+        if self.receipt_directory_session != Some(head.id)
+            || self.directory_receipt.map(|value| value.key.scope()) != Some("session.create")
+            || self.receipt != self.directory_receipt
+        {
+            return Err(create_error(
+                "a create receipt directory must name the created session and exact create receipt",
+            ));
+        }
+        if self.root_writes != 0 {
+            return Err(create_error(
+                "ready publication must not overwrite the root control whose AgentStarted tail it conditions on",
+            ));
+        }
+        if self.receipts != 1 {
+            return Err(create_error(
+                "a create writes exactly one idempotency receipt; the receipt's conditional put \
+                 is the concurrency election, so a create without one can mint two sessions for \
+                 one key",
+            ));
+        }
+        if self.receipt_directories != 1 {
+            return Err(create_error(
+                "a create writes exactly one deletion directory locator beside its receipt",
+            ));
+        }
+        if !matches!(
+            self.receipt.map(|value| &value.outcome),
+            Some(aex_session_domain::ReceiptOutcome::Resource { kind, id, .. })
+                if *kind == aex_session_domain::ResourceKind::Session
+                    && id.0 == head.id.to_string()
+        ) {
+            return Err(create_error(
+                "the indexed create receipt must name the exact published session",
+            ));
+        }
+        Ok(head)
+    }
 }
 
 /// One after-commit notification.
@@ -1010,110 +1128,11 @@ impl SessionTransaction {
     /// set of `contains` checks, so a new `Write` arm has to be classified here
     /// instead of silently becoming a legal create participant.
     fn check_create_participants(&self) -> Result<(), PlanError> {
-        let mut head: Option<&Session> = None;
-        let mut root_writes = 0_usize;
-        let mut receipts = 0_usize;
-        let mut receipt = None;
-        let mut receipt_directories = 0_usize;
-        let mut receipt_directory_session = None;
-        let mut directory_receipt = None;
-        for write in &self.writes {
-            match write {
-                Write::PutSessionHead(session) => {
-                    if head.is_some() {
-                        return Err(create_error("a create writes exactly one session head"));
-                    }
-                    head = Some(session);
-                }
-                Write::PutSessionDeletionHead(_) => {
-                    return Err(create_error(
-                        "ready creation cannot publish a deletion coordination head",
-                    ));
-                }
-                Write::PutAgentControl(_) => root_writes += 1,
-                Write::PutIdempotencyReceipt(value) => {
-                    receipts += 1;
-                    receipt = Some(value.as_ref());
-                }
-                Write::PutSessionReceiptDirectory {
-                    session,
-                    receipt: value,
-                } => {
-                    receipt_directories += 1;
-                    receipt_directory_session = Some(*session);
-                    directory_receipt = Some(value.as_ref());
-                }
-                Write::PutMessage(_)
-                | Write::PutSealedMessage(_)
-                | Write::PutRun(_)
-                | Write::AdmitRootRun { .. }
-                | Write::RequestRootCancellation { .. }
-                | Write::CancelAgent { .. }
-                | Write::AppendJournalPage { .. }
-                | Write::PutApproval(_)
-                | Write::PutOperation(_)
-                | Write::PutSessionOperationEdge { .. }
-                | Write::RedactOperationResult(_)
-                | Write::PutWorkItem(_)
-                | Write::PutAgentWake(_)
-                | Write::PutAgentWakeDedupe(_)
-                | Write::CompleteWorkItem(_)
-                | Write::PutOutboxEvent(_)
-                | Write::PutMessageAdmittedEvent(_)
-                | Write::PutPin(_)
-                | Write::DeletePin(_)
-                | Write::PutRegistryPointer(_)
-                | Write::PutUpload(_)
-                | Write::PutGrant(_)
-                | Write::PutCustody(_)
-                | Write::PutSecret(_)
-                | Write::PutTombstone(_)
-                | Write::DeleteItem(_) => {
-                    return Err(create_error(
-                        "ready publication writes only the public head and exact receipt",
-                    ));
-                }
-            }
-        }
-        let Some(_head) = head else {
-            return Err(create_error("a create writes exactly one session head"));
-        };
-        if receipt_directory_session != Some(head.expect("checked above").id)
-            || directory_receipt.map(|value| value.key.scope()) != Some("session.create")
-            || receipt != directory_receipt
-        {
-            return Err(create_error(
-                "a create receipt directory must name the created session and exact create receipt",
-            ));
-        }
-        if root_writes != 0 {
-            return Err(create_error(
-                "ready publication must not overwrite the root control whose AgentStarted tail it conditions on",
-            ));
-        }
-        if receipts != 1 {
-            return Err(create_error(
-                "a create writes exactly one idempotency receipt; the receipt's conditional put \
-                 is the concurrency election, so a create without one can mint two sessions for \
-                 one key",
-            ));
-        }
-        if receipt_directories != 1 {
-            return Err(create_error(
-                "a create writes exactly one deletion directory locator beside its receipt",
-            ));
-        }
-        let head = head.expect("checked above");
-        if !matches!(
-            receipt.map(|value| &value.outcome),
-            Some(aex_session_domain::ReceiptOutcome::Resource { kind, id, .. })
-                if *kind == aex_session_domain::ResourceKind::Session
-                    && id.0 == head.id.to_string()
-        ) {
-            return Err(create_error(
-                "the indexed create receipt must name the exact published session",
-            ));
-        }
+        let head = CreateWrites::collect(&self.writes)?.validate()?;
+        self.check_create_conditions(head)
+    }
+
+    fn check_create_conditions(&self, head: &Session) -> Result<(), PlanError> {
         let has_root_revision = self.conditions.iter().any(|condition| {
             matches!(condition, Condition::AgentRevision { session, agent, .. }
                 if *session == head.id && *agent == head.root_agent)
@@ -1530,8 +1549,8 @@ mod tests {
     }
 
     /// A create plan over the domain fixture.
-    fn create_plan(session: aex_session_domain::Session) -> SessionTransaction {
-        let receipt = crate::testing::create_receipt(&session);
+    fn create_plan(session: &aex_session_domain::Session) -> SessionTransaction {
+        let receipt = crate::testing::create_receipt(session);
         SessionTransaction {
             intent: TransactionIntent::CreateSession,
             conditions: vec![
@@ -1590,7 +1609,7 @@ mod tests {
 
     #[test]
     fn ready_create_publication_is_five_constant_actions() {
-        let shape = create_plan(aex_session_domain::testing::session_fixture())
+        let shape = create_plan(&aex_session_domain::testing::session_fixture())
             .validate()
             .expect("the minimal create is complete");
         assert_eq!(shape.actions, SessionTransaction::CREATE_MAX_ACTIONS);
@@ -1598,7 +1617,7 @@ mod tests {
 
     #[test]
     fn a_create_may_not_smuggle_a_write_a_create_was_not_asked_for() {
-        let mut plan = create_plan(aex_session_domain::testing::session_fixture());
+        let mut plan = create_plan(&aex_session_domain::testing::session_fixture());
         plan.writes.push(Write::DeleteItem(key("SOMETHING")));
         assert!(matches!(
             plan.validate(),
@@ -1608,7 +1627,7 @@ mod tests {
 
     #[test]
     fn a_create_without_its_receipt_cannot_elect_a_winner() {
-        let mut plan = create_plan(aex_session_domain::testing::session_fixture());
+        let mut plan = create_plan(&aex_session_domain::testing::session_fixture());
         plan.writes
             .retain(|write| !matches!(write, Write::PutIdempotencyReceipt(_)));
         assert!(matches!(

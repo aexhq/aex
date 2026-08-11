@@ -813,8 +813,8 @@ mod tests {
     }
 
     fn planned(kind: OperationKind, session: &Session) -> Planned<Operation> {
-        let root =
-            (kind == OperationKind::SessionCancel && session.active_run.is_some()).then(|| {
+        let root = (kind == OperationKind::SessionCancel && session.active_run.is_some())
+            .then_some({
                 RootAdmissionState {
                     agent: session.root_agent,
                     revision: aex_session_domain::AgentRevision(3),
