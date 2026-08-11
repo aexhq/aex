@@ -254,27 +254,33 @@ impl SessionReceiptDirectoryEntry {
     pub fn new(
         workspace: WorkspaceId,
         session: SessionId,
-        receipt_pk: impl Into<String>,
-        receipt_sk: impl Into<String>,
+        receipt_partition_key: impl Into<String>,
+        receipt_sort_key: impl Into<String>,
         created_at: Timestamp,
     ) -> Result<Self, StoreError> {
-        let receipt_pk = receipt_pk.into();
-        let receipt_sk = receipt_sk.into();
-        let scope = receipt_scope(workspace, session, &receipt_pk);
-        if scope.is_none() || receipt_sk != RECEIPT_SK {
+        let receipt_partition_key = receipt_partition_key.into();
+        let receipt_sort_key = receipt_sort_key.into();
+        let Some(scope) = receipt_scope(workspace, session, &receipt_partition_key) else {
+            return Err(StoreError::Invalid {
+                detail:
+                    "a session receipt locator must name an exact session or create receipt in its workspace"
+                        .to_owned(),
+            });
+        };
+        if receipt_sort_key != RECEIPT_SK {
             return Err(StoreError::Invalid {
                 detail:
                     "a session receipt locator must name an exact session or create receipt in its workspace"
                         .to_owned(),
             });
         }
-        let scope = scope.expect("the scope was checked").to_owned();
-        let target = receipt_target(&receipt_pk, &receipt_sk);
+        let scope = scope.to_owned();
+        let target = receipt_target(&receipt_partition_key, &receipt_sort_key);
         Ok(Self {
             workspace,
             session,
-            receipt_pk,
-            receipt_sk,
+            receipt_pk: receipt_partition_key,
+            receipt_sk: receipt_sort_key,
             scope,
             target,
             created_at,
@@ -303,7 +309,7 @@ impl SessionReceiptDirectoryEntry {
 /// used by the receipt write.
 ///
 /// Keeping this derivation beside the directory codec prevents an application
-/// planner from guessing DynamoDB key templates. The caller still emits the
+/// planner from guessing `DynamoDB` key templates. The caller still emits the
 /// locator as its own logical action so transaction accounting remains exact.
 ///
 /// # Errors
@@ -371,6 +377,11 @@ impl SessionDeletionStore {
     }
 
     /// Strongly reads the payload-free deletion coordination head.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the strong read is unavailable or the stored
+    /// deletion head is malformed or belongs to another authority scope.
     pub async fn load_head(
         &self,
         workspace: WorkspaceId,
@@ -428,6 +439,12 @@ impl SessionDeletionStore {
     /// A series of strong `GetItem`s is not sufficient: a concurrent owner
     /// write could otherwise produce a mixed snapshot and a false completion
     /// or corruption result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the transactional read cannot be built or
+    /// completed, or when its progress/evidence rows are malformed or mutually
+    /// inconsistent.
     pub async fn load_snapshot(
         &self,
         workspace: WorkspaceId,
@@ -547,6 +564,11 @@ impl SessionDeletionStore {
 }
 
 /// Encodes the immutable progress root.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Invalid`] when the progress identity has a zero epoch
+/// or otherwise fails its domain validation.
 pub fn encode_progress(progress: SessionDeletionProgress) -> Result<Item, StoreError> {
     let progress = progress.validate()?;
     let target = keys::deletion_progress(progress.session);
@@ -563,6 +585,11 @@ pub fn encode_progress(progress: SessionDeletionProgress) -> Result<Item, StoreE
 }
 
 /// Strictly decodes one progress root under an asserted tenant/session.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] when the row is malformed, belongs to another
+/// workspace or session, or does not match its canonical physical key.
 pub fn decode_progress(
     item: &Item,
     workspace: WorkspaceId,
@@ -594,6 +621,11 @@ pub fn decode_progress(
 }
 
 /// Encodes one immutable owner receipt.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Invalid`] when the evidence carries a zero deletion
+/// epoch.
 pub fn encode_evidence(evidence: SessionDeletionEvidence) -> Result<Item, StoreError> {
     if evidence.epoch.0 == 0 {
         return Err(StoreError::Invalid {
@@ -615,6 +647,11 @@ pub fn encode_evidence(evidence: SessionDeletionEvidence) -> Result<Item, StoreE
 }
 
 /// Strictly decodes one owner receipt.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] when the row is malformed, names an unknown owner,
+/// belongs to another authority scope, or does not match its canonical key.
 pub fn decode_evidence(
     item: &Item,
     workspace: WorkspaceId,
@@ -661,6 +698,11 @@ pub fn decode_evidence(
 }
 
 /// Encodes one receipt-directory locator.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Invalid`] when the locator's receipt key, scope, or
+/// target digest is internally inconsistent.
 pub fn encode_receipt_directory(entry: &SessionReceiptDirectoryEntry) -> Result<Item, StoreError> {
     entry.validate()?;
     let target = entry.key();
@@ -678,6 +720,11 @@ pub fn encode_receipt_directory(entry: &SessionReceiptDirectoryEntry) -> Result<
 }
 
 /// Strictly decodes one receipt-directory locator.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] when the row is malformed, belongs to another
+/// authority scope, or disagrees with its receipt target or canonical key.
 pub fn decode_receipt_directory(
     item: &Item,
     workspace: WorkspaceId,
@@ -686,8 +733,8 @@ pub fn decode_receipt_directory(
     let row = Row::bind(item, codec::SESSION_RECEIPT_DIRECTORY)?;
     row.owned_by("workspaceId", &workspace.to_string())?;
     let stored_session = row.id("sessionId")?;
-    let receipt_pk = row.string("receiptPk")?.to_owned();
-    let receipt_sk = row.string("receiptSk")?.to_owned();
+    let receipt_partition_key = row.string("receiptPk")?.to_owned();
+    let receipt_sort_key = row.string("receiptSk")?.to_owned();
     let scope = row.string("scope")?.to_owned();
     let target = EvidenceDigest::parse(row.string("targetSha256")?).ok_or_else(|| {
         malformed(
@@ -699,8 +746,8 @@ pub fn decode_receipt_directory(
     let entry = SessionReceiptDirectoryEntry {
         workspace,
         session: stored_session,
-        receipt_pk,
-        receipt_sk,
+        receipt_pk: receipt_partition_key,
+        receipt_sk: receipt_sort_key,
         scope,
         target,
         created_at: row.timestamp("createdAt")?,
@@ -729,6 +776,11 @@ pub fn decode_receipt_directory(
 ///
 /// This two-item transaction cannot initialize progress against a live or
 /// differently owned head.
+///
+/// # Errors
+///
+/// Returns [`StoreError`] when the progress identity is invalid or either the
+/// head guard or immutable progress write cannot be compiled into the plan.
 pub fn compile_initialize_progress(
     table: &str,
     progress: SessionDeletionProgress,
@@ -764,6 +816,11 @@ pub fn compile_initialize_progress(
 }
 
 /// Compiles one immutable owner receipt behind the exact progress identity.
+///
+/// # Errors
+///
+/// Returns [`StoreError`] when progress is invalid, the evidence does not
+/// belong to it, or the guarded transaction cannot be compiled.
 pub fn compile_record_evidence(
     table: &str,
     progress: SessionDeletionProgress,
@@ -881,6 +938,11 @@ pub fn append_completion_cleanup(
 /// The caller must append [`append_completion_cleanup`] plus the canonical
 /// operation and work transitions to the same transaction. This function only
 /// owns the physical head condition and minimal tombstone encoding.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Invalid`] when progress is invalid or the tombstone is
+/// not bound to its exact workspace, session, operation, and deletion epoch.
 pub fn tombstone_put(
     table: &str,
     progress: SessionDeletionProgress,
@@ -997,7 +1059,6 @@ impl crate::application_plan::ExternalActionCompiler for DeletionTombstoneCompil
 ///
 /// Returns [`StoreError::Invalid`] for a forged or internally inconsistent
 /// locator.
-#[must_use]
 pub fn receipt_directory_put(
     table: &str,
     entry: &SessionReceiptDirectoryEntry,
@@ -1013,6 +1074,11 @@ pub fn receipt_directory_put(
 /// The progress guard makes a stale or differently owned continuation fail
 /// before it can delete anything. A receipt already reclaimed by TTL is an
 /// idempotent success; an unrelated row at the addressed key is not.
+///
+/// # Errors
+///
+/// Returns [`StoreError`] when progress or the locator is invalid, their scopes
+/// differ, or the guarded receipt/directory transaction cannot be compiled.
 pub fn compile_delete_receipt(
     table: &str,
     progress: SessionDeletionProgress,
@@ -1073,6 +1139,12 @@ pub fn compile_delete_receipt(
 /// through its owning codec or query projection. This compiler then prevents a
 /// stale continuation from deleting after another operation takes authority,
 /// and prevents a key reused for another item family from being removed.
+///
+/// # Errors
+///
+/// Returns [`StoreError`] when progress is invalid, the page is empty or above
+/// its bound, a target addresses protected deletion authority, or a guarded
+/// delete cannot be compiled.
 pub fn compile_guarded_deletes(
     session_table: &str,
     progress: SessionDeletionProgress,
@@ -1181,9 +1253,7 @@ fn receipt_target(pk: &str, sk: &str) -> EvidenceDigest {
 fn receipt_scope(workspace: WorkspaceId, session: SessionId, pk: &str) -> Option<&str> {
     let rest = pk.strip_prefix(&format!("IDEM#{workspace}#"))?;
     let (scope, digest) = rest.rsplit_once('#')?;
-    if EvidenceDigest::parse(digest).is_none() {
-        return None;
-    }
+    EvidenceDigest::parse(digest)?;
     let exact_session = scope.rsplit_once(':').is_some_and(|(base, subject)| {
         base.starts_with("session.")
             && crate::replay::IdempotencyScope::BASES.contains(&base)
