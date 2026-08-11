@@ -27,6 +27,10 @@ pub const fn delivery_for(timeout_ms: u32) -> DeliveryMode {
 
 impl ProductionHandsBackend {
     /// Holds one connection until the attached terminal answer arrives.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "attached delivery binds the authenticated endpoint, exact operation, request, bounds and timeout"
+    )]
     pub(super) async fn start_attached(
         &self,
         endpoint: &LeaseHandle<AuthenticatedGuestEndpoint>,

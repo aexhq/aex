@@ -355,7 +355,7 @@ impl AdmissionPlan {
     ///
     /// Every chunk atomically checks the scope-deletion fence, puts immutable
     /// observation revisions and records their exact deletion ledger. The
-    /// chunk count is bounded by the DynamoDB batch-write action ceiling even
+    /// chunk count is bounded by the `DynamoDB` batch-write action ceiling even
     /// though the execution uses `TransactWriteItems`.
     #[must_use]
     pub const fn materialization_batches(&self) -> usize {

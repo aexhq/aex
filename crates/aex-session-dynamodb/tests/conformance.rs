@@ -356,7 +356,7 @@ async fn an_operation_listing_uses_the_sparse_workspace_index_without_a_filter_e
             workspace(),
             &OperationFilter {
                 session: None,
-                kind: Some(OperationKind::SessionPersist),
+                kind: Some(OperationKind::WorkspaceDelete),
                 status: Some(OperationStatus::Running),
             },
             PageBudget::new(25).expect("a page"),
@@ -393,7 +393,7 @@ fn operation_row(operation: OperationId, created_at: &str) -> Value {
         "itemType": {"S": "operation"},
         "operationId": {"S": operation.to_string()},
         "workspaceId": {"S": workspace.clone()},
-        "kind": {"S": "session_persist"},
+        "kind": {"S": "workspace_delete"},
         "status": {"S": "queued"},
         "intentHash": {"S": "03".repeat(32)},
         "scopeKind": {"S": "workspace"},
@@ -536,70 +536,22 @@ async fn a_located_operation_whose_authority_row_is_gone_is_isolated_rather_than
 }
 
 #[test]
-fn a_public_cancel_request_fences_the_exact_observed_operation() {
-    let request = OperationCancelRequest {
-        workspace: workspace(),
-        operation: operation(),
-        kind: OperationKind::SessionPersist,
-        status: OperationStatus::Running,
-        version: 4,
-        now: Timestamp::from_unix_millis(1_754_138_096_000).expect("fixture instant"),
-    };
-    let update = operation_cancel_requested(&tables().session_authority, &request)
-        .expect("the public cancellation update builds")
-        .build()
-        .expect("the update is complete");
-    let condition = update.condition_expression().expect("a condition");
-    for fence in [
-        "workspaceId = :workspaceId",
-        "operationId = :operationId",
-        "kind = :kind",
-        "version = :version",
-        "#status = :status",
-        "cancelRequested = :false",
-        "attribute_not_exists(committedAt)",
-    ] {
+fn generic_operation_cancel_is_refused_for_the_entire_current_vocabulary() {
+    for kind in OperationKind::ALL {
+        let request = OperationCancelRequest {
+            workspace: workspace(),
+            operation: operation(),
+            kind,
+            status: OperationStatus::Queued,
+            version: 4,
+            now: Timestamp::from_unix_millis(1_754_138_096_000).expect("fixture instant"),
+        };
+
         assert!(
-            condition.contains(fence),
-            "missing `{fence}` from `{condition}`"
+            operation_cancel_requested(&tables().session_authority, &request).is_err(),
+            "{kind:?} must use its owning command/effect fence"
         );
     }
-    assert!(
-        update
-            .update_expression()
-            .contains("cancelRequested = :true")
-    );
-    assert!(
-        !update.update_expression().contains("terminalAt"),
-        "a running cancellation is a request for the next fenced step"
-    );
-
-    let queued = operation_cancel_requested(
-        &tables().session_authority,
-        &OperationCancelRequest {
-            status: OperationStatus::Queued,
-            ..request
-        },
-    )
-    .expect("a queued cancel builds")
-    .build()
-    .expect("the update is complete");
-    assert!(queued.update_expression().contains("#status = :cancelled"));
-    assert!(queued.update_expression().contains("terminalAt = :now"));
-}
-
-#[test]
-fn a_telemetry_export_cancel_is_refused_by_the_session_authority_owner() {
-    let request = OperationCancelRequest {
-        workspace: workspace(),
-        operation: operation(),
-        kind: OperationKind::TelemetryExport,
-        status: OperationStatus::Queued,
-        version: 4,
-        now: Timestamp::from_unix_millis(1_754_138_096_000).expect("fixture instant"),
-    };
-
-    assert!(operation_cancel_requested(&tables().session_authority, &request).is_err());
 }
 
 #[test]

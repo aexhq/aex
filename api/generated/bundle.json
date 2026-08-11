@@ -2133,7 +2133,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2142,8 +2141,7 @@
             "session_deleted",
             "deletion_in_progress",
             "wrong_workspace_region",
-            "commit_outcome_unknown",
-            "not_implemented"
+            "commit_outcome_unknown"
           ],
           "etag": "none",
           "fragment": "sessions",

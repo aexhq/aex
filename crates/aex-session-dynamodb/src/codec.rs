@@ -860,7 +860,7 @@ mod tests {
 
     #[test]
     fn an_operation_round_trips_without_losing_public_projection_fields() {
-        let original = stored_operation(OperationKind::SessionStop);
+        let original = stored_operation(OperationKind::SessionCancel);
         let item = encode_operation(&original).expect("encodes");
         let decoded = decode_operation(&item, original.record.workspace).expect("decodes");
         assert_eq!(decoded, original);

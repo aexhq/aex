@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:0d39282c582db6cf421f5f15a26f6df8325dfd2231ce92810d08958417af2a1d",
+  "digest": "blake3:1c6ffab954c76a19affde718c05a972b40f45507d5a0516c4bd17fdce7850bde",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -1517,11 +1517,29 @@
         {
           "role": "session-operation-worker",
           "actions": [
-            "dynamodb:GetItem"
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:DeleteItem"
           ],
           "resources": [
             "table"
-          ]
+          ],
+          "itemTypes": [
+            "hands_generation",
+            "lifecycle_intent",
+            "lifecycle_receipt",
+            "idle_probe",
+            "current_generation",
+            "hands_operation_admission"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "GEN#*",
+              "SESSIONGEN#*"
+            ]
+          }
         }
       ],
       "tags": {

@@ -74,6 +74,15 @@ pub struct LifecycleWorkClaim {
 /// transaction is the session-facing consistency barrier: it advances the
 /// public head, terminalizes the operation, releases the mutation guard and
 /// retires the exact fenced work row together.
+///
+/// # Errors
+///
+/// Returns [`AppError`] when the session, operation and work claim disagree,
+/// the lifecycle transition is invalid, or the atomic plan is not submittable.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the closed lifecycle result mapping and its one atomic barrier remain auditable together"
+)]
 pub fn settle_lifecycle_operation(
     session: &Session,
     operation: &Operation,
@@ -199,6 +208,11 @@ pub fn settle_lifecycle_operation(
 /// this barrier is planned. The session head is replaced by the tombstone in
 /// the store adapter while the exact operation and work claim terminalize in
 /// the same transaction.
+///
+/// # Errors
+///
+/// Returns [`AppError`] when the bound authorities disagree, deletion evidence
+/// is incomplete, or the atomic tombstone plan is not submittable.
 pub fn settle_session_delete(
     session: &Session,
     operation: &Operation,
@@ -270,6 +284,11 @@ pub fn settle_session_delete(
 /// exact work claim together. Explicit terminate uses
 /// [`settle_lifecycle_operation`] instead, because a terminal provider is its
 /// requested successful effect.
+///
+/// # Errors
+///
+/// Returns [`AppError`] when the bound authorities disagree, termination cannot
+/// be represented, or the atomic loss-settlement plan is not submittable.
 pub fn settle_lifecycle_loss(
     session: &Session,
     operation: &Operation,
@@ -403,6 +422,10 @@ pub async fn admit_lifecycle_operation(
         .map(LifecycleAdmissionOutcome::Planned)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the exhaustive admission outcome and fixed transaction membership are one closed authority"
+)]
 fn plan_lifecycle_admission(
     command: &LifecycleCommand,
     session: &Session,
@@ -566,12 +589,12 @@ fn admit_request(command: &LifecycleCommand) -> AdmitRequest {
 
 const fn command_class(kind: OperationKind) -> CommandClass {
     match kind {
-        OperationKind::SessionResume => CommandClass::PausableMutation,
         OperationKind::SessionCancel
         | OperationKind::SessionSuspend
         | OperationKind::SessionTerminate
         | OperationKind::SessionDelete => CommandClass::PauseExempt,
-        OperationKind::WorkspaceDelete
+        OperationKind::SessionResume
+        | OperationKind::WorkspaceDelete
         | OperationKind::TelemetryExport
         | OperationKind::ContentGc => CommandClass::PausableMutation,
     }

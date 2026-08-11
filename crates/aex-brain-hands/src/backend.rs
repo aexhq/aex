@@ -74,7 +74,7 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 /// Opening or closing an exact descriptor may hash the full five-GiB file once
 /// on the smallest offered CPU. This stays below the public ALB's 1,200-second
 /// idle ceiling and bounds a guest call after its edge request disappears.
-const FILE_RPC_TIMEOUT: Duration = Duration::from_secs(600);
+const FILE_RPC_TIMEOUT: Duration = Duration::from_mins(10);
 const FILE_BATCH_MAX_REQUESTS: usize = 10;
 const RESULT_CHUNK_BYTES: u64 = 180_000;
 const RESULT_PULL_ATTEMPTS: usize = 32;
@@ -954,7 +954,6 @@ impl ProductionHandsBackend {
     }
 
     fn lease_from_observation(
-        &self,
         view: &GenerationView,
         description: MicrovmDescription,
         token: EndpointToken,
@@ -977,6 +976,10 @@ impl ProductionHandsBackend {
         AuthenticatedGuestEndpoint::new(view.head.generation, view.head.fence, endpoint, token)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "operation admission owns one retry-bounded exact-generation and native-resume fence"
+    )]
     async fn admit_operation(
         &self,
         generation: GenerationId,
@@ -1075,7 +1078,7 @@ impl ProductionHandsBackend {
                     let endpoint = match observed {
                         Some((description, token)) => {
                             let endpoint =
-                                self.lease_from_observation(&admitted, description, token)?;
+                                Self::lease_from_observation(&admitted, description, token)?;
                             let identity = LeaseIdentity {
                                 generation,
                                 fence: admitted.head.fence,
@@ -1389,7 +1392,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                     &admitted.endpoint,
                     Verb::Status,
                     &StatusRequest {
-                        binding: binding(&view),
+                        binding: binding(view),
                         operation: wire,
                     },
                     STATUS_TIMEOUT,
@@ -1423,7 +1426,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                     &admitted.endpoint,
                     Verb::Cancel,
                     &CancelRequest {
-                        binding: binding(&view),
+                        binding: binding(view),
                         operation: wire,
                         reason: CancelReason::CustomerStop,
                     },
@@ -1479,7 +1482,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                         &admitted.endpoint,
                         Verb::Result,
                         &ResultRequest {
-                            binding: binding(&view),
+                            binding: binding(view),
                             operation: wire,
                             from_offset: offset,
                             max_bytes: remaining.min(RESULT_CHUNK_BYTES),

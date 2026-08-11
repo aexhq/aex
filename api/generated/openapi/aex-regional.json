@@ -9421,7 +9421,6 @@
     },
     "/api/sessions/{sessionId}/deletions": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_delete",
         "parameters": [
           {
@@ -9507,16 +9506,6 @@
             },
             "description": "Error."
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9534,7 +9523,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -9543,8 +9531,7 @@
           "session_deleted",
           "deletion_in_progress",
           "wrong_workspace_region",
-          "commit_outcome_unknown",
-          "not_implemented"
+          "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "operation_id",

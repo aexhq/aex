@@ -88,6 +88,11 @@ pub struct ResolvedInitialFile {
 
 impl ResolvedInitialFile {
     /// Exact payload byte size declared by the registered content reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] when the public size cannot fit the runtime's
+    /// `u64` transfer authority.
     pub fn size_bytes(&self) -> Result<u64, AppError> {
         u64::try_from(self.value.content.size_bytes.get()).map_err(|_| {
             AppError::Port(crate::ports::PortError::Corrupt {
@@ -144,7 +149,7 @@ pub enum PrepareSessionCreateOutcome {
     /// The same identity already committed. No volatile dependency was read.
     Replayed {
         /// The generated public resource stored by the winner.
-        session: models::Session,
+        session: Box<models::Session>,
         /// The exact canonical response bytes stored in the receipt.
         canonical_response: Vec<u8>,
     },
@@ -165,12 +170,7 @@ pub async fn prepare_session_create(
     let now = context.clock.now();
     if let Some(stored) = context
         .sessions
-        .load_receipt(
-            command.workspace,
-            CREATE_RECEIPT_SCOPE,
-            &command.identity,
-            now,
-        )
+        .load_receipt(command.workspace, CREATE_SCOPE, &command.identity, now)
         .await?
     {
         return match replay(&stored, &command.identity.intent()) {
@@ -200,7 +200,7 @@ pub async fn prepare_session_create(
                     }));
                 }
                 Ok(PrepareSessionCreateOutcome::Replayed {
-                    session,
+                    session: Box::new(session),
                     canonical_response: bytes.to_vec(),
                 })
             }

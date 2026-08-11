@@ -647,10 +647,8 @@ impl Write {
                 format!("{}#{}", agent.session, agent.id),
                 "CONTROL".to_owned(),
             ),
-            Self::AdmitRootRun { session, agent, .. } => {
-                (format!("{session}#{agent}"), "CONTROL".to_owned())
-            }
-            Self::CancelAgent { session, agent, .. } => {
+            Self::AdmitRootRun { session, agent, .. }
+            | Self::CancelAgent { session, agent, .. } => {
                 (format!("{session}#{agent}"), "CONTROL".to_owned())
             }
             Self::AppendJournalPage { session, page } => (
@@ -1009,6 +1007,10 @@ impl SessionTransaction {
     /// internal Brain execution facts, durable wake, public event, and exact
     /// receipt. The eleventh action is the read-only active-account projection
     /// fence. Head and root predicates merge onto their corresponding writes.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the exhaustive closed participant and condition vocabularies must remain reviewable together"
+    )]
     fn check_message_admission_participants(&self) -> Result<(), PlanError> {
         let mut writes = [0_u8; 10];
         for write in &self.writes {
@@ -1361,10 +1363,20 @@ mod tests {
         let receipt = crate::testing::create_receipt(&session);
         SessionTransaction {
             intent: TransactionIntent::CreateSession,
-            conditions: Vec::new(),
+            conditions: vec![
+                Condition::AgentRevision {
+                    session: session.id,
+                    agent: root_agent.id,
+                    expected: root_agent.revision,
+                },
+                Condition::JournalTail {
+                    session: session.id,
+                    agent: root_agent.id,
+                    expected: root_agent.journal_tail,
+                },
+            ],
             writes: vec![
                 Write::PutSessionHead(Box::new(session)),
-                Write::PutAgentControl(Box::new(root_agent)),
                 Write::PutIdempotencyReceipt(Box::new(receipt)),
             ],
             after_commit: Vec::new(),
@@ -1387,7 +1399,7 @@ mod tests {
     }
 
     #[test]
-    fn a_create_with_no_selection_and_no_secrets_is_three_items_in_one_table() {
+    fn a_ready_create_is_three_actions_in_one_table() {
         let shape = create_plan(aex_session_domain::testing::session_fixture())
             .validate()
             .expect("the minimal create is complete");

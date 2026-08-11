@@ -45,7 +45,7 @@ fn regional_operations() -> BTreeSet<String> {
 #[test]
 fn the_regional_surface_is_session_centric_and_has_one_file_registry() {
     let operations = regional_operations();
-    assert_eq!(operations.len(), 98, "regional route ledger drifted");
+    assert_eq!(operations.len(), 95, "regional route ledger drifted");
 
     for required in [
         "session_cancel",
@@ -87,6 +87,9 @@ fn the_regional_surface_is_session_centric_and_has_one_file_registry() {
         "session_trash",
         "session_restore",
         "session_purge",
+        "session_approval_get",
+        "session_approval_respond",
+        "session_approvals_list",
         "session_files_persisted_list",
         "session_files_persisted_stat",
         "session_files_persisted_download_create",
@@ -187,7 +190,6 @@ fn no_public_schema_or_identifier_exposes_a_run_or_turn_identity() {
         "api/generated/schemas/Message.json",
         "api/generated/schemas/Observation.json",
         "api/generated/schemas/UsageAttribution.json",
-        "api/generated/schemas/ApprovalBoundCall.json",
     ] {
         let text = std::str::from_utf8(
             tree.bytes(path)

@@ -12,6 +12,7 @@ use aex_observation_store_dynamodb::{
     SessionObservationDeletionStatus,
 };
 use aex_operation_domain::{OperationKind, OperationStatus};
+use aex_runtime_control::generation::GenerationState;
 use aex_session_dynamodb::StoreError;
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::transactions::{OperationStepCancel, operation_cancelled};
@@ -622,8 +623,6 @@ impl DynamoLifecyclePort {
         &self,
         session: &aex_session_domain::Session,
     ) -> Result<LifecycleReadiness, StoreError> {
-        use aex_runtime_control::store::RuntimeActivityStore as _;
-
         let generation_partition = aex_runtime_activity_dynamodb::keys::generation_partition_for_id(
             session.lifecycle.generation,
         );
@@ -690,12 +689,7 @@ impl DynamoLifecyclePort {
                 .await?;
             return Ok(LifecycleReadiness::Deferred);
         }
-        if let Some(current) = self
-            .runtime
-            .load_current(session.id)
-            .await
-            .map_err(runtime_store_error)?
-        {
+        if let Some(current) = self.runtime.load_current(session.id).await? {
             if current.generation != session.lifecycle.generation {
                 return Err(StoreError::Invalid {
                     detail: "the deletion fence observed a different current generation".to_owned(),
@@ -834,7 +828,6 @@ impl LifecyclePort for DynamoLifecyclePort {
             return self.prepare_session_delete(&session).await;
         }
         let view = self.runtime_view(&session).await?;
-        use aex_runtime_control::generation::GenerationState;
         let ready = match step.kind {
             OperationKind::SessionSuspend => view.head.state == GenerationState::Suspended,
             OperationKind::SessionResume => view.head.state == GenerationState::Running,
@@ -878,6 +871,10 @@ impl LifecyclePort for DynamoLifecyclePort {
         Ok(LifecycleReadiness::Deferred)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the exact runtime, deletion evidence, operation and work fences settle in one atomic authority"
+    )]
     async fn settle(
         &self,
         step: &LifecycleStep,
@@ -1200,6 +1197,10 @@ where
     ///
     /// Returns [`ReconcileError`] when either authority is unavailable or the
     /// work and operation identities do not agree exactly.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one reconciliation pass binds work, operation, lifecycle effect and retirement without a split"
+    )]
     pub async fn reconcile(
         &self,
         hint: &WorkHint,
@@ -1224,7 +1225,7 @@ where
             && operation.cancel_requested
             && operation.committed_at.is_none();
         let lifecycle_step =
-            (!operation.status.is_terminal() && !cancelling).then(|| LifecycleStep {
+            (!operation.status.is_terminal() && !cancelling).then_some(LifecycleStep {
                 workspace: binding.workspace,
                 session: binding.session,
                 operation: binding.operation,

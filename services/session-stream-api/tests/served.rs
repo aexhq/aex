@@ -14,6 +14,7 @@ use std::sync::Arc;
 use aex_content_aws::object_store::ContentObjectStore;
 use aex_content_domain::identity::{RegistryKind, Revision};
 use aex_content_dynamodb::store::ContentMetadataStore;
+use aex_internal_contracts::RunId;
 use aex_operation_domain::operation::{
     Operation, OperationKind, OperationResult, OperationScope, OperationStatus,
 };
@@ -33,8 +34,7 @@ use aex_secret_custody_dynamodb::codec::{
 use aex_secret_custody_dynamodb::store::{Page, SecretCustodyStore};
 use aex_secret_domain::custody::CustodyRevision;
 use aex_secret_domain::plaintext::SecretPlaintext;
-use aex_secret_domain::revocation::RevocationEpoch;
-use aex_secret_domain::secret::{SecretName, SecretRevision, SecretState, SourceGeneration};
+use aex_secret_domain::secret::{SecretName, SourceGeneration};
 use aex_session_domain::{Message, Run, Session};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
@@ -58,14 +58,13 @@ use aex_usage_query_dynamodb::expressions::{
 };
 use aex_usage_query_dynamodb::store::{AggregatePageRows, CoarsePageRows, UsageProjectionReads};
 use aex_wire::CanonicalJson;
-use aex_wire::cursor::Cursor;
 use aex_wire::error::{ErrorCode, WireError};
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::idempotency::PrincipalScope;
 use aex_wire::ids::OperationId;
 use aex_wire::ids::{
-    ApiKeyId, ApprovalId, GenerationId, PrefixedId, ProviderCredentialId, ResourceName, RunId,
-    SessionId, Uuid7, WorkspaceId,
+    ApiKeyId, ApprovalId, GenerationId, PrefixedId, ProviderCredentialId, ResourceName, SessionId,
+    Uuid7, WorkspaceId,
 };
 use aex_wire::ids::{ContentHash, UploadId};
 use aex_wire::models;
@@ -113,21 +112,6 @@ fn workspace() -> WorkspaceId {
 
 fn moment(spelling: &str) -> Timestamp {
     Timestamp::parse(spelling).expect("a pinned spelling")
-}
-
-fn stored_secret(name: &str) -> StoredSecret {
-    StoredSecret {
-        workspace: workspace(),
-        name: ResourceName::parse(name).expect("a resource name"),
-        generation: SourceGeneration::FIRST,
-        revision: SecretRevision::FIRST,
-        state: SecretState::Ready,
-        revocation_epoch: RevocationEpoch::INITIAL,
-        revoked_through_revision: SecretRevision(0),
-        created_at: moment("2026-08-01T12:34:56.789Z"),
-        updated_at: moment("2026-08-01T12:34:56.789Z"),
-        revoked_at: None,
-    }
 }
 
 fn stored_credential() -> StoredCredential {
@@ -1283,23 +1267,6 @@ fn build_with_workspace(
     ((mounted.router, mounted.routes), custody)
 }
 
-/// The shared state a handler case binds directly, over empty projections.
-fn shared_with(
-    custody: Arc<FakeCustody>,
-    registry: Arc<FakeRegistry>,
-    sessions: Arc<FakeSessions>,
-    operations: Arc<FakeOperations>,
-) -> Arc<Shared> {
-    shared_with_workspace(
-        custody,
-        registry,
-        sessions,
-        operations,
-        Arc::new(FakeWorkspaceProjection::default()),
-        Arc::new(FakePlacements::default()),
-    )
-}
-
 fn shared_with_workspace(
     custody: Arc<FakeCustody>,
     registry: Arc<FakeRegistry>,
@@ -1843,7 +1810,7 @@ async fn operation_list_filters_exactly_and_binds_the_cursor_to_every_filter() {
 }
 
 #[tokio::test]
-async fn operation_cancel_is_idempotent_and_refuses_non_cancelable_or_internal_work() {
+async fn operation_cancel_refuses_current_lifecycle_work_and_hides_internal_work() {
     let session = sample::<SessionId>(51);
     let running = stored_operation(
         52,
@@ -1888,38 +1855,23 @@ async fn operation_cancel_is_idempotent_and_refuses_non_cancelable_or_internal_w
     assert!(mounted.contains(&RouteId::RegionalOperationCancel));
 
     let cancel = |operation: OperationId| format!("/api/operations/{operation}/cancellations");
-    let (status, body) = post(&router, &cancel(running.record.id), "{}").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["status"], "running");
-    let (status, body) = post(&router, &cancel(running.record.id), "{}").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    for operation in [running, queued, fixed, telemetry] {
+        let (status, body) = post(&router, &cancel(operation.record.id), "{}").await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(
+            body["error"]["code"],
+            ErrorCode::OperationNotCancelable.as_str()
+        );
+    }
     assert_eq!(
         *operations.writes.lock().expect("an uncontended fixture"),
-        1,
-        "the accepted running cancellation is idempotent"
-    );
-
-    let (status, body) = post(&router, &cancel(queued.record.id), "{}").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["status"], "cancelled");
-
-    let (status, body) = post(&router, &cancel(fixed.record.id), "{}").await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(
-        body["error"]["code"],
-        ErrorCode::OperationNotCancelable.as_str()
+        0,
+        "current lifecycle commands own their own effect fences"
     );
 
     let (status, body) = post(&router, &cancel(internal.record.id), "{}").await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(body["error"]["code"], ErrorCode::NotFound.as_str());
-
-    let (status, body) = post(&router, &cancel(telemetry.record.id), "{}").await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(
-        body["error"]["code"],
-        ErrorCode::OperationNotCancelable.as_str()
-    );
 }
 
 // --- provider credential reads ----------------------------------------------------
@@ -2123,19 +2075,17 @@ async fn the_revocation_reaches_the_authority_as_a_transaction() {
     );
 }
 
-/// The `secrets` and `provider-credentials` fragments are each split across two
-/// deployables, so this trait implementation carries methods for the other half.
-/// They are unreachable through the router, and that is what makes the split
-/// safe rather than merely conventional.
+/// The `provider-credentials` fragment is split across two deployables, so this
+/// trait implementation carries methods for the other half. They are unreachable
+/// through the router, and that is what makes the split safe rather than merely
+/// conventional.
 #[test]
-fn the_other_half_of_each_split_fragment_is_unreachable_here() {
+fn the_other_half_of_the_provider_credentials_fragment_is_unreachable_here() {
     let served = Routes::served();
-    for group in [RouteGroup::Secrets, RouteGroup::ProviderCredentials] {
-        let theirs = RouteOwner::SecretApi.routes_in(group);
-        assert!(!theirs.is_empty(), "{group:?} has a secret-api half");
-        for id in theirs {
-            assert!(!served.contains(&id), "`{id}` is the secret edge's");
-        }
+    let theirs = RouteOwner::SecretApi.routes_in(RouteGroup::ProviderCredentials);
+    assert!(!theirs.is_empty(), "the group has a secret-api half");
+    for id in theirs {
+        assert!(!served.contains(&id), "`{id}` is the secret edge's");
     }
 }
 

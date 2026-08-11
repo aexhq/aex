@@ -364,7 +364,7 @@ pub fn session_message(stored: &Message) -> Result<models::Message, ProjectionEr
                 text: text.clone(),
             })),
             MessagePart::File { .. } => {
-                return Err(ProjectionError::DeferredMessageAttachment { message: stored.id });
+                Err(ProjectionError::DeferredMessageAttachment { message: stored.id })
             }
             MessagePart::ToolCall { id, arguments } => {
                 Ok(models::MessagePart::ToolCall(models::MessagePartToolCall {

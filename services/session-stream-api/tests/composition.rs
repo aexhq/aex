@@ -519,16 +519,12 @@ fn the_finite_half_owns_every_regional_non_stream_route_except_the_peers() {
             "`{id}` is a frame stream"
         );
     }
-    // The plaintext-bearing half of the two split fragments belongs to the
+    // Provider credential registration still belongs to the plaintext-bearing
     // secret edge, and this deployable must not claim it.
-    for id in [
-        RouteId::SecretPut,
-        RouteId::SecretDelete,
-        RouteId::SecretRevoke,
-        RouteId::ProviderCredentialRegister,
-    ] {
-        assert_eq!(route_owner(id), Some(RouteOwner::SecretApi), "`{id}`");
-    }
+    assert_eq!(
+        route_owner(RouteId::ProviderCredentialRegister),
+        Some(RouteOwner::SecretApi)
+    );
 }
 
 #[test]

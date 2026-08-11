@@ -1018,12 +1018,6 @@ fn a_dispatch_outcome_of_a_group_without_a_stream_can_never_be_a_stream() {
 #[test]
 fn regional_read_models_match_their_authoritative_producers() {
     let workspace = workspace_id().to_string();
-    for spelling in ["cancelled", "expired"] {
-        let status: aex_wire::models::ApprovalStatus =
-            serde_json::from_str(&format!("\"{spelling}\"")).expect("declared approval status");
-        assert_eq!(status.as_str(), spelling);
-    }
-
     let attribution: aex_wire::models::UsageAttribution =
         serde_json::from_value(serde_json::json!({
             "region": "eu-west-1",

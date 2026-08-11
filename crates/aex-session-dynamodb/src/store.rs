@@ -968,7 +968,7 @@ mod operation_store_tests {
                 id: sample::<OperationId>(2),
                 workspace,
                 session: None,
-                kind: OperationKind::SessionPersist,
+                kind: OperationKind::WorkspaceDelete,
                 status,
                 intent: IntentDigest::from_bytes([3; 32]),
                 scope: OperationScope::Workspace(workspace),
@@ -1038,39 +1038,32 @@ mod operation_store_tests {
         }
     }
 
-    async fn assert_ambiguous_landing(status: OperationStatus, expected: OperationStatus) {
+    async fn assert_generic_cancel_is_refused(status: OperationStatus) {
         let io = AmbiguousLanding::new(status);
         let initial = io.state.lock().expect("an uncontended fixture").clone();
         let outcome = request_cancel_with(&io, initial.record.workspace, initial.record.id, now())
             .await
-            .expect("the strong reread resolves the ambiguous write");
-        let OperationCancelOutcome::Accepted(stored) = outcome else {
-            panic!("the landed cancellation must be accepted");
-        };
-        assert_eq!(stored.record.status, expected);
-        assert!(stored.record.cancel_requested);
-        assert_eq!(
-            stored.version,
-            initial.version.checked_add(1).expect("a fixture version")
-        );
-        assert_eq!(io.reads.load(Ordering::Relaxed), 2);
-        assert_eq!(io.writes.load(Ordering::Relaxed), 1);
+            .expect("the strong read classifies the operation");
+        assert!(matches!(outcome, OperationCancelOutcome::NotCancelable));
+        assert_eq!(io.reads.load(Ordering::Relaxed), 1);
+        assert_eq!(io.writes.load(Ordering::Relaxed), 0);
 
         let replay = request_cancel_with(&io, initial.record.workspace, initial.record.id, now())
             .await
-            .expect("the durable state answers an idempotent replay");
-        assert!(matches!(replay, OperationCancelOutcome::Accepted(_)));
-        assert_eq!(io.writes.load(Ordering::Relaxed), 1);
+            .expect("the durable state answers the same refusal");
+        assert!(matches!(replay, OperationCancelOutcome::NotCancelable));
+        assert_eq!(io.reads.load(Ordering::Relaxed), 2);
+        assert_eq!(io.writes.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
-    async fn an_ambiguous_queued_terminal_is_resolved_by_one_strong_reread() {
-        assert_ambiguous_landing(OperationStatus::Queued, OperationStatus::Cancelled).await;
+    async fn a_queued_lifecycle_operation_refuses_generic_cancellation() {
+        assert_generic_cancel_is_refused(OperationStatus::Queued).await;
     }
 
     #[tokio::test]
-    async fn an_ambiguous_running_latch_is_resolved_by_one_strong_reread() {
-        assert_ambiguous_landing(OperationStatus::Running, OperationStatus::Running).await;
+    async fn a_running_lifecycle_operation_refuses_generic_cancellation() {
+        assert_generic_cancel_is_refused(OperationStatus::Running).await;
     }
 }
 

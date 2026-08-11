@@ -3,7 +3,7 @@
 use aex_hands_protocol::files::{
     FILE_FRAME_BYTES, FILE_TRANSFER_PART_BYTES, FileDownloadId as GuestDownloadId,
     FileDownloadState, FilePartReceipt, FileRequest, FileResponse, FileUploadId as GuestUploadId,
-    FileUploadState, LiveFileEntryKind, MAX_FILE_BYTES, live_file_size_is_admitted,
+    FileUploadState, LiveFileEntryKind, live_file_size_is_admitted,
 };
 use aex_hands_protocol::operation::{FileMode, GuestPath, GuestRoot};
 use aex_hands_protocol::rpc::HandsOperationId;
@@ -1284,6 +1284,7 @@ fn assemble_download_part(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aex_hands_protocol::files::MAX_FILE_BYTES;
     use aex_session_domain::lifecycle::LifecycleStatus;
 
     fn generation() -> GenerationId {

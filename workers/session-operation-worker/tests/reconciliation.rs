@@ -230,7 +230,7 @@ impl LifecyclePort for MemoryLifecycle {
         {
             return Err(precondition());
         }
-        row.state = "done".to_owned();
+        "done".clone_into(&mut row.state);
         row.claim_owner = None;
         row.lease_expires_at = None;
         *self.settlements.lock().expect("settlement lock") += 1;

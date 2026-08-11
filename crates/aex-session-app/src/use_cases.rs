@@ -9,6 +9,8 @@
 //! Replayable admissions strongly read their receipt before mutable planning
 //! dependencies. Fresh work then passes authorization and the pause gate.
 
+use std::collections::BTreeSet;
+
 use aex_internal_contracts::RunId;
 use aex_operation_domain::DeletionState;
 use aex_session_domain::{
@@ -17,9 +19,10 @@ use aex_session_domain::{
     SessionStatus, TerminalAttempt, WorkAdmission, claim_terminal, pause_gate, queue, replay,
     resolve_message_bounds, start as start_run_domain,
 };
+use aex_wire::PrefixedId as _;
 use aex_wire::error::ErrorCode;
 use aex_wire::ids::{AgentId, GenerationId, MessageId, SessionId, WorkspaceId};
-use std::collections::BTreeSet;
+use sha2::Digest as _;
 
 use crate::error::AppError;
 use crate::plan::{Condition, Hint, Planned, SessionTransaction, TransactionIntent, Write};
@@ -28,8 +31,19 @@ use crate::ports::{AppContext, PortError};
 /// Largest public text message admitted inline for MVP.
 ///
 /// Brain journal entries are limited to 32,768 bytes; 24 KiB leaves bounded
-/// room for the canonical record envelope and DynamoDB item metadata.
+/// room for the canonical record envelope and `DynamoDB` item metadata.
 pub const MESSAGE_TEXT_MAX_BYTES: usize = 24_576;
+
+fn lowercase_hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
 /// Admit a message and the run it starts.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SendMessage {
@@ -47,11 +61,11 @@ pub struct SendMessage {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MessageAdmissionOutcome {
     /// A new user message and session activity were planned together.
-    Planned(Planned<(Message, Session)>),
+    Planned(Box<Planned<(Message, Session)>>),
     /// Exact replay before any mutable session/account/credential read.
     Replayed {
         /// Stored wire response.
-        response: aex_wire::models::MessageSendResult,
+        response: Box<aex_wire::models::MessageSendResult>,
         /// Exact canonical bytes sent by the winner.
         canonical_response: Vec<u8>,
     },
@@ -118,6 +132,10 @@ fn live_conditions(session: &Session) -> Vec<Condition> {
 ///
 /// Returns [`AppError`] when the account is paused, a port read fails, or the
 /// domain refuses the admission.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the receipt-first admission and its fixed eleven-action authority are one atomic product invariant"
+)]
 pub async fn admit_message(
     context: &AppContext<'_>,
     command: &SendMessage,
@@ -159,7 +177,7 @@ pub async fn admit_message(
                     }));
                 }
                 Ok(MessageAdmissionOutcome::Replayed {
-                    response,
+                    response: Box::new(response),
                     canonical_response: bytes.to_vec(),
                 })
             }
@@ -282,14 +300,13 @@ pub async fn admit_message(
         })
     })?;
     let mut wake_digest = sha2::Sha256::new();
-    use sha2::Digest as _;
     wake_digest.update(b"aex.agent.wake.v1\0");
     wake_digest.update(command.session.to_string().as_bytes());
     wake_digest.update(b"\0");
     wake_digest.update(materialized.root.agent.to_string().as_bytes());
     let wake = crate::plan::AgentWake {
         work_id: format!("wrk_{wake_suffix}"),
-        dedupe_key: format!("{:x}", wake_digest.finalize()),
+        dedupe_key: lowercase_hex(&wake_digest.finalize()),
         session: command.session,
         agent: materialized.root.agent,
         from: journal_entry.seq,
@@ -423,10 +440,10 @@ pub async fn admit_message(
     };
     plan.validate()?;
 
-    Ok(MessageAdmissionOutcome::Planned(Planned {
+    Ok(MessageAdmissionOutcome::Planned(Box::new(Planned {
         plan,
         projected: (message, head),
-    }))
+    })))
 }
 
 /// Starts an admitted run.

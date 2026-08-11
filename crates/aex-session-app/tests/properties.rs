@@ -18,6 +18,7 @@ use aex_session_domain::testing::{id, moment, running_session, session_fixture, 
 use aex_session_domain::{
     MAX_OPEN_MESSAGES_PER_RUN, Message, MessageRole, MessageState, SessionStatus, WorkAdmission,
 };
+use aex_wire::error::ErrorCode;
 use aex_wire::ids::MessageId;
 use aex_wire::models::MessageSendRequest;
 
@@ -47,9 +48,10 @@ async fn every_plan(ports: &ScriptedPorts) -> Vec<(TransactionIntent, SessionTra
     let context = ports.context(&clock, &ids);
     let mut plans = Vec::new();
 
-    if let Ok(MessageAdmissionOutcome::Planned(Planned { plan, .. })) =
+    if let Ok(MessageAdmissionOutcome::Planned(planned)) =
         admit_message(&context, &send_message()).await
     {
+        let Planned { plan, .. } = *planned;
         plans.push((plan.intent, plan));
     }
     plans
@@ -437,17 +439,17 @@ async fn public_message_event_contains_no_internal_run_or_agent_identity() {
 
 #[tokio::test]
 async fn the_maximum_open_message_set_fits_one_terminal_transaction() {
-    let (session, run, _agent, _) = running_session();
+    let (session, run, agent, _) = running_session();
     let ports = ScriptedPorts::idle()
         .with_session(session.clone())
-        .with_run(run.clone());
-    let agent = ports.root_agent().agent;
+        .with_run(run.clone())
+        .with_agent(agent.clone());
     let open_messages = (0..MAX_OPEN_MESSAGES_PER_RUN)
         .map(|index| Message {
             id: id::<MessageId>(u8::try_from(index + 40).expect("fixture tag")),
             session: session.id,
             run: Some(run.id),
-            agent,
+            agent: agent.id,
             role: if index % 2 == 0 {
                 MessageRole::Assistant
             } else {
@@ -463,7 +465,7 @@ async fn the_maximum_open_message_set_fits_one_terminal_transaction() {
         workspace: session.workspace,
         session: session.id,
         attempt: terminal_attempt(&session, &run),
-        agent,
+        agent: agent.id,
         open_messages,
     };
     let clock = clock();

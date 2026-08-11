@@ -2,7 +2,7 @@
 //!
 //! File bytes never enter this table. The rows elect one public transfer id
 //! before a guest effect, bind it to one workspace/session/generation, and keep
-//! the exact replay response. The MicroVM remains the only byte store.
+//! the exact replay response. The `MicroVM` remains the only byte store.
 
 use std::sync::Arc;
 
@@ -278,7 +278,7 @@ pub trait LiveTransferStore: Send + Sync + 'static {
     ) -> Result<(), LiveTransferError>;
 }
 
-/// DynamoDB implementation over the existing session-authority table.
+/// `DynamoDB` implementation over the existing session-authority table.
 #[derive(Debug, Clone)]
 pub struct LiveTransferDynamoStore {
     client: Client,
@@ -569,11 +569,11 @@ fn encode_transfer(record: &TransferRecord) -> Result<Item, StoreError> {
 
 fn decode_transfer(
     item: &Item,
-    expected_pk: &str,
-    expected_sk: &str,
+    expected_partition_key: &str,
+    expected_sort_key: &str,
 ) -> Result<TransferRecord, StoreError> {
     let row = Row::bind(item, TRANSFER_ITEM)?;
-    if row.string(PK)? != expected_pk || row.string(SK)? != expected_sk {
+    if row.string(PK)? != expected_partition_key || row.string(SK)? != expected_sort_key {
         return Err(StoreError::Invalid {
             detail: "live transfer row key disagrees with the requested key".to_owned(),
         });
@@ -588,8 +588,8 @@ fn decode_transfer(
         || row.u64("revision")? != record.revision()
         || row.timestamp("expiresAt")? != record.expires_at()
         || row.u64("expiresAtEpochSeconds")? != expiry_epoch(record.expires_at())?
-        || session_partition(record.session()) != expected_pk
-        || record.key().sort_key() != expected_sk
+        || session_partition(record.session()) != expected_partition_key
+        || record.key().sort_key() != expected_sort_key
     {
         return Err(StoreError::Invalid {
             detail: "live transfer indexed attributes disagree with its document".to_owned(),
@@ -669,7 +669,7 @@ fn revision_put(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aex_wire::ids::{PrefixedId as _, Uuid7};
+    use aex_wire::ids::Uuid7;
 
     fn id<T: aex_wire::ids::PrefixedId>(time: u64, byte: u8) -> T {
         T::from_uuid7(Uuid7::compose(time, [byte; 10]))

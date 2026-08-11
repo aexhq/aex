@@ -441,6 +441,10 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
         })
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the exact head, pointer, admission marker and native-resume intent form one atomic transaction"
+    )]
     fn admit_operation<'a>(&'a self, plan: &'a OperationAdmissionPlan) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             if plan.open_operations == 0 || plan.next_revision != plan.expected_revision.next() {

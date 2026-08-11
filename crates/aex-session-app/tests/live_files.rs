@@ -202,12 +202,14 @@ async fn a_session_with_no_generation_in_force_fails_rather_than_listing_nothing
     // An empty listing and "there is no live filesystem" are different answers,
     // and returning the first for the second is the invented-data failure the
     // whole port refusal discipline exists to prevent.
-    let ports = ScriptedPorts::idle().with_live_entries(workspace_entries());
+    let mut session = session_fixture();
+    session.generation = None;
+    let ports = ScriptedPorts::idle()
+        .with_session(session.clone())
+        .with_live_entries(workspace_entries());
     let clock = clock();
     let ids = CountingIds::default();
     let context = ports.context(&clock, &ids);
-    let session = session_fixture();
-
     let outcome = list_live_files(
         &context,
         session.workspace,

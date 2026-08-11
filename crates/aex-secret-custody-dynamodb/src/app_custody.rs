@@ -49,12 +49,12 @@ impl ProviderCredentialReader for ProviderCredentialReads {
         self.store
             .load_provider_credential(workspace, credential)
             .await
-            .map(|binding| binding.map(provider_binding_of))
+            .map(|binding| binding.as_ref().map(provider_binding_of))
             .map_err(|error| port_error(&error))
     }
 }
 
-fn provider_binding_of(binding: crate::codec::ProviderCredential) -> ProviderCredentialBinding {
+fn provider_binding_of(binding: &crate::codec::ProviderCredential) -> ProviderCredentialBinding {
     ProviderCredentialBinding {
         credential: binding.credential,
         provider: binding.provider,

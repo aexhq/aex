@@ -1672,10 +1672,10 @@ fn read_error(error: &ReadError) -> WireError {
         }
         // The authority itself is unreachable. `503 observability_unavailable`
         // now means exactly that, never a lagging projection.
-        ReadError::Provider { .. } => WireError::new(ErrorCode::ObservabilityUnavailable)
-            .with_retry_after(Duration::from_secs(1)),
-        ReadError::Materializing { .. } => WireError::new(ErrorCode::ObservabilityUnavailable)
-            .with_retry_after(Duration::from_secs(1)),
+        ReadError::Provider { .. } | ReadError::Materializing { .. } => {
+            WireError::new(ErrorCode::ObservabilityUnavailable)
+                .with_retry_after(Duration::from_secs(1))
+        }
         ReadError::InvalidResume => WireError::new(ErrorCode::InvalidCursor),
         ReadError::Malformed { .. } => WireError::new(ErrorCode::InternalError),
     }

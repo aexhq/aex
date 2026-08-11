@@ -406,6 +406,10 @@ impl RuntimeControl {
     /// the native-resume intent and `resuming` head before endpoint traffic. This
     /// method closes the running/suspended accounting interval, lifecycle
     /// receipt and bounded usage outbox in the existing atomic settlement.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "native resume verifies and settles one closed provider/runtime authority transition"
+    )]
     pub async fn observe_native_resume(
         &self,
         view: &GenerationView,
@@ -665,14 +669,11 @@ impl RuntimeControl {
         }
         match command {
             RuntimeCommand::Evaluate { .. } => self.evaluate(&view, now).await,
-            RuntimeCommand::LiveWorkspaceWake { .. } => self.wake(&view, now).await,
-            RuntimeCommand::SessionSuspend { .. } => self.manual_suspend(&view, now).await,
-            RuntimeCommand::SessionResume { .. } => self.wake(&view, now).await,
-            RuntimeCommand::SessionTerminate { .. } => {
-                self.discard(&view, now, LifecycleAction::Terminate, false)
-                    .await
+            RuntimeCommand::LiveWorkspaceWake { .. } | RuntimeCommand::SessionResume { .. } => {
+                self.wake(&view, now).await
             }
-            RuntimeCommand::WorkspaceDiscard { .. } => {
+            RuntimeCommand::SessionSuspend { .. } => self.manual_suspend(&view, now).await,
+            RuntimeCommand::SessionTerminate { .. } | RuntimeCommand::WorkspaceDiscard { .. } => {
                 self.discard(&view, now, LifecycleAction::Terminate, false)
                     .await
             }
@@ -840,6 +841,10 @@ impl RuntimeControl {
     }
 
     /// Closes an intent whose exact provider state is now known.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the exhaustive provider verdict maps directly into one atomic runtime settlement"
+    )]
     async fn close_reconciled(
         &self,
         view: &GenerationView,

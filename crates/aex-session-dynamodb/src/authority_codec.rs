@@ -236,12 +236,12 @@ impl From<Origin> for OriginV1 {
 }
 
 impl OriginV1 {
-    fn decode(self) -> Result<Origin, CodecError> {
-        Ok(Origin {
+    fn decode(self) -> Origin {
+        Origin {
             session: self.session,
             operation: self.operation,
             cloned_at: self.cloned_at,
-        })
+        }
     }
 }
 
@@ -350,7 +350,6 @@ impl SessionV1 {
         if status != lifecycle.status
             || self.active_run != lifecycle.active.map(|active| active.run)
             || self.generation != Some(lifecycle.generation)
-            || self.revision != lifecycle.revision.0
         {
             return Err(malformed(
                 AUTHORITY_DOCUMENT,
@@ -402,7 +401,7 @@ impl SessionV1 {
             .map_err(|error| malformed(AUTHORITY_DOCUMENT, error.to_string()))?,
             provider_credential,
             lineage: Lineage {
-                origin: self.origin.map(OriginV1::decode).transpose()?,
+                origin: self.origin.map(OriginV1::decode),
             },
             resolved,
             metadata: self
@@ -1359,6 +1358,10 @@ mod tests {
             .expect("scalar metadata"),
         );
         session.updated_at = moment(9);
+        assert_ne!(
+            session.revision.0, session.lifecycle.revision.0,
+            "session and lifecycle revisions are independent fences"
+        );
         let item = encode_session(&session).expect("encode");
         assert!(item.contains_key(AUTHORITY_SCHEMA));
         assert!(item.contains_key(AUTHORITY_DOCUMENT));

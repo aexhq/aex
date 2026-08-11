@@ -27,7 +27,7 @@ use crate::ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext, Clock,
     IdFactory, LimitsReader, LiveEntry, LiveListQuery, LiveListing, LiveWorkspaceReader,
     MessageAdmissionSnapshot, PageBudget, PortError, ProviderCredentialReader, RegistryReader,
-    RootAdmissionState, SessionReader, SessionSnapshot, VersionedOperation,
+    RootAdmissionState, SessionReader, VersionedOperation,
 };
 
 /// One recorded port interaction.
@@ -126,6 +126,7 @@ impl IdFactory for CountingIds {
 pub struct ScriptedPorts {
     log: SyncLog,
     snapshot: MessageAdmissionSnapshot,
+    agent: AgentControl,
     operation: Option<VersionedOperation>,
     run: Option<Run>,
     receipt: Option<IdempotencyReceipt>,
@@ -173,6 +174,7 @@ impl ScriptedPorts {
                     idle: true,
                 },
             },
+            agent: root,
             operation: None,
             run: None,
             receipt: None,
@@ -354,6 +356,13 @@ impl ScriptedPorts {
         self
     }
 
+    /// Scripts the exact agent-control row read by terminal settlement.
+    #[must_use]
+    pub fn with_agent(mut self, agent: AgentControl) -> Self {
+        self.agent = agent;
+        self
+    }
+
     /// Scripts an existing idempotency receipt.
     #[must_use]
     pub fn with_receipt(mut self, receipt: IdempotencyReceipt) -> Self {
@@ -436,14 +445,15 @@ impl SessionReader for ScriptedPorts {
 
     async fn load_agent(
         &self,
-        _session: SessionId,
-        _agent: AgentId,
+        session: SessionId,
+        agent: AgentId,
     ) -> Result<AgentControl, PortError> {
         self.log.record(PortCall::Read("load_agent"));
-        Err(PortError::Unowned {
-            kind: "agent control",
-            seam: "the scripted message projection is intentionally narrower than AgentControl",
-        })
+        if self.agent.session == session && self.agent.id == agent {
+            Ok(self.agent.clone())
+        } else {
+            Err(PortError::NotFound { kind: "agent" })
+        }
     }
 
     async fn list_agents(

@@ -93,8 +93,16 @@ fn session_delete_worker_can_remove_only_one_sessions_terminal_runtime_rows() {
         .iter()
         .filter(|grant| grant.role == "session-operation-worker")
         .collect::<Vec<_>>();
-    assert_eq!(grants.len(), 1);
-    let grant = grants[0];
+    assert_eq!(grants.len(), 2, "read and deletion grants stay disjoint");
+    let grant = grants
+        .into_iter()
+        .find(|grant| {
+            grant
+                .actions
+                .iter()
+                .any(|action| action == "dynamodb:DeleteItem")
+        })
+        .expect("one deletion grant");
     assert_eq!(
         grant.actions,
         ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:DeleteItem"]
@@ -177,10 +185,13 @@ fn the_session_operation_worker_can_read_only_exact_runtime_generations() {
 
     assert_eq!(
         grants.len(),
-        1,
-        "the lifecycle bridge has one runtime grant"
+        2,
+        "the lifecycle read and deletion grants stay independently fenced"
     );
-    let grant = grants[0];
+    let grant = grants
+        .into_iter()
+        .find(|grant| grant.actions.as_slice() == ["dynamodb:GetItem"])
+        .expect("the lifecycle bridge has one exact-generation read grant");
     assert_eq!(grant.actions, ["dynamodb:GetItem"]);
     assert_eq!(grant.resources, ["table"]);
     assert!(

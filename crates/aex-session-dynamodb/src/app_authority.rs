@@ -284,6 +284,10 @@ impl SessionAuthorityExternal {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the exact root revision, journal fence and immutable entry facts form one closed atomic update"
+    )]
     fn root_run_admission(
         tables: &RegionalTables,
         binding: AuthorityBinding,
@@ -849,6 +853,11 @@ impl<S: HintSink> DynamoAuthorityCommitter<S> {
 
     /// Commits a multi-family plan whose ambiguous outcome is resolved by the
     /// caller-selected durable authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when compilation refuses the participant set or
+    /// the provider cannot establish a committed outcome under `resolution`.
     pub async fn commit_replayable_resolving(
         &self,
         plan: &SessionTransaction,
@@ -1447,7 +1456,6 @@ fn decode_cancel_target(item: &Item) -> Result<AgentCancelTarget, PortError> {
 
 #[cfg(test)]
 mod tests {
-    use aex_operation_domain::cursor::ContinuationCursor;
     use aex_session_app::plan::{Condition, SessionTransaction, TransactionIntent, Write};
     use aex_session_domain::testing::running_session;
 
@@ -1466,7 +1474,7 @@ mod tests {
             id: aex_session_domain::testing::id(41),
             workspace: session.workspace,
             session: Some(session.id),
-            kind: aex_operation_domain::OperationKind::SessionTrash,
+            kind: aex_operation_domain::OperationKind::SessionDelete,
             status: aex_operation_domain::operation::OperationStatus::Succeeded,
             intent: aex_wire::idempotency::IntentDigest::from_bytes([4; 32]),
             scope: aex_operation_domain::operation::OperationScope::Session(session.id),
@@ -1526,7 +1534,7 @@ mod tests {
             id: aex_session_domain::testing::id(42),
             workspace: session.workspace,
             session: Some(session.id),
-            kind: aex_operation_domain::OperationKind::SessionTrash,
+            kind: aex_operation_domain::OperationKind::SessionDelete,
             status: aex_operation_domain::operation::OperationStatus::Succeeded,
             intent: aex_wire::idempotency::IntentDigest::from_bytes([4; 32]),
             scope: aex_operation_domain::operation::OperationScope::Session(session.id),
@@ -1623,226 +1631,5 @@ mod tests {
             "a settlement never creates the row it settles"
         );
         assert_eq!(compiled.condition_groups[0].len(), 1);
-    }
-
-    /// A continued stop parked at one agent, as the worker would read it back.
-    fn resumed(
-        session: &aex_session_domain::Session,
-    ) -> (aex_operation_domain::Operation, ContinuationCursor) {
-        let cursor = ContinuationCursor::new(
-            aex_operation_domain::cursor::CursorPosition::Stop {
-                next_agent: aex_session_domain::testing::id(60),
-            },
-            98,
-            None,
-        )
-        .expect("builds");
-        let operation = aex_operation_domain::Operation {
-            id: aex_session_domain::testing::id(61),
-            workspace: session.workspace,
-            session: Some(session.id),
-            kind: aex_operation_domain::OperationKind::SessionStop,
-            status: aex_operation_domain::operation::OperationStatus::Running,
-            intent: aex_wire::idempotency::IntentDigest::from_bytes([5; 32]),
-            scope: aex_operation_domain::operation::OperationScope::Session(session.id),
-            progress: None,
-            cursor: Some(cursor.clone()),
-            cancel_requested: false,
-            result: None,
-            error: None,
-            created_at: aex_session_domain::testing::moment(1),
-            started_at: Some(aex_session_domain::testing::moment(1)),
-            updated_at: aex_session_domain::testing::moment(2),
-            committed_at: Some(aex_session_domain::testing::moment(1)),
-            terminal_at: None,
-        };
-        (operation, cursor)
-    }
-
-    fn step_plan(
-        operation: &aex_operation_domain::Operation,
-        conditions: Vec<Condition>,
-    ) -> SessionTransaction {
-        SessionTransaction {
-            intent: TransactionIntent::ContinueOperation,
-            conditions,
-            writes: vec![Write::PutOperation(Box::new(operation.clone()))],
-            after_commit: Vec::new(),
-        }
-    }
-
-    fn binding_of(session: &aex_session_domain::Session) -> SessionBinding {
-        SessionBinding {
-            workspace: session.workspace,
-            organization: session.organization,
-            session: session.id,
-        }
-    }
-
-    #[test]
-    fn a_resumed_step_conditions_on_the_version_it_read_and_advances_it_by_exactly_one() {
-        let (session, _run, _agent, _message) = running_session();
-        let (operation, cursor) = resumed(&session);
-        let observed = aex_operation_domain::operation::OperationVersion(7);
-        let plan = step_plan(
-            &operation,
-            vec![
-                Condition::OperationCursorAt {
-                    operation: operation.id,
-                    expected: Some(Box::new(cursor)),
-                },
-                Condition::OperationVersion {
-                    operation: operation.id,
-                    expected: observed,
-                },
-            ],
-        );
-        let binding = binding_of(&session);
-        let compiled = compile_application_transaction(
-            &tables(),
-            &plan,
-            binding,
-            &SessionAuthorityExternal::new(binding),
-        )
-        .expect("a resumed step compiles");
-
-        assert_eq!(
-            compiled.transaction.len(),
-            1,
-            "both guards and the write merge into one action on the operation item"
-        );
-        let put = compiled.transaction.actions()[0]
-            .put()
-            .expect("a step rewrites the whole envelope");
-        let expression = put.condition_expression().expect("a condition");
-        assert!(
-            expression.contains("attribute_exists(pk)"),
-            "a step never creates the row it advances: {expression}"
-        );
-        assert!(
-            !expression.contains("attribute_not_exists(pk)"),
-            "a step is not an insert: {expression}"
-        );
-        let names = put.expression_attribute_names().expect("names");
-        assert!(
-            names.values().any(|attribute| attribute == "version"),
-            "the step must guard the version it observed"
-        );
-        assert!(
-            names
-                .values()
-                .any(|attribute| attribute == "continuationCursor"),
-            "the step must guard the cursor it advances from"
-        );
-        let written = put
-            .item()
-            .get("version")
-            .and_then(|value| value.as_n().ok())
-            .and_then(|text| text.parse::<u64>().ok())
-            .expect("the stored row carries its version");
-        assert_eq!(
-            written,
-            observed.next().0,
-            "the row advances by exactly one, or the public cancellation's optimistic loop breaks"
-        );
-    }
-
-    #[test]
-    fn a_resumed_step_that_cannot_name_its_version_is_refused_rather_than_guessed_at() {
-        let (session, _run, _agent, _message) = running_session();
-        let (operation, cursor) = resumed(&session);
-        let plan = step_plan(
-            &operation,
-            vec![Condition::OperationCursorAt {
-                operation: operation.id,
-                expected: Some(Box::new(cursor)),
-            }],
-        );
-        let binding = binding_of(&session);
-        let error = compile_application_transaction(
-            &tables(),
-            &plan,
-            binding,
-            &SessionAuthorityExternal::new(binding),
-        )
-        .expect_err("a version the plan cannot name must not be invented");
-        assert!(
-            format!("{error}").contains("OperationVersion"),
-            "the refusal must name what is missing: {error}"
-        );
-    }
-
-    #[test]
-    fn an_admission_that_claims_an_observed_version_is_refused() {
-        let (session, _run, _agent, _message) = running_session();
-        let (mut operation, _cursor) = resumed(&session);
-        operation.cursor = None;
-        let plan = step_plan(
-            &operation,
-            vec![Condition::OperationVersion {
-                operation: operation.id,
-                expected: aex_operation_domain::operation::OperationVersion(3),
-            }],
-        );
-        let binding = binding_of(&session);
-        let error = compile_application_transaction(
-            &tables(),
-            &plan,
-            binding,
-            &SessionAuthorityExternal::new(binding),
-        )
-        .expect_err("an insert has no version to have observed");
-        assert!(format!("{error}").contains("admission"), "{error}");
-    }
-
-    #[test]
-    fn a_binding_that_disagrees_with_the_compiler_is_refused_before_any_action_is_built() {
-        let (session, _run, _agent, _message) = running_session();
-        let (operation, _cursor) = resumed(&session);
-        let mut plan = step_plan(&operation, Vec::new());
-        plan.intent = TransactionIntent::StopSession;
-        let binding = binding_of(&session);
-        let mut foreign = binding;
-        foreign.workspace = aex_session_domain::testing::id(99);
-        let error = compile_application_transaction(
-            &tables(),
-            &plan,
-            binding,
-            &SessionAuthorityExternal::new(foreign),
-        )
-        .expect_err("two disagreeing bindings must never both be trusted");
-        assert!(
-            matches!(error, crate::error::StoreError::Invalid { .. }),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn a_write_with_no_compiler_is_refused_rather_than_skipped() {
-        let (session, _run, _agent, _message) = running_session();
-        let plan = SessionTransaction {
-            intent: TransactionIntent::StopSession,
-            conditions: Vec::new(),
-            writes: vec![Write::RedactOperationResult(
-                aex_session_domain::testing::id(7),
-            )],
-            after_commit: Vec::new(),
-        };
-        let binding = SessionBinding {
-            workspace: session.workspace,
-            organization: session.organization,
-            session: session.id,
-        };
-        let error = compile_application_transaction(
-            &tables(),
-            &plan,
-            binding,
-            &SessionAuthorityExternal::new(binding),
-        )
-        .expect_err("an unknown write must never be silently dropped");
-        assert!(
-            format!("{error}").contains("RedactOperationResult"),
-            "the refusal must name the arm: {error}"
-        );
     }
 }

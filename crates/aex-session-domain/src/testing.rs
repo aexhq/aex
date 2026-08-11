@@ -177,9 +177,10 @@ pub fn session_fixture() -> Session {
         generation: Some(generation),
         pinned_runtime,
         provider_credential: crate::ProviderCredentialPin {
-            credential: aex_wire::ids::ProviderCredentialId::from_uuid7(Uuid7::compose(
-                1, [12; 10],
-            )),
+            credential: aex_wire::ids::ProviderCredentialId::parse(
+                "pcr_01h455vb4pex5vsknk084sn02q",
+            )
+            .expect("the fixture credential matches the resolved configuration"),
             provider: ProviderId::Openai,
             source_generation: 1,
             revision: 1,

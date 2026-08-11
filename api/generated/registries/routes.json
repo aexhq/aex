@@ -2283,8 +2283,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The irreversible cross-plane session/user-content/telemetry deletion authority is not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2293,8 +2291,7 @@
         "session_deleted",
         "deletion_in_progress",
         "wrong_workspace_region",
-        "commit_outcome_unknown",
-        "not_implemented"
+        "commit_outcome_unknown"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -2316,6 +2313,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Irreversibly delete the session and session-scoped user content, observations, telemetry, and export objects. Independent registered workspace files remain.",

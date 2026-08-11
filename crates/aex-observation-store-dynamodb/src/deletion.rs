@@ -99,7 +99,7 @@ pub trait SessionObservationDeletion: Send + Sync {
     ) -> Result<SessionObservationDeletionStatus, SessionObservationDeletionError>;
 }
 
-/// DynamoDB implementation of the exact-session deletion participant.
+/// `DynamoDB` implementation of the exact-session deletion participant.
 #[derive(Clone, Debug)]
 pub struct SessionObservationDeletionStore {
     dynamodb: aws_sdk_dynamodb::Client,

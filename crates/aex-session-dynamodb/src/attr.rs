@@ -412,6 +412,11 @@ impl<'a> Row<'a> {
     ///
     /// This is deliberately separate from [`Row::id`]: `RunId` is persisted in
     /// internal rows but no longer belongs to the public ID registry.
+    ///
+    /// # Errors
+    ///
+    /// [`CodecError::Malformed`] when the attribute is absent, not a string, or
+    /// does not contain a canonical private run identifier.
     pub fn run_id(&self, attribute: &'static str) -> Result<RunId, CodecError> {
         let text = self.string(attribute)?;
         RunId::parse(text).map_err(|error| CodecError::Malformed {
@@ -422,6 +427,10 @@ impl<'a> Row<'a> {
     }
 
     /// An optional private execution identifier.
+    ///
+    /// # Errors
+    ///
+    /// As [`Row::run_id`], minus the missing case.
     pub fn opt_run_id(&self, attribute: &'static str) -> Result<Option<RunId>, CodecError> {
         if self.item.contains_key(attribute) {
             self.run_id(attribute).map(Some)

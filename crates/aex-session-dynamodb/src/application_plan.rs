@@ -1176,7 +1176,7 @@ mod tests {
             &RefuseExternal,
         );
         assert!(
-            matches!(error, Err(StoreError::Invalid { ref detail }) if detail == "session creation authority is wrong: a create writes exactly one root agent control record; a head whose root agent does not exist answers 404 to the reader the 201 just invited"),
+            matches!(error, Err(StoreError::Invalid { ref detail }) if detail == "session creation authority is wrong: a create writes exactly one idempotency receipt; the receipt's conditional put is the concurrency election, so a create without one can mint two sessions for one key"),
             "{error:?}"
         );
     }
@@ -1216,7 +1216,7 @@ mod tests {
     fn a_receipt_compiles_to_one_conditional_put_the_session_adapter_owns() {
         let (session, _run, _agent, _message) = running_session();
         let input = SessionTransaction {
-            intent: TransactionIntent::AdmitMessage,
+            intent: TransactionIntent::SettleLifecycle,
             conditions: Vec::new(),
             writes: vec![Write::PutIdempotencyReceipt(Box::new(receipt(
                 "session.message:ses_1",
@@ -1328,7 +1328,7 @@ mod tests {
         // addressed two different items, so a replay under a changed body found
         // nothing and executed twice instead of conflicting.
         let two_keys = SessionTransaction {
-            intent: TransactionIntent::AdmitMessage,
+            intent: TransactionIntent::SettleLifecycle,
             conditions: Vec::new(),
             writes: vec![
                 Write::PutIdempotencyReceipt(Box::new(receipt("session.message:ses_1", "k1", 7))),

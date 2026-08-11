@@ -206,7 +206,7 @@ mod tests {
             id: attempted().operation,
             workspace: workspace(),
             session: Some(session),
-            kind: OperationKind::SessionStop,
+            kind: OperationKind::SessionCancel,
             status,
             intent: attempted().intent,
             scope: OperationScope::Session(session),
