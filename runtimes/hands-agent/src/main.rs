@@ -1,7 +1,7 @@
 //! `hands-agent` composition root (guest rootfs binary).
 //!
 //! Exclusive responsibility: the credential-free guest-root protocol agent
-//! process. It is PID 1 of the `MicroVM`, serves the five verbs and the provider
+//! process. It is PID 1 of the `MicroVM`, serves the six verbs and the provider
 //! lifecycle hooks on one port, and supervises one process group per open
 //! operation.
 //!
@@ -20,6 +20,7 @@
 
 mod cancel;
 mod execute;
+mod file;
 mod host;
 mod image;
 mod serve;
@@ -58,6 +59,9 @@ pub enum HandsAgentRunError {
     /// The journal could not be opened or replayed.
     #[error("the operation journal is unusable: {0}")]
     Journal(#[from] aex_hands_agent::journal::JournalError),
+    /// The resumable live-file state directory could not be opened.
+    #[error("the live-file transfer store is unusable: {0}")]
+    FileStore(#[from] std::io::Error),
     /// The listener or the server stopped.
     #[error("the guest listener stopped: {reason}")]
     Listener {
@@ -157,9 +161,15 @@ fn agent_build() -> [u8; 8] {
 pub fn compose(config: &Config) -> Result<Arc<serve::Guest>, HandsAgentRunError> {
     let journal = Journal::open(&config.journal_root)?;
     let executor = execute::Executor::new(Arc::new(host::HostRunner), config.guest_root.clone());
+    let files = file::FileService::open(
+        config.guest_root.clone(),
+        &config.guest_root.0,
+        &config.journal_root,
+    )?;
     Ok(Arc::new(serve::Guest::new(
         journal,
         executor,
+        files,
         agent_build(),
         Arc::new(image::HostImageValidator::guest()),
     )))

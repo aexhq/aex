@@ -1,4 +1,4 @@
-//! The guest's HTTP surface: the five verbs, the attached stream, the provider
+//! The guest's HTTP surface: the six verbs, the attached stream, the provider
 //! lifecycle hooks and the internal health paths — all on one port.
 //!
 //! One port because `CreateMicrovmImage` declares exactly one hook port and
@@ -88,6 +88,8 @@ pub struct Guest {
     journal: Journal,
     /// The operation dispatcher.
     executor: Executor,
+    /// Generation-local binary file transfers.
+    files: crate::file::FileService,
     /// The current binding.
     bound: RwLock<Option<Bound>>,
     /// The first eight bytes of this agent binary's `blake3`.
@@ -102,12 +104,14 @@ impl Guest {
     pub fn new(
         journal: Journal,
         executor: Executor,
+        files: crate::file::FileService,
         agent_build: [u8; 8],
         image: Arc<dyn ImageValidator>,
     ) -> Self {
         Self {
             journal,
             executor,
+            files,
             bound: RwLock::new(None),
             agent_build,
             image,
@@ -493,6 +497,11 @@ fn answer(
             at: "verb",
             reason: "attach is a delivery mode on its own stream, not a posted verb".to_owned(),
         }),
+        Verb::File => {
+            let request: aex_hands_protocol::files::FileRequest =
+                serde_json::from_slice(frame.payload).map_err(|_| decode("payload"))?;
+            serde_json::to_vec(&guest.files.answer(request)).map_err(|_| decode("response"))
+        }
     }
 }
 
@@ -711,9 +720,14 @@ mod tests {
     fn guest_with(dir: &std::path::Path, runner: Arc<dyn Runner>) -> Arc<Guest> {
         let journal = Journal::open(dir).expect("the journal tree is created");
         let executor = Executor::new(runner, GuestRoot::workspace());
+        let workspace = dir.join("workspace");
+        std::fs::create_dir_all(&workspace).expect("the workspace exists");
+        let files = crate::file::FileService::open(GuestRoot::workspace(), workspace, dir)
+            .expect("the file store opens");
         Arc::new(Guest::new(
             journal,
             executor,
+            files,
             [1, 2, 3, 4, 5, 6, 7, 8],
             Arc::new(ValidImage),
         ))
@@ -805,7 +819,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_run_hook_binds_the_generation_and_then_the_five_verbs_answer() {
+    async fn the_run_hook_binds_the_generation_and_then_the_operation_verbs_answer() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let runner = Arc::new(FakeRunner::default());
         let app = router(guest(dir.path(), Arc::clone(&runner)));

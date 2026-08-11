@@ -9,7 +9,7 @@
 //! Request preamble — 40 bytes
 //!   0..4    magic            b"AEXH"
 //!   4..6    schema_version   u16
-//!   6..7    verb             u8    1=start 2=status 3=cancel 4=result 5=attach
+//!   6..7    verb             u8    1=start 2=status 3=cancel 4=result 5=attach 6=file
 //!   7..8    flags            u8    bit0 = payload has a trailing binary segment
 //!   8..24   generation       [u8;16]
 //!  24..32   fence            u64
@@ -69,7 +69,7 @@ pub const FLAG_TRAILING_BINARY: u8 = 0b0000_0001;
 /// The launch protocol version.
 pub const PROTOCOL_V1: SchemaVersion = SchemaVersion::V1;
 
-/// The five verbs. There is no sixth.
+/// The six exact-generation verbs.
 ///
 /// `attach` is not a sixth verb in the protocol sense: it is the `Attached`
 /// delivery mode of `start`, expressed as its own stream only because HTTP cannot
@@ -89,16 +89,19 @@ pub enum Verb {
     Result = 4,
     /// Open the attached delivery stream for one operation.
     Attach = 5,
+    /// Transfer binary live-workspace files.
+    File = 6,
 }
 
 impl Verb {
     /// Every verb, in wire order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Start,
         Self::Status,
         Self::Cancel,
         Self::Result,
         Self::Attach,
+        Self::File,
     ];
 
     /// The wire code.
@@ -116,6 +119,7 @@ impl Verb {
             Self::Cancel => "/aex/hands/v1/cancel",
             Self::Result => "/aex/hands/v1/result",
             Self::Attach => "/aex/hands/v1/attach",
+            Self::File => "/aex/hands/v1/file",
         }
     }
 
@@ -128,6 +132,7 @@ impl Verb {
             3 => Some(Self::Cancel),
             4 => Some(Self::Result),
             5 => Some(Self::Attach),
+            6 => Some(Self::File),
             _ => None,
         }
     }
@@ -440,7 +445,7 @@ pub fn decode_request<'a>(
     let Some(verb) = Verb::from_code(bytes[6]) else {
         return Err(FrameError::Malformed {
             at: "verb",
-            reason: format!("verb {} is not one of the five", bytes[6]),
+            reason: format!("verb {} is not one of the six", bytes[6]),
         });
     };
     // 5. header_crc32c
@@ -563,7 +568,7 @@ pub fn decode_response_preamble(
     let Some(verb) = Verb::from_code(bytes[6]) else {
         return Err(FrameError::Malformed {
             at: "verb",
-            reason: format!("verb {} is not one of the five", bytes[6]),
+            reason: format!("verb {} is not one of the six", bytes[6]),
         });
     };
     let Some(status) = ResponseStatus::from_code(bytes[7]) else {
@@ -795,11 +800,11 @@ mod tests {
     }
 
     #[test]
-    fn there_are_exactly_five_verbs_with_fixed_paths() {
-        assert_eq!(Verb::ALL.len(), 5);
+    fn there_are_exactly_six_verbs_with_fixed_paths() {
+        assert_eq!(Verb::ALL.len(), 6);
         assert_eq!(
             Verb::ALL.map(Verb::code),
-            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5, 6],
             "the wire codes are pinned"
         );
         assert_eq!(
@@ -810,9 +815,10 @@ mod tests {
                 "/aex/hands/v1/cancel",
                 "/aex/hands/v1/result",
                 "/aex/hands/v1/attach",
+                "/aex/hands/v1/file",
             ]
         );
-        for code in [0u8, 6, 7, 255] {
+        for code in [0u8, 7, 255] {
             assert!(
                 Verb::from_code(code).is_none(),
                 "verb {code} does not exist"

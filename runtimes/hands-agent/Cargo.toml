@@ -44,11 +44,12 @@ axum.workspace = true
 blake3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["fs", "process"] }
 
 # The guest artifact must cross-build with no C toolchain in its inputs: a host
 # compiler in the build inputs is exactly what makes a "byte-reproducible" claim

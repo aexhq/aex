@@ -3,7 +3,7 @@
 //! Hands is customer root, so this crate is the hostile-input boundary. Every
 //! decoder here is written on the assumption that the sender is adversarial.
 //!
-//! # The five verbs
+//! # The six verbs
 //!
 //! ```text
 //! start(operation, call_hash, fence, bounds) -> accepted(operation, guest_revision)
@@ -31,10 +31,15 @@
 //!   in-guest counter, so `RuntimeReceipt` is constructible only from a provider
 //!   control-plane response, asserted by `tests/no_guest_billing.rs`.
 
+pub mod files;
 pub mod lifecycle;
 pub mod operation;
 pub mod rpc;
 
+pub use files::{
+    FILE_PART_BYTES, FileDownloadChunk, FileDownloadId, FileDownloadState, FileFailureCode,
+    FilePartReceipt, FileRequest, FileResponse, FileUploadState, MAX_FILE_BYTES,
+};
 pub use lifecycle::{
     KeepaliveLease, LifecycleIntent, LifecycleOutcome, ProviderFailure, ProviderReceiptId,
     ProviderRequestId, ReceiptError, RuntimeReceipt, TrueIdleEvidence,
