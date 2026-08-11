@@ -368,7 +368,7 @@ pub enum FileFailureCode {
     Unavailable,
 }
 
-mod base64_bytes {
+pub(crate) mod base64_bytes {
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD;
     use serde::{Deserialize as _, Deserializer, Serializer};

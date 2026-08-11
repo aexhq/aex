@@ -39,7 +39,7 @@ const DETACHED_PREFIX: &str = "hands.v1";
 ///
 /// One reinterpretation happens and is deliberate: `bash`'s `command` is a
 /// shell line by its own catalogue schema, so it is run by a shell
-/// ([`crate::encode::COMMAND_SHELL`]). Its `argv` form is passed through untouched.
+/// ([`crate::encode::COMMAND_SHELL`]).
 pub struct HandsToolExecutor {
     hands: Arc<dyn HandsPort>,
 }
@@ -749,6 +749,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_model_write_reaches_the_guest_as_bounded_inline_bytes() {
+        let (executor, hands) = fixture();
+        let mut write = call();
+        write.route.name = ToolName::parse("write_file").expect("tool name");
+        write.input = aex_wire::CanonicalJson::from_value(&serde_json::json!({
+            "path": "/workspace/a.txt",
+            "content": "hello\n",
+            "mode": "0755"
+        }))
+        .expect("canonical input");
+        executor
+            .invoke(&ticket(), &write, &CancelToken::new())
+            .await
+            .expect("the write is accepted");
+        let starts = hands.starts.lock().expect("starts");
+        let request: aex_hands_protocol::operation::OperationRequest =
+            serde_json::from_value(starts[0].1.request.clone()).expect("protocol request");
+        let aex_hands_protocol::operation::OperationRequest::WriteFile {
+            path,
+            mode,
+            content,
+        } = request
+        else {
+            panic!("a model write is a structured WriteFile operation");
+        };
+        assert_eq!(path.as_str(), "/workspace/a.txt");
+        assert_eq!(mode, aex_hands_protocol::operation::FileMode::Executable);
+        assert_eq!(content, b"hello\n");
+    }
+
+    #[tokio::test]
     async fn the_owners_ls_reaches_the_guests_list_dir_operation() {
         let (executor, hands) = fixture();
         let mut listing = call();
@@ -851,13 +882,13 @@ mod tests {
     #[test]
     fn only_the_rows_the_guest_can_complete_are_reported_as_supported() {
         let (executor, _) = fixture();
-        for served in ["read_file", "list_dir", "glob", "grep", "bash", "git"] {
+        for served in ["read_file", "write_file", "edit_file", "bash"] {
             assert!(
                 executor.supports(&ToolName::parse(served).expect("tool name")),
                 "{served} is encoded into an operation the guest runs"
             );
         }
-        for unserved in ["write_file", "run_code", "browser_launch", "web_fetch"] {
+        for unserved in ["run_code", "browser_launch", "web_fetch"] {
             assert!(
                 !executor.supports(&ToolName::parse(unserved).expect("tool name")),
                 "{unserved} must never be advertised: it could only fail"

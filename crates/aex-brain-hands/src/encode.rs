@@ -1,7 +1,8 @@
 //! Catalogue tool names, encoded as the guest operations that actually do the work.
 //!
 //! The guest implements a closed **operation** vocabulary (`Exec`, `ReadFile`,
-//! `ListDir`, `StatPath`, `Search`, `EditFile`, `ProcessStatus`, `ProcessStop`).
+//! `ListDir`, `StatPath`, `Search`, `WriteFile`, `EditFile`, `ProcessStatus`,
+//! `ProcessStop`).
 //! The model sees a different vocabulary: the **catalogue** rows in
 //! `aex_brain_tool_catalog::catalog`. Nothing between the two translated, so every
 //! Hands-routed call arrived at the guest as `RegisteredTool` and came back
@@ -16,13 +17,14 @@
 //! | `list_dir` | `ListDir` | no path means the guest root, which is what a bare `ls` is |
 //! | `glob` | `Search` with [`SearchPattern::Glob`] | |
 //! | `grep` | `Search` with [`SearchPattern::Regex`] | the guest matches a regex as a literal (HS-08): narrower than promised, never wider |
+//! | `write_file` | `WriteFile` | bounded inline UTF-8 bytes, atomically published by the guest |
 //! | `edit_file` | `EditFile` | one exact-replacement hunk, guarded by `expectedRevision` |
 //! | `bash` | `Exec` | `command` is handed to [`COMMAND_SHELL`] |
 //! | `git` | `Exec` via [`crate::operation::git`] | |
 //! | `install_packages` | `Exec` via [`crate::operation::package_install`] | `apt` selects the image's real manager, `dnf` |
 //! | `process_output` | `ProcessStatus` | the wire arm *is* the bounded output window |
 //! | `process_stop` | `ProcessStop` | |
-//! | `write_file`, `apply_patch`, `run_code`, `process_status`, `browser_*` | none | [`HandsTool::unserved_reason`] says why, per row |
+//! | `apply_patch`, `run_code`, `process_status`, `browser_*` | none | [`HandsTool::unserved_reason`] says why, per row |
 //!
 //! `StatPath` is implemented by the guest and no catalogue row asks for it. That
 //! is recorded rather than papered over: the gap is a missing catalogue row, not
@@ -49,8 +51,8 @@
 use std::collections::BTreeMap;
 
 use aex_hands_protocol::operation::{
-    ByteRangeRequest, EnvName, EnvValue, GuestPath, GuestPathError, GuestProcessId, GuestRoot,
-    OperationRequest, Patch, PatchHunk, SearchPattern, StopSignal,
+    ByteRangeRequest, EnvName, EnvValue, FileMode, GuestPath, GuestPathError, GuestProcessId,
+    GuestRoot, OperationRequest, Patch, PatchHunk, SearchPattern, StopSignal,
 };
 use aex_wire::ids::{ContentHash, Uuid7};
 use aex_wire::types::DecimalU128;
@@ -60,9 +62,8 @@ use crate::operation::{ConstructError, ConstructedCommand, PackageManager, git, 
 
 /// The program a `bash` `command` string is handed to.
 ///
-/// The catalogue offers `command` (one shell line) exclusive-or `argv` (an exact
-/// vector). `argv` is passed through untouched; `command` is a shell line and the
-/// only honest way to run one is to run a shell. `bash` is in the pinned image
+/// The catalogue offers `command` as one shell line. The only honest way to run
+/// one is to run a shell. `bash` is in the pinned image
 /// package set, and the customer is already root inside the guest, so this adds
 /// no reach — refusing it would only mean the model cannot run `ls`.
 pub const COMMAND_SHELL: [&str; 2] = ["bash", "-lc"];
@@ -182,6 +183,7 @@ impl HandsTool {
     pub const fn unserved_reason(self) -> Option<&'static str> {
         match self {
             Self::ReadFile
+            | Self::WriteFile
             | Self::EditFile
             | Self::ListDir
             | Self::Glob
@@ -191,17 +193,13 @@ impl HandsTool {
             | Self::InstallPackages
             | Self::ProcessOutput
             | Self::ProcessStop => None,
-            Self::WriteFile => Some(
-                "the wire write carries its content as a digest, and the guest holds no \
-                 credential to resolve a digest to bytes",
-            ),
             Self::ApplyPatch => Some(
                 "the wire edit is exact-replacement hunks and nothing on the Brain side parses a \
                  unified diff into them",
             ),
             Self::RunCode => Some(
                 "`code_run` builds the argv for a body file under `<root>/.aex/code-exec`, and \
-                 delivering that body needs the write the guest refuses; `bash` runs an \
+                 no encoder materializes that private body before dispatch; `bash` runs an \
                  interpreter today",
             ),
             Self::ProcessStatus => Some(
@@ -259,6 +257,23 @@ impl HandsTool {
                 Ok(EncodedOperation::instant(OperationRequest::ReadFile {
                     path,
                     range: byte_range(args)?,
+                }))
+            }
+            Self::WriteFile => {
+                let mode = match optional_text(args, "mode")? {
+                    None | Some("0644") => FileMode::ReadWrite,
+                    Some("0755") => FileMode::Executable,
+                    Some(_) => {
+                        return Err(ToolEncodingError::Malformed {
+                            field: "mode",
+                            expected: "`0644` or `0755`",
+                        });
+                    }
+                };
+                Ok(EncodedOperation::instant(OperationRequest::WriteFile {
+                    path: required_path(args, "path", root)?,
+                    mode,
+                    content: required_text(args, "content")?.as_bytes().to_vec(),
                 }))
             }
             Self::EditFile => {
@@ -400,8 +415,7 @@ impl HandsTool {
                     signal,
                 }))
             }
-            Self::WriteFile
-            | Self::ApplyPatch
+            Self::ApplyPatch
             | Self::RunCode
             | Self::ProcessStatus
             | Self::BrowserLaunch
@@ -830,7 +844,7 @@ mod tests {
     }
 
     #[test]
-    fn every_hands_routed_catalogue_row_has_an_arm() {
+    fn every_mvp_hands_routed_catalogue_row_has_a_served_arm() {
         let entries =
             aex_brain_tool_catalog::catalog::builtin_entries().expect("the catalogue builds");
         let routed = entries
@@ -845,15 +859,16 @@ mod tests {
             })
             .map(|entry| entry.descriptor.name.as_str())
             .collect::<Vec<_>>();
-        let mut known = HandsTool::ALL
-            .iter()
-            .map(|tool| tool.as_str())
-            .collect::<Vec<_>>();
-        known.sort_unstable();
         assert_eq!(
-            routed, known,
+            routed,
+            ["bash", "edit_file", "read_file", "write_file"],
             "a Hands-routed catalogue row was added or removed without deciding its guest \
              operation"
+        );
+        assert!(
+            routed
+                .iter()
+                .all(|name| { HandsTool::parse(name).is_some_and(HandsTool::is_served) })
         );
     }
 
@@ -888,6 +903,45 @@ mod tests {
         };
         assert_eq!(argv, vec![COMMAND_SHELL[0], COMMAND_SHELL[1], "ls -la"]);
         assert_eq!(cwd.as_str(), "/workspace");
+    }
+
+    #[test]
+    fn a_write_carries_bounded_inline_bytes_and_an_explicit_mode() {
+        let OperationRequest::WriteFile {
+            path,
+            mode,
+            content,
+        } = encode(
+            "write_file",
+            &json!({"path": "/workspace/a.txt", "content": "hello\n", "mode": "0755"}),
+        )
+        else {
+            panic!("a model write is a structured WriteFile operation");
+        };
+        assert_eq!(path.as_str(), "/workspace/a.txt");
+        assert_eq!(mode, aex_hands_protocol::operation::FileMode::Executable);
+        assert_eq!(content, b"hello\n");
+
+        let OperationRequest::WriteFile { mode, .. } = encode(
+            "write_file",
+            &json!({"path": "/workspace/default.txt", "content": ""}),
+        ) else {
+            panic!("a model write is a structured WriteFile operation");
+        };
+        assert_eq!(mode, aex_hands_protocol::operation::FileMode::ReadWrite);
+
+        let content = "x".repeat(500_000);
+        let encoded = HandsTool::WriteFile
+            .encode(
+                &root(),
+                &json!({"path": "/workspace/large.txt", "content": content}),
+            )
+            .expect("the largest catalog write encodes");
+        let bytes = serde_json::to_vec(&encoded.request).expect("the operation serializes");
+        assert!(
+            bytes.len() + 4_096 < crate::MAX_FRAME_BYTES as usize,
+            "the closed StartRequest envelope must still fit around the largest write operation"
+        );
     }
 
     #[test]

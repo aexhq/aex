@@ -14,7 +14,7 @@ use crate::wire_pending::{EffectClass, ExecutorRoute};
 
 /// Snapshot-bound SHA-256 identity of [`builtin_catalog_bytes`].
 pub const BUILTIN_CATALOG_DIGEST: &str =
-    "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb";
+    "sha256:408e41a8846fe19ebfd9f96800176bc187f7e902edc8b6069d8b6ca6766ee2b4";
 
 /// Builds and validates the immutable built-in rows in canonical name order.
 ///
@@ -23,7 +23,7 @@ pub const BUILTIN_CATALOG_DIGEST: &str =
 /// Returns a build error if a compiled name, schema, credential, or invariant
 /// is invalid. Such an error is a build/startup defect, never a runtime skip.
 pub fn builtin_entries() -> Result<Vec<ToolManifestEntry>, CatalogBuildError> {
-    let mut entries = [BASH_SPEC]
+    let mut entries = [READ_FILE_SPEC, EDIT_FILE_SPEC, WRITE_FILE_SPEC, BASH_SPEC]
         .iter()
         .map(build_entry)
         .collect::<Result<Vec<_>, _>>()?;
@@ -108,8 +108,8 @@ pub fn select_effect(
 }
 
 fn build_entry(spec: &Spec) -> Result<ToolManifestEntry, CatalogBuildError> {
-    // MVP exposes only Bash inside the customer's session MicroVM. It uses the
-    // authenticated Hands endpoint and is charged as session compute; hosted
+    // MVP tools execute inside the customer's session MicroVM through its
+    // authenticated Hands endpoint and are charged as session compute. Hosted
     // credential-backed tools return in a later release.
     let credential = if is_hands(spec.boundary) {
         CredentialClass::HandsEndpointToken
@@ -261,6 +261,54 @@ const BASH_SPEC: Spec = spec!(
     65_536,
     600_000,
     4,
+    NONE,
+    None
+);
+
+const READ_FILE_SPEC: Spec = spec!(
+    "read_file",
+    HandsFilesystem,
+    HandsFilesystem,
+    NonReplayable,
+    InterruptOnAmbiguity,
+    Never,
+    2_048,
+    1_000_000,
+    65_536,
+    60_000,
+    2,
+    NONE,
+    None
+);
+
+const WRITE_FILE_SPEC: Spec = spec!(
+    "write_file",
+    HandsFilesystem,
+    HandsFilesystem,
+    NonReplayable,
+    InterruptOnAmbiguity,
+    WhenPolicyRequires,
+    524_288,
+    4_096,
+    4_096,
+    60_000,
+    2,
+    NONE,
+    None
+);
+
+const EDIT_FILE_SPEC: Spec = spec!(
+    "edit_file",
+    HandsFilesystem,
+    HandsFilesystem,
+    NonReplayable,
+    InterruptOnAmbiguity,
+    WhenPolicyRequires,
+    262_144,
+    8_192,
+    8_192,
+    60_000,
+    2,
     NONE,
     None
 );
@@ -494,51 +542,6 @@ const SPECS: &[Spec] = &[
         4,
         CMT,
         ManagedInternet
-    ),
-    spec!(
-        "read_file",
-        HandsFilesystem,
-        HandsFilesystem,
-        NonReplayable,
-        InterruptOnAmbiguity,
-        Never,
-        2_048,
-        1_000_000,
-        65_536,
-        60_000,
-        2,
-        NONE,
-        None
-    ),
-    spec!(
-        "write_file",
-        HandsFilesystem,
-        HandsFilesystem,
-        NonReplayable,
-        InterruptOnAmbiguity,
-        WhenPolicyRequires,
-        1_048_576,
-        4_096,
-        4_096,
-        60_000,
-        2,
-        NONE,
-        None
-    ),
-    spec!(
-        "edit_file",
-        HandsFilesystem,
-        HandsFilesystem,
-        NonReplayable,
-        InterruptOnAmbiguity,
-        WhenPolicyRequires,
-        262_144,
-        8_192,
-        8_192,
-        60_000,
-        2,
-        NONE,
-        None
     ),
     spec!(
         "apply_patch",
@@ -889,10 +892,8 @@ fn input_schema(name: &str) -> Value {
             &["path", "content"],
             vec![
                 ("path", text(1, 4_096)),
-                ("content", text(0, 1_000_000)),
-                ("expectedRevision", pattern(HASH)),
-                ("create", json!({"type":"boolean"})),
-                ("mode", pattern("^0[0-7]{3}$")),
+                ("content", text(0, 500_000)),
+                ("mode", enumeration(&["0644", "0755"])),
             ],
         ),
         "edit_file" => object(

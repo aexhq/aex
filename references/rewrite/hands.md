@@ -363,6 +363,7 @@ translation and the only place the two vocabularies meet.
 | catalogue row | operation | note |
 | --- | --- | --- |
 | `read_file` | `ReadFile` | `offsetBytes`/`maxBytes` become the inclusive wire range; a line window has no wire field and is refused |
+| `write_file` | `WriteFile` | bounded UTF-8 content becomes base64-encoded inline bytes below the authenticated frame ceiling; absent `mode` defaults to `0644`, and the guest publishes atomically |
 | `list_dir` | `ListDir` | no `path` means the guest root, which is what a bare `ls` is; `depth` and `includeHidden: false` are refused, having no wire field |
 | `glob` | `Search` / `SearchPattern::Glob` | |
 | `grep` | `Search` / `SearchPattern::Regex` | matched as a literal under HS-08; `glob` and `contextLines` are refused |
@@ -372,9 +373,8 @@ translation and the only place the two vocabularies meet.
 | `install_packages` | `Exec` via `operation::package_install` | `apt` selects the image's real manager, `dnf`; a version is pinned in each manager's own spelling |
 | `process_output` | `ProcessStatus` | the wire arm *is* the bounded output window |
 | `process_stop` | `ProcessStop` | |
-| `write_file` | none | the wire write carries content as a digest and the guest holds no credential to resolve one |
 | `apply_patch` | none | the wire edit is exact-replacement hunks and nothing Brain-side parses a unified diff into them |
-| `run_code` | none | `code_run` builds the argv for a body file under `<root>/.aex/code-exec`, and delivering that body needs the write above |
+| `run_code` | none | `code_run` builds the argv for a body file under `<root>/.aex/code-exec`, but no encoder composes the preparatory write with that exec |
 | `process_status` | none | the guest arm returns an output window, not the lifecycle state the row advertises |
 | `browser_*` | none | the image carries no headless browser |
 
@@ -384,18 +384,24 @@ persists. A row with **no** operation is not advertised at all:
 `ToolExecutor::supports` reports it unimplemented, `advertise` leaves it out, and
 the model is never offered a tool that could only fail. Adding a Hands-routed
 catalogue row without deciding its arm fails
-`every_hands_routed_catalogue_row_has_an_arm`; adding a `HandsTool` variant without
-an arm does not compile.
+`every_mvp_hands_routed_catalogue_row_has_a_served_arm`; adding a `HandsTool`
+variant without an arm does not compile.
+
+The launch catalog selects exactly `bash`, `edit_file`, `read_file`, and
+`write_file` from this mapping. The remaining rows document encoder/runtime work
+that stays outside the immutable MVP catalog until its owning vertical slice is
+restored.
 
 Two gaps this map exposes rather than closes. `StatPath` is implemented in the
 guest and **no catalogue row asks for it** — a missing catalogue row, not a missing
-capability. And every structured operation answers in **text** (a listing is lines,
-a stat is one CSV row, an exec is its captured output) while the catalogue's
-`result_schema` advertises structured JSON for the same rows. Nothing validates a
-result against that schema, and `incorporate_result` now carries a non-JSON body
-through as `ToolResultPart::Text` rather than refusing it, so the body reaches the
-model intact — but the advertised and delivered shapes still differ. Result shaping
-is its own seam.
+capability. And several structured operations still answer in **text** (a listing
+is lines, a stat is one CSV row, an exec is its captured output) while the
+catalogue's `result_schema` advertises structured JSON for the same rows;
+`write_file` now returns its schema-shaped JSON directly. Nothing validates every
+result against its schema, and `incorporate_result` carries a non-JSON body through
+as `ToolResultPart::Text` rather than refusing it, so the body reaches the model
+intact — but the remaining advertised and delivered shapes still differ. Result
+shaping is its own seam.
 
 ## 7. What was kept and what was discarded from the interrupted predecessor
 

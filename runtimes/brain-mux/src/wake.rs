@@ -1333,21 +1333,27 @@ mod tests {
                 .iter()
                 .map(|tool| tool.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["bash"]
+            vec!["bash", "edit_file", "read_file", "write_file"]
         );
         assert!(!advertised.parallel_safe);
-        assert!(matches!(
-            tools.route(&pin, &ToolName::parse("wait").expect("name")),
-            Err(aex_brain_app::ports::ToolRoutingError::Unknown { .. })
-        ));
-        assert!(matches!(
-            tools.route(&pin, &ToolName::parse("web_search").expect("name")),
-            Err(aex_brain_app::ports::ToolRoutingError::Unknown { .. })
-        ));
+        for name in ["bash", "edit_file", "read_file", "write_file"] {
+            tools
+                .route(&pin, &ToolName::parse(name).expect("name"))
+                .unwrap_or_else(|error| panic!("{name} must route through Hands: {error}"));
+        }
+        for deferred in ["grep", "list_dir", "wait", "web_search"] {
+            assert!(
+                matches!(
+                    tools.route(&pin, &ToolName::parse(deferred).expect("name")),
+                    Err(aex_brain_app::ports::ToolRoutingError::Unknown { .. })
+                ),
+                "{deferred} is outside the immutable MVP surface"
+            );
+        }
     }
 
     #[test]
-    fn deferred_authorities_never_reappear_in_the_bash_only_catalog() {
+    fn deferred_authorities_never_reappear_in_the_four_tool_catalog() {
         let pin = CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"));
         let tools = ProductionToolExecutors {
             brain_inline: Some(Arc::new(crate::inline_tools::BrainControlExecutor)),
@@ -1364,11 +1370,11 @@ mod tests {
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(names, vec!["bash"]);
+        assert_eq!(names, vec!["bash", "edit_file", "read_file", "write_file"]);
         assert!(!names.contains(&"web_fetch"));
         assert!(!names.contains(&"web_search"));
         assert!(!names.iter().any(|name| name.starts_with("mcp__")));
-        assert!(!names.contains(&"read_file"));
+        assert!(!names.contains(&"grep"));
         assert!(
             !advertised.parallel_safe,
             "managed network work is not safe for us to run concurrently"

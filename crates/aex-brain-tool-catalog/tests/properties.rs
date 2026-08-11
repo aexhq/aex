@@ -15,8 +15,11 @@ fn builtin_catalog_has_one_stable_row_per_launch_tool() {
         .iter()
         .map(|entry| entry.descriptor.name.as_str())
         .collect::<BTreeSet<_>>();
-    assert_eq!(names, BTreeSet::from(["bash"]));
-    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        names,
+        BTreeSet::from(["bash", "edit_file", "read_file", "write_file"])
+    );
+    assert_eq!(entries.len(), 4);
 
     let digest = Sha256::digest(builtin_catalog_bytes().expect("catalog must canonicalize"));
     let mut actual = "sha256:".to_owned();

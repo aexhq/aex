@@ -655,8 +655,11 @@ pub enum OperationRequest {
         path: GuestPath,
         /// The POSIX mode.
         mode: FileMode,
-        /// The content.
-        content: ContentRef,
+        /// Bounded inline bytes. The model-facing tool accepts UTF-8 text; base64
+        /// keeps the authenticated JSON frame binary-safe and below its one-MiB
+        /// ceiling.
+        #[serde(with = "crate::files::base64_bytes")]
+        content: Vec<u8>,
     },
     /// Edit a file, guarded by its current digest.
     EditFile {

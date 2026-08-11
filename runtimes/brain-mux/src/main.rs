@@ -568,9 +568,10 @@ fn resolve_production_ports(
         reason: format!("production Hands binding failed: {error}"),
     })?;
 
-    // The MVP catalog is Bash-only. It executes inside the exact session
-    // generation through Hands; hosted paid tools and typed integrations are
-    // deliberately not linked into this release binary.
+    // The MVP catalog contains only Bash and the three structured file tools.
+    // They execute inside the exact session generation through Hands; hosted
+    // paid tools and typed integrations are deliberately not linked into this
+    // release binary.
     let tools = wake::ProductionToolExecutors {
         brain_inline: None,
         managed_web: None,

@@ -9,8 +9,8 @@ use std::sync::Mutex;
 use aex_hands_protocol::files::{
     FILE_FRAME_BYTES, FILE_TRANSFER_PART_BYTES, FileDownloadChunk, FileDownloadId,
     FileDownloadState, FileFailureCode, FilePartReceipt, FileRequest, FileResponse, FileUploadId,
-    FileUploadState, LiveFileEntry, LiveFileEntryKind, LiveFileListing, MAX_FILE_BYTES,
-    MAX_FILE_LIST_ENTRIES, live_file_size_is_admitted,
+    FileUploadState, LiveFileEntry, LiveFileEntryKind, LiveFileListing, MAX_FILE_LIST_ENTRIES,
+    live_file_size_is_admitted,
 };
 use aex_hands_protocol::operation::{FileMode, GuestPath, GuestRoot};
 use aex_hands_tools::{EntryKind, FsError, GuestFs, ListEntry};
@@ -620,8 +620,7 @@ impl FileService {
             return Err(FileFailureCode::Conflict);
         }
         write_atomic(&self.aborted_upload_path(upload), b"aborted")?;
-        std::fs::remove_dir_all(self.upload_directory(upload))
-            .map_err(|error| map_io(&error))?;
+        std::fs::remove_dir_all(self.upload_directory(upload)).map_err(|error| map_io(&error))?;
         Ok(FileResponse::UploadAborted { upload })
     }
 

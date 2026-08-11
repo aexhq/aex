@@ -378,8 +378,8 @@ fn builtin_catalog_preserves_the_clean_cut_and_runtime_semantics() {
         .collect::<Vec<_>>();
     assert_eq!(
         names,
-        ["bash"],
-        "Bash is the complete public built-in catalog"
+        ["bash", "edit_file", "read_file", "write_file"],
+        "the four session-local tools are the complete public built-in catalog"
     );
 
     for entry in entries.iter().filter(|entry| {
@@ -397,7 +397,10 @@ fn builtin_catalog_preserves_the_clean_cut_and_runtime_semantics() {
         );
     }
 
-    let bash = &entries[0];
+    let bash = entries
+        .iter()
+        .find(|entry| entry.descriptor.name.as_str() == "bash")
+        .expect("bash descriptor");
     assert!(bash.descriptor.variants.is_empty());
     assert_eq!(bash.descriptor.effect, EffectClass::NonReplayable);
     assert_eq!(
@@ -438,7 +441,7 @@ fn generated_argument_contracts_reject_hostile_shapes() {
         serde_json::json!({"command":"true"}),
         serde_json::json!({"command":"pwd","cwd":"/workspace","timeoutMs":1000}),
     ] {
-        validate_arguments(bash, &valid).expect("valid attached Bash command");
+        validate_arguments(bash, &valid).expect("valid Bash command");
     }
 }
 
@@ -562,7 +565,7 @@ fn submit_result_digest_is_canonical_and_budgeted_without_truncation() {
 }
 
 #[test]
-fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
+fn advertisement_is_exactly_the_ready_session_local_tools() {
     let entries = builtin_entries().expect("compiled catalog");
     let executors = ready_executors();
     let capabilities = CapabilitySet::default();
@@ -580,8 +583,9 @@ fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
         assert!(advertised.contains(entry.descriptor.name.as_str()));
     }
 
-    // Bash uses only the authenticated session endpoint. No public built-in is
-    // withheld for a workspace secret or optional hosted-tool capability.
+    // The session-local tools use only the authenticated session endpoint. No
+    // public built-in is withheld for a workspace secret or optional hosted-tool
+    // capability.
     let no_secrets = ResolvedSecretNames::default();
     let advertised = advertise(ReadinessInput {
         entries: &entries,
@@ -596,8 +600,10 @@ fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
         let name = entry.descriptor.name.as_str();
         assert!(advertised.contains(name), "{name}");
     }
-    assert_eq!(advertised.entries.len(), 1);
-    assert!(advertised.contains("bash"));
+    assert_eq!(advertised.entries.len(), 4);
+    for name in ["bash", "edit_file", "read_file", "write_file"] {
+        assert!(advertised.contains(name), "{name}");
+    }
     assert!(
         entries.iter().all(|entry| !matches!(
             entry.descriptor.credential,

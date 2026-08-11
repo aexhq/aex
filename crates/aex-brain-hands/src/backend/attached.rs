@@ -195,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn the_catalogue_rows_that_detach_are_exactly_the_tree_walk_and_the_toolchains() {
+    fn the_mvp_catalogue_has_one_detached_command_and_three_attached_file_tools() {
         let entries =
             aex_brain_tool_catalog::catalog::builtin_entries().expect("the catalogue builds");
         let mut attached = Vec::new();
@@ -217,29 +217,7 @@ mod tests {
         }
         attached.sort();
         detached.sort();
-        assert_eq!(
-            detached,
-            vec![
-                "browser_control",
-                "browser_launch",
-                "git",
-                "grep",
-                "install_packages",
-                "run_code",
-                "bash",
-            ]
-        );
-        for row in [
-            "read_file",
-            "write_file",
-            "edit_file",
-            "apply_patch",
-            "list_dir",
-            "process_output",
-            "process_status",
-            "process_stop",
-        ] {
-            assert!(attached.contains(&row.to_owned()), "{row}");
-        }
+        assert_eq!(detached, vec!["bash"]);
+        assert_eq!(attached, vec!["edit_file", "read_file", "write_file"]);
     }
 }

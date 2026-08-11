@@ -42,8 +42,8 @@ instruction, or MCP-server resource. Dedicated BYOK provider credentials remain
 their own narrow write-only authority. Every other customer-supplied artifact is
 an opaque registered workspace file that a session may mount; conventional
 guidance such as `AGENTS.md`, skill files, tool bundles, and MCP configuration is
-read through Bash inside the session rather than being interpreted as a separate
-public capability.
+read through the session-local file tools or Bash rather than being interpreted
+as a separate public capability.
 
 Revisit generic secrets only when a concrete non-provider consumer cannot use an
 opaque mounted file and has a complete custody, rotation, revocation, audit, and
@@ -55,11 +55,11 @@ as dormant routes or catalog labels.
 
 ## Hosted paid tools
 
-The launch built-in model tool catalog contains Bash only. It executes inside the
-session MicroVM and is charged as session compute. Hosted credential-backed tools
-such as web search, their public executor deployable, and any user BYOK tool-key
-surface are absent from the release rather than hidden behind an unreachable
-catalog row.
+The launch built-in model tool catalog contains exactly `read_file`, `write_file`,
+`edit_file`, and Bash. They execute inside the session MicroVM and are charged as
+session compute. Hosted credential-backed tools such as web search, their public
+executor deployable, and any user BYOK tool-key surface are absent from the
+release rather than hidden behind an unreachable catalog row.
 
 Revisit this when customer demand justifies platform-managed paid tools and the
 release can prove immutable tool identity, metering, permission and approval
@@ -87,14 +87,15 @@ workspace files.
 
 ## Interactive tool approvals
 
-Launch exposes Bash as the only built-in model tool and runs it without a human
-approval round trip. The public `approvalPolicy` selector, approval resources,
-approval routes, `awaiting_approval` session state, dashboard controls, and CLI
-commands are deleted rather than shipped dormant.
+Launch exposes only `read_file`, `write_file`, `edit_file`, and Bash as built-in
+model tools and runs them without a human approval round trip. The public
+`approvalPolicy` selector, approval resources, approval routes,
+`awaiting_approval` session state, dashboard controls, and CLI commands are
+deleted rather than shipped dormant.
 
-Revisit interactive approvals only when a non-Bash tool or a concrete customer
-policy requires them and one atomic authority can bind the exact tool call,
-arguments, implementation, resolved configuration, credential revision, and
+Revisit interactive approvals only when a concrete customer policy or future
+tool risk profile requires them and one atomic authority can bind the exact tool
+call, arguments, implementation, resolved configuration, credential revision, and
 generation through decision, dispatch, replay, cancellation, and expiry. Restore
 the contract, runtime state, dashboard/SDK/CLI experience, and end-to-end tests
 together; do not add a policy field or approval button without that complete

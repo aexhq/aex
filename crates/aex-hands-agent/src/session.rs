@@ -604,15 +604,15 @@ mod tests {
         Journal, JournalError, OperationMeta, ProcessProbe, ProcessRecord, ReplayVerdict,
     };
     use aex_hands_protocol::operation::{
-        ContentRef, FileMode, GuestPath, GuestRoot, OperationBounds, OperationExit,
-        OperationRequest, StopSignal, TerminalMetadata, TerminalState,
+        FileMode, GuestPath, GuestRoot, OperationBounds, OperationExit, OperationRequest,
+        StopSignal, TerminalMetadata, TerminalState,
     };
     use aex_hands_protocol::rpc::{
         CallHash, CancelReason, CancelResponse, Fence, HandsOperationId, ResultResponse,
         StartResponse, StatusResponse,
     };
     use aex_wire::ids::{ContentHash, GenerationId, PrefixedId as _, Uuid7};
-    use aex_wire::types::{DecimalU128, Timestamp};
+    use aex_wire::types::Timestamp;
 
     fn at(millis: i64) -> Timestamp {
         Timestamp::from_unix_millis(millis).expect("a bounded instant")
@@ -643,10 +643,7 @@ mod tests {
             path: GuestPath::parse(&GuestRoot::workspace(), "/workspace/out.txt")
                 .expect("a contained path"),
             mode: FileMode::ReadWrite,
-            content: ContentRef {
-                digest: ContentHash::from_bytes([9; 32]),
-                bytes: DecimalU128::new(3),
-            },
+            content: b"new".to_vec(),
         }
     }
 

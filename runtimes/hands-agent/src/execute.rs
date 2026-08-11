@@ -443,13 +443,39 @@ impl Executor {
                 mode,
                 content,
             } => {
-                let _ = (path, mode, content);
-                Ok(Dispatch::Terminal(Box::new(failed(
-                    meta,
-                    now,
-                    "capability_unavailable",
-                    UNRESOLVABLE_CONTENT,
-                ))))
+                let created = match filesystem::stat_path(&self.fs, path) {
+                    Ok(_) => false,
+                    Err(aex_hands_tools::port::FsError::NotFound { .. }) => true,
+                    Err(error) => {
+                        return Ok(Dispatch::Terminal(Box::new(failed(
+                            meta,
+                            now,
+                            error.code(),
+                            &error.to_string(),
+                        ))));
+                    }
+                };
+                let mode = match mode {
+                    aex_hands_protocol::operation::FileMode::ReadWrite => 0o644,
+                    aex_hands_protocol::operation::FileMode::Executable => 0o755,
+                };
+                match filesystem::write_file(&self.fs, path, content, mode) {
+                    Ok(bytes) => {
+                        let result = serde_json::json!({
+                            "bytes": bytes,
+                            "created": created,
+                            "path": path.as_str(),
+                            "revision": filesystem::digest(content).to_string(),
+                        });
+                        Self::text_terminal(journal, meta, now, &result.to_string())
+                    }
+                    Err(error) => Ok(Dispatch::Terminal(Box::new(failed(
+                        meta,
+                        now,
+                        error.code(),
+                        &error.to_string(),
+                    )))),
+                }
             }
             OperationRequest::EditFile {
                 path,
@@ -653,13 +679,11 @@ const fn edit_code(error: &filesystem::EditError) -> &'static str {
     }
 }
 
-/// Why a content reference cannot be resolved inside the guest.
+/// Why an exec standard-input reference cannot be resolved inside the guest.
 ///
 /// `ContentRef` is a digest and a length. The guest holds no credential, so it
-/// cannot turn one into bytes; the contract change that gives these arms a
-/// presigned plan URL is a recorded gap. Refusing is the only honest answer —
-/// writing an empty file, or running a command with empty standard input, would
-/// silently do something the caller did not ask for.
+/// cannot turn one into bytes. Refusing is the only honest answer; running a
+/// command with empty standard input would silently do something else.
 const UNRESOLVABLE_CONTENT: &str = "the guest holds no credential and cannot resolve a content digest to bytes; the arm needs \
      the presigned plan the contract gap describes";
 
@@ -678,5 +702,92 @@ fn failed(meta: &OperationMeta, now: Timestamp, reason: &str, detail: &str) -> T
             detail: Some(detail.to_owned()),
             retryable: false,
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Dispatch, Executor};
+    use aex_hands_agent::journal::{Journal, OperationMeta};
+    use aex_hands_protocol::operation::{
+        DeliveryMode, FileMode, GuestPath, GuestRoot, OperationBounds, OperationRequest,
+        TerminalState,
+    };
+    use aex_hands_protocol::rpc::{CallHash, HandsOperationId};
+    use aex_wire::ids::{ContentHash, Uuid7};
+    use aex_wire::types::Timestamp;
+    use std::sync::Arc;
+
+    fn at(millis: i64) -> Timestamp {
+        Timestamp::from_unix_millis(millis).expect("a bounded instant")
+    }
+
+    fn operation(tag: u64) -> HandsOperationId {
+        HandsOperationId(Uuid7::compose(tag, [u8::try_from(tag).unwrap_or(0); 10]))
+    }
+
+    fn write_meta(tag: u64, content: &[u8]) -> OperationMeta {
+        OperationMeta {
+            operation: operation(tag),
+            call_hash: CallHash(ContentHash::from_bytes(
+                [u8::try_from(tag).unwrap_or(0); 32],
+            )),
+            request: OperationRequest::WriteFile {
+                path: GuestPath::parse(&GuestRoot::workspace(), "/workspace/out.txt")
+                    .expect("a contained path"),
+                mode: FileMode::ReadWrite,
+                content: content.to_vec(),
+            },
+            bounds: OperationBounds {
+                max_output_bytes: 4_096,
+                max_frame_bytes: 65_536,
+                max_wall_ms: 60_000,
+                max_concurrent_operations: 4,
+            },
+            deadline: at(60_000),
+            started_at: at(0),
+            incarnation: 1,
+        }
+    }
+
+    #[test]
+    fn a_structured_write_atomically_creates_and_overwrites_the_workspace_file() {
+        let root = tempfile::tempdir().expect("a temporary guest root");
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("the workspace exists");
+        let journal = Journal::open(root.path().join("journal")).expect("the journal opens");
+        let guest_root = GuestRoot::workspace();
+        let executor = Executor {
+            fs: crate::host::HostFs::new(guest_root.clone(), &workspace),
+            runner: Arc::new(crate::host::HostRunner),
+            root: guest_root,
+        };
+
+        for (tag, content, created) in [
+            (1, b"first".as_slice(), true),
+            (2, b"second".as_slice(), false),
+        ] {
+            let meta = write_meta(tag, content);
+            journal.record_start(&meta).expect("the start is durable");
+            let Dispatch::Terminal(terminal) = executor
+                .dispatch(&journal, &meta, DeliveryMode::Attached, at(1))
+                .expect("the write is dispatched")
+            else {
+                panic!("a file write is synchronous");
+            };
+            assert_eq!(terminal.state, TerminalState::Succeeded);
+            let result = journal
+                .read_output(meta.operation, 0, 4_096)
+                .expect("the result is retained");
+            let result: serde_json::Value =
+                serde_json::from_slice(&result).expect("the result is structured JSON");
+            assert_eq!(result["created"], created);
+            assert_eq!(result["path"], "/workspace/out.txt");
+        }
+
+        assert_eq!(
+            std::fs::read(workspace.join("out.txt")).expect("the file exists"),
+            b"second"
+        );
     }
 }
