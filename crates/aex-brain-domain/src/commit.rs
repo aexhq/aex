@@ -4,7 +4,10 @@
 //! by `DynamoDB` for size gives no usable diagnosis and costs a round trip. A fanout that
 //! would exceed the envelope pages instead.
 
-use aex_wire::ids::GenerationId;
+use aex_internal_contracts::RunId;
+use aex_wire::ids::{
+    ContentHash as WireContentHash, GenerationId, MessageId, OperationId, ToolCallId,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::budget::{BudgetDelta, BudgetGrant};
@@ -35,8 +38,10 @@ pub const SMALL_ITEM_BYTES: usize = 512;
 
 /// The most children one spawn transaction admits.
 ///
-/// Derived, not guessed: a child costs a control put, an index put and a queued-index put,
-/// so `3n + 3 <= 100` gives `n = 32`. `F = 128` is realized as four idempotent pages.
+/// Derived, not guessed: a child costs a control put, an index put and a queued-index put;
+/// the page also carries the session guard, parent control, fanout intent and session-budget
+/// update, so `3n + 4 <= 100` gives `n = 32`. `F = 128` is realized as four idempotent
+/// pages.
 pub const SPAWN_PAGE_CHILDREN: u32 = 32;
 
 /// Proof of ownership, carried by every store write.
@@ -237,11 +242,17 @@ pub const fn event_seq(seq: JournalSeq, sub_slot: u16) -> u64 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunTransition {
     /// The run this decision moves.
-    pub run: uuid::Uuid,
-    /// The public run status the transition writes.
-    pub status: String,
-    /// The terminal reason, when the transition terminalizes the run.
-    pub finish: Option<FinishReason>,
+    pub run: RunId,
+    /// Why the current message ended.
+    pub finish: FinishReason,
+    /// Typed customer-safe failure detail, when present.
+    pub failure: Option<crate::journal::TypedFailure>,
+    /// Complete public outputs, in journal order.
+    pub output_messages: Vec<MessageId>,
+    /// The cancellation operation, when this is a caller cancellation.
+    pub cancellation: Option<OperationId>,
+    /// The ambiguous external effect, when this is an interrupted run.
+    pub ambiguous_effect: Option<EffectId>,
 }
 
 /// A session-head transition performed by this decision.
@@ -251,6 +262,69 @@ pub struct SessionHeadTransition {
     pub status: String,
     /// The session revision the transition conditions on.
     pub revision: u64,
+}
+
+/// Who authored one complete public session message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicMessageRole {
+    /// The model.
+    Assistant,
+    /// A Bash/tool result.
+    Tool,
+}
+
+/// One part of a complete public session message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PublicMessagePart {
+    /// Customer-visible text.
+    Text {
+        /// Complete UTF-8 text.
+        text: String,
+    },
+    /// One Bash call with the digest of its canonical arguments.
+    ToolCall {
+        /// Deterministic public call identity.
+        id: ToolCallId,
+        /// SHA-256 of canonical arguments.
+        arguments: WireContentHash,
+    },
+    /// One Bash result with the digest of its canonical result body.
+    ToolResult {
+        /// The matching public call identity.
+        id: ToolCallId,
+        /// SHA-256 of the canonical result body.
+        result: WireContentHash,
+    },
+}
+
+/// One complete, born-sealed public message written with its journal fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicMessageAppend {
+    /// Deterministic public identity.
+    pub id: MessageId,
+    /// The internal run that produced it. Never projected to public events.
+    pub run: RunId,
+    /// Its public role.
+    pub role: PublicMessageRole,
+    /// Complete ordered parts.
+    pub parts: Vec<PublicMessagePart>,
+    /// Immutable visibility order instant.
+    pub at: Timestamp,
+}
+
+/// One customer-visible session/message event with no internal agent or run identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicSessionEvent {
+    /// Ordered native session-event sequence.
+    pub event_seq: u64,
+    /// The admitted public message that finished.
+    pub message: MessageId,
+    /// Customer-safe outcome tag.
+    pub outcome: String,
+    /// When the boundary committed.
+    pub at: Timestamp,
 }
 
 /// An idempotency receipt written by this decision.
@@ -289,6 +363,11 @@ pub struct DecisionCommit {
     pub retired_wake: Option<WakeRetirement>,
     /// Events appended by this decision.
     pub events: Vec<EventAppend>,
+    /// Complete public messages committed by this decision. Each costs a canonical row
+    /// and its immutable seal-order projection.
+    pub messages: Vec<PublicMessageAppend>,
+    /// Customer-visible session/message events. These never carry internal identities.
+    pub session_events: Vec<PublicSessionEvent>,
     /// The run transition, at a run boundary.
     pub run: Option<RunTransition>,
     /// The session-head transition, at a run boundary.
@@ -401,6 +480,24 @@ impl DecisionCommit {
                 largest_item = format!("event {} at sequence {}", event.kind, event.event_seq);
             }
         }
+        for message in &self.messages {
+            let size = crate::canonical::canonicalize_value(message)?.len();
+            // The canonical authority row and immutable seal-order projection each carry
+            // the complete message document.
+            bytes = bytes.saturating_add(size.saturating_mul(2));
+            if size > largest {
+                largest = size;
+                largest_item = format!("public message {}", message.id);
+            }
+        }
+        for event in &self.session_events {
+            let size = crate::canonical::canonicalize_value(event)?.len();
+            bytes = bytes.saturating_add(size);
+            if size > largest {
+                largest = size;
+                largest_item = format!("public session event {}", event.event_seq);
+            }
+        }
         let small = self.small_actions();
         bytes = bytes.saturating_add(small.saturating_mul(SMALL_ITEM_BYTES));
         if small > 0 && SMALL_ITEM_BYTES > largest {
@@ -418,8 +515,10 @@ impl DecisionCommit {
     }
 
     fn small_actions(&self) -> usize {
-        // One control update is always present. A spawn costs three items, everything else
-        // costs one.
+        // One session-head guard (or boundary write) and one control update are always
+        // present. For a boundary, `run` counts the run row and `session` counts the
+        // internal outbox because the head write already occupies the fixed guard slot.
+        // A spawn costs three items, everything else costs one.
         let spawn_actions: usize = self
             .children
             .iter()
@@ -431,7 +530,7 @@ impl DecisionCommit {
                 }
             })
             .sum();
-        1_usize
+        2_usize
             .saturating_add(self.effects.len())
             .saturating_add(usize::from(!self.budget.is_empty()))
             .saturating_add(usize::from(!self.session_budget.is_empty()))
@@ -440,6 +539,8 @@ impl DecisionCommit {
             .saturating_add(self.wakes.len())
             .saturating_add(usize::from(self.retired_wake.is_some()))
             .saturating_add(self.events.len())
+            .saturating_add(self.messages.len().saturating_mul(2))
+            .saturating_add(self.session_events.len())
             .saturating_add(usize::from(self.run.is_some()))
             .saturating_add(usize::from(self.session.is_some()))
             .saturating_add(usize::from(self.idempotency.is_some()))
@@ -461,6 +562,8 @@ impl DecisionCommit {
             && self.joins.is_empty()
             && self.wakes.is_empty()
             && self.events.is_empty()
+            && self.messages.is_empty()
+            && self.session_events.is_empty()
             && self.run.is_none()
             && self.session.is_none()
             && self.idempotency.is_none()
@@ -593,6 +696,8 @@ mod tests {
             wakes: Vec::new(),
             retired_wake: None,
             events: Vec::new(),
+            messages: Vec::new(),
+            session_events: Vec::new(),
             run: None,
             session: None,
             idempotency: None,
@@ -620,8 +725,8 @@ mod tests {
     fn a_minimal_decision_is_admitted() {
         let cost = commit(vec![finished()], Vec::new())
             .validate()
-            .expect("one append plus a control update fits");
-        assert_eq!(cost.actions, 2);
+            .expect("one append plus the two fixed authority actions fits");
+        assert_eq!(cost.actions, 3);
     }
 
     #[test]

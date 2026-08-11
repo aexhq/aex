@@ -249,6 +249,7 @@ pub fn assistant(
         },
     };
     JournalRecord::AssistantMessage {
+        public_message: None,
         message,
         usage: TURN_USAGE,
         receipt: Box::new(receipt),
@@ -292,6 +293,7 @@ pub fn assistant_tool_use(calls: &[(&str, &str)], effect: EffectId) -> JournalRe
 #[must_use]
 pub fn tool_result(call: &str, text: &str, effect: EffectId) -> JournalRecord {
     JournalRecord::ToolResult {
+        public_message: None,
         call: ToolCallId::truncating(call),
         content: vec![ToolResultPart::Text {
             text: BoundedString::truncating(text),

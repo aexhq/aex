@@ -757,6 +757,10 @@ fn commit_plan_error(error: crate::plan::PlanError) -> CommitError {
         crate::plan::PlanError::Envelope(violation) => CommitError::Envelope(violation),
         crate::plan::PlanError::Key(key) => CommitError::Store(store_key_error(&key)),
         crate::plan::PlanError::Store(store) => commit_store_error(&store),
+        crate::plan::PlanError::Boundary(reason) => CommitError::Store(StoreError::Undecodable {
+            location: "root run boundary".to_owned(),
+            reason,
+        }),
     }
 }
 

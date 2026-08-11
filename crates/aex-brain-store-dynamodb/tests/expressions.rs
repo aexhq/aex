@@ -220,6 +220,8 @@ fn an_oversized_decision_never_reaches_the_transport() {
         wakes: Vec::new(),
         retired_wake: None,
         events: Vec::new(),
+        messages: Vec::new(),
+        session_events: Vec::new(),
         run: None,
         session: None,
         idempotency: None,

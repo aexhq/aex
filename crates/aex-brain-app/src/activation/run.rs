@@ -42,7 +42,7 @@ use aex_brain_domain::ids::{
 };
 use aex_brain_domain::journal::ExecutorRoute;
 use aex_brain_domain::journal::{
-    FinishReason, JournalEntry, JournalRecord, ParkReason, WaitResolution,
+    FinishReason, JournalEntry, JournalRecord, ParkReason, TypedFailure, WaitResolution,
 };
 use aex_brain_domain::planner::{OwedStep, PlanPolicy, model_effect_id, plan};
 use aex_brain_domain::wire_pending::{
@@ -1039,7 +1039,7 @@ impl Session<'_> {
         match recover(&effect, self.support()) {
             RecoveryDecision::Interrupt { evidence } => {
                 let mut draft = self.draft("effecting");
-                decide::settle_unknown(&mut draft, effect.id, evidence);
+                self.settle_unknown_current(&mut draft, effect.id, evidence)?;
                 self.commit(draft).await?;
                 Ok(Some(Stop::Finished(FinishReason::Interrupted)))
             }
@@ -1096,7 +1096,7 @@ impl Session<'_> {
             OwedStep::Finished { reason } => Ok(Step::Stop(Stop::Finished(reason))),
             OwedStep::Finish { reason } => {
                 let mut draft = self.draft(phase_tag(&self.state.phase));
-                decide::finish(&mut draft, reason, self.state.failure.clone());
+                self.finish_current(&mut draft, reason, self.state.failure.clone(), None)?;
                 self.commit(draft).await?;
                 Ok(Step::Stop(Stop::Finished(reason)))
             }
@@ -1125,6 +1125,12 @@ impl Session<'_> {
             cancel_requested: self.stop_requested,
             ..PlanPolicy::from_limits(self.ports.clock.now(), limits)
         }
+    }
+
+    fn bounded_effect_deadline(&self, proposed: Timestamp) -> Timestamp {
+        self.state
+            .active_deadline
+            .map_or(proposed, |run_deadline| run_deadline.min(proposed))
     }
 
     /// Opens a durable wait, unless one with the same reason is already open.
@@ -1205,6 +1211,89 @@ impl Session<'_> {
 
     fn draft(&self, phase: &'static str) -> Draft {
         Draft::new(&self.guard, self.ports.clock.now(), phase)
+    }
+
+    fn finish_current(
+        &self,
+        draft: &mut Draft,
+        reason: FinishReason,
+        failure: Option<TypedFailure>,
+        ambiguous_effect: Option<EffectId>,
+    ) -> Result<(), ActivationError> {
+        let Some(run) = self.state.active_run else {
+            decide::finish(draft, reason, failure);
+            return Ok(());
+        };
+        let message = self
+            .state
+            .active_message
+            .ok_or(ActivationError::Unsupported {
+                step: "finish_root_run_without_public_message",
+                owed_by: "RunAdmitted must bind the public message that owns the run",
+            })?;
+        let active = self
+            .authority
+            .active
+            .as_deref()
+            .ok_or(ActivationError::Unsupported {
+                step: "finish_root_run_without_boundary_authority",
+                owed_by: "the production claimant must strongly bind the active session and run",
+            })?;
+        if active.run.id != run || active.session.active_run != Some(run) {
+            return Err(ActivationError::Unsupported {
+                step: "finish_root_run_with_mismatched_authority",
+                owed_by: "the session head and Brain fold must name the same active run",
+            });
+        }
+        let cancellation = if reason == FinishReason::Cancelled {
+            active
+                .session
+                .mutation_guard
+                .filter(|guard| guard.kind == aex_wire::models::OperationKind::SessionCancel)
+                .map(|guard| guard.holder)
+        } else {
+            None
+        };
+        if reason == FinishReason::Cancelled && cancellation.is_none() {
+            return Err(ActivationError::Unsupported {
+                step: "finish_cancelled_run_without_operation",
+                owed_by: "the session cancellation authority must carry its operation guard",
+            });
+        }
+        let ambiguous_effect = ambiguous_effect.or(self.state.ambiguous_effect);
+        if reason == FinishReason::Interrupted && ambiguous_effect.is_none() {
+            return Err(ActivationError::Unsupported {
+                step: "finish_interrupted_run_without_effect",
+                owed_by: "the outcome-unknown settlement must carry its exact effect",
+            });
+        }
+        decide::finish_run(
+            draft,
+            run,
+            message,
+            active.session.revision.0,
+            reason,
+            failure,
+            self.state.active_output_messages.clone(),
+            cancellation,
+            ambiguous_effect,
+        );
+        Ok(())
+    }
+
+    fn settle_unknown_current(
+        &self,
+        draft: &mut Draft,
+        effect: EffectId,
+        evidence: DispatchEvidence,
+    ) -> Result<(), ActivationError> {
+        if self.state.active_run.is_some() {
+            decide::settle_root_unknown(draft, effect, evidence);
+            self.finish_current(draft, FinishReason::Interrupted, None, Some(effect))
+        } else {
+            decide::settle_unknown(draft, effect, evidence);
+            Ok(())
+        }
     }
 
     /// Commits one decision and folds its own records into the in-memory state.
@@ -1334,7 +1423,8 @@ impl Session<'_> {
                 .catalog
                 .model(&config.catalog_pin, config.provider, &config.model)?;
         let now = self.ports.clock.now();
-        let deadline = now.plus_millis(self.policy.effect_deadline_ms);
+        let deadline =
+            self.bounded_effect_deadline(now.plus_millis(self.policy.effect_deadline_ms));
 
         let existing = resumed.map(Prepared::from).or_else(|| self.open_prepared());
         let effect = existing.as_ref().map_or_else(
@@ -1471,7 +1561,11 @@ impl Session<'_> {
                 if !produced.is_consistent() {
                     return Err(ActivationError::InvalidProviderOutcome);
                 }
-                decide::settle_model_call(&mut draft, effect, &produced);
+                if let Some(run) = self.state.active_run {
+                    decide::settle_root_model_call(&mut draft, run, effect, &produced);
+                } else {
+                    decide::settle_model_call(&mut draft, effect, &produced);
+                }
                 self.commit(draft).await?;
                 Ok(Step::Continue)
             }
@@ -1511,32 +1605,34 @@ impl Session<'_> {
                         self.commit(draft).await?;
                         return Ok(Step::Continue);
                     }
-                    decide::finish(
+                    self.finish_current(
                         &mut draft,
                         FinishReason::Failed,
                         Some(decide::refusal(
                             "provider_dispatch_failed",
                             error.detail.as_str(),
                         )),
-                    );
+                        None,
+                    )?;
                     self.commit(draft).await?;
                     Ok(Step::Stop(Stop::Finished(FinishReason::Failed)))
                 }
                 FailureSettlement::KnownFailure { stage, proof } => {
                     decide::settle_known_failure(&mut draft, effect, stage, proof);
-                    decide::finish(
+                    self.finish_current(
                         &mut draft,
                         FinishReason::Failed,
                         Some(decide::refusal(
                             "provider_dispatch_failed",
                             error.detail.as_str(),
                         )),
-                    );
+                        None,
+                    )?;
                     self.commit(draft).await?;
                     Ok(Step::Stop(Stop::Finished(FinishReason::Failed)))
                 }
                 FailureSettlement::Unknown(evidence) => {
-                    decide::settle_unknown(&mut draft, effect, *evidence);
+                    self.settle_unknown_current(&mut draft, effect, *evidence)?;
                     self.commit(draft).await?;
                     Ok(Step::Stop(Stop::Finished(FinishReason::Interrupted)))
                 }
@@ -1560,7 +1656,7 @@ impl Session<'_> {
         let route = self.ports.tools.route(&config.catalog_pin, &call.name)?;
         let request_hash = ContentHash::of(&canonicalize_value(&call.input)?);
         let now = self.ports.clock.now();
-        let deadline = now.plus_millis(i64::from(route.timeout_ms));
+        let deadline = self.bounded_effect_deadline(now.plus_millis(i64::from(route.timeout_ms)));
 
         let existing = resumed.map(Prepared::from).or_else(|| self.open_prepared());
         let (effect, attempt) = if let Some(open) = existing {
@@ -1668,20 +1764,34 @@ impl Session<'_> {
                                 .to_owned(),
                         ),
                     };
-                    decide::settle_unknown(&mut draft, effect, evidence);
+                    self.settle_unknown_current(&mut draft, effect, evidence)?;
                     self.commit(draft).await?;
                     return Ok(Step::Stop(Stop::Finished(FinishReason::Interrupted)));
                 }
-                decide::settle_tool_call(
-                    &mut draft,
-                    effect,
-                    call.call.clone(),
-                    body.content,
-                    body.is_error,
-                    body.executed_on,
-                    body.duration_ms,
-                    body.checksum,
-                );
+                if let Some(run) = self.state.active_run {
+                    decide::settle_root_tool_call(
+                        &mut draft,
+                        run,
+                        effect,
+                        call.call.clone(),
+                        body.content,
+                        body.is_error,
+                        body.executed_on,
+                        body.duration_ms,
+                        body.checksum,
+                    );
+                } else {
+                    decide::settle_tool_call(
+                        &mut draft,
+                        effect,
+                        call.call.clone(),
+                        body.content,
+                        body.is_error,
+                        body.executed_on,
+                        body.duration_ms,
+                        body.checksum,
+                    );
+                }
                 self.commit(draft).await?;
                 Ok(Step::Continue)
             }
@@ -1759,36 +1869,66 @@ impl Session<'_> {
                     // A tool that could not be dispatched is a *result* the model decides
                     // about, not a reason to end the run: the alternative is terminalizing a
                     // whole session because one optional tool was unavailable.
-                    draft.append(JournalRecord::ToolResult {
-                        call: call.call.clone(),
-                        content: vec![ToolResultPart::Text {
-                            text: BoundedString::truncating(error.detail.as_str()),
-                        }],
-                        is_error: true,
-                        executed_on: route.executor,
-                        duration_ms: 0,
-                        effect,
-                    });
+                    let content = vec![ToolResultPart::Text {
+                        text: BoundedString::truncating(error.detail.as_str()),
+                    }];
+                    if let Some(run) = self.state.active_run {
+                        decide::append_root_tool_result(
+                            &mut draft,
+                            run,
+                            effect,
+                            call.call.clone(),
+                            content,
+                            true,
+                            route.executor,
+                            0,
+                        );
+                    } else {
+                        draft.append(JournalRecord::ToolResult {
+                            public_message: None,
+                            call: call.call.clone(),
+                            content,
+                            is_error: true,
+                            executed_on: route.executor,
+                            duration_ms: 0,
+                            effect,
+                        });
+                    }
                     self.commit(draft).await?;
                     Ok(Step::Continue)
                 }
                 FailureSettlement::KnownFailure { stage, proof } => {
                     decide::settle_known_failure(&mut draft, effect, stage, proof);
-                    draft.append(JournalRecord::ToolResult {
-                        call: call.call.clone(),
-                        content: vec![ToolResultPart::Text {
-                            text: BoundedString::truncating(error.detail.as_str()),
-                        }],
-                        is_error: true,
-                        executed_on: route.executor,
-                        duration_ms: 0,
-                        effect,
-                    });
+                    let content = vec![ToolResultPart::Text {
+                        text: BoundedString::truncating(error.detail.as_str()),
+                    }];
+                    if let Some(run) = self.state.active_run {
+                        decide::append_root_tool_result(
+                            &mut draft,
+                            run,
+                            effect,
+                            call.call.clone(),
+                            content,
+                            true,
+                            route.executor,
+                            0,
+                        );
+                    } else {
+                        draft.append(JournalRecord::ToolResult {
+                            public_message: None,
+                            call: call.call.clone(),
+                            content,
+                            is_error: true,
+                            executed_on: route.executor,
+                            duration_ms: 0,
+                            effect,
+                        });
+                    }
                     self.commit(draft).await?;
                     Ok(Step::Continue)
                 }
                 FailureSettlement::Unknown(evidence) => {
-                    decide::settle_unknown(&mut draft, effect, *evidence);
+                    self.settle_unknown_current(&mut draft, effect, *evidence)?;
                     self.commit(draft).await?;
                     Ok(Step::Stop(Stop::Finished(FinishReason::Interrupted)))
                 }
@@ -1818,7 +1958,7 @@ impl Session<'_> {
         let now = self.ports.clock.now();
         if now >= effect.deadline {
             let mut draft = self.draft("effecting");
-            Self::settle_detached_unknown(&mut draft, effect, wait);
+            self.settle_detached_unknown(&mut draft, effect, wait)?;
             self.commit(draft).await?;
             return Ok(Stop::Finished(FinishReason::Interrupted));
         }
@@ -1831,7 +1971,7 @@ impl Session<'_> {
         match status {
             Ok(DetachedStatus::Running { poll_after }) => {
                 if query_now >= effect.deadline {
-                    Self::settle_detached_unknown(&mut draft, effect, wait);
+                    self.settle_detached_unknown(&mut draft, effect, wait)?;
                     self.commit(draft).await?;
                     return Ok(Stop::Finished(FinishReason::Interrupted));
                 }
@@ -1853,11 +1993,11 @@ impl Session<'_> {
             }
             Ok(DetachedStatus::Completed(body)) => {
                 if body.executed_on != operation.executor {
-                    Self::settle_detached_unknown(&mut draft, effect, wait);
+                    self.settle_detached_unknown(&mut draft, effect, wait)?;
                     self.commit(draft).await?;
                     return Ok(Stop::Finished(FinishReason::Interrupted));
                 }
-                Self::settle_detached(
+                self.settle_detached(
                     &mut draft,
                     effect.id,
                     wait,
@@ -1877,7 +2017,7 @@ impl Session<'_> {
                     text: BoundedString::truncating(&reason),
                 }];
                 let checksum = ContentHash::of(&canonicalize_value(&content)?);
-                Self::settle_detached(
+                self.settle_detached(
                     &mut draft,
                     effect.id,
                     wait,
@@ -1894,7 +2034,7 @@ impl Session<'_> {
             }
             Err(error) if error.retryable => {
                 if query_now >= effect.deadline {
-                    Self::settle_detached_unknown(&mut draft, effect, wait);
+                    self.settle_detached_unknown(&mut draft, effect, wait)?;
                     self.commit(draft).await?;
                     return Ok(Stop::Finished(FinishReason::Interrupted));
                 }
@@ -1913,7 +2053,7 @@ impl Session<'_> {
                 Ok(Stop::Parked)
             }
             Ok(DetachedStatus::Unknown) | Err(_) => {
-                Self::settle_detached_unknown(&mut draft, effect, wait);
+                self.settle_detached_unknown(&mut draft, effect, wait)?;
                 self.commit(draft).await?;
                 Ok(Stop::Finished(FinishReason::Interrupted))
             }
@@ -1975,7 +2115,7 @@ impl Session<'_> {
             due: Some(due),
         });
         if now >= effect.deadline {
-            Self::settle_detached_unknown(&mut draft, effect, wait);
+            self.settle_detached_unknown(&mut draft, effect, wait)?;
             self.commit(draft).await?;
             return Ok(Stop::Finished(FinishReason::Interrupted));
         }
@@ -2001,6 +2141,7 @@ impl Session<'_> {
         reason = "these are exactly the fields of the three records this writes; bundling them would create a struct with one construction site"
     )]
     fn settle_detached(
+        &self,
         draft: &mut Draft,
         effect: EffectId,
         wait: WaitId,
@@ -2020,31 +2161,49 @@ impl Session<'_> {
             wait,
             resolution: WaitResolution::Delivered,
         });
-        draft.append(JournalRecord::ToolResult {
-            call,
-            content,
-            is_error,
-            executed_on,
-            duration_ms,
-            effect,
-        });
+        if let Some(run) = self.state.active_run {
+            decide::append_root_tool_result(
+                draft,
+                run,
+                effect,
+                call,
+                content,
+                is_error,
+                executed_on,
+                duration_ms,
+            );
+        } else {
+            draft.append(JournalRecord::ToolResult {
+                public_message: None,
+                call,
+                content,
+                is_error,
+                executed_on,
+                duration_ms,
+                effect,
+            });
+        }
     }
 
-    fn settle_detached_unknown(draft: &mut Draft, effect: &DurableEffect, wait: WaitId) {
+    fn settle_detached_unknown(
+        &self,
+        draft: &mut Draft,
+        effect: &DurableEffect,
+        wait: WaitId,
+    ) -> Result<(), ActivationError> {
         let evidence = effect.evidence.clone().unwrap_or_else(|| {
             DispatchEvidence::ambiguous(
                 effect.state.attempt().unwrap_or(1),
                 DispatchStage::Streaming,
             )
         });
-        // `OutcomeUnknown` is terminal in the pure fold. Close the wait first so every
-        // record in this atomic decision remains foldable; reversing these two appends
-        // would place `WaitResolved` after an absorbing terminal.
+        // Close the wait before the settlement. Children become absorbing at the
+        // outcome-unknown record; roots append their non-absorbing run boundary next.
         draft.append(JournalRecord::WaitResolved {
             wait,
             resolution: WaitResolution::Cancelled,
         });
-        decide::settle_unknown(draft, effect.id, evidence);
+        self.settle_unknown_current(draft, effect.id, evidence)
     }
 
     fn open_tool_wait(&self) -> Option<(WaitId, ToolCallId, DetachedOperationRef)> {

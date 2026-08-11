@@ -204,6 +204,8 @@ pub enum JournalRecord {
     },
     /// A **complete** assistant message. Partial deltas can never reach here.
     AssistantMessage {
+        /// The sealed public message projection, for a root session run only.
+        public_message: Option<MessageId>,
         /// The whole provider/model/catalog-bound message and completeness proof.
         message: CompleteAssistantMessage,
         /// Provider-reported usage.
@@ -215,6 +217,8 @@ pub enum JournalRecord {
     },
     /// The result of one tool call.
     ToolResult {
+        /// The sealed public message projection, for a root session run only.
+        public_message: Option<MessageId>,
         /// Which call this answers.
         call: ToolCallId,
         /// Result content in the canonical non-recursive tool-result vocabulary.
@@ -227,6 +231,23 @@ pub enum JournalRecord {
         duration_ms: u32,
         /// The effect that produced it.
         effect: EffectId,
+    },
+    /// The root agent completed one public session message and is ready for another.
+    ///
+    /// Unlike [`JournalRecord::AgentFinished`], this is not absorbing. Child agents
+    /// still finish for life; only the root agent carrying the matching active run may
+    /// cross this boundary back to `awaiting_input`.
+    RunFinished {
+        /// The internal execution identity being closed.
+        run: RunId,
+        /// How the current message ended.
+        reason: FinishReason,
+        /// Typed customer-safe failure detail, when there is one.
+        failure: Option<TypedFailure>,
+        /// Complete sealed public messages produced by this execution, in journal order.
+        output_messages: Vec<MessageId>,
+        /// The ambiguous effect when `reason` is `interrupted`.
+        ambiguous_effect: Option<EffectId>,
     },
     /// Intent to perform external work. Committed before any byte leaves.
     EffectPrepared {
@@ -340,6 +361,7 @@ impl JournalRecord {
             Self::UserMessage { .. } => "user_message",
             Self::AssistantMessage { .. } => "assistant_message",
             Self::ToolResult { .. } => "tool_result",
+            Self::RunFinished { .. } => "run_finished",
             Self::EffectPrepared { .. } => "effect_prepared",
             Self::EffectSettled { .. } => "effect_settled",
             Self::ChildSpawned { .. } => "child_spawned",

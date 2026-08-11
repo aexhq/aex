@@ -14,7 +14,9 @@
 
 use aex_brain_domain::budget::{BudgetDelta, Dimension};
 use aex_brain_domain::commit::{
-    ControlUpdate, DecisionCommit, EffectWrite, FenceGuardRef, WakeCreate, WakeRetirement,
+    ControlUpdate, DecisionCommit, EffectWrite, FenceGuardRef, PublicMessageAppend,
+    PublicMessagePart, PublicMessageRole, PublicSessionEvent, RunTransition, SessionHeadTransition,
+    WakeCreate, WakeRetirement, event_seq,
 };
 use aex_brain_domain::effect::{
     DispatchEvidence, DispatchProof, DispatchStage, EffectClass, EffectKind, SettledOutcome,
@@ -27,6 +29,11 @@ use aex_brain_domain::journal::{
     ExecutorRoute, FinishReason, JournalRecord, ParkReason, TypedFailure,
 };
 use aex_brain_domain::wire_pending::{CanonicalBlock, ToolResultPart};
+use aex_internal_contracts::RunId;
+use aex_wire::ids::{
+    ContentHash as WireContentHash, MessageId, OperationId, PrefixedId as _,
+    ToolCallId as PublicToolCallId, Uuid7,
+};
 
 use crate::ports::{FenceGuard, ProviderDispatchError, ProviderOutcome, ToolDispatchError};
 
@@ -62,6 +69,10 @@ pub struct Draft {
     budget: Vec<BudgetDelta>,
     wakes: Vec<WakeCreate>,
     retired_wake: Option<WakeRetirement>,
+    messages: Vec<PublicMessageAppend>,
+    session_events: Vec<PublicSessionEvent>,
+    run: Option<RunTransition>,
+    session: Option<SessionHeadTransition>,
     phase: &'static str,
     finish: Option<FinishReason>,
 }
@@ -80,6 +91,10 @@ impl Draft {
             budget: Vec::new(),
             wakes: Vec::new(),
             retired_wake: None,
+            messages: Vec::new(),
+            session_events: Vec::new(),
+            run: None,
+            session: None,
             phase,
             finish: None,
         }
@@ -171,6 +186,10 @@ impl Draft {
             && self.budget.is_empty()
             && self.wakes.is_empty()
             && self.retired_wake.is_none()
+            && self.messages.is_empty()
+            && self.session_events.is_empty()
+            && self.run.is_none()
+            && self.session.is_none()
     }
 
     /// The records this draft appends, in order.
@@ -210,8 +229,10 @@ impl Draft {
             wakes: self.wakes,
             retired_wake: self.retired_wake,
             events: Vec::new(),
-            run: None,
-            session: None,
+            messages: self.messages,
+            session_events: self.session_events,
+            run: self.run,
+            session: self.session,
             idempotency: None,
         }
     }
@@ -304,10 +325,50 @@ pub fn settle_model_call(draft: &mut Draft, effect: EffectId, outcome: &Provider
         outcome: SettledOutcome::Complete { receipt },
     });
     draft.append(JournalRecord::AssistantMessage {
+        public_message: None,
         message: outcome.message.clone(),
         usage: outcome.usage,
         receipt: Box::new(outcome.receipt.clone()),
         effect,
+    });
+    draft.phase(if outcome.message.blocks.iter().any(is_tool_use) {
+        "awaiting_tools"
+    } else {
+        "awaiting_finish"
+    });
+}
+
+/// Settles a root model call and writes its complete born-sealed public message.
+pub fn settle_root_model_call(
+    draft: &mut Draft,
+    run: RunId,
+    effect: EffectId,
+    outcome: &ProviderOutcome,
+) {
+    let receipt = ContentHash::of(outcome.message.proof.0.as_bytes());
+    let public_message = public_message_id(run, effect, 0x01);
+    draft.append(JournalRecord::EffectSettled {
+        effect,
+        outcome: SettledOutcome::Complete { receipt },
+        charged: Vec::new(),
+    });
+    draft.effect(EffectWrite::Settle {
+        id: effect,
+        outcome: SettledOutcome::Complete { receipt },
+    });
+    draft.append(JournalRecord::AssistantMessage {
+        public_message: Some(public_message),
+        message: outcome.message.clone(),
+        usage: outcome.usage,
+        receipt: Box::new(outcome.receipt.clone()),
+        effect,
+    });
+    draft.messages.push(PublicMessageAppend {
+        id: public_message,
+        run,
+        role: PublicMessageRole::Assistant,
+        parts: public_assistant_parts(run, &outcome.message.blocks),
+        at: draft.now,
     });
     draft.phase(if outcome.message.blocks.iter().any(is_tool_use) {
         "awaiting_tools"
@@ -345,6 +406,7 @@ pub fn settle_tool_call(
         outcome: SettledOutcome::Complete { receipt: checksum },
     });
     draft.append(JournalRecord::ToolResult {
+        public_message: None,
         call,
         content,
         is_error,
@@ -352,6 +414,188 @@ pub fn settle_tool_call(
         duration_ms,
         effect,
     });
+}
+
+/// Settles one root Bash result and writes its complete born-sealed public message.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the arguments are the closed ToolResult journal shape plus its root-run binding"
+)]
+pub fn settle_root_tool_call(
+    draft: &mut Draft,
+    run: RunId,
+    effect: EffectId,
+    call: aex_brain_domain::ids::ToolCallId,
+    content: Vec<ToolResultPart>,
+    is_error: bool,
+    executed_on: ExecutorRoute,
+    duration_ms: u32,
+    checksum: ContentHash,
+) {
+    draft.append(JournalRecord::EffectSettled {
+        effect,
+        outcome: SettledOutcome::Complete { receipt: checksum },
+        charged: Vec::new(),
+    });
+    draft.effect(EffectWrite::Settle {
+        id: effect,
+        outcome: SettledOutcome::Complete { receipt: checksum },
+    });
+    append_root_tool_result(
+        draft,
+        run,
+        effect,
+        call,
+        content,
+        is_error,
+        executed_on,
+        duration_ms,
+    );
+}
+
+/// Appends a root Bash result after the caller has written its effect settlement.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the arguments are the closed ToolResult journal shape plus its root-run binding"
+)]
+pub fn append_root_tool_result(
+    draft: &mut Draft,
+    run: RunId,
+    effect: EffectId,
+    call: aex_brain_domain::ids::ToolCallId,
+    content: Vec<ToolResultPart>,
+    is_error: bool,
+    executed_on: ExecutorRoute,
+    duration_ms: u32,
+) {
+    let public_message = public_message_id(run, effect, 0x02);
+    let public_call = public_tool_call_id(run, &call);
+    let result_bytes = serde_json::to_vec(&content)
+        .expect("the closed canonical tool-result vocabulary always serializes");
+    draft.append(JournalRecord::ToolResult {
+        public_message: Some(public_message),
+        call,
+        content: content.clone(),
+        is_error,
+        executed_on,
+        duration_ms,
+        effect,
+    });
+    let mut parts = content
+        .iter()
+        .filter_map(|part| match part {
+            ToolResultPart::Text { text } => Some(PublicMessagePart::Text {
+                text: text.as_str().to_owned(),
+            }),
+            ToolResultPart::Json { value } => Some(PublicMessagePart::Text {
+                text: value.as_str().to_owned(),
+            }),
+        })
+        .collect::<Vec<_>>();
+    parts.push(PublicMessagePart::ToolResult {
+        id: public_call,
+        result: WireContentHash::of(&result_bytes),
+    });
+    draft.messages.push(PublicMessageAppend {
+        id: public_message,
+        run,
+        role: PublicMessageRole::Tool,
+        parts,
+        at: draft.now,
+    });
+}
+
+/// Closes one root run without terminalizing the retained root agent.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the boundary deliberately carries every run/session fence and outcome fact"
+)]
+pub fn finish_run(
+    draft: &mut Draft,
+    run: RunId,
+    message: MessageId,
+    session_revision: u64,
+    reason: FinishReason,
+    failure: Option<TypedFailure>,
+    output_messages: Vec<MessageId>,
+    cancellation: Option<OperationId>,
+    ambiguous_effect: Option<EffectId>,
+) {
+    let boundary_seq = draft.next_seq();
+    draft.append(JournalRecord::RunFinished {
+        run,
+        reason,
+        failure: failure.clone(),
+        output_messages: output_messages.clone(),
+        ambiguous_effect,
+    });
+    draft.run = Some(RunTransition {
+        run,
+        finish: reason,
+        failure,
+        output_messages,
+        cancellation,
+        ambiguous_effect,
+    });
+    draft.session = Some(SessionHeadTransition {
+        status: "idle".to_owned(),
+        revision: session_revision,
+    });
+    draft.session_events.push(PublicSessionEvent {
+        event_seq: event_seq(boundary_seq, 0),
+        message,
+        outcome: finish_outcome(reason).to_owned(),
+        at: draft.now,
+    });
+    draft.phase("awaiting_input");
+}
+
+const fn finish_outcome(reason: FinishReason) -> &'static str {
+    match reason {
+        FinishReason::Completed => "succeeded",
+        FinishReason::Timeout => "timed_out",
+        FinishReason::Cancelled => "cancelled",
+        FinishReason::Interrupted | FinishReason::Budget => "interrupted",
+        FinishReason::MaxTurns | FinishReason::MaxSteps | FinishReason::Failed => "failed",
+    }
+}
+
+fn public_message_id(run: RunId, effect: EffectId, tag: u8) -> MessageId {
+    MessageId::from_uuid7(derived_uuid(run, &[tag], &effect.0))
+}
+
+fn public_tool_call_id(run: RunId, call: &aex_brain_domain::ids::ToolCallId) -> PublicToolCallId {
+    PublicToolCallId::from_uuid7(derived_uuid(run, &[0x03], call.as_str().as_bytes()))
+}
+
+fn derived_uuid(run: RunId, tag: &[u8], material: &[u8]) -> Uuid7 {
+    let mut bytes = Vec::with_capacity(tag.len().saturating_add(material.len()));
+    bytes.extend_from_slice(tag);
+    bytes.extend_from_slice(material);
+    let digest = ContentHash::of(&bytes);
+    let mut entropy = [0_u8; 10];
+    entropy.copy_from_slice(&digest.0[..10]);
+    Uuid7::compose(run.uuid7().unix_millis(), entropy)
+}
+
+fn public_assistant_parts(run: RunId, blocks: &[CanonicalBlock]) -> Vec<PublicMessagePart> {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            CanonicalBlock::Text { text, .. } => Some(PublicMessagePart::Text {
+                text: text.as_str().to_owned(),
+            }),
+            CanonicalBlock::Refusal { text } => Some(PublicMessagePart::Text {
+                text: text.as_str().to_owned(),
+            }),
+            CanonicalBlock::ToolUse { id, input, .. } => Some(PublicMessagePart::ToolCall {
+                id: public_tool_call_id(run, id),
+                arguments: WireContentHash::of(input.as_bytes()),
+            }),
+            // Private chain-of-thought is never projected into the public message surface.
+            CanonicalBlock::Reasoning(_) | CanonicalBlock::ToolResult { .. } => None,
+        })
+        .collect()
 }
 
 /// Settles an effect nothing can be proved about, and terminalizes the run.
@@ -373,6 +617,22 @@ pub fn settle_unknown(draft: &mut Draft, effect: EffectId, evidence: DispatchEvi
     // The fold terminalizes on `OutcomeUnknown` by itself; the control update has to agree
     // with it, or the row and the journal would disagree about whether the agent is done.
     draft.finish(FinishReason::Interrupted);
+}
+
+/// Settles an outcome-unknown root effect without absorbing the retained root agent.
+/// The caller appends [`JournalRecord::RunFinished`] in the same draft.
+pub fn settle_root_unknown(draft: &mut Draft, effect: EffectId, evidence: DispatchEvidence) {
+    let outcome = SettledOutcome::OutcomeUnknown { evidence };
+    draft.append(JournalRecord::EffectSettled {
+        effect,
+        outcome: outcome.clone(),
+        charged: Vec::new(),
+    });
+    draft.effect(EffectWrite::Settle {
+        id: effect,
+        outcome,
+    });
+    draft.phase("awaiting_finish");
 }
 
 /// Settles an effect the upstream definitively refused.

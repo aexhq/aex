@@ -49,6 +49,7 @@ fn authority() -> SessionAuthority {
             [4; 10],
         )),
         deletion_epoch: 0,
+        active: None,
     }
 }
 

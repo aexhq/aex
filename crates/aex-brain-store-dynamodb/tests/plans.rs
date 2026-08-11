@@ -5,11 +5,12 @@
 //! if every action carries its precondition. Both are properties of the compiled plan, so
 //! both are asserted here rather than observed indirectly and expensively on a live plane.
 
-use aex_brain_app::ports::{DecisionContext, SessionAuthority};
+use aex_brain_app::ports::{DecisionContext, RunBoundaryAuthority, SessionAuthority};
 use aex_brain_domain::budget::{BudgetDelta, Dimension, DimensionVector};
 use aex_brain_domain::commit::{
     ChildWrite, ControlUpdate, DecisionCommit, EffectWrite, FenceGuardRef, JoinWrite,
-    SPAWN_PAGE_CHILDREN, WakeCreate, WakeRetirement,
+    PublicSessionEvent, RunTransition, SPAWN_PAGE_CHILDREN, SessionHeadTransition, WakeCreate,
+    WakeRetirement, event_seq,
 };
 use aex_brain_domain::effect::{EffectClass, EffectKind};
 use aex_brain_domain::ids::{
@@ -45,6 +46,7 @@ fn context() -> DecisionContext {
                 [4; 10],
             )),
             deletion_epoch: 0,
+            active: None,
         },
         lease_expires_at: Timestamp::from_millis(1_767_225_615_000),
         now: Timestamp::from_millis(1_767_225_600_000),
@@ -88,6 +90,8 @@ fn base(appends: Vec<JournalRecord>) -> DecisionCommit {
         wakes: Vec::new(),
         retired_wake: None,
         events: Vec::new(),
+        messages: Vec::new(),
+        session_events: Vec::new(),
         run: None,
         session: None,
         idempotency: None,
@@ -237,6 +241,77 @@ fn a_decision_guards_the_session_head_without_writing_it() {
     );
     assert!(first.update().is_none());
     assert!(first.put().is_none());
+}
+
+#[test]
+fn a_root_run_boundary_is_one_six_action_session_centric_commit() {
+    let (session, run, agent, _) = aex_session_domain::testing::running_session();
+    let mut context = context();
+    context.authority.workspace = session.workspace;
+    context.authority.organization = session.organization;
+    context.authority.deletion_epoch = session.deletion.epoch.0;
+    context.authority.active = Some(Box::new(RunBoundaryAuthority {
+        session: session.clone(),
+        run: run.clone(),
+    }));
+    let mut commit = base(vec![JournalRecord::RunFinished {
+        run: run.id,
+        reason: FinishReason::Completed,
+        failure: None,
+        output_messages: Vec::new(),
+        ambiguous_effect: None,
+    }]);
+    commit.guard.key = AgentKey::new(
+        SessionId(uuid::Uuid::from_bytes(*session.id.uuid7().as_bytes())),
+        AgentId(uuid::Uuid::from_bytes(*agent.id.uuid7().as_bytes())),
+    );
+    commit.guard.cancel_epoch = CancelEpoch(session.cancellation.0);
+    commit.guard.fence = Fence(agent.fence().0);
+    commit.run = Some(RunTransition {
+        run: run.id,
+        finish: FinishReason::Completed,
+        failure: None,
+        output_messages: Vec::new(),
+        cancellation: None,
+        ambiguous_effect: None,
+    });
+    commit.session = Some(SessionHeadTransition {
+        status: "idle".to_owned(),
+        revision: session.revision.0,
+    });
+    commit.session_events.push(PublicSessionEvent {
+        event_seq: event_seq(JournalSeq(10), 0),
+        message: run.message,
+        outcome: "succeeded".to_owned(),
+        at: context.now,
+    });
+    commit.control.phase = "awaiting_input".to_owned();
+
+    let compiled = plan::compile(&tables(), &context, &commit).expect("boundary compiles");
+    assert_eq!(compiled.len(), 6);
+    assert_eq!(
+        compiled.participants(),
+        &[
+            Participant::AGENT_CONTROL,
+            Participant::AGENT_JOURNAL,
+            Participant::SESSION_COMPLETED_EVENT,
+            Participant::SESSION_RUN,
+            Participant::SESSION_HEAD,
+            Participant::SESSION_TERMINAL_EVENT,
+        ]
+    );
+    assert!(
+        !compiled
+            .participants()
+            .contains(&Participant::SESSION_HEAD_GUARD),
+        "the guarded head write replaces a conflicting read action"
+    );
+    let event = compiled.actions()[2]
+        .put()
+        .expect("public event put")
+        .item();
+    assert!(event.get("runId").is_none());
+    assert!(event.get("agentId").is_none());
 }
 
 /// Every action carries a condition. The shared compiler refuses an unconditional

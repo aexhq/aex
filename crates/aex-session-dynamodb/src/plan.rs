@@ -86,6 +86,8 @@ impl Participant {
     pub const AGENT_EFFECT: Self = Self::new("agent.effect");
     /// The public `session.message_admitted` native event.
     pub const SESSION_ADMITTED_EVENT: Self = Self::new("session.admitted_event");
+    /// The public `session.message_completed` native event.
+    pub const SESSION_COMPLETED_EVENT: Self = Self::new("session.completed_event");
     /// The run's terminal native event.
     pub const SESSION_TERMINAL_EVENT: Self = Self::new("session.terminal_event");
     /// A bounded preview native event.

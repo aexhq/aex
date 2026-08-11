@@ -25,10 +25,13 @@ use crate::session::Session;
 /// Largest number of open messages one run may carry into its terminal
 /// barrier.
 ///
-/// The application commits four fixed rows plus both the mutable base row and
-/// immutable sealed projection for each message. Forty-eight therefore fills,
-/// but never exceeds, `DynamoDB`'s 100-action transaction envelope.
-pub const MAX_OPEN_MESSAGES_PER_RUN: usize = 48;
+/// The complete production boundary commits six fixed rows: agent control,
+/// `RunFinished` journal, public message-completed event, internal run, session
+/// head and the accounting outbox. Each still-open message costs its mutable
+/// base row plus immutable sealed projection. Forty-seven therefore fills, but
+/// never exceeds, `DynamoDB`'s 100-action transaction envelope:
+/// `6 + 2 * 47 = 100`.
+pub const MAX_OPEN_MESSAGES_PER_RUN: usize = 47;
 
 /// One attempt to settle a run.
 #[derive(Debug, Clone, PartialEq, Eq)]

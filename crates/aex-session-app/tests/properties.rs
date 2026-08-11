@@ -474,7 +474,12 @@ async fn the_maximum_open_message_set_fits_one_terminal_transaction() {
         .await
         .expect("the invariant ceiling settles");
 
-    assert_eq!(planned.plan.validate().expect("valid").actions, MAX_ACTIONS);
+    let generic_actions = planned.plan.validate().expect("valid").actions;
+    assert_eq!(
+        generic_actions + 2,
+        MAX_ACTIONS,
+        "the production Brain boundary adds RunFinished journal and public completion event"
+    );
     assert_eq!(
         planned
             .plan

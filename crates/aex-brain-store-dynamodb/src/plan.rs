@@ -16,13 +16,23 @@
 use aex_brain_app::ports::{DecisionContext, SessionAuthority};
 use aex_brain_domain::budget::{BudgetDelta, Dimension};
 use aex_brain_domain::child::{ChildOutcome, ChildState};
-use aex_brain_domain::commit::{ChildWrite, DecisionCommit, EffectWrite, JoinWrite, WakeCreate};
+use aex_brain_domain::commit::{
+    ChildWrite, DecisionCommit, EffectWrite, JoinWrite, PublicMessagePart, PublicMessageRole,
+    RunTransition, WakeCreate,
+};
 use aex_brain_domain::ids::{AgentKey, CancelEpoch};
+use aex_brain_domain::journal::FinishReason;
+use aex_session_domain::{
+    AgentFence, DomainError, InterruptReason, Message, MessagePart, MessageRole, MessageState,
+    RunOutcome, TerminalAttempt, UsageClosureId, claim_terminal,
+};
 use aex_session_dynamodb::attr::{ItemBuilder, n, s, stamp};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::{IMMUTABLE, Participant, TransactionPlan, key};
 use aex_session_dynamodb::transactions::DECISION_ORDER;
 use aex_session_dynamodb::{codec, keys as shared};
+use aex_wire::error::ErrorCode;
+use aex_wire::ids::{PrefixedId as _, Uuid7};
 use aex_work_dynamodb::codec::{DeliveryEvidence, Payload, WorkRecord};
 
 use crate::keys::{self, BrainKeyError};
@@ -85,6 +95,9 @@ pub enum PlanError {
     /// The shared compiler refused an action.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A root run boundary was incomplete or contradicted its strongly-read authority.
+    #[error("invalid root run boundary: {0}")]
+    Boundary(String),
 }
 
 /// The lowest-priority band a Brain wake may carry.
@@ -150,18 +163,24 @@ pub fn compile(
 
     let mut plan = TransactionPlan::new(client_request_token(commit));
 
-    // 1. The session head guard. It reads, never writes: a decision must not serialize
-    //    behind every other decision in the session.
-    plan.condition_check(
-        Participant::SESSION_HEAD_GUARD,
-        session_head_guard(
-            table,
-            session,
-            commit.guard.cancel_epoch,
-            &context.authority,
-        ),
-    )
-    .map_err(PlanError::Store)?;
+    let terminal = terminal_commit(context, commit, agent)?;
+
+    // 1. Ordinary decisions use a read-only session guard. A run boundary replaces it
+    //    with the canonical session-head write below: DynamoDB forbids checking and
+    //    writing the same item in one transaction, and that put carries the identical
+    //    tenant/deletion/cancellation guards plus revision and active-run fences.
+    if terminal.is_none() {
+        plan.condition_check(
+            Participant::SESSION_HEAD_GUARD,
+            session_head_guard(
+                table,
+                session,
+                commit.guard.cancel_epoch,
+                &context.authority,
+            ),
+        )
+        .map_err(PlanError::Store)?;
+    }
 
     // 2. The control item, under the whole precondition set. All five, always: each
     //    rejects a different way of being stale, and dropping one lets that writer publish.
@@ -290,6 +309,80 @@ pub fn compile(
             aws_sdk_dynamodb::types::Put::builder()
                 .table_name(table)
                 .set_item(Some(stored))
+                .condition_expression(IMMUTABLE),
+        )
+        .map_err(PlanError::Store)?;
+    }
+
+    // Complete public output messages are born sealed in the same decision as the
+    // complete assistant/tool journal record. They are never reconstructed from preview
+    // deltas, and the immutable seal-order row makes list pagination stable.
+    for append in &commit.messages {
+        let active = context.authority.active.as_deref().ok_or_else(|| {
+            PlanError::Boundary("a public output message has no active run authority".to_owned())
+        })?;
+        if append.run != active.run.id || active.session.id != session {
+            return Err(PlanError::Boundary(
+                "a public output message crosses its active session or run".to_owned(),
+            ));
+        }
+        let message = Message {
+            id: append.id,
+            session,
+            run: Some(append.run),
+            agent,
+            role: match append.role {
+                PublicMessageRole::Assistant => MessageRole::Assistant,
+                PublicMessageRole::Tool => MessageRole::Tool,
+            },
+            state: MessageState::Sealed,
+            parts: append
+                .parts
+                .iter()
+                .map(|part| match part {
+                    PublicMessagePart::Text { text } => MessagePart::Text { text: text.clone() },
+                    PublicMessagePart::ToolCall { id, arguments } => MessagePart::ToolCall {
+                        id: *id,
+                        arguments: *arguments,
+                    },
+                    PublicMessagePart::ToolResult { id, result } => MessagePart::ToolResult {
+                        id: *id,
+                        result: *result,
+                    },
+                })
+                .collect(),
+            created_at: translate::at(append.at, "public message instant")
+                .map_err(BrainKeyError::from)?,
+            sealed_at: Some(
+                translate::at(append.at, "public message seal instant")
+                    .map_err(BrainKeyError::from)?,
+            ),
+        };
+        let base = aex_session_dynamodb::authority_codec::encode_domain_message(
+            &message,
+            context.authority.workspace,
+            context.authority.organization,
+        )
+        .map_err(StoreError::from)?;
+        plan.put(
+            Participant::SESSION_MESSAGE,
+            aws_sdk_dynamodb::types::Put::builder()
+                .table_name(table)
+                .set_item(Some(base))
+                .condition_expression(IMMUTABLE),
+        )
+        .map_err(PlanError::Store)?;
+        let projection = aex_session_dynamodb::authority_codec::encode_sealed_message(
+            &message,
+            context.authority.workspace,
+            context.authority.organization,
+        )
+        .map_err(StoreError::from)?;
+        plan.put(
+            Participant::SESSION_SEALED_MESSAGE,
+            aws_sdk_dynamodb::types::Put::builder()
+                .table_name(table)
+                .set_item(Some(projection))
                 .condition_expression(IMMUTABLE),
         )
         .map_err(PlanError::Store)?;
@@ -646,6 +739,37 @@ pub fn compile(
         .map_err(PlanError::Store)?;
     }
 
+    for event in &commit.session_events {
+        let occurred_at =
+            translate::at(event.at, "public session event instant").map_err(BrainKeyError::from)?;
+        let body = serde_json::to_vec(&serde_json::json!({
+            "messageId": event.message,
+            "outcome": event.outcome,
+        }))
+        .map_err(|error| PlanError::Boundary(format!("session event body: {error}")))?;
+        let stored = aex_session_dynamodb::wire_pending::SessionEvent {
+            workspace: context.authority.workspace,
+            event_seq: event.event_seq,
+            event_id: aex_wire::ids::ObservationId::from_uuid7(event.message.uuid7()),
+            event_type: "session.message_completed".to_owned(),
+            run: None,
+            agent: None,
+            body: aex_session_dynamodb::wire_pending::Body::Inline(body),
+            occurred_at,
+            outbox_state: "pending",
+        };
+        plan.put(
+            Participant::SESSION_COMPLETED_EVENT,
+            aws_sdk_dynamodb::types::Put::builder()
+                .table_name(table)
+                .set_item(Some(aex_session_dynamodb::codec::encode_event(
+                    session, &stored,
+                )))
+                .condition_expression(IMMUTABLE),
+        )
+        .map_err(PlanError::Store)?;
+    }
+
     // 9. Wakes, through the work adapter's own builders. Brain never forks that row shape,
     //    and the queue never originates a wake: the durable item is the fact.
     for wake in &commit.wakes {
@@ -682,9 +806,76 @@ pub fn compile(
         .map_err(PlanError::Store)?;
     }
 
-    // The domain validator bounds the decision before anything is built; this bounds the
-    // *compiled* plan, which is one action larger because of the head guard. Both exist:
-    // the first tells a caller to page, the second is the number the service enforces.
+    // The internal run, retained session head and accounting outbox fact cross their
+    // terminal barrier together. The outbox row is an internal billing authority; public
+    // session events are projected separately and never expose this run identity.
+    if let Some(terminal) = terminal {
+        let run_item = aex_session_dynamodb::authority_codec::encode_domain_run(
+            &terminal.run,
+            context.authority.workspace,
+            context.authority.organization,
+        )
+        .map_err(StoreError::from)?;
+        plan.put(
+            Participant::SESSION_RUN,
+            aws_sdk_dynamodb::types::Put::builder()
+                .table_name(table)
+                .set_item(Some(run_item))
+                .condition_expression("runId = :run AND (#status = :queued OR #status = :running)")
+                .expression_attribute_names("#status", "status")
+                .expression_attribute_values(":run", s(terminal.run.id.to_string()))
+                .expression_attribute_values(":queued", s("queued"))
+                .expression_attribute_values(":running", s("running")),
+        )
+        .map_err(PlanError::Store)?;
+
+        let head_item = aex_session_dynamodb::authority_codec::encode_session(&terminal.session)
+            .map_err(StoreError::from)?;
+        plan.put(
+            Participant::SESSION_HEAD,
+            aws_sdk_dynamodb::types::Put::builder()
+                .table_name(table)
+                .set_item(Some(head_item))
+                .condition_expression(
+                    "revision = :revision AND activeRunId = :run \
+                     AND cancelEpoch = :cancelEpoch AND deletionEpoch = :deletionEpoch \
+                     AND workspaceId = :workspaceId AND organizationId = :organizationId \
+                     AND lifecycle = :active",
+                )
+                .expression_attribute_values(
+                    ":revision",
+                    n(terminal.session.revision.0.saturating_sub(1)),
+                )
+                .expression_attribute_values(":run", s(terminal.run.id.to_string()))
+                .expression_attribute_values(":cancelEpoch", n(commit.guard.cancel_epoch.0))
+                .expression_attribute_values(":deletionEpoch", n(context.authority.deletion_epoch))
+                .expression_attribute_values(
+                    ":workspaceId",
+                    s(context.authority.workspace.to_string()),
+                )
+                .expression_attribute_values(
+                    ":organizationId",
+                    s(context.authority.organization.to_string()),
+                )
+                .expression_attribute_values(":active", s("active")),
+        )
+        .map_err(PlanError::Store)?;
+
+        plan.put(
+            Participant::SESSION_TERMINAL_EVENT,
+            aws_sdk_dynamodb::types::Put::builder()
+                .table_name(table)
+                .set_item(Some(aex_session_dynamodb::codec::encode_outbox_event(
+                    context.authority.workspace,
+                    &terminal.outbox,
+                )))
+                .condition_expression(IMMUTABLE),
+        )
+        .map_err(PlanError::Store)?;
+    }
+
+    // The domain validator includes the head guard (or its boundary replacement); this
+    // final assertion checks the actual compiled provider plan as a second line of defence.
     if plan.len() > aex_session_dynamodb::plan::MAX_ACTIONS {
         return Err(PlanError::Envelope(
             aex_brain_domain::commit::EnvelopeViolation::TooManyActions {
@@ -693,6 +884,195 @@ pub fn compile(
         ));
     }
     Ok(plan)
+}
+
+fn terminal_commit(
+    context: &DecisionContext,
+    commit: &DecisionCommit,
+    agent: aex_wire::ids::AgentId,
+) -> Result<Option<aex_session_domain::TerminalCommit>, PlanError> {
+    let (Some(run), Some(session)) = (&commit.run, &commit.session) else {
+        if commit.run.is_some() || commit.session.is_some() {
+            return Err(PlanError::Boundary(
+                "run and session transitions must be present together".to_owned(),
+            ));
+        }
+        if !commit.session_events.is_empty()
+            || commit.appends.iter().any(|record| {
+                matches!(
+                    record,
+                    aex_brain_domain::journal::JournalRecord::RunFinished { .. }
+                )
+            })
+        {
+            return Err(PlanError::Boundary(
+                "a run-finished record or completion event requires the terminal transition"
+                    .to_owned(),
+            ));
+        }
+        return Ok(None);
+    };
+    if session.status != "idle" {
+        return Err(PlanError::Boundary(
+            "a root run boundary must return the session to idle".to_owned(),
+        ));
+    }
+    let active =
+        context.authority.active.as_deref().ok_or_else(|| {
+            PlanError::Boundary("the claimant did not bind an active run".to_owned())
+        })?;
+    if active.run.id != run.run
+        || active.session.active_run != Some(run.run)
+        || active.session.revision.0 != session.revision
+    {
+        return Err(PlanError::Boundary(
+            "the boundary disagrees with its strongly-read session/run authority".to_owned(),
+        ));
+    }
+    let finished = commit.appends.last().ok_or_else(|| {
+        PlanError::Boundary("a root run boundary has no final journal record".to_owned())
+    })?;
+    let aex_brain_domain::journal::JournalRecord::RunFinished {
+        run: journal_run,
+        reason,
+        failure,
+        output_messages,
+        ambiguous_effect,
+    } = finished
+    else {
+        return Err(PlanError::Boundary(
+            "the terminal transition is not closed by RunFinished".to_owned(),
+        ));
+    };
+    if commit
+        .appends
+        .iter()
+        .filter(|record| {
+            matches!(
+                record,
+                aex_brain_domain::journal::JournalRecord::RunFinished { .. }
+            )
+        })
+        .count()
+        != 1
+        || *journal_run != run.run
+        || *reason != run.finish
+        || failure != &run.failure
+        || output_messages != &run.output_messages
+        || ambiguous_effect != &run.ambiguous_effect
+    {
+        return Err(PlanError::Boundary(
+            "RunFinished disagrees with the terminal transition".to_owned(),
+        ));
+    }
+    let [event] = commit.session_events.as_slice() else {
+        return Err(PlanError::Boundary(
+            "a root run boundary requires exactly one public completion event".to_owned(),
+        ));
+    };
+    let first_seq = commit.guard.tail.map_or(
+        aex_brain_domain::ids::JournalSeq::ZERO,
+        aex_brain_domain::ids::JournalSeq::next,
+    );
+    let boundary_seq =
+        aex_brain_domain::ids::JournalSeq(first_seq.get().saturating_add(
+            u64::try_from(commit.appends.len().saturating_sub(1)).unwrap_or(u64::MAX),
+        ));
+    if event.message != active.run.message
+        || event.outcome != finish_outcome(run.finish)
+        || event.event_seq != aex_brain_domain::commit::event_seq(boundary_seq, 0)
+        || event.at != context.now
+    {
+        return Err(PlanError::Boundary(
+            "the public completion event disagrees with the run boundary".to_owned(),
+        ));
+    }
+    let attempt = TerminalAttempt {
+        run: run.run,
+        outcome: terminal_outcome(run, &active.run)?,
+        at: translate::at(context.now, "run terminal instant").map_err(BrainKeyError::from)?,
+        session_revision_seen: active.session.revision,
+        cancellation_seen: active.session.cancellation,
+        agent_fence: AgentFence(commit.guard.fence.0),
+        usage_closure: UsageClosureId(active.run.id.uuid7()),
+    };
+    claim_terminal(
+        &active.run,
+        &active.session,
+        agent,
+        AgentFence(commit.guard.fence.0),
+        &[],
+        &attempt,
+    )
+    .map(Some)
+    .map_err(|error| PlanError::Boundary(error.to_string()))
+}
+
+const fn finish_outcome(reason: FinishReason) -> &'static str {
+    match reason {
+        FinishReason::Completed => "succeeded",
+        FinishReason::Timeout => "timed_out",
+        FinishReason::Cancelled => "cancelled",
+        FinishReason::Interrupted | FinishReason::Budget => "interrupted",
+        FinishReason::MaxTurns | FinishReason::MaxSteps | FinishReason::Failed => "failed",
+    }
+}
+
+fn terminal_outcome(
+    transition: &RunTransition,
+    run: &aex_session_domain::Run,
+) -> Result<RunOutcome, PlanError> {
+    Ok(match transition.finish {
+        FinishReason::Completed => RunOutcome::Succeeded {
+            output_messages: transition.output_messages.clone(),
+        },
+        FinishReason::Timeout => RunOutcome::TimedOut {
+            deadline: run.deadline,
+        },
+        FinishReason::Budget => RunOutcome::Interrupted(InterruptReason::SpendCapExhausted),
+        FinishReason::Cancelled => RunOutcome::Cancelled {
+            by: transition.cancellation.ok_or_else(|| {
+                PlanError::Boundary("a cancelled run has no cancellation operation".to_owned())
+            })?,
+        },
+        FinishReason::Interrupted => {
+            let effect = transition.ambiguous_effect.ok_or_else(|| {
+                PlanError::Boundary("an interrupted run has no ambiguous effect".to_owned())
+            })?;
+            let mut entropy = [0_u8; 10];
+            entropy.copy_from_slice(&effect.0[..10]);
+            RunOutcome::Interrupted(InterruptReason::AmbiguousEffect {
+                effect: aex_session_domain::EffectId(Uuid7::compose(
+                    transition.run.uuid7().unix_millis(),
+                    entropy,
+                )),
+            })
+        }
+        FinishReason::MaxTurns | FinishReason::MaxSteps => RunOutcome::Failed {
+            error: DomainError {
+                code: ErrorCode::LimitExceeded,
+                message: "the current message reached its execution limit".to_owned(),
+                detail: None,
+                retryable: false,
+            },
+        },
+        FinishReason::Failed => {
+            let failure = transition.failure.as_ref();
+            RunOutcome::Failed {
+                error: DomainError {
+                    code: failure
+                        .and_then(|failure| ErrorCode::parse(&failure.code))
+                        .unwrap_or(ErrorCode::UpstreamError),
+                    message: failure.map_or_else(
+                        || "the current message failed".to_owned(),
+                        |failure| failure.message.clone(),
+                    ),
+                    detail: None,
+                    retryable: false,
+                },
+            }
+        }
+    })
 }
 
 /// The transport deduplication identity of one decision.

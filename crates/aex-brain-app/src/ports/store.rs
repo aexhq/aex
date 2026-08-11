@@ -38,6 +38,17 @@ pub struct SessionAuthority {
     pub organization: OrganizationId,
     /// The deletion generation the decision must still observe.
     pub deletion_epoch: u64,
+    /// Complete active session/run authority used only by a root run boundary.
+    pub active: Option<Box<RunBoundaryAuthority>>,
+}
+
+/// Canonical session and internal-run rows observed for one root boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunBoundaryAuthority {
+    /// The complete session head, including revision/lifecycle fences.
+    pub session: aex_session_domain::Session,
+    /// The complete internal run owned by that head.
+    pub run: aex_session_domain::Run,
 }
 
 /// Per-decision facts supplied to the durable transaction compiler.

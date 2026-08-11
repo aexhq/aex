@@ -172,6 +172,12 @@ fn truncated(state: &FoldState) -> bool {
 }
 
 fn breach(state: &FoldState, policy: &PlanPolicy) -> Option<FinishReason> {
+    if state
+        .active_deadline
+        .is_some_and(|deadline| policy.now >= deadline)
+    {
+        return Some(FinishReason::Timeout);
+    }
     if state.assistant_turns >= policy.max_turns {
         return Some(FinishReason::MaxTurns);
     }
@@ -302,6 +308,23 @@ mod tests {
             OwedStep::Finish {
                 reason: FinishReason::Timeout
             }
+        );
+
+        let mut absolute = state();
+        absolute.active_deadline = Some(Timestamp::from_millis(59_999));
+        absolute.phase = Phase::AwaitingModel;
+        assert_eq!(
+            plan(
+                &absolute,
+                &PlanPolicy {
+                    now: Timestamp::from_millis(60_000),
+                    ..policy()
+                }
+            ),
+            OwedStep::Finish {
+                reason: FinishReason::Timeout
+            },
+            "the admitted absolute deadline outranks the static turn duration"
         );
 
         let mut broke = state();

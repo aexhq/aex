@@ -58,6 +58,7 @@ aex-brain-domain = { path = "../aex-brain-domain" }
 # measurement, the one transaction-plan compiler and the error vocabulary. Brain
 # calls these rather than forking the item shapes they own.
 aex-session-dynamodb = { path = "../aex-session-dynamodb" }
+aex-session-domain = { path = "../aex-session-domain" }
 aex-work-dynamodb = { path = "../aex-work-dynamodb" }
 aex-wire = { path = "../aex-wire" }
 
@@ -65,7 +66,6 @@ tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 aex-brain-test-support = { path = "../aex-brain-test-support" }
-aex-session-domain = { path = "../aex-session-domain" }
 aex-test-harness = { path = "../../tests/support/aex-test-harness" }
 aws-smithy-http-client.workspace = true
 base64.workspace = true

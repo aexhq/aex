@@ -43,6 +43,7 @@ testing = []
 futures.workspace = true
 aex-brain-domain = { path = "../aex-brain-domain" }
 aex-model-catalog = { path = "../aex-model-catalog" }
+aex-session-domain = { path = "../aex-session-domain" }
 aex-wire = { path = "../aex-wire" }
 loom = { workspace = true, optional = true }
 serde.workspace = true

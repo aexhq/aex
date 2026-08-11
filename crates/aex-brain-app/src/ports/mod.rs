@@ -51,8 +51,9 @@ pub use store::{
     AgentHead, Claim, ClaimError, CommitError, CommitReceipt, ConditionFailure, DecisionContext,
     DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage, DurableWake, EffectStore,
     JournalCursor, JournalPage, JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS,
-    MalformedWakeDelivery, MalformedWakeReason, ReadBudget, ReleaseDisposition, SessionAuthority,
-    StoreError, WakeBatch, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+    MalformedWakeDelivery, MalformedWakeReason, ReadBudget, ReleaseDisposition,
+    RunBoundaryAuthority, SessionAuthority, StoreError, WakeBatch, WakeDelivery, WakeOrigin,
+    WakeQueue, WakeState,
 };
 pub use tool::{
     ControlStateView, DetachedStatus, PreparedToolCall, ToolAdvertisement, ToolDispatchError,

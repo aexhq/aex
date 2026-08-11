@@ -101,6 +101,10 @@ pub struct FoldState {
     pub active_max_spend_cents: Option<u64>,
     /// Absolute fence for the current root run.
     pub active_deadline: Option<Timestamp>,
+    /// Sealed public output messages produced by the current root run, in journal order.
+    pub active_output_messages: Vec<MessageId>,
+    /// The effect whose outcome became ambiguous in the current root run.
+    pub ambiguous_effect: Option<EffectId>,
     /// Tool calls asked for and not yet resolved, keyed by call id.
     #[serde(with = "ordered_map_entries")]
     pub pending_calls: BTreeMap<ToolCallId, PendingCall>,
@@ -277,6 +281,17 @@ pub enum FoldError {
         /// The effect.
         effect: EffectId,
     },
+    /// A run boundary did not name the root run currently owned by this fold.
+    #[error("run boundary for {presented} does not match active run {active:?}")]
+    RunBoundaryMismatch {
+        /// The active run, when one exists.
+        active: Option<RunId>,
+        /// What the record presented.
+        presented: RunId,
+    },
+    /// A run boundary did not carry the exact public output-message sequence.
+    #[error("run boundary output messages disagree with the folded public messages")]
+    RunOutputMismatch,
     /// A budget operation was refused.
     #[error(transparent)]
     Budget(#[from] BudgetError),
@@ -419,6 +434,51 @@ mod control_projection_tests {
         assert_eq!(state.turn_started_at, Some(Timestamp::from_millis(1_000)));
         assert_eq!(state.phase, Phase::AwaitingModel);
     }
+
+    #[test]
+    fn a_root_run_boundary_returns_to_input_without_finishing_the_agent() {
+        let run = aex_internal_contracts::RunId::from_uuid7(Uuid7::compose(1, [1; 10]));
+        let input = MessageId::from_uuid7(Uuid7::compose(2, [2; 10]));
+        let output = MessageId::from_uuid7(Uuid7::compose(3, [3; 10]));
+        let mut state = FoldState::empty();
+        let admitted = JournalEntry::seal(
+            JournalSeq::ZERO,
+            Timestamp::from_millis(1_000),
+            JournalRecord::RunAdmitted {
+                run,
+                message: input,
+                content: Vec::new(),
+                max_spend_cents: 1_000,
+                deadline: Timestamp::from_millis(90_000),
+            },
+        )
+        .expect("admission seals");
+        apply_record(&mut state, &admitted).expect("admission folds");
+        state.active_output_messages.push(output);
+        let finished = JournalEntry::seal(
+            JournalSeq(1),
+            Timestamp::from_millis(2_000),
+            JournalRecord::RunFinished {
+                run,
+                reason: crate::journal::FinishReason::Completed,
+                failure: None,
+                output_messages: vec![output],
+                ambiguous_effect: None,
+            },
+        )
+        .expect("boundary seals");
+
+        apply_record(&mut state, &finished).expect("boundary folds");
+
+        assert_eq!(state.phase, Phase::AwaitingInput);
+        assert_eq!(state.active_run, None);
+        assert_eq!(state.active_message, None);
+        assert!(state.active_output_messages.is_empty());
+        assert!(
+            !state.is_finished(),
+            "the retained root accepts another message"
+        );
+    }
 }
 
 /// Folds `entries` into a state.
@@ -535,6 +595,11 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             max_spend_cents,
             deadline,
         } => {
+            // Limits named by the admitted message are per run. Model history and
+            // cumulative usage survive the boundary, while its planner turn count does
+            // not: a retained multi-turn session must give each message its own
+            // `max_turns` envelope.
+            state.assistant_turns = 0;
             state.active_run = Some(*run);
             state.active_message = Some(*message);
             state.active_max_spend_cents = Some(*max_spend_cents);
@@ -559,6 +624,7 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
         }
 
         JournalRecord::AssistantMessage {
+            public_message,
             message,
             usage,
             receipt,
@@ -599,9 +665,13 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
                 Phase::AwaitingTools
             };
             state.steps_this_turn = state.steps_this_turn.saturating_add(1);
+            if let Some(message) = public_message {
+                state.active_output_messages.push(*message);
+            }
         }
 
         JournalRecord::ToolResult {
+            public_message,
             call,
             content,
             is_error,
@@ -638,6 +708,9 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             } else {
                 state.phase = Phase::AwaitingTools;
             }
+            if let Some(message) = public_message {
+                state.active_output_messages.push(*message);
+            }
         }
 
         JournalRecord::EffectPrepared {
@@ -667,10 +740,16 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             }
             state.settled_effects.insert(*effect);
             if let SettledOutcome::OutcomeUnknown { .. } = outcome {
-                // `Interrupted` exists only as the projection of an `OutcomeUnknown`
-                // effect. Nothing else may produce it.
-                state.finish = Some(FinishReason::Interrupted);
-                state.phase = Phase::Finished;
+                // A child remains terminal for life. The root agent instead owes a
+                // `RunFinished` boundary that settles the current message and returns
+                // the retained session to input-ready state.
+                if state.parent.is_none() && state.active_run.is_some() {
+                    state.ambiguous_effect = Some(*effect);
+                    state.phase = Phase::AwaitingFinish;
+                } else {
+                    state.finish = Some(FinishReason::Interrupted);
+                    state.phase = Phase::Finished;
+                }
             } else if matches!(state.phase, Phase::Effecting { effect: open } if open == *effect) {
                 state.phase = if state.pending_calls.is_empty() {
                     Phase::AwaitingFinish
@@ -801,6 +880,41 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             preserved,
         } => {
             apply_compaction(state, *replaces_through, summary, *preserved)?;
+        }
+
+        JournalRecord::RunFinished {
+            run,
+            reason: _,
+            failure: _,
+            output_messages,
+            ambiguous_effect: _,
+        } => {
+            if state.parent.is_some() || state.active_run != Some(*run) {
+                return Err(FoldError::RunBoundaryMismatch {
+                    active: state.active_run,
+                    presented: *run,
+                });
+            }
+            if state.active_output_messages != *output_messages {
+                return Err(FoldError::RunOutputMismatch);
+            }
+            state.active_run = None;
+            state.active_message = None;
+            state.active_max_spend_cents = None;
+            state.active_deadline = None;
+            state.active_output_messages.clear();
+            state.ambiguous_effect = None;
+            state.open_user.clear();
+            state.pending_calls.clear();
+            state.resolved_calls.clear();
+            state.retired_calls.clear();
+            state.open_effects.clear();
+            state.turn_started_at = None;
+            state.assistant_turns = 0;
+            state.steps_this_turn = 0;
+            state.failure = None;
+            state.finish = None;
+            state.phase = Phase::AwaitingInput;
         }
 
         JournalRecord::AgentFinished { reason, failure } => {

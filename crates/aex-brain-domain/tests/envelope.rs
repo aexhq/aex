@@ -7,8 +7,8 @@
 use aex_brain_domain::budget::{BudgetDelta, Dimension, DimensionVector};
 use aex_brain_domain::commit::{
     ChildWrite, ControlUpdate, DecisionCommit, EffectWrite, EnvelopeViolation, FenceGuardRef,
-    MAX_ITEM_BYTES, MAX_TRANSACTION_ACTIONS, MAX_TRANSACTION_BYTES, SPAWN_PAGE_CHILDREN, event_seq,
-    fanout_pages,
+    MAX_ITEM_BYTES, MAX_TRANSACTION_ACTIONS, MAX_TRANSACTION_BYTES, PublicSessionEvent,
+    RunTransition, SPAWN_PAGE_CHILDREN, SessionHeadTransition, event_seq, fanout_pages,
 };
 use aex_brain_domain::effect::{EffectClass, EffectKind};
 use aex_brain_domain::ids::{
@@ -16,7 +16,7 @@ use aex_brain_domain::ids::{
     JoinId, JournalSeq, OwnerToken, SessionId, Timestamp,
 };
 use aex_brain_domain::journal::{FinishReason, JournalRecord, TypedFailure};
-use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
+use aex_wire::ids::{GenerationId, MessageId, PrefixedId as _, Uuid7};
 use uuid::Uuid;
 
 fn guard(tail: Option<JournalSeq>) -> FenceGuardRef {
@@ -49,6 +49,8 @@ fn decision(appends: Vec<JournalRecord>, children: Vec<ChildWrite>) -> DecisionC
         wakes: Vec::new(),
         retired_wake: None,
         events: Vec::new(),
+        messages: Vec::new(),
+        session_events: Vec::new(),
         run: None,
         session: None,
         idempotency: None,
@@ -80,11 +82,49 @@ fn the_action_ceiling_is_the_dynamodb_one() {
 }
 
 #[test]
-fn a_minimal_decision_costs_its_appends_plus_one_control_update() {
+fn a_minimal_decision_costs_its_append_head_guard_and_control_update() {
     let cost = decision(vec![finished()], Vec::new())
         .validate()
-        .expect("one append plus a control update fits");
-    assert_eq!(cost.actions, 2);
+        .expect("one append plus the two fixed authority actions fits");
+    assert_eq!(cost.actions, 3);
+}
+
+#[test]
+fn a_root_run_boundary_has_exactly_six_fixed_actions() {
+    let run = aex_internal_contracts::RunId::from_uuid7(Uuid7::compose(10, [10; 10]));
+    let message = MessageId::from_uuid7(Uuid7::compose(11, [11; 10]));
+    let mut boundary = decision(
+        vec![JournalRecord::RunFinished {
+            run,
+            reason: FinishReason::Completed,
+            failure: None,
+            output_messages: Vec::new(),
+            ambiguous_effect: None,
+        }],
+        Vec::new(),
+    );
+    boundary.run = Some(RunTransition {
+        run,
+        finish: FinishReason::Completed,
+        failure: None,
+        output_messages: Vec::new(),
+        cancellation: None,
+        ambiguous_effect: None,
+    });
+    boundary.session = Some(SessionHeadTransition {
+        status: "idle".to_owned(),
+        revision: 7,
+    });
+    boundary.session_events.push(PublicSessionEvent {
+        event_seq: event_seq(JournalSeq::ZERO, 0),
+        message,
+        outcome: "succeeded".to_owned(),
+        at: Timestamp::from_millis(12),
+    });
+
+    let cost = boundary.validate().expect("the terminal boundary fits");
+    assert_eq!(cost.actions, 6);
+    assert_eq!(6 + 2 * 47, MAX_TRANSACTION_ACTIONS);
 }
 
 #[test]
@@ -141,12 +181,12 @@ fn spawn_page(children: u32) -> DecisionCommit {
 #[test]
 fn the_page_size_is_derived_from_the_action_envelope_not_guessed() {
     // A child costs a control put, an index put and a queued-index put; the page also
-    // carries the parent control update, the fanout intent and the session budget update.
-    // That is `3n + 3 <= 100`, so 32. This asserts the derivation, not the constant.
+    // carries the session guard, parent control update, fanout intent and session budget.
+    // That is `3n + 4 <= 100`, so 32. This asserts the derivation, not the constant.
     let full = spawn_page(SPAWN_PAGE_CHILDREN)
         .validate()
         .expect("the derived page size fits one transaction");
-    assert_eq!(full.actions, 3 * SPAWN_PAGE_CHILDREN as usize + 3);
+    assert_eq!(full.actions, 3 * SPAWN_PAGE_CHILDREN as usize + 4);
     assert!(full.actions <= MAX_TRANSACTION_ACTIONS, "{full:?}");
 
     let widest = (0..64_u32)

@@ -9,7 +9,8 @@
 //!   and advancing the fence would fence out the very owner doing the renewing.
 
 use aex_brain_app::ports::{
-    BoxFuture, Claim, ClaimError, LeaseStore, ReleaseDisposition, SessionAuthority, StoreError,
+    BoxFuture, Claim, ClaimError, LeaseStore, ReleaseDisposition, RunBoundaryAuthority,
+    SessionAuthority, StoreError,
 };
 use aex_brain_domain::ids::{AgentKey, Fence, OwnerToken, Timestamp};
 use aex_session_dynamodb::attr::{Row, n, s, stamp};
@@ -54,14 +55,58 @@ async fn load_session_authority(
         .send()
         .await
         .map_err(|error| ClaimError::Store(transport("claim session authority", &error)))?;
-    session_authority_from_item(output.item.as_ref(), session)
+    let head = output.item.as_ref().ok_or(ClaimError::Terminal)?;
+    let canonical = decode_session(head, session)?;
+    let mut authority = SessionAuthority {
+        workspace: canonical.workspace,
+        organization: canonical.organization,
+        deletion_epoch: canonical.deletion.epoch.0,
+        active: None,
+    };
+    if let Some(run_id) = canonical.active_run {
+        let run_key = aex_session_dynamodb::keys::run(session, run_id);
+        let output = store
+            .client()
+            .get_item()
+            .table_name(store.table())
+            .set_key(Some(item_key(&run_key.pk, &run_key.sk)))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| ClaimError::Store(transport("claim active run authority", &error)))?;
+        let item = output.item.as_ref().ok_or_else(|| {
+            ClaimError::Store(StoreError::Undecodable {
+                location: "active run".to_owned(),
+                reason: "the session head names a missing run".to_owned(),
+            })
+        })?;
+        let run =
+            aex_session_dynamodb::authority_codec::decode_domain_run(item, canonical.workspace)
+                .map_err(|error| {
+                    ClaimError::Store(StoreError::Undecodable {
+                        location: "active run".to_owned(),
+                        reason: error.to_string(),
+                    })
+                })?;
+        if run.id != run_id || run.session != canonical.id || run.status.is_terminal() {
+            return Err(ClaimError::Store(StoreError::Undecodable {
+                location: "active run".to_owned(),
+                reason: "the run disagrees with the session head or is already terminal".to_owned(),
+            }));
+        }
+        authority.active = Some(Box::new(RunBoundaryAuthority {
+            session: canonical,
+            run,
+        }));
+    }
+    Ok(authority)
 }
 
 fn session_authority_from_item(
     item: Option<&aex_session_dynamodb::attr::Item>,
     expected_session: SessionId,
 ) -> Result<SessionAuthority, ClaimError> {
-    // A durable wake or agent row may outlive the purged session that owned it.
+    // A durable wake or agent row may outlive the deleted session that owned it.
     // That stale delivery is terminal work, not malformed storage to retry.
     let Some(item) = item else {
         return Err(ClaimError::Terminal);
@@ -73,6 +118,19 @@ fn decode_session_authority(
     item: &aex_session_dynamodb::attr::Item,
     expected_session: SessionId,
 ) -> Result<SessionAuthority, ClaimError> {
+    let session = decode_session(item, expected_session)?;
+    Ok(SessionAuthority {
+        workspace: session.workspace,
+        organization: session.organization,
+        deletion_epoch: session.deletion.epoch.0,
+        active: None,
+    })
+}
+
+fn decode_session(
+    item: &aex_session_dynamodb::attr::Item,
+    expected_session: SessionId,
+) -> Result<aex_session_domain::Session, ClaimError> {
     let row = Row::bind(item, aex_session_dynamodb::codec::SESSION_HEAD).map_err(|error| {
         ClaimError::Store(StoreError::Undecodable {
             location: "session head".to_owned(),
@@ -102,11 +160,7 @@ fn decode_session_authority(
     if !session.deletion.state.admits_work() {
         return Err(ClaimError::Terminal);
     }
-    Ok(SessionAuthority {
-        workspace: session.workspace,
-        organization: session.organization,
-        deletion_epoch: session.deletion.epoch.0,
-    })
+    Ok(session)
 }
 
 impl LeaseStore for BrainStore {
@@ -370,11 +424,7 @@ mod tests {
 
     #[test]
     fn every_non_live_deletion_state_is_terminal_to_a_claim() {
-        for state in [
-            DeletionState::Trashed,
-            DeletionState::Purging,
-            DeletionState::Purged,
-        ] {
+        for state in [DeletionState::Deleting, DeletionState::Deleted] {
             let mut session = session_fixture();
             session.deletion.state = state;
             let item = aex_session_dynamodb::authority_codec::encode_session(&session)
