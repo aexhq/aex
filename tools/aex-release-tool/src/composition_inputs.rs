@@ -662,8 +662,7 @@ mod tests {
                 ("model".to_owned(), digest(2)),
                 (
                     "tool".to_owned(),
-                    crate::artifact::tool_catalog_digest(root)
-                        .expect("source-bound tool catalog"),
+                    crate::artifact::tool_catalog_digest(root).expect("source-bound tool catalog"),
                 ),
             ]),
         }
