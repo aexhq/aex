@@ -14,6 +14,8 @@
 {"kind":"operation","text":"op_01kyw2qa51ehascntrb5d5pq2x"}
 {"kind":"approval","text":"apr_01kyw2qa52fde9tqjzc1gp4rv4"}
 {"kind":"generation","text":"gen_01kyw2qa53e9ht8sb6cxm6jtkb"}
+{"kind":"file_upload","text":"ful_01kyw2qa53e9ht8sb6cxm6jtkb"}
+{"kind":"file_download","text":"fdl_01kyw2qa54f5napv3ddsqq0wbj"}
 {"kind":"observation","text":"obs_01kyw2qa54f5napv3ddsqq0wbj"}
 {"kind":"telemetry_batch","text":"bch_01kyw2qa55e1rv4wvmenv7ey3s"}
 {"kind":"telemetry_gap","text":"gap_01kyw2qa56exwbjykvfhyqwzw0"}

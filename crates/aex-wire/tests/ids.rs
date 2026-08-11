@@ -31,15 +31,15 @@ struct InvalidCase {
 
 /// Parses `text` as the kind named by `key`, returning whether it was accepted.
 ///
-/// This is the one place the 22 concrete newtypes are enumerated; every other
+/// This is the one place the 24 concrete newtypes are enumerated; every other
 /// test drives them through this function, so adding a kind cannot silently
 /// leave a type untested.
 fn parse_as(kind: IdKind, text: &str) -> bool {
     use aex_wire::ids::{
-        AgentId, ApiKeyId, ApprovalId, ExportId, GenerationId, InvitationId, MeasurementId,
-        MembershipId, MessageId, ObservationId, OperationId, OrganizationId, ProviderCredentialId,
-        SessionId, StatementId, TelemetryBatchId, TelemetryGapId, ToolCallId, UploadId, UserId,
-        WorkspaceId,
+        AgentId, ApiKeyId, ApprovalId, ExportId, FileDownloadId, FileUploadId, GenerationId,
+        InvitationId, MeasurementId, MembershipId, MessageId, ObservationId, OperationId,
+        OrganizationId, ProviderCredentialId, SessionId, StatementId, TelemetryBatchId,
+        TelemetryGapId, ToolCallId, UploadId, UserId, WorkspaceId,
     };
     match kind {
         IdKind::User => UserId::parse(text).is_ok(),
@@ -56,6 +56,8 @@ fn parse_as(kind: IdKind, text: &str) -> bool {
         IdKind::Operation => OperationId::parse(text).is_ok(),
         IdKind::Approval => ApprovalId::parse(text).is_ok(),
         IdKind::Generation => GenerationId::parse(text).is_ok(),
+        IdKind::FileUpload => FileUploadId::parse(text).is_ok(),
+        IdKind::FileDownload => FileDownloadId::parse(text).is_ok(),
         IdKind::Observation => ObservationId::parse(text).is_ok(),
         IdKind::TelemetryBatch => TelemetryBatchId::parse(text).is_ok(),
         IdKind::TelemetryGap => TelemetryGapId::parse(text).is_ok(),
