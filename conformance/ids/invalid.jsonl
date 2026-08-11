@@ -53,12 +53,6 @@
 {"kind":"message","reason":"non_crockford_character","text":"msg_01kyw2qa4xf0ivmesw7mz3yg21"}
 {"kind":"message","reason":"uppercase_suffix","text":"msg_01KYW2QA4XF0WVMESW7MZ3YG21"}
 {"kind":"message","reason":"not_uuid_v7","text":"msg_01kyw2qa4x90wvmesw7mz3yg21"}
-{"kind":"run","reason":"wrong_prefix","text":"agt_01kyw2qa4yfx082gj38h2mcht8"}
-{"kind":"run","reason":"short_suffix","text":"run_01kyw2qa4yfx082gj38h2mcht"}
-{"kind":"run","reason":"long_suffix","text":"run_01kyw2qa4yfx082gj38h2mcht8i"}
-{"kind":"run","reason":"non_crockford_character","text":"run_01kyw2qa4yfxi82gj38h2mcht8"}
-{"kind":"run","reason":"uppercase_suffix","text":"run_01KYW2QA4YFX082GJ38H2MCHT8"}
-{"kind":"run","reason":"not_uuid_v7","text":"run_01kyw2qa4y9x082gj38h2mcht8"}
 {"kind":"agent","reason":"wrong_prefix","text":"tcl_01kyw2qa4zes3rgjaa9d64tkjf"}
 {"kind":"agent","reason":"short_suffix","text":"agt_01kyw2qa4zes3rgjaa9d64tkj"}
 {"kind":"agent","reason":"long_suffix","text":"agt_01kyw2qa4zes3rgjaa9d64tkjfi"}

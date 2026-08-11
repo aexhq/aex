@@ -31,7 +31,7 @@ struct InvalidCase {
 
 /// Parses `text` as the kind named by `key`, returning whether it was accepted.
 ///
-/// This is the one place the 24 concrete newtypes are enumerated; every other
+/// This is the one place the concrete newtypes are enumerated; every other
 /// test drives them through this function, so adding a kind cannot silently
 /// leave a type untested.
 fn parse_as(kind: IdKind, text: &str) -> bool {
