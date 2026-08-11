@@ -31,7 +31,7 @@
 
 use aex_internal_contracts::usage as contracts;
 use aex_internal_contracts::usage::RatingRequest;
-use aex_internal_contracts::{PricingVersion, SchemaVersion};
+use aex_internal_contracts::{PricingVersion, RunId, SchemaVersion};
 use aex_usage_domain::fact::{FactKind, UsageFact};
 use aex_usage_domain::identity::FACT_ID_PREFIX;
 use aex_usage_domain::measurement::Measurement;
@@ -163,7 +163,7 @@ fn contract_fact(fact: &UsageFact) -> Result<contracts::UsageFact, OutboxError> 
         region,
         attribution: contracts::Attribution {
             session: parse_attributed("attribution.session", fact.attribution.session.as_ref())?,
-            run: parse_attributed("attribution.run", fact.attribution.run.as_ref())?,
+            run: parse_internal_run("attribution.run", fact.attribution.run.as_ref())?,
             operation: parse_attributed(
                 "attribution.operation",
                 fact.attribution.operation.as_ref(),
@@ -277,6 +277,20 @@ where
     D: std::fmt::Display,
 {
     value.map(|id| parse_id(field, &id.to_string())).transpose()
+}
+
+/// Parses one private execution identity without re-exposing it through the
+/// public [`PrefixedId`] registry.
+fn parse_internal_run<D>(
+    field: &'static str,
+    value: Option<&D>,
+) -> Result<Option<RunId>, OutboxError>
+where
+    D: std::fmt::Display,
+{
+    value
+        .map(|id| RunId::parse(&id.to_string()).map_err(|error| foreign(field, error.to_string())))
+        .transpose()
 }
 
 /// Shapes one grammar refusal.
