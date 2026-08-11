@@ -50,13 +50,15 @@ pub const MATERIALIZE_CHUNK: usize = 25;
 /// page writes both its exact scope directory and the aggregate workspace
 /// directory that workspace GSIs use. Together with the deletion fence,
 /// observation puts and exact page ledger this keeps the worst transaction at
-/// 85 actions, below DynamoDB's 100-action ceiling.
+/// 85 actions, below `DynamoDB`'s 100-action ceiling.
 pub const MATERIALIZATION_MAX_SEGMENT_UPDATES: usize =
     2 * (MATERIALIZE_CHUNK + Signal::AUTHORITY.len());
 
 /// Maximum actions in one materialization transaction.
 pub const MATERIALIZATION_MAX_ACTIONS: usize =
     1 + MATERIALIZE_CHUNK + MATERIALIZATION_MAX_SEGMENT_UPDATES + 1;
+
+const _: () = assert!(MATERIALIZATION_MAX_ACTIONS <= limits::DDB_TRANSACT_MAX_ACTIONS);
 
 /// How many materialization chunks one batch drives at once.
 ///
@@ -237,6 +239,17 @@ pub struct AdmissionRequest {
     pub intent_digest: String,
     /// The normalized observations.
     pub observations: Vec<PreparedObservation>,
+}
+
+/// Exact inputs transaction C binds into one committed admission.
+struct CommitPage<'a> {
+    request: &'a AdmissionRequest,
+    plan: &'a AdmissionPlan,
+    allocations: &'a [Allocation],
+    workspace_allocations: &'a [Allocation],
+    page_digests: &'a [String],
+    pinned_epoch: u64,
+    now: Timestamp,
 }
 
 /// What a committed admission reports back to the caller.
@@ -494,15 +507,15 @@ impl AdmissionAuthority {
                 limit: limits::OBS_CLOCK_SKEW_MAX_MS,
             });
         }
-        self.commit(
+        self.commit(CommitPage {
             request,
-            &plan,
-            &allocations,
-            &workspace_allocations,
-            &page_digests,
+            plan: &plan,
+            allocations: &allocations,
+            workspace_allocations: &workspace_allocations,
+            page_digests: &page_digests,
             pinned_epoch,
             now,
-        )
+        })
         .await?;
 
         // Always consume the durable winner, including after an ambiguous C
@@ -789,10 +802,10 @@ impl AdmissionAuthority {
                         Some(StoredReceiptRecord {
                             state: StoredReceipt::Aborted,
                             ..
-                        }),
+                        })
+                        | None,
                         _,
-                    )
-                    | (None, _) => Err(AuthorityError::provider("TransactWriteItems", error)),
+                    ) => Err(AuthorityError::provider("TransactWriteItems", error)),
                 }
             }
         }
@@ -898,11 +911,14 @@ impl AdmissionAuthority {
         let rows =
             crate::staging::settle_bounded_ordered(reads, MAX_CONCURRENT_FRONTIER_READS).await?;
         let (exact, workspace) = rows.split_at(ordered.len());
+        let workspace_allocations = if reads_workspace {
+            allocate_in_signal_order(&ordered, workspace, &request.observations)
+        } else {
+            Vec::new()
+        };
         Ok((
             allocate_in_signal_order(&ordered, exact, &request.observations),
-            reads_workspace
-                .then(|| allocate_in_signal_order(&ordered, workspace, &request.observations))
-                .unwrap_or_default(),
+            workspace_allocations,
         ))
     }
 
@@ -973,16 +989,16 @@ impl AdmissionAuthority {
     /// Small, bounded and independent of the record count: the receipt flip
     /// carries one digest per staged page rather than one entry per record, so
     /// the action count is the same at one point and at two thousand.
-    async fn commit(
-        &self,
-        request: &AdmissionRequest,
-        plan: &AdmissionPlan,
-        allocations: &[Allocation],
-        workspace_allocations: &[Allocation],
-        page_digests: &[String],
-        pinned_epoch: u64,
-        now: Timestamp,
-    ) -> Result<(), AuthorityError> {
+    async fn commit(&self, page: CommitPage<'_>) -> Result<(), AuthorityError> {
+        let CommitPage {
+            request,
+            plan,
+            allocations,
+            workspace_allocations,
+            page_digests,
+            pinned_epoch,
+            now,
+        } = page;
         let mut actions = vec![self.publish_receipt(request, allocations, page_digests, now)?];
         for allocation in allocations {
             actions.push(self.advance_frontier(request, &request.scope, allocation, now)?);
@@ -1183,8 +1199,8 @@ impl AdmissionAuthority {
         now: Timestamp,
     ) -> Result<TransactWriteItem, AuthorityError> {
         let shard = spool_shard(&request.batch_id.to_string());
-        let spool_pk = keys::spool_pk(request.workspace, shard);
-        let spool_sk = format!("{}#{}", now.to_wire(), request.batch_id);
+        let spool_partition = keys::spool_pk(request.workspace, shard);
+        let committed_entry = format!("{}#{}", now.to_wire(), request.batch_id);
         let update = Update::builder()
             .table_name(&self.table)
             .key(PK, AttributeValue::S(keys::scope_batch_pk(&request.scope)))
@@ -1203,8 +1219,8 @@ impl AdmissionAuthority {
             .expression_attribute_values(":committed", AttributeValue::S("committed".to_owned()))
             .expression_attribute_values(":preparing", AttributeValue::S("preparing".to_owned()))
             .expression_attribute_values(":now", AttributeValue::S(now.to_wire()))
-            .expression_attribute_values(":spool_pk", AttributeValue::S(spool_pk))
-            .expression_attribute_values(":spool_sk", AttributeValue::S(spool_sk))
+            .expression_attribute_values(":spool_pk", AttributeValue::S(spool_partition))
+            .expression_attribute_values(":spool_sk", AttributeValue::S(committed_entry))
             .expression_attribute_values(
                 ":batch_pk",
                 AttributeValue::S(keys::batch_pk(request.workspace, request.batch_id)),
@@ -3139,9 +3155,6 @@ mod tests {
 
         assert_eq!(2 * deltas.len(), MATERIALIZATION_MAX_SEGMENT_UPDATES);
         assert_eq!(MATERIALIZATION_MAX_ACTIONS, 85);
-        assert!(
-            MATERIALIZATION_MAX_ACTIONS <= aex_observation_domain::limits::DDB_TRANSACT_MAX_ACTIONS
-        );
         assert_eq!(segment_delta_digest(&deltas).len(), 64);
     }
 
