@@ -37,13 +37,12 @@ use aex_secret_custody_dynamodb::codec::{CredentialState, ProviderCredential as 
 use aex_secret_custody_dynamodb::expressions;
 use aex_secret_custody_dynamodb::store::CustodyStore;
 use aex_secret_custody_dynamodb::store::SecretCustodyStore;
-use aex_session_app::plan::Planned;
-use aex_session_app::ports::AuthorityCommitter as _;
-use aex_session_app::{SessionCommand, restore_session, stop_session, trash_session};
+use aex_session_app::{LifecycleAdmissionOutcome, LifecycleCommand, admit_lifecycle_operation};
 use aex_session_dynamodb::app_authority::{
-    ApiHintSink, AuthorizedAccount, DynamoAuthorityCommitter, RequestClock, SessionCommandReads,
+    ApiHintSink, AuthorizedAccount, DynamoAuthorityCommitter, RequestClock,
+    SessionAuthorityExternal, SessionCommandReads,
 };
-use aex_session_dynamodb::application_plan::SessionBinding;
+use aex_session_dynamodb::application_plan::{FamilyCompilers, SessionBinding};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, RegionalTables, TransactionPlan};
@@ -57,20 +56,19 @@ use aex_usage_query_dynamodb::store::UsageProjectionReads;
 use aex_wire::cursor::Cursor;
 use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
-use aex_wire::ids::{
-    OperationId, ProviderCredentialId, ResourceName, RunId, SessionId, WorkspaceId,
-};
+use aex_wire::ids::{OperationId, ProviderCredentialId, ResourceName, SessionId, WorkspaceId};
 use aex_wire::limits::LimitId;
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::server::{
     AcceptKind, Accepted, ApprovalsApi, Created, NoContent, ProviderCredentialsApi,
-    RegionalOperationsApi, RegistryApi, RequestContext as WireContext, RouteGroup, SecretsApi,
-    SessionsApi, WithETag, WorkspaceApi, dispatch_approvals, dispatch_files,
+    RegionalOperationsApi, RegistryApi, RequestContext as WireContext, RouteGroup, SessionsApi,
+    WithETag, WorkspaceApi, dispatch_approvals, dispatch_files,
     dispatch_provider_credentials, dispatch_regional_operations, dispatch_registry,
-    dispatch_secrets, dispatch_sessions, dispatch_usage, dispatch_workspace,
+    dispatch_sessions, dispatch_usage, dispatch_workspace,
 };
 use aex_wire::types::Timestamp;
+use aex_work_dynamodb::WorkApplicationCompiler;
 
 /// The adapters and start-up bindings every request shares.
 ///
@@ -385,15 +383,21 @@ impl Routes {
     /// the edge has already parsed it. An absent one is an invalid request, not
     /// a server-minted identity: a server-minted identity could never be
     /// replayed, which is the whole point of the header.
-    fn session_command(&self, session_id: SessionId, route: RouteId) -> WireResult<SessionCommand> {
+    fn lifecycle_command(
+        &self,
+        session_id: SessionId,
+        route: RouteId,
+        kind: OperationKind,
+    ) -> WireResult<LifecycleCommand> {
         let operation = self.cx.operation_id.ok_or_else(|| {
             WireError::new(ErrorCode::InvalidRequest).with_message("operation id")
         })?;
-        Ok(SessionCommand {
+        Ok(LifecycleCommand {
             workspace: self.cx.auth.workspace_id,
             session: session_id,
             operation,
             intent: intent_of(route, self.cx.auth.workspace_id, session_id),
+            kind,
         })
     }
 
@@ -423,26 +427,32 @@ impl Routes {
         })
     }
 
-    /// Submits one planned command and projects the operation it admitted.
-    async fn admit(
+    async fn admit_lifecycle_route(
         &self,
         session_id: SessionId,
-        planned: Planned<aex_operation_domain::Operation>,
+        route: RouteId,
+        kind: OperationKind,
     ) -> WireResult<Accepted> {
-        let committer = DynamoAuthorityCommitter::new(
-            self.shared.authority.clone(),
-            self.shared.tables.clone(),
-            SessionBinding {
-                workspace: self.cx.auth.workspace_id,
-                organization: self.cx.auth.organization_id,
-                session: session_id,
-            },
-            self.now()?,
-            ApiHintSink,
-        );
-        let projected = match committer.commit(&planned.plan).await {
-            Ok(_) => planned.projected,
-            Err(failure) => self.recover(&failure, &planned.projected).await?,
+        let command = self.lifecycle_command(session_id, route, kind)?;
+        let bindings = self.bindings()?;
+        let outcome = admit_lifecycle_operation(&bindings.context(), &command)
+            .await
+            .map_err(|error| app_failure(&error))?;
+        self.admit_lifecycle(session_id, outcome).await
+    }
+
+    /// Submits one lifecycle admission and projects its durable operation.
+    async fn admit_lifecycle(
+        &self,
+        session_id: SessionId,
+        outcome: LifecycleAdmissionOutcome,
+    ) -> WireResult<Accepted> {
+        let projected = match outcome {
+            LifecycleAdmissionOutcome::Replayed(operation) => operation,
+            LifecycleAdmissionOutcome::Planned(planned) => {
+                self.commit_lifecycle(session_id, &planned.plan, &planned.projected)
+                    .await?
+            }
         };
         let operation = projected
             .public()
@@ -451,77 +461,79 @@ impl Routes {
         Ok(Accepted(operation))
     }
 
-    /// Resolves a refused commit against the durable facts (D-10).
-    ///
-    /// Asserted on the rows, never on a status code. Rows 1-6 need no extra
-    /// read at all; only the two transport-ambiguous rows pay for the strongly
-    /// consistent point read below, and `OperationStore` is already the
-    /// strongly consistent operation authority, so there is no second reader to
-    /// keep in step.
-    async fn recover(
+    async fn commit_lifecycle(
         &self,
-        failure: &aex_session_app::CommitError,
+        session_id: SessionId,
+        plan: &aex_session_app::SessionTransaction,
         attempted: &aex_operation_domain::Operation,
     ) -> WireResult<aex_operation_domain::Operation> {
-        let answer = aex_session_app::ProviderAnswer::of(failure);
-        let needs_read = matches!(
-            answer,
-            aex_session_app::ProviderAnswer::Ambiguous(_)
-                | aex_session_app::ProviderAnswer::ConditionFailed(_)
+        let binding = SessionBinding {
+            workspace: self.cx.auth.workspace_id,
+            organization: self.cx.auth.organization_id,
+            session: session_id,
+        };
+        let committer = DynamoAuthorityCommitter::new(
+            self.shared.authority.clone(),
+            self.shared.tables.clone(),
+            binding,
+            self.now()?,
+            ApiHintSink,
         );
-        let stored = if needs_read {
-            self.shared
+        let operations = SessionAuthorityExternal::new(binding);
+        let work = WorkApplicationCompiler;
+        let compilers = FamilyCompilers::new()
+            .with(
+                aex_session_app::TableFamily::OperationAuthority,
+                &operations,
+            )
+            .with(aex_session_app::TableFamily::WorkAuthority, &work);
+        match committer
+            .commit_replayable_resolving(
+                plan,
+                &compilers,
+                aex_session_dynamodb::Resolution::TargetItem,
+            )
+            .await
+        {
+            Ok(()) => Ok(attempted.clone()),
+            Err(error) => self.recover_lifecycle(&error, attempted).await,
+        }
+    }
+
+    async fn recover_lifecycle(
+        &self,
+        failure: &StoreError,
+        attempted: &aex_operation_domain::Operation,
+    ) -> WireResult<aex_operation_domain::Operation> {
+        if matches!(
+            failure,
+            StoreError::PreconditionFailed { .. } | StoreError::CommitAmbiguous { .. }
+        ) {
+            let stored = self
+                .shared
                 .operations
                 .load(self.cx.auth.workspace_id, attempted.id)
                 .await
-                .map_err(|error| authority_failure(&error))?
-                .map(|stored| stored.record)
-        } else {
-            None
-        };
-        let resolution = aex_session_app::resolve(
-            &answer,
-            aex_session_app::Attempted {
-                workspace: self.cx.auth.workspace_id,
-                operation: attempted.id,
-                intent: attempted.intent,
-            },
-            &aex_session_app::Observed {
-                operation: stored,
-                // The command read the head before planning, so a session that
-                // was absent would have refused before any commit.
-                session_present: true,
-            },
-        );
-        match resolution {
-            // Rows 1, 3 and the unlatched half of 7: the write landed and the
-            // caller is shown the stored envelope, not a second write.
-            aex_session_app::Resolution::Replay(operation) => Ok(*operation),
-            aex_session_app::Resolution::NotFound => Err(WireError::new(ErrorCode::NotFound)),
-            aex_session_app::Resolution::IdempotencyConflict => {
-                Err(WireError::new(ErrorCode::OperationIdempotencyConflict))
+                .map_err(|error| authority_failure(&error))?;
+            if let Some(stored) = stored {
+                let observed = stored.record;
+                if observed.workspace == attempted.workspace
+                    && observed.session == attempted.session
+                    && observed.scope == attempted.scope
+                    && observed.kind == attempted.kind
+                    && observed.intent == attempted.intent
+                {
+                    return Ok(observed);
+                }
+                return Err(WireError::new(ErrorCode::OperationIdempotencyConflict));
             }
-            aex_session_app::Resolution::GuardMoved(_) => {
-                Err(WireError::new(ErrorCode::PreconditionFailed))
-            }
-            // Row 7. The identity is stable, so re-submitting it unchanged is
-            // the caller's next step and the code says exactly that.
-            aex_session_app::Resolution::Resubmit => {
-                Err(WireError::new(ErrorCode::CommitOutcomeUnknown))
-            }
-            // Row 8. Latched and stuck. The operation may never become
-            // `Failed`, so the customer is told the outcome is unknown and the
-            // condition is made loud for an operator.
-            aex_session_app::Resolution::Quarantine => {
-                eprintln!(
-                    "session-stream-api: operation {} is latched and its commit outcome is \
-                     unknown; it is a manual-review candidate",
-                    attempted.id
-                );
-                Err(WireError::new(ErrorCode::CommitOutcomeUnknown))
-            }
-            aex_session_app::Resolution::Retry => Err(commit_failure(failure)),
+            return Err(if matches!(failure, StoreError::CommitAmbiguous { .. }) {
+                WireError::new(ErrorCode::CommitOutcomeUnknown)
+            } else {
+                WireError::new(ErrorCode::PreconditionFailed)
+            });
         }
+        Err(authority_failure(failure))
     }
 }
 
@@ -595,27 +607,6 @@ fn app_failure(error: &aex_session_app::AppError) -> WireError {
         eprintln!("session-stream-api: a mounted route reached the unowned `{kind}` port: {seam}");
     }
     WireError::new(error.code())
-}
-
-/// Maps one commit refusal onto the stable public code.
-fn commit_failure(error: &aex_session_app::CommitError) -> WireError {
-    match error {
-        // A guard the command asserted did not hold: the request was built
-        // against a session that has since moved. Never a server fault.
-        aex_session_app::CommitError::ConditionFailed { .. } => {
-            WireError::new(ErrorCode::PreconditionFailed)
-        }
-        aex_session_app::CommitError::Throttled => WireError::new(ErrorCode::RateLimited),
-        aex_session_app::CommitError::Unavailable => WireError::new(ErrorCode::UpstreamError),
-        // Rows 6-8 of the unknown-outcome matrix. The operation identity is
-        // caller-minted and stable, so the caller resolves this by polling
-        // `regional_operation_get` or by re-submitting the *same* identity
-        // unchanged. It must never be reported as a definite failure.
-        aex_session_app::CommitError::Ambiguous { .. } => {
-            WireError::new(ErrorCode::CommitOutcomeUnknown)
-        }
-        aex_session_app::CommitError::PlanRejected(_) => WireError::new(ErrorCode::InternalError),
-    }
 }
 
 fn public_operation(stored: &StoredOperation) -> WireResult<Option<models::Operation>> {
@@ -879,6 +870,20 @@ impl ApprovalsApi for Routes {
 }
 
 impl SessionsApi for Routes {
+    async fn session_cancel(
+        &self,
+        _cx: &WireContext,
+        session_id: SessionId,
+        _body: models::EmptyRequest,
+    ) -> WireResult<Accepted> {
+        self.admit_lifecycle_route(
+            session_id,
+            RouteId::SessionCancel,
+            OperationKind::SessionCancel,
+        )
+        .await
+    }
+
     async fn session_create(
         &self,
         _cx: &WireContext,
@@ -887,13 +892,15 @@ impl SessionsApi for Routes {
         Err(not_served(RouteId::SessionCreate))
     }
 
-    async fn session_credential_rebind(
+    async fn session_delete(
         &self,
         _cx: &WireContext,
         _session_id: SessionId,
-        _body: models::SessionCredentialRebindRequest,
+        _body: models::EmptyRequest,
     ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionCredentialRebind))
+        // Deletion remains unmounted until the cross-owner payload and
+        // telemetry cascade can prove completion before publishing a tombstone.
+        Err(not_served(RouteId::SessionDelete))
     }
 
     async fn session_get(
@@ -972,139 +979,46 @@ impl SessionsApi for Routes {
         projection::session_message_page(&page.items, next).map_err(WireError::from)
     }
 
-    async fn session_persist(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::SessionPersistRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionPersist))
-    }
-
-    async fn session_purge(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::SessionPurgeRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionPurge))
-    }
-
-    async fn session_restore(
+    async fn session_resume(
         &self,
         _cx: &WireContext,
         session_id: SessionId,
         _body: models::EmptyRequest,
     ) -> WireResult<Accepted> {
-        let command = self.session_command(session_id, RouteId::SessionRestore)?;
-        let bindings = self.bindings()?;
-        let planned = restore_session(&bindings.context(), &command)
-            .await
-            .map_err(|error| app_failure(&error))?;
-        self.admit(session_id, planned).await
-    }
-
-    async fn session_run_get(
-        &self,
-        _cx: &WireContext,
-        session_id: SessionId,
-        run_id: RunId,
-    ) -> WireResult<models::Run> {
-        match self
-            .shared
-            .sessions
-            .load_run(self.cx.auth.workspace_id, session_id, run_id)
-            .await
-            .map_err(|error| authority_failure(&error))?
-        {
-            SessionScoped::Missing | SessionScoped::Active(None) => {
-                Err(WireError::new(ErrorCode::NotFound))
-            }
-            SessionScoped::Deleted => Err(WireError::new(ErrorCode::SessionDeleted)),
-            SessionScoped::Active(Some(run)) => Ok(projection::session_run(&run)),
-        }
-    }
-
-    async fn session_runs_list(
-        &self,
-        _cx: &WireContext,
-        session_id: SessionId,
-        query: models::SessionRunsListQuery,
-    ) -> WireResult<models::RunPage> {
-        let budget = budget(query.limit)?;
-        let (after, expected_deletion_epoch) = self
-            .resume_session_collection(
-                RouteId::SessionRunsList,
-                "session.runs",
-                session_id,
-                query.cursor.as_ref(),
-            )
-            .await?;
-        let page = match self
-            .shared
-            .sessions
-            .page_runs(
-                self.cx.auth.workspace_id,
-                session_id,
-                expected_deletion_epoch,
-                budget,
-                after.as_ref(),
-            )
-            .await
-            .map_err(|error| authority_failure(&error))?
-        {
-            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
-            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
-            SessionScoped::Active(page) => page,
-        };
-        let binding = self.cursor_binding_for_session_epoch(
-            RouteId::SessionRunsList,
-            "session.runs",
+        self.admit_lifecycle_route(
             session_id,
-            page.deletion_epoch,
-        )?;
-        if query.cursor.is_some() {
-            self.resume(query.cursor.as_ref(), &binding)?;
-        }
-        let next = self.continuation(page.next.as_ref(), &binding)?;
-        Ok(projection::session_run_page(&page.items, next))
+            RouteId::SessionResume,
+            OperationKind::SessionResume,
+        )
+        .await
     }
 
-    async fn session_stop(
+    async fn session_suspend(
         &self,
         _cx: &WireContext,
         session_id: SessionId,
         _body: models::EmptyRequest,
     ) -> WireResult<Accepted> {
-        let command = self.session_command(session_id, RouteId::SessionStop)?;
-        let bindings = self.bindings()?;
-        let planned = stop_session(&bindings.context(), &command)
-            .await
-            .map_err(|error| app_failure(&error))?;
-        self.admit(session_id, planned).await
+        self.admit_lifecycle_route(
+            session_id,
+            RouteId::SessionSuspend,
+            OperationKind::SessionSuspend,
+        )
+        .await
     }
 
-    async fn session_trash(
+    async fn session_terminate(
         &self,
         _cx: &WireContext,
         session_id: SessionId,
         _body: models::EmptyRequest,
     ) -> WireResult<Accepted> {
-        let command = self.session_command(session_id, RouteId::SessionTrash)?;
-        let bindings = self.bindings()?;
-        let planned = trash_session(&bindings.context(), &command)
-            .await
-            .map_err(|error| app_failure(&error))?;
-        self.admit(session_id, planned).await
-    }
-
-    async fn session_workspace_discard(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::SessionWorkspaceDiscardRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionWorkspaceDiscard))
+        self.admit_lifecycle_route(
+            session_id,
+            RouteId::SessionTerminate,
+            OperationKind::SessionTerminate,
+        )
+        .await
     }
 
     async fn sessions_list(
@@ -1173,107 +1087,6 @@ impl SessionsApi for Routes {
             next_cursor: self.continuation(page.next.as_ref(), &binding)?,
         })
     }
-}
-
-impl SecretsApi for Routes {
-    async fn secret_delete(&self, _cx: &WireContext, _name: ResourceName) -> WireResult<NoContent> {
-        Err(not_served(RouteId::SecretDelete))
-    }
-
-    /// `GET /api/workspace/secrets/{name}` — one secret's metadata.
-    ///
-    /// A **reserved** name answers `404` before any read (D-10). A provider
-    /// credential's backing secret is invisible in this fragment: leaving it
-    /// visible would let a customer `secret_delete` it and leave a `ready`
-    /// binding pointing at a tombstone, so `provider_credential_get` would
-    /// publish `ready` for something that cannot work — a read path telling a
-    /// lie. Its lifecycle runs through `provider_credential_revoke`, which is
-    /// the only route that may fence it.
-    async fn secret_get(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-    ) -> WireResult<WithETag<models::SecretMetadata>> {
-        if is_reserved_secret_name(&name) {
-            return Err(WireError::new(ErrorCode::NotFound));
-        }
-        let stored = self
-            .shared
-            .custody
-            .load_secret(self.cx.auth.workspace_id, &name)
-            .await
-            .map_err(|error| authority_failure(&error))?
-            .ok_or_else(|| WireError::new(ErrorCode::NotFound))?;
-        // A tombstone projects to `SecretDeleted`, which maps to `not_found`:
-        // a deleted record is absent, never a `deleted` state on the wire.
-        let value = projection::secret_metadata(&stored).map_err(WireError::from)?;
-        let etag = entity_tag("SecretMetadata", &value).map_err(WireError::from)?;
-        Ok(WithETag { value, etag })
-    }
-
-    async fn secret_put(
-        &self,
-        _cx: &WireContext,
-        _name: ResourceName,
-        _body: models::SecretPutRequest,
-    ) -> WireResult<WithETag<models::SecretMetadata>> {
-        Err(not_served(RouteId::SecretPut))
-    }
-
-    async fn secret_revoke(
-        &self,
-        _cx: &WireContext,
-        _name: ResourceName,
-        _body: models::EmptyRequest,
-    ) -> WireResult<models::SecretRevocation> {
-        Err(not_served(RouteId::SecretRevoke))
-    }
-
-    /// `GET /api/workspace/secrets` — the workspace's secrets.
-    ///
-    /// Reserved names are **skipped** (D-10), which is why a page can come back
-    /// under-full while still reporting a correct `nextCursor`: the cursor is
-    /// minted from the authority's own position and never from the filtered item
-    /// count, and the wire already permits a short page. Filtering after the
-    /// read is what keeps the key template `authorize_managed_call` conditions
-    /// on unchanged — a hot-path change to solve a cold-path problem was the
-    /// alternative, and it was rejected.
-    async fn secrets_list(
-        &self,
-        _cx: &WireContext,
-        query: models::SecretsListQuery,
-    ) -> WireResult<models::SecretMetadataPage> {
-        let binding = self.cursor_binding(RouteId::SecretsList, "secrets")?;
-        let after = self.resume(query.cursor.as_ref(), &binding)?;
-        let page = self
-            .shared
-            .custody
-            .page_secrets(
-                self.cx.auth.workspace_id,
-                budget(query.limit)?,
-                after.as_ref(),
-            )
-            .await
-            .map_err(|error| authority_failure(&error))?;
-        let next = self.continuation(page.next.as_ref(), &binding)?;
-        let visible: Vec<_> = page
-            .items
-            .into_iter()
-            .filter(|row| !is_reserved_secret_name(&row.name))
-            .collect();
-        projection::secret_metadata_page(&visible, next).map_err(WireError::from)
-    }
-}
-
-/// Whether a stored secret name belongs to the reserved credential namespace.
-///
-/// The reservation is **typed**, not a string-prefix convention: a name is
-/// reserved exactly when it parses as a `ProviderCredentialId`, which is the
-/// same rule `regional-secret-api` refuses a `secret_put` under. One rule, two
-/// deployables, and neither can drift into admitting what the other hides.
-fn is_reserved_secret_name(name: &ResourceName) -> bool {
-    use aex_wire::ids::PrefixedId as _;
-    ProviderCredentialId::parse(name.as_str()).is_ok()
 }
 
 impl ProviderCredentialsApi for Routes {
@@ -1544,238 +1357,6 @@ impl RegistryApi for Routes {
         .await
     }
 
-    async fn registry_instructions_delete(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-    ) -> WireResult<NoContent> {
-        self.registry_delete(RegistryKind::Instruction, &name).await
-    }
-
-    async fn registry_instructions_get(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-    ) -> WireResult<WithETag<models::RegisteredInstruction>> {
-        self.registry_get(
-            RegistryKind::Instruction,
-            &name,
-            projection::registered_instruction,
-        )
-        .await
-    }
-
-    async fn registry_instructions_list(
-        &self,
-        _cx: &WireContext,
-        query: models::RegistryInstructionsListQuery,
-    ) -> WireResult<models::RegisteredInstructionPage> {
-        let (page, next) = self
-            .registry_page(
-                RouteId::RegistryInstructionsList,
-                RegistryKind::Instruction,
-                query.cursor.as_ref(),
-                query.limit,
-            )
-            .await?;
-        projection::registered_instruction_page(&page.rows, next).map_err(WireError::from)
-    }
-
-    async fn registry_instructions_put(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-        body: models::RegisteredInstructionValue,
-    ) -> WireResult<WithETag<models::RegisteredInstruction>> {
-        // An instruction has no payload at all, so there is nothing to admit
-        // and nothing to pin: the whole value is the document.
-        let read = models::RegisteredInstructionRead { text: body.text };
-        self.registry_put(
-            RegistryKind::Instruction,
-            &name,
-            &read,
-            None,
-            projection::registered_instruction,
-        )
-        .await
-    }
-
-    async fn registry_mcp_servers_delete(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-    ) -> WireResult<NoContent> {
-        self.registry_delete(RegistryKind::McpServer, &name).await
-    }
-
-    async fn registry_mcp_servers_get(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-    ) -> WireResult<WithETag<models::RegisteredMcpServer>> {
-        self.registry_get(
-            RegistryKind::McpServer,
-            &name,
-            projection::registered_mcp_server,
-        )
-        .await
-    }
-
-    async fn registry_mcp_servers_list(
-        &self,
-        _cx: &WireContext,
-        query: models::RegistryMcpServersListQuery,
-    ) -> WireResult<models::RegisteredMcpServerPage> {
-        let (page, next) = self
-            .registry_page(
-                RouteId::RegistryMcpServersList,
-                RegistryKind::McpServer,
-                query.cursor.as_ref(),
-                query.limit,
-            )
-            .await?;
-        projection::registered_mcp_server_page(&page.rows, next).map_err(WireError::from)
-    }
-
-    async fn registry_mcp_servers_put(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-        body: models::RegisteredMcpServerValue,
-    ) -> WireResult<WithETag<models::RegisteredMcpServer>> {
-        // Configuration never contains a secret value: `McpHeader` carries a
-        // `secretName`, so this deployable needs no secret plaintext here.
-        let read = models::RegisteredMcpServerRead {
-            headers: body.headers,
-            transport: body.transport,
-            url: body.url,
-        };
-        self.registry_put(
-            RegistryKind::McpServer,
-            &name,
-            &read,
-            None,
-            projection::registered_mcp_server,
-        )
-        .await
-    }
-
-    async fn registry_skills_delete(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-    ) -> WireResult<NoContent> {
-        self.registry_delete(RegistryKind::Skill, &name).await
-    }
-
-    async fn registry_skills_get(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-    ) -> WireResult<WithETag<models::RegisteredSkill>> {
-        self.registry_get(RegistryKind::Skill, &name, projection::registered_skill)
-            .await
-    }
-
-    async fn registry_skills_list(
-        &self,
-        _cx: &WireContext,
-        query: models::RegistrySkillsListQuery,
-    ) -> WireResult<models::RegisteredSkillPage> {
-        let (page, next) = self
-            .registry_page(
-                RouteId::RegistrySkillsList,
-                RegistryKind::Skill,
-                query.cursor.as_ref(),
-                query.limit,
-            )
-            .await?;
-        projection::registered_skill_page(&page.rows, next).map_err(WireError::from)
-    }
-
-    async fn registry_skills_put(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-        body: models::RegisteredSkillValue,
-    ) -> WireResult<WithETag<models::RegisteredSkill>> {
-        let payload = self
-            .admit_payload(RegistryKind::Skill, &name, &body.bundle)
-            .await?;
-        let read = models::RegisteredSkillRead {
-            bundle: payload.reference,
-            bundle_format: body.bundle_format,
-            description: body.description,
-        };
-        self.registry_put(
-            RegistryKind::Skill,
-            &name,
-            &read,
-            Some(payload.source),
-            projection::registered_skill,
-        )
-        .await
-    }
-
-    async fn registry_tools_delete(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-    ) -> WireResult<NoContent> {
-        self.registry_delete(RegistryKind::Tool, &name).await
-    }
-
-    async fn registry_tools_get(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-    ) -> WireResult<WithETag<models::RegisteredTool>> {
-        self.registry_get(RegistryKind::Tool, &name, projection::registered_tool)
-            .await
-    }
-
-    async fn registry_tools_list(
-        &self,
-        _cx: &WireContext,
-        query: models::RegistryToolsListQuery,
-    ) -> WireResult<models::RegisteredToolPage> {
-        let (page, next) = self
-            .registry_page(
-                RouteId::RegistryToolsList,
-                RegistryKind::Tool,
-                query.cursor.as_ref(),
-                query.limit,
-            )
-            .await?;
-        projection::registered_tool_page(&page.rows, next).map_err(WireError::from)
-    }
-
-    async fn registry_tools_put(
-        &self,
-        _cx: &WireContext,
-        name: ResourceName,
-        body: models::RegisteredToolValue,
-    ) -> WireResult<WithETag<models::RegisteredTool>> {
-        let payload = self
-            .admit_payload(RegistryKind::Tool, &name, &body.bundle)
-            .await?;
-        let read = models::RegisteredToolRead {
-            bundle: payload.reference,
-            bundle_format: body.bundle_format,
-            description: body.description,
-            entry: body.entry,
-            input_schema: body.input_schema,
-        };
-        self.registry_put(
-            RegistryKind::Tool,
-            &name,
-            &read,
-            Some(payload.source),
-            projection::registered_tool,
-        )
-        .await
-    }
-
     async fn registry_files_download_create(
         &self,
         _cx: &WireContext,
@@ -2005,7 +1586,6 @@ impl UnaryDispatch for Routes {
         // The group comes from the generated table, so a new fragment is a
         // non-exhaustive-match compile error rather than a runtime 404.
         let outcome = match route(raw.route).fragment {
-            "secrets" => dispatch_secrets(self, &wire, raw, limits).await?,
             "provider-credentials" => {
                 dispatch_provider_credentials(self, &wire, raw, limits).await?
             }

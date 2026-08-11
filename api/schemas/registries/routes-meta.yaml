@@ -111,9 +111,6 @@ deferredOperations:
   session_create: "The complete session authority and create use case are not implemented."
   session_delete: "The irreversible cross-plane session/user-content/telemetry deletion authority is not implemented."
   session_message_send: "The wire and domain message vocabularies and durable command path are not reconciled."
-  session_resume: "The exact-generation manual resume authority and provider coordination are not implemented."
-  session_suspend: "The idle-only exact-generation manual suspension authority and provider coordination are not implemented."
-  session_terminate: "The permanent compute/live-file termination authority and provider coordination are not implemented."
 
 # Actual public mount authority. `scenarioOwners` and `operationOwners` plan
 # where a route belongs; this table says which complete handlers are mounted
@@ -239,6 +236,9 @@ servedOperations:
     - session_files_live_upload_part_put
     - session_get
     - session_messages_list
+    - session_resume
+    - session_suspend
+    - session_terminate
     - sessions_list
     - upload_abort
     - upload_complete

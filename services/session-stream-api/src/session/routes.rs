@@ -17,7 +17,6 @@ pub fn session_route_ids() -> Vec<RouteId> {
                 "operations" | "registry" | "approvals" | "sessions" | "files" | "uploads"
                 | "usage" | "workspace" => true,
                 "provider-credentials" => *id != RouteId::ProviderCredentialRegister,
-                "secrets" => matches!(*id, RouteId::SecretGet | RouteId::SecretsList),
                 _ => false,
             }
         })

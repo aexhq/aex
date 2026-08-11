@@ -884,14 +884,14 @@ impl AccountStateReader for AuthorizedAccount {
     }
 }
 
-/// The eventually consistent command-path view of the session authority.
+/// The command-path view of the session authority.
 ///
 /// Deliberately **not** [`crate::store::SessionReads`], which reads strongly for
-/// the served read routes. Every value a command reads here is re-asserted as a
-/// condition in the transaction it builds, so a stale read costs at most one
-/// condition failure and can never commit a wrong effect (D-11). A strongly
-/// consistent read costs twice the capacity and roughly twice the latency and
-/// buys nothing the condition does not already buy.
+/// served read routes. Mutable planning inputs are eventual because every value
+/// is re-asserted as a transaction condition. The known operation identity is
+/// different: it is the replay election authority and is read strongly before
+/// any mutable dependency, so an accepted retry cannot be hidden by lag and
+/// re-planned against later account or session state.
 #[derive(Debug, Clone)]
 pub struct SessionCommandReads {
     client: Client,
@@ -909,13 +909,25 @@ impl SessionCommandReads {
     }
 
     async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, PortError> {
+        self.get_with(pk, sk, false).await
+    }
+
+    async fn get_strong(&self, pk: &str, sk: &str) -> Result<Option<Item>, PortError> {
+        self.get_with(pk, sk, true).await
+    }
+
+    async fn get_with(
+        &self,
+        pk: &str,
+        sk: &str,
+        consistent: bool,
+    ) -> Result<Option<Item>, PortError> {
         let output = self
             .client
             .get_item()
             .table_name(&self.table)
             .set_key(Some(key(pk, sk)))
-            // Eventually consistent, on purpose. See the type's documentation.
-            .consistent_read(false)
+            .consistent_read(consistent)
             .send()
             .await
             .map_err(|_| PortError::Unavailable {
@@ -1062,7 +1074,11 @@ impl SessionReader for SessionCommandReads {
         operation: OperationId,
     ) -> Result<Option<VersionedOperation>, PortError> {
         let physical = crate::keys::operation(operation);
-        let Some(item) = self.get(&physical.pk, &physical.sk).await? else {
+        // Operation identity is the lifecycle command's replay authority. It
+        // must be checked strongly before account/session state: otherwise an
+        // exact accepted retry could miss the row, observe a later pause or
+        // session transition, and refuse instead of replaying.
+        let Some(item) = self.get_strong(&physical.pk, &physical.sk).await? else {
             return Ok(None);
         };
         crate::codec::decode_operation(&item, workspace)

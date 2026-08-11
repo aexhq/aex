@@ -564,10 +564,10 @@ impl LifecyclePort for DynamoLifecyclePort {
             return Ok(LifecycleReadiness::Ready);
         }
         if view.head.state.is_terminal() {
-            return Err(StoreError::Invalid {
-                detail: "the retained generation was lost before its lifecycle effect completed"
-                    .to_owned(),
-            });
+            // Terminate has reached its requested provider effect. Suspend and
+            // resume instead need the loss barrier, which fails the operation
+            // while terminalizing the public session under the same work fence.
+            return Ok(LifecycleReadiness::Ready);
         }
         let command = match step.kind {
             OperationKind::SessionSuspend => {
@@ -618,14 +618,20 @@ impl LifecyclePort for DynamoLifecyclePort {
                 detail: "the lifecycle operation changed binding before settlement".to_owned(),
             });
         }
-        if step.kind != OperationKind::SessionCancel {
-            let view = self.runtime_view(&session).await?;
+        let runtime = if step.kind == OperationKind::SessionCancel {
+            None
+        } else {
+            Some(self.runtime_view(&session).await?)
+        };
+        if let Some(view) = runtime.as_ref() {
             let ready = match step.kind {
                 OperationKind::SessionSuspend => {
                     view.head.state == aex_runtime_control::generation::GenerationState::Suspended
+                        || view.head.state.is_terminal()
                 }
                 OperationKind::SessionResume => {
                     view.head.state == aex_runtime_control::generation::GenerationState::Running
+                        || view.head.state.is_terminal()
                 }
                 OperationKind::SessionTerminate => view.head.state.is_terminal(),
                 _ => false,
@@ -634,17 +640,44 @@ impl LifecyclePort for DynamoLifecyclePort {
                 return Err(StoreError::Contended);
             }
         }
-        let planned = aex_session_app::settle_lifecycle_operation(
-            &session,
-            &stored.record,
-            aex_operation_domain::OperationVersion(stored.version),
-            &aex_session_app::LifecycleWorkClaim {
-                work_id: hold.work_id.clone(),
-                fence: hold.fence,
-                owner: hold.owner.clone(),
-            },
-            now,
-        )
+        let claim = aex_session_app::LifecycleWorkClaim {
+            work_id: hold.work_id.clone(),
+            fence: hold.fence,
+            owner: hold.owner.clone(),
+        };
+        let planned = if matches!(
+            step.kind,
+            OperationKind::SessionSuspend | OperationKind::SessionResume
+        ) && runtime
+            .as_ref()
+            .is_some_and(|view| view.head.state.is_terminal())
+        {
+            let (reason, at) = observed_termination(
+                runtime
+                    .as_ref()
+                    .expect("terminal runtime was checked")
+                    .head
+                    .state,
+                session.lifecycle.expires_at,
+                now,
+            );
+            aex_session_app::settle_lifecycle_loss(
+                &session,
+                &stored.record,
+                aex_operation_domain::OperationVersion(stored.version),
+                &claim,
+                reason,
+                at,
+            )
+        } else {
+            aex_session_app::settle_lifecycle_operation(
+                &session,
+                &stored.record,
+                aex_operation_domain::OperationVersion(stored.version),
+                &claim,
+                now,
+            )
+        }
         .map_err(|error| StoreError::Invalid {
             detail: format!("the lifecycle settlement plan was rejected: {error}"),
         })?;
@@ -677,6 +710,29 @@ impl LifecyclePort for DynamoLifecyclePort {
             )
             .await
     }
+}
+
+fn observed_termination(
+    state: aex_runtime_control::generation::GenerationState,
+    expires_at: Timestamp,
+    observed_at: Timestamp,
+) -> (aex_session_domain::TerminationReason, Timestamp) {
+    if state == aex_runtime_control::generation::GenerationState::Terminated
+        && observed_at >= expires_at
+    {
+        return (
+            aex_session_domain::TerminationReason::LifetimeExpired,
+            expires_at,
+        );
+    }
+    (
+        aex_session_domain::TerminationReason::RuntimeLost,
+        if observed_at > expires_at {
+            expires_at
+        } else {
+            observed_at
+        },
+    )
 }
 
 fn runtime_store_error(error: aex_runtime_control::store::RuntimeStoreError) -> StoreError {
@@ -1159,4 +1215,36 @@ pub enum WorkError {
     /// Shard count was zero.
     #[error("due shard count must be positive")]
     InvalidShardCount,
+}
+
+#[cfg(test)]
+mod lifecycle_observation_tests {
+    use aex_runtime_control::generation::GenerationState;
+    use aex_session_domain::TerminationReason;
+
+    use super::*;
+
+    fn at(millis: i64) -> Timestamp {
+        Timestamp::from_unix_millis(millis).expect("fixture instant")
+    }
+
+    #[test]
+    fn provider_expiry_uses_the_immutable_fence_even_when_observed_late() {
+        assert_eq!(
+            observed_termination(GenerationState::Terminated, at(28_800), at(40_000)),
+            (TerminationReason::LifetimeExpired, at(28_800))
+        );
+    }
+
+    #[test]
+    fn provider_loss_never_publishes_or_bills_past_the_immutable_fence() {
+        assert_eq!(
+            observed_termination(GenerationState::Lost, at(28_800), at(40_000)),
+            (TerminationReason::RuntimeLost, at(28_800))
+        );
+        assert_eq!(
+            observed_termination(GenerationState::Lost, at(28_800), at(20_000)),
+            (TerminationReason::RuntimeLost, at(20_000))
+        );
+    }
 }

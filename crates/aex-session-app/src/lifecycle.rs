@@ -7,13 +7,15 @@
 //! operation result.
 
 use aex_operation_domain::{
-    AdmissionOutcome, AdmitRequest, DedupIdentity, Operation, OperationKind, OperationResult,
-    OperationScope, OperationVersion, WorkId, WorkItem, WorkState, admit, succeed,
+    AdmissionOutcome, AdmitRequest, DedupIdentity, FailureClass, Operation, OperationFailure,
+    OperationKind, OperationResult, OperationScope, OperationVersion, WorkId, WorkItem, WorkState,
+    admit, fail, succeed,
 };
 use aex_session_domain::{
     CancelCause, CommandClass, Session, TerminationReason, acquire_mutation_guard, begin_delete,
     cancel_session_fence, pause_gate,
 };
+use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{OperationId, PrefixedId as _, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
@@ -187,6 +189,88 @@ pub fn settle_lifecycle_operation(
     Ok(Planned {
         plan,
         projected: succeeded,
+    })
+}
+
+/// Atomically terminalizes a session whose exact generation was observed lost.
+///
+/// A manual suspend or resume cannot succeed after the retained generation has
+/// become absorbing. This barrier publishes the truthful session termination,
+/// fails the requested operation, releases its mutation guard and retires the
+/// exact work claim together. Explicit terminate uses
+/// [`settle_lifecycle_operation`] instead, because a terminal provider is its
+/// requested successful effect.
+pub fn settle_lifecycle_loss(
+    session: &Session,
+    operation: &Operation,
+    operation_version: OperationVersion,
+    claim: &LifecycleWorkClaim,
+    reason: TerminationReason,
+    at: Timestamp,
+) -> Result<Planned<Operation>, AppError> {
+    if operation.workspace != session.workspace
+        || operation.session != Some(session.id)
+        || operation.scope != OperationScope::Session(session.id)
+        || claim.work_id != WorkId(operation.id.uuid7()).to_string()
+        || !matches!(
+            operation.kind,
+            OperationKind::SessionSuspend | OperationKind::SessionResume
+        )
+    {
+        return Err(AppError::Port(PortError::Corrupt {
+            kind: "lifecycle loss settlement",
+            reason: "session, operation, work or operation kind binding disagree",
+        }));
+    }
+    aex_session_domain::release_mutation_guard(session, operation.id)?;
+
+    let mut head = session.clone();
+    head.lifecycle.begin_terminate(reason)?;
+    head.lifecycle.complete_terminate(at)?;
+    head.status = head.lifecycle.status;
+    head.active_run = None;
+    head.work_admission = aex_session_domain::WorkAdmission::ContinuityLost;
+    head.revision = session.revision.next();
+    head.mutation_guard = None;
+    head.updated_at = at;
+    let failed = fail(
+        operation,
+        OperationFailure::bare(ErrorCode::SessionTerminated, FailureClass::Terminal),
+        at,
+    )?
+    .operation;
+    let plan = SessionTransaction {
+        intent: TransactionIntent::SettleLifecycle,
+        conditions: vec![
+            Condition::SessionRevision {
+                session: session.id,
+                expected: session.revision,
+            },
+            Condition::MutationGuardHeldBy {
+                session: session.id,
+                holder: operation.id,
+            },
+            Condition::OperationVersion {
+                operation: operation.id,
+                expected: operation_version,
+            },
+        ],
+        writes: vec![
+            Write::PutSessionHead(Box::new(head)),
+            Write::PutOperation(Box::new(failed.clone())),
+            Write::CompleteWorkItem(Box::new(WorkCompletion {
+                work_id: claim.work_id.clone(),
+                fence: claim.fence,
+                owner: claim.owner.clone(),
+                at,
+            })),
+        ],
+        after_commit: Vec::new(),
+    };
+    plan.validate()?;
+    Ok(Planned {
+        plan,
+        projected: failed,
     })
 }
 
@@ -626,5 +710,48 @@ mod tests {
         assert_eq!(head.lifecycle.status, LifecycleStatus::Idle);
         assert_eq!(head.active_run, None);
         assert_eq!(head.work_admission, WorkAdmission::Open);
+    }
+
+    #[test]
+    fn a_lost_generation_fails_manual_lifecycle_and_closes_the_session_atomically() {
+        let session = aex_session_domain::testing::session_fixture();
+        let admitted = planned(OperationKind::SessionSuspend, &session);
+        let transitional = planned_head(&admitted.plan).clone();
+        let claim = LifecycleWorkClaim {
+            work_id: WorkId(admitted.projected.id.uuid7()).to_string(),
+            fence: 7,
+            owner: "session-operation-worker:test".to_owned(),
+        };
+        let at = aex_session_domain::testing::moment(20);
+        let settled = settle_lifecycle_loss(
+            &transitional,
+            &admitted.projected,
+            OperationVersion::FIRST,
+            &claim,
+            TerminationReason::RuntimeLost,
+            at,
+        )
+        .expect("settles the observed loss");
+        let head = planned_head(&settled.plan);
+        assert_eq!(head.lifecycle.status, LifecycleStatus::Terminated);
+        assert_eq!(
+            head.lifecycle.termination_reason,
+            Some(TerminationReason::RuntimeLost)
+        );
+        assert_eq!(head.lifecycle.terminated_at, Some(at));
+        assert_eq!(head.work_admission, WorkAdmission::ContinuityLost);
+        assert_eq!(head.mutation_guard, None);
+        assert_eq!(
+            settled.projected.status,
+            aex_operation_domain::OperationStatus::Failed
+        );
+        assert_eq!(
+            settled.projected.error.as_ref().map(|error| error.code),
+            Some(ErrorCode::SessionTerminated)
+        );
+        assert!(settled.plan.writes.iter().any(|write| {
+            matches!(write, Write::CompleteWorkItem(completion) if completion.work_id == claim.work_id && completion.fence == claim.fence)
+        }));
+        assert_eq!(settled.plan.validate().expect("valid").actions, 3);
     }
 }

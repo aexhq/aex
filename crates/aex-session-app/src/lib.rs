@@ -37,7 +37,7 @@ pub use create::{
 pub use error::AppError;
 pub use lifecycle::{
     LifecycleAdmissionOutcome, LifecycleCommand, LifecycleWorkClaim, admit_lifecycle_operation,
-    settle_lifecycle_operation,
+    settle_lifecycle_loss, settle_lifecycle_operation,
 };
 pub use outcome::{Attempted, Observed, ProviderAnswer, Resolution, resolve};
 pub use plan::{

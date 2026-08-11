@@ -99,6 +99,11 @@
         "dynamodb:TransactWriteItems"
       ],
       "resources": ["table"]
+    },
+    {
+      "role": "session-operation-worker",
+      "actions": ["dynamodb:GetItem"],
+      "resources": ["table"]
     }
   ],
   "tags": { "aex:plane": "regional", "aex:component": "runtime-activity", "aex:data-class": "authority" }
