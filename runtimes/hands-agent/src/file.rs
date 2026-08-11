@@ -504,7 +504,7 @@ impl FileService {
         if file_size_bytes > MAX_FILE_BYTES {
             return Err(FileFailureCode::LimitExceeded);
         }
-        let sha256 = hash_file(&mut file)?;
+        let (sha256, parts) = hash_file_parts(&mut file)?;
         let version = file_version(&metadata, sha256);
         let (start, length_bytes) = match range {
             None => (0, file_size_bytes),
@@ -525,6 +525,7 @@ impl FileService {
             start,
             length_bytes,
             sha256,
+            parts,
             version,
         };
         let mut open = self
@@ -541,7 +542,7 @@ impl FileService {
                 OpenDownload {
                     file,
                     path: path.clone(),
-                    state,
+                    state: state.clone(),
                 },
             );
         }
@@ -774,6 +775,62 @@ fn hash_file(file: &mut File) -> Result<ContentHash, FileFailureCode> {
     Ok(ContentHash::from_bytes(hash.finalize().into()))
 }
 
+fn hash_file_parts(
+    file: &mut File,
+) -> Result<(ContentHash, Vec<FilePartReceipt>), FileFailureCode> {
+    file.seek(std::io::SeekFrom::Start(0)).map_err(map_io)?;
+    let mut whole = sha2::Sha256::new();
+    let mut part = sha2::Sha256::new();
+    let mut parts = Vec::new();
+    let mut part_bytes = 0u32;
+    let mut offset = 0u64;
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(map_io)?;
+        if read == 0 {
+            break;
+        }
+        let mut consumed = 0usize;
+        while consumed < read {
+            let available = FILE_TRANSFER_PART_BYTES - part_bytes;
+            let take = usize::try_from(available)
+                .map_err(|_| FileFailureCode::InvalidRequest)?
+                .min(read - consumed);
+            use sha2::Digest as _;
+            whole.update(&buffer[consumed..consumed + take]);
+            part.update(&buffer[consumed..consumed + take]);
+            part_bytes = part_bytes.saturating_add(take as u32);
+            consumed += take;
+            if part_bytes == FILE_TRANSFER_PART_BYTES {
+                let number =
+                    u32::try_from(parts.len() + 1).map_err(|_| FileFailureCode::LimitExceeded)?;
+                let completed = std::mem::replace(&mut part, sha2::Sha256::new());
+                parts.push(FilePartReceipt {
+                    part_number: number,
+                    offset,
+                    size_bytes: part_bytes,
+                    sha256: ContentHash::from_bytes(completed.finalize().into()),
+                });
+                offset = offset.saturating_add(u64::from(part_bytes));
+                part_bytes = 0;
+            }
+        }
+    }
+    if part_bytes != 0 {
+        use sha2::Digest as _;
+        let number = u32::try_from(parts.len() + 1).map_err(|_| FileFailureCode::LimitExceeded)?;
+        parts.push(FilePartReceipt {
+            part_number: number,
+            offset,
+            size_bytes: part_bytes,
+            sha256: ContentHash::from_bytes(part.finalize().into()),
+        });
+    }
+    file.seek(std::io::SeekFrom::Start(0)).map_err(map_io)?;
+    use sha2::Digest as _;
+    Ok((ContentHash::from_bytes(whole.finalize().into()), parts))
+}
+
 fn file_version(metadata: &std::fs::Metadata, sha256: ContentHash) -> ContentHash {
     let mut evidence = Vec::with_capacity(128);
     evidence.extend_from_slice(&metadata.len().to_be_bytes());
@@ -987,7 +1044,11 @@ mod tests {
                 end_inclusive: aex_wire::types::DecimalU128::new(3),
             }),
         }), FileResponse::DownloadOpened { state }
-            if state.start == 1 && state.length_bytes == 3 && state.file_size_bytes == 5));
+            if state.start == 1
+                && state.length_bytes == 3
+                && state.file_size_bytes == 5
+                && state.parts.len() == 1
+                && state.parts[0].sha256 == ContentHash::of(&[0, 255, 1, 2, 3])));
         std::fs::rename(workspace.join("binary"), workspace.join("moved")).expect("rename");
         std::fs::write(workspace.join("binary"), b"replacement").expect("replacement");
         assert!(

@@ -48,7 +48,7 @@ impl std::fmt::Display for FileDownloadId {
 }
 
 /// One completed upload part.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FilePartReceipt {
     /// One-based part number.
@@ -80,7 +80,7 @@ pub struct FileUploadState {
 }
 
 /// One opened download range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FileDownloadState {
     /// Caller-minted transfer identity.
@@ -94,6 +94,8 @@ pub struct FileDownloadState {
     pub length_bytes: u64,
     /// SHA-256 of the complete file held by the opened descriptor.
     pub sha256: ContentHash,
+    /// Fixed public ranges and their expected SHA-256 values, ascending.
+    pub parts: Vec<FilePartReceipt>,
     /// Opaque identity binding file bytes and bounded stat evidence.
     pub version: ContentHash,
 }
