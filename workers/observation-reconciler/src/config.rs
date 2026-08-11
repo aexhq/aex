@@ -19,6 +19,10 @@ pub const PLANE_VAR: &str = "AEX_PLANE";
 pub const REGION_VAR: &str = "AEX_REGION";
 /// Environment variable naming the observation-authority `DynamoDB` table.
 pub const OBSERVATION_TABLE_VAR: &str = "AEX_OBSERVATION_TABLE";
+/// Environment variable naming the regional session authority. The deletion
+/// duty uses it to cancel an export's canonical operation atomically before
+/// removing export payload.
+pub const SESSION_TABLE_VAR: &str = "AEX_SESSION_TABLE";
 /// Environment variable naming the regional observation `S3` bucket.
 pub const OBSERVATION_BUCKET_VAR: &str = "AEX_OBSERVATION_BUCKET";
 /// Environment variable naming the duty this deployment runs.
@@ -39,6 +43,7 @@ pub const REQUIRED_VARS: &[&str] = &[
     PLANE_VAR,
     REGION_VAR,
     OBSERVATION_TABLE_VAR,
+    SESSION_TABLE_VAR,
     OBSERVATION_BUCKET_VAR,
     DUTY_VAR,
     RECONCILE_PAGE_VAR,
@@ -94,6 +99,8 @@ pub struct Config {
     pub region: Region,
     /// The observation-authority table.
     pub observation_table: String,
+    /// The regional session authority holding canonical export operations.
+    pub session_table: String,
     /// The regional observation bucket.
     pub observation_bucket: String,
     /// The one duty this deployment runs.
@@ -147,6 +154,7 @@ impl Config {
             }
         })?;
         let observation_table = required(&lookup, OBSERVATION_TABLE_VAR)?;
+        let session_table = required(&lookup, SESSION_TABLE_VAR)?;
         let observation_bucket = required(&lookup, OBSERVATION_BUCKET_VAR)?;
         let duty = duty(&lookup)?;
         let page = bounded(&lookup, RECONCILE_PAGE_VAR, 1, PAGE_MAX)?;
@@ -158,6 +166,7 @@ impl Config {
             plane,
             region,
             observation_table,
+            session_table,
             observation_bucket,
             duty,
             page: narrow(page, RECONCILE_PAGE_VAR)?,
@@ -275,7 +284,8 @@ mod tests {
     use super::{
         Config, DUTY_SHARDS_VAR, DUTY_VAR, FOREIGN_DUTY, MAX_ATTEMPTS_VAR, OBSERVATION_BUCKET_VAR,
         OBSERVATION_TABLE_VAR, ObservationReconcilerConfigError, PAGE_MAX, PLANE_VAR,
-        RECONCILE_PAGE_VAR, REGION_VAR, REQUIRED_VARS, SHARDS_MAX, USAGE_QUEUE_URL_VAR,
+        RECONCILE_PAGE_VAR, REGION_VAR, REQUIRED_VARS, SESSION_TABLE_VAR, SHARDS_MAX,
+        USAGE_QUEUE_URL_VAR,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -283,6 +293,7 @@ mod tests {
             (PLANE_VAR, "prd".to_owned()),
             (REGION_VAR, "eu-west-1".to_owned()),
             (OBSERVATION_TABLE_VAR, "observation-authority".to_owned()),
+            (SESSION_TABLE_VAR, "session-authority".to_owned()),
             (OBSERVATION_BUCKET_VAR, "aex-prd-observations".to_owned()),
             (DUTY_VAR, "gate.evaluate".to_owned()),
             (RECONCILE_PAGE_VAR, "250".to_owned()),
@@ -306,6 +317,7 @@ mod tests {
         let config = read(&complete()).expect("a complete environment starts");
         assert_eq!(config.plane, "prd");
         assert_eq!(config.region, Region::EuWest1);
+        assert_eq!(config.session_table, "session-authority");
         assert_eq!(config.duty, ControlDomain::GateEvaluate);
         assert_eq!(config.page, 250);
         assert_eq!(config.shards, 16);

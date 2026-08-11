@@ -32,6 +32,7 @@ use aws_sdk_dynamodb::types::{AttributeValue, Get, TransactGetItem};
 const SCOPE_GUARD: Participant = Participant::new("export.scope_guard");
 const OPERATION: Participant = Participant::new("export.operation");
 const EXPORT: Participant = Participant::new("export.state");
+const SCOPE_EXPORT: Participant = Participant::new("export.scope_directory");
 
 /// A complete export/operation admission.
 #[derive(Clone, Debug)]
@@ -206,6 +207,13 @@ impl ExportPairStore {
             PutBuilder::default()
                 .table_name(&self.observation_table)
                 .set_item(Some(export_item))
+                .condition_expression("attribute_not_exists(pk)"),
+        )?;
+        plan.put(
+            SCOPE_EXPORT,
+            PutBuilder::default()
+                .table_name(&self.observation_table)
+                .set_item(Some(scope_export_item(commit)))
                 .condition_expression("attribute_not_exists(pk)"),
         )?;
 
@@ -906,6 +914,34 @@ fn export_item(plan: &ExportPlan) -> Item {
     item
 }
 
+/// The strongly-consistent scope directory entry paired with admission.
+///
+/// A GSI is intentionally not used for deletion proof: index propagation may
+/// lag the transaction that admitted the export. This row commits beside the
+/// export and canonical operation, so a scope enumerator can never observe a
+/// complete admission without its exact export identity.
+fn scope_export_item(commit: &ExportAdmissionCommit) -> Item {
+    HashMap::from([
+        (PK.to_owned(), s(keys::scope_export_pk(&commit.scope))),
+        (
+            SK.to_owned(),
+            s(keys::scope_export_sk(commit.export.export)),
+        ),
+        ("itemType".to_owned(), s("scope_export")),
+        ("scopeKey".to_owned(), s(commit.scope.to_key())),
+        (
+            "workspaceId".to_owned(),
+            s(commit.operation.workspace.to_string()),
+        ),
+        ("exportId".to_owned(), s(commit.export.export.to_string())),
+        ("operationId".to_owned(), s(commit.operation.id.to_string())),
+        (
+            "format".to_owned(),
+            s(commit.export.export_row.text["format"].clone()),
+        ),
+    ])
+}
+
 fn add_scope_guard(
     plan: &mut TransactionPlan,
     observation_table: &str,
@@ -1418,6 +1454,7 @@ async fn send(client: &aws_sdk_dynamodb::Client, plan: &TransactionPlan) -> Resu
 
 #[cfg(test)]
 mod tests {
+    use aex_observation_app::{ExportAdmission, ExportScope};
     use aex_operation_domain::{
         FailureClass, Operation, OperationFailure, OperationKind, OperationResult, OperationScope,
         OperationStatus,
@@ -1434,7 +1471,7 @@ mod tests {
         EXPORT, ExportPairError, ExportPublish, ExportSettlement, ExportStart, OPERATION,
         deletion_error, failure_plan, failure_terminal, lease_is_expired, lease_window_is_valid,
         pair_gets, pair_snapshot_retry_delay, paired_terminal, publish_terminal,
-        resolve_start_replay, retryable_transition,
+        resolve_start_replay, retryable_transition, scope_export_item,
     };
 
     fn at(millis: i64) -> Timestamp {
@@ -1488,6 +1525,57 @@ mod tests {
             ),
             ("fence".to_owned(), n(1)),
         ])
+    }
+
+    #[test]
+    fn admission_directory_names_the_exact_session_export_and_operation() {
+        let mut queued = operation(OperationStatus::Queued).record;
+        let session = SessionId::from_uuid7(Uuid7::compose(5, [5; 10]));
+        queued.session = Some(session);
+        queued.scope = OperationScope::Session(session);
+        queued.intent = IntentDigest::from_bytes([7; 32]);
+        let scope = aex_observation_domain::keys::ScopeKey::Session {
+            workspace: queued.workspace,
+            session,
+        };
+        let export = aex_observation_app::export::plan(&ExportAdmission {
+            operation: queued.id,
+            workspace: queued.workspace,
+            scope: ExportScope::Session(session),
+            format: "ndjson".to_owned(),
+            completeness: "allow_gaps".to_owned(),
+            normalized_query: "{\"signal\":\"logs\"}".to_owned(),
+            partitions: vec!["OBS#fixture".to_owned()],
+            intent: [7; 32],
+            deletion_epoch: 3,
+            snapshot: at(10),
+            gaps: Vec::new(),
+            launch_at: at(10),
+            now: at(10),
+        })
+        .expect("export plans");
+        let export_id = export.export;
+        let item = scope_export_item(&super::ExportAdmissionCommit {
+            export,
+            operation: queued.clone(),
+            scope,
+            deletion_epoch: 3,
+        });
+
+        assert_eq!(
+            item[PK].as_s().expect("directory partition"),
+            &aex_observation_domain::keys::scope_export_pk(&scope)
+        );
+        assert_eq!(
+            item[SK].as_s().expect("directory key"),
+            &aex_observation_domain::keys::scope_export_sk(export_id)
+        );
+        assert_eq!(
+            item["operationId"].as_s().expect("operation"),
+            &queued.id.to_string()
+        );
+        assert_eq!(item["scopeKey"].as_s().expect("scope"), &scope.to_key());
+        assert_eq!(item["format"].as_s().expect("format"), "ndjson");
     }
 
     #[test]

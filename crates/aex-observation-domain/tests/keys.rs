@@ -231,6 +231,22 @@ fn every_key_template_round_trips_its_components() {
     );
     assert_eq!(keys::frontier_sk(Signal::Metrics), "SIG#metrics");
     assert_eq!(keys::DELETION_SK, "DELETION");
+
+    let batch =
+        PrefixedId::parse("bch_0000000004g82840g2081040g2").expect("fixture batch id parses");
+    let export =
+        PrefixedId::parse("exp_0000000005gm2ga1850m2ga185").expect("fixture export id parses");
+    assert_eq!(
+        keys::scope_batch_pk(&scope),
+        format!("BATCHS#S#wsp_{SUFFIX_W}#ses_{SUFFIX_A}")
+    );
+    assert_eq!(keys::scope_batch_sk(batch), batch.to_string());
+    assert_eq!(keys::materialization_sk(7), "MAT#000007");
+    assert_eq!(
+        keys::scope_export_pk(&scope),
+        format!("EXPORTS#S#wsp_{SUFFIX_W}#ses_{SUFFIX_A}")
+    );
+    assert_eq!(keys::scope_export_sk(export), export.to_string());
 }
 
 #[test]

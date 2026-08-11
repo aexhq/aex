@@ -554,6 +554,46 @@ pub fn export_checkpoint_sk(export: aex_wire::ids::ExportId) -> String {
     format!("CKPT#{export}")
 }
 
+/// `BATCHS#{scope}` — the strongly-consistent directory of admission batches
+/// that can still hold payload for one scope.
+///
+/// This is a base-table directory rather than a secondary index. A deletion
+/// proof must not be able to outrun index propagation and declare a scope empty
+/// while a preparing request can still stage pages or objects.
+#[must_use]
+pub fn scope_batch_pk(scope: &ScopeKey) -> String {
+    format!("BATCHS#{}", scope.to_key())
+}
+
+/// The directory entry for one batch.
+#[must_use]
+pub fn scope_batch_sk(batch: aex_wire::ids::TelemetryBatchId) -> String {
+    batch.to_string()
+}
+
+/// `MAT#{page:06}` — one bounded materialization ledger page inside a batch.
+///
+/// The page is written atomically with the observation rows it names. It is the
+/// exact, strongly-consistent enumeration a scope deletion uses; it never has
+/// to infer an `OBS#` partition from an eventually-consistent projection.
+#[must_use]
+pub fn materialization_sk(page: u32) -> String {
+    format!("MAT#{page:06}")
+}
+
+/// `EXPORTS#{scope}` — the strongly-consistent directory of exports owned by
+/// one scope.
+#[must_use]
+pub fn scope_export_pk(scope: &ScopeKey) -> String {
+    format!("EXPORTS#{}", scope.to_key())
+}
+
+/// The directory entry for one export.
+#[must_use]
+pub fn scope_export_sk(export: aex_wire::ids::ExportId) -> String {
+    export.to_string()
+}
+
 /// Splits an `EXPORT#{workspace_id}` partition key.
 ///
 /// # Errors

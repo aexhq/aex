@@ -652,7 +652,22 @@ where
         let key: Box<str> = artifact_key(&self.settings.object_prefix, lease.format).into();
         let Some(progress) = self.authority.load_progress(lease.fence).await? else {
             let upload_id = self.objects.create_upload(&key).await?;
-            return Ok(UploadState::fresh(key, upload_id));
+            let state = UploadState::fresh(key, upload_id);
+            // Publish the upload identity under the export fence before doing
+            // any other S3 work. If session deletion revoked the pair between
+            // lease acceptance and multipart creation, this write loses and we
+            // immediately abort the otherwise-unreachable upload.
+            if let Err(error) = self
+                .authority
+                .record_progress(&state.progress(lease.fence))
+                .await
+            {
+                if let Err(abort) = self.abort(&state).await {
+                    tracing::error!(error = %abort, "the uncheckpointed multipart upload could not be aborted");
+                }
+                return Err(error);
+            }
+            return Ok(state);
         };
         // The listing is read to exhaustion by the adapter; a truncation without
         // a marker is a hard integrity failure here, never a silent short list.
@@ -1057,6 +1072,7 @@ mod tests {
     struct FakeAuthority {
         outcome: LeaseOutcome,
         stored: Option<ExportProgress>,
+        progress_error: Option<&'static str>,
         publication: Publication,
         failure_settlement: aex_observation_store_dynamodb::ExportSettlement,
         budget: MemoryBudget,
@@ -1068,6 +1084,7 @@ mod tests {
             Self {
                 outcome: LeaseOutcome::Taken(Box::new(lease(Format::Ndjson))),
                 stored: None,
+                progress_error: None,
                 publication: Publication::Ready,
                 failure_settlement: aex_observation_store_dynamodb::ExportSettlement::Settled,
                 budget: budget.clone(),
@@ -1132,6 +1149,12 @@ mod tests {
                 .lock()
                 .expect("the recorder is not poisoned")
                 .push(progress.clone());
+            if let Some(reason) = self.progress_error {
+                return Err(TaskError::Provider {
+                    operation: "TransactCheckpointExport",
+                    reason: reason.to_owned(),
+                });
+            }
             Ok(())
         }
 
@@ -1422,6 +1445,31 @@ mod tests {
         assert_eq!(task.authority.page_calls(), 0);
         assert_eq!(task.objects.parts(), 0);
         assert_eq!(task.objects.aborts(), 0, "there is no upload to abort");
+    }
+
+    #[tokio::test]
+    async fn a_revoke_between_lease_and_upload_checkpoint_cannot_leave_an_unreachable_upload() {
+        let budget = budget();
+        let mut authority = FakeAuthority::new(&budget, walk(1));
+        authority.progress_error = Some("the session deletion fence won");
+        let task = task(authority, FakeObjects::default(), &budget);
+
+        let error = task
+            .run(now())
+            .await
+            .expect_err("a revoked upload cannot become reachable");
+        assert!(matches!(error, TaskError::Provider { .. }), "{error:?}");
+        let progress = task.authority.recorded_progress();
+        assert_eq!(
+            progress.len(),
+            1,
+            "the upload identity is fenced immediately"
+        );
+        assert!(progress[0].checkpoint.parts.is_empty());
+        assert!(progress[0].members.is_empty());
+        assert_eq!(task.objects.aborts(), 1, "the new upload is aborted");
+        assert_eq!(task.authority.page_calls(), 0, "no telemetry was read");
+        assert_eq!(task.authority.fail_calls(), 1, "the pair is settled");
     }
 
     fn checkpointed() -> ExportProgress {
@@ -1752,7 +1800,12 @@ mod tests {
 
         let progress = task.authority.recorded_progress();
         assert!(!progress.is_empty(), "at least one full part was flushed");
-        for (index, recorded) in progress.iter().enumerate() {
+        assert!(
+            progress[0].checkpoint.parts.is_empty(),
+            "the multipart identity is checkpointed before its first upload"
+        );
+        assert!(progress[0].members.is_empty());
+        for (index, recorded) in progress.iter().skip(1).enumerate() {
             assert_eq!(recorded.checkpoint.fence, 7, "written under the held fence");
             assert_eq!(recorded.checkpoint.parts.len(), index + 1);
             assert_eq!(recorded.members.len(), index + 1);

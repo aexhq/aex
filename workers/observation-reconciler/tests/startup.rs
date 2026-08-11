@@ -12,6 +12,7 @@ const REQUIRED: &[&str] = &[
     "AEX_PLANE",
     "AEX_REGION",
     "AEX_OBSERVATION_TABLE",
+    "AEX_SESSION_TABLE",
     "AEX_OBSERVATION_BUCKET",
     "AEX_OBS_DUTY",
     "AEX_OBS_RECONCILE_PAGE",
@@ -59,6 +60,7 @@ fn a_partial_environment_still_refuses_and_names_the_gap() {
         .env("AEX_PLANE", "dev")
         .env("AEX_REGION", "eu-west-1")
         .env("AEX_OBSERVATION_TABLE", "observation-authority")
+        .env("AEX_SESSION_TABLE", "session-authority")
         .env("AEX_OBSERVATION_BUCKET", "aex-dev-observations")
         .output()
         .expect("the artifact runs");
@@ -74,6 +76,7 @@ fn the_launcher_duty_is_refused_by_the_built_binary() {
         .env("AEX_PLANE", "dev")
         .env("AEX_REGION", "eu-west-1")
         .env("AEX_OBSERVATION_TABLE", "observation-authority")
+        .env("AEX_SESSION_TABLE", "session-authority")
         .env("AEX_OBSERVATION_BUCKET", "aex-dev-observations")
         .env("AEX_OBS_DUTY", "export.launch")
         .env("AEX_OBS_RECONCILE_PAGE", "100")

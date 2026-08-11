@@ -58,3 +58,22 @@ fn the_declared_shape_bounds_the_regional_decode_footprint() {
         "the regional decode ceiling must stay inside 64 GiB"
     );
 }
+
+#[test]
+fn a_preparing_receipt_outlives_every_possible_admission_invocation() {
+    let units = include_str!("../../../release/units.toml");
+    let row = units
+        .split("[[unit]]")
+        .find(|block| block.contains("id = \"regional-otlp\""))
+        .expect("regional-otlp is a registered deployable");
+    let timeout_ms = row
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("timeout_s = "))
+        .and_then(|value| value.trim().parse::<i64>().ok())
+        .expect("the Lambda timeout is declared")
+        * 1_000;
+    assert!(
+        timeout_ms < aex_observation_domain::limits::OBS_PREPARE_TTL_MS,
+        "batch expiry must not tell deletion that a preparer is gone while its body puts can still run"
+    );
+}

@@ -25,6 +25,7 @@ risk = ["concurrency"]
 scenarios = []
 
 [package.metadata.aex.targets]
+deletion = "unit"
 g7_staged_commit_envelope = "integration"
 properties = "unit"
 
@@ -51,4 +52,7 @@ aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = fa
 aex-wire = { path = "../aex-wire" }
 
 [dev-dependencies]
+aws-smithy-http-client.workspace = true
+aws-smithy-runtime-api.workspace = true
+http.workspace = true
 proptest.workspace = true

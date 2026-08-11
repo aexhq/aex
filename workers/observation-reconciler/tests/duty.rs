@@ -23,7 +23,7 @@ use aws_smithy_types::body::SdkBody;
 use observation_reconciler::config::{
     Config, DUTY_SHARDS_VAR, DUTY_VAR, MAX_ATTEMPTS_VAR, OBSERVATION_BUCKET_VAR,
     OBSERVATION_TABLE_VAR, ObservationReconcilerConfigError, PLANE_VAR, RECONCILE_PAGE_VAR,
-    REGION_VAR, REQUIRED_VARS, USAGE_QUEUE_URL_VAR,
+    REGION_VAR, REQUIRED_VARS, SESSION_TABLE_VAR, USAGE_QUEUE_URL_VAR,
 };
 use observation_reconciler::duty::{
     BatchOutcome, DueItem, DutyEngine, DutySettings, ItemId, ItemKey,
@@ -41,6 +41,7 @@ fn complete() -> BTreeMap<&'static str, String> {
         (PLANE_VAR, "dev".to_owned()),
         (REGION_VAR, "eu-west-1".to_owned()),
         (OBSERVATION_TABLE_VAR, "observation-authority".to_owned()),
+        (SESSION_TABLE_VAR, "session-authority".to_owned()),
         (OBSERVATION_BUCKET_VAR, "aex-dev-observations".to_owned()),
         (DUTY_VAR, "spool.repair".to_owned()),
         (RECONCILE_PAGE_VAR, "100".to_owned()),
@@ -63,6 +64,7 @@ fn a_complete_environment_starts_and_carries_no_default() {
     assert_eq!(config.plane, "dev");
     assert_eq!(config.region, Region::EuWest1);
     assert_eq!(config.observation_table, "observation-authority");
+    assert_eq!(config.session_table, "session-authority");
     assert_eq!(config.observation_bucket, "aex-dev-observations");
     assert_eq!(config.duty, ControlDomain::SpoolRepair);
     assert_eq!(config.page, 100);
@@ -530,6 +532,7 @@ fn body_of(
 fn settings(duty: ControlDomain) -> DutySettings {
     DutySettings {
         table: TABLE.to_owned(),
+        session_table: "session-authority".to_owned(),
         bucket: "aex-dev-observations".to_owned(),
         usage_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-usage.fifo".to_owned(),
         region: Region::EuWest1,

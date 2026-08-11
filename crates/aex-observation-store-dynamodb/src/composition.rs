@@ -25,6 +25,8 @@ pub enum Capability {
     WriteBodies,
     /// `s3:DeleteObject` on `observations/*`.
     DeleteBodies,
+    /// `s3:ListBucket`/`DeleteObject`/`AbortMultipartUpload` on `exports/*`.
+    DeleteExportObjects,
     /// `s3:PutObject`/`AbortMultipartUpload`/`ListMultipartUploadParts` on
     /// `exports/*`.
     WriteExportObjects,
@@ -44,6 +46,7 @@ impl Capability {
         Capability::ReadBodies,
         Capability::WriteBodies,
         Capability::DeleteBodies,
+        Capability::DeleteExportObjects,
         Capability::WriteExportObjects,
         Capability::LaunchExportTasks,
         Capability::DeliverUsage,
@@ -60,6 +63,7 @@ impl Capability {
             Self::ReadBodies => "read_bodies",
             Self::WriteBodies => "write_bodies",
             Self::DeleteBodies => "delete_bodies",
+            Self::DeleteExportObjects => "delete_export_objects",
             Self::WriteExportObjects => "write_export_objects",
             Self::LaunchExportTasks => "launch_export_tasks",
             Self::DeliverUsage => "deliver_usage",
@@ -125,6 +129,8 @@ impl Role {
                 Capability::DeleteObservations,
                 Capability::ReadBodies,
                 Capability::DeleteBodies,
+                Capability::WriteExportControl,
+                Capability::DeleteExportObjects,
             ],
             // The launcher holds **no** observation read permission at all, so a
             // launcher bug cannot become a data path.
@@ -225,12 +231,18 @@ mod tests {
         for role in Role::ALL {
             let expected = *role == Role::ReconcilerDeletion;
             assert_eq!(role.holds(Capability::DeleteBodies), expected, "{role:?}");
+            assert_eq!(
+                role.holds(Capability::DeleteExportObjects),
+                expected,
+                "{role:?}"
+            );
         }
     }
 
     #[test]
     fn the_export_task_holds_no_delete_anywhere() {
         assert!(!Role::ExportTask.holds(Capability::DeleteBodies));
+        assert!(!Role::ExportTask.holds(Capability::DeleteExportObjects));
         assert!(!Role::ExportTask.holds(Capability::DeleteObservations));
         assert!(Role::ExportTask.holds(Capability::WriteExportControl));
         assert!(Role::ExportTask.holds(Capability::WriteExportObjects));

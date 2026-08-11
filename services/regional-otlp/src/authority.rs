@@ -14,7 +14,7 @@
 //!   caller re-reads `BATCH#…/RECEIPT` and branches on `state`; a transaction is
 //!   never retried blindly.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -36,10 +36,27 @@ use aex_wire::ids::{
 use aex_wire::types::{Region, Timestamp};
 use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update, WriteRequest};
 
-use crate::staging::{BodyPlacement, BodyStager, S3BodySink, STAGING_BYTE_BUDGET};
+use crate::staging::{
+    BodyPlacement, BodyStager, S3BodySink, STAGING_BYTE_BUDGET, scope_body_prefix,
+};
 
 /// How many observations one materialization write carries.
 pub const MATERIALIZE_CHUNK: usize = 25;
+
+/// Maximum directory updates in one materialization transaction.
+///
+/// Every record can name a different event-time hour, while accepted-time
+/// contributions collapse to at most one row per authority signal. A session
+/// page writes both its exact scope directory and the aggregate workspace
+/// directory that workspace GSIs use. Together with the deletion fence,
+/// observation puts and exact page ledger this keeps the worst transaction at
+/// 85 actions, below DynamoDB's 100-action ceiling.
+pub const MATERIALIZATION_MAX_SEGMENT_UPDATES: usize =
+    2 * (MATERIALIZE_CHUNK + Signal::AUTHORITY.len());
+
+/// Maximum actions in one materialization transaction.
+pub const MATERIALIZATION_MAX_ACTIONS: usize =
+    1 + MATERIALIZE_CHUNK + MATERIALIZATION_MAX_SEGMENT_UPDATES + 1;
 
 /// How many materialization chunks one batch drives at once.
 ///
@@ -62,10 +79,10 @@ const GATE_CACHE_TTL: Duration = Duration::from_secs(2);
 
 /// How many accepted-frontier point reads one batch may hold open at once.
 ///
-/// The signal vocabulary is closed, so every read a batch could need can be
-/// open together and the bound is the vocabulary's own size rather than a
-/// tuning number somebody chose.
-pub const MAX_CONCURRENT_FRONTIER_READS: usize = Signal::ALL.len();
+/// The signal vocabulary is closed, so every exact-scope and aggregate-
+/// workspace read a batch could need can be open together. The bound is twice
+/// the vocabulary size rather than a tuning number somebody chose.
+pub const MAX_CONCURRENT_FRONTIER_READS: usize = 2 * Signal::ALL.len();
 
 /// The shard count one accepted-time bucket is written across.
 ///
@@ -451,11 +468,13 @@ impl AdmissionAuthority {
         let pages = pack_pages(&staged)?;
 
         // Step 6 — transaction P.
-        self.prepare(request, &plan, now).await?;
+        self.prepare(request, &plan, pinned_epoch, now).await?;
         if let Some(receipt) = self.receipt_state(request).await?
             && receipt.state == StoredReceipt::Committed
         {
-            return self.replay_committed(request, &plan, &receipt).await;
+            return self
+                .replay_committed(request, &plan, &receipt, pinned_epoch)
+                .await;
         }
 
         // Step 7 — stage bodies and pages. Nothing here is reachable or billed
@@ -464,7 +483,7 @@ impl AdmissionAuthority {
         let page_digests = self.stage_pages(request, &pages, &staged).await?;
 
         // Step 8 — transaction C.
-        let allocations = self.allocate(request, signals).await?;
+        let (allocations, workspace_allocations) = self.allocate(request, signals).await?;
         let skew = (now.unix_millis()
             - Timestamp::from_datetime_trunc_ms(time::OffsetDateTime::now_utc())
                 .map_or(now.unix_millis(), Timestamp::unix_millis))
@@ -479,6 +498,7 @@ impl AdmissionAuthority {
             request,
             &plan,
             &allocations,
+            &workspace_allocations,
             &page_digests,
             pinned_epoch,
             now,
@@ -509,8 +529,11 @@ impl AdmissionAuthority {
             &placements,
             BucketHour::from_timestamp(accepted_at),
             accepted_at,
+            pinned_epoch,
         )
         .await?;
+        self.finalize_materialization(request, &receipt.allocations, pinned_epoch, accepted_at)
+            .await?;
 
         Ok(AdmissionReceipt {
             batch_id: request.batch_id,
@@ -526,6 +549,7 @@ impl AdmissionAuthority {
         request: &AdmissionRequest,
         plan: &AdmissionPlan,
         receipt: &StoredReceiptRecord,
+        pinned_epoch: u64,
     ) -> Result<AdmissionReceipt, AuthorityError> {
         let accepted_at = receipt.accepted_at.ok_or(AuthorityError::Malformed {
             item: "admission_receipt",
@@ -541,6 +565,14 @@ impl AdmissionAuthority {
             .collect::<Vec<_>>();
         let pages = pack_pages(&staged)?;
         confirm_page_manifest(&staged_page_digests(&pages, &staged), &receipt.page_digests)?;
+        if receipt.materialized {
+            return Ok(AdmissionReceipt {
+                batch_id: request.batch_id,
+                accepted_at,
+                accepted: request.observations.len() as u64,
+                logical_bytes: plan.logical_bytes(),
+            });
+        }
         let placements = self.stage_bodies(request).await?;
         self.materialize(
             request,
@@ -548,8 +580,11 @@ impl AdmissionAuthority {
             &placements,
             BucketHour::from_timestamp(accepted_at),
             accepted_at,
+            pinned_epoch,
         )
         .await?;
+        self.finalize_materialization(request, &receipt.allocations, pinned_epoch, accepted_at)
+            .await?;
         Ok(AdmissionReceipt {
             batch_id: request.batch_id,
             accepted_at,
@@ -558,11 +593,117 @@ impl AdmissionAuthority {
         })
     }
 
+    /// Publishes materialization completeness after every observation and
+    /// structural directory contribution is durable.
+    ///
+    /// Transaction C increments one pending counter on every affected signal.
+    /// Readers fail closed while any counter is non-zero. This paired terminal
+    /// transition decrements those counters exactly once, using the receipt's
+    /// immutable `materializedAt` marker as its ambiguity/replay proof.
+    async fn finalize_materialization(
+        &self,
+        request: &AdmissionRequest,
+        allocations: &[Allocation],
+        pinned_epoch: u64,
+        accepted_at: Timestamp,
+    ) -> Result<(), AuthorityError> {
+        let frontier_copies = usize::from(request.scope.session().is_some()) + 1;
+        let mut actions = Vec::with_capacity(allocations.len() * frontier_copies + 2);
+        actions.push(self.deletion_fence(request, pinned_epoch)?);
+
+        let mut receipt = ExpressionBuilder::new();
+        let state = receipt.name("state");
+        let committed = receipt.string("committed");
+        let materialized_at = receipt.name("materializedAt");
+        let at = receipt.string(accepted_at.to_wire());
+        let scope_name = receipt.name("scopeKey");
+        let scope = receipt.string(request.scope.to_key());
+        let batch_name = receipt.name("batchId");
+        let batch = receipt.string(request.batch_id.to_string());
+        let receipt_update = Update::builder()
+            .table_name(&self.table)
+            .key(
+                PK,
+                AttributeValue::S(keys::batch_pk(request.workspace, request.batch_id)),
+            )
+            .key(SK, AttributeValue::S(keys::RECEIPT_SK.to_owned()))
+            .update_expression(format!("SET {materialized_at} = {at}"))
+            .condition_expression(format!(
+                "{state} = {committed} AND attribute_not_exists({materialized_at}) AND \
+                 {scope_name} = {scope} AND {batch_name} = {batch}"
+            ))
+            .set_expression_attribute_names(Some(receipt.names()))
+            .set_expression_attribute_values(Some(receipt.values()))
+            .build()
+            .map_err(|error| AuthorityError::provider("TransactWriteItems", error))?;
+        actions.push(TransactWriteItem::builder().update(receipt_update).build());
+
+        let aggregate_scope = ScopeKey::Workspace(request.workspace);
+        for allocation in allocations {
+            for scope in [
+                Some(request.scope),
+                (request.scope != aggregate_scope).then_some(aggregate_scope),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let mut frontier = ExpressionBuilder::new();
+                let pending = frontier.name("pendingMaterializations");
+                let accepted = frontier.name("accepted");
+                let one = frontier.number(-1_i64);
+                let at_least_one = frontier.number(1_u64);
+                let condition = if scope == request.scope {
+                    let accepted_hi = frontier.number(allocation.hi);
+                    format!("{pending} >= {at_least_one} AND {accepted} >= {accepted_hi}")
+                } else {
+                    format!("{pending} >= {at_least_one}")
+                };
+                let update = Update::builder()
+                    .table_name(&self.table)
+                    .key(PK, AttributeValue::S(keys::frontier_pk(&scope)))
+                    .key(SK, AttributeValue::S(keys::frontier_sk(allocation.signal)))
+                    .update_expression(format!("ADD {pending} {one}"))
+                    .condition_expression(condition)
+                    .set_expression_attribute_names(Some(frontier.names()))
+                    .set_expression_attribute_values(Some(frontier.values()))
+                    .build()
+                    .map_err(|error| AuthorityError::provider("TransactWriteItems", error))?;
+                actions.push(TransactWriteItem::builder().update(update).build());
+            }
+        }
+
+        let outcome = self
+            .dynamodb
+            .transact_write_items()
+            .set_transact_items(Some(actions))
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if self
+                    .receipt_state(request)
+                    .await?
+                    .is_some_and(|receipt| receipt.materialized)
+                {
+                    return Ok(());
+                }
+                if let Err(fenced @ AuthorityError::Fenced { .. }) =
+                    self.deletion_epoch(&request.scope).await
+                {
+                    return Err(fenced);
+                }
+                Err(AuthorityError::provider("TransactWriteItems", error))
+            }
+        }
+    }
+
     /// Transaction P: create or resume the receipt and reserve exact quota.
     async fn prepare(
         &self,
         request: &AdmissionRequest,
         plan: &AdmissionPlan,
+        pinned_epoch: u64,
         now: Timestamp,
     ) -> Result<(), AuthorityError> {
         let mut builder = ExpressionBuilder::new();
@@ -599,10 +740,19 @@ impl AdmissionAuthority {
             .build()
             .map_err(|error| AuthorityError::provider("TransactWriteItems", error))?;
 
+        let directory = Put::builder()
+            .table_name(&self.table)
+            .set_item(Some(scope_batch_item(request, now)))
+            .condition_expression("attribute_not_exists(pk)")
+            .build()
+            .map_err(|error| AuthorityError::provider("TransactWriteItems", error))?;
+
         let outcome = self
             .dynamodb
             .transact_write_items()
+            .transact_items(self.deletion_fence(request, pinned_epoch)?)
             .transact_items(TransactWriteItem::builder().put(receipt).build())
+            .transact_items(TransactWriteItem::builder().put(directory).build())
             .transact_items(TransactWriteItem::builder().update(update).build())
             .send()
             .await;
@@ -610,16 +760,39 @@ impl AdmissionAuthority {
             Ok(_) => Ok(()),
             Err(error) => {
                 // Resolve by batch identity rather than retrying blindly.
-                match self.receipt_state(request).await? {
-                    Some(StoredReceiptRecord {
-                        state: StoredReceipt::Preparing | StoredReceipt::Committed,
-                        ..
-                    }) => Ok(()),
-                    Some(StoredReceiptRecord {
-                        state: StoredReceipt::Aborted,
-                        ..
-                    })
-                    | None => Err(AuthorityError::provider("TransactWriteItems", error)),
+                let receipt = self.receipt_state(request).await?;
+                let directory = self
+                    .get(
+                        &keys::scope_batch_pk(&request.scope),
+                        &keys::scope_batch_sk(request.batch_id),
+                    )
+                    .await?;
+                match (receipt, directory) {
+                    (
+                        Some(StoredReceiptRecord {
+                            state: StoredReceipt::Preparing | StoredReceipt::Committed,
+                            ..
+                        }),
+                        Some(_),
+                    ) => Ok(()),
+                    (
+                        Some(StoredReceiptRecord {
+                            state: StoredReceipt::Preparing | StoredReceipt::Committed,
+                            ..
+                        }),
+                        None,
+                    ) => Err(AuthorityError::Malformed {
+                        item: "scope_batch",
+                        attribute: "pk",
+                    }),
+                    (
+                        Some(StoredReceiptRecord {
+                            state: StoredReceipt::Aborted,
+                            ..
+                        }),
+                        _,
+                    )
+                    | (None, _) => Err(AuthorityError::provider("TransactWriteItems", error)),
                 }
             }
         }
@@ -663,11 +836,22 @@ impl AdmissionAuthority {
         } else {
             (None, Vec::new(), Vec::new())
         };
+        let materialized = match item.get("materializedAt") {
+            None => false,
+            Some(_) if timestamp(&item, "materializedAt").is_some() => true,
+            Some(_) => {
+                return Err(AuthorityError::Malformed {
+                    item: "admission_receipt",
+                    attribute: "materializedAt",
+                });
+            }
+        };
         Ok(Some(StoredReceiptRecord {
             state,
             accepted_at,
             allocations,
             page_digests,
+            materialized,
         }))
     }
 
@@ -682,7 +866,7 @@ impl AdmissionAuthority {
         request: &AdmissionRequest,
     ) -> Result<Vec<BodyPlacement>, AuthorityError> {
         let sink = S3BodySink::new(&self.s3, &self.bucket);
-        BodyStager::new(&sink, request.workspace, STAGING_BYTE_BUDGET)
+        BodyStager::new(&sink, request.scope, STAGING_BYTE_BUDGET)
             .stage_all(&request.observations)
             .await
     }
@@ -696,18 +880,29 @@ impl AdmissionAuthority {
         &self,
         request: &AdmissionRequest,
         signals: SignalSet,
-    ) -> Result<Vec<Allocation>, AuthorityError> {
+    ) -> Result<(Vec<Allocation>, Vec<Allocation>), AuthorityError> {
         let ordered: Vec<Signal> = signals.iter().collect();
-        let reads: Vec<_> = ordered
+        let mut reads: Vec<_> = ordered
             .iter()
             .map(|signal| self.frontier(&request.scope, *signal))
             .collect();
+        let reads_workspace = request.scope.session().is_some();
+        let workspace_scope = ScopeKey::Workspace(request.workspace);
+        if reads_workspace {
+            reads.extend(
+                ordered
+                    .iter()
+                    .map(|signal| self.frontier(&workspace_scope, *signal)),
+            );
+        }
         let rows =
             crate::staging::settle_bounded_ordered(reads, MAX_CONCURRENT_FRONTIER_READS).await?;
-        Ok(allocate_in_signal_order(
-            &ordered,
-            &rows,
-            &request.observations,
+        let (exact, workspace) = rows.split_at(ordered.len());
+        Ok((
+            allocate_in_signal_order(&ordered, exact, &request.observations),
+            reads_workspace
+                .then(|| allocate_in_signal_order(&ordered, workspace, &request.observations))
+                .unwrap_or_default(),
         ))
     }
 
@@ -719,7 +914,7 @@ impl AdmissionAuthority {
         staged: &[StagedRecord],
     ) -> Result<Vec<String>, AuthorityError> {
         let expires = seconds_from_now(limits::OBS_PREPARE_TTL_MS);
-        let mut writes = Vec::new();
+        let mut items = Vec::new();
         let mut digests = Vec::with_capacity(pages.len());
         for (ordinal, span) in pages.iter().enumerate() {
             let encoded = staged_page_bytes(span, staged);
@@ -783,15 +978,21 @@ impl AdmissionAuthority {
         request: &AdmissionRequest,
         plan: &AdmissionPlan,
         allocations: &[Allocation],
+        workspace_allocations: &[Allocation],
         page_digests: &[String],
         pinned_epoch: u64,
         now: Timestamp,
     ) -> Result<(), AuthorityError> {
         let mut actions = vec![self.publish_receipt(request, allocations, page_digests, now)?];
         for allocation in allocations {
-            actions.push(self.advance_frontier(request, allocation, now)?);
+            actions.push(self.advance_frontier(request, &request.scope, allocation, now)?);
+        }
+        let workspace_scope = ScopeKey::Workspace(request.workspace);
+        for allocation in workspace_allocations {
+            actions.push(self.advance_frontier(request, &workspace_scope, allocation, now)?);
         }
         actions.push(self.deletion_fence(request, pinned_epoch)?);
+        actions.push(self.commit_scope_batch(request, now)?);
         actions.push(self.put(spool_item(request, allocations, now))?);
         actions.push(self.put(outbox_item(request, plan, now))?);
 
@@ -870,6 +1071,7 @@ impl AdmissionAuthority {
     fn advance_frontier(
         &self,
         request: &AdmissionRequest,
+        scope: &ScopeKey,
         allocation: &Allocation,
         now: Timestamp,
     ) -> Result<TransactWriteItem, AuthorityError> {
@@ -887,6 +1089,7 @@ impl AdmissionAuthority {
         let revision = frontier.name("revision");
         let count = frontier.name("count");
         let bytes = frontier.name("logicalBytes");
+        let pending = frontier.name("pendingMaterializations");
         let advance = frontier.number(allocation.hi - allocation.lo);
         let one = frontier.number(1u64);
         let signal_bytes = request
@@ -903,14 +1106,14 @@ impl AdmissionAuthority {
             .update(
                 Update::builder()
                     .table_name(&self.table)
-                    .key(PK, AttributeValue::S(keys::frontier_pk(&request.scope)))
+                    .key(PK, AttributeValue::S(keys::frontier_pk(scope)))
                     .key(SK, AttributeValue::S(keys::frontier_sk(allocation.signal)))
                     .update_expression(format!(
                         "SET {item_type} = {frontier_type}, {accepted_at} = {accepted_time}, \
                          {earliest_accepted_at} = if_not_exists({earliest_name}, {accepted_time}), \
                          {earliest_accepted_seq} = if_not_exists({earliest_seq_name}, {allocation_lo}) \
                          ADD {accepted} {advance}, {revision} {one}, {count} {advance}, \
-                         {bytes} {byte_delta}"
+                         {bytes} {byte_delta}, {pending} {one}"
                     ))
                     .condition_expression(format!(
                         "attribute_not_exists({absent}) OR {expected_name} = {expected}"
@@ -968,6 +1171,50 @@ impl AdmissionAuthority {
             .build())
     }
 
+    /// Publishes the exact spool identity on the scope's batch directory.
+    ///
+    /// The directory is created with transaction P and moves to `committed`
+    /// with transaction C. A session deletion can therefore distinguish an
+    /// admission that may still stage bodies from one whose remaining writes
+    /// are all guarded materialization transactions.
+    fn commit_scope_batch(
+        &self,
+        request: &AdmissionRequest,
+        now: Timestamp,
+    ) -> Result<TransactWriteItem, AuthorityError> {
+        let shard = spool_shard(&request.batch_id.to_string());
+        let spool_pk = keys::spool_pk(request.workspace, shard);
+        let spool_sk = format!("{}#{}", now.to_wire(), request.batch_id);
+        let update = Update::builder()
+            .table_name(&self.table)
+            .key(PK, AttributeValue::S(keys::scope_batch_pk(&request.scope)))
+            .key(
+                SK,
+                AttributeValue::S(keys::scope_batch_sk(request.batch_id)),
+            )
+            .update_expression(
+                "SET #state = :committed, acceptedAt = :now, spoolPk = :spool_pk, \
+                 spoolSk = :spool_sk",
+            )
+            .condition_expression(
+                "#state = :preparing AND batchPk = :batch_pk AND scopeKey = :scope",
+            )
+            .expression_attribute_names("#state", "state")
+            .expression_attribute_values(":committed", AttributeValue::S("committed".to_owned()))
+            .expression_attribute_values(":preparing", AttributeValue::S("preparing".to_owned()))
+            .expression_attribute_values(":now", AttributeValue::S(now.to_wire()))
+            .expression_attribute_values(":spool_pk", AttributeValue::S(spool_pk))
+            .expression_attribute_values(":spool_sk", AttributeValue::S(spool_sk))
+            .expression_attribute_values(
+                ":batch_pk",
+                AttributeValue::S(keys::batch_pk(request.workspace, request.batch_id)),
+            )
+            .expression_attribute_values(":scope", AttributeValue::S(request.scope.to_key()))
+            .build()
+            .map_err(|error| AuthorityError::provider("TransactWriteItems", error))?;
+        Ok(TransactWriteItem::builder().update(update).build())
+    }
+
     /// Step 9: idempotently write the `OBS#` revisions the commit published.
     async fn materialize(
         &self,
@@ -976,12 +1223,13 @@ impl AdmissionAuthority {
         placements: &[BodyPlacement],
         abucket: BucketHour,
         now: Timestamp,
+        pinned_epoch: u64,
     ) -> Result<(), AuthorityError> {
         let mut next: HashMap<Signal, u64> = allocations
             .iter()
             .map(|allocation| (allocation.signal, allocation.lo))
             .collect();
-        let mut writes = Vec::new();
+        let mut items = Vec::new();
         for (index, observation) in request.observations.iter().enumerate() {
             let seq = next.entry(observation.signal).or_insert(0);
             let accepted_seq = *seq;
@@ -999,18 +1247,169 @@ impl AdmissionAuthority {
                 },
                 placement,
             );
-            writes.push(
-                WriteRequest::builder()
-                    .put_request(
-                        aws_sdk_dynamodb::types::PutRequest::builder()
-                            .set_item(Some(item))
-                            .build()
-                            .map_err(|error| AuthorityError::provider("BatchWriteItem", error))?,
-                    )
-                    .build(),
-            );
+            items.push(item);
         }
-        self.batch_write(writes).await
+        let waves: Vec<_> = items
+            .chunks(MATERIALIZE_CHUNK)
+            .enumerate()
+            .map(|(page, chunk)| {
+                self.write_materialization_chunk(
+                    request,
+                    pinned_epoch,
+                    u32::try_from(page).unwrap_or(u32::MAX),
+                    abucket,
+                    chunk,
+                )
+            })
+            .collect();
+        crate::staging::settle_bounded_ordered(waves, MATERIALIZE_CONCURRENCY).await?;
+        Ok(())
+    }
+
+    /// Writes one bounded observation page and its exact deletion ledger under
+    /// the same scope-fence transaction.
+    async fn write_materialization_chunk(
+        &self,
+        request: &AdmissionRequest,
+        pinned_epoch: u64,
+        page: u32,
+        abucket: BucketHour,
+        items: &[HashMap<String, AttributeValue>],
+    ) -> Result<(), AuthorityError> {
+        let segments = segment_deltas(items, abucket)?;
+        let directory_digest = segment_delta_digest(&segments);
+        let materialization_digest = materialization_digest(items, &directory_digest)?;
+        let directory_copies = usize::from(request.scope.session().is_some()) + 1;
+        let mut actions = Vec::with_capacity(items.len() + segments.len() * directory_copies + 2);
+        actions.push(self.deletion_fence(request, pinned_epoch)?);
+        for item in items {
+            actions.push(self.put_if_absent(item.clone())?);
+        }
+        let aggregate_scope = ScopeKey::Workspace(request.workspace);
+        for segment in &segments {
+            actions.push(self.advance_segment(request, &request.scope, segment)?);
+            if request.scope != aggregate_scope {
+                actions.push(self.advance_segment(request, &aggregate_scope, segment)?);
+            }
+        }
+        actions.push(self.put_if_absent(materialization_ledger_item(
+            request,
+            page,
+            items,
+            &segments,
+            &directory_digest,
+            &materialization_digest,
+        )?)?);
+        let outcome = self
+            .dynamodb
+            .transact_write_items()
+            .set_transact_items(Some(actions))
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let ledger = self
+                    .get(
+                        &keys::batch_pk(request.workspace, request.batch_id),
+                        &keys::materialization_sk(page),
+                    )
+                    .await?;
+                if ledger.as_ref().is_some_and(|item| {
+                    string(item, "scopeKey") == Some(request.scope.to_key().as_str())
+                        && number(item, "recordCount")
+                            == Some(u64::try_from(items.len()).unwrap_or(u64::MAX))
+                        && string(item, "directoryDigest") == Some(directory_digest.as_str())
+                        && string(item, "materializationDigest")
+                            == Some(materialization_digest.as_str())
+                }) {
+                    return Ok(());
+                }
+                if let Err(fenced @ AuthorityError::Fenced { .. }) =
+                    self.deletion_epoch(&request.scope).await
+                {
+                    return Err(fenced);
+                }
+                Err(AuthorityError::provider("TransactWriteItems", error))
+            }
+        }
+    }
+
+    /// Advances one structural accepted/event-time directory row.
+    ///
+    /// The page ledger is an immutable participant in the same transaction,
+    /// so an ambiguous replay cannot apply these additive counters twice.
+    /// Concurrent pages commute: they only add counts/bytes and every other
+    /// field is an invariant checked before the update is accepted.
+    fn advance_segment(
+        &self,
+        request: &AdmissionRequest,
+        scope: &ScopeKey,
+        delta: &SegmentDelta,
+    ) -> Result<TransactWriteItem, AuthorityError> {
+        let mut builder = ExpressionBuilder::new();
+        let item_type = builder.name(ITEM_TYPE);
+        let scope_name = builder.name("scopeKey");
+        let workspace_name = builder.name("workspaceId");
+        let signal_name = builder.name("signal");
+        let bucket_name = builder.name("bucket");
+        let shards_name = builder.name("shards");
+        let count_name = builder.name("count");
+        let bytes_name = builder.name("logicalBytes");
+        let absent = builder.name(PK);
+        let segment_type = builder.string("segment");
+        let scope_value = builder.string(scope.to_key());
+        let workspace = builder.string(request.workspace.to_string());
+        let signal = builder.string(delta.signal.as_str());
+        let bucket = builder.string(delta.bucket.as_str());
+        let shards = builder.number(BUCKET_SHARDS);
+        let count = builder.number(delta.count);
+        let logical_bytes = builder.number(delta.logical_bytes);
+        let partition = match delta.axis {
+            SegmentAxis::Accepted => keys::segment_pk(scope, delta.signal),
+            SegmentAxis::EventTime => keys::time_segment_pk(scope, delta.signal),
+        };
+        let update = Update::builder()
+            .table_name(&self.table)
+            .key(PK, AttributeValue::S(partition))
+            .key(SK, AttributeValue::S(delta.bucket.as_str().to_owned()))
+            .update_expression(format!(
+                "SET {item_type} = if_not_exists({item_type}, {segment_type}), \
+                 {scope_name} = if_not_exists({scope_name}, {scope_value}), \
+                 {workspace_name} = if_not_exists({workspace_name}, {workspace}), \
+                 {signal_name} = if_not_exists({signal_name}, {signal}), \
+                 {bucket_name} = if_not_exists({bucket_name}, {bucket}), \
+                 {shards_name} = if_not_exists({shards_name}, {shards}) \
+                 ADD {count_name} {count}, {bytes_name} {logical_bytes}"
+            ))
+            .condition_expression(format!(
+                "attribute_not_exists({absent}) OR \
+                 ({item_type} = {segment_type} AND {scope_name} = {scope_value} AND \
+                  {workspace_name} = {workspace} AND {signal_name} = {signal} AND \
+                  {bucket_name} = {bucket} AND {shards_name} = {shards})"
+            ))
+            .set_expression_attribute_names(Some(builder.names()))
+            .set_expression_attribute_values(Some(builder.values()))
+            .build()
+            .map_err(|error| AuthorityError::provider("TransactWriteItems", error))?;
+        Ok(TransactWriteItem::builder().update(update).build())
+    }
+
+    /// Wraps one immutable item as a transaction put.
+    fn put_if_absent(
+        &self,
+        item: HashMap<String, AttributeValue>,
+    ) -> Result<TransactWriteItem, AuthorityError> {
+        Ok(TransactWriteItem::builder()
+            .put(
+                Put::builder()
+                    .table_name(&self.table)
+                    .set_item(Some(item))
+                    .condition_expression("attribute_not_exists(pk)")
+                    .build()
+                    .map_err(|error| AuthorityError::provider("TransactWriteItems", error))?,
+            )
+            .build())
     }
 
     /// Writes a bounded batch as concurrent waves of bounded chunks.
@@ -1128,6 +1527,259 @@ fn staged_page_digests(
         .iter()
         .map(|span| sha256_hex(&staged_page_bytes(span, staged)))
         .collect()
+}
+
+/// Strongly-consistent directory entry created with transaction P.
+fn scope_batch_item(request: &AdmissionRequest, now: Timestamp) -> HashMap<String, AttributeValue> {
+    HashMap::from([
+        (
+            PK.to_owned(),
+            AttributeValue::S(keys::scope_batch_pk(&request.scope)),
+        ),
+        (
+            SK.to_owned(),
+            AttributeValue::S(keys::scope_batch_sk(request.batch_id)),
+        ),
+        (
+            ITEM_TYPE.to_owned(),
+            AttributeValue::S("scope_batch".to_owned()),
+        ),
+        (
+            "scopeKey".to_owned(),
+            AttributeValue::S(request.scope.to_key()),
+        ),
+        (
+            "workspaceId".to_owned(),
+            AttributeValue::S(request.workspace.to_string()),
+        ),
+        (
+            "batchId".to_owned(),
+            AttributeValue::S(request.batch_id.to_string()),
+        ),
+        (
+            "batchPk".to_owned(),
+            AttributeValue::S(keys::batch_pk(request.workspace, request.batch_id)),
+        ),
+        (
+            "bodyPrefix".to_owned(),
+            AttributeValue::S(scope_body_prefix(request.scope)),
+        ),
+        (
+            "state".to_owned(),
+            AttributeValue::S("preparing".to_owned()),
+        ),
+        ("preparedAt".to_owned(), AttributeValue::S(now.to_wire())),
+    ])
+}
+
+/// Which sparse directory one materialized observation contributes to.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum SegmentAxis {
+    /// Accepted-time discovery for accepted-order reads.
+    Accepted,
+    /// Event-time discovery for time-order reads.
+    EventTime,
+}
+
+impl SegmentAxis {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::EventTime => "event_time",
+        }
+    }
+}
+
+/// One page's additive contribution to an exact structural segment row.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct SegmentDelta {
+    axis: SegmentAxis,
+    signal: Signal,
+    bucket: BucketHour,
+    count: u64,
+    logical_bytes: u64,
+}
+
+/// Folds one bounded observation page into its accepted/event directories.
+fn segment_deltas(
+    observations: &[HashMap<String, AttributeValue>],
+    abucket: BucketHour,
+) -> Result<Vec<SegmentDelta>, AuthorityError> {
+    let mut folded = BTreeMap::<(SegmentAxis, Signal, BucketHour), (u64, u64)>::new();
+    for item in observations {
+        let signal =
+            string(item, "signal")
+                .and_then(Signal::parse)
+                .ok_or(AuthorityError::Malformed {
+                    item: "observation",
+                    attribute: "signal",
+                })?;
+        let time = timestamp(item, "time").ok_or(AuthorityError::Malformed {
+            item: "observation",
+            attribute: "time",
+        })?;
+        let bytes = number(item, "logicalBytes").ok_or(AuthorityError::Malformed {
+            item: "observation",
+            attribute: "logicalBytes",
+        })?;
+        for (axis, bucket) in [
+            (SegmentAxis::Accepted, abucket),
+            (SegmentAxis::EventTime, BucketHour::from_timestamp(time)),
+        ] {
+            let contribution = folded.entry((axis, signal, bucket)).or_default();
+            contribution.0 = contribution.0.saturating_add(1);
+            contribution.1 = contribution.1.saturating_add(bytes);
+        }
+    }
+    Ok(folded
+        .into_iter()
+        .map(
+            |((axis, signal, bucket), (count, logical_bytes))| SegmentDelta {
+                axis,
+                signal,
+                bucket,
+                count,
+                logical_bytes,
+            },
+        )
+        .collect())
+}
+
+/// Binds a page ledger to every additive directory contribution it guarded.
+fn segment_delta_digest(deltas: &[SegmentDelta]) -> String {
+    let mut bytes = Vec::new();
+    for delta in deltas {
+        bytes.extend_from_slice(delta.axis.as_str().as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(delta.signal.as_str().as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(delta.bucket.as_str().as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&delta.count.to_be_bytes());
+        bytes.extend_from_slice(&delta.logical_bytes.to_be_bytes());
+    }
+    sha256_hex(&bytes)
+}
+
+/// Binds an exact materialization replay to its ordered observation keys,
+/// external body identities and directory contribution set.
+fn materialization_digest(
+    observations: &[HashMap<String, AttributeValue>],
+    directory_digest: &str,
+) -> Result<String, AuthorityError> {
+    let mut bytes = Vec::new();
+    for item in observations {
+        for attribute in [PK, SK] {
+            let value = string(item, attribute).ok_or(AuthorityError::Malformed {
+                item: "observation",
+                attribute,
+            })?;
+            bytes.extend_from_slice(value.as_bytes());
+            bytes.push(0);
+        }
+        if let Some(key) = string(item, "bodyS3Key") {
+            bytes.extend_from_slice(key.as_bytes());
+        }
+        bytes.push(0);
+    }
+    bytes.extend_from_slice(directory_digest.as_bytes());
+    Ok(sha256_hex(&bytes))
+}
+
+/// One exact, bounded observation ledger page written with its observations.
+fn materialization_ledger_item(
+    request: &AdmissionRequest,
+    page: u32,
+    observations: &[HashMap<String, AttributeValue>],
+    segments: &[SegmentDelta],
+    directory_digest: &str,
+    materialization_digest: &str,
+) -> Result<HashMap<String, AttributeValue>, AuthorityError> {
+    let records = observations
+        .iter()
+        .map(|item| {
+            let pk = item.get(PK).cloned().ok_or(AuthorityError::Malformed {
+                item: "observation",
+                attribute: PK,
+            })?;
+            let sk = item.get(SK).cloned().ok_or(AuthorityError::Malformed {
+                item: "observation",
+                attribute: SK,
+            })?;
+            let mut record = HashMap::from([(PK.to_owned(), pk), (SK.to_owned(), sk)]);
+            if let Some(key) = item.get("bodyS3Key") {
+                record.insert("bodyS3Key".to_owned(), key.clone());
+            }
+            Ok(AttributeValue::M(record))
+        })
+        .collect::<Result<Vec<_>, AuthorityError>>()?;
+    let segment_contributions = segments
+        .iter()
+        .map(|segment| {
+            AttributeValue::M(HashMap::from([
+                (
+                    "axis".to_owned(),
+                    AttributeValue::S(segment.axis.as_str().to_owned()),
+                ),
+                (
+                    "signal".to_owned(),
+                    AttributeValue::S(segment.signal.as_str().to_owned()),
+                ),
+                (
+                    "bucket".to_owned(),
+                    AttributeValue::S(segment.bucket.as_str().to_owned()),
+                ),
+                (
+                    "count".to_owned(),
+                    AttributeValue::N(segment.count.to_string()),
+                ),
+                (
+                    "logicalBytes".to_owned(),
+                    AttributeValue::N(segment.logical_bytes.to_string()),
+                ),
+            ]))
+        })
+        .collect::<Vec<_>>();
+    Ok(HashMap::from([
+        (
+            PK.to_owned(),
+            AttributeValue::S(keys::batch_pk(request.workspace, request.batch_id)),
+        ),
+        (
+            SK.to_owned(),
+            AttributeValue::S(keys::materialization_sk(page)),
+        ),
+        (
+            ITEM_TYPE.to_owned(),
+            AttributeValue::S("materialization_ledger".to_owned()),
+        ),
+        (
+            "scopeKey".to_owned(),
+            AttributeValue::S(request.scope.to_key()),
+        ),
+        (
+            "batchId".to_owned(),
+            AttributeValue::S(request.batch_id.to_string()),
+        ),
+        ("page".to_owned(), AttributeValue::N(page.to_string())),
+        (
+            "recordCount".to_owned(),
+            AttributeValue::N(observations.len().to_string()),
+        ),
+        (
+            "directoryDigest".to_owned(),
+            AttributeValue::S(directory_digest.to_owned()),
+        ),
+        (
+            "materializationDigest".to_owned(),
+            AttributeValue::S(materialization_digest.to_owned()),
+        ),
+        ("observations".to_owned(), AttributeValue::L(records)),
+        (
+            "segments".to_owned(),
+            AttributeValue::L(segment_contributions),
+        ),
+    ]))
 }
 
 /// The `preparing` receipt item.
@@ -1874,6 +2526,8 @@ struct StoredReceiptRecord {
     allocations: Vec<Allocation>,
     /// Ordered staged-page digests committed with the visibility boundary.
     page_digests: Vec<String>,
+    /// Whether the paired materialization-completeness transition won.
+    materialized: bool,
 }
 
 /// The durable state a stored receipt is in.
@@ -1906,17 +2560,20 @@ impl StoredReceipt {
 mod tests {
     use super::{
         AdmissionRequest, Allocation, AuthorityError, BUCKET_SHARDS, FrontierRow,
-        MATERIALIZE_CHUNK, MAX_CONCURRENT_FRONTIER_READS, PreparedObservation,
-        allocate_in_signal_order, confirm_page_manifest, decode_allocations, decode_page_digests,
-        encode_allocations, gap_id_for, spool_item, spool_shard, stable_observation_id,
-        staged_page_digests,
+        MATERIALIZATION_MAX_ACTIONS, MATERIALIZATION_MAX_SEGMENT_UPDATES, MATERIALIZE_CHUNK,
+        MAX_CONCURRENT_FRONTIER_READS, PreparedObservation, allocate_in_signal_order,
+        confirm_page_manifest, decode_allocations, decode_page_digests, encode_allocations,
+        gap_id_for, materialization_ledger_item, segment_delta_digest, segment_deltas, spool_item,
+        spool_shard, stable_observation_id, staged_page_digests,
     };
     use crate::staging::BODY_PREFIX;
     use aex_observation_domain::canonical::CanonicalValue;
     use aex_observation_domain::keys::ScopeKey;
     use aex_observation_domain::signal::{Signal, SignalSet};
     use aex_observation_store_dynamodb::store::{PageSpan, StagedRecord, StoreError};
-    use aex_wire::ids::{OrganizationId, PrefixedId as _, TelemetryBatchId, Uuid7, WorkspaceId};
+    use aex_wire::ids::{
+        OrganizationId, PrefixedId as _, SessionId, TelemetryBatchId, Uuid7, WorkspaceId,
+    };
     use aex_wire::types::Timestamp;
     use aws_sdk_dynamodb::types::AttributeValue;
 
@@ -1931,6 +2588,21 @@ mod tests {
             span_id: None,
             metric_name: None,
             series_hash: None,
+        }
+    }
+
+    fn session_request() -> AdmissionRequest {
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [2; 10]));
+        AdmissionRequest {
+            batch_id: TelemetryBatchId::from_uuid7(Uuid7::compose(3, [3; 10])),
+            organization: OrganizationId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            workspace,
+            scope: ScopeKey::Session {
+                workspace,
+                session: SessionId::from_uuid7(Uuid7::compose(4, [4; 10])),
+            },
+            intent_digest: "0".repeat(64),
+            observations: vec![observation(Signal::Logs, 1, 1)],
         }
     }
 
@@ -2269,6 +2941,211 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn materialization_commits_observations_and_the_exact_deletion_ledger_under_one_fence() {
+        use aex_observation_store_dynamodb::expressions::{PK, SK};
+
+        let (authority, replay) = replay_authority(vec!["{}"]);
+        let request = session_request();
+        let observations = vec![
+            std::collections::HashMap::from([
+                (PK.to_owned(), AttributeValue::S("OBS#one".to_owned())),
+                (SK.to_owned(), AttributeValue::S("REV#1".to_owned())),
+                (
+                    "bodyS3Key".to_owned(),
+                    AttributeValue::S("observations/session/one".to_owned()),
+                ),
+                ("signal".to_owned(), AttributeValue::S("logs".to_owned())),
+                (
+                    "time".to_owned(),
+                    AttributeValue::S("2026-08-01T09:01:00.000Z".to_owned()),
+                ),
+                (
+                    "logicalBytes".to_owned(),
+                    AttributeValue::N("11".to_owned()),
+                ),
+            ]),
+            std::collections::HashMap::from([
+                (PK.to_owned(), AttributeValue::S("OBS#two".to_owned())),
+                (SK.to_owned(), AttributeValue::S("REV#1".to_owned())),
+                ("signal".to_owned(), AttributeValue::S("logs".to_owned())),
+                (
+                    "time".to_owned(),
+                    AttributeValue::S("2026-08-01T10:01:00.000Z".to_owned()),
+                ),
+                (
+                    "logicalBytes".to_owned(),
+                    AttributeValue::N("13".to_owned()),
+                ),
+            ]),
+        ];
+        let accepted_bucket = aex_observation_domain::keys::BucketHour::parse("2026-08-01T11")
+            .expect("accepted bucket");
+
+        authority
+            .write_materialization_chunk(&request, 7, 3, accepted_bucket, &observations)
+            .await
+            .expect("the materialization lands");
+
+        let actual = replay.actual_requests().next().expect("one transaction");
+        let body: serde_json::Value = serde_json::from_slice(
+            actual
+                .body()
+                .bytes()
+                .expect("the request body is in memory"),
+        )
+        .expect("request JSON");
+        let actions = body["TransactItems"].as_array().expect("actions");
+        assert_eq!(
+            actions.len(),
+            10,
+            "fence + two observations + exact/workspace SEG/SEGT updates + ledger"
+        );
+        let fence = &actions[0]["ConditionCheck"];
+        assert_eq!(
+            fence["Key"]["pk"]["S"].as_str(),
+            Some(aex_observation_domain::keys::frontier_pk(&request.scope).as_str())
+        );
+        assert_eq!(
+            fence["Key"]["sk"]["S"].as_str(),
+            Some(aex_observation_domain::keys::DELETION_SK)
+        );
+        let segment_partitions = actions[3..9]
+            .iter()
+            .filter_map(|action| action["Update"]["Key"]["pk"]["S"].as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let exact_accepted = aex_observation_domain::keys::segment_pk(&request.scope, Signal::Logs);
+        let exact_time =
+            aex_observation_domain::keys::time_segment_pk(&request.scope, Signal::Logs);
+        let workspace_accepted = aex_observation_domain::keys::segment_pk(
+            &ScopeKey::Workspace(request.workspace),
+            Signal::Logs,
+        );
+        assert!(segment_partitions.contains(exact_accepted.as_str()));
+        assert!(segment_partitions.contains(exact_time.as_str()));
+        assert!(segment_partitions.contains(workspace_accepted.as_str()));
+        let ledger = &actions[9]["Put"]["Item"];
+        assert_eq!(
+            ledger["itemType"]["S"].as_str(),
+            Some("materialization_ledger")
+        );
+        assert_eq!(ledger["recordCount"]["N"].as_str(), Some("2"));
+        assert_eq!(
+            ledger["observations"]["L"][0]["M"]["bodyS3Key"]["S"].as_str(),
+            Some("observations/session/one")
+        );
+    }
+
+    #[tokio::test]
+    async fn materialization_visibility_settles_receipt_and_signal_frontiers_atomically() {
+        let (authority, replay) = replay_authority(vec!["{}"]);
+        let request = session_request();
+        let allocations = [
+            Allocation {
+                signal: Signal::Logs,
+                lo: 1,
+                hi: 3,
+                revision: 1,
+            },
+            Allocation {
+                signal: Signal::Metrics,
+                lo: 8,
+                hi: 9,
+                revision: 2,
+            },
+        ];
+        authority
+            .finalize_materialization(
+                &request,
+                &allocations,
+                7,
+                Timestamp::parse("2026-08-01T11:00:00.000Z").expect("accepted"),
+            )
+            .await
+            .expect("visibility settles");
+
+        let actual = replay.actual_requests().next().expect("one transaction");
+        let body: serde_json::Value =
+            serde_json::from_slice(actual.body().bytes().expect("request body is in memory"))
+                .expect("request JSON");
+        let actions = body["TransactItems"].as_array().expect("actions");
+        assert_eq!(actions.len(), 6, "two exact and two workspace frontiers");
+        assert!(
+            actions[1]["Update"]["UpdateExpression"]
+                .as_str()
+                .is_some_and(|expression| expression.contains("SET"))
+        );
+        for frontier in &actions[2..] {
+            assert!(
+                frontier["Update"]["ExpressionAttributeValues"]
+                    .as_object()
+                    .expect("values")
+                    .values()
+                    .any(|value| value["N"].as_str() == Some("-1"))
+            );
+        }
+    }
+
+    #[test]
+    fn a_materialization_ledger_refuses_an_observation_without_an_exact_key() {
+        let request = session_request();
+        let error = materialization_ledger_item(
+            &request,
+            0,
+            &[std::collections::HashMap::from([(
+                "pk".to_owned(),
+                AttributeValue::S("OBS#one".to_owned()),
+            )])],
+            &[],
+            &"0".repeat(64),
+            &"1".repeat(64),
+        )
+        .expect_err("a ledger may never carry a null key");
+        assert!(
+            matches!(
+                error,
+                AuthorityError::Malformed {
+                    item: "observation",
+                    attribute: "sk"
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn arbitrary_event_hours_stay_inside_one_bounded_page_transaction() {
+        let accepted = aex_observation_domain::keys::BucketHour::parse("2026-08-01T12")
+            .expect("accepted bucket");
+        let items = (0..MATERIALIZE_CHUNK)
+            .map(|hour| {
+                let signal = Signal::AUTHORITY[hour % Signal::AUTHORITY.len()];
+                std::collections::HashMap::from([
+                    (
+                        "signal".to_owned(),
+                        AttributeValue::S(signal.as_str().to_owned()),
+                    ),
+                    (
+                        "time".to_owned(),
+                        AttributeValue::S(format!(
+                            "2026-07-{day:02}T00:00:00.000Z",
+                            day = hour + 1
+                        )),
+                    ),
+                    ("logicalBytes".to_owned(), AttributeValue::N("1".to_owned())),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let deltas = segment_deltas(&items, accepted).expect("page folds");
+
+        assert_eq!(2 * deltas.len(), MATERIALIZATION_MAX_SEGMENT_UPDATES);
+        assert_eq!(MATERIALIZATION_MAX_ACTIONS, 85);
+        assert!(
+            MATERIALIZATION_MAX_ACTIONS <= aex_observation_domain::limits::DDB_TRANSACT_MAX_ACTIONS
+        );
+        assert_eq!(segment_delta_digest(&deltas).len(), 64);
+    }
+
+    #[tokio::test]
     async fn the_gate_answers_from_one_read_per_cache_window() {
         let (authority, replay) = replay_authority(vec![
             r#"{"Item":{"state":{"S":"closed"}}}"#,
@@ -2468,10 +3345,10 @@ mod tests {
 
     #[test]
     fn every_frontier_read_one_batch_can_need_may_be_open_together() {
-        assert_eq!(MAX_CONCURRENT_FRONTIER_READS, Signal::ALL.len());
+        assert_eq!(MAX_CONCURRENT_FRONTIER_READS, 2 * Signal::ALL.len());
         assert!(
-            SignalSet::all().len() <= MAX_CONCURRENT_FRONTIER_READS,
-            "the bound is the closed vocabulary's own size, so no read ever queues"
+            2 * SignalSet::all().len() <= MAX_CONCURRENT_FRONTIER_READS,
+            "the bound covers exact and aggregate workspace frontiers"
         );
     }
 

@@ -22,6 +22,7 @@
 //! wake `regional-stream` consumes.
 
 pub mod composition;
+pub mod deletion;
 pub mod export_pair;
 pub mod expressions;
 pub mod gap;
@@ -32,6 +33,11 @@ pub mod spool;
 pub mod store;
 
 pub use composition::{Capability, CapabilityViolation, Role, assert_grant};
+pub use deletion::{
+    SessionObservationDeletion, SessionObservationDeletionError, SessionObservationDeletionOutcome,
+    SessionObservationDeletionRequest, SessionObservationDeletionStatus,
+    SessionObservationDeletionStore,
+};
 pub use export_pair::{
     ExportAdmissionCommit, ExportAdmissionOutcome, ExportPairError, ExportPairStore, ExportPublish,
     ExportSettlement, ExportStart,

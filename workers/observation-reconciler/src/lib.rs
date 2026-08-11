@@ -141,6 +141,7 @@ pub fn compose(
 pub fn settings_for(config: &Config) -> DutySettings {
     DutySettings {
         table: config.observation_table.clone(),
+        session_table: config.session_table.clone(),
         bucket: config.observation_bucket.clone(),
         usage_queue_url: config.usage_queue_url.clone(),
         region: config.region,

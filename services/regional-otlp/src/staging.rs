@@ -22,10 +22,10 @@
 use std::future::Future;
 
 use aex_observation_domain::canonical::sha256_hex;
+use aex_observation_domain::keys::ScopeKey;
 use aex_observation_domain::limits;
 use aex_observation_store_dynamodb::store::StoreError;
 use aex_otlp_admission::OtlpLimits;
-use aex_wire::ids::WorkspaceId;
 use async_trait::async_trait;
 use futures::StreamExt as _;
 use tokio::sync::Semaphore;
@@ -149,7 +149,7 @@ impl BodySink for S3BodySink<'_> {
 /// Stages a batch of immutable bodies under both bounds, in observation order.
 pub struct BodyStager<'a> {
     sink: &'a dyn BodySink,
-    workspace: WorkspaceId,
+    scope: ScopeKey,
     byte_permits: Semaphore,
     total_byte_permits: usize,
 }
@@ -161,13 +161,13 @@ impl<'a> BodyStager<'a> {
     /// resource identifier in this deployable is: a bound nobody chose is a
     /// bound nobody owns.
     #[must_use]
-    pub fn new(sink: &'a dyn BodySink, workspace: WorkspaceId, byte_budget: usize) -> Self {
+    pub fn new(sink: &'a dyn BodySink, scope: ScopeKey, byte_budget: usize) -> Self {
         // Rounded down, so the permits that exist can never stand for more bytes
         // than the budget allows.
         let total_byte_permits = byte_budget / STAGING_BYTE_QUANTUM;
         Self {
             sink,
-            workspace,
+            scope,
             byte_permits: Semaphore::new(total_byte_permits),
             total_byte_permits,
         }
@@ -221,7 +221,7 @@ impl<'a> BodyStager<'a> {
             .await
             .map_err(|error| AuthorityError::provider("StageBody", error))?;
         let digest = sha256_hex(&observation.canonical);
-        let key = body_object_key(self.workspace, &digest);
+        let key = body_object_key(self.scope, &digest);
         match self.sink.put_body(&key, &observation.canonical).await? {
             // Both outcomes are the same placement. The key is the digest, so an
             // object that is already present holds these exact bytes, and a
@@ -256,12 +256,23 @@ impl<'a> BodyStager<'a> {
 /// The digest is both the name and the proof: two batches carrying the same
 /// bytes address the same object, which is what makes a re-presented body a
 /// precondition failure rather than a second copy.
-fn body_object_key(workspace: WorkspaceId, digest: &str) -> String {
-    format!(
-        "{BODY_PREFIX}/{workspace}/{}/{}/{digest}",
-        &digest[0..2],
-        &digest[2..4]
-    )
+fn body_object_key(scope: ScopeKey, digest: &str) -> String {
+    let prefix = scope_body_prefix(scope);
+    format!("{prefix}/{}/{}/{digest}", &digest[0..2], &digest[2..4])
+}
+
+/// Exact object prefix owned by one scope.
+///
+/// Session bodies never share an object key with another session, even when
+/// their canonical bytes are equal. That makes exact-session deletion safe:
+/// deleting its prefix cannot erase a body another live scope still names.
+#[must_use]
+pub fn scope_body_prefix(scope: ScopeKey) -> String {
+    let owner = match scope {
+        ScopeKey::Session { session, .. } => format!("sessions/{session}"),
+        ScopeKey::Workspace(_) => "workspace".to_owned(),
+    };
+    format!("{BODY_PREFIX}/{}/{owner}", scope.workspace())
 }
 
 /// Settles `operations` with at most `max_in_flight` open, in input order.
@@ -309,10 +320,11 @@ mod tests {
     use std::time::Duration;
 
     use aex_observation_domain::canonical::CanonicalValue;
+    use aex_observation_domain::keys::ScopeKey;
     use aex_observation_domain::limits;
     use aex_observation_domain::signal::Signal;
     use aex_otlp_admission::OtlpLimits;
-    use aex_wire::ids::{PrefixedId as _, Uuid7, WorkspaceId};
+    use aex_wire::ids::{PrefixedId as _, SessionId, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
 
     use super::{
@@ -360,6 +372,17 @@ mod tests {
 
     fn workspace() -> WorkspaceId {
         WorkspaceId::from_uuid7(Uuid7::compose(2, [2; 10]))
+    }
+
+    fn scope() -> ScopeKey {
+        ScopeKey::Workspace(workspace())
+    }
+
+    fn session_scope(tag: u8) -> ScopeKey {
+        ScopeKey::Session {
+            workspace: workspace(),
+            session: SessionId::from_uuid7(Uuid7::compose(2, [tag; 10])),
+        }
     }
 
     /// What the stager asked the sink to do, and how much of it overlapped.
@@ -472,7 +495,7 @@ mod tests {
     async fn at_most_the_configured_number_of_body_writes_are_ever_open_at_once() {
         let observations: Vec<PreparedObservation> = (0..64).map(object_body).collect();
         let sink = RecordingSink::new().with_delays(vec![5; 64]);
-        let stager = BodyStager::new(&sink, workspace(), STAGING_BYTE_BUDGET);
+        let stager = BodyStager::new(&sink, scope(), STAGING_BYTE_BUDGET);
 
         let placements = stager.stage_all(&observations).await.expect("every body");
 
@@ -499,7 +522,7 @@ mod tests {
         let budget = 3 * per_body_permits * STAGING_BYTE_QUANTUM;
         let observations: Vec<PreparedObservation> = (0..24).map(object_body).collect();
         let sink = RecordingSink::new().with_delays(vec![5; 24]);
-        let stager = BodyStager::new(&sink, workspace(), budget);
+        let stager = BodyStager::new(&sink, scope(), budget);
 
         stager.stage_all(&observations).await.expect("every body");
 
@@ -523,7 +546,7 @@ mod tests {
         let observations: Vec<PreparedObservation> = (0..8).map(object_body).collect();
         // The head is slowest, so completion order is the reverse of input order.
         let sink = RecordingSink::new().with_delays((0..8_u64).map(|n| 80 - n * 10).collect());
-        let stager = BodyStager::new(&sink, workspace(), STAGING_BYTE_BUDGET);
+        let stager = BodyStager::new(&sink, scope(), STAGING_BYTE_BUDGET);
 
         let placements = stager.stage_all(&observations).await.expect("every body");
 
@@ -537,7 +560,7 @@ mod tests {
             assert_eq!(
                 placements[position],
                 BodyPlacement::Object {
-                    key: body_object_key(workspace(), &digest),
+                    key: body_object_key(scope(), &digest),
                     digest,
                 },
                 "position {position} holds another observation's placement"
@@ -553,7 +576,7 @@ mod tests {
         let sink = RecordingSink::new();
         // A budget too small to admit a single object body. Inline bodies are
         // unaffected by it, which is the whole claim.
-        let stager = BodyStager::new(&sink, workspace(), STAGING_BYTE_QUANTUM);
+        let stager = BodyStager::new(&sink, scope(), STAGING_BYTE_QUANTUM);
 
         let placements = stager.stage_all(&observations).await.expect("every body");
 
@@ -576,7 +599,7 @@ mod tests {
         delays[2] = 40;
         delays[9] = 1;
         let sink = RecordingSink::new().with_delays(delays).failing_at(&[2, 9]);
-        let stager = BodyStager::new(&sink, workspace(), STAGING_BYTE_BUDGET);
+        let stager = BodyStager::new(&sink, scope(), STAGING_BYTE_BUDGET);
 
         let error = stager
             .stage_all(&observations)
@@ -600,7 +623,7 @@ mod tests {
     async fn a_precondition_failure_places_exactly_where_a_fresh_write_placed() {
         let observations: Vec<PreparedObservation> = (0..12).map(object_body).collect();
         let fresh = RecordingSink::new();
-        let first = BodyStager::new(&fresh, workspace(), STAGING_BYTE_BUDGET)
+        let first = BodyStager::new(&fresh, scope(), STAGING_BYTE_BUDGET)
             .stage_all(&observations)
             .await
             .expect("the first attempt stages every body");
@@ -608,7 +631,7 @@ mod tests {
         // The replay path runs the identical helper against objects that are
         // already present, which is what a `412` reports.
         let replayed_sink = RecordingSink::new().reporting(PutOutcome::AlreadyPresent);
-        let replayed = BodyStager::new(&replayed_sink, workspace(), STAGING_BYTE_BUDGET)
+        let replayed = BodyStager::new(&replayed_sink, scope(), STAGING_BYTE_BUDGET)
             .stage_all(&observations)
             .await
             .expect("an already-present body is idempotent success");
@@ -624,7 +647,7 @@ mod tests {
     async fn a_body_larger_than_the_whole_budget_is_refused_rather_than_waiting() {
         let observations = vec![object_body(0)];
         let sink = RecordingSink::new();
-        let stager = BodyStager::new(&sink, workspace(), STAGING_BYTE_QUANTUM);
+        let stager = BodyStager::new(&sink, scope(), STAGING_BYTE_QUANTUM);
 
         let error = stager
             .stage_all(&observations)
@@ -667,7 +690,7 @@ mod tests {
         );
 
         let sink = RecordingSink::new();
-        let stager = BodyStager::new(&sink, workspace(), STAGING_BYTE_BUDGET);
+        let stager = BodyStager::new(&sink, scope(), STAGING_BYTE_BUDGET);
         let placements = stager.stage_all(&observations).await.expect("every body");
 
         assert_eq!(placements.len(), limits::OTLP_MAX_RECORDS);
@@ -686,10 +709,26 @@ mod tests {
 
     #[test]
     fn the_object_prefix_is_the_observation_one_not_the_content_one() {
-        let key = body_object_key(workspace(), &"ab".repeat(32));
+        let key = body_object_key(scope(), &"ab".repeat(32));
         assert!(key.starts_with(&format!("{BODY_PREFIX}/")), "{key}");
         assert!(key.contains("/ab/ab/"), "{key}");
         assert_ne!(BODY_PREFIX, "content");
+    }
+
+    #[test]
+    fn equal_bodies_in_two_sessions_never_share_a_deletion_key() {
+        let digest = "ab".repeat(32);
+        let first = body_object_key(session_scope(3), &digest);
+        let second = body_object_key(session_scope(4), &digest);
+        let workspace_owned = body_object_key(scope(), &digest);
+
+        assert_ne!(first, second);
+        assert_ne!(first, workspace_owned);
+        assert!(
+            first.starts_with(&format!("{BODY_PREFIX}/{}/sessions/", workspace())),
+            "{first}"
+        );
+        assert!(workspace_owned.contains("/workspace/"), "{workspace_owned}");
     }
 
     #[tokio::test]

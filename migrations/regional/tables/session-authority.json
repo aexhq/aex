@@ -221,6 +221,28 @@
       }
     },
     {
+      "role": "observation-reconciler",
+      "actions": ["dynamodb:TransactGetItems"],
+      "resources": ["table"],
+      "itemTypes": ["operation"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["EXPORT#*", "OP#*"]
+      }
+    },
+    {
+      "role": "observation-reconciler",
+      "actions": ["dynamodb:TransactWriteItems"],
+      "resources": ["table"],
+      "itemTypes": ["operation"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["EXPORT#*", "FRONT#*", "OP#*", "SESSION#*"]
+      }
+    },
+    {
       "role": "regional-stream",
       "actions": [
         "dynamodb:DescribeTable",

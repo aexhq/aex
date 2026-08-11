@@ -22,7 +22,7 @@ use aex_observation_query::ast::MapRow;
 use aex_observation_query::coverage::Snapshot;
 use aex_observation_query::plan::{Access, NormalizedQuery, Spend};
 use aex_observation_query::{ObservationResume, ResumeKey, SegmentResume, SegmentState};
-use aex_observation_store_dynamodb::expressions::{ExpressionBuilder, Index, PK, SK};
+use aex_observation_store_dynamodb::expressions::{ExpressionBuilder, ITEM_TYPE, Index, PK, SK};
 use aex_observation_store_dynamodb::gap::decode as decode_gap;
 use aex_session_dynamodb::measure::DYNAMODB_ITEM_CEILING;
 use aex_wire::ids::{ObservationId, SessionId, SpanId, TelemetryGapId, TraceId, WorkspaceId};
@@ -50,6 +50,11 @@ const BATCH_GET_UNPROCESSED_RETRIES: u8 = 3;
 const MAX_PARALLEL_SEGMENT_READS: usize = 16;
 /// `DynamoDB` stops one `Query` after at most one mebibyte of evaluated items.
 const DDB_QUERY_MAX_BYTES: u64 = 1024 * 1024;
+/// Directory rows decoded for one request before it fails closed.
+///
+/// This is an explicit refusal ceiling, never a truncation: a wider request
+/// returns a typed budget error instead of silently omitting later buckets.
+const SEGMENT_DIRECTORY_ROW_BUDGET: usize = 100_000;
 
 /// Maximum immutable gap revisions one query may inspect before failing closed.
 pub const GAP_REVISION_BUDGET: u32 = 5_000;
@@ -70,6 +75,12 @@ pub enum ReadError {
     Malformed {
         /// Which attribute.
         attribute: &'static str,
+    },
+    /// A committed accepted range is still materializing its rows/directories.
+    #[error("{pending} telemetry admission(s) are still materializing")]
+    Materializing {
+        /// Exact outstanding admission count on the selected signal frontier.
+        pending: u64,
     },
     /// Authenticated continuation state does not describe this exact plan.
     #[error("cursor resume state does not match the current query plan")]
@@ -616,7 +627,7 @@ impl ObservationReader {
         {
             return Err(ReadError::InvalidResume);
         }
-        let groups = Self::segment_groups(scope, query, plan);
+        let groups = self.discover_segment_groups(scope, query, plan).await?;
         if groups.is_empty() {
             return Ok(Page {
                 items: Vec::new(),
@@ -842,6 +853,167 @@ impl ObservationReader {
             groups.reverse();
         }
         groups
+    }
+
+    /// Resolves telemetry walks from the authoritative sparse directories.
+    ///
+    /// Native session events remain in their owning authority and use the
+    /// bounded logical-hour walk. Every observation-authority signal instead
+    /// opens only a committed `SEG#`/`SEGT#` bucket. Directory rows are strong
+    /// base-table reads, and transaction-C's pending-materialization fence has
+    /// already been checked by the frontier bundle before this method runs.
+    async fn discover_segment_groups(
+        &self,
+        scope: &ScopeKey,
+        query: &NormalizedQuery,
+        plan: &aex_observation_query::plan::Plan,
+    ) -> Result<Vec<(BucketHour, Vec<SegmentDescriptor>)>, ReadError> {
+        let mut grouped = BTreeMap::<BucketHour, Vec<SegmentDescriptor>>::new();
+        let mut directory_rows = 0_usize;
+        for walk in &plan.walks {
+            if walk.access == Access::SessionAuthority {
+                for bucket in Self::ordered_buckets(scope, query, walk.access) {
+                    grouped.entry(bucket).or_default().push(SegmentDescriptor {
+                        bucket,
+                        access: walk.access,
+                        signal: walk.signal,
+                        shard: 0,
+                    });
+                }
+                continue;
+            }
+            let accepted_axis =
+                matches!(walk.access, Access::BaseTable | Access::WorkspaceAccepted);
+            let buckets = self
+                .directory_buckets(scope, walk.signal, accepted_axis, query)
+                .await?;
+            directory_rows = directory_rows.saturating_add(buckets.len());
+            if directory_rows > SEGMENT_DIRECTORY_ROW_BUDGET {
+                return Err(ReadError::BudgetExhausted {
+                    dimension: "segments",
+                    scanned: u32::try_from(directory_rows).unwrap_or(u32::MAX),
+                });
+            }
+            for (bucket, stored_shards) in buckets {
+                let shard_count = if matches!(walk.access, Access::Metric | Access::Trace) {
+                    1
+                } else {
+                    stored_shards
+                };
+                for shard in 0..shard_count {
+                    grouped.entry(bucket).or_default().push(SegmentDescriptor {
+                        bucket,
+                        access: walk.access,
+                        signal: walk.signal,
+                        shard,
+                    });
+                }
+            }
+        }
+        let mut groups = grouped.into_iter().collect::<Vec<_>>();
+        for (_, descriptors) in &mut groups {
+            descriptors.sort_by_key(|segment| (segment.signal, segment.access, segment.shard));
+        }
+        if query.direction == Direction::Descending {
+            groups.reverse();
+        }
+        Ok(groups)
+    }
+
+    /// Strongly pages one exact `(scope, signal, axis)` directory range.
+    async fn directory_buckets(
+        &self,
+        scope: &ScopeKey,
+        signal: Signal,
+        accepted_axis: bool,
+        query: &NormalizedQuery,
+    ) -> Result<Vec<(BucketHour, u8)>, ReadError> {
+        let partition = if accepted_axis {
+            keys::segment_pk(scope, signal)
+        } else {
+            keys::time_segment_pk(scope, signal)
+        };
+        let first = BucketHour::from_timestamp(query.time_gte);
+        let scope_key = scope.to_key();
+        let workspace = scope.workspace().to_string();
+        let last_instant = Timestamp::from_unix_millis(
+            query.time_lt.unix_millis().saturating_sub(1),
+        )
+        .map_err(|_| ReadError::Malformed {
+            attribute: "timeRange",
+        })?;
+        let last = BucketHour::from_timestamp(last_instant);
+        let mut start = None;
+        let mut buckets = Vec::new();
+        loop {
+            let mut builder = ExpressionBuilder::new();
+            let pk_name = builder.name(PK);
+            let pk = builder.string(partition.clone());
+            let sk_name = builder.name(SK);
+            let lo = builder.string(first.as_str());
+            let hi = builder.string(last.as_str());
+            self.counters.record(ReadCounter::SegmentDirectory);
+            let response = self
+                .dynamodb
+                .query()
+                .table_name(&self.table)
+                .key_condition_expression(format!(
+                    "{pk_name} = {pk} AND {sk_name} BETWEEN {lo} AND {hi}"
+                ))
+                .set_expression_attribute_names(Some(builder.names()))
+                .set_expression_attribute_values(Some(builder.values()))
+                .set_exclusive_start_key(start)
+                .consistent_read(true)
+                .send()
+                .await
+                .map_err(|error| ReadError::provider("QuerySegmentDirectory", error))?;
+            for item in response.items() {
+                if string(item, ITEM_TYPE) != Some("segment")
+                    || string(item, PK) != Some(partition.as_str())
+                    || string(item, "scopeKey") != Some(scope_key.as_str())
+                    || string(item, "workspaceId") != Some(workspace.as_str())
+                    || string(item, "signal") != Some(signal.as_str())
+                {
+                    return Err(ReadError::Malformed {
+                        attribute: "segment",
+                    });
+                }
+                let bucket = string(item, SK)
+                    .and_then(|value| BucketHour::parse(value).ok())
+                    .ok_or(ReadError::Malformed { attribute: SK })?;
+                if bucket < first
+                    || bucket > last
+                    || string(item, "bucket") != Some(bucket.as_str())
+                {
+                    return Err(ReadError::Malformed {
+                        attribute: "bucket",
+                    });
+                }
+                let shards = number(item, "shards")
+                    .and_then(|value| u8::try_from(value).ok())
+                    .filter(|value| *value > 0 && *value <= BUCKET_SHARDS)
+                    .ok_or(ReadError::Malformed {
+                        attribute: "shards",
+                    })?;
+                let count =
+                    number(item, "count").ok_or(ReadError::Malformed { attribute: "count" })?;
+                if count == 0 {
+                    continue;
+                }
+                buckets.push((bucket, shards));
+                if buckets.len() > SEGMENT_DIRECTORY_ROW_BUDGET {
+                    return Err(ReadError::BudgetExhausted {
+                        dimension: "segments",
+                        scanned: u32::try_from(buckets.len()).unwrap_or(u32::MAX),
+                    });
+                }
+            }
+            start = response.last_evaluated_key;
+            if start.is_none() {
+                break;
+            }
+        }
+        Ok(buckets)
     }
 
     #[allow(
@@ -2394,6 +2566,39 @@ mod tests {
         observation_response_owned_by(workspace(), scope, accepted, observed, id, revision)
     }
 
+    fn segment_directory_response(
+        scope: &ScopeKey,
+        signal: Signal,
+        accepted_axis: bool,
+        buckets: &[&str],
+    ) -> String {
+        let pk = if accepted_axis {
+            keys::segment_pk(scope, signal)
+        } else {
+            keys::time_segment_pk(scope, signal)
+        };
+        let scope_key = scope.to_key();
+        let workspace = scope.workspace().to_string();
+        let items = buckets
+            .iter()
+            .map(|bucket| {
+                serde_json::json!({
+                    "pk": {"S": pk.clone()},
+                    "sk": {"S": bucket},
+                    "itemType": {"S": "segment"},
+                    "scopeKey": {"S": scope_key.clone()},
+                    "workspaceId": {"S": workspace.clone()},
+                    "signal": {"S": signal.as_str()},
+                    "bucket": {"S": bucket},
+                    "shards": {"N": BUCKET_SHARDS.to_string()},
+                    "count": {"N": "1"},
+                })
+            })
+            .collect::<Vec<_>>();
+        let count = items.len();
+        serde_json::json!({"Items": items, "Count": count, "ScannedCount": count}).to_string()
+    }
+
     /// The same reply, with the row's recorded owner chosen by the caller.
     ///
     /// A session partition (`OBS#S#{session}`) names no workspace, so the
@@ -2544,7 +2749,9 @@ mod tests {
         ));
         let item = observation_response(&scope, accepted, observed, id, 7);
         let empty = r#"{"Items":[],"Count":0,"ScannedCount":0}"#;
-        let (reader, _replay) = replaying_reader_responses(&[&item, empty, empty, empty]);
+        let directory = segment_directory_response(&scope, Signal::Logs, false, &["2026-08-01T09"]);
+        let (reader, _replay) =
+            replaying_reader_responses(&[&directory, &item, empty, empty, empty]);
         let mut query = normalized_query();
         query.trace_id = None;
         query.metric_name = None;
@@ -2571,6 +2778,62 @@ mod tests {
         assert_eq!(page.last.expect("follow position").revision, 7);
     }
 
+    #[tokio::test]
+    async fn finite_queries_and_exports_open_only_directory_named_hours() {
+        let scope = ScopeKey::Workspace(workspace());
+        let directory = segment_directory_response(
+            &scope,
+            Signal::Logs,
+            false,
+            &["2026-08-01T09", "2026-08-01T11"],
+        );
+        let empty = r#"{"Items":[],"Count":0,"ScannedCount":0}"#;
+        let responses = [
+            directory.as_str(),
+            empty,
+            empty,
+            empty,
+            empty,
+            empty,
+            empty,
+            empty,
+            empty,
+        ];
+        let (reader, replay) = replaying_reader_responses(&responses);
+        let mut query = normalized_query();
+        query.trace_id = None;
+        query.metric_name = None;
+        query.time_gte = Timestamp::parse("2026-08-01T09:00:00.000Z").expect("range");
+        query.time_lt = Timestamp::parse("2026-08-01T12:00:00.000Z").expect("range");
+        let planned = plan(&query, Budget::default()).expect("plans");
+
+        let page = reader
+            .read_page(
+                &scope,
+                workspace(),
+                &query,
+                &planned,
+                aex_observation_query::coverage::Snapshot::at(query.time_lt),
+                None,
+                None,
+                false,
+            )
+            .await
+            .expect("the shared finite/export reader completes");
+
+        assert!(page.items.is_empty());
+        assert_eq!(reader.counters().total(ReadCounter::SegmentDirectory), 1);
+        assert_eq!(
+            reader.counters().total(ReadCounter::ObservationPage),
+            2 * u64::from(BUCKET_SHARDS),
+            "the empty 10:00 hour costs no physical query"
+        );
+        assert_eq!(
+            replay.actual_requests().count(),
+            1 + 2 * usize::from(BUCKET_SHARDS)
+        );
+    }
+
     /// One page read of a session partition the caller has named but may not
     /// own, over a reply whose single row records `owner`.
     ///
@@ -2590,7 +2853,9 @@ mod tests {
         ));
         let item = observation_response_owned_by(owner, &scope, accepted, accepted, id, 1);
         let empty = r#"{"Items":[],"Count":0,"ScannedCount":0}"#;
-        let (reader, _replay) = replaying_reader_responses(&[&item, empty, empty, empty]);
+        let directory = segment_directory_response(&scope, Signal::Logs, true, &["2026-08-01T09"]);
+        let (reader, _replay) =
+            replaying_reader_responses(&[&directory, &item, empty, empty, empty]);
         let mut query = normalized_query();
         query.axis = ScopeAxis::Scope;
         query.trace_id = None;
@@ -2703,7 +2968,9 @@ mod tests {
         ));
         let item = observation_response(&scope, accepted, accepted, id, 2);
         let empty = r#"{"Items":[],"Count":0,"ScannedCount":0}"#;
-        let (reader, _replay) = replaying_reader_responses(&[&item, empty, empty, empty]);
+        let directory = segment_directory_response(&scope, Signal::Logs, true, &["2026-08-01T09"]);
+        let (reader, _replay) =
+            replaying_reader_responses(&[&directory, &item, empty, empty, empty]);
         let mut query = normalized_query();
         query.trace_id = None;
         query.metric_name = None;
@@ -3165,9 +3432,10 @@ mod tests {
         query.time_lt = Timestamp::parse("2026-08-01T10:00:00.000Z").expect("range");
         let bundle =
             workspace_bundle_response(&scope, &[(Signal::Logs, "2026-08-01T09:30:00.000Z")]);
+        let directory = segment_directory_response(&scope, Signal::Logs, true, &["2026-08-01T09"]);
         let empty = r#"{"Items":[],"Count":0,"ScannedCount":0}"#;
         let (reader, replay) =
-            replaying_reader_responses(&[&bundle, empty, empty, empty, empty, empty]);
+            replaying_reader_responses(&[&bundle, empty, &directory, empty, empty, empty, empty]);
         let snapshot = aex_observation_query::coverage::Snapshot::at(
             Timestamp::parse("2026-08-01T09:02:00.000Z").expect("snapshot"),
         );
@@ -3198,6 +3466,7 @@ mod tests {
         let counters = reader.counters();
         assert_eq!(counters.total(ReadCounter::FrontierBatch), 1);
         assert_eq!(counters.total(ReadCounter::GapHistory), 1);
+        assert_eq!(counters.total(ReadCounter::SegmentDirectory), 1);
         assert_eq!(
             counters.total(ReadCounter::ObservationPage),
             u64::from(BUCKET_SHARDS)
@@ -3205,7 +3474,7 @@ mod tests {
         assert_eq!(counters.total(ReadCounter::SessionHead), 0);
         assert_eq!(
             provider_requests(&replay),
-            2 + usize::from(BUCKET_SHARDS),
+            3 + usize::from(BUCKET_SHARDS),
             "the counters account for every request the cycle actually made"
         );
     }
@@ -3488,7 +3757,11 @@ mod tests {
 
     #[tokio::test]
     async fn an_unreservable_required_head_fails_before_any_provider_read() {
-        let (reader, _replay) = replaying_reader_responses(&[]);
+        let scope = ScopeKey::Workspace(workspace());
+        let directory_bucket = bucket();
+        let directory =
+            segment_directory_response(&scope, Signal::Spans, false, &[directory_bucket.as_str()]);
+        let (reader, replay) = replaying_reader_responses(&[&directory]);
         let mut query = normalized_query();
         query.signals = SignalSet::from_signal(Signal::Spans);
         query.metric_name = None;
@@ -3504,7 +3777,7 @@ mod tests {
 
         let error = reader
             .read_page(
-                &ScopeKey::Workspace(workspace()),
+                &scope,
                 workspace(),
                 &query,
                 &planned,
@@ -3523,6 +3796,11 @@ mod tests {
                 scanned: 0
             }
         ));
+        assert_eq!(
+            replay.actual_requests().count(),
+            1,
+            "the authority reads only the sparse directory, never an observation segment"
+        );
     }
 
     #[tokio::test]

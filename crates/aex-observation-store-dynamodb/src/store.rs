@@ -313,15 +313,16 @@ impl AdmissionPlan {
 
     /// The envelope of transaction P.
     ///
-    /// Two actions: create or resume the receipt, and reserve exact bytes and
-    /// records on the workspace ingest quota.
+    /// Four actions: fence scope deletion, create the immutable receipt and
+    /// exact scope directory entry, and reserve exact bytes and records on the
+    /// workspace ingest quota.
     #[must_use]
     pub fn prepare_envelope(&self) -> TransactionEnvelope {
         let mut builder = ExpressionBuilder::new();
         let condition = crate::expressions::prepare_condition(&mut builder, &"0".repeat(64));
         TransactionEnvelope {
-            actions: 2,
-            bytes: 2 * TYPICAL_CONTROL_ITEM_BYTES
+            actions: 4,
+            bytes: 4 * TYPICAL_CONTROL_ITEM_BYTES
                 + condition.len()
                 + self.page_count().min(1) * PAGE_DIGEST_BYTES,
         }
@@ -350,11 +351,12 @@ impl AdmissionPlan {
         TransactionEnvelope { actions, bytes }
     }
 
-    /// How many `BatchWriteItem` calls step 9 needs.
+    /// How many bounded materialization transactions step 9 needs.
     ///
-    /// Materialization is not a transaction: it is an idempotent, replayable
-    /// bulk write under `attribute_not_exists(pk)`, which is exactly what lets
-    /// transaction C stay inside the envelope.
+    /// Every chunk atomically checks the scope-deletion fence, puts immutable
+    /// observation revisions and records their exact deletion ledger. The
+    /// chunk count is bounded by the DynamoDB batch-write action ceiling even
+    /// though the execution uses `TransactWriteItems`.
     #[must_use]
     pub const fn materialization_batches(&self) -> usize {
         self.records.div_ceil(DDB_BATCH_WRITE_MAX)

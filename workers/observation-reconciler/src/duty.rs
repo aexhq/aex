@@ -31,7 +31,10 @@ use aex_observation_store_dynamodb::gap_hint::hint_update_action;
 use aex_observation_store_dynamodb::spool::{
     GateEvidence, GateState, Pending, SpoolChunk, evaluate,
 };
-use aex_wire::ids::{PrefixedId, TelemetryGapId, WorkspaceId};
+use aex_observation_store_dynamodb::{ExportPairError, ExportPairStore};
+use aex_wire::ids::{
+    ExportId, OperationId, PrefixedId, TelemetryBatchId, TelemetryGapId, WorkspaceId,
+};
 use aex_wire::models::TelemetryGapReason;
 use aex_wire::types::{Region, Timestamp};
 use aws_sdk_dynamodb::types::{
@@ -306,6 +309,8 @@ impl DutyError {
 pub struct DutySettings {
     /// The observation-authority table.
     pub table: String,
+    /// The session authority containing canonical export operations.
+    pub session_table: String,
     /// The regional observation bucket.
     pub bucket: String,
     /// The usage queue the storage fact is delivered to.
@@ -329,6 +334,21 @@ struct GapTerminalization<'a> {
     expected_attempts: u32,
     claimed_at: Option<Timestamp>,
     changed_at: Timestamp,
+}
+
+/// Progress from one bounded deletion family.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct DeletionDrain {
+    removed: u64,
+    /// A fenced admission still owns writes that must settle before proof.
+    pending: bool,
+}
+
+impl DeletionDrain {
+    fn add(&mut self, other: Self) {
+        self.removed = self.removed.saturating_add(other.removed);
+        self.pending |= other.pending;
+    }
 }
 
 /// The duty engine.
@@ -1172,14 +1192,43 @@ impl DutyEngine {
         }
         let scope = scope_of(item)?;
         let mut budget = usize::from(self.settings.page);
-        let mut removed = 0u64;
+        let mut drain = DeletionDrain::default();
+
+        // New writes are enumerated from strongly-consistent scope directories.
+        // The legacy segment walk remains as a safe fallback for rows admitted
+        // before the directory invariant was installed.
+        drain.add(self.purge_scope_batches(&scope, now, &mut budget).await?);
+        if budget > 0 {
+            drain.add(self.purge_scope_exports(&scope, now, &mut budget).await?);
+        }
         for signal in SignalSet::authority().iter() {
             if budget == 0 {
                 break;
             }
-            removed += self.purge_signal(&scope, signal, &mut budget).await?;
+            drain.removed = drain
+                .removed
+                .saturating_add(self.purge_signal(&scope, signal, &mut budget).await?);
+            drain.removed = drain.removed.saturating_add(
+                self.purge_directory(&keys::time_segment_pk(&scope, signal), &mut budget)
+                    .await?,
+            );
         }
-        if removed == 0 {
+        if budget > 0 {
+            drain.removed = drain
+                .removed
+                .saturating_add(self.purge_gaps(&scope, &mut budget).await?);
+        }
+        if budget > 0 {
+            drain.removed = drain
+                .removed
+                .saturating_add(self.purge_frontiers(&scope, &mut budget).await?);
+        }
+        if budget > 0 {
+            drain.removed = drain
+                .removed
+                .saturating_add(self.purge_scope_body_prefix(&scope, &mut budget).await?);
+        }
+        if drain.removed == 0 && !drain.pending {
             self.advance_deletion(item, DeletionState::Deleting, DeletionState::Verifying, now)
                 .await?;
         }
@@ -1238,14 +1287,23 @@ impl DutyEngine {
                 break;
             }
             removed += self
-                .purge_partition(&keys::observation_pk(scope, signal, bucket, shard), budget)
+                .purge_partition(
+                    scope,
+                    &keys::observation_pk(scope, signal, bucket, shard),
+                    budget,
+                )
                 .await?;
         }
         Ok(removed)
     }
 
     /// Removes up to `budget` observations of one partition, bodies included.
-    async fn purge_partition(&self, pk: &str, budget: &mut usize) -> Result<u64, DutyError> {
+    async fn purge_partition(
+        &self,
+        scope: &ScopeKey,
+        pk: &str,
+        budget: &mut usize,
+    ) -> Result<u64, DutyError> {
         let mut builder = ExpressionBuilder::new();
         let partition = builder.name(PK);
         let bound = builder.string(pk.to_owned());
@@ -1267,6 +1325,7 @@ impl DutyEngine {
         let items = response.items();
         for item in items {
             if let Some(key) = string(item, "bodyS3Key") {
+                ensure_session_body_key(scope, key)?;
                 self.delete_object(key).await?;
             }
         }
@@ -1275,6 +1334,674 @@ impl DutyEngine {
         self.delete_keys(&keys).await?;
         *budget = budget.saturating_sub(keys.len());
         Ok(removed)
+    }
+
+    /// Drains one page of the exact scope→batch directory.
+    async fn purge_scope_batches(
+        &self,
+        scope: &ScopeKey,
+        now: Timestamp,
+        budget: &mut usize,
+    ) -> Result<DeletionDrain, DutyError> {
+        let mut drain = DeletionDrain::default();
+        for directory in self.page_of(&keys::scope_batch_pk(scope)).await? {
+            if *budget == 0 {
+                break;
+            }
+            if string(&directory, "scopeKey") != Some(scope.to_key().as_str()) {
+                return Err(DutyError::Malformed {
+                    item: "scope_batch",
+                    attribute: "scopeKey",
+                });
+            }
+            let batch =
+                TelemetryBatchId::parse(require_string(&directory, "batchId", "scope_batch")?)
+                    .map_err(|_| DutyError::Malformed {
+                        item: "scope_batch",
+                        attribute: "batchId",
+                    })?;
+            let batch_pk = require_string(&directory, "batchPk", "scope_batch")?;
+            let directory_key = item_key(&directory).ok_or(DutyError::Malformed {
+                item: "scope_batch",
+                attribute: PK,
+            })?;
+            if batch_pk != keys::batch_pk(scope.workspace(), batch)
+                || directory_key.pk != keys::scope_batch_pk(scope)
+                || directory_key.sk != keys::scope_batch_sk(batch)
+                || session_body_prefix(scope).is_some_and(|prefix| {
+                    string(&directory, "bodyPrefix") != Some(prefix.trim_end_matches('/'))
+                })
+            {
+                return Err(DutyError::Malformed {
+                    item: "scope_batch",
+                    attribute: "batchPk",
+                });
+            }
+            let receipt_key = ItemKey {
+                pk: batch_pk.to_owned(),
+                sk: keys::RECEIPT_SK.to_owned(),
+            };
+            let receipt = self.get(&receipt_key).await?;
+            if let Some(receipt) = &receipt
+                && (string(receipt, "scopeKey") != Some(scope.to_key().as_str())
+                    || string(receipt, "batchId") != Some(batch.to_string().as_str()))
+            {
+                return Err(DutyError::Malformed {
+                    item: "admission_receipt",
+                    attribute: "scopeKey",
+                });
+            }
+            if receipt
+                .as_ref()
+                .is_some_and(|item| string(item, STATE) == Some("preparing"))
+            {
+                // This request may still be staging S3 bodies. Transaction C
+                // must lose to the fence, but deletion cannot prove the prefix
+                // quiet until batch.expire has terminalized the preparer.
+                drain.pending = true;
+                continue;
+            }
+
+            if let (Some(spool_pk), Some(spool_sk)) =
+                (string(&directory, "spoolPk"), string(&directory, "spoolSk"))
+            {
+                let spool_key = ItemKey {
+                    pk: spool_pk.to_owned(),
+                    sk: spool_sk.to_owned(),
+                };
+                if let Some(spool) = self.get(&spool_key).await? {
+                    if string(&spool, "scopeKey") != Some(scope.to_key().as_str())
+                        || string(&spool, "batchId") != Some(batch.to_string().as_str())
+                    {
+                        return Err(DutyError::Malformed {
+                            item: "spool_chunk",
+                            attribute: "scopeKey",
+                        });
+                    }
+                    if pending_of(&spool).contains(&Pending::Outbox) {
+                        // The aggregate storage fact survives session payload
+                        // deletion and must be delivered before its source hint
+                        // can be removed.
+                        drain.pending = true;
+                        continue;
+                    }
+                    self.delete_key(&spool_key).await?;
+                    drain.removed = drain.removed.saturating_add(1);
+                    *budget = budget.saturating_sub(1);
+                    if *budget == 0 {
+                        break;
+                    }
+                }
+            }
+
+            let ledgers = self.page_prefix(batch_pk, "MAT#").await?;
+            if let Some(ledger) = ledgers.first() {
+                drain.removed = drain.removed.saturating_add(
+                    self.purge_materialization_ledger(scope, batch, ledger, budget)
+                        .await?,
+                );
+                continue;
+            }
+
+            if let Some(receipt) = receipt.as_ref()
+                && string(receipt, STATE) == Some("committed")
+                && !receipt.contains_key("materializedAt")
+            {
+                self.settle_abandoned_workspace_frontiers(scope, batch, receipt, now)
+                    .await?;
+            }
+
+            let items = self.page_of(batch_pk).await?;
+            if !items.is_empty() {
+                let keys: Vec<ItemKey> = items.iter().take(*budget).filter_map(item_key).collect();
+                self.delete_keys(&keys).await?;
+                drain.removed = drain
+                    .removed
+                    .saturating_add(u64::try_from(keys.len()).unwrap_or(u64::MAX));
+                *budget = budget.saturating_sub(keys.len());
+                continue;
+            }
+
+            self.delete_key(&directory_key).await?;
+            drain.removed = drain.removed.saturating_add(1);
+            *budget = budget.saturating_sub(1);
+        }
+        Ok(drain)
+    }
+
+    /// Deletes the exact observations named by one atomic materialization page.
+    async fn purge_materialization_ledger(
+        &self,
+        scope: &ScopeKey,
+        batch: TelemetryBatchId,
+        ledger: &HashMap<String, AttributeValue>,
+        budget: &mut usize,
+    ) -> Result<u64, DutyError> {
+        if string(ledger, "scopeKey") != Some(scope.to_key().as_str())
+            || string(ledger, "batchId") != Some(batch.to_string().as_str())
+        {
+            return Err(DutyError::Malformed {
+                item: "materialization_ledger",
+                attribute: "scopeKey",
+            });
+        }
+        let records = ledger
+            .get("observations")
+            .and_then(|value| value.as_l().ok())
+            .ok_or(DutyError::Malformed {
+                item: "materialization_ledger",
+                attribute: "observations",
+            })?;
+        // A ledger page is fixed at the writer's 25-item materialization bound.
+        // Finish one whole page so even a deployment page of one makes progress;
+        // this can never fan out with the customer's batch size.
+        for record in records {
+            let map = record.as_m().map_err(|_| DutyError::Malformed {
+                item: "materialization_ledger",
+                attribute: "observations",
+            })?;
+            if let Some(key) = string(map, "bodyS3Key") {
+                ensure_session_body_key(scope, key)?;
+                self.delete_object(key).await?;
+            }
+            let key = item_key(map).ok_or(DutyError::Malformed {
+                item: "materialization_ledger",
+                attribute: PK,
+            })?;
+            if !key.pk.starts_with(&format!("OBS#{}#", scope.to_key())) {
+                return Err(DutyError::Malformed {
+                    item: "materialization_ledger",
+                    attribute: PK,
+                });
+            }
+            self.delete_key(&key).await?;
+        }
+        let ledger_key = item_key(ledger).ok_or(DutyError::Malformed {
+            item: "materialization_ledger",
+            attribute: PK,
+        })?;
+        self.settle_workspace_segments(scope, batch, ledger, &ledger_key)
+            .await?;
+        *budget = budget.saturating_sub(records.len().saturating_add(1));
+        Ok(u64::try_from(records.len().saturating_add(1)).unwrap_or(u64::MAX))
+    }
+
+    /// Removes one session page's exact contribution from the shared workspace
+    /// segment directories and consumes its ledger atomically.
+    ///
+    /// Observation and S3 deletes above are idempotent. The additive workspace
+    /// counters are not, so the ledger delete is their transaction marker: an
+    /// ambiguous retry that finds the ledger gone knows the decrement already
+    /// committed and can never apply it twice. Zero-count directory rows are
+    /// intentionally retained as anonymous aggregate structure and readers
+    /// skip them; a concurrent admission from another session can safely add
+    /// to the same rows.
+    async fn settle_workspace_segments(
+        &self,
+        scope: &ScopeKey,
+        batch: TelemetryBatchId,
+        ledger: &HashMap<String, AttributeValue>,
+        ledger_key: &ItemKey,
+    ) -> Result<(), DutyError> {
+        let ScopeKey::Session { workspace, .. } = scope else {
+            self.delete_key(ledger_key).await?;
+            return Ok(());
+        };
+        let contributions = ledger
+            .get("segments")
+            .and_then(|value| value.as_l().ok())
+            .ok_or(DutyError::Malformed {
+                item: "materialization_ledger",
+                attribute: "segments",
+            })?;
+        let mut actions = Vec::with_capacity(contributions.len().saturating_add(1));
+        let mut seen = BTreeSet::new();
+        let aggregate_scope = ScopeKey::Workspace(*workspace);
+        for contribution in contributions {
+            let map = contribution.as_m().map_err(|_| DutyError::Malformed {
+                item: "materialization_ledger",
+                attribute: "segments",
+            })?;
+            let axis = require_string(map, "axis", "materialization_ledger")?;
+            let signal = Signal::parse(require_string(map, "signal", "materialization_ledger")?)
+                .filter(|signal| signal.in_observation_authority())
+                .ok_or(DutyError::Malformed {
+                    item: "materialization_ledger",
+                    attribute: "signal",
+                })?;
+            let bucket =
+                BucketHour::parse(require_string(map, "bucket", "materialization_ledger")?)
+                    .map_err(|_| DutyError::Malformed {
+                        item: "materialization_ledger",
+                        attribute: "bucket",
+                    })?;
+            let count = required_number(map, "count", "materialization_ledger")?;
+            let logical_bytes = required_number(map, "logicalBytes", "materialization_ledger")?;
+            if count == 0 || !seen.insert((axis.to_owned(), signal, bucket)) {
+                return Err(DutyError::Malformed {
+                    item: "materialization_ledger",
+                    attribute: "segments",
+                });
+            }
+            let partition = match axis {
+                "accepted" => keys::segment_pk(&aggregate_scope, signal),
+                "event_time" => keys::time_segment_pk(&aggregate_scope, signal),
+                _ => {
+                    return Err(DutyError::Malformed {
+                        item: "materialization_ledger",
+                        attribute: "axis",
+                    });
+                }
+            };
+            let mut builder = ExpressionBuilder::new();
+            let item_type = builder.name("itemType");
+            let scope_name = builder.name("scopeKey");
+            let signal_name = builder.name("signal");
+            let bucket_name = builder.name("bucket");
+            let count_name = builder.name("count");
+            let bytes_name = builder.name("logicalBytes");
+            let segment_type = builder.string("segment");
+            let scope_value = builder.string(aggregate_scope.to_key());
+            let signal_value = builder.string(signal.as_str());
+            let bucket_value = builder.string(bucket.as_str());
+            let count_value = builder.number(count);
+            let bytes_value = builder.number(logical_bytes);
+            let count_delta = builder.number(-i128::from(count));
+            let bytes_delta = builder.number(-i128::from(logical_bytes));
+            let update = Update::builder()
+                .table_name(&self.settings.table)
+                .key(PK, AttributeValue::S(partition))
+                .key(SK, AttributeValue::S(bucket.as_str().to_owned()))
+                .update_expression(format!(
+                    "ADD {count_name} {count_delta}, {bytes_name} {bytes_delta}"
+                ))
+                .condition_expression(format!(
+                    "{item_type} = {segment_type} AND {scope_name} = {scope_value} AND \
+                     {signal_name} = {signal_value} AND {bucket_name} = {bucket_value} AND \
+                     {count_name} >= {count_value} AND {bytes_name} >= {bytes_value}"
+                ))
+                .set_expression_attribute_names(Some(builder.names()))
+                .set_expression_attribute_values(Some(builder.values()))
+                .build()
+                .map_err(|error| DutyError::provider("TransactWriteItems", error))?;
+            actions.push(TransactWriteItem::builder().update(update).build());
+        }
+        if actions.len().saturating_add(1) > limits::DDB_TRANSACT_MAX_ACTIONS {
+            return Err(DutyError::Malformed {
+                item: "materialization_ledger",
+                attribute: "segments",
+            });
+        }
+        let mut builder = ExpressionBuilder::new();
+        let scope_name = builder.name("scopeKey");
+        let batch_name = builder.name("batchId");
+        let digest_name = builder.name("materializationDigest");
+        let scope_value = builder.string(scope.to_key());
+        let batch_value = builder.string(batch.to_string());
+        let digest = builder.string(require_string(
+            ledger,
+            "materializationDigest",
+            "materialization_ledger",
+        )?);
+        let delete = Delete::builder()
+            .table_name(&self.settings.table)
+            .key(PK, AttributeValue::S(ledger_key.pk.clone()))
+            .key(SK, AttributeValue::S(ledger_key.sk.clone()))
+            .condition_expression(format!(
+                "{scope_name} = {scope_value} AND {batch_name} = {batch_value} AND \
+                 {digest_name} = {digest}"
+            ))
+            .set_expression_attribute_names(Some(builder.names()))
+            .set_expression_attribute_values(Some(builder.values()))
+            .build()
+            .map_err(|error| DutyError::provider("TransactWriteItems", error))?;
+        actions.push(TransactWriteItem::builder().delete(delete).build());
+        let outcome = self
+            .dynamodb
+            .transact_write_items()
+            .set_transact_items(Some(actions))
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(_) if self.get(ledger_key).await?.is_none() => Ok(()),
+            Err(error) => Err(DutyError::provider("TransactWriteItems", error)),
+        }
+    }
+
+    /// Releases aggregate workspace visibility blocked by a committed session
+    /// admission that lost its finalization race to deletion.
+    ///
+    /// The receipt marker and every per-signal decrement share one transaction,
+    /// so retries either observe `deletionSettledAt`/`materializedAt` or perform
+    /// the decrement once. Exact session frontiers are removed by this deletion
+    /// participant and need no corresponding release.
+    async fn settle_abandoned_workspace_frontiers(
+        &self,
+        scope: &ScopeKey,
+        batch: TelemetryBatchId,
+        receipt: &HashMap<String, AttributeValue>,
+        now: Timestamp,
+    ) -> Result<(), DutyError> {
+        let ScopeKey::Session { workspace, .. } = scope else {
+            return Ok(());
+        };
+        let allocations = receipt
+            .get("allocations")
+            .and_then(|value| value.as_l().ok())
+            .ok_or(DutyError::Malformed {
+                item: "admission_receipt",
+                attribute: "allocations",
+            })?;
+        let mut signals = BTreeSet::new();
+        for allocation in allocations {
+            let map = allocation.as_m().map_err(|_| DutyError::Malformed {
+                item: "admission_receipt",
+                attribute: "allocations",
+            })?;
+            let signal = Signal::parse(require_string(map, "signal", "admission_receipt")?)
+                .filter(|signal| signal.in_observation_authority())
+                .ok_or(DutyError::Malformed {
+                    item: "admission_receipt",
+                    attribute: "allocations.signal",
+                })?;
+            if !signals.insert(signal) {
+                return Err(DutyError::Malformed {
+                    item: "admission_receipt",
+                    attribute: "allocations.signal",
+                });
+            }
+        }
+        if signals.is_empty() || signals.len() > Signal::AUTHORITY.len() {
+            return Err(DutyError::Malformed {
+                item: "admission_receipt",
+                attribute: "allocations",
+            });
+        }
+        let mut actions = Vec::with_capacity(signals.len().saturating_add(1));
+        let mut marker = ExpressionBuilder::new();
+        let state_name = marker.name(STATE);
+        let materialized = marker.name("materializedAt");
+        let settled = marker.name("deletionSettledAt");
+        let scope_name = marker.name("scopeKey");
+        let batch_name = marker.name("batchId");
+        let committed = marker.string("committed");
+        let scope_value = marker.string(scope.to_key());
+        let batch_value = marker.string(batch.to_string());
+        let at = marker.string(now.to_wire());
+        let update = Update::builder()
+            .table_name(&self.settings.table)
+            .key(PK, AttributeValue::S(keys::batch_pk(*workspace, batch)))
+            .key(SK, AttributeValue::S(keys::RECEIPT_SK.to_owned()))
+            .update_expression(format!("SET {settled} = {at}"))
+            .condition_expression(format!(
+                "{state_name} = {committed} AND attribute_not_exists({materialized}) AND \
+                 attribute_not_exists({settled}) AND {scope_name} = {scope_value} AND \
+                 {batch_name} = {batch_value}"
+            ))
+            .set_expression_attribute_names(Some(marker.names()))
+            .set_expression_attribute_values(Some(marker.values()))
+            .build()
+            .map_err(|error| DutyError::provider("TransactWriteItems", error))?;
+        actions.push(TransactWriteItem::builder().update(update).build());
+        let workspace_scope = ScopeKey::Workspace(*workspace);
+        for signal in signals {
+            let mut builder = ExpressionBuilder::new();
+            let pending = builder.name("pendingMaterializations");
+            let one = builder.number(-1_i64);
+            let at_least_one = builder.number(1_u64);
+            let update = Update::builder()
+                .table_name(&self.settings.table)
+                .key(PK, AttributeValue::S(keys::frontier_pk(&workspace_scope)))
+                .key(SK, AttributeValue::S(keys::frontier_sk(signal)))
+                .update_expression(format!("ADD {pending} {one}"))
+                .condition_expression(format!("{pending} >= {at_least_one}"))
+                .set_expression_attribute_names(Some(builder.names()))
+                .set_expression_attribute_values(Some(builder.values()))
+                .build()
+                .map_err(|error| DutyError::provider("TransactWriteItems", error))?;
+            actions.push(TransactWriteItem::builder().update(update).build());
+        }
+        let outcome = self
+            .dynamodb
+            .transact_write_items()
+            .set_transact_items(Some(actions))
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let key = ItemKey {
+                    pk: keys::batch_pk(*workspace, batch),
+                    sk: keys::RECEIPT_SK.to_owned(),
+                };
+                if self.get(&key).await?.is_some_and(|receipt| {
+                    receipt.contains_key("materializedAt")
+                        || receipt.contains_key("deletionSettledAt")
+                }) {
+                    return Ok(());
+                }
+                Err(DutyError::provider("TransactWriteItems", error))
+            }
+        }
+    }
+
+    /// Revokes and removes one bounded page of session-owned exports.
+    async fn purge_scope_exports(
+        &self,
+        scope: &ScopeKey,
+        now: Timestamp,
+        budget: &mut usize,
+    ) -> Result<DeletionDrain, DutyError> {
+        let mut drain = DeletionDrain::default();
+        let pairs = ExportPairStore::new(
+            self.dynamodb.clone(),
+            self.settings.table.clone(),
+            self.settings.session_table.clone(),
+        );
+        for directory in self.page_of(&keys::scope_export_pk(scope)).await? {
+            if *budget == 0 {
+                break;
+            }
+            if string(&directory, "scopeKey") != Some(scope.to_key().as_str()) {
+                return Err(DutyError::Malformed {
+                    item: "scope_export",
+                    attribute: "scopeKey",
+                });
+            }
+            let workspace = scope.workspace();
+            let export = ExportId::parse(require_string(&directory, "exportId", "scope_export")?)
+                .map_err(|_| DutyError::Malformed {
+                item: "scope_export",
+                attribute: "exportId",
+            })?;
+            OperationId::parse(require_string(&directory, "operationId", "scope_export")?)
+                .map_err(|_| DutyError::Malformed {
+                    item: "scope_export",
+                    attribute: "operationId",
+                })?;
+            let directory_key = item_key(&directory).ok_or(DutyError::Malformed {
+                item: "scope_export",
+                attribute: PK,
+            })?;
+            if directory_key.pk != keys::scope_export_pk(scope)
+                || directory_key.sk != keys::scope_export_sk(export)
+                || string(&directory, "workspaceId") != Some(workspace.to_string().as_str())
+            {
+                return Err(DutyError::Malformed {
+                    item: "scope_export",
+                    attribute: PK,
+                });
+            }
+            let extension = export_extension(require_string(&directory, "format", "scope_export")?)
+                .ok_or(DutyError::Malformed {
+                    item: "scope_export",
+                    attribute: "format",
+                })?;
+            let export_key = ItemKey {
+                pk: keys::export_pk(workspace),
+                sk: keys::export_sk(export),
+            };
+            let checkpoint_key = ItemKey {
+                pk: keys::export_pk(workspace),
+                sk: keys::export_checkpoint_sk(export),
+            };
+            let export_item = self.get(&export_key).await?;
+            let checkpoint = self.get(&checkpoint_key).await?;
+            let had_pair_rows = export_item.is_some() || checkpoint.is_some();
+
+            if export_item.is_some() {
+                match pairs.revoke(workspace, export, *scope, now).await {
+                    Ok(_) | Err(ExportPairError::NotFound) => {}
+                    Err(error) => {
+                        return Err(DutyError::unresolved(
+                            self.settings.duty,
+                            format!("the export pair could not be revoked: {error}"),
+                        ));
+                    }
+                }
+            }
+
+            let prefix = format!("exports/{workspace}/{export}");
+            let artifact = export_item
+                .as_ref()
+                .and_then(|item| string(item, "objectKey"))
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{prefix}.{extension}"));
+            if let Some(upload_id) = checkpoint
+                .as_ref()
+                .and_then(|item| string(item, "uploadId"))
+            {
+                self.abort_upload(&format!("{prefix}.{extension}"), upload_id)
+                    .await?;
+            }
+            let (aborted, truncated) = self.abort_uploads_with_prefix(&prefix).await?;
+            let object_present = self.object_exists(&artifact).await?;
+            if object_present {
+                self.delete_object(&artifact).await?;
+            }
+            if had_pair_rows {
+                self.delete_keys(&[checkpoint_key, export_key]).await?;
+                drain.removed = drain.removed.saturating_add(1);
+            }
+
+            // Keep the exact export identity for a later quiet pass whenever
+            // this pass revoked/deleted anything or filled a bounded multipart
+            // page. The next pass strongly lists and heads the prefix after the
+            // pair is gone, so directory absence is durable proof of external
+            // S3 quiescence rather than merely proof that DeleteObject returned.
+            if had_pair_rows || aborted > 0 || truncated || object_present {
+                drain.pending = true;
+                *budget = budget.saturating_sub(1);
+                continue;
+            }
+            self.delete_key(&directory_key).await?;
+            drain.removed = drain.removed.saturating_add(1);
+            *budget = budget.saturating_sub(1);
+        }
+        Ok(drain)
+    }
+
+    /// Deletes one bounded page of a direct scope partition.
+    async fn purge_directory(&self, pk: &str, budget: &mut usize) -> Result<u64, DutyError> {
+        let items = self.page_of(pk).await?;
+        let keys: Vec<ItemKey> = items.iter().take(*budget).filter_map(item_key).collect();
+        self.delete_keys(&keys).await?;
+        *budget = budget.saturating_sub(keys.len());
+        Ok(u64::try_from(keys.len()).unwrap_or(u64::MAX))
+    }
+
+    /// Deletes session gap revisions and advances the workspace change hint in
+    /// the same transaction. A follow reader can therefore never observe the
+    /// old hint after the rows have disappeared and incorrectly reuse cached
+    /// session gaps.
+    async fn purge_gaps(&self, scope: &ScopeKey, budget: &mut usize) -> Result<u64, DutyError> {
+        let items = self.page_of(&keys::gap_pk(scope)).await?;
+        let keys: Vec<ItemKey> = items.iter().take(*budget).filter_map(item_key).collect();
+        let delete_limit = limits::DDB_TRANSACT_MAX_ACTIONS.saturating_sub(1);
+        for chunk in keys.chunks(delete_limit) {
+            let mut actions = Vec::with_capacity(chunk.len().saturating_add(1));
+            for key in chunk {
+                let delete = Delete::builder()
+                    .table_name(&self.settings.table)
+                    .key(PK, AttributeValue::S(key.pk.clone()))
+                    .key(SK, AttributeValue::S(key.sk.clone()))
+                    .build()
+                    .map_err(|error| DutyError::provider("TransactWriteItems", error))?;
+                actions.push(TransactWriteItem::builder().delete(delete).build());
+            }
+            actions.push(
+                hint_update_action(
+                    &self.settings.table,
+                    scope.workspace(),
+                    u64::try_from(chunk.len()).unwrap_or(u64::MAX),
+                )
+                .map_err(|error| DutyError::unresolved(self.settings.duty, error.to_string()))?,
+            );
+            self.dynamodb
+                .transact_write_items()
+                .set_transact_items(Some(actions))
+                .send()
+                .await
+                .map_err(|error| DutyError::provider("TransactWriteItems", error))?;
+        }
+        *budget = budget.saturating_sub(keys.len());
+        Ok(u64::try_from(keys.len()).unwrap_or(u64::MAX))
+    }
+
+    /// Removes the per-signal frontier rows while retaining the deletion fence.
+    async fn purge_frontiers(
+        &self,
+        scope: &ScopeKey,
+        budget: &mut usize,
+    ) -> Result<u64, DutyError> {
+        let mut removed = 0u64;
+        for signal in SignalSet::authority().iter() {
+            if *budget == 0 {
+                break;
+            }
+            let key = ItemKey {
+                pk: keys::frontier_pk(scope),
+                sk: keys::frontier_sk(signal),
+            };
+            if self.get(&key).await?.is_some() {
+                self.delete_key(&key).await?;
+                removed = removed.saturating_add(1);
+                *budget = budget.saturating_sub(1);
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Deletes session-scoped bodies, including bodies staged by a commit that
+    /// lost to the deletion fence before it could create observation rows.
+    async fn purge_scope_body_prefix(
+        &self,
+        scope: &ScopeKey,
+        budget: &mut usize,
+    ) -> Result<u64, DutyError> {
+        let Some(prefix) = session_body_prefix(scope) else {
+            return Ok(0);
+        };
+        let response = self
+            .s3
+            .list_objects_v2()
+            .bucket(&self.settings.bucket)
+            .prefix(prefix)
+            .max_keys(i32::try_from(*budget).unwrap_or(i32::MAX))
+            .send()
+            .await
+            .map_err(|error| DutyError::provider("ListObjectsV2", error))?;
+        let keys: Vec<String> = response
+            .contents()
+            .iter()
+            .filter_map(|object| object.key().map(str::to_owned))
+            .collect();
+        for key in &keys {
+            self.delete_object(key).await?;
+        }
+        *budget = budget.saturating_sub(keys.len());
+        Ok(u64::try_from(keys.len()).unwrap_or(u64::MAX))
     }
 
     /// Proves a fenced scope holds nothing, then seals the tombstone.
@@ -1292,11 +2019,27 @@ impl DutyEngine {
             remaining += self
                 .count_partition(&keys::segment_pk(&scope, signal))
                 .await?;
+            remaining += self
+                .count_partition(&keys::time_segment_pk(&scope, signal))
+                .await?;
+        }
+        remaining += self.count_partition(&keys::scope_batch_pk(&scope)).await?;
+        remaining += self.count_partition(&keys::scope_export_pk(&scope)).await?;
+        remaining += self.count_partition(&keys::gap_pk(&scope)).await?;
+        for signal in SignalSet::authority().iter() {
+            let key = ItemKey {
+                pk: keys::frontier_pk(&scope),
+                sk: keys::frontier_sk(signal),
+            };
+            remaining += u64::from(self.get(&key).await?.is_some());
+        }
+        if self.scope_body_exists(&scope).await? {
+            remaining = remaining.saturating_add(1);
         }
         if remaining > 0 {
             return Err(DutyError::unresolved(
                 self.settings.duty,
-                format!("{remaining} segment(s) of the scope are still present"),
+                format!("{remaining} session telemetry payload partition(s) are still present"),
             ));
         }
         self.advance_deletion(item, DeletionState::Verifying, DeletionState::Complete, now)
@@ -1318,13 +2061,50 @@ impl DutyEngine {
         let next = builder.string(to.as_str());
         let expected = builder.string(from.as_str());
         let at = builder.string(now.to_wire());
+        let update = match to {
+            DeletionState::Verifying => {
+                let control_pk = builder.name(Index::Control.partition_key());
+                let control_sk = builder.name(Index::Control.sort_key());
+                let attempts = builder.name(ATTEMPTS);
+                let claimed = builder.name(CLAIMED_AT);
+                let next_attempt = builder.name(NEXT_ATTEMPT_AT);
+                let partition = builder.string(keys::control_pk(
+                    ControlDomain::DeletionVerify,
+                    control_shard(item).unwrap_or(0),
+                ));
+                let due = builder.string(keys::control_sk(now, item.id.as_str()));
+                let zero = builder.number(0u64);
+                format!(
+                    "SET {state} = {next}, {changed_at} = {at}, {control_pk} = {partition}, \
+                     {control_sk} = {due}, {attempts} = {zero} REMOVE {claimed}, {next_attempt}"
+                )
+            }
+            DeletionState::Complete => {
+                let completed = builder.name("completedAt");
+                let control_pk = builder.name(Index::Control.partition_key());
+                let control_sk = builder.name(Index::Control.sort_key());
+                let attempts = builder.name(ATTEMPTS);
+                let claimed = builder.name(CLAIMED_AT);
+                let next_attempt = builder.name(NEXT_ATTEMPT_AT);
+                format!(
+                    "SET {state} = {next}, {changed_at} = {at}, {completed} = {at} \
+                     REMOVE {control_pk}, {control_sk}, {attempts}, {claimed}, {next_attempt}"
+                )
+            }
+            _ => {
+                return Err(DutyError::unresolved(
+                    self.settings.duty,
+                    format!("the duty cannot advance deletion to `{}`", to.as_str()),
+                ));
+            }
+        };
         let outcome = self
             .dynamodb
             .update_item()
             .table_name(&self.settings.table)
             .key(PK, AttributeValue::S(item.key.pk.clone()))
             .key(SK, AttributeValue::S(item.key.sk.clone()))
-            .update_expression(format!("SET {state} = {next}, {changed_at} = {at}"))
+            .update_expression(update)
             .condition_expression(format!("{observed} = {expected}"))
             .set_expression_attribute_names(Some(builder.names()))
             .set_expression_attribute_values(Some(builder.values()))
@@ -1662,6 +2442,35 @@ impl DutyEngine {
             .set_expression_attribute_names(Some(builder.names()))
             .set_expression_attribute_values(Some(builder.values()))
             .limit(i32::from(self.settings.page))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| DutyError::provider("Query", error))?;
+        Ok(response.items().to_vec())
+    }
+
+    /// One bounded page under an exact sort-key prefix.
+    async fn page_prefix(
+        &self,
+        pk: &str,
+        prefix: &str,
+    ) -> Result<Vec<HashMap<String, AttributeValue>>, DutyError> {
+        let mut builder = ExpressionBuilder::new();
+        let partition = builder.name(PK);
+        let bound = builder.string(pk.to_owned());
+        let sort = builder.name(SK);
+        let prefix = builder.string(prefix.to_owned());
+        let response = self
+            .dynamodb
+            .query()
+            .table_name(&self.settings.table)
+            .key_condition_expression(format!(
+                "{partition} = {bound} AND begins_with({sort}, {prefix})"
+            ))
+            .set_expression_attribute_names(Some(builder.names()))
+            .set_expression_attribute_values(Some(builder.values()))
+            .limit(i32::from(self.settings.page))
+            .consistent_read(true)
             .send()
             .await
             .map_err(|error| DutyError::provider("Query", error))?;
@@ -1682,6 +2491,7 @@ impl DutyEngine {
             .set_expression_attribute_names(Some(builder.names()))
             .set_expression_attribute_values(Some(builder.values()))
             .limit(i32::from(self.settings.page))
+            .consistent_read(true)
             .send()
             .await
             .map_err(|error| DutyError::provider("Query", error))?;
@@ -1790,9 +2600,127 @@ impl DutyEngine {
             .map_err(|error| DutyError::provider("DeleteObject", error))?;
         Ok(())
     }
+
+    /// Aborts one exact export multipart upload; an already-finished upload is
+    /// idempotent success.
+    async fn abort_upload(&self, key: &str, upload_id: &str) -> Result<(), DutyError> {
+        let outcome = self
+            .s3
+            .abort_multipart_upload()
+            .bucket(&self.settings.bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error)
+                if error
+                    .raw_response()
+                    .is_some_and(|response| response.status().as_u16() == 404) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(DutyError::provider("AbortMultipartUpload", error)),
+        }
+    }
+
+    /// Aborts checkpointless uploads below one deterministic export prefix.
+    async fn abort_uploads_with_prefix(&self, prefix: &str) -> Result<(usize, bool), DutyError> {
+        let response = self
+            .s3
+            .list_multipart_uploads()
+            .bucket(&self.settings.bucket)
+            .prefix(prefix)
+            .max_uploads(i32::from(self.settings.page))
+            .send()
+            .await
+            .map_err(|error| DutyError::provider("ListMultipartUploads", error))?;
+        let mut aborted = 0usize;
+        for upload in response.uploads() {
+            if let (Some(key), Some(upload_id)) = (upload.key(), upload.upload_id()) {
+                self.abort_upload(key, upload_id).await?;
+                aborted = aborted.saturating_add(1);
+            }
+        }
+        Ok((aborted, response.is_truncated().unwrap_or(false)))
+    }
+
+    /// Whether one exact artifact remains after the deletion pass.
+    async fn object_exists(&self, key: &str) -> Result<bool, DutyError> {
+        let outcome = self
+            .s3
+            .head_object()
+            .bucket(&self.settings.bucket)
+            .key(key)
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(true),
+            Err(error)
+                if error
+                    .raw_response()
+                    .is_some_and(|response| response.status().as_u16() == 404) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(DutyError::provider("HeadObject", error)),
+        }
+    }
+
+    /// Whether one exact session body prefix still contains payload.
+    async fn scope_body_exists(&self, scope: &ScopeKey) -> Result<bool, DutyError> {
+        let Some(prefix) = session_body_prefix(scope) else {
+            return Ok(false);
+        };
+        self.s3
+            .list_objects_v2()
+            .bucket(&self.settings.bucket)
+            .prefix(prefix)
+            .max_keys(1)
+            .send()
+            .await
+            .map(|response| !response.contents().is_empty())
+            .map_err(|error| DutyError::provider("ListObjectsV2", error))
+    }
 }
 
 // --- item readers -----------------------------------------------------------
+
+fn export_extension(format: &str) -> Option<&'static str> {
+    match format {
+        "ndjson" | "otlp_json" => Some("jsonl"),
+        "parquet" => Some("parquet"),
+        _ => None,
+    }
+}
+
+fn session_body_prefix(scope: &ScopeKey) -> Option<String> {
+    let ScopeKey::Session { workspace, session } = scope else {
+        return None;
+    };
+    Some(format!("observations/{workspace}/sessions/{session}/"))
+}
+
+/// Refuses a pointer outside the exact session-owned body prefix. A corrupt
+/// ledger must stop deletion rather than erase another live scope's body.
+fn ensure_session_body_key(scope: &ScopeKey, key: &str) -> Result<(), DutyError> {
+    if session_body_prefix(scope).is_some_and(|prefix| !key.starts_with(&prefix)) {
+        return Err(DutyError::Malformed {
+            item: "observation",
+            attribute: "bodyS3Key",
+        });
+    }
+    Ok(())
+}
+
+fn control_shard(item: &DueItem) -> Option<u8> {
+    string(&item.attributes, Index::Control.partition_key())?
+        .rsplit_once('#')?
+        .1
+        .parse()
+        .ok()
+}
 
 /// A due item that the control index names but the base table no longer holds.
 fn absent(id: ItemId, key: ItemKey) -> DueItem {
@@ -2091,16 +3019,21 @@ fn is_transaction_conditional_failure<R>(
 mod tests {
     use std::collections::HashMap;
 
-    use aex_observation_domain::keys::{self, ControlDomain};
+    use aex_observation_domain::frontier::DeletionState;
+    use aex_observation_domain::keys::{self, ControlDomain, ScopeKey};
     use aex_observation_domain::limits;
     use aex_observation_store_dynamodb::expressions::{Index, PK, SK, is_safe_expression};
     use aex_observation_store_dynamodb::spool::{GateState, Pending, SpoolChunk};
+    use aex_wire::ids::{SessionId, TelemetryBatchId, Uuid7, WorkspaceId};
     use aex_wire::types::{Region, Timestamp};
     use aws_sdk_dynamodb::types::AttributeValue;
+    use aws_smithy_http_client::test_util::{ReplayEvent, StaticReplayClient};
+    use aws_smithy_types::body::SdkBody;
 
     use super::{
-        BatchOutcome, DUE_SENTINEL, DutySettings, ItemId, WAKE_STALE_MS, counter_shard, due_at,
-        due_ref, elapsed, gate_state, pending_of, wake_is_stale,
+        BatchOutcome, DUE_SENTINEL, DueItem, DutyEngine, DutySettings, ItemId, ItemKey,
+        WAKE_STALE_MS, counter_shard, due_at, due_ref, elapsed, ensure_session_body_key,
+        gate_state, pending_of, session_body_prefix, wake_is_stale,
     };
 
     fn now() -> Timestamp {
@@ -2110,6 +3043,7 @@ mod tests {
     fn settings() -> DutySettings {
         DutySettings {
             table: "observation-authority".to_owned(),
+            session_table: "session-authority".to_owned(),
             bucket: "aex-dev-observations".to_owned(),
             usage_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/usage.fifo".to_owned(),
             region: Region::EuWest1,
@@ -2118,6 +3052,68 @@ mod tests {
             shards: 16,
             max_attempts: limits::OBS_SPOOL_MAX_ATTEMPTS,
         }
+    }
+
+    fn engine(responses: Vec<String>) -> (DutyEngine, StaticReplayClient) {
+        use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials};
+
+        let events = responses
+            .into_iter()
+            .map(|body| {
+                ReplayEvent::new(
+                    http::Request::builder()
+                        .method("POST")
+                        .uri("https://dynamodb.eu-west-1.amazonaws.com/")
+                        .body(SdkBody::empty())
+                        .expect("request"),
+                    http::Response::builder()
+                        .status(200)
+                        .body(SdkBody::from(body))
+                        .expect("response"),
+                )
+            })
+            .collect();
+        let replay = StaticReplayClient::new(events);
+        let credentials = Credentials::new(
+            "AKIDTESTTESTTESTTEST",
+            "test-secret",
+            None,
+            None,
+            "aex-tests",
+        );
+        let dynamodb = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::Config::builder()
+                .behavior_version(BehaviorVersion::latest())
+                .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
+                .credentials_provider(credentials.clone())
+                .http_client(replay.clone())
+                .build(),
+        );
+        let s3 = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(BehaviorVersion::latest())
+                .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+                .credentials_provider(credentials.clone())
+                .http_client(replay.clone())
+                .build(),
+        );
+        let sqs = aws_sdk_sqs::Client::from_conf(
+            aws_sdk_sqs::Config::builder()
+                .behavior_version(BehaviorVersion::latest())
+                .region(aws_sdk_sqs::config::Region::new("eu-west-1"))
+                .credentials_provider(credentials)
+                .http_client(replay.clone())
+                .build(),
+        );
+        let mut duty = settings();
+        duty.duty = ControlDomain::DeletionExecute;
+        (DutyEngine::new(dynamodb, s3, sqs, duty), replay)
+    }
+
+    fn body_of(
+        request: &aws_smithy_runtime_api::client::orchestrator::HttpRequest,
+    ) -> serde_json::Value {
+        serde_json::from_slice(request.body().bytes().expect("request body")).expect("request JSON")
     }
 
     #[test]
@@ -2253,5 +3249,234 @@ mod tests {
         }
         assert_eq!(settings.duty, ControlDomain::SpoolRepair);
         assert!(settings.usage_queue_url.starts_with("https://"));
+    }
+
+    #[test]
+    fn only_an_exact_session_has_an_owned_observation_body_prefix() {
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10]));
+        let first = ScopeKey::Session {
+            workspace,
+            session: SessionId::from_uuid7(Uuid7::compose(2, [2; 10])),
+        };
+        let second = ScopeKey::Session {
+            workspace,
+            session: SessionId::from_uuid7(Uuid7::compose(3, [3; 10])),
+        };
+        assert_ne!(session_body_prefix(&first), session_body_prefix(&second));
+        assert_eq!(session_body_prefix(&ScopeKey::Workspace(workspace)), None);
+        let first_key = format!(
+            "{}aa/bb/digest",
+            session_body_prefix(&first).expect("prefix")
+        );
+        assert!(ensure_session_body_key(&first, &first_key).is_ok());
+        assert!(ensure_session_body_key(&second, &first_key).is_err());
+    }
+
+    #[tokio::test]
+    async fn gap_rows_and_the_workspace_change_hint_are_updated_atomically() {
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10]));
+        let scope = ScopeKey::Session {
+            workspace,
+            session: SessionId::from_uuid7(Uuid7::compose(2, [2; 10])),
+        };
+        let gap_pk = keys::gap_pk(&scope);
+        let query = serde_json::json!({
+            "Items": [{
+                "pk": {"S": gap_pk},
+                "sk": {"S": "GAP#fixture#00000000000000000001"}
+            }],
+            "Count": 1,
+            "ScannedCount": 1
+        })
+        .to_string();
+        let (engine, replay) = engine(vec![query, "{}".to_owned()]);
+        let mut budget = 10;
+
+        assert_eq!(
+            engine
+                .purge_gaps(&scope, &mut budget)
+                .await
+                .expect("gaps drain"),
+            1
+        );
+        assert_eq!(budget, 9);
+        let requests: Vec<_> = replay.actual_requests().collect();
+        assert_eq!(requests.len(), 2);
+        let transaction = body_of(requests[1]);
+        let actions = transaction["TransactItems"].as_array().expect("actions");
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0]["Delete"]["Key"]["pk"]["S"], gap_pk);
+        assert_eq!(
+            actions[1]["Update"]["Key"]["pk"]["S"].as_str(),
+            Some(keys::gap_hint_pk(workspace).as_str())
+        );
+        assert!(
+            actions[1]["Update"]["UpdateExpression"]
+                .as_str()
+                .is_some_and(|update| update.contains("ADD "))
+        );
+    }
+
+    #[tokio::test]
+    async fn session_ledger_decrements_shared_segment_rows_exactly_once() {
+        let (engine, replay) = engine(vec!["{}".to_owned()]);
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [2; 10]));
+        let session = SessionId::from_uuid7(Uuid7::compose(1, [4; 10]));
+        let scope = ScopeKey::Session { workspace, session };
+        let batch = TelemetryBatchId::from_uuid7(Uuid7::compose(1, [8; 10]));
+        let ledger_key = ItemKey {
+            pk: keys::batch_pk(workspace, batch),
+            sk: keys::materialization_sk(0),
+        };
+        let contribution = |axis: &str| {
+            AttributeValue::M(HashMap::from([
+                ("axis".to_owned(), AttributeValue::S(axis.to_owned())),
+                ("signal".to_owned(), AttributeValue::S("logs".to_owned())),
+                (
+                    "bucket".to_owned(),
+                    AttributeValue::S("2026-08-01T09".to_owned()),
+                ),
+                ("count".to_owned(), AttributeValue::N("2".to_owned())),
+                (
+                    "logicalBytes".to_owned(),
+                    AttributeValue::N("24".to_owned()),
+                ),
+            ]))
+        };
+        let ledger = HashMap::from([
+            (PK.to_owned(), AttributeValue::S(ledger_key.pk.clone())),
+            (SK.to_owned(), AttributeValue::S(ledger_key.sk.clone())),
+            ("scopeKey".to_owned(), AttributeValue::S(scope.to_key())),
+            ("batchId".to_owned(), AttributeValue::S(batch.to_string())),
+            (
+                "materializationDigest".to_owned(),
+                AttributeValue::S("0".repeat(64)),
+            ),
+            (
+                "segments".to_owned(),
+                AttributeValue::L(vec![contribution("accepted"), contribution("event_time")]),
+            ),
+        ]);
+
+        engine
+            .settle_workspace_segments(&scope, batch, &ledger, &ledger_key)
+            .await
+            .expect("the aggregate contribution settles");
+
+        let request = replay.actual_requests().next().expect("one transaction");
+        let transaction = body_of(request);
+        let actions = transaction["TransactItems"].as_array().expect("actions");
+        assert_eq!(actions.len(), 3);
+        assert_eq!(
+            actions[0]["Update"]["Key"]["pk"]["S"].as_str(),
+            Some(keys::segment_pk(&ScopeKey::Workspace(workspace), Signal::Logs).as_str())
+        );
+        assert_eq!(
+            actions[1]["Update"]["Key"]["pk"]["S"].as_str(),
+            Some(keys::time_segment_pk(&ScopeKey::Workspace(workspace), Signal::Logs).as_str())
+        );
+        for update in &actions[..2] {
+            let values = update["Update"]["ExpressionAttributeValues"]
+                .as_object()
+                .expect("values");
+            assert!(values.values().any(|value| value["N"] == "-2"));
+            assert!(values.values().any(|value| value["N"] == "-24"));
+        }
+        assert_eq!(
+            actions[2]["Delete"]["Key"]["sk"]["S"].as_str(),
+            Some(ledger_key.sk.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn deletion_releases_workspace_visibility_for_a_committed_unfinished_batch() {
+        let (engine, replay) = engine(vec!["{}".to_owned()]);
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [2; 10]));
+        let session = SessionId::from_uuid7(Uuid7::compose(1, [4; 10]));
+        let scope = ScopeKey::Session { workspace, session };
+        let batch = TelemetryBatchId::from_uuid7(Uuid7::compose(1, [8; 10]));
+        let allocation = |signal: &str| {
+            AttributeValue::M(HashMap::from([(
+                "signal".to_owned(),
+                AttributeValue::S(signal.to_owned()),
+            )]))
+        };
+        let receipt = HashMap::from([
+            (
+                "state".to_owned(),
+                AttributeValue::S("committed".to_owned()),
+            ),
+            ("scopeKey".to_owned(), AttributeValue::S(scope.to_key())),
+            ("batchId".to_owned(), AttributeValue::S(batch.to_string())),
+            (
+                "allocations".to_owned(),
+                AttributeValue::L(vec![allocation("logs"), allocation("metrics")]),
+            ),
+        ]);
+
+        engine
+            .settle_abandoned_workspace_frontiers(&scope, batch, &receipt, now())
+            .await
+            .expect("the pending workspace frontier is released");
+
+        let request = replay.actual_requests().next().expect("one transaction");
+        let transaction = body_of(request);
+        let actions = transaction["TransactItems"].as_array().expect("actions");
+        assert_eq!(actions.len(), 3, "receipt marker plus two frontiers");
+        for update in &actions[1..] {
+            assert_eq!(
+                update["Update"]["Key"]["pk"]["S"].as_str(),
+                Some(keys::frontier_pk(&ScopeKey::Workspace(workspace)).as_str())
+            );
+            assert!(
+                update["Update"]["ExpressionAttributeValues"]
+                    .as_object()
+                    .expect("values")
+                    .values()
+                    .any(|value| value["N"].as_str() == Some("-1"))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_to_verify_reindexes_the_same_tombstone_for_a_separate_duty() {
+        let (engine, replay) = engine(vec!["{}".to_owned()]);
+        let item = DueItem {
+            id: ItemId::new("ses_fixture"),
+            key: ItemKey {
+                pk: "FRONT#S#wsp_fixture#ses_fixture".to_owned(),
+                sk: keys::DELETION_SK.to_owned(),
+            },
+            attempts: 2,
+            attributes: HashMap::from([(
+                Index::Control.partition_key().to_owned(),
+                AttributeValue::S(keys::control_pk(ControlDomain::DeletionExecute, 7)),
+            )]),
+        };
+
+        engine
+            .advance_deletion(
+                &item,
+                DeletionState::Deleting,
+                DeletionState::Verifying,
+                now(),
+            )
+            .await
+            .expect("transition");
+        let request = replay.actual_requests().next().expect("update");
+        let body = body_of(request);
+        let strings: Vec<&str> = body["ExpressionAttributeValues"]
+            .as_object()
+            .expect("values")
+            .values()
+            .filter_map(|value| value["S"].as_str())
+            .collect();
+        assert!(strings.contains(&"verifying"), "{strings:?}");
+        assert!(
+            strings.contains(&keys::control_pk(ControlDomain::DeletionVerify, 7).as_str()),
+            "{strings:?}"
+        );
+        let update = body["UpdateExpression"].as_str().expect("update");
+        assert!(update.contains("REMOVE"), "{update}");
     }
 }

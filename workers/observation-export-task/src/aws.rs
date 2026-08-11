@@ -31,7 +31,7 @@ use aex_wire::error::ErrorCode;
 use aex_wire::ids::{ContentHash, ExportId, WorkspaceId};
 use aex_wire::models::{ExportFormat, TelemetryExportResult};
 use aex_wire::types::Timestamp;
-use aws_sdk_dynamodb::types::AttributeValue;
+use aws_sdk_dynamodb::types::{AttributeValue, ConditionCheck, Put, TransactWriteItem};
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 
@@ -265,8 +265,7 @@ impl ExportAuthority for DynamoExportAuthority {
         let fence = builder.name("fence");
         let held = builder.number(progress.checkpoint.fence);
         let condition = format!("attribute_not_exists({fence}) OR {fence} <= {held}");
-        self.dynamodb
-            .put_item()
+        let checkpoint = Put::builder()
             .table_name(&self.table)
             .set_item(Some(encode_progress(
                 &self.export_pk(),
@@ -276,9 +275,34 @@ impl ExportAuthority for DynamoExportAuthority {
             .condition_expression(condition)
             .set_expression_attribute_names(Some(builder.names()))
             .set_expression_attribute_values(Some(builder.values()))
+            .build()
+            .map_err(|error| TaskError::provider("TransactWriteItems", error))?;
+
+        let mut live = ExpressionBuilder::new();
+        let state = live.name("state");
+        let generating = live.string("generating");
+        let fence = live.name("fence");
+        let held = live.number(progress.checkpoint.fence);
+        let cancelled = live.name("cancelRequested");
+        let no = live.value(AttributeValue::Bool(false));
+        let export = ConditionCheck::builder()
+            .table_name(&self.table)
+            .key(PK, AttributeValue::S(self.export_pk()))
+            .key(SK, AttributeValue::S(keys::export_sk(self.export)))
+            .condition_expression(format!(
+                "{state} = {generating} AND {fence} = {held} AND {cancelled} = {no}"
+            ))
+            .set_expression_attribute_names(Some(live.names()))
+            .set_expression_attribute_values(Some(live.values()))
+            .build()
+            .map_err(|error| TaskError::provider("TransactWriteItems", error))?;
+        self.dynamodb
+            .transact_write_items()
+            .transact_items(TransactWriteItem::builder().condition_check(export).build())
+            .transact_items(TransactWriteItem::builder().put(checkpoint).build())
             .send()
             .await
-            .map_err(|error| TaskError::provider("PutItem", error))?;
+            .map_err(|error| TaskError::provider("TransactWriteItems", error))?;
         Ok(())
     }
 

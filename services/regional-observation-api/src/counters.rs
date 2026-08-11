@@ -48,6 +48,8 @@ pub enum ReadCounter {
     SessionHead,
     /// Provider queries against the gap ledger.
     GapHistory,
+    /// Strong queries against accepted/event-time segment directories.
+    SegmentDirectory,
     /// Gap-change hint rows that could not be read, each of which cost the
     /// ledger read the hint exists to avoid.
     GapHintUnreadable,
@@ -82,6 +84,7 @@ impl ReadCounter {
         Self::FrontierBatch,
         Self::SessionHead,
         Self::GapHistory,
+        Self::SegmentDirectory,
         Self::GapHintUnreadable,
         Self::ObservationPage,
         Self::AuthorizationRenewal,
@@ -105,6 +108,7 @@ impl ReadCounter {
             Self::FrontierBatch => "frontier_batch",
             Self::SessionHead => "session_head",
             Self::GapHistory => "gap_history",
+            Self::SegmentDirectory => "segment_directory",
             Self::GapHintUnreadable => "gap_hint_unreadable",
             Self::ObservationPage => "observation_page",
             Self::AuthorizationRenewal => "authorization_renewal",

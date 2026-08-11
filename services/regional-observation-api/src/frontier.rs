@@ -397,6 +397,10 @@ fn decode_signal_frontier(
     signal: Signal,
     item: &HashMap<String, AttributeValue>,
 ) -> Result<SignalFrontier, ReadError> {
+    let pending = crate::reader::number(item, "pendingMaterializations").unwrap_or(0);
+    if pending > 0 {
+        return Err(ReadError::Materializing { pending });
+    }
     let accepted_at = timestamp(item, "acceptedAt").ok_or(ReadError::Malformed {
         attribute: "acceptedAt",
     })?;
@@ -807,6 +811,31 @@ mod tests {
             Err(crate::reader::ReadError::Malformed {
                 attribute: "acceptedAt"
             })
+        ));
+    }
+
+    #[test]
+    fn a_committed_but_unmaterialized_signal_fails_closed() {
+        let scope = ScopeKey::Workspace(workspace());
+        let bundle = super::Bundle {
+            rows: std::collections::BTreeMap::from([(
+                BundleRow::SignalFrontier(Signal::Logs),
+                HashMap::from([
+                    (
+                        "acceptedAt".to_owned(),
+                        AttributeValue::S("2026-08-01T09:00:00.000Z".to_owned()),
+                    ),
+                    (
+                        "pendingMaterializations".to_owned(),
+                        AttributeValue::N("2".to_owned()),
+                    ),
+                ]),
+            )]),
+        };
+
+        assert!(matches!(
+            bundle.decode(&scope, workspace()),
+            Err(crate::reader::ReadError::Materializing { pending: 2 })
         ));
     }
 }
