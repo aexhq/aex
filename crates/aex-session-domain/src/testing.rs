@@ -9,7 +9,6 @@ use std::num::NonZeroU64;
 use aex_content_domain::ContentDigest;
 use aex_internal_contracts::{RunId, journal::JournalEntryKind};
 use aex_operation_domain::DeletionGuard;
-use aex_secret_domain::CustodyRevision;
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{
     AgentId, GenerationId, MessageId, OrganizationId, PrefixedId, SessionId, ToolCallId, Uuid7,
@@ -178,7 +177,14 @@ pub fn session_fixture() -> Session {
         root_agent: id::<AgentId>(4),
         generation: Some(generation),
         pinned_runtime,
-        custody_revision: CustodyRevision::FIRST,
+        provider_credential: crate::ProviderCredentialPin {
+            credential: aex_wire::ids::ProviderCredentialId::from_uuid7(Uuid7::compose(
+                1, [12; 10],
+            )),
+            provider: ProviderId::Openai,
+            source_generation: 1,
+            revision: 1,
+        },
         lineage: Lineage::ROOT,
         resolved,
         metadata: None,
@@ -319,7 +325,7 @@ pub fn approval_binding() -> ApprovalBinding {
         implementation_digest: ContentDigest::of(b"implementation"),
         config_digest: ContentDigest::of(b"config"),
         expected_generation: Some(id::<GenerationId>(13)),
-        expected_custody: CustodyRevision::FIRST,
+        expected_provider_credential_revision: 1,
         expected_config_revision: 4,
     }
 }
@@ -342,7 +348,9 @@ pub fn drift_field(binding: &ApprovalBinding, field: BindingField) -> ApprovalBi
         BindingField::ExpectedGeneration => {
             drifted.expected_generation = Some(id::<GenerationId>(94));
         }
-        BindingField::ExpectedCustody => drifted.expected_custody = CustodyRevision(99),
+        BindingField::ExpectedProviderCredentialRevision => {
+            drifted.expected_provider_credential_revision = 99;
+        }
         BindingField::ExpectedConfigRevision => drifted.expected_config_revision = 99,
     }
     drifted

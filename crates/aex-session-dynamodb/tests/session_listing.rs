@@ -11,7 +11,6 @@ use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::store::{
     SessionListFilter, SessionListStatus, SessionQueries, SessionReads,
 };
-use aex_wire::ids::{OperationId, PrefixedId as _};
 use aex_wire::types::Timestamp;
 use serde_json::Value;
 
@@ -20,21 +19,10 @@ use support::{captured_body, capturing_client, scripted_client, tables};
 fn fixture(status: SessionStatus) -> Session {
     let mut session = aex_session_domain::testing::session_fixture();
     session.status = status;
-    match status {
-        SessionStatus::Idle | SessionStatus::Running | SessionStatus::AwaitingApproval => {}
-        SessionStatus::Trashed => {
-            session.deletion.state = DeletionState::Trashed;
-            session.deletion.trashed_at = Some(session.updated_at);
-            session.work_admission = WorkAdmission::Trashing;
-        }
-        SessionStatus::Purging => {
-            session.deletion.state = DeletionState::Purging;
-            session.deletion.trashed_at = Some(session.updated_at);
-            session.deletion.purge_operation = Some(OperationId::from_uuid7(
-                aex_wire::ids::Uuid7::compose(2, [9; 10]),
-            ));
-            session.work_admission = WorkAdmission::Purging;
-        }
+    session.lifecycle.status = status;
+    if status == SessionStatus::Deleting {
+        session.deletion.state = DeletionState::Deleting;
+        session.work_admission = WorkAdmission::Deleting;
     }
     session
 }
@@ -80,7 +68,7 @@ fn responses(session: &Session, continuation: bool) -> Vec<String> {
 
 #[tokio::test]
 async fn one_lifecycle_neutral_partition_is_snapshot_bounded_and_cursor_ready() {
-    let session = fixture(SessionStatus::Trashed);
+    let session = fixture(SessionStatus::Deleting);
     let partition =
         aex_session_dynamodb::keys::workspace_index::session_partition(session.workspace);
     let after = PagePosition {
@@ -133,11 +121,12 @@ async fn one_lifecycle_neutral_partition_is_snapshot_bounded_and_cursor_ready() 
 }
 
 #[tokio::test]
-async fn deleting_matches_both_trashed_and_purging_but_not_live() {
+async fn deleting_matches_only_the_irreversible_deletion_state() {
     for (status, expected) in [
         (SessionStatus::Idle, false),
-        (SessionStatus::Trashed, true),
-        (SessionStatus::Purging, true),
+        (SessionStatus::Terminating, false),
+        (SessionStatus::Terminated, false),
+        (SessionStatus::Deleting, true),
     ] {
         let session = fixture(status);
         let (client, _replay) = scripted_client(responses(&session, false));
@@ -161,7 +150,7 @@ async fn deleting_matches_both_trashed_and_purging_but_not_live() {
 
 #[tokio::test]
 async fn the_continuation_is_the_complete_provider_position() {
-    let session = fixture(SessionStatus::Purging);
+    let session = fixture(SessionStatus::Deleting);
     let (client, _replay) = scripted_client(responses(&session, true));
     let reads = SessionReads::new(client, &tables().session_authority);
     let page = reads

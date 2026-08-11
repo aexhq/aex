@@ -16,8 +16,6 @@ use aex_wire::error::ErrorCode;
 use aex_wire::ids::{AgentId, ApprovalId, GenerationId, SessionId, ToolCallId};
 use aex_wire::types::Timestamp;
 
-use aex_secret_domain::CustodyRevision;
-
 /// Where an approval is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ApprovalStatus {
@@ -132,8 +130,8 @@ pub enum BindingField {
     ConfigDigest,
     /// The expected workspace generation.
     ExpectedGeneration,
-    /// The expected custody revision.
-    ExpectedCustody,
+    /// The expected dedicated provider-credential revision.
+    ExpectedProviderCredentialRevision,
     /// The expected configuration revision.
     ExpectedConfigRevision,
 }
@@ -150,7 +148,7 @@ impl BindingField {
         Self::ImplementationDigest,
         Self::ConfigDigest,
         Self::ExpectedGeneration,
-        Self::ExpectedCustody,
+        Self::ExpectedProviderCredentialRevision,
         Self::ExpectedConfigRevision,
     ];
 }
@@ -176,8 +174,8 @@ pub struct ApprovalBinding {
     pub config_digest: ContentDigest,
     /// The workspace generation the call expects.
     pub expected_generation: Option<GenerationId>,
-    /// The custody revision the call expects.
-    pub expected_custody: CustodyRevision,
+    /// The dedicated provider-credential revision the call expects.
+    pub expected_provider_credential_revision: u64,
     /// The configuration revision the call expects.
     pub expected_config_revision: u64,
 }
@@ -213,8 +211,10 @@ pub fn binding_drift(expected: &ApprovalBinding, current: &ApprovalBinding) -> V
     if expected.expected_generation != current.expected_generation {
         drifted.push(BindingField::ExpectedGeneration);
     }
-    if expected.expected_custody != current.expected_custody {
-        drifted.push(BindingField::ExpectedCustody);
+    if expected.expected_provider_credential_revision
+        != current.expected_provider_credential_revision
+    {
+        drifted.push(BindingField::ExpectedProviderCredentialRevision);
     }
     if expected.expected_config_revision != current.expected_config_revision {
         drifted.push(BindingField::ExpectedConfigRevision);

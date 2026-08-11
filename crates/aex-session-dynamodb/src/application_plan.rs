@@ -913,8 +913,12 @@ const fn session_status(status: aex_session_domain::SessionStatus) -> &'static s
         aex_session_domain::SessionStatus::Idle => "idle",
         aex_session_domain::SessionStatus::Running => "running",
         aex_session_domain::SessionStatus::AwaitingApproval => "awaiting_approval",
-        aex_session_domain::SessionStatus::Trashed => "trashed",
-        aex_session_domain::SessionStatus::Purging => "purging",
+        aex_session_domain::SessionStatus::Suspending => "suspending",
+        aex_session_domain::SessionStatus::Suspended => "suspended",
+        aex_session_domain::SessionStatus::Resuming => "resuming",
+        aex_session_domain::SessionStatus::Terminating => "terminating",
+        aex_session_domain::SessionStatus::Terminated => "terminated",
+        aex_session_domain::SessionStatus::Deleting => "deleting",
     }
 }
 
@@ -922,8 +926,7 @@ const fn work_admission(value: aex_session_domain::WorkAdmission) -> &'static st
     match value {
         aex_session_domain::WorkAdmission::Open => "open",
         aex_session_domain::WorkAdmission::Paused => "paused",
-        aex_session_domain::WorkAdmission::Trashing => "trashing",
-        aex_session_domain::WorkAdmission::Purging => "purging",
+        aex_session_domain::WorkAdmission::Deleting => "deleting",
         aex_session_domain::WorkAdmission::ContinuityLost => "continuity_lost",
     }
 }
@@ -931,9 +934,8 @@ const fn work_admission(value: aex_session_domain::WorkAdmission) -> &'static st
 const fn deletion_state(value: aex_operation_domain::DeletionState) -> &'static str {
     match value {
         aex_operation_domain::DeletionState::Live => "active",
-        aex_operation_domain::DeletionState::Trashed => "trashed",
-        aex_operation_domain::DeletionState::Purging => "purging",
-        aex_operation_domain::DeletionState::Purged => "purged",
+        aex_operation_domain::DeletionState::Deleting => "deleting",
+        aex_operation_domain::DeletionState::Deleted => "deleted",
     }
 }
 

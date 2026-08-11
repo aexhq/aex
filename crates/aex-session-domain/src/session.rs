@@ -7,9 +7,11 @@
 
 use aex_internal_contracts::RunId;
 use aex_operation_domain::{DeletionGuard, DeletionState, OperationKind};
-use aex_secret_domain::CustodyRevision;
 use aex_wire::CanonicalJson;
-use aex_wire::ids::{AgentId, GenerationId, OperationId, OrganizationId, SessionId, WorkspaceId};
+use aex_wire::ids::{
+    AgentId, GenerationId, OperationId, OrganizationId, ProviderCredentialId, SessionId,
+    WorkspaceId,
+};
 use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
 use sha2::{Digest as _, Sha256};
@@ -177,6 +179,23 @@ pub struct PinnedRuntime {
     definition: aex_runtime_control::generation::HandsGeneration,
 }
 
+/// The dedicated BYOK provider credential version pinned by this session.
+///
+/// This is deliberately not generic secret custody. The session may use one
+/// provider credential and records only the dedicated binding facts required
+/// to reject drift or revocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderCredentialPin {
+    /// The public provider-credential identity.
+    pub credential: ProviderCredentialId,
+    /// The provider the credential authenticates to.
+    pub provider: ProviderId,
+    /// The immutable source generation selected at session creation.
+    pub source_generation: u64,
+    /// The binding revision selected at session creation.
+    pub revision: u64,
+}
+
 impl PinnedRuntime {
     /// Binds an immutable generation definition to the session that owns it.
     ///
@@ -324,12 +343,12 @@ pub struct Session {
     pub generation: Option<GenerationId>,
     /// The immutable generation definition the create decided.
     ///
-    /// Written once with the head and never rewritten. The `runtime-activity`
-    /// generation head and `CURRENT` pointer are **derived** from it on first
-    /// launch, not written by the create transaction (A D-2).
+    /// Written once with the ready head and never rewritten. Session creation
+    /// has already launched this exact generation and materialized its selected
+    /// workspace files before the public session becomes visible.
     pub pinned_runtime: PinnedRuntime,
-    /// The custody revision its credentials are at.
-    pub custody_revision: CustodyRevision,
+    /// The dedicated BYOK provider credential version selected at creation.
+    pub provider_credential: ProviderCredentialPin,
     /// Where it came from.
     pub lineage: Lineage,
     /// The exact configuration it resolved.

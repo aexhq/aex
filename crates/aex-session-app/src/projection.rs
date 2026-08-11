@@ -11,22 +11,36 @@
 //! So: `session_get` and `sessions_list` consume this. They must not grow their
 //! own.
 
-use aex_session_domain::{Session, SessionStatus};
+use aex_session_domain::{Session, SessionStatus, TerminationReason};
 use aex_wire::canonical::{CanonicalError, to_jcs_bytes};
 use aex_wire::models;
+use aex_wire::types::Cents;
 
 /// The public status of a session head.
 ///
-/// The domain has five statuses and the wire has four: both deletion states
-/// project onto `deleting`, because a caller is told a deletion is running and
-/// not which half of it.
 #[must_use]
 pub const fn public_status(status: SessionStatus) -> models::SessionStatus {
     match status {
         SessionStatus::Idle => models::SessionStatus::Idle,
         SessionStatus::Running => models::SessionStatus::Running,
         SessionStatus::AwaitingApproval => models::SessionStatus::AwaitingApproval,
-        SessionStatus::Trashed | SessionStatus::Purging => models::SessionStatus::Deleting,
+        SessionStatus::Suspending => models::SessionStatus::Suspending,
+        SessionStatus::Suspended => models::SessionStatus::Suspended,
+        SessionStatus::Resuming => models::SessionStatus::Resuming,
+        SessionStatus::Terminating => models::SessionStatus::Terminating,
+        SessionStatus::Terminated => models::SessionStatus::Terminated,
+        SessionStatus::Deleting => models::SessionStatus::Deleting,
+    }
+}
+
+const fn public_termination_reason(reason: TerminationReason) -> models::SessionTerminationReason {
+    match reason {
+        TerminationReason::User => models::SessionTerminationReason::User,
+        TerminationReason::LifetimeExpired => models::SessionTerminationReason::LifetimeExpired,
+        TerminationReason::ProviderCredentialRevoked => {
+            models::SessionTerminationReason::ProviderCredentialRevoked
+        }
+        TerminationReason::RuntimeLost => models::SessionTerminationReason::RuntimeLost,
     }
 }
 
@@ -39,8 +53,10 @@ pub fn public_session_list_item(session: &Session) -> models::SessionListItem {
     models::SessionListItem {
         id: session.id,
         workspace_id: session.workspace,
-        status: public_status(session.status),
+        status: public_status(session.lifecycle.status),
         revision: session.revision.0,
+        active_message_id: session.lifecycle.active.map(|active| active.message),
+        expires_at: session.lifecycle.expires_at,
         provider: session.resolved.provider(),
         model: session.resolved.model().to_owned(),
         created_at: session.created_at,
@@ -66,29 +82,27 @@ pub fn public_session(session: &Session) -> Result<models::Session, CanonicalErr
     Ok(models::Session {
         id: session.id,
         workspace_id: session.workspace,
-        status: public_status(session.status),
+        status: public_status(session.lifecycle.status),
         revision: session.revision.0,
-        continuity: models::WorkspaceContinuity {
-            // Compatibility values until the public contract lane removes the retired
-            // persistence fields. No session root is stored behind these projections.
-            root_hash: None,
-            persist_revision: 0,
-            last_persisted_at: None,
-            // The generation that is *live*, which is `None` until a launch.
-            // Never the pinned definition: publishing that would tell a caller
-            // a workspace is running when H-LAZY guarantees nothing has
-            // started.
-            live_generation_id: session.generation,
-        },
-        lineage: models::SessionLineage {
-            origin_session_id: session.lineage.origin.as_ref().map(|origin| origin.session),
-            cloned_at_persist_revision: None,
-            clone_operation_id: session
-                .lineage
-                .origin
-                .as_ref()
-                .map(|origin| origin.operation),
-        },
+        active_message_id: session.lifecycle.active.map(|active| active.message),
+        active_max_spend_cents: session
+            .lifecycle
+            .active
+            .map(|active| Cents::new(active.bounds.max_spend_cents.get())),
+        active_deadline: session
+            .lifecycle
+            .active
+            .map(|active| active.bounds.deadline),
+        launched_at: session.lifecycle.launched_at,
+        expires_at: session.lifecycle.expires_at,
+        idle_since: session.lifecycle.idle_since,
+        suspend_at: session.lifecycle.suspend_at,
+        suspended_at: session.lifecycle.suspended_at,
+        terminated_at: session.lifecycle.terminated_at,
+        termination_reason: session
+            .lifecycle
+            .termination_reason
+            .map(public_termination_reason),
         resolved_config: resolved,
         metadata: session
             .metadata
@@ -120,12 +134,23 @@ mod tests {
     #[test]
     fn the_list_projection_is_complete_without_resolved_config() {
         let mut session = aex_session_domain::testing::session_fixture();
-        session.status = SessionStatus::Purging;
+        session
+            .lifecycle
+            .begin_terminate(aex_session_domain::TerminationReason::User)
+            .expect("termination starts");
+        session
+            .lifecycle
+            .complete_terminate(session.updated_at)
+            .expect("termination completes");
+        session.lifecycle.begin_delete().expect("deletion starts");
+        session.status = SessionStatus::Deleting;
         let item = super::public_session_list_item(&session);
 
         assert_eq!(item.id, session.id);
         assert_eq!(item.workspace_id, session.workspace);
         assert_eq!(item.status, aex_wire::models::SessionStatus::Deleting);
+        assert_eq!(item.active_message_id, None);
+        assert_eq!(item.expires_at, session.lifecycle.expires_at);
         assert_eq!(item.revision, session.revision.0);
         assert_eq!(item.provider, session.resolved.provider());
         assert_eq!(item.model, session.resolved.model());

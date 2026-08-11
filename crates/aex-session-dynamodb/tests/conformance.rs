@@ -250,8 +250,10 @@ async fn a_scoped_point_read_hides_foreign_tenants_and_refuses_deleted_parents()
     );
 
     let mut deleted = session.clone();
-    deleted.deletion.state = aex_session_domain::DeletionState::Trashed;
-    deleted.status = aex_session_domain::SessionStatus::Trashed;
+    deleted.deletion.state = aex_session_domain::DeletionState::Deleting;
+    deleted.work_admission = aex_session_domain::WorkAdmission::Deleting;
+    deleted.lifecycle.status = aex_session_domain::SessionStatus::Deleting;
+    deleted.status = aex_session_domain::SessionStatus::Deleting;
     let (client, _replay) = scripted_client(scoped_run_responses(&deleted, &run));
     let reads = SessionReads::new(client, &tables().session_authority);
     assert_eq!(

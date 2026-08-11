@@ -10,7 +10,7 @@
 use std::future::Future;
 
 use aex_operation_domain::operation::{CancelRejection, OperationKind, OperationStatus, cancel};
-use aex_session_domain::{DeletionEpoch, DeletionState, Message, Run, Session, SessionStatus};
+use aex_session_domain::{DeletionEpoch, Message, Run, Session, SessionStatus};
 use aex_wire::idempotency::IdempotencyKey;
 use aex_wire::ids::{AgentId, ApprovalId, OperationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
@@ -124,11 +124,7 @@ pub struct PositionPage<T> {
     pub isolated: u32,
 }
 
-/// The four public session-status filters understood by the collection.
-///
-/// Domain deletion has two visible phases, but both are one `deleting` wire
-/// status. Keeping that collapse in the authority filter prevents a handler
-/// from accidentally listing only half of deletion.
+/// The complete public session-status filters understood by the collection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionListStatus {
     /// No run is in flight.
@@ -137,7 +133,17 @@ pub enum SessionListStatus {
     Running,
     /// A run is blocked on an approval.
     AwaitingApproval,
-    /// Either the recovery window or irreversible purge is in progress.
+    /// Compute is stopping but this generation remains resumable.
+    Suspending,
+    /// Compute is stopped and this generation remains resumable.
+    Suspended,
+    /// The retained generation is starting again.
+    Resuming,
+    /// Compute and live files are being destroyed.
+    Terminating,
+    /// Compute and live files are permanently gone.
+    Terminated,
+    /// Irreversible metadata deletion is in progress.
     Deleting,
 }
 
@@ -147,7 +153,12 @@ impl SessionListStatus {
             Self::Idle => matches!(status, SessionStatus::Idle),
             Self::Running => matches!(status, SessionStatus::Running),
             Self::AwaitingApproval => matches!(status, SessionStatus::AwaitingApproval),
-            Self::Deleting => matches!(status, SessionStatus::Trashed | SessionStatus::Purging),
+            Self::Suspending => matches!(status, SessionStatus::Suspending),
+            Self::Suspended => matches!(status, SessionStatus::Suspended),
+            Self::Resuming => matches!(status, SessionStatus::Resuming),
+            Self::Terminating => matches!(status, SessionStatus::Terminating),
+            Self::Terminated => matches!(status, SessionStatus::Terminated),
+            Self::Deleting => matches!(status, SessionStatus::Deleting),
         }
     }
 }
@@ -1285,9 +1296,6 @@ impl SessionReads {
                 return Err(malformed_session(
                     "the strongly hydrated head disagrees with its index locator",
                 ));
-            }
-            if session.deletion.state == DeletionState::Purged {
-                return Ok(None);
             }
             Ok(Some(session))
         })

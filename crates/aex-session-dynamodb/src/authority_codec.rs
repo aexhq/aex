@@ -9,11 +9,12 @@ use std::num::NonZeroU64;
 use aex_content_domain::ContentDigest;
 use aex_internal_contracts::RunId;
 use aex_operation_domain::{DeletionEpoch, DeletionGuard, DeletionState, OperationKind};
-use aex_secret_domain::CustodyRevision;
 use aex_session_domain::{
-    CancellationEpoch, DomainError, EffectId, InterruptReason, Lineage, Message, MessagePart,
-    MessageRole, MessageState, MutationGuard, Origin, ResolvedConfigAuthority,
-    ResolvedConfigDigest, Run, RunOutcome, Session, SessionRevision, SessionStatus, WorkAdmission,
+    ActiveMessage, CancellationEpoch, DomainError, EffectId, InterruptReason, LifecycleRevision,
+    Lineage, Message, MessagePart, MessageRole, MessageState, MutationGuard, Origin,
+    ProviderCredentialPin, ResolvedConfigAuthority, ResolvedConfigDigest, ResolvedMessageBounds,
+    Run, RunOutcome, Session, SessionLifecycle, SessionRevision, SessionStatus, TerminationReason,
+    WorkAdmission,
 };
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{
@@ -68,9 +69,7 @@ impl MutationGuardV1 {
 struct DeletionV1 {
     state: String,
     epoch: u64,
-    trashed_at: Option<Timestamp>,
-    recovery_deadline: Option<Timestamp>,
-    purge_operation: Option<OperationId>,
+    delete_operation: Option<OperationId>,
 }
 
 impl From<DeletionGuard> for DeletionV1 {
@@ -78,9 +77,7 @@ impl From<DeletionGuard> for DeletionV1 {
         Self {
             state: deletion_state(guard.state).to_owned(),
             epoch: guard.epoch.0,
-            trashed_at: guard.trashed_at,
-            recovery_deadline: guard.recovery_deadline,
-            purge_operation: guard.purge_operation,
+            delete_operation: guard.delete_operation,
         }
     }
 }
@@ -91,9 +88,131 @@ impl DeletionV1 {
             session,
             state: parse_deletion_state(&self.state)?,
             epoch: DeletionEpoch(self.epoch),
-            trashed_at: self.trashed_at,
-            recovery_deadline: self.recovery_deadline,
-            purge_operation: self.purge_operation,
+            delete_operation: self.delete_operation,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ActiveMessageV1 {
+    message: MessageId,
+    run: RunId,
+    max_spend_cents: u64,
+    deadline: Timestamp,
+}
+
+impl From<ActiveMessage> for ActiveMessageV1 {
+    fn from(active: ActiveMessage) -> Self {
+        Self {
+            message: active.message,
+            run: active.run,
+            max_spend_cents: active.bounds.max_spend_cents.get(),
+            deadline: active.bounds.deadline,
+        }
+    }
+}
+
+impl ActiveMessageV1 {
+    fn decode(self) -> Result<ActiveMessage, CodecError> {
+        let max_spend_cents = NonZeroU64::new(self.max_spend_cents)
+            .ok_or_else(|| malformed(AUTHORITY_DOCUMENT, "active message spend ceiling is zero"))?;
+        Ok(ActiveMessage {
+            message: self.message,
+            run: self.run,
+            bounds: ResolvedMessageBounds {
+                max_spend_cents,
+                deadline: self.deadline,
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct SessionLifecycleV1 {
+    generation: GenerationId,
+    revision: u64,
+    status: String,
+    active: Option<ActiveMessageV1>,
+    launched_at: Timestamp,
+    expires_at: Timestamp,
+    idle_since: Option<Timestamp>,
+    suspend_at: Option<Timestamp>,
+    suspended_at: Option<Timestamp>,
+    terminated_at: Option<Timestamp>,
+    termination_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ProviderCredentialPinV1 {
+    credential: aex_wire::ids::ProviderCredentialId,
+    provider: ProviderId,
+    source_generation: u64,
+    revision: u64,
+}
+
+impl From<ProviderCredentialPin> for ProviderCredentialPinV1 {
+    fn from(pin: ProviderCredentialPin) -> Self {
+        Self {
+            credential: pin.credential,
+            provider: pin.provider,
+            source_generation: pin.source_generation,
+            revision: pin.revision,
+        }
+    }
+}
+
+impl From<ProviderCredentialPinV1> for ProviderCredentialPin {
+    fn from(pin: ProviderCredentialPinV1) -> Self {
+        Self {
+            credential: pin.credential,
+            provider: pin.provider,
+            source_generation: pin.source_generation,
+            revision: pin.revision,
+        }
+    }
+}
+
+impl From<&SessionLifecycle> for SessionLifecycleV1 {
+    fn from(lifecycle: &SessionLifecycle) -> Self {
+        Self {
+            generation: lifecycle.generation,
+            revision: lifecycle.revision.0,
+            status: session_status(lifecycle.status).to_owned(),
+            active: lifecycle.active.map(Into::into),
+            launched_at: lifecycle.launched_at,
+            expires_at: lifecycle.expires_at,
+            idle_since: lifecycle.idle_since,
+            suspend_at: lifecycle.suspend_at,
+            suspended_at: lifecycle.suspended_at,
+            terminated_at: lifecycle.terminated_at,
+            termination_reason: lifecycle
+                .termination_reason
+                .map(termination_reason)
+                .map(str::to_owned),
+        }
+    }
+}
+
+impl SessionLifecycleV1 {
+    fn decode(self) -> Result<SessionLifecycle, CodecError> {
+        Ok(SessionLifecycle {
+            generation: self.generation,
+            revision: LifecycleRevision(self.revision),
+            status: parse_session_status(&self.status)?,
+            active: self.active.map(ActiveMessageV1::decode).transpose()?,
+            launched_at: self.launched_at,
+            expires_at: self.expires_at,
+            idle_since: self.idle_since,
+            suspend_at: self.suspend_at,
+            suspended_at: self.suspended_at,
+            terminated_at: self.terminated_at,
+            termination_reason: self
+                .termination_reason
+                .map(|reason| parse_termination_reason(&reason))
+                .transpose()?,
         })
     }
 }
@@ -170,6 +289,7 @@ struct SessionV1 {
     workspace: WorkspaceId,
     organization: OrganizationId,
     status: String,
+    lifecycle: SessionLifecycleV1,
     revision: u64,
     active_run: Option<RunId>,
     work_admission: String,
@@ -178,14 +298,13 @@ struct SessionV1 {
     mutation_guard: Option<MutationGuardV1>,
     root_agent: AgentId,
     generation: Option<GenerationId>,
-    /// The immutable generation definition the create decided (A D-2).
+    /// The immutable generation definition the create launched.
     ///
-    /// The whole `HandsGeneration` tuple rather than a projection of it: the
-    /// first launch derives the two `runtime-activity` rows from this as a
-    /// total function, and a lossy projection would force that derivation to
-    /// invent whatever it could not read back.
+    /// The whole `HandsGeneration` tuple is retained rather than a projection:
+    /// create has already materialized this exact generation before publishing
+    /// the head, and later activity must never reconstruct missing launch facts.
     pinned_runtime: aex_runtime_control::generation::HandsGeneration,
-    custody_revision: u64,
+    provider_credential: ProviderCredentialPinV1,
     origin: Option<OriginV1>,
     resolved: ResolvedV1,
     metadata_document: Option<String>,
@@ -200,6 +319,7 @@ impl From<&Session> for SessionV1 {
             workspace: session.workspace,
             organization: session.organization,
             status: session_status(session.status).to_owned(),
+            lifecycle: (&session.lifecycle).into(),
             revision: session.revision.0,
             active_run: session.active_run,
             work_admission: work_admission(session.work_admission).to_owned(),
@@ -209,7 +329,7 @@ impl From<&Session> for SessionV1 {
             root_agent: session.root_agent,
             generation: session.generation,
             pinned_runtime: session.pinned_runtime.definition().clone(),
-            custody_revision: session.custody_revision.0,
+            provider_credential: session.provider_credential.into(),
             origin: session.lineage.origin.map(Into::into),
             resolved: (&session.resolved).into(),
             metadata_document: session
@@ -225,11 +345,39 @@ impl From<&Session> for SessionV1 {
 impl SessionV1 {
     fn decode(self) -> Result<Session, CodecError> {
         let id = self.id;
+        let status = parse_session_status(&self.status)?;
+        let lifecycle = self.lifecycle.decode()?;
+        if status != lifecycle.status
+            || self.active_run != lifecycle.active.map(|active| active.run)
+            || self.generation != Some(lifecycle.generation)
+            || self.revision != lifecycle.revision.0
+        {
+            return Err(malformed(
+                AUTHORITY_DOCUMENT,
+                "session lifecycle disagrees with its checked head projections",
+            ));
+        }
+        let provider_credential: ProviderCredentialPin = self.provider_credential.into();
+        let resolved = self.resolved.decode()?;
+        let resolved_wire: aex_wire::models::ResolvedConfig =
+            serde_json::from_value(resolved.document().to_value())
+                .map_err(|error| malformed(AUTHORITY_DOCUMENT, error.to_string()))?;
+        if provider_credential.provider != resolved.provider()
+            || provider_credential.credential != resolved_wire.provider_credential_id
+            || provider_credential.revision == 0
+            || provider_credential.source_generation == 0
+        {
+            return Err(malformed(
+                AUTHORITY_DOCUMENT,
+                "provider credential pin disagrees with the resolved configuration",
+            ));
+        }
         Ok(Session {
             id,
             workspace: self.workspace,
             organization: self.organization,
-            status: parse_session_status(&self.status)?,
+            status,
+            lifecycle,
             revision: SessionRevision(self.revision),
             active_run: self.active_run,
             work_admission: parse_work_admission(&self.work_admission)?,
@@ -252,11 +400,11 @@ impl SessionV1 {
                 self.pinned_runtime,
             )
             .map_err(|error| malformed(AUTHORITY_DOCUMENT, error.to_string()))?,
-            custody_revision: CustodyRevision(self.custody_revision),
+            provider_credential,
             lineage: Lineage {
                 origin: self.origin.map(OriginV1::decode).transpose()?,
             },
-            resolved: self.resolved.decode()?,
+            resolved,
             metadata: self
                 .metadata_document
                 .map(|document| {
@@ -393,7 +541,7 @@ impl MessageV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
 enum InterruptV1 {
-    StopRequested { operation: OperationId },
+    SessionCancel { operation: OperationId },
     AccountPaused,
     AuthorizationRevoked,
     ContinuityLost { generation: Option<GenerationId> },
@@ -404,7 +552,7 @@ enum InterruptV1 {
 impl From<InterruptReason> for InterruptV1 {
     fn from(reason: InterruptReason) -> Self {
         match reason {
-            InterruptReason::StopRequested { operation } => Self::StopRequested { operation },
+            InterruptReason::SessionCancel { operation } => Self::SessionCancel { operation },
             InterruptReason::AccountPaused => Self::AccountPaused,
             InterruptReason::AuthorizationRevoked => Self::AuthorizationRevoked,
             InterruptReason::ContinuityLost { generation } => Self::ContinuityLost { generation },
@@ -419,7 +567,7 @@ impl From<InterruptReason> for InterruptV1 {
 impl From<InterruptV1> for InterruptReason {
     fn from(reason: InterruptV1) -> Self {
         match reason {
-            InterruptV1::StopRequested { operation } => Self::StopRequested { operation },
+            InterruptV1::SessionCancel { operation } => Self::SessionCancel { operation },
             InterruptV1::AccountPaused => Self::AccountPaused,
             InterruptV1::AuthorizationRevoked => Self::AuthorizationRevoked,
             InterruptV1::ContinuityLost { generation } => Self::ContinuityLost { generation },
@@ -603,7 +751,6 @@ pub fn encode_session(session: &Session) -> Result<Item, CodecError> {
     let document = encode_document(&SessionV1::from(session))?;
     let key = keys::head(session.id);
     let lifecycle = deletion_state(session.deletion.state);
-    let indexed = session.deletion.state != DeletionState::Purged;
     let builder = ItemBuilder::new(codec::SESSION_HEAD)
         .set(crate::attr::PK, s(key.pk))
         .set(crate::attr::SK, s(key.sk))
@@ -635,26 +782,29 @@ pub fn encode_session(session: &Session) -> Result<Item, CodecError> {
         )
         .set("provider", s(session.resolved.provider().as_str()))
         .set("model", s(session.resolved.model().to_owned()))
-        .set("custodyRevision", n(session.custody_revision.0))
+        .set(
+            "providerCredentialId",
+            s(session.provider_credential.credential.to_string()),
+        )
+        .set(
+            "providerCredentialRevision",
+            n(session.provider_credential.revision),
+        )
         .set("createdAt", crate::attr::stamp(session.created_at))
         .set("updatedAt", crate::attr::stamp(session.updated_at));
-    let builder = if indexed {
-        builder
-            .set(
-                keys::workspace_index::PK,
-                s(keys::workspace_index::session_partition(session.workspace)),
-            )
-            .set(
-                keys::workspace_index::SK,
-                s(keys::workspace_index::session_sort(
-                    session.created_at,
-                    session.id,
-                )),
-            )
-    } else {
-        builder
-    };
-    Ok(builder.build())
+    Ok(builder
+        .set(
+            keys::workspace_index::PK,
+            s(keys::workspace_index::session_partition(session.workspace)),
+        )
+        .set(
+            keys::workspace_index::SK,
+            s(keys::workspace_index::session_sort(
+                session.created_at,
+                session.id,
+            )),
+        )
+        .build())
 }
 
 /// Decodes a canonical session head read from the base table.
@@ -710,7 +860,9 @@ fn decode_session_row(row: Row<'_>, asserted: WorkspaceId) -> Result<Session, Co
         || row.id::<OrganizationId>("organizationId")? != session.organization
         || row.string("provider")? != session.resolved.provider().as_str()
         || row.string("model")? != session.resolved.model()
-        || row.u64("custodyRevision")? != session.custody_revision.0
+        || row.id::<aex_wire::ids::ProviderCredentialId>("providerCredentialId")?
+            != session.provider_credential.credential
+        || row.u64("providerCredentialRevision")? != session.provider_credential.revision
         || row.timestamp("createdAt")? != session.created_at
         || row.timestamp("updatedAt")? != session.updated_at
     {
@@ -729,11 +881,8 @@ fn decode_session_row(row: Row<'_>, asserted: WorkspaceId) -> Result<Session, Co
     }
     let expected_index_partition = keys::workspace_index::session_partition(asserted);
     let expected_index_sort = keys::workspace_index::session_sort(session.created_at, session.id);
-    let indexed = session.deletion.state != DeletionState::Purged;
-    if row.opt_string(keys::workspace_index::PK)?
-        != indexed.then_some(expected_index_partition.as_str())
-        || row.opt_string(keys::workspace_index::SK)?
-            != indexed.then_some(expected_index_sort.as_str())
+    if row.opt_string(keys::workspace_index::PK)? != Some(expected_index_partition.as_str())
+        || row.opt_string(keys::workspace_index::SK)? != Some(expected_index_sort.as_str())
     {
         return Err(malformed(
             AUTHORITY_DOCUMENT,
@@ -1006,8 +1155,12 @@ const fn session_status(status: SessionStatus) -> &'static str {
         SessionStatus::Idle => "idle",
         SessionStatus::Running => "running",
         SessionStatus::AwaitingApproval => "awaiting_approval",
-        SessionStatus::Trashed => "trashed",
-        SessionStatus::Purging => "purging",
+        SessionStatus::Suspending => "suspending",
+        SessionStatus::Suspended => "suspended",
+        SessionStatus::Resuming => "resuming",
+        SessionStatus::Terminating => "terminating",
+        SessionStatus::Terminated => "terminated",
+        SessionStatus::Deleting => "deleting",
     }
 }
 
@@ -1016,8 +1169,12 @@ fn parse_session_status(text: &str) -> Result<SessionStatus, CodecError> {
         "idle" => Ok(SessionStatus::Idle),
         "running" => Ok(SessionStatus::Running),
         "awaiting_approval" => Ok(SessionStatus::AwaitingApproval),
-        "trashed" => Ok(SessionStatus::Trashed),
-        "purging" => Ok(SessionStatus::Purging),
+        "suspending" => Ok(SessionStatus::Suspending),
+        "suspended" => Ok(SessionStatus::Suspended),
+        "resuming" => Ok(SessionStatus::Resuming),
+        "terminating" => Ok(SessionStatus::Terminating),
+        "terminated" => Ok(SessionStatus::Terminated),
+        "deleting" => Ok(SessionStatus::Deleting),
         _ => Err(malformed(AUTHORITY_DOCUMENT, "unknown session status")),
     }
 }
@@ -1026,8 +1183,7 @@ const fn work_admission(admission: WorkAdmission) -> &'static str {
     match admission {
         WorkAdmission::Open => "open",
         WorkAdmission::Paused => "paused",
-        WorkAdmission::Trashing => "trashing",
-        WorkAdmission::Purging => "purging",
+        WorkAdmission::Deleting => "deleting",
         WorkAdmission::ContinuityLost => "continuity_lost",
     }
 }
@@ -1036,8 +1192,7 @@ fn parse_work_admission(text: &str) -> Result<WorkAdmission, CodecError> {
     match text {
         "open" => Ok(WorkAdmission::Open),
         "paused" => Ok(WorkAdmission::Paused),
-        "trashing" => Ok(WorkAdmission::Trashing),
-        "purging" => Ok(WorkAdmission::Purging),
+        "deleting" => Ok(WorkAdmission::Deleting),
         "continuity_lost" => Ok(WorkAdmission::ContinuityLost),
         _ => Err(malformed(AUTHORITY_DOCUMENT, "unknown work admission")),
     }
@@ -1046,19 +1201,36 @@ fn parse_work_admission(text: &str) -> Result<WorkAdmission, CodecError> {
 const fn deletion_state(state: DeletionState) -> &'static str {
     match state {
         DeletionState::Live => "active",
-        DeletionState::Trashed => "trashed",
-        DeletionState::Purging => "purging",
-        DeletionState::Purged => "purged",
+        DeletionState::Deleting => "deleting",
+        DeletionState::Deleted => "deleted",
     }
 }
 
 fn parse_deletion_state(text: &str) -> Result<DeletionState, CodecError> {
     match text {
         "active" => Ok(DeletionState::Live),
-        "trashed" => Ok(DeletionState::Trashed),
-        "purging" => Ok(DeletionState::Purging),
-        "purged" => Ok(DeletionState::Purged),
+        "deleting" => Ok(DeletionState::Deleting),
+        "deleted" => Ok(DeletionState::Deleted),
         _ => Err(malformed(AUTHORITY_DOCUMENT, "unknown deletion state")),
+    }
+}
+
+const fn termination_reason(reason: TerminationReason) -> &'static str {
+    match reason {
+        TerminationReason::User => "user",
+        TerminationReason::LifetimeExpired => "lifetime_expired",
+        TerminationReason::ProviderCredentialRevoked => "provider_credential_revoked",
+        TerminationReason::RuntimeLost => "runtime_lost",
+    }
+}
+
+fn parse_termination_reason(text: &str) -> Result<TerminationReason, CodecError> {
+    match text {
+        "user" => Ok(TerminationReason::User),
+        "lifetime_expired" => Ok(TerminationReason::LifetimeExpired),
+        "provider_credential_revoked" => Ok(TerminationReason::ProviderCredentialRevoked),
+        "runtime_lost" => Ok(TerminationReason::RuntimeLost),
+        _ => Err(malformed(AUTHORITY_DOCUMENT, "unknown termination reason")),
     }
 }
 
@@ -1166,7 +1338,8 @@ mod tests {
                         | "organizationId"
                         | "provider"
                         | "model"
-                        | "custodyRevision"
+                        | "providerCredentialId"
+                        | "providerCredentialRevision"
                         | "resolvedConfigDigest"
                         | AUTHORITY_SCHEMA
                         | AUTHORITY_DOCUMENT
