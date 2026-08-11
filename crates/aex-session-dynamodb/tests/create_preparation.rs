@@ -221,14 +221,22 @@ fn metadata_is_staged_per_file_then_header_and_generation_are_elected_atomically
     }));
 
     let election = elect_plan("dev-session-authority", &prepared).expect("election plan");
-    assert_eq!(election.len(), 2, "header + physical root control");
+    assert_eq!(
+        election.len(),
+        3,
+        "header + physical root control + deletion locator"
+    );
     assert_eq!(
         election
             .participants()
             .iter()
             .map(|participant| participant.as_str())
             .collect::<Vec<_>>(),
-        ["session.create_preparation", "agent.root_control"]
+        [
+            "session.create_preparation",
+            "agent.root_control",
+            "session.create_preparation_edge"
+        ]
     );
     let control = election.actions()[1].put().expect("root control").item();
     assert!(
@@ -251,6 +259,22 @@ fn metadata_is_staged_per_file_then_header_and_generation_are_elected_atomically
             .and_then(|value| value.as_n().ok())
             .map(String::as_str),
         Some("3600000")
+    );
+    let edge = election.actions()[2]
+        .put()
+        .expect("deletion locator")
+        .item();
+    assert_eq!(
+        edge.get("sessionId").and_then(|value| value.as_s().ok()),
+        Some(&prepared.session.to_string())
+    );
+    assert_eq!(
+        edge.get("preparationPk")
+            .and_then(|value| value.as_s().ok()),
+        Some(&format!(
+            "CREATE#{}#{}",
+            prepared.workspace, prepared.receipt_key_sha256
+        ))
     );
 }
 

@@ -146,12 +146,10 @@ pub struct OperationCancelRequest {
     pub now: aex_wire::types::Timestamp,
 }
 
-/// Whether cancellation for this kind is owned by session authority.
+/// Whether generic operation cancellation for this kind is owned here.
 ///
-/// Telemetry exports are public and cancelable in the product model, but their
-/// effect fence is the observation export row. Treating an operation-row
-/// update as their cancellation would acknowledge a command that cannot stop
-/// the export launcher or task.
+/// The released session operations have dedicated verbs, telemetry owns its
+/// own effect fence, and internal maintenance operations are not public.
 #[must_use]
 pub const fn operation_cancel_owned(kind: aex_operation_domain::OperationKind) -> bool {
     use aex_operation_domain::OperationKind;
@@ -176,8 +174,7 @@ pub const fn operation_cancel_owned(kind: aex_operation_domain::OperationKind) -
 ///
 /// # Errors
 ///
-/// [`StoreError::Invalid`] for a terminal input, an internal, non-cancelable or
-/// separately-owned kind, or version exhaustion.
+/// [`StoreError::Invalid`] for every currently released kind.
 pub fn operation_cancel_requested(
     _table: &str,
     request: &OperationCancelRequest,

@@ -30,9 +30,9 @@ pub const SESSION_EVENT_SK: &str = "esSk";
 pub enum SessionReadState {
     /// The session may still be read.
     Active,
-    /// Trash or purge is in progress.
+    /// Irreversible deletion is in progress.
     Deleting,
-    /// The authority records it as purged.
+    /// The authority records it as deleted.
     Deleted,
 }
 
@@ -79,21 +79,28 @@ pub fn session_read_state<S: std::hash::BuildHasher>(
         .get("itemType")
         .and_then(|value| value.as_s().ok())
         .ok_or("itemType")?;
-    if item_type != "session_head" {
-        return Err("itemType");
-    }
     if head_workspace(item) != Some(asserted_workspace) {
         return Err("workspaceId");
     }
-    match item
-        .get("lifecycle")
-        .and_then(|value| value.as_s().ok())
-        .map(String::as_str)
-    {
-        Some("active") => Ok(SessionReadState::Active),
-        Some("trashed" | "purging") => Ok(SessionReadState::Deleting),
-        Some("purged") => Ok(SessionReadState::Deleted),
-        _ => Err("lifecycle"),
+    match item_type {
+        "session_head" => match item
+            .get("lifecycle")
+            .and_then(|value| value.as_s().ok())
+            .map(String::as_str)
+        {
+            Some("active") => Ok(SessionReadState::Active),
+            _ => Err("lifecycle"),
+        },
+        "session_deletion_head" => match item
+            .get("lifecycle")
+            .and_then(|value| value.as_s().ok())
+            .map(String::as_str)
+        {
+            Some("deleting") => Ok(SessionReadState::Deleting),
+            _ => Err("lifecycle"),
+        },
+        "session_tombstone" => Ok(SessionReadState::Deleted),
+        _ => Err("itemType"),
     }
 }
 
@@ -201,25 +208,30 @@ mod tests {
         );
         assert_eq!(session_deletion_epoch(&item, workspace), Ok(3));
         item.insert(
+            "itemType".to_owned(),
+            AttributeValue::S("session_deletion_head".to_owned()),
+        );
+        item.insert(
             "lifecycle".to_owned(),
-            AttributeValue::S("purging".to_owned()),
+            AttributeValue::S("deleting".to_owned()),
         );
         assert_eq!(
             session_read_state(&item, workspace),
             Ok(SessionReadState::Deleting)
         );
         item.insert(
-            "lifecycle".to_owned(),
-            AttributeValue::S("purged".to_owned()),
+            "itemType".to_owned(),
+            AttributeValue::S("session_tombstone".to_owned()),
         );
+        item.remove("lifecycle");
         assert_eq!(
             session_read_state(&item, workspace),
             Ok(SessionReadState::Deleted)
         );
         item.insert(
-            "lifecycle".to_owned(),
+            "itemType".to_owned(),
             AttributeValue::S("future_state".to_owned()),
         );
-        assert_eq!(session_read_state(&item, workspace), Err("lifecycle"));
+        assert_eq!(session_read_state(&item, workspace), Err("itemType"));
     }
 }

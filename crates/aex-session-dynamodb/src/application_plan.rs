@@ -561,19 +561,19 @@ fn compile_owned(
             compile_session_write(tables, intent, action, session, binding, output)?;
             Ok(true)
         }
-        Write::PutTombstone(tombstone) => {
-            if Some(tombstone.session) != binding.session
-                || tombstone.workspace != binding.workspace
-            {
-                return Err(cross_tenant());
-            }
-            output.put(
-                Participant::SESSION_HEAD,
-                conditional_put(
-                    &tables.session_authority,
-                    crate::authority_codec::encode_session_tombstone(tombstone),
-                    compile_conditions(&action.conditions)?,
-                )?,
+        Write::PutSessionDeletionHead(head) => {
+            compile_session_deletion_head_write(tables, action, head, binding, output)?;
+            Ok(true)
+        }
+        Write::PutSessionReceiptDirectory { session, receipt } => {
+            compile_session_receipt_directory_write(
+                tables, action, *session, receipt, binding, output,
+            )?;
+            Ok(true)
+        }
+        Write::PutSessionOperationEdge { session, operation } => {
+            compile_session_operation_edge_write(
+                tables, action, *session, *operation, binding, output,
             )?;
             Ok(true)
         }
@@ -591,6 +591,80 @@ fn compile_owned(
         }
         _ => Ok(false),
     }
+}
+
+fn compile_session_receipt_directory_write(
+    tables: &RegionalTables,
+    action: &LogicalAction<'_>,
+    session: aex_wire::ids::SessionId,
+    receipt: &aex_session_domain::IdempotencyReceipt,
+    binding: AuthorityBinding,
+    output: &mut TransactionPlan,
+) -> Result<(), StoreError> {
+    if Some(session) != binding.session || !action.conditions.is_empty() {
+        return Err(cross_tenant());
+    }
+    validate_receipt_binding(binding, receipt)?;
+    let entry = crate::deletion::receipt_directory_entry(binding.workspace, session, receipt)?;
+    output.put(
+        Participant::SESSION_RECEIPT_DIRECTORY,
+        crate::deletion::receipt_directory_put(&tables.session_authority, &entry)?,
+    )?;
+    Ok(())
+}
+
+fn compile_session_operation_edge_write(
+    tables: &RegionalTables,
+    action: &LogicalAction<'_>,
+    session: aex_wire::ids::SessionId,
+    operation: aex_wire::ids::OperationId,
+    binding: AuthorityBinding,
+    output: &mut TransactionPlan,
+) -> Result<(), StoreError> {
+    if Some(session) != binding.session {
+        return Err(cross_tenant());
+    }
+    let target = crate::keys::operation_edge(session, operation);
+    let item = crate::attr::ItemBuilder::new(crate::codec::SESSION_OPERATION_EDGE)
+        .set(crate::attr::PK, s(target.pk))
+        .set(crate::attr::SK, s(target.sk))
+        .set("workspaceId", s(binding.workspace.to_string()))
+        .set("sessionId", s(session.to_string()))
+        .set("operationId", s(operation.to_string()))
+        .build();
+    output.put(
+        Participant::SESSION_OPERATION_EDGE,
+        conditional_put(
+            &tables.session_authority,
+            item,
+            compile_conditions(&action.conditions)?,
+        )?,
+    )?;
+    Ok(())
+}
+
+fn compile_session_deletion_head_write(
+    tables: &RegionalTables,
+    action: &LogicalAction<'_>,
+    head: &aex_session_domain::SessionDeletionHead,
+    binding: AuthorityBinding,
+    output: &mut TransactionPlan,
+) -> Result<(), StoreError> {
+    if Some(head.session) != binding.session
+        || head.workspace != binding.workspace
+        || head.organization != binding.organization
+    {
+        return Err(cross_tenant());
+    }
+    output.put(
+        Participant::SESSION_HEAD,
+        conditional_put(
+            &tables.session_authority,
+            crate::authority_codec::encode_session_deletion_head(head),
+            compile_conditions(&action.conditions)?,
+        )?,
+    )?;
+    Ok(())
 }
 
 fn compile_session_write(
@@ -1136,7 +1210,7 @@ mod tests {
     fn a_cross_tenant_canonical_write_fails_before_request_construction() {
         let (session, _run, _agent, _message) = running_session();
         let input = SessionTransaction {
-            intent: TransactionIntent::AdmitMessage,
+            intent: TransactionIntent::CommitTerminal,
             conditions: Vec::new(),
             writes: vec![Write::PutSessionHead(Box::new(session.clone()))],
             after_commit: Vec::new(),
@@ -1176,7 +1250,7 @@ mod tests {
             &RefuseExternal,
         );
         assert!(
-            matches!(error, Err(StoreError::Invalid { ref detail }) if detail.contains("a create writes exactly one idempotency receipt")),
+            matches!(error, Err(StoreError::Invalid { ref detail }) if detail.contains("create receipt directory")),
             "{error:?}"
         );
     }
@@ -1261,12 +1335,83 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_session_receipt_locator_is_a_distinct_owned_physical_write() {
+        let (session, _run, _agent, _message) = running_session();
+        let scope = format!("session.message:{}", session.id);
+        let receipt = receipt(&scope, "k", 7);
+        let input = SessionTransaction {
+            intent: TransactionIntent::CommitTerminal,
+            conditions: Vec::new(),
+            writes: vec![Write::PutSessionReceiptDirectory {
+                session: session.id,
+                receipt: Box::new(receipt),
+            }],
+            after_commit: Vec::new(),
+        };
+        let compiled = compile_application_transaction(
+            &RegionalTables::composed("dev", "eu-west-1"),
+            &input,
+            SessionBinding {
+                workspace: session.workspace,
+                organization: session.organization,
+                session: session.id,
+            },
+            &FamilyCompilers::new(),
+        )
+        .expect("the session adapter owns the receipt locator");
+        assert_eq!(compiled.transaction.len(), 1);
+        assert_eq!(
+            compiled.transaction.participants(),
+            [crate::plan::Participant::SESSION_RECEIPT_DIRECTORY]
+        );
+    }
+
+    #[test]
+    fn a_session_operation_edge_merges_its_exact_absence_election() {
+        let (session, _run, _agent, _message) = running_session();
+        let operation = aex_session_domain::testing::id(77);
+        let edge = Write::PutSessionOperationEdge {
+            session: session.id,
+            operation,
+        };
+        let input = SessionTransaction {
+            intent: TransactionIntent::DeleteSession,
+            conditions: vec![Condition::ItemAbsent(edge.target())],
+            writes: vec![edge],
+            after_commit: Vec::new(),
+        };
+        let compiled = compile_application_transaction(
+            &RegionalTables::composed("dev", "eu-west-1"),
+            &input,
+            SessionBinding {
+                workspace: session.workspace,
+                organization: session.organization,
+                session: session.id,
+            },
+            &FamilyCompilers::new(),
+        )
+        .expect("the session adapter owns the operation edge");
+        assert_eq!(compiled.transaction.len(), 1);
+        assert_eq!(
+            compiled.transaction.participants(),
+            [crate::plan::Participant::SESSION_OPERATION_EDGE]
+        );
+        assert_eq!(
+            compiled.transaction.actions()[0]
+                .put()
+                .expect("an edge is a conditional put")
+                .condition_expression(),
+            Some("(attribute_not_exists(pk))")
+        );
+    }
+
     fn rejected_receipt(
         receipt: aex_session_domain::IdempotencyReceipt,
     ) -> crate::error::StoreError {
         let (session, _run, _agent, _message) = running_session();
         let input = SessionTransaction {
-            intent: TransactionIntent::AdmitMessage,
+            intent: TransactionIntent::CommitTerminal,
             conditions: Vec::new(),
             writes: vec![Write::PutIdempotencyReceipt(Box::new(receipt))],
             after_commit: Vec::new(),

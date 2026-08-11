@@ -31,6 +31,8 @@ use crate::{codec, keys};
 /// One bounded receipt-directory page. Deletion drains at most this many rows
 /// before yielding to its durable continuation.
 pub const RECEIPT_DIRECTORY_PAGE_MAX: u8 = 25;
+/// Maximum payload rows one guarded deletion transaction removes before yielding.
+pub const DELETION_PAGE_MAX: usize = 25;
 
 const PROGRESS_STATE: &str = "deleting";
 const RECEIPT_ITEM_TYPE: &str = "idempotency_receipt";
@@ -41,6 +43,20 @@ const DELETION_PROGRESS: Participant = Participant::new("session.delete_progress
 const DELETION_EVIDENCE: Participant = Participant::new("session.delete_evidence");
 const RECEIPT_DIRECTORY: Participant = Participant::new("session.delete_receipt_directory");
 const RECEIPT_PAYLOAD: Participant = Participant::new("session.delete_receipt_payload");
+const OWNED_PAYLOAD: Participant = Participant::new("session.delete_owned_payload");
+
+/// One exact row already validated by its owning authority's bounded query.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeletionTarget {
+    /// Physical table.
+    pub table: String,
+    /// Exact partition key.
+    pub pk: String,
+    /// Exact sort key.
+    pub sk: String,
+    /// Expected closed-vocabulary item type.
+    pub item_type: String,
+}
 
 /// A content-free digest of an owner's durable proof.
 ///
@@ -283,6 +299,51 @@ impl SessionReceiptDirectoryEntry {
     }
 }
 
+/// Derives the exact enumerable locator from the same canonical receipt codec
+/// used by the receipt write.
+///
+/// Keeping this derivation beside the directory codec prevents an application
+/// planner from guessing DynamoDB key templates. The caller still emits the
+/// locator as its own logical action so transaction accounting remains exact.
+///
+/// # Errors
+///
+/// Returns [`StoreError`] when the receipt is not session-owned or its physical
+/// key cannot be rendered canonically.
+pub fn receipt_directory_entry(
+    workspace: WorkspaceId,
+    session: SessionId,
+    receipt: &aex_session_domain::IdempotencyReceipt,
+) -> Result<SessionReceiptDirectoryEntry, StoreError> {
+    if receipt.key.scope() == "session.create"
+        && !matches!(
+            &receipt.outcome,
+            aex_session_domain::ReceiptOutcome::Resource { kind, id, .. }
+                if *kind == aex_session_domain::ResourceKind::Session
+                    && id.0 == session.to_string()
+        )
+    {
+        return Err(StoreError::Invalid {
+            detail: "a create receipt locator must name the exact created session".to_owned(),
+        });
+    }
+    let row = crate::codec::receipt_of(receipt).map_err(|error| StoreError::Invalid {
+        detail: format!("an idempotency receipt could not be projected: {error}"),
+    })?;
+    let item =
+        crate::codec::encode_receipt(workspace, &row).map_err(|error| StoreError::Invalid {
+            detail: format!("an idempotency receipt key is unusable: {error}"),
+        })?;
+    let encoded = Row::bind(&item, RECEIPT_ITEM_TYPE)?;
+    SessionReceiptDirectoryEntry::new(
+        workspace,
+        session,
+        encoded.string(PK)?.to_owned(),
+        encoded.string(SK)?.to_owned(),
+        receipt.created_at,
+    )
+}
+
 /// One bounded strong directory page.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionReceiptDirectoryPage {
@@ -307,6 +368,32 @@ impl SessionDeletionStore {
             dynamodb,
             table: table.into(),
         }
+    }
+
+    /// Strongly reads the payload-free deletion coordination head.
+    pub async fn load_head(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+    ) -> Result<Option<aex_session_domain::SessionDeletionHead>, StoreError> {
+        let target = keys::head(session);
+        let item = self
+            .dynamodb
+            .get_item()
+            .table_name(&self.table)
+            .key(PK, s(target.pk))
+            .key(SK, s(target.sk))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?
+            .item;
+        item.as_ref()
+            .map(|item| {
+                crate::authority_codec::decode_session_deletion_head(item, workspace, session)
+                    .map_err(StoreError::from)
+            })
+            .transpose()
     }
 
     /// Strongly reads the progress root.
@@ -659,7 +746,7 @@ pub fn compile_initialize_progress(
                  lifecycle = :deleting AND deletionEpoch = :epoch AND \
                  mutationGuardOperationId = :operation",
             )
-            .expression_attribute_values(":head", s(codec::SESSION_HEAD))
+            .expression_attribute_values(":head", s(codec::SESSION_DELETION_HEAD))
             .expression_attribute_values(":workspace", s(progress.workspace.to_string()))
             .expression_attribute_values(":session", s(progress.session.to_string()))
             .expression_attribute_values(":deleting", s(PROGRESS_STATE))
@@ -820,13 +907,87 @@ pub fn tombstone_put(
              revision = :revision AND lifecycle = :deleting AND deletionEpoch = :epoch AND \
              mutationGuardOperationId = :operation",
         )
-        .expression_attribute_values(":head", s(codec::SESSION_HEAD))
+        .expression_attribute_values(":head", s(codec::SESSION_DELETION_HEAD))
         .expression_attribute_values(":workspace", s(progress.workspace.to_string()))
         .expression_attribute_values(":session", s(progress.session.to_string()))
         .expression_attribute_values(":revision", n(expected_revision))
         .expression_attribute_values(":deleting", s(PROGRESS_STATE))
         .expression_attribute_values(":epoch", n(progress.epoch.0))
         .expression_attribute_values(":operation", s(progress.operation.to_string())))
+}
+
+/// Closed compiler for the final tombstone item in a multi-family settlement.
+///
+/// Operation and work rows remain compiled by their owning adapters. This
+/// compiler owns only the HEAD replacement and refuses every other action.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeletionTombstoneCompiler {
+    progress: SessionDeletionProgress,
+    expected_revision: u64,
+}
+
+impl DeletionTombstoneCompiler {
+    /// Binds the exact progress root and scrubbed-head revision observed by the
+    /// final atomic snapshot.
+    #[must_use]
+    pub const fn new(progress: SessionDeletionProgress, expected_revision: u64) -> Self {
+        Self {
+            progress,
+            expected_revision,
+        }
+    }
+}
+
+impl crate::application_plan::ExternalActionCompiler for DeletionTombstoneCompiler {
+    fn compile_action(
+        &self,
+        tables: &crate::plan::RegionalTables,
+        binding: crate::application_plan::AuthorityBinding,
+        action: &crate::application_plan::LogicalAction<'_>,
+        output: &mut TransactionPlan,
+    ) -> Result<(), StoreError> {
+        let Some(aex_session_app::plan::Write::PutTombstone(tombstone)) = action.write else {
+            return Err(StoreError::Invalid {
+                detail: "the deletion tombstone compiler received a non-tombstone action"
+                    .to_owned(),
+            });
+        };
+        if binding.workspace != self.progress.workspace
+            || binding.session != Some(self.progress.session)
+            || action.conditions.len() != 2
+            || !action.conditions.iter().any(|(_, condition)| {
+                matches!(
+                    condition,
+                    aex_session_app::plan::Condition::SessionRevision { session, expected }
+                        if *session == self.progress.session
+                            && expected.0 == self.expected_revision
+                )
+            })
+            || !action.conditions.iter().any(|(_, condition)| {
+                matches!(
+                    condition,
+                    aex_session_app::plan::Condition::MutationGuardHeldBy { session, holder }
+                        if *session == self.progress.session
+                            && *holder == self.progress.operation
+                )
+            })
+        {
+            return Err(StoreError::Invalid {
+                detail: "the tombstone action is not bound to the scrubbed deletion head"
+                    .to_owned(),
+            });
+        }
+        output.put(
+            Participant::SESSION_HEAD,
+            tombstone_put(
+                &tables.session_authority,
+                self.progress,
+                tombstone,
+                self.expected_revision,
+            )?,
+        )?;
+        Ok(())
+    }
 }
 
 /// Builds the immutable directory write which must accompany its receipt put
@@ -902,6 +1063,61 @@ pub fn compile_delete_receipt(
             .expression_attribute_values(":scope", s(entry.scope.clone()))
             .expression_attribute_values(":target", s(entry.target.as_hex())),
     )?;
+    Ok(plan)
+}
+
+/// Compiles one bounded page of exact payload-row deletes behind the durable
+/// progress identity.
+///
+/// The continuation must first validate each row's workspace/session binding
+/// through its owning codec or query projection. This compiler then prevents a
+/// stale continuation from deleting after another operation takes authority,
+/// and prevents a key reused for another item family from being removed.
+pub fn compile_guarded_deletes(
+    session_table: &str,
+    progress: SessionDeletionProgress,
+    targets: &[DeletionTarget],
+) -> Result<TransactionPlan, StoreError> {
+    let progress = progress.validate()?;
+    if targets.is_empty() || targets.len() > DELETION_PAGE_MAX {
+        return Err(StoreError::Invalid {
+            detail: format!("a guarded deletion page must contain 1..={DELETION_PAGE_MAX} rows"),
+        });
+    }
+    let head = keys::head(progress.session);
+    let deletion_progress = keys::deletion_progress(progress.session);
+    let delete_operation = keys::operation(progress.operation);
+    let mut plan = TransactionPlan::new(format!(
+        "delete-page:{}:{}",
+        progress.operation,
+        targets.len()
+    ));
+    append_progress_guard(session_table, progress, &mut plan)?;
+    for target in targets {
+        if target.table.is_empty()
+            || target.pk.is_empty()
+            || target.sk.is_empty()
+            || target.item_type.is_empty()
+            || (target.pk == head.pk && target.sk == head.sk)
+            || (target.pk == deletion_progress.pk && target.sk == deletion_progress.sk)
+            || (target.pk == delete_operation.pk && target.sk == delete_operation.sk)
+            || (target.pk == keys::session_partition(progress.session)
+                && (target.sk.starts_with(keys::DELETION_EVIDENCE_PREFIX)
+                    || target.sk.starts_with(keys::RECEIPT_DIRECTORY_PREFIX)))
+        {
+            return Err(StoreError::Invalid {
+                detail: "a guarded deletion page addressed protected deletion authority".to_owned(),
+            });
+        }
+        plan.delete(
+            OWNED_PAYLOAD,
+            DeleteBuilder::default()
+                .table_name(&target.table)
+                .set_key(Some(key(&target.pk, &target.sk)))
+                .condition_expression("itemType = :item")
+                .expression_attribute_values(":item", s(target.item_type.clone())),
+        )?;
+    }
     Ok(plan)
 }
 

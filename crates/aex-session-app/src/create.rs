@@ -659,6 +659,10 @@ fn build_plan(
 
     let writes = vec![
         Write::PutSessionHead(Box::new(session.clone())),
+        Write::PutSessionReceiptDirectory {
+            session: session.id,
+            receipt: Box::new(receipt.clone()),
+        },
         Write::PutIdempotencyReceipt(Box::new(receipt)),
     ];
 

@@ -191,8 +191,12 @@ impl TransferRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TransferElection {
-    /// Physical election partition.
+    /// Stable replay-election sort key.
     pub key: String,
+    /// Owning workspace.
+    pub workspace: WorkspaceId,
+    /// Owning session; the election is stored in this session's enumerable partition.
+    pub session: SessionId,
     /// Caller intent digest.
     pub intent: [u8; 32],
     /// Elected transfer.
@@ -309,10 +313,15 @@ impl LiveTransferDynamoStore {
         Ok(output.item)
     }
 
-    async fn read_election(&self, key: &str) -> Result<Option<TransferElection>, StoreError> {
-        self.get(key, "ELECTION")
+    async fn read_election(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        key: &str,
+    ) -> Result<Option<TransferElection>, StoreError> {
+        self.get(&session_partition(session), key)
             .await?
-            .map(|item| decode_election(&item, key))
+            .map(|item| decode_election(&item, workspace, session, key))
             .transpose()
     }
 
@@ -337,11 +346,16 @@ impl LiveTransferDynamoStore {
 impl LiveTransferStore for LiveTransferDynamoStore {
     async fn elect(&self, request: ElectRequest) -> Result<ElectedTransfer, LiveTransferError> {
         let election_key = election_key(&request);
-        if let Some(existing) = self.read_election(&election_key).await? {
+        if let Some(existing) = self
+            .read_election(request.workspace, request.session, &election_key)
+            .await?
+        {
             return resolve_election(self, &request, existing).await;
         }
         let election = TransferElection {
             key: election_key,
+            workspace: request.workspace,
+            session: request.session,
             intent: request.intent,
             transfer: request.transfer,
             response: None,
@@ -376,11 +390,12 @@ impl LiveTransferStore for LiveTransferDynamoStore {
                 transfer: request.create,
             }),
             Err(StoreError::PreconditionFailed { .. } | StoreError::CommitAmbiguous { .. }) => {
-                let existing = self.read_election(&election.key).await?.ok_or(
-                    StoreError::CommitAmbiguous {
+                let existing = self
+                    .read_election(request.workspace, request.session, &election.key)
+                    .await?
+                    .ok_or(StoreError::CommitAmbiguous {
                         resolve_by: Resolution::IdempotencyReceipt,
-                    },
-                )?;
+                    })?;
                 resolve_election(self, &request, existing).await
             }
             Err(error) => Err(error.into()),
@@ -481,11 +496,12 @@ impl LiveTransferStore for LiveTransferDynamoStore {
         match self.send(&plan, Resolution::IdempotencyReceipt).await {
             Ok(()) => Ok(()),
             Err(StoreError::PreconditionFailed { .. } | StoreError::CommitAmbiguous { .. }) => {
-                let existing = self.read_election(&election.key).await?.ok_or(
-                    StoreError::CommitAmbiguous {
+                let existing = self
+                    .read_election(record.workspace(), record.session(), &election.key)
+                    .await?
+                    .ok_or(StoreError::CommitAmbiguous {
                         resolve_by: Resolution::IdempotencyReceipt,
-                    },
-                )?;
+                    })?;
                 if existing.intent == election.intent
                     && existing.transfer == election.transfer
                     && existing.response.as_deref() == Some(response)
@@ -603,8 +619,10 @@ fn encode_election(election: &TransferElection) -> Result<Item, StoreError> {
         detail: format!("live transfer election could not be encoded: {error}"),
     })?;
     Ok(ItemBuilder::new(ELECTION_ITEM)
-        .set(PK, s(election.key.clone()))
-        .set(SK, s("ELECTION"))
+        .set(PK, s(session_partition(election.session)))
+        .set(SK, s(election.key.clone()))
+        .set("workspaceId", s(election.workspace.to_string()))
+        .set("sessionId", s(election.session.to_string()))
         .set("revision", n(election.revision))
         .set("expiresAt", stamp(election.expires_at))
         .set(
@@ -615,15 +633,24 @@ fn encode_election(election: &TransferElection) -> Result<Item, StoreError> {
         .build())
 }
 
-fn decode_election(item: &Item, expected_key: &str) -> Result<TransferElection, StoreError> {
+fn decode_election(
+    item: &Item,
+    expected_workspace: WorkspaceId,
+    expected_session: SessionId,
+    expected_key: &str,
+) -> Result<TransferElection, StoreError> {
     let row = Row::bind(item, ELECTION_ITEM)?;
     let election: TransferElection =
         serde_json::from_slice(row.bytes("document")?).map_err(|error| StoreError::Invalid {
             detail: format!("live transfer election is malformed: {error}"),
         })?;
-    if row.string(PK)? != expected_key
-        || row.string(SK)? != "ELECTION"
+    if row.string(PK)? != session_partition(expected_session)
+        || row.string(SK)? != expected_key
+        || row.string("workspaceId")? != expected_workspace.to_string()
+        || row.string("sessionId")? != expected_session.to_string()
         || election.key != expected_key
+        || election.workspace != expected_workspace
+        || election.session != expected_session
         || row.u64("revision")? != election.revision
         || row.timestamp("expiresAt")? != election.expires_at
         || row.u64("expiresAtEpochSeconds")? != expiry_epoch(election.expires_at)?
@@ -716,6 +743,8 @@ mod tests {
         let record = upload();
         let election = TransferElection {
             key: "LIVEIDEM#bounded".to_owned(),
+            workspace: record.workspace(),
+            session: record.session(),
             intent: [7; 32],
             transfer: record.key(),
             response: Some(br#"{\"state\":\"staging\"}"#.to_vec()),
@@ -724,7 +753,8 @@ mod tests {
         };
         let item = encode_election(&election).expect("encode");
         assert_eq!(
-            decode_election(&item, &election.key).expect("decode"),
+            decode_election(&item, election.workspace, election.session, &election.key,)
+                .expect("decode"),
             election
         );
         assert!(!format!("{item:?}").contains("customer-replay-key"));

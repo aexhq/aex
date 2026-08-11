@@ -464,7 +464,7 @@ mod tests {
         let organization = id::<OrganizationId>(2);
         let digest = ContentDigest::of(b"registry file");
         let plan = SessionTransaction {
-            intent: TransactionIntent::StopSession,
+            intent: TransactionIntent::CommitTerminal,
             conditions: vec![Condition::ContentOwned { workspace, digest }],
             writes: Vec::new(),
             after_commit: Vec::new(),

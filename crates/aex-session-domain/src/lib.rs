@@ -48,7 +48,7 @@ pub use approval::{
 pub use budget::{BudgetGrant, EffectiveLimits, LimitUnresolved};
 pub use deletion::{
     DeleteCommit, DeleteEvidence, DeletionEpoch, DeletionGuard, DeletionRejection, DeletionState,
-    SessionTombstone, begin_delete, complete_delete,
+    SessionDeletionHead, SessionTombstone, begin_delete, complete_delete,
 };
 pub use idempotency::{
     IdempotencyIdentity, IdempotencyReceipt, ReceiptKey, ReceiptKeyError, ReceiptOutcome,

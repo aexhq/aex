@@ -26,6 +26,8 @@ use crate::wire_pending::{
 
 /// The `itemType` of a session head.
 pub const SESSION_HEAD: &str = "session_head";
+/// Payload-free coordination head used during irreversible deletion.
+pub const SESSION_DELETION_HEAD: &str = "session_deletion_head";
 /// The minimal irreversible-deletion marker replacing a session head.
 pub const SESSION_TOMBSTONE: &str = "session_tombstone";
 /// The operation/epoch-bound session deletion progress root.
@@ -34,6 +36,8 @@ pub const SESSION_DELETION_PROGRESS: &str = "session_deletion_progress";
 pub const SESSION_DELETION_EVIDENCE: &str = "session_deletion_evidence";
 /// An enumerable locator for a separately keyed idempotency receipt.
 pub const SESSION_RECEIPT_DIRECTORY: &str = "session_receipt_directory";
+/// Session-partition locator for one separately keyed operation row.
+pub const SESSION_OPERATION_EDGE: &str = "session_operation_edge";
 /// The `itemType` of a message.
 pub const MESSAGE: &str = "message";
 /// The `itemType` of an immutable, seal-ordered public message projection.

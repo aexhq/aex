@@ -71,6 +71,8 @@ impl AppError {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::Port(PortError::NotFound { .. }) => ErrorCode::NotFound,
+            Self::Port(PortError::Deleted { .. }) => ErrorCode::SessionDeleted,
+            Self::Port(PortError::Deleting { .. }) => ErrorCode::SessionDeleting,
             Self::Port(_)
             | Self::Plan(_)
             | Self::Commit(_)
@@ -119,6 +121,7 @@ mod tests {
         PauseRejection,
     };
     use aex_wire::error::ErrorCode;
+    use aex_wire::ids::{OperationId, PrefixedId as _, Uuid7};
 
     use super::AppError;
     use crate::ports::{CommitError, PortError};
@@ -128,6 +131,14 @@ mod tests {
         assert_eq!(
             AppError::Port(PortError::NotFound { kind: "session" }).code(),
             ErrorCode::NotFound
+        );
+        assert_eq!(
+            AppError::Port(PortError::Deleting {
+                kind: "session",
+                operation: OperationId::from_uuid7(Uuid7::compose(1, [8; 10])),
+            })
+            .code(),
+            ErrorCode::SessionDeleting
         );
         assert_eq!(
             AppError::Paused(PauseRejection {

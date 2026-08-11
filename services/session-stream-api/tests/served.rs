@@ -161,15 +161,15 @@ fn stored_operation(
 ) -> StoredOperation {
     let created_at = moment(&format!("2026-08-01T12:34:{seed:02}.000Z"));
     let result =
-        (kind == OperationKind::SessionSuspend && status == OperationStatus::Succeeded).then(|| {
+        (kind == OperationKind::SessionTerminate && status == OperationStatus::Succeeded).then(|| {
             OperationResult {
                 measurement: None,
                 content: Some(
                     CanonicalJson::parse(&format!(
-                        r#"{{"changed":true,"sessionId":"{}","sessionRevision":9,"suspendedAt":"2026-08-01T12:34:56.789Z"}}"#,
-                        session.expect("a suspend operation is session scoped")
+                        r#"{{"changed":true,"sessionId":"{}","sessionRevision":9,"terminatedAt":"2026-08-01T12:34:{seed:02}.000Z"}}"#,
+                        session.expect("a terminate operation is session scoped")
                     ))
-                    .expect("a typed suspend result"),
+                    .expect("a typed terminate result"),
                 ),
             }
         });
@@ -1639,6 +1639,14 @@ fn session_cancel_is_mounted_only_after_current_work_settlement_is_composed() {
     assert!(!route(RouteId::SessionCancel).deferred);
 }
 
+/// Delete is mounted only after admission scrubs the payload-bearing head and
+/// the worker can prove every owner complete before publishing the tombstone.
+#[test]
+fn session_delete_is_mounted_only_after_the_eight_owner_barrier_is_composed() {
+    assert!(Routes::served().contains(&RouteId::SessionDelete));
+    assert!(!route(RouteId::SessionDelete).deferred);
+}
+
 // --- durable operations ----------------------------------------------------------
 
 #[tokio::test]
@@ -1646,34 +1654,12 @@ async fn operation_get_projects_the_typed_result_and_hides_internal_gc() {
     let session = sample::<SessionId>(40);
     let public = stored_operation(
         41,
-        OperationKind::SessionSuspend,
-        OperationStatus::Succeeded,
-        Some(session),
-    );
-    let internal = stored_operation(42, OperationKind::ContentGc, OperationStatus::Running, None);
-    let operations = Arc::new(FakeOperations {
-        rows: std::sync::Mutex::new(vec![public.clone(), internal.clone()]),
-        ..FakeOperations::default()
-    });
-    let ((router, mounted), _) = build_with_operations(
-        Arc::new(FakeCustody::default()),
-        Arc::new(FakeRegistry::default()),
-        operations,
-    );
-    assert!(mounted.contains(&RouteId::RegionalOperationGet));
-
-    let (status, _, body) = get(&router, &format!("/api/operations/{}", public.record.id)).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let decoded: models::Operation =
-        serde_json::from_value(body.clone()).expect("the published operation schema");
-    assert_eq!(decoded.workspace_id, workspace());
-    assert_eq!(decoded.session_id, Some(session));
-    assert_eq!(decoded.kind, models::OperationKind::SessionSuspend);
+    assert_eq!(decoded.kind, models::OperationKind::SessionTerminate);
     assert_eq!(decoded.status, models::OperationStatus::Succeeded);
     assert!(matches!(
         decoded.result,
-        Some(models::OperationResult::SessionSuspend(
-            models::SessionSuspendResult {
+        Some(models::OperationResult::SessionTerminate(
+            models::SessionTerminateResult {
                 changed: true,
                 session_revision: 9,
                 ..
@@ -1692,13 +1678,13 @@ fn operation_list_fixture(
 ) -> (Arc<FakeOperations>, OperationId, OperationId) {
     let first = stored_operation(
         45,
-        OperationKind::SessionSuspend,
+        OperationKind::SessionTerminate,
         OperationStatus::Succeeded,
         Some(session),
     );
     let second = stored_operation(
         46,
-        OperationKind::SessionSuspend,
+        OperationKind::SessionTerminate,
         OperationStatus::Succeeded,
         Some(session),
     );
@@ -1710,19 +1696,19 @@ fn operation_list_fixture(
             second.clone(),
             stored_operation(
                 47,
-                OperationKind::SessionResume,
+                OperationKind::SessionSuspend,
                 OperationStatus::Succeeded,
                 Some(session),
             ),
             stored_operation(
                 48,
-                OperationKind::SessionSuspend,
+                OperationKind::SessionTerminate,
                 OperationStatus::Running,
                 Some(session),
             ),
             stored_operation(
                 49,
-                OperationKind::SessionSuspend,
+                OperationKind::SessionTerminate,
                 OperationStatus::Succeeded,
                 Some(other_session),
             ),
@@ -1751,7 +1737,7 @@ async fn operation_list_filters_exactly_and_binds_the_cursor_to_every_filter() {
     );
     assert!(mounted.contains(&RouteId::RegionalOperationsList));
     let query = format!(
-        "/api/operations?sessionId={session}&kind=session_suspend&status=succeeded&limit=1"
+        "/api/operations?sessionId={session}&kind=session_terminate&status=succeeded&limit=1"
     );
 
     let (status, _, body) = get(&router, &query).await;
@@ -1792,7 +1778,7 @@ async fn operation_list_filters_exactly_and_binds_the_cursor_to_every_filter() {
     let (status, _, body) = get(
         &router,
         &format!(
-            "/api/operations?sessionId={session}&kind=session_suspend&status=running&limit=1&cursor={}",
+            "/api/operations?sessionId={session}&kind=session_terminate&status=running&limit=1&cursor={}",
             cursor.as_str()
         ),
     )
@@ -1803,7 +1789,7 @@ async fn operation_list_filters_exactly_and_binds_the_cursor_to_every_filter() {
     let (status, _, body) = get(
         &router,
         &format!(
-            "/api/operations?sessionId={session}&kind=session_resume&status=succeeded&limit=1&cursor={}",
+            "/api/operations?sessionId={session}&kind=session_suspend&status=succeeded&limit=1&cursor={}",
             cursor.as_str()
         ),
     )
@@ -1814,7 +1800,7 @@ async fn operation_list_filters_exactly_and_binds_the_cursor_to_every_filter() {
     let (status, _, body) = get(
         &router,
         &format!(
-            "/api/operations?sessionId={other_session}&kind=session_suspend&status=succeeded&limit=1&cursor={}",
+            "/api/operations?sessionId={other_session}&kind=session_terminate&status=succeeded&limit=1&cursor={}",
             cursor.as_str()
         ),
     )
@@ -1830,30 +1816,24 @@ async fn operation_list_filters_exactly_and_binds_the_cursor_to_every_filter() {
     );
     assert!(filters.iter().all(|filter| {
         filter.session == Some(session)
-            && filter.kind == Some(OperationKind::SessionSuspend)
+            && filter.kind == Some(OperationKind::SessionTerminate)
             && filter.status == Some(OperationStatus::Succeeded)
     }));
 }
 
 #[tokio::test]
-async fn operation_cancel_refuses_current_lifecycle_work_and_hides_internal_work() {
+async fn operation_cancel_refuses_every_released_kind_and_hides_internal_work() {
     let session = sample::<SessionId>(51);
-    let running = stored_operation(
+    let terminate = stored_operation(
         52,
-        OperationKind::SessionResume,
+        OperationKind::SessionTerminate,
         OperationStatus::Running,
         Some(session),
     );
-    let queued = stored_operation(
+    let suspend = stored_operation(
         53,
-        OperationKind::SessionResume,
-        OperationStatus::Queued,
-        Some(session),
-    );
-    let fixed = stored_operation(
-        54,
         OperationKind::SessionSuspend,
-        OperationStatus::Running,
+        OperationStatus::Queued,
         Some(session),
     );
     let internal = stored_operation(55, OperationKind::ContentGc, OperationStatus::Running, None);
@@ -1865,9 +1845,8 @@ async fn operation_cancel_refuses_current_lifecycle_work_and_hides_internal_work
     );
     let operations = Arc::new(FakeOperations {
         rows: std::sync::Mutex::new(vec![
-            running.clone(),
-            queued.clone(),
-            fixed.clone(),
+            terminate.clone(),
+            suspend.clone(),
             internal.clone(),
             telemetry.clone(),
         ]),
@@ -1881,8 +1860,8 @@ async fn operation_cancel_refuses_current_lifecycle_work_and_hides_internal_work
     assert!(mounted.contains(&RouteId::RegionalOperationCancel));
 
     let cancel = |operation: OperationId| format!("/api/operations/{operation}/cancellations");
-    for operation in [running, queued, fixed, telemetry] {
-        let (status, body) = post(&router, &cancel(operation.record.id), "{}").await;
+    for operation in [terminate.record.id, suspend.record.id, telemetry.record.id] {
+        let (status, body) = post(&router, &cancel(operation), "{}").await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert_eq!(
             body["error"]["code"],
@@ -1892,7 +1871,7 @@ async fn operation_cancel_refuses_current_lifecycle_work_and_hides_internal_work
     assert_eq!(
         *operations.writes.lock().expect("an uncontended fixture"),
         0,
-        "current lifecycle commands own their own effect fences"
+        "a refused cancellation never mutates the operation row"
     );
 
     let (status, body) = post(&router, &cancel(internal.record.id), "{}").await;
@@ -1900,7 +1879,406 @@ async fn operation_cancel_refuses_current_lifecycle_work_and_hides_internal_work
     assert_eq!(body["error"]["code"], ErrorCode::NotFound.as_str());
 }
 
-// --- provider credential reads ----------------------------------------------------
+/// The approval reads are owned, complete, and deferred: nothing composed into
+/// the platform raises an approval, so a `200` with an empty page would be a
+/// confident wrong answer about a capability that does not exist yet.
+#[tokio::test]
+async fn approval_reads_are_deferred_and_the_router_answers_the_refusal() {
+    let row = stored_approval(ApprovalStatus::Approved);
+    let session = row.binding.session;
+    let approval = row.approval;
+    let ((router, mounted), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            approvals: vec![row],
+            sessions: Vec::new(),
+            session_page_calls: std::sync::Mutex::default(),
+            messages: Vec::new(),
+            runs: Vec::new(),
+            next: None,
+            deleted: false,
+            deletion_epoch: 0,
+        }),
+    );
+    for id in [RouteId::SessionApprovalGet, RouteId::SessionApprovalsList] {
+        assert!(!mounted.contains(&id), "`{id}` is deferred");
+        assert!(route(id).deferred, "`{id}` carries the ledger's deferral");
+    }
+    for path in [
+        format!("/api/sessions/{session}/approvals/{approval}"),
+        format!("/api/sessions/{session}/approvals"),
+    ] {
+        let (status, _, body) = get(&router, &path).await;
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+        assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
+    }
+}
+
+#[tokio::test]
+async fn approval_get_projects_the_complete_bound_call_and_decision() {
+    let row = stored_approval(ApprovalStatus::Approved);
+    let session = row.binding.session;
+    let approval_id = row.approval;
+    let routes = handler(
+        shared_with(
+            Arc::new(FakeCustody::default()),
+            Arc::new(FakeRegistry::default()),
+            Arc::new(FakeSessions {
+                approvals: vec![row],
+                sessions: Vec::new(),
+                session_page_calls: std::sync::Mutex::default(),
+                messages: Vec::new(),
+                runs: Vec::new(),
+                next: None,
+                deleted: false,
+                deletion_epoch: 0,
+            }),
+            Arc::new(FakeOperations::default()),
+        ),
+        RouteId::SessionApprovalGet,
+    );
+    let wire = wire_context(RouteId::SessionApprovalGet);
+
+    let approval = routes
+        .session_approval_get(&wire, session, approval_id)
+        .await
+        .expect("the stored approval projects");
+    assert_eq!(approval.status, models::ApprovalStatus::Approved);
+    assert_eq!(approval.decision, Some(models::ApprovalDecision::Approve));
+    assert_eq!(approval.session_id, session);
+    assert_eq!(approval.bound_call.expected_config_revision, 8);
+    assert_eq!(
+        approval.bound_call.config_digest,
+        ContentHash::of(b"config")
+    );
+}
+
+#[tokio::test]
+async fn approval_list_publishes_expired_and_binds_continuation_to_the_session() {
+    let row = stored_approval(ApprovalStatus::Expired);
+    let session = row.binding.session;
+    let next = PagePosition {
+        pk: format!("SES#{session}"),
+        sk: format!("APR#{}", row.approval),
+        index_pk: None,
+        index_sk: None,
+    };
+    let routes = handler(
+        shared_with(
+            Arc::new(FakeCustody::default()),
+            Arc::new(FakeRegistry::default()),
+            Arc::new(FakeSessions {
+                approvals: vec![row],
+                sessions: Vec::new(),
+                session_page_calls: std::sync::Mutex::default(),
+                messages: Vec::new(),
+                runs: Vec::new(),
+                next: Some(next),
+                deleted: false,
+                deletion_epoch: 0,
+            }),
+            Arc::new(FakeOperations::default()),
+        ),
+        RouteId::SessionApprovalsList,
+    );
+    let wire = wire_context(RouteId::SessionApprovalsList);
+
+    let page = routes
+        .session_approvals_list(&wire, session, approvals_query(None))
+        .await
+        .expect("the collection projects");
+    assert_eq!(page.items[0].status, models::ApprovalStatus::Expired);
+    assert_eq!(page.items[0].decision, None);
+    let cursor = page.next_cursor.clone().expect("a continuation");
+
+    let restored = handler(
+        shared_with(
+            Arc::new(FakeCustody::default()),
+            Arc::new(FakeRegistry::default()),
+            Arc::new(FakeSessions {
+                approvals: vec![stored_approval(ApprovalStatus::Expired)],
+                sessions: Vec::new(),
+                session_page_calls: std::sync::Mutex::default(),
+                messages: Vec::new(),
+                runs: Vec::new(),
+                next: None,
+                deleted: false,
+                // Trash and restore each advance the canonical deletion epoch.
+                deletion_epoch: 2,
+            }),
+            Arc::new(FakeOperations::default()),
+        ),
+        RouteId::SessionApprovalsList,
+    );
+    let restored_wire = wire_context(RouteId::SessionApprovalsList);
+    let failure = restored
+        .session_approvals_list(
+            &restored_wire,
+            session,
+            approvals_query(Some(cursor.clone())),
+        )
+        .await
+        .expect_err("a cursor cannot survive a deletion-epoch change");
+    assert_eq!(failure.code, ErrorCode::InvalidCursor);
+
+    let other_session = sample::<SessionId>(30);
+    let failure = routes
+        .session_approvals_list(&wire, other_session, approvals_query(Some(cursor)))
+        .await
+        .expect_err("a cursor is bound to its own session");
+    assert_eq!(failure.code, ErrorCode::InvalidCursor);
+}
+
+#[tokio::test]
+async fn approval_reads_refuse_a_session_that_crossed_its_deletion_fence() {
+    let row = stored_approval(ApprovalStatus::Pending);
+    let session = row.binding.session;
+    let approval_id = row.approval;
+    let shared = shared_with(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            approvals: vec![row],
+            sessions: Vec::new(),
+            session_page_calls: std::sync::Mutex::default(),
+            messages: Vec::new(),
+            runs: Vec::new(),
+            next: None,
+            deleted: true,
+            deletion_epoch: 1,
+        }),
+        Arc::new(FakeOperations::default()),
+    );
+
+    let point = handler(Arc::clone(&shared), RouteId::SessionApprovalGet);
+    let wire = wire_context(RouteId::SessionApprovalGet);
+    let failure = point
+        .session_approval_get(&wire, session, approval_id)
+        .await
+        .expect_err("a deleted session answers gone");
+    assert_eq!(failure.code, ErrorCode::SessionDeleted);
+
+    let collection = handler(shared, RouteId::SessionApprovalsList);
+    let wire = wire_context(RouteId::SessionApprovalsList);
+    let failure = collection
+        .session_approvals_list(&wire, session, approvals_query(None))
+        .await
+        .expect_err("a deleted session answers gone");
+    assert_eq!(failure.code, ErrorCode::SessionDeleted);
+}
+
+/// Resolving only the approval row would acknowledge before the durable Brain
+/// handoff. The route stays absent until one authority transaction also owns
+/// exact replay after an ambiguous commit, the concurrent-decision winner, and
+/// the single journal/result/wake or bound-call authorization it hands off.
+#[tokio::test]
+async fn approval_response_is_absent_without_one_atomic_handoff_authority() {
+    let row = stored_approval(ApprovalStatus::Pending);
+    let session = row.binding.session;
+    let approval = row.approval;
+    let ((router, mounted), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            approvals: vec![row],
+            sessions: Vec::new(),
+            session_page_calls: std::sync::Mutex::default(),
+            messages: Vec::new(),
+            runs: Vec::new(),
+            next: None,
+            deleted: false,
+            deletion_epoch: 0,
+        }),
+    );
+
+    assert!(!mounted.contains(&RouteId::SessionApprovalRespond));
+    let (status, body) = post(
+        &router,
+        &format!("/api/sessions/{session}/approvals/{approval}/responses"),
+        r#"{"decision":"deny"}"#,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_IMPLEMENTED,
+        "an incomplete approval authority became reachable: {status} {body}"
+    );
+    assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
+}
+
+// --- secret reads ----------------------------------------------------------------
+
+#[tokio::test]
+async fn a_secret_read_answers_the_published_metadata_and_its_entity_tag() {
+    let stored = stored_secret("openai-key");
+    let custody = FakeCustody {
+        secrets: BTreeMap::from([("openai-key".to_owned(), stored.clone())]),
+        ..FakeCustody::default()
+    };
+    let (router, _) = router(custody);
+    let (status, etag, body) = get(&router, "/api/workspace/secrets/openai-key").await;
+
+    assert_eq!(status, StatusCode::OK);
+    let decoded: models::SecretMetadata =
+        serde_json::from_value(body.clone()).expect("the published schema");
+    assert_eq!(decoded.name.as_str(), "openai-key");
+    assert_eq!(decoded.state, models::SecretState::Ready);
+    assert_eq!(decoded.revision, 1);
+    assert!(
+        body.get("value").is_none(),
+        "a secret value is never readable: {body}"
+    );
+
+    let expected = entity_tag("SecretMetadata", &decoded).expect("a tag");
+    assert_eq!(
+        etag.as_deref(),
+        Some(expected.as_str()),
+        "the route declares `etag: returns`"
+    );
+}
+
+#[tokio::test]
+async fn a_tombstoned_secret_is_absent_rather_than_a_deleted_state() {
+    let mut deleted = stored_secret("gone");
+    deleted.state = SecretState::Deleted;
+    let custody = FakeCustody {
+        secrets: BTreeMap::from([("gone".to_owned(), deleted)]),
+        ..FakeCustody::default()
+    };
+    let (router, _) = router(custody);
+    let (status, _, body) = get(&router, "/api/workspace/secrets/gone").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        body["error"]["code"].as_str(),
+        Some(ErrorCode::NotFound.as_str())
+    );
+}
+
+#[tokio::test]
+async fn an_absent_secret_is_not_found() {
+    let (router, _) = router(FakeCustody::default());
+    let (status, _, _) = get(&router, "/api/workspace/secrets/absent").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// D-10. A provider credential's backing secret is reserved and invisible in
+/// this fragment, on the point read and on the listing alike.
+///
+/// Leaving it visible would let a customer `secret_delete` it and leave a
+/// `ready` binding pointing at a tombstone, so `provider_credential_get` would
+/// publish `ready` for something that cannot work — a read path telling a lie.
+/// A credential's lifecycle runs through `provider_credential_revoke` alone.
+#[tokio::test]
+async fn a_credential_backing_secret_is_not_reachable_through_the_secrets_fragment() {
+    let backing = aex_wire::ids::ProviderCredentialId::from_uuid7(aex_wire::ids::Uuid7::compose(
+        1_754_051_696_789,
+        [6; 10],
+    ))
+    .to_string();
+    let custody = FakeCustody {
+        secrets: BTreeMap::from([
+            ("openai-key".to_owned(), stored_secret("openai-key")),
+            (backing.clone(), stored_secret(&backing)),
+        ]),
+        ..FakeCustody::default()
+    };
+    let (router, _) = router(custody);
+
+    let (status, _, _) = get(&router, &format!("/api/workspace/secrets/{backing}")).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a reserved name is absent here whether or not it exists"
+    );
+
+    let (status, _, body) = get(&router, "/api/workspace/secrets").await;
+    assert_eq!(status, StatusCode::OK);
+    let page: models::SecretMetadataPage =
+        serde_json::from_value(body).expect("the published schema");
+    let names: Vec<&str> = page.items.iter().map(|row| row.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["openai-key"],
+        "the listing skips reserved names, which is why a page may come back \
+         under-full while still naming a correct continuation"
+    );
+}
+
+#[tokio::test]
+async fn a_secret_listing_pages_and_its_continuation_resumes_the_next_page() {
+    let custody = FakeCustody {
+        secrets: BTreeMap::from([
+            ("alpha".to_owned(), stored_secret("alpha")),
+            ("beta".to_owned(), stored_secret("beta")),
+            ("gamma".to_owned(), stored_secret("gamma")),
+        ]),
+        page_size: 2,
+        ..FakeCustody::default()
+    };
+    let (router, _) = router(custody);
+
+    let (status, _, body) = get(&router, "/api/workspace/secrets?limit=2").await;
+    assert_eq!(status, StatusCode::OK);
+    let first: models::SecretMetadataPage =
+        serde_json::from_value(body).expect("the published schema");
+    assert_eq!(first.items.len(), 2);
+    let cursor = first
+        .next_cursor
+        .expect("a full page names its continuation");
+
+    let (status, _, body) = get(
+        &router,
+        &format!("/api/workspace/secrets?limit=2&cursor={}", cursor.as_str()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let second: models::SecretMetadataPage =
+        serde_json::from_value(body).expect("the published schema");
+    assert_eq!(
+        second.items.len(),
+        1,
+        "the continuation resumed after `beta`"
+    );
+    assert_eq!(second.items[0].name.as_str(), "gamma");
+    assert_eq!(second.next_cursor, None);
+}
+
+/// A cursor is bound to the collection that minted it, so replaying one against
+/// another listing is refused rather than answered from the wrong partition.
+#[tokio::test]
+async fn a_cursor_minted_for_another_collection_is_refused() {
+    let custody = FakeCustody {
+        secrets: BTreeMap::from([
+            ("alpha".to_owned(), stored_secret("alpha")),
+            ("beta".to_owned(), stored_secret("beta")),
+        ]),
+        page_size: 1,
+        credentials: vec![stored_credential()],
+        ..FakeCustody::default()
+    };
+    let (router, _) = router(custody);
+    let (_, _, body) = get(&router, "/api/workspace/secrets?limit=1").await;
+    let page: models::SecretMetadataPage =
+        serde_json::from_value(body).expect("the published schema");
+    let cursor = page.next_cursor.expect("a continuation");
+
+    let (status, _, body) = get(
+        &router,
+        &format!(
+            "/api/workspace/provider-credentials?cursor={}",
+            cursor.as_str()
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["error"]["code"].as_str(),
+        Some(ErrorCode::InvalidCursor.as_str())
+    );
+}
+
+// --- provider credential reads ------------------------------------------------------
 
 #[tokio::test]
 async fn a_credential_read_answers_the_persisted_fingerprint_and_never_the_secret() {
@@ -2143,37 +2521,14 @@ fn the_mounted_session_mutations_are_durable_operation_admissions() {
         RouteId::SessionSuspend,
         RouteId::SessionResume,
         RouteId::SessionTerminate,
-    ] {
-        assert!(Routes::served().contains(&id), "`{id}` must be mounted");
-        assert_eq!(
-            route(id).success_status,
-            202,
-            "`{id}` admits a durable operation rather than returning a resource"
-        );
-    }
-}
-
-fn unused_custody_revision() -> CustodyRevision {
-    CustodyRevision::FIRST
-}
-
-#[test]
-fn the_fixture_module_stays_honest() {
-    // `CustodyRevision` is imported for the store trait's signature surface;
-    // this keeps the import load-bearing rather than silently unused.
-    assert_eq!(unused_custody_revision(), CustodyRevision::FIRST);
-}
-
-// --- the registry listings ---------------------------------------------------------
-
-/// The one public registry listing and the collection it must read.
+/// Every registry listing, its path, and the collection it must read.
 const REGISTRY_LISTINGS: &[(RouteId, &str, RegistryKind)] = &[(
     RouteId::RegistryFilesList,
     "/api/workspace/files",
     RegistryKind::File,
 )];
 
-/// The one public point read whose representation includes its value document.
+/// The sole durable arbitrary-file point read.
 const REGISTRY_POINTS: &[(RouteId, &str)] =
     &[(RouteId::RegistryFilesGet, "/api/workspace/files/notes.md")];
 
@@ -2216,6 +2571,7 @@ async fn session_listing_keeps_one_authenticated_snapshot_across_filtered_pages(
     first_deleting.workspace = workspace();
     first_deleting.deletion.session = first_deleting.id;
     first_deleting.status = aex_session_domain::SessionStatus::Deleting;
+    first_deleting.lifecycle.status = aex_session_domain::SessionStatus::Deleting;
     first_deleting.created_at = moment("2026-08-01T12:00:00.000Z");
 
     let mut second_deleting = first_deleting.clone();
@@ -2227,6 +2583,7 @@ async fn session_listing_keeps_one_authenticated_snapshot_across_filtered_pages(
     idle.id = sample(83);
     idle.deletion.session = idle.id;
     idle.status = aex_session_domain::SessionStatus::Idle;
+    idle.lifecycle.status = aex_session_domain::SessionStatus::Idle;
     idle.created_at = moment("2026-08-01T12:02:00.000Z");
 
     let sessions = Arc::new(FakeSessions {

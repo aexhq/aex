@@ -47,6 +47,9 @@ pub const DELETION_EVIDENCE_PREFIX: &str = "DELETE#EVIDENCE#";
 /// Enumerable locators for separately keyed idempotency receipts.
 pub const RECEIPT_DIRECTORY_PREFIX: &str = "DELETE#RECEIPT#";
 
+/// Locator for the separately keyed private create-preparation partition.
+pub const CREATE_PREPARATION_EDGE_SK: &str = "CREATEPREP#AUTHORITY";
+
 /// `SESSION#{session_id}`.
 #[must_use]
 pub fn session_partition(session: SessionId) -> String {
@@ -86,6 +89,15 @@ pub fn receipt_directory(session: SessionId, target_sha256_hex: &str) -> Key {
     Key::new(
         session_partition(session),
         format!("{RECEIPT_DIRECTORY_PREFIX}{target_sha256_hex}"),
+    )
+}
+
+/// Enumerable locator for the private create-preparation partition.
+#[must_use]
+pub fn create_preparation_edge(session: SessionId) -> Key {
+    Key::new(
+        session_partition(session),
+        CREATE_PREPARATION_EDGE_SK.to_owned(),
     )
 }
 
@@ -352,10 +364,20 @@ pub mod workspace_index {
 }
 
 /// Every session lifecycle value, in the order a session moves through them.
-pub const LIFECYCLES: &[&str] = &["active", "trashed", "purging", "purged"];
+pub const LIFECYCLES: &[&str] = &["active", "deleting", "deleted"];
 
 /// Every session status value.
-pub const STATUSES: &[&str] = &["idle", "running", "stopping"];
+pub const STATUSES: &[&str] = &[
+    "idle",
+    "running",
+    "awaiting_approval",
+    "suspending",
+    "suspended",
+    "resuming",
+    "terminating",
+    "terminated",
+    "deleting",
+];
 
 /// Every run status value.
 pub const RUN_STATUSES: &[&str] = &[
@@ -373,9 +395,9 @@ pub const APPROVAL_STATUSES: &[&str] = &["pending", "approved", "denied", "cance
 
 /// Every reason a pending approval is withdrawn.
 pub const APPROVAL_CANCEL_CAUSES: &[&str] = &[
-    "stop_requested",
+    "session_cancel",
     "run_cancelled",
-    "session_trashing",
+    "session_deleting",
     "account_paused",
     "continuity_lost",
     "tool_call_cancelled",
@@ -392,12 +414,17 @@ pub const OUTBOX_STATES: &[&str] = &["pending", "delivered"];
 /// `migrations/regional/tables/session-authority.json`.
 pub const ITEM_TYPES: &[&str] = &[
     "session_head",
+    "session_deletion_head",
     "session_tombstone",
     "session_deletion_progress",
     "session_deletion_evidence",
     "session_receipt_directory",
+    "session_operation_edge",
+    "live_file_transfer",
+    "live_file_election",
     "session_create_preparation",
     "session_create_prepared_file",
+    "session_create_preparation_edge",
     "message",
     "sealed_message",
     "run",
@@ -491,7 +518,7 @@ mod tests {
         let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [5; 10]));
         let partition = workspace_index::session_partition(workspace);
         assert!(partition.ends_with("#SESSION"));
-        for _lifecycle in ["active", "trashed", "purging"] {
+        for _lifecycle in ["active", "deleting"] {
             assert_eq!(workspace_index::session_partition(workspace), partition);
         }
     }

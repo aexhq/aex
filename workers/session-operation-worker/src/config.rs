@@ -27,10 +27,10 @@ pub const SESSION_TABLE: &str = "AEX_SESSION_TABLE";
 pub const RUNTIME_ACTIVITY_TABLE: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
 /// Existing runtime-control-worker lifecycle queue.
 pub const RUNTIME_LIFECYCLE_QUEUE_URL: &str = "AEX_RUNTIME_LIFECYCLE_QUEUE_URL";
-/// The `observation-authority` table.
+/// Session-scoped observation and export deletion authority.
 pub const OBSERVATION_TABLE: &str = "AEX_OBSERVATION_TABLE";
-/// The deployed observation deletion-duty shard count.
-pub const OBSERVATION_DUTY_SHARDS: &str = "AEX_OBS_DUTY_SHARDS";
+/// Closed observation deletion-duty shard count.
+pub const OBS_DUTY_SHARDS: &str = "AEX_OBS_DUTY_SHARDS";
 /// How many deterministic shards the due scan sweeps.
 pub const DUE_SCAN_SHARDS: &str = "AEX_DUE_SCAN_SHARDS";
 /// Claim lease in milliseconds.
@@ -52,7 +52,7 @@ pub const REQUIRED: [&str; 15] = [
     RUNTIME_ACTIVITY_TABLE,
     RUNTIME_LIFECYCLE_QUEUE_URL,
     OBSERVATION_TABLE,
-    OBSERVATION_DUTY_SHARDS,
+    OBS_DUTY_SHARDS,
     DUE_SCAN_SHARDS,
     LEASE_MS,
     STEP_DEADLINE_MS,
@@ -62,7 +62,7 @@ pub const REQUIRED: [&str; 15] = [
 /// Variables this binary must never be bound to.
 ///
 /// Physical object deletion belongs to `content-lifecycle-worker`; a secret key
-/// bound here would give the purge leg a decrypt capability it has no use for.
+/// bound here would give the deletion worker a decrypt capability it cannot use.
 pub const FORBIDDEN: [(&str, &str); 2] = [
     (
         "AEX_SECRET_KMS_KEY_ARN",
@@ -95,9 +95,9 @@ pub struct Config {
     pub runtime_activity_table: String,
     /// Existing runtime-control-worker lifecycle queue.
     pub runtime_lifecycle_queue_url: String,
-    /// `observation-authority` table.
+    /// Observation authority table.
     pub observation_table: String,
-    /// Deployed observation deletion-duty shard count.
+    /// Observation deletion-duty shard count.
     pub observation_duty_shards: u8,
     /// Deterministic due-scan shard count.
     pub due_scan_shards: u64,
@@ -155,13 +155,11 @@ impl Config {
                 ),
             });
         }
-        let observation_duty_shards =
-            u8::try_from(bounded_u64(lookup, OBSERVATION_DUTY_SHARDS, 1, 64)?).map_err(|_| {
-                RegionalHttpConfigError::Invalid {
-                    name: OBSERVATION_DUTY_SHARDS,
-                    reason: "the shard count does not fit the observation due index".to_owned(),
-                }
-            })?;
+        let observation_duty_shards = u8::try_from(bounded_u64(lookup, OBS_DUTY_SHARDS, 1, 255)?)
+            .map_err(|_| RegionalHttpConfigError::Invalid {
+            name: OBS_DUTY_SHARDS,
+            reason: "observation duty shards do not fit the deployed u8 keyspace".to_owned(),
+        })?;
         Ok(Self {
             plane,
             region,

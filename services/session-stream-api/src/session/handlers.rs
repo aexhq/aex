@@ -710,6 +710,43 @@ impl Routes {
                 }
                 return Err(WireError::new(ErrorCode::OperationIdempotencyConflict));
             }
+            if matches!(failure, StoreError::PreconditionFailed { .. }) {
+                match self
+                    .shared
+                    .commands
+                    .load_session(self.cx.auth.workspace_id, session_id_of(attempted)?)
+                    .await
+                {
+                    Err(aex_session_app::PortError::Deleting { operation, .. })
+                        if attempted.kind == OperationKind::SessionDelete =>
+                    {
+                        return Err(if operation == attempted.id {
+                            WireError::new(ErrorCode::CommitOutcomeUnknown)
+                        } else {
+                            WireError::new(ErrorCode::DeletionInProgress)
+                        });
+                    }
+                    Err(aex_session_app::PortError::Deleting { .. }) => {
+                        return Err(WireError::new(ErrorCode::SessionDeleting));
+                    }
+                    Err(aex_session_app::PortError::Deleted { .. }) => {
+                        return Err(WireError::new(ErrorCode::SessionDeleted));
+                    }
+                    Err(aex_session_app::PortError::NotFound { .. }) => {
+                        return Err(WireError::new(ErrorCode::NotFound));
+                    }
+                    Err(error) => return Err(app_failure(&aex_session_app::AppError::Port(error))),
+                    Ok(_) if attempted.kind == OperationKind::SessionDelete => {
+                        // A competing whole-session command moved a guard but
+                        // no delete operation was elected. The caller must
+                        // retry the same operation identity after observing
+                        // the newer session state; `session_delete` does not
+                        // publish a generic precondition response.
+                        return Err(WireError::new(ErrorCode::CommitOutcomeUnknown));
+                    }
+                    Ok(_) => {}
+                }
+            }
             return Err(if matches!(failure, StoreError::CommitAmbiguous { .. }) {
                 WireError::new(ErrorCode::CommitOutcomeUnknown)
             } else {
@@ -717,6 +754,17 @@ impl Routes {
             });
         }
         Err(authority_failure(failure))
+    }
+}
+
+fn session_id_of(operation: &aex_operation_domain::Operation) -> WireResult<SessionId> {
+    match (operation.session, operation.scope) {
+        (Some(session), aex_operation_domain::OperationScope::Session(scoped))
+            if session == scoped =>
+        {
+            Ok(session)
+        }
+        _ => Err(WireError::new(ErrorCode::InternalError)),
     }
 }
 
@@ -930,6 +978,125 @@ impl RegionalOperationsApi for Routes {
             .collect::<WireResult<Vec<_>>>()?;
         Ok(models::OperationPage {
             items,
+            next_cursor: self.continuation(page.next.as_ref(), &binding)?,
+        })
+    }
+}
+
+fn approval(stored: &Approval) -> models::Approval {
+    let (status, decision) = match stored.status {
+        ApprovalStatus::Pending => (models::ApprovalStatus::Pending, None),
+        ApprovalStatus::Approved => (
+            models::ApprovalStatus::Approved,
+            Some(models::ApprovalDecision::Approve),
+        ),
+        ApprovalStatus::Denied => (
+            models::ApprovalStatus::Denied,
+            Some(models::ApprovalDecision::Deny),
+        ),
+        ApprovalStatus::Cancelled => (models::ApprovalStatus::Cancelled, None),
+        ApprovalStatus::Expired => (models::ApprovalStatus::Expired, None),
+    };
+    models::Approval {
+        bound_call: models::ApprovalBoundCall {
+            agent_id: stored.binding.agent,
+            arguments_digest: stored.binding.argument_digest,
+            config_digest: stored.binding.config_digest,
+            expected_config_revision: stored.binding.expected_config_revision,
+            expected_generation_id: stored.binding.expected_generation,
+            implementation_digest: stored.binding.implementation_digest,
+            tool_call_id: stored.binding.tool_call,
+            tool_name: stored.binding.tool.clone(),
+        },
+        created_at: stored.created_at,
+        decision,
+        expires_at: stored.expires_at,
+        id: stored.approval,
+        resolved_at: stored.resolved_at,
+        session_id: stored.binding.session,
+        status,
+    }
+}
+
+impl ApprovalsApi for Routes {
+    async fn session_approval_get(
+        &self,
+        _cx: &WireContext,
+        session_id: SessionId,
+        approval_id: aex_wire::ids::ApprovalId,
+    ) -> WireResult<models::Approval> {
+        match self
+            .shared
+            .sessions
+            .load_approval(self.cx.auth.workspace_id, session_id, approval_id)
+            .await
+            .map_err(|error| authority_failure(&error))?
+        {
+            SessionScoped::Missing | SessionScoped::Active(None) => {
+                Err(WireError::new(ErrorCode::NotFound))
+            }
+            SessionScoped::Deleted => Err(WireError::new(ErrorCode::SessionDeleted)),
+            SessionScoped::Active(Some(stored)) => Ok(approval(&stored)),
+        }
+    }
+
+    async fn session_approval_respond(
+        &self,
+        _cx: &WireContext,
+        _session_id: SessionId,
+        _approval_id: aex_wire::ids::ApprovalId,
+        _body: models::ApprovalRespondRequest,
+    ) -> WireResult<models::Approval> {
+        Err(not_served(RouteId::SessionApprovalRespond))
+    }
+
+    async fn session_approvals_list(
+        &self,
+        _cx: &WireContext,
+        session_id: SessionId,
+        query: models::SessionApprovalsListQuery,
+    ) -> WireResult<models::ApprovalPage> {
+        let budget = budget(query.limit)?;
+        let (after, expected_deletion_epoch) = self
+            .resume_session_collection(
+                RouteId::SessionApprovalsList,
+                "session.approvals",
+                session_id,
+                query.cursor.as_ref(),
+            )
+            .await?;
+        let page = match self
+            .shared
+            .sessions
+            .page_approvals(
+                self.cx.auth.workspace_id,
+                session_id,
+                expected_deletion_epoch,
+                budget,
+                after.as_ref(),
+            )
+            .await
+            .map_err(|error| authority_failure(&error))?
+        {
+            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
+            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
+            SessionScoped::Active(page) => page,
+        };
+        let binding = self.cursor_binding_for_session_epoch(
+            RouteId::SessionApprovalsList,
+            "session.approvals",
+            session_id,
+            page.deletion_epoch,
+        )?;
+        // The pre-decode parent read and the page's own before/query/after
+        // fence can observe different live generations if trash+restore races
+        // this request. Rechecking the MAC binding refuses that page instead
+        // of silently resuming an old generation.
+        if query.cursor.is_some() {
+            self.resume(query.cursor.as_ref(), &binding)?;
+        }
+        Ok(models::ApprovalPage {
+            items: page.items.iter().map(approval).collect(),
             next_cursor: self.continuation(page.next.as_ref(), &binding)?,
         })
     }

@@ -13,8 +13,8 @@ use aex_session_domain::{
     ActiveMessage, CancellationEpoch, DomainError, EffectId, InterruptReason, LifecycleRevision,
     Lineage, Message, MessagePart, MessageRole, MessageState, MutationGuard, Origin,
     ProviderCredentialPin, ResolvedConfigAuthority, ResolvedConfigDigest, ResolvedMessageBounds,
-    Run, RunOutcome, Session, SessionLifecycle, SessionRevision, SessionStatus, TerminationReason,
-    WorkAdmission,
+    Run, RunOutcome, Session, SessionDeletionHead, SessionLifecycle, SessionRevision,
+    SessionStatus, TerminationReason, WorkAdmission,
 };
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{
@@ -806,6 +806,87 @@ pub fn encode_session(session: &Session) -> Result<Item, CodecError> {
         .build())
 }
 
+/// Encodes the payload-free coordination head elected by `session_delete`.
+#[must_use]
+pub fn encode_session_deletion_head(head: &SessionDeletionHead) -> Item {
+    let key = keys::head(head.session);
+    ItemBuilder::new(codec::SESSION_DELETION_HEAD)
+        .set(crate::attr::PK, s(key.pk))
+        .set(crate::attr::SK, s(key.sk))
+        .set("sessionId", s(head.session.to_string()))
+        .set("workspaceId", s(head.workspace.to_string()))
+        .set("organizationId", s(head.organization.to_string()))
+        .set("operationId", s(head.operation.to_string()))
+        .set("mutationGuardOperationId", s(head.operation.to_string()))
+        .set("deletionEpoch", n(head.epoch.0))
+        .set("revision", n(head.revision.0))
+        .set("generationId", s(head.generation.to_string()))
+        .set("status", s("deleting"))
+        .set("lifecycle", s("deleting"))
+        .set("startedAt", crate::attr::stamp(head.started_at))
+        .build()
+}
+
+/// Decodes the minimal coordination head and verifies its exact tenant/key.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] for a malformed, cross-tenant or mis-keyed row.
+pub fn decode_session_deletion_head(
+    item: &Item,
+    asserted: WorkspaceId,
+    session: SessionId,
+) -> Result<SessionDeletionHead, CodecError> {
+    let row = Row::bind(item, codec::SESSION_DELETION_HEAD)?;
+    row.owned_by("workspaceId", &asserted.to_string())?;
+    let decoded = SessionDeletionHead {
+        session: row.id::<SessionId>("sessionId")?,
+        workspace: asserted,
+        organization: row.id::<OrganizationId>("organizationId")?,
+        operation: row.id::<OperationId>("operationId")?,
+        epoch: DeletionEpoch(row.u64("deletionEpoch")?),
+        revision: SessionRevision(row.u64("revision")?),
+        generation: row.id::<GenerationId>("generationId")?,
+        started_at: row.timestamp("startedAt")?,
+    };
+    let expected = keys::head(session);
+    if decoded.session != session
+        || decoded.epoch.0 == 0
+        || row.id::<OperationId>("mutationGuardOperationId")? != decoded.operation
+        || row.string("status")? != "deleting"
+        || row.string("lifecycle")? != "deleting"
+        || row.string(crate::attr::PK)? != expected.pk
+        || row.string(crate::attr::SK)? != expected.sk
+    {
+        return Err(malformed(
+            "sessionId",
+            "the deletion coordination head disagrees with its tenant, fences or exact key",
+        ));
+    }
+    Ok(decoded)
+}
+
+/// Whether the item is the exact asserted deletion coordination head.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] when a declared coordination row is malformed.
+pub fn is_session_deletion_head(
+    item: &Item,
+    asserted: WorkspaceId,
+    session: SessionId,
+) -> Result<bool, CodecError> {
+    if item
+        .get(crate::attr::ITEM_TYPE)
+        .and_then(|value| value.as_s().ok())
+        .map(String::as_str)
+        != Some(codec::SESSION_DELETION_HEAD)
+    {
+        return Ok(false);
+    }
+    decode_session_deletion_head(item, asserted, session).map(|_| true)
+}
+
 /// Encodes the minimal irreversible-deletion marker at the session HEAD key.
 #[must_use]
 pub fn encode_session_tombstone(tombstone: &aex_session_domain::SessionTombstone) -> Item {
@@ -1342,8 +1423,9 @@ mod tests {
 
     use super::{
         AUTHORITY_DOCUMENT, AUTHORITY_SCHEMA, decode_domain_message, decode_domain_run,
-        decode_sealed_message, decode_session, decode_session_projection, encode_domain_message,
-        encode_domain_run, encode_sealed_message, encode_session, encode_session_tombstone,
+        decode_sealed_message, decode_session, decode_session_deletion_head,
+        decode_session_projection, encode_domain_message, encode_domain_run, encode_sealed_message,
+        encode_session, encode_session_deletion_head, encode_session_tombstone,
         is_session_tombstone,
     };
 
@@ -1436,6 +1518,40 @@ mod tests {
         assert!(
             is_session_tombstone(&item, id::<aex_wire::ids::WorkspaceId>(99), session.id).is_err()
         );
+    }
+
+    #[test]
+    fn deleting_head_keeps_only_content_free_coordination_fences() {
+        let session = session_fixture();
+        let head = aex_session_domain::SessionDeletionHead {
+            session: session.id,
+            workspace: session.workspace,
+            organization: session.organization,
+            operation: id::<OperationId>(41),
+            epoch: aex_session_domain::DeletionEpoch(2),
+            revision: session.revision.next(),
+            generation: session.lifecycle.generation,
+            started_at: moment(20),
+        };
+        let item = encode_session_deletion_head(&head);
+        assert_eq!(
+            decode_session_deletion_head(&item, session.workspace, session.id),
+            Ok(head)
+        );
+        for forbidden in [
+            AUTHORITY_DOCUMENT,
+            "provider",
+            "model",
+            "providerCredentialId",
+            "resolvedConfigDigest",
+            "metadata",
+            "rootAgentId",
+        ] {
+            assert!(
+                !item.contains_key(forbidden),
+                "payload field `{forbidden}` survived"
+            );
+        }
     }
 
     #[test]

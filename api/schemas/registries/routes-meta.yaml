@@ -216,6 +216,7 @@ servedOperations:
     - session_observations_traces_stream
     - session_cancel
     - session_create
+    - session_delete
     - session_files_live_download_complete
     - session_files_live_download_create
     - session_files_live_download_delete

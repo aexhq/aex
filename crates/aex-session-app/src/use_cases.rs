@@ -469,6 +469,10 @@ pub async fn admit_message(
             Write::PutAgentWakeDedupe(Box::new(wake.clone())),
             Write::PutAgentWake(Box::new(wake)),
             Write::PutMessageAdmittedEvent(Box::new(admitted_event)),
+            Write::PutSessionReceiptDirectory {
+                session: command.session,
+                receipt: Box::new(receipt.clone()),
+            },
             Write::PutIdempotencyReceipt(Box::new(receipt)),
         ],
         after_commit: vec![Hint::WakeAgent {

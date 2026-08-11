@@ -1,22 +1,18 @@
 //! Fenced, bounded continuation kernel for regional session operations.
 
 pub mod config;
+mod deletion;
 
 use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64;
 
 use std::sync::Arc;
 
-use aex_observation_store_dynamodb::{
-    SessionObservationDeletion, SessionObservationDeletionError, SessionObservationDeletionRequest,
-    SessionObservationDeletionStatus,
-};
 use aex_operation_domain::{OperationKind, OperationStatus};
-use aex_runtime_control::generation::GenerationState;
 use aex_session_dynamodb::StoreError;
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::transactions::{OperationStepCancel, operation_cancelled};
-use aex_wire::ids::{AgentId, OperationId, PrefixedId, SessionId, WorkspaceId};
+use aex_wire::ids::{OperationId, PrefixedId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aex_work_dynamodb::WorkClaim;
 use aex_work_dynamodb::codec::ReconciliationCursor;
@@ -263,7 +259,7 @@ pub struct OperationSnapshot {
     pub workspace: WorkspaceId,
     /// Owning session for session-scoped continuations.
     pub session: Option<SessionId>,
-    /// Immutable operation kind.
+    /// Exact operation kind.
     pub kind: OperationKind,
     /// Current monotonic status.
     pub status: OperationStatus,
@@ -439,27 +435,40 @@ impl LifecyclePort for NoLifecycle {
 #[derive(Debug, Clone)]
 pub struct DynamoLifecyclePort {
     dynamodb: aws_sdk_dynamodb::Client,
-    sessions: aex_session_dynamodb::store::SessionReads,
+    sessions: aex_session_dynamodb::store::SessionStore,
     operations: aex_session_dynamodb::store::OperationStore,
     runtime: aex_runtime_activity_dynamodb::RuntimeActivityDynamoStore,
     sqs: aws_sdk_sqs::Client,
     runtime_queue_url: String,
     tables: aex_session_dynamodb::plan::RegionalTables,
+    deletion: deletion::DynamoDeletionCoordinator,
 }
 
 impl DynamoLifecyclePort {
-    /// Binds the three durable authorities and the runtime-control hint queue.
+    /// Binds the session, work, runtime and observation authorities plus the
+    /// runtime-control hint queue.
     #[must_use]
     pub fn new(
         dynamodb: aws_sdk_dynamodb::Client,
         sqs: aws_sdk_sqs::Client,
         tables: aex_session_dynamodb::plan::RegionalTables,
         runtime_queue_url: impl Into<String>,
-    ) -> Self {
-        Self {
-            sessions: aex_session_dynamodb::store::SessionReads::new(
+        observation_table: impl Into<String>,
+        observation_duty_shards: u8,
+    ) -> Result<Self, StoreError> {
+        let runtime_queue_url = runtime_queue_url.into();
+        let deletion = deletion::DynamoDeletionCoordinator::new(
+            dynamodb.clone(),
+            sqs.clone(),
+            tables.clone(),
+            runtime_queue_url.clone(),
+            observation_table,
+            observation_duty_shards,
+        )?;
+        Ok(Self {
+            sessions: aex_session_dynamodb::store::SessionStore::new(
                 dynamodb.clone(),
-                tables.session_authority.clone(),
+                tables.clone(),
             ),
             operations: aex_session_dynamodb::store::OperationStore::new(
                 dynamodb.clone(),
@@ -471,9 +480,10 @@ impl DynamoLifecyclePort {
             ),
             dynamodb,
             sqs,
-            runtime_queue_url: runtime_queue_url.into(),
+            runtime_queue_url,
             tables,
-        }
+            deletion,
+        })
     }
 
     async fn session(
@@ -538,279 +548,6 @@ impl DynamoLifecyclePort {
             })?;
         Ok(())
     }
-
-    async fn partition_page(
-        &self,
-        table: &str,
-        partition: &str,
-        prefix: Option<&str>,
-        limit: i32,
-    ) -> Result<Vec<(String, String)>, StoreError> {
-        use aws_sdk_dynamodb::types::AttributeValue;
-
-        let mut query = self
-            .dynamodb
-            .query()
-            .table_name(table)
-            .consistent_read(true)
-            .key_condition_expression(if prefix.is_some() {
-                "pk = :pk AND begins_with(sk, :prefix)"
-            } else {
-                "pk = :pk"
-            })
-            .expression_attribute_values(":pk", AttributeValue::S(partition.to_owned()))
-            .limit(limit);
-        if let Some(prefix) = prefix {
-            query =
-                query.expression_attribute_values(":prefix", AttributeValue::S(prefix.to_owned()));
-        }
-        let output = query
-            .send()
-            .await
-            .map_err(|error| StoreError::Unavailable {
-                detail: format!("the deletion participant could not query `{table}`: {error}"),
-            })?;
-        output
-            .items
-            .unwrap_or_default()
-            .into_iter()
-            .map(|item| {
-                let pk = item.get("pk").and_then(|value| value.as_s().ok()).cloned();
-                let sk = item.get("sk").and_then(|value| value.as_s().ok()).cloned();
-                pk.zip(sk).ok_or_else(|| StoreError::Invalid {
-                    detail: "a deletion query returned a row without string pk/sk".to_owned(),
-                })
-            })
-            .collect()
-    }
-
-    async fn delete_rows(
-        &self,
-        table: &str,
-        rows: Vec<(String, String)>,
-    ) -> Result<bool, StoreError> {
-        use aws_sdk_dynamodb::types::AttributeValue;
-
-        let changed = !rows.is_empty();
-        for (pk, sk) in rows {
-            self.dynamodb
-                .delete_item()
-                .table_name(table)
-                .key("pk", AttributeValue::S(pk))
-                .key("sk", AttributeValue::S(sk))
-                .send()
-                .await
-                .map_err(|error| StoreError::Unavailable {
-                    detail: format!(
-                        "the deletion participant could not delete from `{table}`: {error}"
-                    ),
-                })?;
-        }
-        Ok(changed)
-    }
-
-    async fn delete_prefix(
-        &self,
-        table: &str,
-        partition: &str,
-        prefix: Option<&str>,
-    ) -> Result<bool, StoreError> {
-        let rows = self.partition_page(table, partition, prefix, 25).await?;
-        self.delete_rows(table, rows).await
-    }
-
-    async fn prepare_runtime_delete(
-        &self,
-        session: &aex_session_domain::Session,
-    ) -> Result<LifecycleReadiness, StoreError> {
-        let generation_partition = aex_runtime_activity_dynamodb::keys::generation_partition_for_id(
-            session.lifecycle.generation,
-        );
-        let generation_head = self
-            .partition_page(
-                &self.tables.runtime_activity,
-                &generation_partition,
-                Some("HEAD"),
-                1,
-            )
-            .await?
-            .into_iter()
-            .next();
-        if let Some(generation_head) = generation_head {
-            let view = self.runtime_view(session).await?;
-            if !view.head.state.is_terminal() {
-                self.dispatch(aex_runtime_control_aws::RuntimeCommand::SessionTerminate {
-                    session: session.id,
-                    generation: session.lifecycle.generation,
-                })
-                .await?;
-                return Ok(LifecycleReadiness::Deferred);
-            }
-            if !self
-                .partition_page(
-                    &self.tables.runtime_activity,
-                    &generation_partition,
-                    Some("USAGE#"),
-                    1,
-                )
-                .await?
-                .is_empty()
-            {
-                // Usage/accounting authority must consume the outbox before
-                // its operational source row can disappear.
-                return Ok(LifecycleReadiness::Deferred);
-            }
-            for prefix in ["INTENT#", "OPERATION#", "PROBE#", "RECEIPT#"] {
-                if self
-                    .delete_prefix(
-                        &self.tables.runtime_activity,
-                        &generation_partition,
-                        Some(prefix),
-                    )
-                    .await?
-                {
-                    return Ok(LifecycleReadiness::Deferred);
-                }
-            }
-            let remaining = self
-                .partition_page(
-                    &self.tables.runtime_activity,
-                    &generation_partition,
-                    None,
-                    2,
-                )
-                .await?;
-            if remaining.as_slice() != [generation_head.clone()] {
-                return Err(StoreError::Invalid {
-                    detail: "session deletion found an unowned retained runtime row".to_owned(),
-                });
-            }
-            self.delete_rows(&self.tables.runtime_activity, vec![generation_head])
-                .await?;
-            return Ok(LifecycleReadiness::Deferred);
-        }
-        if let Some(current) = self.runtime.load_current(session.id).await? {
-            if current.generation != session.lifecycle.generation {
-                return Err(StoreError::Invalid {
-                    detail: "the deletion fence observed a different current generation".to_owned(),
-                });
-            }
-            let key = aex_runtime_activity_dynamodb::keys::current(session.id);
-            self.delete_rows(&self.tables.runtime_activity, vec![(key.pk, key.sk)])
-                .await?;
-            return Ok(LifecycleReadiness::Deferred);
-        }
-
-        Ok(LifecycleReadiness::Ready)
-    }
-
-    async fn prepare_session_content_delete(
-        &self,
-        session: SessionId,
-    ) -> Result<LifecycleReadiness, StoreError> {
-        let session_partition = aex_session_dynamodb::keys::session_partition(session);
-        for prefix in [
-            "APPROVAL#",
-            "CLONE#",
-            "EVT#",
-            "MSG#",
-            "OP#",
-            "OUTBOX#",
-            "RUN#",
-            "SEALEDMSG#",
-        ] {
-            if self
-                .delete_prefix(
-                    &self.tables.session_authority,
-                    &session_partition,
-                    Some(prefix),
-                )
-                .await?
-            {
-                return Ok(LifecycleReadiness::Deferred);
-            }
-        }
-
-        Ok(LifecycleReadiness::Ready)
-    }
-
-    async fn prepare_brain_content_delete(
-        &self,
-        session: SessionId,
-    ) -> Result<LifecycleReadiness, StoreError> {
-        let session_partition = aex_session_dynamodb::keys::session_partition(session);
-        let agent_indexes = self
-            .partition_page(
-                &self.tables.session_authority,
-                &session_partition,
-                Some("AGENT#"),
-                1,
-            )
-            .await?;
-        if let Some((_, index_sk)) = agent_indexes.first() {
-            let agent = index_sk
-                .strip_prefix("AGENT#")
-                .and_then(|value| value.parse::<AgentId>().ok())
-                .ok_or_else(|| StoreError::Invalid {
-                    detail: "a session agent index carries no valid agent identity".to_owned(),
-                })?;
-            for partition in [
-                aex_session_dynamodb::keys::agent_partition(session, agent),
-                format!("BRAINAGENT#{session}#{agent}"),
-            ] {
-                if self
-                    .delete_prefix(&self.tables.session_authority, &partition, None)
-                    .await?
-                {
-                    return Ok(LifecycleReadiness::Deferred);
-                }
-            }
-            self.delete_rows(
-                &self.tables.session_authority,
-                vec![(session_partition.clone(), index_sk.clone())],
-            )
-            .await?;
-            return Ok(LifecycleReadiness::Deferred);
-        }
-        if self
-            .delete_prefix(
-                &self.tables.session_authority,
-                &session_partition,
-                Some(aex_session_dynamodb::keys::BRAIN_PREFIX),
-            )
-            .await?
-        {
-            return Ok(LifecycleReadiness::Deferred);
-        }
-        let remaining = self
-            .partition_page(&self.tables.session_authority, &session_partition, None, 2)
-            .await?;
-        if remaining.as_slice() != [(session_partition, "HEAD".to_owned())] {
-            return Err(StoreError::Invalid {
-                detail: "session deletion found an unowned retained payload row".to_owned(),
-            });
-        }
-        Ok(LifecycleReadiness::Ready)
-    }
-
-    async fn prepare_session_delete(
-        &self,
-        session: &aex_session_domain::Session,
-    ) -> Result<LifecycleReadiness, StoreError> {
-        let readiness = self.prepare_runtime_delete(session).await?;
-        if readiness != LifecycleReadiness::Ready {
-            return Ok(readiness);
-        }
-        let readiness = self.prepare_session_content_delete(session.id).await?;
-        if readiness != LifecycleReadiness::Ready {
-            return Ok(readiness);
-        }
-        let readiness = self.prepare_brain_content_delete(session.id).await?;
-        if readiness != LifecycleReadiness::Ready {
-            return Ok(readiness);
-        }
-        Ok(LifecycleReadiness::Ready)
-    }
 }
 
 #[async_trait::async_trait]
@@ -833,11 +570,12 @@ impl LifecyclePort for DynamoLifecyclePort {
             let session = self.session(step).await?;
             return Ok(cancellation_readiness(&session));
         }
-        let session = self.session(step).await?;
         if step.kind == OperationKind::SessionDelete {
-            return self.prepare_session_delete(&session).await;
+            return self.deletion.prepare(step, _now).await;
         }
+        let session = self.session(step).await?;
         let view = self.runtime_view(&session).await?;
+        use aex_runtime_control::generation::GenerationState;
         let ready = match step.kind {
             OperationKind::SessionSuspend => view.head.state == GenerationState::Suspended,
             OperationKind::SessionResume => view.head.state == GenerationState::Running,
@@ -881,16 +619,15 @@ impl LifecyclePort for DynamoLifecyclePort {
         Ok(LifecycleReadiness::Deferred)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the exact runtime, deletion evidence, operation and work fences settle in one atomic authority"
-    )]
     async fn settle(
         &self,
         step: &LifecycleStep,
         hold: &WorkClaim,
         now: Timestamp,
     ) -> Result<(), StoreError> {
+        if step.kind == OperationKind::SessionDelete {
+            return self.deletion.settle(step, hold, now).await;
+        }
         let session = self.session(step).await?;
         let stored = aex_session_dynamodb::store::OperationAuthority::load(
             &self.operations,
@@ -909,10 +646,7 @@ impl LifecyclePort for DynamoLifecyclePort {
                 detail: "the lifecycle operation changed binding before settlement".to_owned(),
             });
         }
-        let runtime = if matches!(
-            step.kind,
-            OperationKind::SessionCancel | OperationKind::SessionDelete
-        ) {
+        let runtime = if step.kind == OperationKind::SessionCancel {
             None
         } else {
             Some(self.runtime_view(&session).await?)
@@ -939,25 +673,7 @@ impl LifecyclePort for DynamoLifecyclePort {
             fence: hold.fence,
             owner: hold.owner.clone(),
         };
-        let planned = if step.kind == OperationKind::SessionDelete {
-            aex_session_app::settle_session_delete(
-                &session,
-                &stored.record,
-                aex_operation_domain::operation::OperationVersion(stored.version),
-                &claim,
-                &aex_session_domain::DeleteEvidence {
-                    generation_terminated: true,
-                    session_content_removed: true,
-                    messages_removed: true,
-                    brain_user_content_removed: true,
-                    observations_removed: true,
-                    export_objects_removed: true,
-                    billing_aggregate_retained: true,
-                    audit_fact_retained: true,
-                },
-                now,
-            )
-        } else if matches!(
+        let planned = if matches!(
             step.kind,
             OperationKind::SessionSuspend | OperationKind::SessionResume
         ) && runtime
@@ -976,7 +692,7 @@ impl LifecyclePort for DynamoLifecyclePort {
             aex_session_app::settle_lifecycle_loss(
                 &session,
                 &stored.record,
-                aex_operation_domain::operation::OperationVersion(stored.version),
+                aex_operation_domain::OperationVersion(stored.version),
                 &claim,
                 reason,
                 at,
@@ -985,7 +701,7 @@ impl LifecyclePort for DynamoLifecyclePort {
             aex_session_app::settle_lifecycle_operation(
                 &session,
                 &stored.record,
-                aex_operation_domain::operation::OperationVersion(stored.version),
+                aex_operation_domain::OperationVersion(stored.version),
                 &claim,
                 now,
             )
@@ -1121,43 +837,37 @@ pub fn compile_cancelled_step(
     Ok(plan)
 }
 
-/// Result of reconciling one authoritative operation-step hint.
+/// Result of reconciling one terminal-operation hint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReconcileDisposition {
     /// This invocation retired the work row.
     Retired,
     /// A previous invocation already retired it.
     AlreadyRetired,
-    /// An idempotent nonterminal participant was durably scheduled or replayed.
-    EffectScheduled,
     /// The owning operation is still nonterminal and belongs to an effect lane.
     Deferred,
 }
 
-/// Reconciliation of terminal work, accepted cancellations and idempotent
-/// participant admission.
+/// Fenced reconciliation of operation work and accepted cancellations.
 ///
-/// Every path strongly validates the hint against the work and operation
-/// authorities first. Lifecycle effects are prepared before the work fence and
-/// settled behind it; session observation deletion uses its own operation-bound
-/// conditional row, so duplicate invocations replay that participant.
+/// Lifecycle effects are delegated to the composed runtime bridge before the
+/// work fence is taken. The fence is acquired only once exact provider state is
+/// ready for the atomic session-facing consistency barrier.
 #[derive(Clone)]
-pub struct OperationReconciler<W, O, D> {
+pub struct OperationReconciler<W, O> {
     work: W,
     operations: O,
-    observation_deletions: D,
     lifecycle: Arc<dyn LifecyclePort>,
     owner: String,
     lease_ms: i64,
 }
 
-impl<W, O, D> OperationReconciler<W, O, D>
+impl<W, O> OperationReconciler<W, O>
 where
     W: WorkPort,
     O: OperationPort,
-    D: SessionObservationDeletion,
 {
-    /// Binds the durable authorities and the claim identity.
+    /// Binds the two authorities and the claim identity.
     ///
     /// # Errors
     ///
@@ -1166,7 +876,6 @@ where
     pub fn new(
         work: W,
         operations: O,
-        observation_deletions: D,
         owner: impl Into<String>,
         lease_ms: i64,
     ) -> Result<Self, ReconcileError> {
@@ -1178,7 +887,6 @@ where
             work,
             operations,
             lifecycle: Arc::new(NoLifecycle),
-            observation_deletions,
             owner,
             lease_ms,
         })
@@ -1203,22 +911,12 @@ where
         &self.operations
     }
 
-    /// The bound observation deletion participant.
-    #[must_use]
-    pub const fn observation_deletions(&self) -> &D {
-        &self.observation_deletions
-    }
-
     /// Reconciles one hint.
     ///
     /// # Errors
     ///
     /// Returns [`ReconcileError`] when either authority is unavailable or the
     /// work and operation identities do not agree exactly.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one reconciliation pass binds work, operation, lifecycle effect and retirement without a split"
-    )]
     pub async fn reconcile(
         &self,
         hint: &WorkHint,
@@ -1243,7 +941,7 @@ where
             && operation.cancel_requested
             && operation.committed_at.is_none();
         let lifecycle_step =
-            (!operation.status.is_terminal() && !cancelling).then_some(LifecycleStep {
+            (!operation.status.is_terminal() && !cancelling).then(|| LifecycleStep {
                 workspace: binding.workspace,
                 session: binding.session,
                 operation: binding.operation,
@@ -1255,24 +953,6 @@ where
                 LifecycleReadiness::Ready => {}
                 LifecycleReadiness::Deferred | LifecycleReadiness::Unowned => {
                     return Ok(ReconcileDisposition::Deferred);
-                }
-            }
-            if step.kind == OperationKind::SessionDelete {
-                self.observation_deletions
-                    .request(SessionObservationDeletionRequest {
-                        workspace: binding.workspace,
-                        session: binding.session,
-                        operation: binding.operation,
-                        now,
-                    })
-                    .await?;
-                if self
-                    .observation_deletions
-                    .status(binding.workspace, binding.session, binding.operation)
-                    .await?
-                    != SessionObservationDeletionStatus::Complete
-                {
-                    return Ok(ReconcileDisposition::EffectScheduled);
                 }
             }
         }
@@ -1445,7 +1125,7 @@ pub enum ReconcileError {
     #[error("the work hint is invalid")]
     InvalidHint,
     /// Worker claim settings were unusable.
-    #[error("operation reconciler settings are invalid")]
+    #[error("terminal reconciler settings are invalid")]
     InvalidSettings,
     /// No base row exists under the hint's asserted tenant.
     #[error("the authoritative work row is missing")]
@@ -1462,9 +1142,6 @@ pub enum ReconcileError {
     /// Work payload, tenant, session, version, claim, or operation disagreed.
     #[error("the work and operation authorities do not agree")]
     AuthorityMismatch,
-    /// Observation deletion admission or replay failed.
-    #[error(transparent)]
-    ObservationDeletion(#[from] SessionObservationDeletionError),
     /// A regional authority call failed.
     #[error(transparent)]
     Store(#[from] StoreError),

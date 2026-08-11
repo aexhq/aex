@@ -15,7 +15,7 @@ use aex_operation_domain::{
     FailureClass, Operation, OperationFailure, OperationKind, OperationResult, OperationScope,
     OperationStatus, fail, revoke_telemetry_export, start, succeed,
 };
-use aex_session_dynamodb::attr::{Item, PK, SK, boolean, n, s};
+use aex_session_dynamodb::attr::{Item, ItemBuilder, PK, SK, boolean, n, s};
 use aex_session_dynamodb::codec::{decode_operation, encode_operation};
 use aex_session_dynamodb::error::{
     Idempotence, Resolution, RetryPolicy, StoreError, classify, decode_cancellation_with_resolution,
@@ -31,6 +31,7 @@ use aws_sdk_dynamodb::types::{AttributeValue, Get, TransactGetItem};
 
 const SCOPE_GUARD: Participant = Participant::new("export.scope_guard");
 const OPERATION: Participant = Participant::new("export.operation");
+const SESSION_OPERATION_EDGE: Participant = Participant::new("export.session_operation_edge");
 const EXPORT: Participant = Participant::new("export.state");
 const SCOPE_EXPORT: Participant = Participant::new("export.scope_directory");
 
@@ -202,6 +203,15 @@ impl ExportPairStore {
                 .set_item(Some(operation_item))
                 .condition_expression("attribute_not_exists(pk)"),
         )?;
+        if let Some(edge) = session_operation_edge_item(commit) {
+            plan.put(
+                SESSION_OPERATION_EDGE,
+                PutBuilder::default()
+                    .table_name(&self.session_table)
+                    .set_item(Some(edge))
+                    .condition_expression("attribute_not_exists(pk)"),
+            )?;
+        }
         plan.put(
             EXPORT,
             PutBuilder::default()
@@ -942,6 +952,22 @@ fn scope_export_item(commit: &ExportAdmissionCommit) -> Item {
     ])
 }
 
+fn session_operation_edge_item(commit: &ExportAdmissionCommit) -> Option<Item> {
+    let ScopeKey::Session { session, .. } = commit.scope else {
+        return None;
+    };
+    let target = aex_session_dynamodb::keys::operation_edge(session, commit.operation.id);
+    Some(
+        ItemBuilder::new(aex_session_dynamodb::codec::SESSION_OPERATION_EDGE)
+            .set(PK, s(target.pk))
+            .set(SK, s(target.sk))
+            .set("workspaceId", s(commit.operation.workspace.to_string()))
+            .set("sessionId", s(session.to_string()))
+            .set("operationId", s(commit.operation.id.to_string()))
+            .build(),
+    )
+}
+
 fn add_scope_guard(
     plan: &mut TransactionPlan,
     observation_table: &str,
@@ -1471,7 +1497,7 @@ mod tests {
         EXPORT, ExportPairError, ExportPublish, ExportSettlement, ExportStart, OPERATION,
         deletion_error, failure_plan, failure_terminal, lease_is_expired, lease_window_is_valid,
         pair_gets, pair_snapshot_retry_delay, paired_terminal, publish_terminal,
-        resolve_start_replay, retryable_transition, scope_export_item,
+        resolve_start_replay, retryable_transition, scope_export_item, session_operation_edge_item,
     };
 
     fn at(millis: i64) -> Timestamp {
@@ -1555,12 +1581,14 @@ mod tests {
         })
         .expect("export plans");
         let export_id = export.export;
-        let item = scope_export_item(&super::ExportAdmissionCommit {
+        let commit = super::ExportAdmissionCommit {
             export,
             operation: queued.clone(),
             scope,
             deletion_epoch: 3,
-        });
+        };
+        let item = scope_export_item(&commit);
+        let edge = session_operation_edge_item(&commit).expect("session exports are enumerable");
 
         assert_eq!(
             item[PK].as_s().expect("directory partition"),
@@ -1576,6 +1604,17 @@ mod tests {
         );
         assert_eq!(item["scopeKey"].as_s().expect("scope"), &scope.to_key());
         assert_eq!(item["format"].as_s().expect("format"), "ndjson");
+        let expected_edge = aex_session_dynamodb::keys::operation_edge(session, queued.id);
+        assert_eq!(edge[PK].as_s().expect("edge partition"), &expected_edge.pk);
+        assert_eq!(edge[SK].as_s().expect("edge key"), &expected_edge.sk);
+        assert_eq!(
+            edge["itemType"].as_s().expect("edge item type"),
+            aex_session_dynamodb::codec::SESSION_OPERATION_EDGE
+        );
+        assert_eq!(
+            edge["operationId"].as_s().expect("edge operation"),
+            &queued.id.to_string()
+        );
     }
 
     #[test]

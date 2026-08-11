@@ -37,10 +37,13 @@ pub const STARTUP_FILE_MAX_COUNT: usize = 256;
 
 const PREPARATION: &str = "session_create_preparation";
 const PREPARED_FILE: &str = "session_create_prepared_file";
+const PREPARATION_EDGE: &str = "session_create_preparation_edge";
 const AGENT_CONTROL: &str = "agent_control";
 const JOURNAL_ENTRY: &str = "agent_journal";
 const PREPARATION_PARTICIPANT: Participant = Participant::new("session.create_preparation");
 const PREPARED_FILE_PARTICIPANT: Participant = Participant::new("session.create_prepared_file");
+const PREPARATION_EDGE_PARTICIPANT: Participant =
+    Participant::new("session.create_preparation_edge");
 const PREPARATION_RECLAIM_AFTER_MS: i64 = 86_400_000;
 
 /// One exact registry revision selected for synchronous materialization.
@@ -369,7 +372,7 @@ fn stage_plan(
         maximum: STARTUP_FILE_MAX_COUNT,
     })?;
     let item = ItemBuilder::new(PREPARED_FILE)
-        .set(crate::attr::PK, s(partition))
+        .set(crate::attr::PK, s(partition.clone()))
         .set(crate::attr::SK, s(sort))
         .set("workspaceId", s(prepared.workspace.to_string()))
         .set("intentDigest", s(prepared.intent.to_string()))
@@ -414,7 +417,9 @@ fn stage_plan(
 
 /// Atomically elects the prepared selection and a fresh physical root control.
 ///
-/// No provider launch is legal before this two-action plan commits. An exact
+/// No provider launch is legal before this three-action plan commits. The
+/// session-partition edge makes the separately keyed preparation enumerable by
+/// irreversible deletion. An exact
 /// replay by the same coordinator is idempotent; a different coordinator loses
 /// the conditions and must not launch or recreate execution state.
 ///
@@ -436,7 +441,7 @@ pub fn elect_plan(
     let coordinator = coordinator_text(prepared.coordinator);
     let reclaim_at = preparation_reclaim_epoch_seconds(prepared.prepared_at)?;
     let header = ItemBuilder::new(PREPARATION)
-        .set(crate::attr::PK, s(partition))
+        .set(crate::attr::PK, s(partition.clone()))
         .set(crate::attr::SK, s("PREPARED"))
         .set("state", s("prepared"))
         .set("workspaceId", s(prepared.workspace.to_string()))
@@ -520,6 +525,21 @@ pub fn elect_plan(
             .expression_attribute_values(":generation", s(prepared.generation.to_string()))
             .expression_attribute_values(":zero", n(0))
             .expression_attribute_values(":false", boolean(false)),
+    )?;
+    let edge_key = crate::keys::create_preparation_edge(prepared.session);
+    let edge = ItemBuilder::new(PREPARATION_EDGE)
+        .set(crate::attr::PK, s(edge_key.pk))
+        .set(crate::attr::SK, s(edge_key.sk))
+        .set("workspaceId", s(prepared.workspace.to_string()))
+        .set("sessionId", s(prepared.session.to_string()))
+        .set("preparationPk", s(partition))
+        .build();
+    plan.put(
+        PREPARATION_EDGE_PARTICIPANT,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(edge))
+            .condition_expression(IMMUTABLE),
     )?;
     Ok(plan)
 }

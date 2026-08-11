@@ -667,12 +667,12 @@ impl ApprovalStatus {
 /// Why a pending approval was withdrawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ApprovalCancelCause {
-    /// A stop operation asked for it.
-    StopRequested,
+    /// The public session cancellation command asked for it.
+    SessionCancel,
     /// The run was cancelled.
     RunCancelled,
-    /// The session is being trashed.
-    SessionTrashing,
+    /// The irreversible deletion fence was crossed.
+    SessionDeleting,
     /// The account is paused.
     AccountPaused,
     /// The workspace generation is gone.
@@ -688,9 +688,9 @@ impl ApprovalCancelCause {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::StopRequested => "stop_requested",
+            Self::SessionCancel => "session_cancel",
             Self::RunCancelled => "run_cancelled",
-            Self::SessionTrashing => "session_trashing",
+            Self::SessionDeleting => "session_deleting",
             Self::AccountPaused => "account_paused",
             Self::ContinuityLost => "continuity_lost",
             Self::ToolCallCancelled => "tool_call_cancelled",
@@ -702,9 +702,9 @@ impl ApprovalCancelCause {
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         match text {
-            "stop_requested" => Some(Self::StopRequested),
+            "session_cancel" => Some(Self::SessionCancel),
             "run_cancelled" => Some(Self::RunCancelled),
-            "session_trashing" => Some(Self::SessionTrashing),
+            "session_deleting" => Some(Self::SessionDeleting),
             "account_paused" => Some(Self::AccountPaused),
             "continuity_lost" => Some(Self::ContinuityLost),
             "tool_call_cancelled" => Some(Self::ToolCallCancelled),

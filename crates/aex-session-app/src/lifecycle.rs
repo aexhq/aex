@@ -215,29 +215,31 @@ pub fn settle_lifecycle_operation(
     })
 }
 
-/// Atomically publishes the minimal irreversible-deletion tombstone.
+/// Plans the canonical public result for a fully evidenced irreversible delete.
 ///
-/// Every payload owner must have made its completion evidence durable before
-/// this barrier is planned. The session head is replaced by the tombstone in
-/// the store adapter while the exact operation and work claim terminalize in
-/// the same transaction.
+/// This is intentionally only the application projection. The production
+/// deletion committer must compile the head replacement through
+/// `aex-session-dynamodb::deletion::tombstone_put` and append the exact eight
+/// evidence/progress removals to the same operation/work transaction. The
+/// generic application-plan compiler is not a deletion authority.
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] when the bound authorities disagree, deletion evidence
-/// is incomplete, or the atomic tombstone plan is not submittable.
+/// Returns [`AppError`] unless the operation owns the exact deletion guard and
+/// every independent owner fact is present.
 pub fn settle_session_delete(
-    session: &Session,
+    head: &aex_session_domain::SessionDeletionHead,
     operation: &Operation,
     operation_version: OperationVersion,
     claim: &LifecycleWorkClaim,
     evidence: &DeleteEvidence,
     now: Timestamp,
 ) -> Result<Planned<Operation>, AppError> {
-    if operation.workspace != session.workspace
-        || operation.session != Some(session.id)
-        || operation.scope != OperationScope::Session(session.id)
+    if operation.workspace != head.workspace
+        || operation.session != Some(head.session)
+        || operation.scope != OperationScope::Session(head.session)
         || operation.kind != OperationKind::SessionDelete
+        || operation.id != head.operation
         || claim.work_id != WorkId(operation.id.uuid7()).to_string()
     {
         return Err(AppError::Port(PortError::Corrupt {
@@ -245,8 +247,13 @@ pub fn settle_session_delete(
             reason: "session, operation and work binding disagree",
         }));
     }
-    aex_session_domain::release_mutation_guard(session, operation.id)?;
-    let tombstone = complete_delete(&session.deletion, session.workspace, evidence, now)?;
+    let guard = aex_session_domain::DeletionGuard {
+        session: head.session,
+        state: aex_session_domain::DeletionState::Deleting,
+        epoch: head.epoch,
+        delete_operation: Some(head.operation),
+    };
+    let tombstone = complete_delete(&guard, head.workspace, evidence, now)?;
     let result = canonical_result(&models::SessionTombstone {
         deleted_at: tombstone.deleted_at,
         id: tombstone.session,
@@ -258,11 +265,11 @@ pub fn settle_session_delete(
         intent: TransactionIntent::SettleLifecycle,
         conditions: vec![
             Condition::SessionRevision {
-                session: session.id,
-                expected: session.revision,
+                session: head.session,
+                expected: head.revision,
             },
             Condition::MutationGuardHeldBy {
-                session: session.id,
+                session: head.session,
                 holder: operation.id,
             },
             Condition::OperationVersion {
@@ -432,13 +439,21 @@ pub async fn admit_lifecycle_operation(
             .await?;
         (snapshot.session, Some(snapshot.root))
     } else {
-        (
-            context
-                .sessions
-                .load_session(command.workspace, command.session)
-                .await?,
-            None,
-        )
+        let loaded = context
+            .sessions
+            .load_session(command.workspace, command.session)
+            .await;
+        let session = match loaded {
+            Err(PortError::Deleting { operation, .. })
+                if command.kind == OperationKind::SessionDelete =>
+            {
+                return Err(AppError::Deletion(
+                    aex_session_domain::DeletionRejection::InProgress(operation),
+                ));
+            }
+            result => result?,
+        };
+        (session, None)
     };
     let account = context.accounts.projection(session.organization).await?;
     pause_gate(command_class(command.kind), &account)?;
@@ -559,6 +574,21 @@ fn plan_lifecycle_admission(
     head.revision = session.revision.next();
     head.updated_at = now;
 
+    let head_write = if command.kind == OperationKind::SessionDelete {
+        Write::PutSessionDeletionHead(Box::new(aex_session_domain::SessionDeletionHead {
+            session: session.id,
+            workspace: session.workspace,
+            organization: session.organization,
+            operation: command.operation,
+            epoch: head.deletion.epoch,
+            revision: head.revision,
+            generation: session.lifecycle.generation,
+            started_at: now,
+        }))
+    } else {
+        Write::PutSessionHead(Box::new(head))
+    };
+
     let work_id = WorkId(command.operation.uuid7());
     let work = WorkItem {
         id: work_id,
@@ -578,6 +608,10 @@ fn plan_lifecycle_admission(
     };
 
     let operation_write = Write::PutOperation(Box::new(operation.clone()));
+    let operation_edge_write = Write::PutSessionOperationEdge {
+        session: session.id,
+        operation: command.operation,
+    };
     let work_write = Write::PutWorkItem(Box::new(work));
     let mut conditions = vec![
         Condition::SessionRevision {
@@ -599,6 +633,7 @@ fn plan_lifecycle_admission(
             at_least: account_revision,
         },
         Condition::ItemAbsent(operation_write.target()),
+        Condition::ItemAbsent(operation_edge_write.target()),
         Condition::ItemAbsent(work_write.target()),
     ];
     conditions.push(match session.mutation_guard {
@@ -612,7 +647,8 @@ fn plan_lifecycle_admission(
     });
     let mut writes = vec![
         operation_write,
-        Write::PutSessionHead(Box::new(head)),
+        operation_edge_write,
+        head_write,
         work_write,
     ];
     if let Some((root, cancellation)) = cancellation_root {
@@ -798,6 +834,18 @@ mod tests {
             .expect("head write")
     }
 
+    fn planned_deletion_head(
+        plan: &SessionTransaction,
+    ) -> &aex_session_domain::SessionDeletionHead {
+        plan.writes
+            .iter()
+            .find_map(|write| match write {
+                Write::PutSessionDeletionHead(head) => Some(head.as_ref()),
+                _ => None,
+            })
+            .expect("deletion head write")
+    }
+
     fn complete_delete_evidence() -> DeleteEvidence {
         DeleteEvidence {
             generation_terminated: true,
@@ -862,7 +910,7 @@ mod tests {
                 .count(),
             2
         );
-        assert_eq!(cancel.plan.validate().expect("valid").actions, 7);
+        assert_eq!(cancel.plan.validate().expect("valid").actions, 8);
 
         let terminate = planned(OperationKind::SessionTerminate, &running);
         let terminating = planned_head(&terminate.plan);
@@ -874,13 +922,70 @@ mod tests {
     fn delete_closes_admission_before_provider_cleanup() {
         let live = aex_session_domain::testing::session_fixture();
         let delete = planned(OperationKind::SessionDelete, &live);
-        let deleting = planned_head(&delete.plan);
-        assert_eq!(deleting.work_admission, WorkAdmission::Deleting);
-        assert_eq!(
-            deleting.deletion.state,
-            aex_operation_domain::DeletionState::Deleting
+        let deleting = planned_deletion_head(&delete.plan);
+        assert_eq!(deleting.session, live.id);
+        assert_eq!(deleting.generation, live.lifecycle.generation);
+        assert_eq!(deleting.operation, delete.projected.id);
+        assert_eq!(deleting.epoch, live.deletion.epoch.next());
+        assert!(
+            !delete
+                .plan
+                .writes
+                .iter()
+                .any(|write| matches!(write, Write::PutSessionHead(_)))
         );
-        assert_eq!(deleting.lifecycle.status, LifecycleStatus::Terminating);
+    }
+
+    #[test]
+    fn deletion_completion_requires_all_eight_owner_facts_and_targets_head() {
+        let live = aex_session_domain::testing::session_fixture();
+        let admitted = planned(OperationKind::SessionDelete, &live);
+        let deleting = *planned_deletion_head(&admitted.plan);
+        let claim = LifecycleWorkClaim {
+            work_id: WorkId(admitted.projected.id.uuid7()).to_string(),
+            fence: 9,
+            owner: "session-operation-worker:test".to_owned(),
+        };
+        let settled = settle_session_delete(
+            &deleting,
+            &admitted.projected,
+            OperationVersion::FIRST,
+            &claim,
+            &complete_delete_evidence(),
+            aex_session_domain::testing::moment(20),
+        )
+        .expect("settles complete evidence");
+        let tombstone = settled
+            .plan
+            .writes
+            .iter()
+            .find_map(|write| match write {
+                Write::PutTombstone(tombstone) => Some(tombstone.as_ref()),
+                _ => None,
+            })
+            .expect("minimal tombstone");
+        assert_eq!(tombstone.session, deleting.session);
+        assert_eq!(
+            Write::PutTombstone(Box::new(tombstone.clone()))
+                .target()
+                .sort,
+            "HEAD"
+        );
+        assert_eq!(settled.plan.validate().expect("valid").actions, 3);
+
+        let mut incomplete = complete_delete_evidence();
+        incomplete.observations_removed = false;
+        assert!(
+            settle_session_delete(
+                &deleting,
+                &admitted.projected,
+                OperationVersion::FIRST,
+                &claim,
+                &incomplete,
+                aex_session_domain::testing::moment(20),
+            )
+            .is_err()
+        );
     }
 
     #[test]

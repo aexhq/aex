@@ -136,6 +136,20 @@ pub enum PortError {
         /// What was being read.
         kind: &'static str,
     },
+    /// The named session crossed its irreversible deletion fence.
+    #[error("{kind} was deleted")]
+    Deleted {
+        /// What was deleted.
+        kind: &'static str,
+    },
+    /// The named session has crossed the irreversible fence but its cascade is incomplete.
+    #[error("{kind} is being deleted by operation {operation}")]
+    Deleting {
+        /// What is being deleted.
+        kind: &'static str,
+        /// Exact operation that owns the irreversible fence.
+        operation: OperationId,
+    },
     /// The provider refused the read for now.
     #[error("{kind} is temporarily unavailable")]
     Unavailable {
@@ -178,10 +192,9 @@ pub enum PortError {
 pub trait SessionReader: Send + Sync {
     /// One session head.
     ///
-    /// Split from [`SessionReader::load_message_snapshot`] on purpose: stop, trash and
-    /// restore need the head and nothing else (D-14), and bundling the agents
-    /// into every head read made all three depend on a decode that no adapter
-    /// in the tree can perform.
+    /// Split from [`SessionReader::load_message_snapshot`] on purpose: lifecycle
+    /// commands need the head and nothing else, and bundling Brain state into
+    /// every head read would make them depend on an unrelated decode.
     async fn load_session(
         &self,
         workspace: WorkspaceId,

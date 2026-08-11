@@ -88,7 +88,7 @@ mod tests {
         let workspace = id::<WorkspaceId>(1);
         let organization = id::<OrganizationId>(2);
         let plan = SessionTransaction {
-            intent: TransactionIntent::StopSession,
+            intent: TransactionIntent::CommitTerminal,
             conditions: vec![Condition::RegistryEtag {
                 selector: RegistrySelector {
                     workspace,
@@ -132,7 +132,7 @@ mod tests {
         let workspace = id::<WorkspaceId>(1);
         let organization = id::<OrganizationId>(2);
         let plan = SessionTransaction {
-            intent: TransactionIntent::StopSession,
+            intent: TransactionIntent::CommitTerminal,
             conditions: vec![Condition::RegistryEtag {
                 selector: RegistrySelector {
                     workspace,

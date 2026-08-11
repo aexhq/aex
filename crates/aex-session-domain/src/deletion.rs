@@ -8,10 +8,36 @@
 
 pub use aex_operation_domain::{DeletionEpoch, DeletionGuard, DeletionState};
 
-use aex_wire::ids::{OperationId, SessionId, WorkspaceId};
+use aex_wire::ids::{GenerationId, OperationId, OrganizationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 
-use crate::session::WorkAdmission;
+use crate::{SessionRevision, session::WorkAdmission};
+
+/// Minimal content-free coordination head retained while deletion fans out.
+///
+/// The payload-bearing [`crate::Session`] is replaced by this value in the
+/// admission transaction. It contains only the fences needed to terminate the
+/// exact generation, bind owner evidence and conditionally publish the final
+/// tombstone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionDeletionHead {
+    /// Deleted session identity.
+    pub session: SessionId,
+    /// Owning workspace.
+    pub workspace: WorkspaceId,
+    /// Owning organization retained solely for cross-table authority binding.
+    pub organization: OrganizationId,
+    /// Exact deletion operation holding the mutation guard.
+    pub operation: OperationId,
+    /// Monotonic deletion epoch.
+    pub epoch: DeletionEpoch,
+    /// Session-head revision produced by admission.
+    pub revision: SessionRevision,
+    /// Exact immutable runtime generation that must become terminal.
+    pub generation: GenerationId,
+    /// When the destructive fence committed.
+    pub started_at: Timestamp,
+}
 
 /// The minimal marker retained after user-content deletion.
 #[derive(Debug, Clone, PartialEq, Eq)]

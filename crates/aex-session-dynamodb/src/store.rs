@@ -1234,6 +1234,14 @@ impl SessionReads {
             }
             Err(error) => return Err(StoreError::Corrupt(error)),
         }
+        match crate::authority_codec::is_session_deletion_head(&item, workspace, session) {
+            Ok(true) => return Ok((SessionScoped::Deleted, child_item)),
+            Ok(false) => {}
+            Err(CodecError::WrongTenant { .. }) => {
+                return Ok((SessionScoped::Missing, child_item));
+            }
+            Err(error) => return Err(StoreError::Corrupt(error)),
+        }
         let decoded = match crate::authority_codec::decode_session(&item, workspace) {
             Ok(decoded) => decoded,
             Err(CodecError::WrongTenant { .. }) => {
@@ -1258,6 +1266,12 @@ impl SessionReads {
             return Ok(SessionScoped::Missing);
         };
         match crate::authority_codec::is_session_tombstone(&item, workspace, session) {
+            Ok(true) => return Ok(SessionScoped::Deleted),
+            Ok(false) => {}
+            Err(CodecError::WrongTenant { .. }) => return Ok(SessionScoped::Missing),
+            Err(error) => return Err(StoreError::Corrupt(error)),
+        }
+        match crate::authority_codec::is_session_deletion_head(&item, workspace, session) {
             Ok(true) => return Ok(SessionScoped::Deleted),
             Ok(false) => {}
             Err(CodecError::WrongTenant { .. }) => return Ok(SessionScoped::Missing),
@@ -1296,6 +1310,10 @@ impl SessionReads {
                 return Ok(None);
             };
             if crate::authority_codec::is_session_tombstone(&item, workspace, locator.session)? {
+                return Ok(None);
+            }
+            if crate::authority_codec::is_session_deletion_head(&item, workspace, locator.session)?
+            {
                 return Ok(None);
             }
             let session = crate::authority_codec::decode_session(&item, workspace)?;

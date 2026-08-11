@@ -742,6 +742,7 @@ const fn condition_tag(condition: &Condition) -> &'static str {
 const fn write_tag(write: &Write) -> &'static str {
     match write {
         Write::PutSessionHead(_) => "PutSessionHead",
+        Write::PutSessionDeletionHead(_) => "PutSessionDeletionHead",
         Write::PutMessage(_) => "PutMessage",
         Write::PutSealedMessage(_) => "PutSealedMessage",
         Write::PutRun(_) => "PutRun",
@@ -752,7 +753,9 @@ const fn write_tag(write: &Write) -> &'static str {
         Write::AppendJournalPage { .. } => "AppendJournalPage",
         Write::PutApproval(_) => "PutApproval",
         Write::PutIdempotencyReceipt(_) => "PutIdempotencyReceipt",
+        Write::PutSessionReceiptDirectory { .. } => "PutSessionReceiptDirectory",
         Write::PutOperation(_) => "PutOperation",
+        Write::PutSessionOperationEdge { .. } => "PutSessionOperationEdge",
         Write::RedactOperationResult(_) => "RedactOperationResult",
         Write::PutWorkItem(_) => "PutWorkItem",
         Write::PutAgentWake(_) => "PutAgentWake",
@@ -1332,6 +1335,36 @@ impl SessionReader for SessionCommandReads {
             .get(&physical.pk, &physical.sk)
             .await?
             .ok_or(PortError::NotFound { kind: "session" })?;
+        if crate::authority_codec::is_session_tombstone(&item, workspace, session).map_err(
+            |error| PortError::Corrupt {
+                kind: "session",
+                reason: match error {
+                    crate::attr::CodecError::WrongTenant { .. } => {
+                        "the stored tombstone crosses the asserted tenant"
+                    }
+                    _ => "the stored tombstone is malformed",
+                },
+            },
+        )? {
+            return Err(PortError::Deleted { kind: "session" });
+        }
+        if item
+            .get(crate::attr::ITEM_TYPE)
+            .and_then(|value| value.as_s().ok())
+            .map(String::as_str)
+            == Some(crate::codec::SESSION_DELETION_HEAD)
+        {
+            let deleting =
+                crate::authority_codec::decode_session_deletion_head(&item, workspace, session)
+                    .map_err(|_| PortError::Corrupt {
+                        kind: "session",
+                        reason: "the stored deletion coordination head is malformed",
+                    })?;
+            return Err(PortError::Deleting {
+                kind: "session",
+                operation: deleting.operation,
+            });
+        }
         crate::authority_codec::decode_session(&item, workspace).map_err(|_| PortError::Corrupt {
             kind: "session",
             reason: "the stored session head does not decode into the domain vocabulary",
@@ -1651,7 +1684,7 @@ mod tests {
             id: aex_session_domain::testing::id(41),
             workspace: session.workspace,
             session: Some(session.id),
-            kind: aex_operation_domain::OperationKind::SessionDelete,
+            kind: aex_operation_domain::OperationKind::SessionTerminate,
             status: aex_operation_domain::operation::OperationStatus::Succeeded,
             intent: aex_wire::idempotency::IntentDigest::from_bytes([4; 32]),
             scope: aex_operation_domain::operation::OperationScope::Session(session.id),
@@ -1667,7 +1700,7 @@ mod tests {
             terminal_at: Some(aex_session_domain::testing::moment(1)),
         };
         let plan = SessionTransaction {
-            intent: TransactionIntent::TrashSession,
+            intent: TransactionIntent::TerminateSession,
             conditions: vec![Condition::SessionRevision {
                 session: session.id,
                 expected: session.revision,
@@ -1711,7 +1744,7 @@ mod tests {
             id: aex_session_domain::testing::id(42),
             workspace: session.workspace,
             session: Some(session.id),
-            kind: aex_operation_domain::OperationKind::SessionDelete,
+            kind: aex_operation_domain::OperationKind::SessionTerminate,
             status: aex_operation_domain::operation::OperationStatus::Succeeded,
             intent: aex_wire::idempotency::IntentDigest::from_bytes([4; 32]),
             scope: aex_operation_domain::operation::OperationScope::Session(session.id),
@@ -1728,7 +1761,7 @@ mod tests {
         };
         operation.workspace = aex_session_domain::testing::id(88);
         let plan = SessionTransaction {
-            intent: TransactionIntent::TrashSession,
+            intent: TransactionIntent::TerminateSession,
             conditions: Vec::new(),
             writes: vec![Write::PutOperation(Box::new(operation))],
             after_commit: Vec::new(),
@@ -1756,7 +1789,7 @@ mod tests {
         let (session, _run, _agent, _message) = running_session();
         let agent = aex_session_domain::testing::id(51);
         let plan = SessionTransaction {
-            intent: TransactionIntent::StopSession,
+            intent: TransactionIntent::CancelSession,
             conditions: vec![Condition::AgentRevision {
                 session: session.id,
                 agent,
@@ -1808,5 +1841,282 @@ mod tests {
             "a settlement never creates the row it settles"
         );
         assert_eq!(compiled.condition_groups[0].len(), 1);
+    }
+
+    #[test]
+    fn root_cancellation_advances_both_fences_and_sets_only_the_stop_latch() {
+        let (session, _run, _agent, _message) = running_session();
+        let agent = session.root_agent;
+        let plan = SessionTransaction {
+            intent: TransactionIntent::CancelSession,
+            conditions: vec![Condition::AgentRevision {
+                session: session.id,
+                agent,
+                expected: aex_session_domain::AgentRevision(3),
+            }],
+            writes: vec![Write::RequestRootCancellation {
+                session: session.id,
+                agent,
+                from_revision: aex_session_domain::AgentRevision(3),
+                to_revision: aex_session_domain::AgentRevision(4),
+                from_cancellation: aex_session_domain::CancellationEpoch(7),
+                to_cancellation: aex_session_domain::CancellationEpoch(8),
+                at: aex_session_domain::testing::moment(9),
+            }],
+            after_commit: Vec::new(),
+        };
+        let binding = SessionBinding {
+            workspace: session.workspace,
+            organization: session.organization,
+            session: session.id,
+        };
+        let compiled = compile_application_transaction(
+            &tables(),
+            &plan,
+            binding,
+            &SessionAuthorityExternal::new(binding),
+        )
+        .expect("compiles");
+        let update = compiled.transaction.actions()[0]
+            .update()
+            .expect("the Brain control is a narrow update");
+        let change = update.update_expression();
+        assert!(change.contains("stopRequested = :requested"), "{change}");
+        assert!(
+            change.contains("cancelEpoch = :nextCancellation"),
+            "{change}"
+        );
+        assert!(!change.contains("#status ="), "{change}");
+        let guard = update
+            .condition_expression()
+            .expect("both old fences are conditioned");
+        assert!(guard.contains("cancelEpoch = :fromCancellation"), "{guard}");
+        assert!(guard.contains("revision"), "{guard}");
+        assert!(
+            guard.contains("attribute_not_exists(finishReason)"),
+            "{guard}"
+        );
+    }
+
+    /// A continued stop parked at one agent, as the worker would read it back.
+    fn resumed(
+        session: &aex_session_domain::Session,
+    ) -> (aex_operation_domain::Operation, ContinuationCursor) {
+        let cursor = ContinuationCursor::new(
+            aex_operation_domain::cursor::CursorPosition::SessionTerminate {
+                stage: aex_operation_domain::cursor::LifecycleStage::AwaitProvider,
+                generation: session.lifecycle.generation,
+            },
+            98,
+            None,
+        )
+        .expect("builds");
+        let operation = aex_operation_domain::Operation {
+            id: aex_session_domain::testing::id(61),
+            workspace: session.workspace,
+            session: Some(session.id),
+            kind: aex_operation_domain::OperationKind::SessionTerminate,
+            status: aex_operation_domain::operation::OperationStatus::Running,
+            intent: aex_wire::idempotency::IntentDigest::from_bytes([5; 32]),
+            scope: aex_operation_domain::operation::OperationScope::Session(session.id),
+            progress: None,
+            cursor: Some(cursor.clone()),
+            cancel_requested: false,
+            result: None,
+            error: None,
+            created_at: aex_session_domain::testing::moment(1),
+            started_at: Some(aex_session_domain::testing::moment(1)),
+            updated_at: aex_session_domain::testing::moment(2),
+            committed_at: Some(aex_session_domain::testing::moment(1)),
+            terminal_at: None,
+        };
+        (operation, cursor)
+    }
+
+    fn step_plan(
+        operation: &aex_operation_domain::Operation,
+        conditions: Vec<Condition>,
+    ) -> SessionTransaction {
+        SessionTransaction {
+            intent: TransactionIntent::SettleLifecycle,
+            conditions,
+            writes: vec![Write::PutOperation(Box::new(operation.clone()))],
+            after_commit: Vec::new(),
+        }
+    }
+
+    fn binding_of(session: &aex_session_domain::Session) -> SessionBinding {
+        SessionBinding {
+            workspace: session.workspace,
+            organization: session.organization,
+            session: session.id,
+        }
+    }
+
+    #[test]
+    fn a_resumed_step_conditions_on_the_version_it_read_and_advances_it_by_exactly_one() {
+        let (session, _run, _agent, _message) = running_session();
+        let (operation, cursor) = resumed(&session);
+        let observed = aex_operation_domain::operation::OperationVersion(7);
+        let plan = step_plan(
+            &operation,
+            vec![
+                Condition::OperationCursorAt {
+                    operation: operation.id,
+                    expected: Some(Box::new(cursor)),
+                },
+                Condition::OperationVersion {
+                    operation: operation.id,
+                    expected: observed,
+                },
+            ],
+        );
+        let binding = binding_of(&session);
+        let compiled = compile_application_transaction(
+            &tables(),
+            &plan,
+            binding,
+            &SessionAuthorityExternal::new(binding),
+        )
+        .expect("a resumed step compiles");
+
+        assert_eq!(
+            compiled.transaction.len(),
+            1,
+            "both guards and the write merge into one action on the operation item"
+        );
+        let put = compiled.transaction.actions()[0]
+            .put()
+            .expect("a step rewrites the whole envelope");
+        let expression = put.condition_expression().expect("a condition");
+        assert!(
+            expression.contains("attribute_exists(pk)"),
+            "a step never creates the row it advances: {expression}"
+        );
+        assert!(
+            !expression.contains("attribute_not_exists(pk)"),
+            "a step is not an insert: {expression}"
+        );
+        let names = put.expression_attribute_names().expect("names");
+        assert!(
+            names.values().any(|attribute| attribute == "version"),
+            "the step must guard the version it observed"
+        );
+        assert!(
+            names
+                .values()
+                .any(|attribute| attribute == "continuationCursor"),
+            "the step must guard the cursor it advances from"
+        );
+        let written = put
+            .item()
+            .get("version")
+            .and_then(|value| value.as_n().ok())
+            .and_then(|text| text.parse::<u64>().ok())
+            .expect("the stored row carries its version");
+        assert_eq!(
+            written,
+            observed.next().0,
+            "the row advances by exactly one, or the public cancellation's optimistic loop breaks"
+        );
+    }
+
+    #[test]
+    fn a_resumed_step_that_cannot_name_its_version_is_refused_rather_than_guessed_at() {
+        let (session, _run, _agent, _message) = running_session();
+        let (operation, cursor) = resumed(&session);
+        let plan = step_plan(
+            &operation,
+            vec![Condition::OperationCursorAt {
+                operation: operation.id,
+                expected: Some(Box::new(cursor)),
+            }],
+        );
+        let binding = binding_of(&session);
+        let error = compile_application_transaction(
+            &tables(),
+            &plan,
+            binding,
+            &SessionAuthorityExternal::new(binding),
+        )
+        .expect_err("a version the plan cannot name must not be invented");
+        assert!(
+            format!("{error}").contains("OperationVersion"),
+            "the refusal must name what is missing: {error}"
+        );
+    }
+
+    #[test]
+    fn an_admission_that_claims_an_observed_version_is_refused() {
+        let (session, _run, _agent, _message) = running_session();
+        let (mut operation, _cursor) = resumed(&session);
+        operation.cursor = None;
+        let plan = step_plan(
+            &operation,
+            vec![Condition::OperationVersion {
+                operation: operation.id,
+                expected: aex_operation_domain::operation::OperationVersion(3),
+            }],
+        );
+        let binding = binding_of(&session);
+        let error = compile_application_transaction(
+            &tables(),
+            &plan,
+            binding,
+            &SessionAuthorityExternal::new(binding),
+        )
+        .expect_err("an insert has no version to have observed");
+        assert!(format!("{error}").contains("admission"), "{error}");
+    }
+
+    #[test]
+    fn a_binding_that_disagrees_with_the_compiler_is_refused_before_any_action_is_built() {
+        let (session, _run, _agent, _message) = running_session();
+        let (operation, _cursor) = resumed(&session);
+        let mut plan = step_plan(&operation, Vec::new());
+        plan.intent = TransactionIntent::SettleLifecycle;
+        let binding = binding_of(&session);
+        let mut foreign = binding;
+        foreign.workspace = aex_session_domain::testing::id(99);
+        let error = compile_application_transaction(
+            &tables(),
+            &plan,
+            binding,
+            &SessionAuthorityExternal::new(foreign),
+        )
+        .expect_err("two disagreeing bindings must never both be trusted");
+        assert!(
+            matches!(error, crate::error::StoreError::Invalid { .. }),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_write_with_no_compiler_is_refused_rather_than_skipped() {
+        let (session, _run, _agent, _message) = running_session();
+        let plan = SessionTransaction {
+            intent: TransactionIntent::SettleLifecycle,
+            conditions: Vec::new(),
+            writes: vec![Write::RedactOperationResult(
+                aex_session_domain::testing::id(7),
+            )],
+            after_commit: Vec::new(),
+        };
+        let binding = SessionBinding {
+            workspace: session.workspace,
+            organization: session.organization,
+            session: session.id,
+        };
+        let error = compile_application_transaction(
+            &tables(),
+            &plan,
+            binding,
+            &SessionAuthorityExternal::new(binding),
+        )
+        .expect_err("an unknown write must never be silently dropped");
+        assert!(
+            format!("{error}").contains("RedactOperationResult"),
+            "the refusal must name the arm: {error}"
+        );
     }
 }

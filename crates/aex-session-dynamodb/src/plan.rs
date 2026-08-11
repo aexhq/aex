@@ -94,6 +94,8 @@ impl Participant {
     pub const SESSION_PREVIEW_EVENT: Self = Self::new("session.preview_event");
     /// The durable idempotency receipt.
     pub const SESSION_IDEMPOTENCY: Self = Self::new("session.idempotency");
+    /// Enumerable locator for one session-owned idempotency receipt.
+    pub const SESSION_RECEIPT_DIRECTORY: Self = Self::new("session.receipt_directory");
     /// The durable operation record.
     pub const SESSION_OPERATION: Self = Self::new("session.operation");
     /// The session-partition edge to a durable operation.

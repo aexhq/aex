@@ -112,7 +112,12 @@
     },
     {
       "role": "session-operation-worker",
-      "actions": ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:DeleteItem"],
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:DeleteItem",
+        "dynamodb:TransactWriteItems"
+      ],
       "resources": ["table"],
       "itemTypes": [
         "hands_generation",

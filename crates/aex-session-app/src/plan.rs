@@ -22,7 +22,7 @@ use aex_secret_domain::{
 use aex_session_domain::{
     AccountRevision, AgentControl, AgentFence, AgentRevision, Approval, AuthorizationEpoch,
     CancellationEpoch, IdempotencyReceipt, JournalPage, JournalSeq, Message, OutboxEvent, Run,
-    Session, SessionRevision, SessionTombstone, WorkAdmission,
+    Session, SessionDeletionHead, SessionRevision, SessionTombstone, WorkAdmission,
 };
 use aex_wire::ids::{
     AgentId, ObservationId, OperationId, OrganizationId, ProviderCredentialId, SessionId, UploadId,
@@ -62,24 +62,6 @@ pub enum TransactionIntent {
     StartRun,
     /// Settle a run.
     CommitTerminal,
-    /// Stop a session's work.
-    StopSession,
-    /// Clone a session.
-    CloneSession,
-    /// Discard the live workspace.
-    DiscardWorkspace,
-    /// Rebind credentials.
-    RebindCredentials,
-    /// Trash a session.
-    TrashSession,
-    /// Restore a session.
-    RestoreSession,
-    /// Purge a session.
-    PurgeSession,
-    /// Decide an approval.
-    RespondApproval,
-    /// Advance a continued operation.
-    ContinueOperation,
     /// Mint a registry-file download grant and its replay receipt.
     RegistryDownload,
 }
@@ -521,6 +503,8 @@ pub struct MessageAdmittedEvent {
 pub enum Write {
     /// Replace the session head.
     PutSessionHead(Box<Session>),
+    /// Replace the payload-bearing head with a minimal deletion envelope.
+    PutSessionDeletionHead(Box<SessionDeletionHead>),
     /// Replace a complete message authority row.
     PutMessage(Box<Message>),
     /// Append the immutable, seal-ordered public projection of a message.
@@ -612,8 +596,26 @@ pub enum Write {
     PutApproval(Box<Approval>),
     /// Write an idempotency receipt.
     PutIdempotencyReceipt(Box<IdempotencyReceipt>),
+    /// Index one session-scoped receipt so irreversible deletion can enumerate it.
+    ///
+    /// This is a distinct logical/physical write from the receipt itself. A
+    /// deletion continuation must never fabricate locators for receipts that
+    /// may or may not have committed.
+    PutSessionReceiptDirectory {
+        /// Session whose deletion owns the locator.
+        session: SessionId,
+        /// Exact receipt admitted in the same transaction.
+        receipt: Box<IdempotencyReceipt>,
+    },
     /// Replace an operation record.
     PutOperation(Box<Operation>),
+    /// Index one session-scoped operation for irreversible deletion cleanup.
+    PutSessionOperationEdge {
+        /// Owning session.
+        session: SessionId,
+        /// Exact operation row addressed by the edge.
+        operation: OperationId,
+    },
     /// Strip a purged session's operation result.
     RedactOperationResult(OperationId),
     /// Replace a durable work item.
@@ -654,6 +656,7 @@ impl Write {
     pub const fn family(&self) -> TableFamily {
         match self {
             Self::PutSessionHead(_)
+            | Self::PutSessionDeletionHead(_)
             | Self::PutMessage(_)
             | Self::PutSealedMessage(_)
             | Self::PutRun(_)
@@ -663,6 +666,8 @@ impl Write {
             | Self::AppendJournalPage { .. }
             | Self::PutApproval(_)
             | Self::CancelAgent { .. }
+            | Self::PutSessionReceiptDirectory { .. }
+            | Self::PutSessionOperationEdge { .. }
             | Self::PutTombstone(_) => TableFamily::SessionAuthority,
             Self::PutIdempotencyReceipt(_) => TableFamily::Idempotency,
             Self::PutOperation(_) | Self::RedactOperationResult(_) => {
@@ -687,6 +692,7 @@ impl Write {
     pub fn target(&self) -> ItemKey {
         let (partition, sort) = match self {
             Self::PutSessionHead(session) => (session.id.to_string(), "HEAD".to_owned()),
+            Self::PutSessionDeletionHead(head) => (head.session.to_string(), "HEAD".to_owned()),
             Self::PutMessage(message) => (
                 message.session.to_string(),
                 format!("MESSAGE#{}", message.id),
@@ -733,7 +739,18 @@ impl Write {
                 receipt.key.scope().to_owned(),
                 receipt.key.key_sha256().to_owned(),
             ),
+            Self::PutSessionReceiptDirectory { session, receipt } => (
+                session.to_string(),
+                format!(
+                    "RECEIPT_DIRECTORY#{}#{}",
+                    receipt.key.scope(),
+                    receipt.key.key_sha256()
+                ),
+            ),
             Self::PutOperation(operation) => (operation.id.to_string(), "OPERATION".to_owned()),
+            Self::PutSessionOperationEdge { session, operation } => {
+                (session.to_string(), format!("OP#{operation}"))
+            }
             Self::RedactOperationResult(id) => (id.to_string(), "OPERATION".to_owned()),
             Self::PutWorkItem(item) => (item.id.to_string(), "STATE".to_owned()),
             Self::PutAgentWake(wake) => (wake.work_id.clone(), "STATE".to_owned()),
@@ -797,7 +814,8 @@ impl Write {
             // `ResponseBody::MAX_INLINE_BYTES`, so a flat estimate would let a
             // transaction carrying several of them pass the 4 MiB envelope check
             // and fail at the provider instead.
-            Self::PutIdempotencyReceipt(receipt) => {
+            Self::PutIdempotencyReceipt(receipt)
+            | Self::PutSessionReceiptDirectory { receipt, .. } => {
                 512 + match &receipt.outcome {
                     aex_session_domain::ReceiptOutcome::Resource { response, .. } => {
                         response.inline().map_or(0, <[u8]>::len)
@@ -976,14 +994,15 @@ impl SessionTransaction {
 
     /// The largest number of items a create transaction may ever carry.
     ///
-    /// Four always: the ready public head, exact receipt, one condition on the
+    /// Five always: the ready public head, exact receipt, its deletion
+    /// directory locator, one condition on the
     /// already-started root control/journal authority, and the commit-time
     /// active-account fence. This is a
     /// **constant**, not a bound to grow into: a create whose action count grew
     /// with request size would be a create whose tail latency and
     /// `TransactionConflictException` rate grew with request size, which the
     /// performance-first ordering forbids (A D-5).
-    pub const CREATE_MAX_ACTIONS: usize = 4;
+    pub const CREATE_MAX_ACTIONS: usize = 5;
 
     /// Enforces A D-1's create membership rule.
     ///
@@ -994,6 +1013,10 @@ impl SessionTransaction {
         let mut head: Option<&Session> = None;
         let mut root_writes = 0_usize;
         let mut receipts = 0_usize;
+        let mut receipt = None;
+        let mut receipt_directories = 0_usize;
+        let mut receipt_directory_session = None;
+        let mut directory_receipt = None;
         for write in &self.writes {
             match write {
                 Write::PutSessionHead(session) => {
@@ -1002,8 +1025,24 @@ impl SessionTransaction {
                     }
                     head = Some(session);
                 }
+                Write::PutSessionDeletionHead(_) => {
+                    return Err(create_error(
+                        "ready creation cannot publish a deletion coordination head",
+                    ));
+                }
                 Write::PutAgentControl(_) => root_writes += 1,
-                Write::PutIdempotencyReceipt(_) => receipts += 1,
+                Write::PutIdempotencyReceipt(value) => {
+                    receipts += 1;
+                    receipt = Some(value.as_ref());
+                }
+                Write::PutSessionReceiptDirectory {
+                    session,
+                    receipt: value,
+                } => {
+                    receipt_directories += 1;
+                    receipt_directory_session = Some(*session);
+                    directory_receipt = Some(value.as_ref());
+                }
                 Write::PutMessage(_)
                 | Write::PutSealedMessage(_)
                 | Write::PutRun(_)
@@ -1013,6 +1052,7 @@ impl SessionTransaction {
                 | Write::AppendJournalPage { .. }
                 | Write::PutApproval(_)
                 | Write::PutOperation(_)
+                | Write::PutSessionOperationEdge { .. }
                 | Write::RedactOperationResult(_)
                 | Write::PutWorkItem(_)
                 | Write::PutAgentWake(_)
@@ -1038,6 +1078,14 @@ impl SessionTransaction {
         let Some(_head) = head else {
             return Err(create_error("a create writes exactly one session head"));
         };
+        if receipt_directory_session != Some(head.expect("checked above").id)
+            || directory_receipt.map(|value| value.key.scope()) != Some("session.create")
+            || receipt != directory_receipt
+        {
+            return Err(create_error(
+                "a create receipt directory must name the created session and exact create receipt",
+            ));
+        }
         if root_writes != 0 {
             return Err(create_error(
                 "ready publication must not overwrite the root control whose AgentStarted tail it conditions on",
@@ -1050,7 +1098,22 @@ impl SessionTransaction {
                  one key",
             ));
         }
+        if receipt_directories != 1 {
+            return Err(create_error(
+                "a create writes exactly one deletion directory locator beside its receipt",
+            ));
+        }
         let head = head.expect("checked above");
+        if !matches!(
+            receipt.map(|value| &value.outcome),
+            Some(aex_session_domain::ReceiptOutcome::Resource { kind, id, .. })
+                if *kind == aex_session_domain::ResourceKind::Session
+                    && id.0 == head.id.to_string()
+        ) {
+            return Err(create_error(
+                "the indexed create receipt must name the exact published session",
+            ));
+        }
         let has_root_revision = self.conditions.iter().any(|condition| {
             matches!(condition, Condition::AgentRevision { session, agent, .. }
                 if *session == head.id && *agent == head.root_agent)
@@ -1076,35 +1139,53 @@ impl SessionTransaction {
         Ok(())
     }
 
-    /// Enforces the fixed 11-action message-admission authority.
+    /// Enforces the fixed 12-action message-admission authority.
     ///
-    /// Ten immutable/update rows carry the message, its sealed projection,
+    /// Eleven immutable/update rows carry the message, its sealed projection,
     /// internal Brain execution facts, durable wake, public event, and exact
-    /// receipt. The eleventh action is the read-only active-account projection
+    /// receipt and deletion-directory locator. The twelfth action is the read-only active-account projection
     /// fence. Head and root predicates merge onto their corresponding writes.
     #[expect(
         clippy::too_many_lines,
         reason = "the exhaustive closed participant and condition vocabularies must remain reviewable together"
     )]
     fn check_message_admission_participants(&self) -> Result<(), PlanError> {
-        let mut writes = [0_u8; 10];
+        let mut writes = [0_u8; 11];
+        let mut head_session = None;
+        let mut receipt = None;
+        let mut directory = None;
         for write in &self.writes {
             let slot = match write {
                 Write::PutMessage(_) => 0,
                 Write::PutSealedMessage(_) => 1,
                 Write::PutRun(_) => 2,
-                Write::PutSessionHead(_) => 3,
+                Write::PutSessionHead(head) => {
+                    head_session = Some(head.id);
+                    3
+                }
                 Write::AdmitRootRun { .. } => 4,
                 Write::AppendJournalPage { .. } => 5,
                 Write::PutAgentWake(_) => 6,
                 Write::PutAgentWakeDedupe(_) => 7,
                 Write::PutMessageAdmittedEvent(_) => 8,
-                Write::PutIdempotencyReceipt(_) => 9,
+                Write::PutIdempotencyReceipt(value) => {
+                    receipt = Some(value.as_ref());
+                    9
+                }
+                Write::PutSessionReceiptDirectory {
+                    session,
+                    receipt: value,
+                } => {
+                    directory = Some((*session, value.as_ref()));
+                    10
+                }
                 Write::PutAgentControl(_)
+                | Write::PutSessionDeletionHead(_)
                 | Write::RequestRootCancellation { .. }
                 | Write::CancelAgent { .. }
                 | Write::PutApproval(_)
                 | Write::PutOperation(_)
+                | Write::PutSessionOperationEdge { .. }
                 | Write::RedactOperationResult(_)
                 | Write::PutWorkItem(_)
                 | Write::CompleteWorkItem(_)
@@ -1119,15 +1200,26 @@ impl SessionTransaction {
                 | Write::PutTombstone(_)
                 | Write::DeleteItem(_) => {
                     return Err(message_admission_error(
-                        "admission writes only its ten closed participants",
+                        "admission writes only its eleven closed participants",
                     ));
                 }
             };
             writes[slot] = writes[slot].saturating_add(1);
         }
-        if writes != [1; 10] {
+        if writes != [1; 11] {
             return Err(message_admission_error(
-                "admission writes each of its ten participants exactly once",
+                "admission writes each of its eleven participants exactly once",
+            ));
+        }
+        if !matches!(
+            (head_session, receipt, directory),
+            (Some(head), Some(receipt), Some((session, directory_receipt)))
+                if head == session
+                    && receipt == directory_receipt
+                    && receipt.key.scope() == format!("session.message:{session}")
+        ) {
+            return Err(message_admission_error(
+                "admission indexes the exact session message receipt it writes",
             ));
         }
 
@@ -1470,7 +1562,11 @@ mod tests {
                 },
             ],
             writes: vec![
-                Write::PutSessionHead(Box::new(session)),
+                Write::PutSessionHead(Box::new(session.clone())),
+                Write::PutSessionReceiptDirectory {
+                    session: session.id,
+                    receipt: Box::new(receipt.clone()),
+                },
                 Write::PutIdempotencyReceipt(Box::new(receipt)),
             ],
             after_commit: Vec::new(),
@@ -1493,7 +1589,7 @@ mod tests {
     }
 
     #[test]
-    fn ready_create_publication_is_four_constant_actions() {
+    fn ready_create_publication_is_five_constant_actions() {
         let shape = create_plan(aex_session_domain::testing::session_fixture())
             .validate()
             .expect("the minimal create is complete");
