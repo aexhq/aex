@@ -66,9 +66,9 @@ use aex_wire::routes::{RouteId, route};
 use aex_wire::server::{
     AcceptKind, Accepted, ApprovalsApi, Created, NoContent, ProviderCredentialsApi,
     RegionalOperationsApi, RegistryApi, RequestContext as WireContext, RouteGroup, SecretsApi,
-    SessionsApi, WithETag, WorkspaceApi, dispatch_approvals, dispatch_provider_credentials,
-    dispatch_regional_operations, dispatch_registry, dispatch_secrets, dispatch_sessions,
-    dispatch_usage, dispatch_workspace,
+    SessionsApi, WithETag, WorkspaceApi, dispatch_approvals, dispatch_files,
+    dispatch_provider_credentials, dispatch_regional_operations, dispatch_registry,
+    dispatch_secrets, dispatch_sessions, dispatch_usage, dispatch_workspace,
 };
 use aex_wire::types::Timestamp;
 
@@ -78,6 +78,10 @@ use aex_wire::types::Timestamp;
 /// which is what lets a handler be constructed for one request by cloning two
 /// `Arc`s.
 pub struct Shared {
+    /// Exact-generation authenticated guest transport for ephemeral live files.
+    pub live_files: Arc<dyn aex_brain_hands::LiveFileBackend>,
+    /// Durable transfer election, ownership and replay authority.
+    pub live_transfers: Arc<dyn crate::session::live_transfer::LiveTransferStore>,
     /// The ciphertext-metadata authority.
     ///
     /// Metadata only: this deployable holds no decrypt key, so the one thing it
@@ -2009,6 +2013,7 @@ impl UnaryDispatch for Routes {
             "registry" => dispatch_registry(self, &wire, raw, limits).await?,
             "approvals" => dispatch_approvals(self, &wire, raw, limits).await?,
             "sessions" => dispatch_sessions(self, &wire, raw, limits).await?,
+            "files" => dispatch_files(self, &wire, raw, limits).await?,
             "uploads" => aex_wire::server::dispatch_uploads(self, &wire, raw, limits).await?,
             "usage" => dispatch_usage(self, &wire, raw, limits).await?,
             "workspace" => dispatch_workspace(self, &wire, raw, limits).await?,

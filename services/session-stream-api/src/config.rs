@@ -92,6 +92,18 @@ pub const REGISTRY_TABLE: &str = "AEX_REGISTRY_TABLE";
 pub const SECRET_CUSTODY_TABLE: &str = "AEX_SECRET_CUSTODY_TABLE";
 /// The `runtime-activity` table.
 pub const RUNTIME_ACTIVITY_TABLE: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
+/// Compute usage ingress shared with runtime-control resume accounting.
+pub const USAGE_COMPUTE_QUEUE_URL: &str = "AEX_USAGE_COMPUTE_QUEUE_URL";
+/// Storage usage ingress shared with runtime-control resume accounting.
+pub const USAGE_STORAGE_QUEUE_URL: &str = "AEX_USAGE_STORAGE_QUEUE_URL";
+/// Runtime due-index shard count (constructor setting; this edge does not scan it).
+pub const RUNTIME_DUE_SHARDS: &str = "AEX_RUNTIME_DUE_SHARDS";
+/// Runtime due page item ceiling.
+pub const RUNTIME_DUE_PAGE_ITEMS: &str = "AEX_RUNTIME_DUE_PAGE_ITEMS";
+/// Runtime due page read ceiling.
+pub const RUNTIME_DUE_PAGE_READS: &str = "AEX_RUNTIME_DUE_PAGE_READS";
+/// Exact pricing version attached to resume usage drafts.
+pub const PRICING_VERSION: &str = "AEX_PRICING_VERSION";
 /// The `usage-query-projection` table.
 pub const USAGE_QUERY_TABLE: &str = "AEX_USAGE_QUERY_TABLE";
 /// The account that must own the content bucket.
@@ -141,7 +153,7 @@ pub const STREAM_CONNECTION_BUFFER_BYTES: &str = "AEX_STREAM_CONNECTION_BUFFER_B
 pub const STREAM_WRITE_STALL_MS: &str = "AEX_STREAM_WRITE_STALL_MS";
 
 /// Every variable a healthy `session-stream-api` requires in `poll` mode.
-pub const REQUIRED: [&str; 35] = [
+pub const REQUIRED: [&str; 41] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
@@ -158,6 +170,12 @@ pub const REQUIRED: [&str; 35] = [
     REGISTRY_TABLE,
     SECRET_CUSTODY_TABLE,
     RUNTIME_ACTIVITY_TABLE,
+    USAGE_COMPUTE_QUEUE_URL,
+    USAGE_STORAGE_QUEUE_URL,
+    RUNTIME_DUE_SHARDS,
+    RUNTIME_DUE_PAGE_ITEMS,
+    RUNTIME_DUE_PAGE_READS,
+    PRICING_VERSION,
     USAGE_QUERY_TABLE,
     CONTENT_BUCKET_OWNER,
     CONTENT_KMS_KEY_ARN,
@@ -272,6 +290,16 @@ pub struct Config {
     pub secret_custody_table: String,
     /// `runtime-activity` table.
     pub runtime_activity_table: String,
+    /// Compute usage ingress used by same-generation resume.
+    pub usage_compute_queue_url: String,
+    /// Storage usage ingress used by same-generation resume.
+    pub usage_storage_queue_url: String,
+    /// Runtime-control due-index shard count.
+    pub runtime_due_shards: u16,
+    /// Runtime-control due scan budget.
+    pub runtime_due_page: aex_runtime_control::store::PageBudget,
+    /// Exact usage pricing version.
+    pub pricing_version: String,
     /// `usage-query-projection` table.
     pub usage_query_table: String,
     /// `observation-authority` table.
@@ -358,6 +386,36 @@ impl Config {
                 ),
             });
         }
+        let usage_compute_queue_url = required(lookup, USAGE_COMPUTE_QUEUE_URL)?;
+        let usage_storage_queue_url = required(lookup, USAGE_STORAGE_QUEUE_URL)?;
+        let queue_prefix = format!("https://sqs.{}.amazonaws.com/", region.as_str());
+        for (name, value) in [
+            (USAGE_COMPUTE_QUEUE_URL, &usage_compute_queue_url),
+            (USAGE_STORAGE_QUEUE_URL, &usage_storage_queue_url),
+        ] {
+            if !value.starts_with(&queue_prefix) {
+                return Err(RegionalHttpConfigError::Invalid {
+                    name,
+                    reason: format!("must be an SQS queue URL in `{}`", region.as_str()),
+                });
+            }
+        }
+        if usage_compute_queue_url == usage_storage_queue_url {
+            return Err(RegionalHttpConfigError::Invalid {
+                name: USAGE_STORAGE_QUEUE_URL,
+                reason: "compute and storage usage authorities cannot share one queue".to_owned(),
+            });
+        }
+        let runtime_due_shards_raw = bounded_u64(lookup, RUNTIME_DUE_SHARDS, 1, u16::MAX.into())?;
+        let runtime_due_shards = u16::try_from(runtime_due_shards_raw).map_err(|_| {
+            RegionalHttpConfigError::Invalid {
+                name: RUNTIME_DUE_SHARDS,
+                reason: "does not fit u16".to_owned(),
+            }
+        })?;
+        let runtime_due_page_items = bounded_u64(lookup, RUNTIME_DUE_PAGE_ITEMS, 1, 32)?;
+        let runtime_due_page_reads = bounded_u64(lookup, RUNTIME_DUE_PAGE_READS, 1, 10_000)?;
+        let pricing_version = required(lookup, PRICING_VERSION)?;
 
         let raw_wake = one_of(lookup, STREAM_WAKE_MODE, &WakeMode::ALL)?;
         let wake_mode = if raw_wake == "ddb_streams" {
@@ -503,6 +561,14 @@ impl Config {
             registry_table: required(lookup, REGISTRY_TABLE)?,
             secret_custody_table: required(lookup, SECRET_CUSTODY_TABLE)?,
             runtime_activity_table: required(lookup, RUNTIME_ACTIVITY_TABLE)?,
+            usage_compute_queue_url,
+            usage_storage_queue_url,
+            runtime_due_shards,
+            runtime_due_page: aex_runtime_control::store::PageBudget {
+                max_items: u32::try_from(runtime_due_page_items).unwrap_or(u32::MAX),
+                max_reads: u32::try_from(runtime_due_page_reads).unwrap_or(u32::MAX),
+            },
+            pricing_version,
             usage_query_table: required(lookup, USAGE_QUERY_TABLE)?,
             observation_table: required(lookup, OBSERVATION_TABLE)?,
             session_stream,

@@ -25,6 +25,7 @@ use aex_hands_control_aws::{
     AGENT_PORT, EndpointToken, MAX_DURATION_SECONDS, MicrovmControlApi, MicrovmDescription,
     RunHookBounds, RunHookPayload, RunRequest, TOKEN_TTL_SECONDS,
 };
+use aex_hands_protocol::files::{FileRequest, FileResponse};
 use aex_hands_protocol::lifecycle::ProviderRequestId;
 use aex_hands_protocol::operation::{
     DeliveryMode, OperationBounds, OperationExit, OperationRequest, TerminalMetadata, TerminalState,
@@ -57,6 +58,7 @@ use aex_wire::types::Timestamp;
 use tokio::sync::Mutex;
 
 use crate::lease::{EndpointLeaseCache, GuestObservation, LeaseHandle, LeaseIdentity};
+use crate::live_file::{LiveFileBackend, LiveFileReply};
 use crate::{
     AuthenticatedGuestEndpoint, GuestReply, HttpGuestTransport, MAX_FRAME_BYTES,
     MAX_RESULT_BODY_BYTES, ResultAssembly, admit, admit_native_resume, launch_backoff_ms, settle,
@@ -69,6 +71,11 @@ pub use attached::{ATTACH_MAX_WALL_MS, delivery_for};
 const MATERIALIZE_ATTEMPTS: u32 = 64;
 const STORE_ATTEMPTS: usize = 16;
 const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
+/// Opening or closing an exact descriptor may hash the full five-GiB file once
+/// on the smallest offered CPU. This stays below the public ALB's 1,200-second
+/// idle ceiling and bounds a guest call after its edge request disappears.
+const FILE_RPC_TIMEOUT: Duration = Duration::from_secs(600);
+const FILE_BATCH_MAX_REQUESTS: usize = 10;
 const RESULT_CHUNK_BYTES: u64 = 180_000;
 const RESULT_PULL_ATTEMPTS: usize = 32;
 const ENDPOINT_LEASE_CACHE_CAPACITY: usize = 128;
@@ -1177,6 +1184,69 @@ impl ProductionHandsBackend {
             ProviderFailureKind::Overloaded,
             "operation settlement lost its bounded concurrency retry budget",
         ))
+    }
+}
+
+impl LiveFileBackend for ProductionHandsBackend {
+    fn call<'a>(
+        &'a self,
+        session: SessionId,
+        generation: GenerationId,
+        activity: HandsOperationId,
+        requests: &'a [FileRequest],
+    ) -> BoxFuture<'a, Result<LiveFileReply, HandsError>> {
+        Box::pin(async move {
+            if requests.is_empty() || requests.len() > FILE_BATCH_MAX_REQUESTS {
+                return Err(pre_dispatch(
+                    ProviderFailureKind::InvalidRequest,
+                    "a live-file batch must contain between one and ten bounded guest calls",
+                ));
+            }
+            let (replies, resumed) = self
+                .call_native_activity_batch::<_, FileResponse>(
+                    session,
+                    generation,
+                    activity,
+                    Verb::File,
+                    requests,
+                    FILE_RPC_TIMEOUT,
+                )
+                .await?;
+            let lifecycle_fence = replies
+                .first()
+                .ok_or_else(|| {
+                    dispatched(
+                        ProviderFailureKind::ProtocolViolation,
+                        "a non-empty live-file batch returned no guest replies",
+                    )
+                })?
+                .fence
+                .0;
+            if replies.iter().any(|reply| reply.fence.0 != lifecycle_fence) {
+                return Err(dispatched(
+                    ProviderFailureKind::ProtocolViolation,
+                    "one live-file activity observed more than one lifecycle fence",
+                ));
+            }
+            let view = self.load_view(generation, ReadConsistency::Strong).await?;
+            Self::require_view(&view, session, generation)?;
+            let expires_at = view
+                .lifetime
+                .ok_or_else(|| {
+                    dispatched(
+                        ProviderFailureKind::ProtocolViolation,
+                        "a reachable generation has no provider lifetime authority",
+                    )
+                })?
+                .expires_at();
+            Ok(LiveFileReply {
+                responses: replies.into_iter().map(|reply| reply.payload).collect(),
+                generation,
+                resumed,
+                lifecycle_fence,
+                expires_at,
+            })
+        })
     }
 }
 

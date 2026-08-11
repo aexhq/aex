@@ -48,7 +48,9 @@ path = "src/main.rs"
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-dynamodbstreams.workspace = true
+aws-sdk-lambdamicrovms.workspace = true
 aws-sdk-s3.workspace = true
+aws-sdk-sqs.workspace = true
 # The two cold-start reads, one store each: Secrets Manager holds the credential
 # pepper ring at the id the issuing authority also reads, and Parameter Store
 # holds the cursor signing ring both halves of this deployable share.
@@ -61,6 +63,12 @@ bytes.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["net"] }
 aex-content-domain = { path = "../../crates/aex-content-domain" }
+aex-brain-hands = { path = "../../crates/aex-brain-hands" }
+aex-brain-app = { path = "../../crates/aex-brain-app" }
+aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
+aex-hands-protocol = { path = "../../crates/aex-hands-protocol" }
+aex-runtime-control = { path = "../../crates/aex-runtime-control" }
+aex-runtime-control-aws = { path = "../../crates/aex-runtime-control-aws" }
 # The one `AccountOperationalState` mapping, shared with the central plane so
 # that one account cannot be described two ways. Already a dependency of
 # `aex-regional-http`, so this adds no crate edge to the deployable.

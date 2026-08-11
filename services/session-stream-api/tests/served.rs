@@ -86,6 +86,23 @@ use tower::ServiceExt as _;
 
 // --- fixtures -------------------------------------------------------------------
 
+struct NoLiveFiles;
+
+impl aex_brain_hands::LiveFileBackend for NoLiveFiles {
+    fn call<'a>(
+        &'a self,
+        _session: SessionId,
+        _generation: GenerationId,
+        _activity: aex_hands_protocol::rpc::HandsOperationId,
+        _requests: &'a [aex_hands_protocol::files::FileRequest],
+    ) -> aex_brain_app::ports::BoxFuture<
+        'a,
+        Result<aex_brain_hands::LiveFileReply, aex_brain_app::ports::HandsError>,
+    > {
+        Box::pin(async { panic!("a non-live fixture reached guest transport") })
+    }
+}
+
 fn sample<I: PrefixedId>(seed: u8) -> I {
     I::from_uuid7(Uuid7::compose(1_754_051_696_789, [seed; 10]))
 }
@@ -1323,6 +1340,13 @@ fn shared_with_workspace(
     placements: Arc<FakePlacements>,
 ) -> Arc<Shared> {
     Arc::new(Shared {
+        live_files: Arc::new(NoLiveFiles),
+        live_transfers: Arc::new(
+            session_stream_api::session::live_transfer::LiveTransferDynamoStore::new(
+                offline_dynamodb(),
+                SESSION_TABLE,
+            ),
+        ),
         workspace: projection as Arc<dyn WorkspaceProjection>,
         placements: placements as Arc<dyn AuthorizationProjection>,
         api_url: aex_wire::types::HttpsUrl::parse("https://eu-west-1.aex.dev")
@@ -3163,6 +3187,13 @@ impl UsageProjectionReads for FakeUsage {
 
 fn usage_router(usage: Arc<FakeUsage>) -> axum::Router {
     let shared = Arc::new(Shared {
+        live_files: Arc::new(NoLiveFiles),
+        live_transfers: Arc::new(
+            session_stream_api::session::live_transfer::LiveTransferDynamoStore::new(
+                offline_dynamodb(),
+                SESSION_TABLE,
+            ),
+        ),
         // The usage cases never reach a workspace read, so the projection here
         // is the empty one: a case that started depending on a workspace row
         // would fail rather than pass against an invented one.

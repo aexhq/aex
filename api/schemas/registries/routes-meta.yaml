@@ -110,17 +110,6 @@ deferredOperations:
   session_cancel: "The multi-turn current-work cancellation authority and provider coordination are not implemented."
   session_create: "The complete session authority and create use case are not implemented."
   session_delete: "The irreversible cross-plane session/user-content/telemetry deletion authority is not implemented."
-  session_files_live_download_create: "The session root, content decryption, and presigning composition is incomplete."
-  session_files_live_download_complete: "The exact-generation live download completion authority is awaiting integration."
-  session_files_live_download_delete: "The exact-generation live download close authority is awaiting integration."
-  session_files_live_download_part_get: "The exact-generation raw download transport is awaiting integration."
-  session_files_live_list: "The guest answers this from lstat with no digest; session-stream-api composes no authenticated guest transport or provider endpoint token to ask it."
-  session_files_live_stat: "The guest answers this from lstat with no digest; session-stream-api composes no authenticated guest transport or provider endpoint token to ask it."
-  session_files_live_upload_complete: "The exact-generation live upload completion authority is awaiting integration."
-  session_files_live_upload_create: "The exact-generation live upload admission authority is awaiting integration."
-  session_files_live_upload_delete: "The exact-generation live upload abort authority is awaiting integration."
-  session_files_live_upload_get: "The exact-generation live upload read authority is awaiting integration."
-  session_files_live_upload_part_put: "The exact-generation raw upload transport is awaiting integration."
   session_message_send: "The wire and domain message vocabularies and durable command path are not reconciled."
   session_resume: "The exact-generation manual resume authority and provider coordination are not implemented."
   session_suspend: "The idle-only exact-generation manual suspension authority and provider coordination are not implemented."
@@ -237,6 +226,17 @@ servedOperations:
     - session_observations_telemetry_stream
     - session_observations_traces_listen
     - session_observations_traces_stream
+    - session_files_live_download_complete
+    - session_files_live_download_create
+    - session_files_live_download_delete
+    - session_files_live_download_part_get
+    - session_files_live_list
+    - session_files_live_stat
+    - session_files_live_upload_complete
+    - session_files_live_upload_create
+    - session_files_live_upload_delete
+    - session_files_live_upload_get
+    - session_files_live_upload_part_put
     - session_get
     - session_messages_list
     - sessions_list

@@ -393,7 +393,18 @@ async fn run(
     };
     let registry_entries = scalar(aex_wire::limits::LimitId::RegistryEntries)?;
     let registry_value_bytes = scalar(aex_wire::limits::LimitId::RegistryValueBytes)?;
+    let live_files =
+        session_stream_api::session::live_composition::production_live_files(&aws, config)
+            .map_err(|error| SessionStreamApiRunError::Probe(error.to_string()))?;
+    let live_transfers = Arc::new(
+        session_stream_api::session::live_transfer::LiveTransferDynamoStore::new(
+            dynamodb.clone(),
+            stores.session_table.clone(),
+        ),
+    );
     let dispatcher = Dispatcher::new(Arc::new(Shared {
+        live_files,
+        live_transfers,
         custody: Arc::new(stores.custody.clone()),
         custody_reads: stores.custody.clone(),
         custody_table: stores.custody.table().to_owned(),

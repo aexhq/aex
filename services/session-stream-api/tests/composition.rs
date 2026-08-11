@@ -70,6 +70,18 @@ fn polling() -> BTreeMap<&'static str, String> {
             "aex-dev-runtime-activity".to_owned(),
         ),
         (
+            config::USAGE_COMPUTE_QUEUE_URL,
+            "https://sqs.eu-west-1.amazonaws.com/000000000000/aex-dev-compute".to_owned(),
+        ),
+        (
+            config::USAGE_STORAGE_QUEUE_URL,
+            "https://sqs.eu-west-1.amazonaws.com/000000000000/aex-dev-storage".to_owned(),
+        ),
+        (config::RUNTIME_DUE_SHARDS, "8".to_owned()),
+        (config::RUNTIME_DUE_PAGE_ITEMS, "32".to_owned()),
+        (config::RUNTIME_DUE_PAGE_READS, "64".to_owned()),
+        (config::PRICING_VERSION, "synthetic-zero-v1".to_owned()),
+        (
             config::USAGE_QUERY_TABLE,
             "aex-dev-usage-query-projection".to_owned(),
         ),
