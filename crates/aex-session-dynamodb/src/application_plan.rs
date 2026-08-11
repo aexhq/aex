@@ -1002,7 +1002,6 @@ const fn session_status(status: aex_session_domain::SessionStatus) -> &'static s
     match status {
         aex_session_domain::SessionStatus::Idle => "idle",
         aex_session_domain::SessionStatus::Running => "running",
-        aex_session_domain::SessionStatus::AwaitingApproval => "awaiting_approval",
         aex_session_domain::SessionStatus::Suspending => "suspending",
         aex_session_domain::SessionStatus::Suspended => "suspended",
         aex_session_domain::SessionStatus::Resuming => "resuming",

@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::operation::{ByteRangeRequest, FileMode, GuestPath};
 
+/// Largest live-directory page the guest will produce.
+pub const MAX_FILE_LIST_ENTRIES: u32 = 1_000;
+
 /// Largest binary body carried by one authenticated guest frame.
 ///
 /// Base64 expands by four thirds. Seven hundred thousand bytes plus the closed
@@ -117,6 +120,46 @@ pub struct FileDownloadChunk {
     pub last: bool,
 }
 
+/// What one live `lstat` observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveFileEntryKind {
+    /// A regular file.
+    File,
+    /// A directory.
+    Directory,
+    /// A symbolic link, reported without following it.
+    Symlink,
+}
+
+/// One structured live entry. No content digest is computed or implied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LiveFileEntry {
+    /// Absolute normalized path inside the guest workspace.
+    pub path: GuestPath,
+    /// Entry kind from `lstat`.
+    pub kind: LiveFileEntryKind,
+    /// Size reported by `lstat`.
+    pub size_bytes: u64,
+    /// Modification time in Unix epoch milliseconds.
+    pub mtime_ms: i64,
+    /// POSIX mode bits.
+    pub mode: u32,
+    /// Exact link text, when this is a symlink. It is never resolved or followed.
+    pub target: Option<String>,
+}
+
+/// One ordered live-directory page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LiveFileListing {
+    /// Entries in strict path order.
+    pub entries: Vec<LiveFileEntry>,
+    /// Resume strictly after this path, when the page was truncated.
+    pub next_after: Option<GuestPath>,
+}
+
 /// One binary-safe live-file RPC.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -125,6 +168,22 @@ pub struct FileDownloadChunk {
     rename_all_fields = "camelCase"
 )]
 pub enum FileRequest {
+    /// List one live directory from `lstat` metadata only.
+    List {
+        /// Directory to list.
+        path: GuestPath,
+        /// Whether to descend through directories. Symlinks are never followed.
+        recursive: bool,
+        /// Page size, at most [`MAX_FILE_LIST_ENTRIES`].
+        limit: u32,
+        /// Resume strictly after this path.
+        after: Option<GuestPath>,
+    },
+    /// Stat one path without following a symlink.
+    Stat {
+        /// Path to observe.
+        path: GuestPath,
+    },
     /// Create or reopen a generation-local multipart upload.
     UploadOpen {
         /// Caller-minted upload identity.
@@ -210,6 +269,11 @@ pub enum FileRequest {
         /// Transfer identity.
         download: FileDownloadId,
     },
+    /// Close an abandoned descriptor without an expensive final hash pass.
+    DownloadAbort {
+        /// Transfer identity.
+        download: FileDownloadId,
+    },
 }
 
 /// One live-file answer.
@@ -220,6 +284,16 @@ pub enum FileRequest {
     rename_all_fields = "camelCase"
 )]
 pub enum FileResponse {
+    /// One live-directory page.
+    Listing {
+        /// Structured lstat-only answer.
+        listing: LiveFileListing,
+    },
+    /// One lstat-only live entry.
+    Entry {
+        /// Structured answer.
+        entry: LiveFileEntry,
+    },
     /// Upload open/status/part answer.
     Upload {
         /// Current resumable state.
@@ -253,6 +327,11 @@ pub enum FileResponse {
         sha256: ContentHash,
         /// Reverified version token.
         version: ContentHash,
+    },
+    /// An abandoned descriptor was closed.
+    DownloadAborted {
+        /// Closed transfer identity.
+        download: FileDownloadId,
     },
     /// A stable guest-side refusal. The trusted caller maps it onto a declared
     /// public error; no customer-controlled diagnostic is used as authority.
@@ -299,7 +378,7 @@ mod base64_bytes {
 #[cfg(test)]
 mod tests {
     use super::{FILE_FRAME_BYTES, FileDownloadId, FileRequest, FileUploadId};
-    use crate::operation::GuestRoot;
+    use crate::operation::{GuestPath, GuestRoot};
     use aex_wire::ids::{ContentHash, Uuid7};
 
     #[test]
@@ -319,6 +398,25 @@ mod tests {
         let _ = (
             FileDownloadId(Uuid7::compose(1, [4; 10])),
             GuestRoot::workspace(),
+        );
+    }
+
+    #[test]
+    fn a_live_list_carries_only_validated_paths_and_bounded_page_inputs() {
+        let root = GuestRoot::workspace();
+        let request = FileRequest::List {
+            path: GuestPath::parse(&root, "/workspace/src").expect("path"),
+            recursive: true,
+            limit: 1_000,
+            after: Some(
+                GuestPath::parse(&root, "/workspace/src/lib.rs").expect("continuation path"),
+            ),
+        };
+        let encoded = serde_json::to_vec(&request).expect("list request encodes");
+        assert!(encoded.len() < 8_192);
+        assert_eq!(
+            serde_json::from_slice::<FileRequest>(&encoded).expect("strict decode"),
+            request
         );
     }
 }

@@ -12,7 +12,6 @@ schemas:
     values:
       - { value: idle, doc: "Ready for another message." }
       - { value: running, doc: "Processing the active message." }
-      - { value: awaiting_approval, doc: "The active message is waiting for a bound tool-call decision." }
       - { value: suspending, doc: "Stopping compute while retaining this exact generation." }
       - { value: suspended, doc: "Compute is stopped and this exact generation may be resumed." }
       - { value: resuming, doc: "Restarting the retained generation." }
@@ -76,25 +75,6 @@ schemas:
     fields:
       hands: { type: ref, to: HandsNetworkRequest, doc: "The guest policy." }
 
-  ApprovalPolicyAllowAll:
-    doc: Every built-in tool call runs without an approval.
-    type: object
-    fields: {}
-
-  ApprovalPolicyRequireForTools:
-    doc: Named built-in tools require an explicit decision before they run.
-    type: object
-    fields:
-      tools: { type: array, max: 256, items: { type: resource_name }, doc: "Built-in tools that need approval." }
-
-  ApprovalPolicy:
-    doc: When a bound built-in tool call needs a human decision.
-    type: union
-    tag: mode
-    variants:
-      - { value: allow_all, payload: ApprovalPolicyAllowAll, doc: "Never ask." }
-      - { value: require_for_tools, payload: ApprovalPolicyRequireForTools, doc: "Ask for the named tools." }
-
   SessionCreateRequest:
     doc: Create an eight-hour multi-turn session with one explicitly pinned BYOK provider credential.
     type: object
@@ -106,7 +86,6 @@ schemas:
       compute: { type: ref, to: SessionComputeRequest, optional: true, doc: "The baseline compute shape." }
       network: { type: ref, to: SessionNetworkRequest, optional: true, doc: "The guest network policy." }
       packages: { type: array, max: 64, optional: true, items: { type: ref, to: PackageRequest }, doc: "Packages to pre-install." }
-      approvalPolicy: { type: ref, to: ApprovalPolicy, optional: true, doc: "When to ask for a built-in tool decision." }
       metadata: { type: map, max: 64, optional: true, items: { type: metadata_value }, doc: "Caller-defined labels." }
 
   ComputeShape:
@@ -153,7 +132,6 @@ schemas:
       compute: { type: ref, to: ResolvedCompute, doc: "Resolved capacity." }
       network: { type: ref, to: ResolvedNetwork, doc: "Resolved network policy." }
       registered: { type: ref, to: SessionRegisteredSelection, doc: "Resolved mounted files." }
-      approvalPolicy: { type: ref, to: ApprovalPolicy, doc: "Resolved approval policy." }
       packages: { type: array, max: 64, items: { type: ref, to: PackageRequest }, doc: "Resolved packages." }
       lifecycle: { type: ref, to: SessionLifecyclePolicy, doc: "Immutable automatic lifecycle behavior." }
 

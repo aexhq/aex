@@ -437,7 +437,7 @@ impl LifecyclePort for NoLifecycle {
 #[derive(Debug, Clone)]
 pub struct DynamoLifecyclePort {
     dynamodb: aws_sdk_dynamodb::Client,
-    sessions: aex_session_dynamodb::store::SessionStore,
+    sessions: aex_session_dynamodb::store::SessionReads,
     operations: aex_session_dynamodb::store::OperationStore,
     runtime: aex_runtime_activity_dynamodb::RuntimeActivityDynamoStore,
     sqs: aws_sdk_sqs::Client,
@@ -455,9 +455,9 @@ impl DynamoLifecyclePort {
         runtime_queue_url: impl Into<String>,
     ) -> Self {
         Self {
-            sessions: aex_session_dynamodb::store::SessionStore::new(
+            sessions: aex_session_dynamodb::store::SessionReads::new(
                 dynamodb.clone(),
-                tables.clone(),
+                tables.session_authority.clone(),
             ),
             operations: aex_session_dynamodb::store::OperationStore::new(
                 dynamodb.clone(),

@@ -130,7 +130,6 @@ pub fn session_fixture() -> Session {
     let resolved = ResolvedConfigAuthority::new(
         CanonicalJson::parse(
             r#"{
-                "approvalPolicy":{"mode":"allow_all"},
                 "catalogRevision":"mc1_0000000000000000000000000000000000000000000000000000000000000000",
                 "compute":{
                     "baseline":{"memoryMiB":1024,"vcpus":1.0},

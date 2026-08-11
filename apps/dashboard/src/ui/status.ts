@@ -10,7 +10,6 @@ import type { Status } from "./components";
 export function sessionStatus(value: string): Status | undefined {
   switch (value) {
     case "running": return "good";
-    case "awaiting_approval": return "warning";
     case "terminating": return "warning";
     case "terminated": return "serious";
     case "deleting": return "serious";

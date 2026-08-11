@@ -4,14 +4,10 @@
   "regenerate": "This file is committed and hand-edited, unlike `release/test-registry.json`. An id enters `routes` or `scenarios` only with the change that defers it, and leaves only with the change that mounts, deletes or un-defers it - moving it to `retired` in the same commit unless the contract deletes it outright.",
   "routes": {
     "floor": 48,
-    "floorNote": "The approved ceiling remains 48; this registry defers 21 routes. Three are the deliberately unmounted approval surface, seven are the new session create/message/cancel/suspend/resume/terminate/delete commands awaiting complete production authorities, and eleven are the exact-generation ephemeral live-file surface awaiting guest transport integration. The two telemetry export admissions are mounted with their atomic export/operation lifecycle. Registry pointers, capacity reads, canonical session reads/messages, and registry-file download admission remain mounted. Deleted persistence, trash/restore, generic-secret, typed skill/tool/instruction/MCP, and public run routes do not count as deferrals.",
+    "floorNote": "The approved ceiling remains 48. Human approval is deleted from the Bash MVP contract rather than deferred: Bash auto-approves, and interactive approval policy is recorded in the backlog. Session create/message/delete commands and exact-generation live-file routes remain governed by their explicit mount state. Deleted persistence, trash/restore, generic-secret, typed skill/tool/instruction/MCP, public run, and approval routes do not count as deferrals.",
     "deleting": {},
     "deferred": [
-      "session_approval_get",
-      "session_approval_respond",
-      "session_approvals_list",
       "session_create",
-      "session_cancel",
       "session_delete",
       "session_files_live_download_create",
       "session_files_live_download_complete",
@@ -24,10 +20,7 @@
       "session_files_live_upload_delete",
       "session_files_live_upload_get",
       "session_files_live_upload_part_put",
-      "session_message_send",
-      "session_resume",
-      "session_suspend",
-      "session_terminate"
+      "session_message_send"
     ],
     "retired": [
       "account_get",
@@ -50,8 +43,12 @@
       "registry_tools_get",
       "registry_tools_put",
       "secret_put",
+      "session_cancel",
       "session_get",
       "session_messages_list",
+      "session_resume",
+      "session_suspend",
+      "session_terminate",
       "sessions_list",
       "session_restore",
       "session_stop",

@@ -30,9 +30,8 @@ use aex_regional_http::projection::{
 };
 use aex_regional_http::router::RouteOwner;
 use aex_registry_dynamodb::store::{PointerPage, RegistryStore};
-use aex_runtime_activity_dynamodb::RuntimeContinuity;
 use aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore;
-use aex_secret_custody_dynamodb::SessionCustodyReads;
+use aex_secret_custody_dynamodb::ProviderCredentialReads;
 use aex_secret_custody_dynamodb::codec::{CredentialState, ProviderCredential as StoredCredential};
 use aex_secret_custody_dynamodb::expressions;
 use aex_secret_custody_dynamodb::store::CustodyStore;
@@ -51,7 +50,7 @@ use aex_session_dynamodb::store::{
     OperationApiStore, OperationCancelOutcome, OperationFilter, SessionListFilter,
     SessionListStatus, SessionQueries, SessionScoped,
 };
-use aex_session_dynamodb::wire_pending::{Approval, ApprovalStatus, StoredOperation};
+use aex_session_dynamodb::wire_pending::StoredOperation;
 use aex_usage_query_dynamodb::store::UsageProjectionReads;
 use aex_wire::cursor::Cursor;
 use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
@@ -61,10 +60,9 @@ use aex_wire::limits::LimitId;
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::server::{
-    AcceptKind, Accepted, ApprovalsApi, Created, NoContent, ProviderCredentialsApi,
-    RegionalOperationsApi, RegistryApi, RequestContext as WireContext, RouteGroup, SessionsApi,
-    WithETag, WorkspaceApi, dispatch_approvals, dispatch_files,
-    dispatch_provider_credentials, dispatch_regional_operations, dispatch_registry,
+    AcceptKind, Accepted, Created, NoContent, ProviderCredentialsApi, RegionalOperationsApi,
+    RegistryApi, RequestContext as WireContext, RouteGroup, SessionsApi, WithETag, WorkspaceApi,
+    dispatch_files, dispatch_provider_credentials, dispatch_regional_operations, dispatch_registry,
     dispatch_sessions, dispatch_usage, dispatch_workspace,
 };
 use aex_wire::types::Timestamp;
@@ -376,9 +374,9 @@ impl Routes {
             .map_err(|_| WireError::new(ErrorCode::InternalError))
     }
 
-    /// The command envelope for a whole-session mutation.
+    /// The command envelope for a session lifecycle mutation.
     ///
-    /// These three routes are keyed by `Aex-Operation-Id` rather than by an
+    /// These routes are keyed by `Aex-Operation-Id` rather than by an
     /// ordinary idempotency key, so the operation identity is caller-minted and
     /// the edge has already parsed it. An absent one is an invalid request, not
     /// a server-minted identity: a server-minted identity could never be
@@ -409,12 +407,8 @@ impl Routes {
             ids: crate::session::app_ports::RequestIds,
             unowned: crate::session::app_ports::UnownedPorts,
             reads: self.shared.commands.clone(),
-            continuity: RuntimeContinuity::new(self.shared.runtime_activity.clone(), now),
-            secrets: SessionCustodyReads::new(
+            credentials: ProviderCredentialReads::new(
                 self.shared.custody_reads.clone(),
-                self.shared.plane,
-                self.shared.region,
-                self.cx.auth.organization_id,
                 self.cx.auth.workspace_id,
             ),
             accounts: AuthorizedAccount {
@@ -544,8 +538,7 @@ struct CommandBindings {
     unowned: crate::session::app_ports::UnownedPorts,
     reads: SessionCommandReads,
     accounts: AuthorizedAccount,
-    continuity: RuntimeContinuity,
-    secrets: SessionCustodyReads,
+    credentials: ProviderCredentialReads,
 }
 
 impl CommandBindings {
@@ -555,19 +548,14 @@ impl CommandBindings {
             ids: &self.ids,
             sessions: &self.reads,
             accounts: &self.accounts,
-            // Three ports another stream owns. Every one refuses rather than
+            // Ports another stream owns refuse rather than
             // inventing an answer; see `crate::session::app_ports`.
             registry: &self.unowned,
             catalog: None,
             deployment: None,
             limits: &self.unowned,
             live: &self.unowned,
-            // Owned, not refused: `aex-runtime-activity-dynamodb` is the
-            // authority for both continuity and true idle, and
-            // `aex-secret-custody-dynamodb` holds both rows a custody read has
-            // to join.
-            continuity: &self.continuity,
-            secrets: &self.secrets,
+            credentials: &self.credentials,
         }
     }
 }
@@ -653,7 +641,11 @@ const fn session_list_status(status: models::SessionStatus) -> SessionListStatus
     match status {
         models::SessionStatus::Idle => SessionListStatus::Idle,
         models::SessionStatus::Running => SessionListStatus::Running,
-        models::SessionStatus::AwaitingApproval => SessionListStatus::AwaitingApproval,
+        models::SessionStatus::Suspending => SessionListStatus::Suspending,
+        models::SessionStatus::Suspended => SessionListStatus::Suspended,
+        models::SessionStatus::Resuming => SessionListStatus::Resuming,
+        models::SessionStatus::Terminating => SessionListStatus::Terminating,
+        models::SessionStatus::Terminated => SessionListStatus::Terminated,
         models::SessionStatus::Deleting => SessionListStatus::Deleting,
     }
 }
@@ -743,127 +735,6 @@ impl RegionalOperationsApi for Routes {
             .collect::<WireResult<Vec<_>>>()?;
         Ok(models::OperationPage {
             items,
-            next_cursor: self.continuation(page.next.as_ref(), &binding)?,
-        })
-    }
-}
-
-fn approval(stored: &Approval) -> models::Approval {
-    let (status, decision) = match stored.status {
-        ApprovalStatus::Pending => (models::ApprovalStatus::Pending, None),
-        ApprovalStatus::Approved => (
-            models::ApprovalStatus::Approved,
-            Some(models::ApprovalDecision::Approve),
-        ),
-        ApprovalStatus::Denied => (
-            models::ApprovalStatus::Denied,
-            Some(models::ApprovalDecision::Deny),
-        ),
-        ApprovalStatus::Cancelled => (models::ApprovalStatus::Cancelled, None),
-        ApprovalStatus::Expired => (models::ApprovalStatus::Expired, None),
-    };
-    models::Approval {
-        bound_call: models::ApprovalBoundCall {
-            agent_id: stored.binding.agent,
-            arguments_digest: stored.binding.argument_digest,
-            config_digest: stored.binding.config_digest,
-            expected_config_revision: stored.binding.expected_config_revision,
-            expected_custody_revision: stored.binding.expected_custody,
-            expected_generation_id: stored.binding.expected_generation,
-            implementation_digest: stored.binding.implementation_digest,
-            run_id: stored.binding.run,
-            tool_call_id: stored.binding.tool_call,
-            tool_name: stored.binding.tool.clone(),
-        },
-        created_at: stored.created_at,
-        decision,
-        expires_at: stored.expires_at,
-        id: stored.approval,
-        resolved_at: stored.resolved_at,
-        session_id: stored.binding.session,
-        status,
-    }
-}
-
-impl ApprovalsApi for Routes {
-    async fn session_approval_get(
-        &self,
-        _cx: &WireContext,
-        session_id: SessionId,
-        approval_id: aex_wire::ids::ApprovalId,
-    ) -> WireResult<models::Approval> {
-        match self
-            .shared
-            .sessions
-            .load_approval(self.cx.auth.workspace_id, session_id, approval_id)
-            .await
-            .map_err(|error| authority_failure(&error))?
-        {
-            SessionScoped::Missing | SessionScoped::Active(None) => {
-                Err(WireError::new(ErrorCode::NotFound))
-            }
-            SessionScoped::Deleted => Err(WireError::new(ErrorCode::SessionDeleted)),
-            SessionScoped::Active(Some(stored)) => Ok(approval(&stored)),
-        }
-    }
-
-    async fn session_approval_respond(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _approval_id: aex_wire::ids::ApprovalId,
-        _body: models::ApprovalRespondRequest,
-    ) -> WireResult<models::Approval> {
-        Err(not_served(RouteId::SessionApprovalRespond))
-    }
-
-    async fn session_approvals_list(
-        &self,
-        _cx: &WireContext,
-        session_id: SessionId,
-        query: models::SessionApprovalsListQuery,
-    ) -> WireResult<models::ApprovalPage> {
-        let budget = budget(query.limit)?;
-        let (after, expected_deletion_epoch) = self
-            .resume_session_collection(
-                RouteId::SessionApprovalsList,
-                "session.approvals",
-                session_id,
-                query.cursor.as_ref(),
-            )
-            .await?;
-        let page = match self
-            .shared
-            .sessions
-            .page_approvals(
-                self.cx.auth.workspace_id,
-                session_id,
-                expected_deletion_epoch,
-                budget,
-                after.as_ref(),
-            )
-            .await
-            .map_err(|error| authority_failure(&error))?
-        {
-            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
-            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
-            SessionScoped::Active(page) => page,
-        };
-        let binding = self.cursor_binding_for_session_epoch(
-            RouteId::SessionApprovalsList,
-            "session.approvals",
-            session_id,
-            page.deletion_epoch,
-        )?;
-        // The pre-decode parent read and the page's own before/query/after
-        // fence can observe different live generations if trash+restore races
-        // this request. Rechecking the MAC binding refuses that page instead
-        // of silently resuming an old generation.
-        if query.cursor.is_some() {
-            self.resume(query.cursor.as_ref(), &binding)?;
-        }
-        Ok(models::ApprovalPage {
-            items: page.items.iter().map(approval).collect(),
             next_cursor: self.continuation(page.next.as_ref(), &binding)?,
         })
     }
@@ -1591,7 +1462,6 @@ impl UnaryDispatch for Routes {
             }
             "operations" => dispatch_regional_operations(self, &wire, raw, limits).await?,
             "registry" => dispatch_registry(self, &wire, raw, limits).await?,
-            "approvals" => dispatch_approvals(self, &wire, raw, limits).await?,
             "sessions" => dispatch_sessions(self, &wire, raw, limits).await?,
             "files" => dispatch_files(self, &wire, raw, limits).await?,
             "uploads" => aex_wire::server::dispatch_uploads(self, &wire, raw, limits).await?,

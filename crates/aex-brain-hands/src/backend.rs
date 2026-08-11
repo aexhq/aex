@@ -807,56 +807,6 @@ impl ProductionHandsBackend {
         }
     }
 
-    /// Executes one bounded exact-generation guest activity under the shared
-    /// native-resume authority used by live-file HTTP calls.
-    ///
-    /// The caller supplies the one [`HandsOperationId`] allocated for the HTTP
-    /// action. Admission is durable before the guest effect; a provider-suspended
-    /// generation is resumed only by this endpoint traffic; and a successful
-    /// authenticated response closes both the native lifecycle receipt/usage and
-    /// the activity marker before the response is exposed.
-    pub(crate) async fn call_native_activity<Request, Response>(
-        &self,
-        session: SessionId,
-        generation: GenerationId,
-        activity: HandsOperationId,
-        verb: Verb,
-        request: &Request,
-        timeout: Duration,
-    ) -> Result<(GuestReply<Response>, bool), HandsError>
-    where
-        Request: serde::Serialize + ?Sized,
-        Response: serde::de::DeserializeOwned,
-    {
-        let prepared = self.prepare_generation(session, generation).await?;
-        let admitted = self.admit_operation(generation, activity, prepared).await?;
-        let reply = match self
-            .call_guest(&admitted.endpoint, verb, request, timeout)
-            .await
-        {
-            Ok(reply) => reply,
-            Err(
-                error @ HandsError::Transport {
-                    proof: DispatchProof::NotSent,
-                    ..
-                },
-            ) => {
-                if admitted.native_resume {
-                    self.reconcile_native_resume(&admitted.view).await?;
-                }
-                self.settle_operation(generation, activity).await?;
-                return Err(error);
-            }
-            Err(error) => return Err(error),
-        };
-        self.observe_guest(&admitted.endpoint, &reply).await?;
-        if admitted.native_resume {
-            self.settle_native_activity(&admitted.view).await?;
-        }
-        self.settle_operation(generation, activity).await?;
-        Ok((reply, admitted.native_resume))
-    }
-
     /// Executes one ordered bounded guest batch as one durable HTTP activity.
     ///
     /// Live multipart transfer may require several guest frames, but its

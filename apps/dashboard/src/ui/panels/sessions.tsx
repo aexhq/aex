@@ -7,7 +7,16 @@ import { Badge, Card, Empty, Resolved } from "../components";
 import { instant, label, sessionStatus } from "../status";
 import type { Page, SessionListItem } from "../wire";
 
-const STATUSES = ["idle", "running", "awaiting_approval", "deleting"] as const;
+const STATUSES = [
+  "idle",
+  "running",
+  "suspending",
+  "suspended",
+  "resuming",
+  "terminating",
+  "terminated",
+  "deleting",
+] as const;
 
 export function SessionsPanel({
   slug,

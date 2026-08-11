@@ -5,7 +5,6 @@
 //! it either produces the value or a [`CodecError`], and there is no arm that
 //! substitutes a default for something the authority is supposed to know.
 
-use aex_internal_contracts::RunId;
 use aex_operation_domain::{
     ContinuationCursor, FailureClass, Operation, OperationFailure, OperationKind, OperationResult,
     OperationScope, OperationStatus, Progress,

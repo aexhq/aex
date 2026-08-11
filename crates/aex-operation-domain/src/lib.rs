@@ -39,8 +39,8 @@ pub use lease::{
 };
 pub use operation::{
     CancelRejection, Execution, FailureClass, Operation, OperationCommit, OperationFailure,
-    OperationKind, OperationResult, OperationScope, OperationStatus, Progress, ProgressError,
-    PublicProjectionError, TransitionError, cancel, commit_point, fail, progress,
+    OperationKind, OperationResult, OperationScope, OperationStatus, OperationVersion, Progress,
+    ProgressError, PublicProjectionError, TransitionError, cancel, commit_point, fail, progress,
     revoke_telemetry_export, start, succeed,
 };
 pub use redact::redact_for_session_delete;

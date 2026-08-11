@@ -25,7 +25,7 @@ pub mod expressions;
 pub mod keys;
 pub mod store;
 
-pub use app_custody::SessionCustodyReads;
+pub use app_custody::ProviderCredentialReads;
 pub use codec::{
     CallAuthorization, CredentialState, CustodyBinding, CustodyHead, ProviderCredential,
     SecretMetadata, StoredGeneration,

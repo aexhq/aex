@@ -19,8 +19,8 @@ pub fn session_route_ids() -> Vec<RouteId> {
                 return false;
             }
             match descriptor.fragment {
-                "operations" | "registry" | "approvals" | "sessions" | "files" | "uploads"
-                | "usage" | "workspace" => true,
+                "operations" | "registry" | "sessions" | "files" | "uploads" | "usage"
+                | "workspace" => true,
                 "provider-credentials" => *id != RouteId::ProviderCredentialRegister,
                 _ => false,
             }

@@ -7,14 +7,11 @@
 
 use aex_session_app::testing::{CountingIds, FixedClock, ScriptedPorts, message_identity_under};
 use aex_session_app::{
-    AppError, CommitError, MESSAGE_TEXT_MAX_BYTES, PortError, SendMessage, SessionCommand,
-    admit_message, stop_session,
+    AppError, CommitError, MESSAGE_TEXT_MAX_BYTES, PortError, SendMessage, admit_message,
 };
 use aex_session_domain::WorkAdmission;
-use aex_session_domain::testing::{id, moment, session_fixture};
+use aex_session_domain::testing::{moment, session_fixture};
 use aex_wire::error::ErrorCode;
-use aex_wire::idempotency::IntentDigest;
-use aex_wire::ids::OperationId;
 use aex_wire::models::MessageSendRequest;
 
 fn clock() -> FixedClock {
@@ -104,7 +101,6 @@ async fn a_refused_command_leaves_no_partial_plan() {
     // error, never both and never half of one.
     assert!(!ports.recorded_a_write());
 }
-
 #[tokio::test]
 async fn message_text_accepts_exact_utf8_byte_ceiling() {
     for text in [
@@ -158,26 +154,4 @@ async fn message_text_rejects_one_byte_over_before_any_port_read() {
             "request-shape admission precedes session, account, spend, and provider work"
         );
     }
-}
-
-#[tokio::test]
-async fn a_pause_exempt_command_still_plans_under_a_paused_account() {
-    let ports = ScriptedPorts::idle().paused();
-    let clock = clock();
-    let ids = CountingIds::default();
-    let context = ports.context(&clock, &ids);
-
-    let session = session_fixture();
-    let planned = stop_session(
-        &context,
-        &SessionCommand {
-            workspace: session.workspace,
-            session: session.id,
-            operation: id::<OperationId>(30),
-            intent: IntentDigest::from_bytes([30; 32]),
-        },
-    )
-    .await
-    .expect("stop is pause exempt");
-    planned.plan.validate().expect("validates");
 }

@@ -60,7 +60,6 @@ fn session_status_reachability() {
         .expect("message");
     observed.insert(lifecycle.status);
     let run = lifecycle.active.expect("active").run;
-    lifecycle.await_approval(run).expect("awaits");
     observed.insert(lifecycle.status);
     lifecycle.cancel_current(moment(2)).expect("cancels");
     lifecycle.begin_suspend().expect("starts suspend");

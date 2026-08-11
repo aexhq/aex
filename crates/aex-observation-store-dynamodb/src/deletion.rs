@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use aex_observation_domain::frontier::DeletionState;
 use aex_observation_domain::keys::{self, ControlDomain, ScopeKey};
 use aex_session_dynamodb::attr::{PK, SK};
-use aex_session_dynamodb::error::{Idempotence, StoreError, classify};
+use aex_session_dynamodb::error::{Idempotence, Resolution, StoreError, classify};
 use aex_wire::ids::{OperationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::types::AttributeValue;
@@ -260,7 +260,7 @@ impl SessionObservationDeletion for SessionObservationDeletionStore {
                 .map(SessionObservationDeletionOutcome::Replay);
         }
         let error = outcome.expect_err("the successful response returned above");
-        Err(classify(&error, Idempotence::Write).into())
+        Err(classify(&error, Idempotence::Write(Resolution::TargetItem)).into())
     }
 
     async fn status(

@@ -15,7 +15,6 @@ fragments:
   - registry
   - uploads
   - provider-credentials
-  - approvals
   - observations
   - otlp
   - telemetry-lifecycle

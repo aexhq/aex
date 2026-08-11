@@ -1154,7 +1154,6 @@ const fn session_status(status: SessionStatus) -> &'static str {
     match status {
         SessionStatus::Idle => "idle",
         SessionStatus::Running => "running",
-        SessionStatus::AwaitingApproval => "awaiting_approval",
         SessionStatus::Suspending => "suspending",
         SessionStatus::Suspended => "suspended",
         SessionStatus::Resuming => "resuming",
@@ -1168,7 +1167,6 @@ fn parse_session_status(text: &str) -> Result<SessionStatus, CodecError> {
     match text {
         "idle" => Ok(SessionStatus::Idle),
         "running" => Ok(SessionStatus::Running),
-        "awaiting_approval" => Ok(SessionStatus::AwaitingApproval),
         "suspending" => Ok(SessionStatus::Suspending),
         "suspended" => Ok(SessionStatus::Suspended),
         "resuming" => Ok(SessionStatus::Resuming),

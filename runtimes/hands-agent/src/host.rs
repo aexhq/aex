@@ -171,7 +171,10 @@ fn meta_of(path: &std::path::Path, metadata: &std::fs::Metadata, target: Option<
                 .is_symlink()
                 .then(|| std::fs::read_link(path).ok())
                 .flatten()
-                .map(|target| target.to_string_lossy().into_owned())
+                // The typed wire cannot represent non-UTF-8 link bytes. Leave
+                // them absent so the structured caller refuses the observation;
+                // lossy conversion would invent a different link target.
+                .and_then(|target| target.into_os_string().into_string().ok())
         }),
     }
 }
@@ -226,10 +229,29 @@ impl GuestFs for HostFs {
     }
 
     fn read_dir(&self, path: &GuestPath) -> Result<Vec<DirEntry>, FsError> {
+        self.read_dir_bounded(path, usize::MAX)?
+            .ok_or_else(|| FsError::Other {
+                path: path.as_str().to_owned(),
+                reason: "directory entry ceiling exceeded".to_owned(),
+            })
+    }
+}
+
+impl HostFs {
+    /// Reads and sorts at most `ceiling` immediate children. `None` means the
+    /// directory has more children than the caller's remaining scan budget.
+    pub(crate) fn read_dir_bounded(
+        &self,
+        path: &GuestPath,
+        ceiling: usize,
+    ) -> Result<Option<Vec<DirEntry>>, FsError> {
         let mut entries = Vec::new();
         for entry in
             std::fs::read_dir(self.host_path(path)).map_err(|error| fs_error(path, &error))?
         {
+            if entries.len() == ceiling {
+                return Ok(None);
+            }
             let entry = entry.map_err(|error| fs_error(path, &error))?;
             let metadata = entry
                 .metadata()
@@ -237,13 +259,20 @@ impl GuestFs for HostFs {
                 .or_else(|_| {
                     std::fs::symlink_metadata(entry.path()).map_err(|error| fs_error(path, &error))
                 })?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| FsError::Other {
+                    path: path.as_str().to_owned(),
+                    reason: "directory entry name is not UTF-8".to_owned(),
+                })?;
             entries.push(DirEntry {
-                name: entry.file_name().to_string_lossy().into_owned(),
+                name,
                 meta: meta_of(&entry.path(), &metadata, None),
             });
         }
         entries.sort_by(|left, right| left.name.cmp(&right.name));
-        Ok(entries)
+        Ok(Some(entries))
     }
 }
 

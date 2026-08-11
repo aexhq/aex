@@ -109,11 +109,6 @@ pub enum ParkReason {
         /// When the timer is due.
         due: Timestamp,
     },
-    /// Waiting for an approval decision.
-    AwaitingApproval {
-        /// The approval request.
-        id: String,
-    },
     /// Waiting for scheduler capacity.
     AwaitingCapacity {
         /// Which limit is binding.

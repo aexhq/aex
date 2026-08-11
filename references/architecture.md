@@ -60,7 +60,11 @@ Session status is semantic:
 
 - `idle`
 - `running`
-- `awaiting_approval`
+- `suspending`
+- `suspended`
+- `resuming`
+- `terminating`
+- `terminated`
 - `deleting`
 
 Run status is independently observable:

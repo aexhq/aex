@@ -20,6 +20,7 @@ pub mod encode;
 pub mod executor;
 pub mod guest;
 mod lease;
+pub mod live_file;
 pub mod operation;
 pub mod port;
 
@@ -32,12 +33,13 @@ pub use executor::HandsToolExecutor;
 pub use port::{HandsAdapter, HandsBackend};
 
 pub use guest::{AuthenticatedGuestEndpoint, GuestReply, HttpGuestTransport};
+pub use live_file::{LiveFileBackend, LiveFileReply};
 
 pub use adapter::{
     AdmitPlan, Alpn, CONNECTION_IDLE_MS, CONTEXT_TOOL_RESULT_BYTES, HandsError,
     LAUNCH_POLL_BASE_MS, LAUNCH_POLL_MAX_MS, MAX_FRAME_BYTES, MAX_RESULT_BODY_BYTES,
-    MaterializeStep, RESERVED_CONNECTIONS, SettlePlan, admit, launch_backoff_ms, materialize_step,
-    max_in_flight, pool_size, settle, transport_mode,
+    MaterializeStep, RESERVED_CONNECTIONS, SettlePlan, admit, admit_native_resume,
+    launch_backoff_ms, materialize_step, max_in_flight, pool_size, settle, transport_mode,
 };
 pub use operation::{
     CODE_RUN_MAX_WALL_MS, CODE_RUN_WALL_MS, CodeLanguage, ConstructError, ConstructedCommand,

@@ -8,10 +8,8 @@
 use std::cell::RefCell;
 use std::num::NonZeroU64;
 
-use aex_content_domain::ContentDigest;
 use aex_internal_contracts::RunId;
 use aex_operation_domain::Operation;
-use aex_secret_domain::{SecretName, SessionCustody, TrueIdle, WorkspaceSecret};
 use aex_session_domain::testing::{materialized_state, moment, session_fixture};
 use aex_session_domain::{
     AccountProjection, AccountRevision, AccountState, AgentControl, EffectiveLimits,
@@ -27,9 +25,9 @@ use aex_workspace_domain::{RegistryPointer, RegistrySelector, Upload};
 
 use crate::ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext, Clock,
-    ContinuityReader, IdFactory, LimitsReader, LiveEntry, LiveListQuery, LiveListing,
-    LiveWorkspaceReader, MessageAdmissionSnapshot, PageBudget, PortError, RegistryReader,
-    RootAdmissionState, SecretCustodyReader, SessionReader, VersionedOperation,
+    IdFactory, LimitsReader, LiveEntry, LiveListQuery, LiveListing, LiveWorkspaceReader,
+    MessageAdmissionSnapshot, PageBudget, PortError, ProviderCredentialReader, RegistryReader,
+    RootAdmissionState, SessionReader, SessionSnapshot, VersionedOperation,
 };
 
 /// One recorded port interaction.
@@ -131,9 +129,6 @@ pub struct ScriptedPorts {
     operation: Option<VersionedOperation>,
     run: Option<Run>,
     receipt: Option<IdempotencyReceipt>,
-    custody: Option<SessionCustody>,
-    secrets: Vec<WorkspaceSecret>,
-    true_idle: TrueIdle,
     account: AccountProjection,
     limits: EffectiveLimits,
     limits_revision: u64,
@@ -181,9 +176,6 @@ impl ScriptedPorts {
             operation: None,
             run: None,
             receipt: None,
-            custody: None,
-            secrets: Vec::new(),
-            true_idle: TrueIdle::idle(moment(0)),
             limits: [(LimitId::SessionMaterializedAgents, 8)]
                 .into_iter()
                 .collect(),
@@ -191,8 +183,6 @@ impl ScriptedPorts {
             credential: Some(crate::ports::ProviderCredentialBinding {
                 credential: session.provider_credential.credential,
                 provider: aex_wire::provider::ProviderId::Openai,
-                secret_name: aex_secret_domain::SecretName::parse("openai-key")
-                    .expect("a fixture secret name is valid"),
                 source_generation: 1,
                 revision: 1,
                 state: crate::ports::CredentialState::Ready,
@@ -367,27 +357,6 @@ impl ScriptedPorts {
         self
     }
 
-    /// Scripts the workspace secrets returned by the custody reader.
-    #[must_use]
-    pub fn with_secrets(mut self, secrets: Vec<WorkspaceSecret>) -> Self {
-        self.secrets = secrets;
-        self
-    }
-
-    /// Scripts the session custody row returned by the custody reader.
-    #[must_use]
-    pub fn with_custody(mut self, custody: SessionCustody) -> Self {
-        self.custody = Some(custody);
-        self
-    }
-
-    /// Scripts the runtime authority's true-idle verdict.
-    #[must_use]
-    pub fn with_true_idle(mut self, true_idle: TrueIdle) -> Self {
-        self.true_idle = true_idle;
-        self
-    }
-
     /// The scripted session.
     #[must_use]
     pub const fn session(&self) -> &Session {
@@ -423,12 +392,11 @@ impl ScriptedPorts {
             ids,
             sessions: self,
             registry: self,
-            secrets: self,
+            credentials: self,
             catalog: Some(self),
             deployment: Some(&self.deployment),
             limits: self,
             accounts: self,
-            continuity: self,
             live: self,
         }
     }
@@ -565,26 +533,7 @@ impl RegistryReader for ScriptedPorts {
 }
 
 #[async_trait::async_trait]
-impl SecretCustodyReader for ScriptedPorts {
-    async fn read_secrets(
-        &self,
-        _workspace: WorkspaceId,
-        names: &[SecretName],
-    ) -> Result<Vec<WorkspaceSecret>, PortError> {
-        self.log.record(PortCall::Read("read_secrets"));
-        Ok(self
-            .secrets
-            .iter()
-            .filter(|secret| names.contains(&secret.name))
-            .cloned()
-            .collect())
-    }
-
-    async fn read_custody(&self, _session: SessionId) -> Result<Option<SessionCustody>, PortError> {
-        self.log.record(PortCall::Read("read_custody"));
-        Ok(self.custody.clone())
-    }
-
+impl ProviderCredentialReader for ScriptedPorts {
     async fn read_provider_credential(
         &self,
         _workspace: WorkspaceId,
@@ -630,13 +579,6 @@ impl AccountStateReader for ScriptedPorts {
 }
 
 #[async_trait::async_trait]
-impl ContinuityReader for ScriptedPorts {
-    async fn true_idle(&self, _session: SessionId) -> Result<TrueIdle, PortError> {
-        self.log.record(PortCall::Read("true_idle"));
-        Ok(self.true_idle)
-    }
-}
-
 #[async_trait::async_trait]
 impl LiveWorkspaceReader for ScriptedPorts {
     async fn list(

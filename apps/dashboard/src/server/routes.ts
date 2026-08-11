@@ -38,8 +38,6 @@ export const DASHBOARD_ROUTES = [
   "sessions_list",
   "session_get",
   "session_messages_list",
-  "session_approvals_list",
-  "session_approval_respond",
   "session_files_live_list",
   // Observability.
   "observations_events_query",

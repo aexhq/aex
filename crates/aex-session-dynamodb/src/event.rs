@@ -48,7 +48,7 @@ pub fn decode(item: &Item) -> Result<SessionEvent, CodecError> {
         event_seq: row.u64("eventSeq")?,
         event_id,
         event_type: row.string("type")?.to_owned(),
-        run: row.opt_id("runId")?,
+        run: row.opt_run_id("runId")?,
         agent: row.opt_id("agentId")?,
         body,
         occurred_at: row.timestamp("occurredAt")?,

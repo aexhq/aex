@@ -25,12 +25,8 @@
 //!   "the tag changed" and "the body changed" cannot disagree.
 
 use aex_content_domain::identity::RegistryKind;
-use aex_secret_custody_dynamodb::codec::{
-    CredentialState, ProviderCredential as StoredCredential, SecretMetadata as StoredSecret,
-};
-use aex_secret_domain::plaintext::{PlaintextError, SecretPlaintext};
-use aex_secret_domain::secret::{SecretName, SecretState};
-use aex_session_domain::{Message, MessagePart, MessageRole, MessageState, Run, RunOutcome};
+use aex_secret_custody_dynamodb::codec::{CredentialState, ProviderCredential as StoredCredential};
+use aex_session_domain::{Message, MessagePart, MessageRole, MessageState};
 use aex_session_dynamodb::paging::PagePosition;
 use aex_wire::cursor::Cursor;
 use aex_wire::error::{ErrorCode, WireError};
@@ -48,13 +44,6 @@ use crate::cursor::{CursorError, SortTuple};
 /// maps onto exactly one published error code.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProjectionError {
-    /// The record is a tombstone. A deleted secret has no public
-    /// representation: it is absent, not a `deleted` state the wire can carry.
-    #[error("secret `{name}` is deleted and has no public representation")]
-    SecretDeleted {
-        /// Which name.
-        name: SecretName,
-    },
     /// A registry pointer was projected onto the model of another registry.
     ///
     /// A pointer is keyed by `(workspace, kind, name)`, so the kind is the only
@@ -67,16 +56,6 @@ pub enum ProjectionError {
         /// Which registry the row belongs to.
         found: &'static str,
     },
-    /// A revocation receipt was asked for from a record that carries no
-    /// revocation instant.
-    #[error("secret `{name}` carries no revocation instant")]
-    NotRevoked {
-        /// Which name.
-        name: SecretName,
-    },
-    /// The request body could not become a domain value.
-    #[error(transparent)]
-    Plaintext(#[from] PlaintextError),
     /// A continuation could not be issued or consumed.
     #[error(transparent)]
     Cursor(#[from] CursorError),
@@ -102,6 +81,12 @@ pub enum ProjectionError {
         /// Which message violated the sealed-only boundary.
         message: aex_wire::ids::MessageId,
     },
+    /// A persisted-file attachment reached the text-only public message view.
+    #[error("message `{message}` contains a deferred file attachment")]
+    DeferredMessageAttachment {
+        /// Which message violated the text-only launch boundary.
+        message: aex_wire::ids::MessageId,
+    },
 }
 
 impl ProjectionError {
@@ -112,18 +97,15 @@ impl ProjectionError {
     #[must_use]
     pub const fn code(&self) -> ErrorCode {
         match self {
-            Self::SecretDeleted { .. } => ErrorCode::NotFound,
-            // A revocation receipt over an unrevoked record, a
-            // non-canonicalizable model and a pointer read out of the wrong
+            // A non-canonicalizable model and a pointer read out of the wrong
             // registry are all invariant failures of this process. The last one
             // in particular means the key template and the query disagreed,
             // which a caller can neither cause nor fix.
-            Self::NotRevoked { .. }
-            | Self::NotCanonicalizable
+            Self::NotCanonicalizable
             | Self::WrongRegistryKind { .. }
             | Self::MalformedValueDocument { .. }
-            | Self::UnsealedMessage { .. } => ErrorCode::InternalError,
-            Self::Plaintext(_) => ErrorCode::InvalidRequest,
+            | Self::UnsealedMessage { .. }
+            | Self::DeferredMessageAttachment { .. } => ErrorCode::InternalError,
             Self::Cursor(_) => ErrorCode::InvalidCursor,
         }
     }
@@ -174,114 +156,6 @@ pub fn authority_failure(error: &aex_session_dynamodb::error::StoreError) -> Wir
         | StoreError::ItemTooLarge { .. } => ErrorCode::InternalError,
     };
     WireError::new(code)
-}
-
-// --- secrets -------------------------------------------------------------------
-
-/// Whether a stored record is still admissible.
-///
-/// This is not the stored `state` column. An emergency revoke is one conditional
-/// update that raises `revokedThroughRevision` to the current revision and
-/// leaves the state alone (that is what makes it `O(1)` in the generation
-/// count), and every use path admits only while
-/// `revokedThroughRevision < revision`. The public `state` therefore has to be
-/// read from the same comparison the admission path uses, or the customer would
-/// be told `ready` about a record nothing may use.
-#[must_use]
-fn public_state(stored: &StoredSecret) -> Option<models::SecretState> {
-    match stored.state {
-        SecretState::Deleted => None,
-        SecretState::Revoked => Some(models::SecretState::Revoked),
-        SecretState::Ready => {
-            if stored.revoked_through_revision < stored.revision {
-                Some(models::SecretState::Ready)
-            } else {
-                Some(models::SecretState::Revoked)
-            }
-        }
-    }
-}
-
-/// Projects one stored secret record onto its public metadata.
-///
-/// The value is never readable, and there is nowhere in the target type to put
-/// one: [`StoredSecret`] cannot hold a ciphertext and neither can
-/// [`models::SecretMetadata`].
-///
-/// # Errors
-///
-/// [`ProjectionError::SecretDeleted`] for a tombstone, which is `404` rather
-/// than a `deleted` state on the wire.
-pub fn secret_metadata(stored: &StoredSecret) -> Result<models::SecretMetadata, ProjectionError> {
-    let state = public_state(stored).ok_or_else(|| ProjectionError::SecretDeleted {
-        name: stored.name.clone(),
-    })?;
-    Ok(models::SecretMetadata {
-        created_at: stored.created_at,
-        name: stored.name.clone(),
-        revision: stored.revision.0,
-        revoked_at: stored.revoked_at,
-        state,
-        updated_at: stored.updated_at,
-    })
-}
-
-/// Projects one page of stored secret records.
-///
-/// A tombstone is **skipped**, not refused: a listing is a view of what exists,
-/// and one deleted row must not make the whole page unanswerable.
-///
-/// # Errors
-///
-/// [`ProjectionError`] only from the continuation.
-pub fn secret_metadata_page(
-    stored: &[StoredSecret],
-    next_cursor: Option<Cursor>,
-) -> Result<models::SecretMetadataPage, ProjectionError> {
-    Ok(models::SecretMetadataPage {
-        items: stored
-            .iter()
-            .filter_map(|row| secret_metadata(row).ok())
-            .collect(),
-        next_cursor,
-    })
-}
-
-/// Projects the receipt of a committed revocation.
-///
-/// # Errors
-///
-/// [`ProjectionError::NotRevoked`] when the record carries no revocation
-/// instant, which can only happen if a revocation was reported without being
-/// committed.
-pub fn secret_revocation(
-    stored: &StoredSecret,
-) -> Result<models::SecretRevocation, ProjectionError> {
-    let revoked_at = stored
-        .revoked_at
-        .ok_or_else(|| ProjectionError::NotRevoked {
-            name: stored.name.clone(),
-        })?;
-    Ok(models::SecretRevocation {
-        name: stored.name.clone(),
-        revision: stored.revision.0,
-        revoked_at,
-    })
-}
-
-/// Projects the write-only `PUT` body onto the domain plaintext.
-///
-/// The bytes leave the request body and enter [`SecretPlaintext`] in one move,
-/// so the only owner of the value from here on is a type that cannot be
-/// serialized and zeroizes on drop.
-///
-/// # Errors
-///
-/// [`ProjectionError::Plaintext`] for an empty or over-long value.
-pub fn secret_plaintext(
-    request: models::SecretPutRequest,
-) -> Result<SecretPlaintext, ProjectionError> {
-    Ok(SecretPlaintext::new(request.value.into_bytes())?)
 }
 
 // --- provider credentials --------------------------------------------------------
@@ -468,16 +342,6 @@ macro_rules! registry_projections {
 registry_projections! {
     RegisteredFile, RegisteredFileRead, RegisteredFileRow, RegisteredFilePage, File,
         registered_file, registered_file_row, registered_file_page;
-    RegisteredSkill, RegisteredSkillRead, RegisteredSkillRow, RegisteredSkillPage, Skill,
-        registered_skill, registered_skill_row, registered_skill_page;
-    RegisteredTool, RegisteredToolRead, RegisteredToolRow, RegisteredToolPage, Tool,
-        registered_tool, registered_tool_row, registered_tool_page;
-    RegisteredInstruction, RegisteredInstructionRead, RegisteredInstructionRow,
-        RegisteredInstructionPage, Instruction,
-        registered_instruction, registered_instruction_row, registered_instruction_page;
-    RegisteredMcpServer, RegisteredMcpServerRead, RegisteredMcpServerRow,
-        RegisteredMcpServerPage, McpServer,
-        registered_mcp_server, registered_mcp_server_row, registered_mcp_server_page;
 }
 
 // --- sessions ---------------------------------------------------------------------
@@ -496,30 +360,26 @@ pub fn session_message(stored: &Message) -> Result<models::Message, ProjectionEr
         .parts
         .iter()
         .map(|part| match part {
-            MessagePart::Text { text } => {
-                models::MessagePart::Text(models::MessagePartText { text: text.clone() })
-            }
-            MessagePart::File { path, media_type } => {
-                models::MessagePart::File(models::MessagePartFile {
-                    media_type: media_type.clone(),
-                    path: path.clone(),
-                    source: models::FileSource::Persisted,
-                })
+            MessagePart::Text { text } => Ok(models::MessagePart::Text(models::MessagePartText {
+                text: text.clone(),
+            })),
+            MessagePart::File { .. } => {
+                return Err(ProjectionError::DeferredMessageAttachment { message: stored.id });
             }
             MessagePart::ToolCall { id, arguments } => {
-                models::MessagePart::ToolCall(models::MessagePartToolCall {
+                Ok(models::MessagePart::ToolCall(models::MessagePartToolCall {
                     arguments_digest: *arguments,
                     id: *id,
-                })
+                }))
             }
-            MessagePart::ToolResult { id, result } => {
-                models::MessagePart::ToolResult(models::MessagePartToolResult {
+            MessagePart::ToolResult { id, result } => Ok(models::MessagePart::ToolResult(
+                models::MessagePartToolResult {
                     id: *id,
                     result_digest: *result,
-                })
-            }
+                },
+            )),
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(models::Message {
         content,
         created_at: stored.created_at,
@@ -529,7 +389,6 @@ pub fn session_message(stored: &Message) -> Result<models::Message, ProjectionEr
             MessageRole::Assistant => models::MessageRole::Assistant,
             MessageRole::Tool => models::MessageRole::Tool,
         },
-        run_id: stored.run,
         session_id: stored.session,
     })
 }
@@ -550,62 +409,6 @@ pub fn session_message_page(
             .collect::<Result<Vec<_>, _>>()?,
         next_cursor,
     })
-}
-
-/// Projects one canonical run authority document onto its public resource.
-///
-/// The public `error` field describes a failed run. Timeout, cancellation and
-/// interruption remain distinct statuses and carry no invented generic error;
-/// their typed internal causes remain durable in the authority document.
-#[must_use]
-pub fn session_run(stored: &Run) -> models::Run {
-    let (output_message_ids, error) = match stored.outcome.as_ref() {
-        Some(RunOutcome::Succeeded { output_messages }) => (Some(output_messages.clone()), None),
-        Some(RunOutcome::Failed { error }) => (
-            None,
-            Some(models::RunFailure {
-                code: error.code.into(),
-                detail: error.detail.clone(),
-                message: error.message.clone(),
-                retryable: error.retryable,
-            }),
-        ),
-        Some(
-            RunOutcome::TimedOut { .. } | RunOutcome::Cancelled { .. } | RunOutcome::Interrupted(_),
-        )
-        | None => (None, None),
-    };
-    models::Run {
-        error,
-        id: stored.id,
-        max_spend_cents: aex_wire::types::Cents::new(stored.max_spend_cents.get()),
-        message_id: stored.message,
-        output_message_ids,
-        queued_at: stored.queued_at,
-        session_id: stored.session,
-        started_at: stored.started_at,
-        status: match stored.status {
-            aex_session_domain::RunStatus::Queued => models::RunStatus::Queued,
-            aex_session_domain::RunStatus::Running => models::RunStatus::Running,
-            aex_session_domain::RunStatus::Succeeded => models::RunStatus::Succeeded,
-            aex_session_domain::RunStatus::Failed => models::RunStatus::Failed,
-            aex_session_domain::RunStatus::TimedOut => models::RunStatus::TimedOut,
-            aex_session_domain::RunStatus::Cancelled => models::RunStatus::Cancelled,
-            aex_session_domain::RunStatus::Interrupted => models::RunStatus::Interrupted,
-        },
-        telemetry_complete: stored.telemetry_complete,
-        telemetry_gap_ids: stored.telemetry_gaps.clone(),
-        terminal_at: stored.terminal_at,
-    }
-}
-
-/// Projects one canonical run page after its signed continuation is minted.
-#[must_use]
-pub fn session_run_page(stored: &[Run], next_cursor: Option<Cursor>) -> models::RunPage {
-    models::RunPage {
-        items: stored.iter().map(session_run).collect(),
-        next_cursor,
-    }
 }
 
 // --- continuations ---------------------------------------------------------------

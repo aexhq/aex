@@ -26,7 +26,8 @@ the repository uses those terms without creating a second contract.
 
 The durable conversational and workspace boundary. Creating a session resolves
 its configuration but does not run a prompt. Public session status is `idle`,
-`running`, `awaiting_approval`, or `deleting`.
+`running`, `suspending`, `suspended`, `resuming`, `terminating`, `terminated`,
+or `deleting`.
 
 ### message
 

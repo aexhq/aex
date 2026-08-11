@@ -968,22 +968,23 @@ impl ObservationReader {
                 .await
                 .map_err(|error| ReadError::provider("QuerySegmentDirectory", error))?;
             for item in response.items() {
-                if string(item, ITEM_TYPE) != Some("segment")
-                    || string(item, PK) != Some(partition.as_str())
-                    || string(item, "scopeKey") != Some(scope_key.as_str())
-                    || string(item, "workspaceId") != Some(workspace.as_str())
-                    || string(item, "signal") != Some(signal.as_str())
+                if string(item, ITEM_TYPE).as_deref() != Some("segment")
+                    || string(item, PK).as_deref() != Some(partition.as_str())
+                    || string(item, "scopeKey").as_deref() != Some(scope_key.as_str())
+                    || string(item, "workspaceId").as_deref() != Some(workspace.as_str())
+                    || string(item, "signal").as_deref() != Some(signal.as_str())
                 {
                     return Err(ReadError::Malformed {
                         attribute: "segment",
                     });
                 }
                 let bucket = string(item, SK)
+                    .as_deref()
                     .and_then(|value| BucketHour::parse(value).ok())
                     .ok_or(ReadError::Malformed { attribute: SK })?;
                 if bucket < first
                     || bucket > last
-                    || string(item, "bucket") != Some(bucket.as_str())
+                    || string(item, "bucket").as_deref() != Some(bucket.as_str())
                 {
                     return Err(ReadError::Malformed {
                         attribute: "bucket",
@@ -1592,7 +1593,6 @@ impl ObservationReader {
             body,
             id: event.event_id,
             observed_at: event.occurred_at,
-            run_id: event.run,
             sequence: DecimalU128::new(u128::from(event.event_seq)),
             session_id: Some(session),
             signal: ObservationSignal::Events,

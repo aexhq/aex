@@ -11,8 +11,8 @@ use aex_regional_http::cursor::{
     CursorBinding, CursorRequestBinding, Order, SnapshotToken, decode_state_resume, encode_state,
 };
 use aex_regional_http::projection::{ProjectionError, authority_failure};
-use aex_runtime_control::store::{GenerationPointer, RuntimeActivityStore as _};
-use aex_session_dynamodb::store::{SessionQueries as _, SessionScoped};
+use aex_runtime_control::store::{GenerationPointer, RuntimeActivityStore as _, RuntimeStoreError};
+use aex_session_dynamodb::store::SessionScoped;
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::ids::{
     ContentHash, FileDownloadId, FilePath, FileUploadId, GenerationId, PrefixedId as _, SessionId,
@@ -68,7 +68,7 @@ impl Routes {
             .runtime_activity
             .load_current_generation(session_id)
             .await
-            .map_err(|error| authority_failure(&error))?
+            .map_err(|error| runtime_authority_failure(&error))?
             .ok_or_else(|| WireError::new(ErrorCode::ResourceConflict))?;
         if pointer.session != session_id || pointer.generation != generation {
             return Err(WireError::new(ErrorCode::PreconditionFailed));
@@ -223,6 +223,18 @@ impl Routes {
     }
 }
 
+fn runtime_authority_failure(error: &RuntimeStoreError) -> WireError {
+    let code = match error {
+        RuntimeStoreError::RevisionConflict { .. }
+        | RuntimeStoreError::ReconcileConflict { .. } => ErrorCode::PreconditionFailed,
+        RuntimeStoreError::IntentOpen { .. } => ErrorCode::ResourceConflict,
+        RuntimeStoreError::NoSuchGeneration { .. } => ErrorCode::NotFound,
+        RuntimeStoreError::Unavailable { .. } => ErrorCode::UpstreamError,
+        RuntimeStoreError::Malformed { .. } => ErrorCode::InternalError,
+    };
+    WireError::new(code)
+}
+
 fn generation_for_live_status(
     status: aex_session_domain::lifecycle::LifecycleStatus,
     generation: GenerationId,
@@ -235,7 +247,6 @@ fn generation_for_live_status(
         LifecycleStatus::Deleting => Err(WireError::new(ErrorCode::SessionDeleting)),
         LifecycleStatus::Idle
         | LifecycleStatus::Running
-        | LifecycleStatus::AwaitingApproval
         | LifecycleStatus::Suspending
         | LifecycleStatus::Suspended
         | LifecycleStatus::Resuming => Ok(generation),

@@ -1,6 +1,6 @@
 //! Generation-local, binary-safe workspace file transfers.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read as _, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -9,13 +9,18 @@ use std::sync::Mutex;
 use aex_hands_protocol::files::{
     FILE_FRAME_BYTES, FILE_TRANSFER_PART_BYTES, FileDownloadChunk, FileDownloadId,
     FileDownloadState, FileFailureCode, FilePartReceipt, FileRequest, FileResponse, FileUploadId,
-    FileUploadState, MAX_FILE_BYTES,
+    FileUploadState, LiveFileEntry, LiveFileEntryKind, LiveFileListing, MAX_FILE_BYTES,
+    MAX_FILE_LIST_ENTRIES,
 };
 use aex_hands_protocol::operation::{FileMode, GuestPath, GuestRoot};
+use aex_hands_tools::{EntryKind, FsError, GuestFs, ListEntry};
 use aex_wire::ids::ContentHash;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 
+/// Maximum directory entries inspected by one live-list request, including
+/// entries discarded before its cursor.
+const MAX_FILE_LIST_VISITS: usize = 16_384;
 const MAX_PARTS: u32 = 10_000;
 
 /// Exact guest file transport state.
@@ -25,13 +30,15 @@ pub struct FileService {
     workspace: PathBuf,
     uploads: PathBuf,
     downloads: Mutex<BTreeMap<FileDownloadId, OpenDownload>>,
+    aborted_downloads: Mutex<BTreeSet<FileDownloadId>>,
 }
 
 #[derive(Debug)]
 struct OpenDownload {
-    file: File,
+    file: Option<File>,
     path: GuestPath,
     state: FileDownloadState,
+    closed: Option<(ContentHash, ContentHash)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,6 +81,7 @@ impl FileService {
             workspace: workspace.into(),
             uploads,
             downloads: Mutex::new(BTreeMap::new()),
+            aborted_downloads: Mutex::new(BTreeSet::new()),
         })
     }
 
@@ -86,6 +94,13 @@ impl FileService {
 
     fn try_answer(&self, request: FileRequest) -> Result<FileResponse, FileFailureCode> {
         match request {
+            FileRequest::List {
+                path,
+                recursive,
+                limit,
+                after,
+            } => self.list(path, recursive, limit, after),
+            FileRequest::Stat { path } => self.stat(path),
             FileRequest::UploadOpen {
                 upload,
                 path,
@@ -125,7 +140,114 @@ impl FileService {
                 max_bytes,
             } => self.download_chunk(download, offset, max_bytes),
             FileRequest::DownloadClose { download } => self.download_close(download),
+            FileRequest::DownloadAbort { download } => self.download_abort(download),
         }
+    }
+
+    fn list(
+        &self,
+        path: GuestPath,
+        recursive: bool,
+        limit: u32,
+        after: Option<GuestPath>,
+    ) -> Result<FileResponse, FileFailureCode> {
+        self.list_with_visit_ceiling(path, recursive, limit, after, MAX_FILE_LIST_VISITS)
+    }
+
+    fn list_with_visit_ceiling(
+        &self,
+        path: GuestPath,
+        recursive: bool,
+        limit: u32,
+        after: Option<GuestPath>,
+        visit_ceiling: usize,
+    ) -> Result<FileResponse, FileFailureCode> {
+        if limit == 0 || limit > MAX_FILE_LIST_ENTRIES {
+            return Err(FileFailureCode::InvalidRequest);
+        }
+        let child_prefix = format!("{}/", path.as_str().trim_end_matches('/'));
+        if after
+            .as_ref()
+            .is_some_and(|after| !after.as_str().starts_with(&child_prefix))
+        {
+            return Err(FileFailureCode::InvalidRequest);
+        }
+        let fs = crate::host::HostFs::new(self.root.clone(), self.workspace.clone());
+        let root_meta = fs.lstat(&path).map_err(map_fs)?;
+        if root_meta.kind != EntryKind::Directory {
+            return Err(FileFailureCode::InvalidPath);
+        }
+        let page_size = usize::try_from(limit).map_err(|_| FileFailureCode::InvalidRequest)?;
+        let mut visited = 0usize;
+        let mut pending = Vec::new();
+        push_children(
+            &fs,
+            &self.root,
+            &path,
+            visit_ceiling,
+            &mut visited,
+            &mut pending,
+        )?;
+        let mut page = Vec::with_capacity(page_size.saturating_add(1));
+        while let Some(entry) = pending.pop() {
+            let entry_path = GuestPath::parse(&self.root, &entry.path)
+                .map_err(|_| FileFailureCode::LimitExceeded)?;
+            let before_or_at_cursor = after
+                .as_ref()
+                .is_some_and(|after| entry_path.as_str() <= after.as_str());
+            let cursor_at_or_inside = after.as_ref().is_some_and(|after| {
+                after == &entry_path
+                    || after
+                        .as_str()
+                        .starts_with(&format!("{}/", entry_path.as_str()))
+            });
+            let descend = recursive
+                && entry.kind == EntryKind::Directory
+                && !entry_path.as_str().ends_with("/.git")
+                && (!before_or_at_cursor || cursor_at_or_inside);
+            if !before_or_at_cursor {
+                page.push(entry);
+                if page.len() > page_size {
+                    break;
+                }
+            }
+            if descend {
+                push_children(
+                    &fs,
+                    &self.root,
+                    &entry_path,
+                    visit_ceiling,
+                    &mut visited,
+                    &mut pending,
+                )?;
+            }
+        }
+        let truncated = page.len() > page_size;
+        page.truncate(page_size);
+        let next_after = truncated
+            .then(|| page.last().map(|entry| entry.path.as_str()))
+            .flatten()
+            .map(|path| GuestPath::parse(&self.root, path))
+            .transpose()
+            .map_err(|_| FileFailureCode::Unavailable)?;
+        let entries = page
+            .into_iter()
+            .map(|entry| live_entry(&self.root, entry))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(FileResponse::Listing {
+            listing: LiveFileListing {
+                entries,
+                next_after,
+            },
+        })
+    }
+
+    fn stat(&self, path: GuestPath) -> Result<FileResponse, FileFailureCode> {
+        let fs = crate::host::HostFs::new(self.root.clone(), self.workspace.clone());
+        let entry = aex_hands_tools::filesystem::stat_path(&fs, &path).map_err(map_fs)?;
+        Ok(FileResponse::Entry {
+            entry: live_entry(&self.root, entry)?,
+        })
     }
 
     fn upload_open(
@@ -138,6 +260,9 @@ impl FileService {
     ) -> Result<FileResponse, FileFailureCode> {
         if size_bytes > MAX_FILE_BYTES || path.as_str() == self.root.0 {
             return Err(FileFailureCode::LimitExceeded);
+        }
+        if self.aborted_upload_path(upload).exists() {
+            return Err(FileFailureCode::Conflict);
         }
         self.validate_workspace_path(&path, true)?;
         let directory = self.upload_directory(upload);
@@ -484,10 +609,19 @@ impl FileService {
     }
 
     fn upload_abort(&self, upload: FileUploadId) -> Result<FileResponse, FileFailureCode> {
+        if self.aborted_upload_path(upload).exists() {
+            let directory = self.upload_directory(upload);
+            if directory.exists() {
+                std::fs::remove_dir_all(directory).map_err(|error| map_io(&error))?;
+            }
+            return Ok(FileResponse::UploadAborted { upload });
+        }
         if self.read_manifest(upload)?.state.complete {
             return Err(FileFailureCode::Conflict);
         }
-        std::fs::remove_dir_all(self.upload_directory(upload)).map_err(|error| map_io(&error))?;
+        write_atomic(&self.aborted_upload_path(upload), b"aborted")?;
+        std::fs::remove_dir_all(self.upload_directory(upload))
+            .map_err(|error| map_io(&error))?;
         Ok(FileResponse::UploadAborted { upload })
     }
 
@@ -536,16 +670,17 @@ impl FileService {
             .lock()
             .map_err(|_| FileFailureCode::Unavailable)?;
         if let Some(existing) = open.get(&download) {
-            if existing.state != state {
+            if existing.state != state || existing.file.is_none() {
                 return Err(FileFailureCode::Conflict);
             }
         } else {
             open.insert(
                 download,
                 OpenDownload {
-                    file,
+                    file: Some(file),
                     path: path.clone(),
                     state: state.clone(),
+                    closed: None,
                 },
             );
         }
@@ -566,6 +701,7 @@ impl FileService {
             .lock()
             .map_err(|_| FileFailureCode::Unavailable)?;
         let opened = open.get_mut(&download).ok_or(FileFailureCode::NotFound)?;
+        let file = opened.file.as_mut().ok_or(FileFailureCode::Conflict)?;
         let end = opened
             .state
             .start
@@ -577,13 +713,9 @@ impl FileService {
         let wanted = (end - offset).min(u64::from(max_bytes));
         let mut bytes =
             vec![0u8; usize::try_from(wanted).map_err(|_| FileFailureCode::InvalidRequest)?];
-        opened
-            .file
-            .seek(std::io::SeekFrom::Start(offset))
+        file.seek(std::io::SeekFrom::Start(offset))
             .map_err(|error| map_io(&error))?;
-        opened
-            .file
-            .read_exact(&mut bytes)
+        file.read_exact(&mut bytes)
             .map_err(|error| map_io(&error))?;
         let chunk = FileDownloadChunk {
             download,
@@ -596,14 +728,21 @@ impl FileService {
     }
 
     fn download_close(&self, download: FileDownloadId) -> Result<FileResponse, FileFailureCode> {
-        let mut opened = self
+        let mut open = self
             .downloads
             .lock()
-            .map_err(|_| FileFailureCode::Unavailable)?
-            .remove(&download)
-            .ok_or(FileFailureCode::NotFound)?;
-        let descriptor_metadata = opened.file.metadata().map_err(|error| map_io(&error))?;
-        let descriptor_sha = hash_file(&mut opened.file)?;
+            .map_err(|_| FileFailureCode::Unavailable)?;
+        let opened = open.get_mut(&download).ok_or(FileFailureCode::NotFound)?;
+        if let Some((sha256, version)) = opened.closed {
+            return Ok(FileResponse::DownloadClosed {
+                download,
+                sha256,
+                version,
+            });
+        }
+        let file = opened.file.as_mut().ok_or(FileFailureCode::Unavailable)?;
+        let descriptor_metadata = file.metadata().map_err(|error| map_io(&error))?;
+        let descriptor_sha = hash_file(file)?;
         if descriptor_sha != opened.state.sha256
             || file_version(&descriptor_metadata, descriptor_sha) != opened.state.version
         {
@@ -619,11 +758,30 @@ impl FileService {
         {
             return Err(FileFailureCode::Conflict);
         }
+        opened.closed = Some((descriptor_sha, opened.state.version));
+        opened.file = None;
         Ok(FileResponse::DownloadClosed {
             download,
             sha256: descriptor_sha,
             version: opened.state.version,
         })
+    }
+
+    fn download_abort(&self, download: FileDownloadId) -> Result<FileResponse, FileFailureCode> {
+        let mut aborted = self
+            .aborted_downloads
+            .lock()
+            .map_err(|_| FileFailureCode::Unavailable)?;
+        if aborted.contains(&download) {
+            return Ok(FileResponse::DownloadAborted { download });
+        }
+        self.downloads
+            .lock()
+            .map_err(|_| FileFailureCode::Unavailable)?
+            .remove(&download)
+            .ok_or(FileFailureCode::NotFound)?;
+        aborted.insert(download);
+        Ok(FileResponse::DownloadAborted { download })
     }
 
     fn validate_workspace_path(
@@ -677,6 +835,9 @@ impl FileService {
     fn upload_directory(&self, upload: FileUploadId) -> PathBuf {
         self.uploads.join(upload.to_string())
     }
+    fn aborted_upload_path(&self, upload: FileUploadId) -> PathBuf {
+        self.uploads.join(format!("aborted-{upload}"))
+    }
     fn manifest_path(&self, upload: FileUploadId) -> PathBuf {
         self.upload_directory(upload).join("manifest.json")
     }
@@ -720,6 +881,43 @@ impl FileService {
             &bytes,
         )
     }
+}
+
+fn push_children(
+    fs: &crate::host::HostFs,
+    root: &GuestRoot,
+    directory: &GuestPath,
+    visit_ceiling: usize,
+    visited: &mut usize,
+    pending: &mut Vec<ListEntry>,
+) -> Result<(), FileFailureCode> {
+    let remaining = visit_ceiling
+        .checked_sub(*visited)
+        .ok_or(FileFailureCode::LimitExceeded)?;
+    let children = fs
+        .read_dir_bounded(directory, remaining)
+        .map_err(map_fs)?
+        .ok_or(FileFailureCode::LimitExceeded)?;
+    *visited = visited
+        .checked_add(children.len())
+        .ok_or(FileFailureCode::LimitExceeded)?;
+    for child in children.into_iter().rev() {
+        let path = format!(
+            "{}/{}",
+            directory.as_str().trim_end_matches('/'),
+            child.name
+        );
+        GuestPath::parse(root, &path).map_err(|_| FileFailureCode::LimitExceeded)?;
+        pending.push(ListEntry {
+            path,
+            kind: child.meta.kind,
+            size: child.meta.size,
+            mtime_ms: child.meta.mtime_ms,
+            mode: child.meta.mode,
+            target: child.meta.target,
+        });
+    }
+    Ok(())
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), FileFailureCode> {
@@ -895,6 +1093,46 @@ fn map_io(error: &std::io::Error) -> FileFailureCode {
         std::io::ErrorKind::InvalidInput => FileFailureCode::InvalidRequest,
         _ => FileFailureCode::Unavailable,
     }
+}
+
+fn map_fs(error: FsError) -> FileFailureCode {
+    match error {
+        FsError::NotFound { .. } => FileFailureCode::NotFound,
+        FsError::IsADirectory { .. } | FsError::NotADirectory { .. } => {
+            FileFailureCode::InvalidPath
+        }
+        FsError::DiskFull => FileFailureCode::LimitExceeded,
+        FsError::PermissionDenied { .. } | FsError::Other { .. } => FileFailureCode::Unavailable,
+    }
+}
+
+fn live_entry(root: &GuestRoot, entry: ListEntry) -> Result<LiveFileEntry, FileFailureCode> {
+    let path = GuestPath::parse(root, &entry.path).map_err(|_| FileFailureCode::Unavailable)?;
+    let kind = match entry.kind {
+        EntryKind::File => LiveFileEntryKind::File,
+        EntryKind::Directory => LiveFileEntryKind::Directory,
+        EntryKind::Symlink => LiveFileEntryKind::Symlink,
+        EntryKind::Other => return Err(FileFailureCode::InvalidPath),
+    };
+    let target = match (kind, entry.target) {
+        (LiveFileEntryKind::Symlink, Some(target))
+            if !target.is_empty() && target.len() <= GuestPath::MAX_BYTES =>
+        {
+            Some(target)
+        }
+        (LiveFileEntryKind::Symlink, Some(_)) => return Err(FileFailureCode::LimitExceeded),
+        (LiveFileEntryKind::Symlink, None) => return Err(FileFailureCode::Unavailable),
+        (_, None) => None,
+        (_, Some(_)) => return Err(FileFailureCode::Unavailable),
+    };
+    Ok(LiveFileEntry {
+        path,
+        kind,
+        size_bytes: entry.size,
+        mtime_ms: entry.mtime_ms,
+        mode: entry.mode & 0o777,
+        target,
+    })
 }
 
 #[cfg(test)]

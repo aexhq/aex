@@ -37,7 +37,6 @@ fn minimal_request() -> models::SessionCreateRequest {
     let session = session_fixture();
     let _ = &session;
     models::SessionCreateRequest {
-        approval_policy: None,
         compute: None,
         credentials: None,
         metadata: None,

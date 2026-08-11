@@ -683,9 +683,6 @@ fn resolved_config(
     };
 
     let document = models::ResolvedConfig {
-        approval_policy: command.request.approval_policy.clone().unwrap_or(
-            models::ApprovalPolicy::AllowAll(models::ApprovalPolicyAllowAll {}),
-        ),
         catalog_revision: qualified.catalog_revision.clone(),
         compute: models::ResolvedCompute {
             size,

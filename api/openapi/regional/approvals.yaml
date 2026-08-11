@@ -1,6 +1,0 @@
-plane: regional
-fragment: approvals
-operations:
-  - { id: session_approvals_list, method: GET, path: "/api/sessions/{sessionId}/approvals", summary: "List the approvals of a session.", scope: "sessions:read", success: ApprovalPage, errors: [unauthenticated, insufficient_scope, wrong_workspace_region, account_paused, not_found, session_deleted, invalid_cursor], query: { cursor: { type: cursor, optional: true, doc: "Opaque continuation token." }, limit: { type: integer, min: 1, max: 1000, optional: true, doc: "Page size." } } }
-  - { id: session_approval_get, method: GET, path: "/api/sessions/{sessionId}/approvals/{approvalId}", summary: "Read one approval and its bound-call record.", scope: "sessions:read", success: Approval, errors: [unauthenticated, insufficient_scope, wrong_workspace_region, account_paused, not_found, session_deleted, approval_not_found] }
-  - { id: session_approval_respond, method: POST, path: "/api/sessions/{sessionId}/approvals/{approvalId}/responses", summary: "Decide a pending approval.", scope: "sessions:write", request: ApprovalRespondRequest, success: Approval, errors: [unauthenticated, insufficient_scope, wrong_workspace_region, account_paused, not_found, session_deleting, session_deleted, invalid_request, approval_not_found, approval_already_resolved, approval_binding_changed] }

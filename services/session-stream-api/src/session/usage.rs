@@ -250,7 +250,6 @@ fn to_wire_item(
         // run or operation identity, and saying so is honest rather than an
         // omission a client should wait for.
         session_id: None,
-        run_id: None,
         operation_id: None,
         source: row.public_category.category().id().to_owned(),
         service_time,

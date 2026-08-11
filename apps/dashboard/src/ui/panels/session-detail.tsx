@@ -2,12 +2,11 @@
 
 import { useState } from "react";
 
-import { DEADLINE_MS, submit, useResource } from "../client";
-import { Badge, Card, CoverageNotice, Empty, Notice, Resolved } from "../components";
-import { readCoverage, type PanelState } from "../panel";
+import { DEADLINE_MS, useResource } from "../client";
+import { Badge, Card, CoverageNotice, Empty, Resolved } from "../components";
+import { readCoverage } from "../panel";
 import { bytes, instant, label, sessionStatus } from "../status";
 import type {
-  Approval,
   LiveFileEntryPage,
   Message,
   ObservationPage,
@@ -90,92 +89,6 @@ export function MessagesPanel({ region, sessionId, billingHref }: Scope) {
                   ))}
                 </tbody>
               </table>
-            </div>
-          )
-        }
-      </Resolved>
-    </Card>
-  );
-}
-
-export function ApprovalsPanel({ region, sessionId, billingHref }: Scope) {
-  const { state, reload } = useResource<Page<Approval>>("session_approvals_list", {
-    region,
-    parameters: { sessionId, limit: "50" },
-    deadlineMs: DEADLINE_MS.control,
-  });
-  const [pending, setPending] = useState<string | null>(null);
-  const [outcome, setOutcome] = useState<PanelState<unknown> | null>(null);
-
-  async function decide(approvalId: string, decision: "approve" | "deny") {
-    setPending(approvalId);
-    const result = await submit<Approval>("session_approval_respond", {
-      region,
-      parameters: { sessionId, approvalId },
-      body: { decision },
-    });
-    setPending(null);
-    setOutcome(result);
-    if (result.kind === "ready") reload();
-  }
-
-  return (
-    <Card
-      title="Approvals"
-      description="A bound call runs only if it is approved here or through a client."
-    >
-      <Resolved state={state} reload={reload} billingHref={billingHref}>
-        {(page) =>
-          page.items.length === 0 ? (
-            <Empty title="Nothing is waiting on a decision." />
-          ) : (
-            <div className="stack">
-              {outcome && outcome.kind !== "ready" ? (
-                <Notice status="warning" title="That decision was not recorded" live>
-                  <p className="small">
-                    {"failure" in outcome ? outcome.failure.message : "The request did not complete."}
-                  </p>
-                </Notice>
-              ) : null}
-              {page.items.map((approval) => (
-                <div key={approval.id} className="stack-tight">
-                  <div className="row">
-                    <Badge
-                      status={approval.status === "pending" ? "warning" : undefined}
-                      label={label(approval.status)}
-                    />
-                    <strong className="small">{approval.boundCall.toolName}</strong>
-                    <span className="small muted">expires {instant(approval.expiresAt)}</span>
-                  </div>
-                  <p className="small muted mono">args {approval.boundCall.argumentsDigest.slice(0, 16)}…</p>
-                  {approval.status === "pending" ? (
-                    <div className="row">
-                      <button
-                        type="button"
-                        className="button"
-                        data-variant="primary"
-                        disabled={pending === approval.id}
-                        onClick={() => void decide(approval.id, "approve")}
-                      >
-                        Approve
-                      </button>
-                      <button
-                        type="button"
-                        className="button"
-                        disabled={pending === approval.id}
-                        onClick={() => void decide(approval.id, "deny")}
-                      >
-                        Deny
-                      </button>
-                    </div>
-                  ) : (
-                    <p className="small muted">
-                      {approval.decision ? `${label(approval.decision)}d` : "Resolved"}{" "}
-                      {instant(approval.resolvedAt)}
-                    </p>
-                  )}
-                </div>
-              ))}
             </div>
           )
         }

@@ -55,7 +55,6 @@ export interface Session {
 export type SessionStatus =
   | "idle"
   | "running"
-  | "awaiting_approval"
   | "suspending"
   | "suspended"
   | "resuming"
@@ -73,26 +72,6 @@ export interface Message {
     | { readonly type: "tool_result"; readonly id: string; readonly resultDigest: string }
   )[];
   readonly createdAt: string;
-}
-
-export interface Approval {
-  readonly id: string;
-  readonly sessionId: string;
-  readonly status: string;
-  readonly createdAt: string;
-  readonly expiresAt: string;
-  readonly resolvedAt?: string;
-  readonly decision?: "approve" | "deny";
-  readonly boundCall: {
-    readonly toolName: string;
-    readonly toolCallId: string;
-    readonly agentId: string;
-    readonly argumentsDigest: string;
-    readonly configDigest: string;
-    readonly expectedConfigRevision: number;
-    readonly expectedGenerationId?: string;
-    readonly implementationDigest: string;
-  };
 }
 
 export interface MissingInterval {

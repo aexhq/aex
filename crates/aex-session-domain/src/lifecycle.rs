@@ -29,8 +29,6 @@ pub enum LifecycleStatus {
     Idle,
     /// Processing the active message.
     Running,
-    /// Waiting for a bound approval decision.
-    AwaitingApproval,
     /// Stopping compute while retaining the exact generation.
     Suspending,
     /// Compute is stopped and the exact generation may resume.
@@ -47,10 +45,9 @@ pub enum LifecycleStatus {
 
 impl LifecycleStatus {
     /// Every public state in canonical order.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 8] = [
         Self::Idle,
         Self::Running,
-        Self::AwaitingApproval,
         Self::Suspending,
         Self::Suspended,
         Self::Resuming,
@@ -62,7 +59,7 @@ impl LifecycleStatus {
     /// Whether Brain currently owns a message.
     #[must_use]
     pub const fn is_active(self) -> bool {
-        matches!(self, Self::Running | Self::AwaitingApproval)
+        matches!(self, Self::Running)
     }
 }
 
@@ -99,7 +96,7 @@ pub struct SessionLifecycle {
     pub revision: LifecycleRevision,
     /// Current public state.
     pub status: LifecycleStatus,
-    /// Current message activity, only while running or awaiting approval.
+    /// Current message activity, only while running.
     pub active: Option<ActiveMessage>,
     /// When the provider generation first launched.
     pub launched_at: Timestamp,
@@ -218,22 +215,6 @@ impl SessionLifecycle {
         Ok(())
     }
 
-    /// Marks the active message as awaiting an approval.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a non-running lifecycle, a different active owner, or an
-    /// exhausted lifecycle revision.
-    pub fn await_approval(&mut self, run: RunId) -> Result<(), LifecycleError> {
-        if self.status != LifecycleStatus::Running {
-            return Err(LifecycleError::InvalidState(self.status));
-        }
-        ensure_owner(self.active, run)?;
-        self.bump_revision()?;
-        self.status = LifecycleStatus::AwaitingApproval;
-        Ok(())
-    }
-
     /// Completes the active message and returns the session to idle.
     ///
     /// # Errors
@@ -283,9 +264,7 @@ impl SessionLifecycle {
                 Ok(true)
             }
             LifecycleStatus::Suspended => Ok(false),
-            LifecycleStatus::Running | LifecycleStatus::AwaitingApproval => {
-                Err(LifecycleError::SessionBusy)
-            }
+            LifecycleStatus::Running => Err(LifecycleError::SessionBusy),
             state => Err(LifecycleError::InvalidState(state)),
         }
     }

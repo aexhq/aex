@@ -386,62 +386,6 @@ schemas:
       name: { type: resource_name, doc: "A human label." }
       apiKey: { type: string, min: 8, max: 8192, doc: "The provider key; write-only, never returned." }
 
-  ApprovalStatus:
-    doc: Where an approval is in its lifecycle.
-    type: enum
-    values:
-      - { value: pending, doc: "Waiting on a decision." }
-      - { value: approved, doc: "Approved; the bound call may run." }
-      - { value: denied, doc: "Denied; the bound call will not run." }
-      - { value: cancelled, doc: "Withdrawn by current-work cancellation, termination, deletion, account pause, runtime loss, tool-call cancellation, or binding drift." }
-      - { value: expired, doc: "Its explicit decision deadline elapsed." }
-
-  ApprovalDecision:
-    doc: The two decisions a caller may make.
-    type: enum
-    values:
-      - { value: approve, doc: "Let the bound call run." }
-      - { value: deny, doc: "Refuse the bound call." }
-
-  ApprovalBoundCall:
-    doc: The exact call an approval is bound to. Nothing else may run under it.
-    type: object
-    fields:
-      agentId: { type: id, of: agent, doc: "The internal execution agent." }
-      toolCallId: { type: id, of: tool_call, doc: "The tool call." }
-      toolName: { type: resource_name, doc: "The canonical tool name." }
-      argumentsDigest: { type: content_hash, doc: "Canonical digest of the arguments." }
-      implementationDigest: { type: content_hash, doc: "Digest of the tool implementation." }
-      configDigest: { type: content_hash, doc: "Digest of the resolved tool configuration." }
-      expectedGenerationId: { type: id, of: generation, optional: true, doc: "The generation the call must run in." }
-      expectedConfigRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The configuration revision the call expects." }
-
-  Approval:
-    doc: A pending or resolved tool approval.
-    type: object
-    fields:
-      id: { type: id, of: approval, doc: "Identity." }
-      sessionId: { type: id, of: session, doc: "The owning session." }
-      status: { type: ref, to: ApprovalStatus, doc: "Lifecycle position." }
-      boundCall: { type: ref, to: ApprovalBoundCall, doc: "Exactly what may run." }
-      decision: { type: ref, to: ApprovalDecision, optional: true, doc: "The recorded decision." }
-      createdAt: { type: timestamp, doc: "When it was raised." }
-      expiresAt: { type: timestamp, doc: "When it stops being decidable." }
-      resolvedAt: { type: timestamp, optional: true, doc: "When it was decided." }
-
-  ApprovalPage:
-    doc: One page of approvals.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: Approval }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  ApprovalRespondRequest:
-    doc: Decide a pending approval. Exact replay returns the winner.
-    type: object
-    fields:
-      decision: { type: ref, to: ApprovalDecision, doc: "The decision." }
-
   LimitSource:
     doc: Where an effective limit value came from.
     type: enum

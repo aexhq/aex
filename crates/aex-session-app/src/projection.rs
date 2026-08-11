@@ -25,7 +25,6 @@ pub const fn public_status(status: SessionStatus) -> models::SessionStatus {
     match status {
         SessionStatus::Idle => models::SessionStatus::Idle,
         SessionStatus::Running => models::SessionStatus::Running,
-        SessionStatus::AwaitingApproval => models::SessionStatus::AwaitingApproval,
         SessionStatus::Suspending => models::SessionStatus::Suspending,
         SessionStatus::Suspended => models::SessionStatus::Suspended,
         SessionStatus::Resuming => models::SessionStatus::Resuming,

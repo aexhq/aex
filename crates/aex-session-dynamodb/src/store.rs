@@ -131,8 +131,6 @@ pub enum SessionListStatus {
     Idle,
     /// A run is executing.
     Running,
-    /// A run is blocked on an approval.
-    AwaitingApproval,
     /// Compute is stopping but this generation remains resumable.
     Suspending,
     /// Compute is stopped and this generation remains resumable.
@@ -152,7 +150,6 @@ impl SessionListStatus {
         match self {
             Self::Idle => matches!(status, SessionStatus::Idle),
             Self::Running => matches!(status, SessionStatus::Running),
-            Self::AwaitingApproval => matches!(status, SessionStatus::AwaitingApproval),
             Self::Suspending => matches!(status, SessionStatus::Suspending),
             Self::Suspended => matches!(status, SessionStatus::Suspended),
             Self::Resuming => matches!(status, SessionStatus::Resuming),

@@ -1,5 +1,5 @@
-//! `aex-session-app` owns session admission and continuation use cases: transactional
-//! admission, trash/restore/purge coordination and the authority ports.
+//! `aex-session-app` owns transactional session admission, current lifecycle
+//! planning, live-file reads and the authority ports.
 //!
 //! # Invariants
 //!
@@ -56,9 +56,6 @@ pub use projection::{
     canonical_session_bytes, public_session, public_session_list_item, public_status,
 };
 pub use use_cases::{
-    CommitTerminal, LiveRead, MESSAGE_TEXT_MAX_BYTES, MessageAdmissionOutcome, Purge,
-    RECOVERY_WINDOW, Rebind, Resume, STOP_BATCH_AGENTS, SendMessage, SessionCommand, StartRun,
-    admit_message, commit_terminal, continue_operation, continue_stop, list_live_files,
-    purge_session, rebind_credentials, restore_session, start_run, stat_live_file, stop_session,
-    trash_session,
+    CommitTerminal, LiveRead, MESSAGE_TEXT_MAX_BYTES, MessageAdmissionOutcome, SendMessage,
+    StartRun, admit_message, commit_terminal, list_live_files, start_run, stat_live_file,
 };

@@ -85,6 +85,21 @@ adding storage or a resume path. Revisit persistent session files separately onl
 if customers need a second durable file abstraction in addition to registered
 workspace files.
 
+## Interactive tool approvals
+
+Launch exposes Bash as the only built-in model tool and runs it without a human
+approval round trip. The public `approvalPolicy` selector, approval resources,
+approval routes, `awaiting_approval` session state, dashboard controls, and CLI
+commands are deleted rather than shipped dormant.
+
+Revisit interactive approvals only when a non-Bash tool or a concrete customer
+policy requires them and one atomic authority can bind the exact tool call,
+arguments, implementation, resolved configuration, credential revision, and
+generation through decision, dispatch, replay, cancellation, and expiry. Restore
+the contract, runtime state, dashboard/SDK/CLI experience, and end-to-end tests
+together; do not add a policy field or approval button without that complete
+handoff.
+
 ## Message attachments
 
 Launch message admission is text-only. Files are not silently converted to path

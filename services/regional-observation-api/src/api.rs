@@ -665,7 +665,6 @@ impl ObservationRequest {
                     body: empty_body(),
                     id,
                     observed_at: time,
-                    run_id: None,
                     sequence: DecimalU128::new(u128::from(
                         crate::reader::number(item, "acceptedSeq").unwrap_or(0),
                     )),
