@@ -17,6 +17,20 @@ pub const HISTORY_SCHEMA: &str = "schema_admin";
 /// The history table, qualified.
 pub const HISTORY_TABLE: &str = "schema_admin._sqlx_migrations";
 
+/// Hosted-only extension installation and its immediate privilege boundary.
+///
+/// The portable grant document cannot name these schemas because they do not
+/// exist outside Aurora. Each namespace loses `PUBLIC` access immediately
+/// after creation and before extension code can be installed into it.
+const OUTBOX_EXTENSION_INSTALL_SQL: [&str; 6] = [
+    "CREATE SCHEMA IF NOT EXISTS aws_commons",
+    "REVOKE ALL ON SCHEMA aws_commons FROM PUBLIC",
+    "CREATE EXTENSION IF NOT EXISTS aws_commons WITH SCHEMA aws_commons",
+    "CREATE SCHEMA IF NOT EXISTS aws_lambda",
+    "REVOKE ALL ON SCHEMA aws_lambda FROM PUBLIC",
+    "CREATE EXTENSION IF NOT EXISTS aws_lambda WITH SCHEMA aws_lambda",
+];
+
 /// Why an online operation did not complete.
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
@@ -132,12 +146,7 @@ pub async fn configure_outbox_wake(
     connection: &mut PgConnection,
     lambda_arn: &str,
 ) -> Result<(), RunnerError> {
-    for statement in [
-        "CREATE SCHEMA IF NOT EXISTS aws_commons",
-        "CREATE EXTENSION IF NOT EXISTS aws_commons WITH SCHEMA aws_commons",
-        "CREATE SCHEMA IF NOT EXISTS aws_lambda",
-        "CREATE EXTENSION IF NOT EXISTS aws_lambda WITH SCHEMA aws_lambda",
-    ] {
+    for statement in OUTBOX_EXTENSION_INSTALL_SQL {
         sqlx::query(statement)
             .execute(&mut *connection)
             .await
@@ -760,7 +769,24 @@ pub async fn seed_signing_key(
 
 #[cfg(test)]
 mod tests {
-    use super::{HISTORY_SCHEMA, HISTORY_TABLE, PepperRow, RunnerError};
+    use super::{
+        HISTORY_SCHEMA, HISTORY_TABLE, OUTBOX_EXTENSION_INSTALL_SQL, PepperRow, RunnerError,
+    };
+
+    #[test]
+    fn hosted_extension_namespaces_are_denied_before_installation() {
+        assert_eq!(
+            OUTBOX_EXTENSION_INSTALL_SQL,
+            [
+                "CREATE SCHEMA IF NOT EXISTS aws_commons",
+                "REVOKE ALL ON SCHEMA aws_commons FROM PUBLIC",
+                "CREATE EXTENSION IF NOT EXISTS aws_commons WITH SCHEMA aws_commons",
+                "CREATE SCHEMA IF NOT EXISTS aws_lambda",
+                "REVOKE ALL ON SCHEMA aws_lambda FROM PUBLIC",
+                "CREATE EXTENSION IF NOT EXISTS aws_lambda WITH SCHEMA aws_lambda",
+            ]
+        );
+    }
 
     #[test]
     fn history_lives_outside_every_application_search_path() {

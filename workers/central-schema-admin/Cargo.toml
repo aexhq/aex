@@ -35,6 +35,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 conformance = "unit"
+hosted_extensions = "integration"
 migrations = "integration"
 smoke = "smoke"
 resource_envelope = "e2e"
