@@ -10,7 +10,7 @@ const AWS_COMMONS_CONTROL: &str =
     "comment = 'hosted fixture commons'\ndefault_version = '1.2'\nrelocatable = false\n";
 const AWS_COMMONS_SQL: &str = "-- hosted fixture commons\n";
 const AWS_LAMBDA_CONTROL: &str = "comment = 'hosted fixture lambda'\ndefault_version = '1.0'\nrelocatable = true\nrequires = 'aws_commons'\n";
-const AWS_LAMBDA_SQL: &str = "CREATE FUNCTION @extschema@.invoke(function_name text, payload json, context text, invocation_type text)\nRETURNS TABLE(status_code integer)\nLANGUAGE sql\nAS 'SELECT CASE WHEN invocation_type = ''DryRun'' THEN 204 ELSE 202 END';\n";
+const AWS_LAMBDA_SQL: &str = "CREATE FUNCTION invoke(function_name text, payload json, context text, invocation_type text)\nRETURNS TABLE(status_code integer)\nLANGUAGE sql\nAS 'SELECT CASE WHEN invocation_type = ''DryRun'' THEN 204 ELSE 202 END';\n";
 
 struct Fixture {
     engine: PostgresContainer,
@@ -120,6 +120,17 @@ async fn hosted_outbox_extensions_install_without_public_and_replay_exactly() {
             ("aws_lambda".to_owned(), "aws_lambda".to_owned()),
         ]
     );
+
+    let invoke_schema: String = sqlx::query_scalar(
+        "SELECT namespace.nspname::text \
+           FROM pg_proc AS procedure \
+           JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace \
+          WHERE procedure.oid = 'aws_lambda.invoke(text,json,text,text)'::regprocedure",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("the installed invoke function schema reads");
+    assert_eq!(invoke_schema, "aws_lambda");
 
     let public_schema_usage: i64 = sqlx::query_scalar(
         "SELECT count(*) \
