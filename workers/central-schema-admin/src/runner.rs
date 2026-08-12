@@ -132,10 +132,17 @@ pub async fn configure_outbox_wake(
     connection: &mut PgConnection,
     lambda_arn: &str,
 ) -> Result<(), RunnerError> {
-    sqlx::query("CREATE EXTENSION IF NOT EXISTS aws_lambda CASCADE")
-        .execute(&mut *connection)
-        .await
-        .map_err(|error| RunnerError::Database(error.to_string()))?;
+    for statement in [
+        "CREATE SCHEMA IF NOT EXISTS aws_commons",
+        "CREATE EXTENSION IF NOT EXISTS aws_commons WITH SCHEMA aws_commons",
+        "CREATE SCHEMA IF NOT EXISTS aws_lambda",
+        "CREATE EXTENSION IF NOT EXISTS aws_lambda WITH SCHEMA aws_lambda",
+    ] {
+        sqlx::query(statement)
+            .execute(&mut *connection)
+            .await
+            .map_err(|error| RunnerError::Database(error.to_string()))?;
+    }
     let dry_run: i32 = sqlx::query_scalar(
         "SELECT status_code \
            FROM aws_lambda.invoke($1::text, '{}'::json, NULL::text, 'DryRun'::text)",

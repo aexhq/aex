@@ -71,6 +71,7 @@ zeroize.workspace = true
 
 [dev-dependencies]
 aex-test-harness = { path = "../../tests/support/aex-test-harness", features = ["containers"] }
+testcontainers.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 [[test]]
 name = "conformance"
@@ -79,6 +80,11 @@ path = "tests/conformance.rs"
 [[test]]
 name = "migrations"
 path = "tests/migrations.rs"
+required-features = ["integration-engines"]
+
+[[test]]
+name = "hosted_extensions"
+path = "tests/hosted_extensions.rs"
 required-features = ["integration-engines"]
 
 [[test]]

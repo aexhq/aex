@@ -31,7 +31,7 @@ schema_version = 2
 revoke_public = true
 
 # A schema created after `public` is dropped grants `PUBLIC` nothing by default.
-# These four are stated anyway: the denial baseline is a property somebody should
+# These are stated anyway: the denial baseline is a property somebody should
 # be able to read, not one they have to infer from PostgreSQL's defaults.
 [[schema]]
 name = "identity"
@@ -49,6 +49,17 @@ revoke_public = true
 # `validate` refuses a document that tries.
 [[schema]]
 name = "schema_admin"
+revoke_public = true
+
+# Aurora's outbox wake extensions live outside every application search path.
+# `control.invoke_outbox_wake` reaches `aws_lambda.invoke` only as its owner;
+# no application role and no anonymous database user can enter either schema.
+[[schema]]
+name = "aws_commons"
+revoke_public = true
+
+[[schema]]
+name = "aws_lambda"
 revoke_public = true
 
 # `control.authorization_epoch` receives no INSERT, UPDATE or DELETE from any

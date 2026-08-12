@@ -507,6 +507,12 @@ mod tests {
                 .any(|statement| statement.starts_with("GRANT") && statement.ends_with("PUBLIC")),
             "granting anything back to PUBLIC would undo the revoke's purpose"
         );
+        for schema in ["aws_commons", "aws_lambda"] {
+            assert!(
+                rendered.contains(&format!("REVOKE ALL ON SCHEMA {schema} FROM PUBLIC")),
+                "the hosted extension schema `{schema}` is outside the PUBLIC surface"
+            );
+        }
     }
 
     #[test]
