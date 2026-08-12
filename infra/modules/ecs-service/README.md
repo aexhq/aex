@@ -123,7 +123,7 @@ substituted for it.
 | `stop_timeout` | `number` | Drain window: 120 for `brain-mux`, 30 for `session-stream-api`. |
 | `deregistration_delay` | `number` | Target-group drain window; at least 30. |
 | `health_check_grace_period_seconds` | `number` | Required behind a load balancer, rejected without one. |
-| `circuit_breaker` | `object` | `{ enable, rollback }`; `enable` must be true. |
+| `circuit_breaker` | `object` | `{ enable = true, rollback = false }`; the breaker stops unhealthy deployments and releases fix forward. |
 | `autoscaling_metrics` | `list(object)` | Target-tracking metrics with `dimensions` and both cooldowns, or `[]` for fixed-count mode. |
 | `autoscaling_bounds` | `object` | `{ min_capacity, max_capacity }`; both equal `desired_count` in fixed-count mode. |
 | `env` / `secret_env` | `map(string)` | Environment; secrets by ARN reference. |

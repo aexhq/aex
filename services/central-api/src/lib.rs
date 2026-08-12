@@ -150,7 +150,7 @@ pub const PERMISSIONS: &[&str] = &[
 ///
 /// One field per probe rather than one boolean for "everything": a process that
 /// reports "not ready" without naming which authority did not answer is a page
-/// nobody can action, and this composition has six of them.
+/// nobody can action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(
     clippy::struct_excessive_bools,
@@ -159,8 +159,6 @@ pub const PERMISSIONS: &[&str] = &[
 pub struct Probes {
     /// `SELECT 1` on the Aurora login succeeded.
     pub aurora: bool,
-    /// That same login proved the finance grants.
-    pub finance: bool,
     /// The API-key pepper loaded.
     pub api_key_pepper: bool,
     /// The identity pepper loaded.
@@ -175,7 +173,6 @@ impl Probes {
     /// No probe has answered yet.
     pub const NONE: Self = Self {
         aurora: false,
-        finance: false,
         api_key_pepper: false,
         identity_pepper: false,
         cursor_secret: false,
@@ -185,7 +182,6 @@ impl Probes {
     /// Every required authority answered its real probe.
     pub const READY: Self = Self {
         aurora: true,
-        finance: true,
         api_key_pepper: true,
         identity_pepper: true,
         cursor_secret: true,
@@ -202,10 +198,6 @@ pub fn readiness(probes: Probes) -> Readiness {
             Dependency {
                 name: "aurora",
                 resolved: probes.aurora,
-            },
-            Dependency {
-                name: "aurora-finance",
-                resolved: probes.finance,
             },
             Dependency {
                 name: "api-key-pepper",
@@ -302,17 +294,22 @@ mod tests {
     fn the_readiness_projection_names_one_dependency_per_probe() {
         assert!(!readiness(Probes::NONE).is_ready());
         assert!(readiness(Probes::READY).is_ready());
-        assert_eq!(readiness(Probes::NONE).unresolved().len(), 6);
+        assert_eq!(readiness(Probes::NONE).unresolved().len(), 5);
+        assert!(
+            !readiness(Probes::NONE)
+                .unresolved()
+                .contains(&"aurora-finance")
+        );
         assert!(readiness(Probes::READY).unresolved().is_empty());
     }
 
     #[test]
     fn a_single_unanswered_probe_keeps_the_whole_process_out_of_rotation() {
         let mut probes = Probes::READY;
-        probes.finance = false;
+        probes.aurora = false;
         let readiness = readiness(probes);
         assert!(!readiness.is_ready());
-        assert_eq!(readiness.unresolved(), vec!["aurora-finance"]);
+        assert_eq!(readiness.unresolved(), vec!["aurora"]);
     }
 
     #[test]

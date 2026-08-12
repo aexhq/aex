@@ -116,8 +116,8 @@ jobs:
           aex-release-tool artifact oci-source-clean \
             --out "$RELEASE_DIR/source-clean-before-plan.json"
 
-      - name: Bind the immutable Brain tool catalogue
-        if: ${{ matrix.name == 'brain-mux' }}
+      - name: Bind the immutable release tool catalogue
+        if: ${{ matrix.name == 'brain-mux' || matrix.name == 'session-stream-api' }}
         run: |
           set -euo pipefail
           identity=$(aex-release-tool artifact tool-catalog)
@@ -125,14 +125,14 @@ jobs:
           echo "AEX_TOOL_CATALOG_SHA256=$digest" >> "$GITHUB_ENV"
 
       - name: Acquire the last-good signed model-catalog binding
-        if: ${{ matrix.name == 'brain-mux' }}
+        if: ${{ matrix.name == 'brain-mux' || matrix.name == 'session-stream-api' }}
         env:
           AEX_MODEL_CATALOG_BINDING_JSON: ${{ vars.AEX_MODEL_CATALOG_BINDING_JSON }}
         run: |
           set -euo pipefail
           binding="${AEX_MODEL_CATALOG_BINDING_JSON:-}"
           if [[ -z "$binding" ]]; then
-            echo "::warning title=brain-mux built without a model catalog::AEX_MODEL_CATALOG_BINDING_JSON is empty, so this brain-mux image compiles the release-input blocker instead of a signed model catalog. The binary refuses to start on every launch and the image can never become ready. Set the repository variable to the last-good signed binding before shipping this image."
+            echo "::warning title=${{ matrix.name }} built without a model catalog::AEX_MODEL_CATALOG_BINDING_JSON is empty, so this image compiles the release-input blocker instead of a signed model catalog. The binary refuses to start on every launch and the image can never become ready. Set the repository variable to the last-good signed binding before shipping this image."
             exit 0
           fi
           (( ${#binding} <= 49152 )) || {
@@ -203,7 +203,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RELEASE_DIR"
           required=()
-          if [ "${{ inputs.for_publication }}" = "true" ] && [ "${{ matrix.name }}" = "brain-mux" ]; then
+          if [ "${{ inputs.for_publication }}" = "true" ] && { [ "${{ matrix.name }}" = "brain-mux" ] || [ "${{ matrix.name }}" = "session-stream-api" ]; }; then
             required+=(--require-model-catalog)
           fi
           aex-release-tool artifact plan --unit "${{ matrix.name }}" "${required[@]}" | tee "$RELEASE_DIR/recipe.json"

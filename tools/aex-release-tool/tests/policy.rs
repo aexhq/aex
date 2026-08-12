@@ -180,7 +180,7 @@ fn every_shipped_workflow_passes_the_structural_gates() {
 }
 
 #[test]
-fn protected_brain_publication_requires_catalog_preflight_before_build() {
+fn protected_catalog_consumers_require_preflight_before_build() {
     // Compilation moved to its own read-only workflow, so the preflight and the
     // build it guards both live there now.
     let workflow =
@@ -196,6 +196,7 @@ fn protected_brain_publication_requires_catalog_preflight_before_build() {
     );
     assert!(workflow.contains("inputs.for_publication"));
     assert!(workflow.contains("matrix.name }}\" = \"brain-mux"));
+    assert!(workflow.contains("matrix.name }}\" = \"session-stream-api"));
     assert!(workflow.contains("env.update(recipe['env'])"));
 
     // The publishing half still owns `publish`, and must never regain the

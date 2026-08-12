@@ -559,7 +559,7 @@ fn publication_plan_with_model_catalog(
     plan_with_model_catalog(unit, catalog)
 }
 
-fn requires_model_catalog(unit: &Unit) -> bool {
+pub(crate) fn requires_model_catalog(unit: &Unit) -> bool {
     matches!(unit.id.as_str(), "brain-mux" | "session-stream-api")
 }
 

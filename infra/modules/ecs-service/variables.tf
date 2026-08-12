@@ -176,13 +176,13 @@ variable "circuit_breaker" {
   })
   default = {
     enable   = true
-    rollback = true
+    rollback = false
   }
-  description = "Deployment circuit breaker. It stays enabled: without it a deployment that never becomes healthy just keeps trying."
+  description = "Deployment circuit breaker. It stays enabled so an unhealthy deployment stops retrying, while automatic rollback stays disabled for the prelaunch fix-forward policy."
 
   validation {
-    condition     = var.circuit_breaker.enable
-    error_message = "The deployment circuit breaker must be enabled."
+    condition     = var.circuit_breaker.enable && !var.circuit_breaker.rollback
+    error_message = "The deployment circuit breaker must be enabled and automatic rollback must stay disabled; this service fixes forward."
   }
 }
 

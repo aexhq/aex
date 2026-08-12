@@ -353,6 +353,10 @@ describe("public main-push publication", () => {
     const publishSource = read(".github/workflows/_build-artifacts.yml");
     const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
     const build = workflow.jobs.compile;
+    const bindToolCatalog = build.steps.find(
+      (step: { readonly name?: string }) =>
+        step.name === "Bind the immutable release tool catalogue"
+    );
     const acquire = build.steps.find(
       (step: { readonly name?: string }) =>
         step.name === "Acquire the last-good signed model-catalog binding"
@@ -361,7 +365,10 @@ describe("public main-push publication", () => {
       (step: { readonly name?: string }) => step.name === "Print the recipe"
     );
 
+    expect(bindToolCatalog?.if).toContain("matrix.name == 'brain-mux'");
+    expect(bindToolCatalog?.if).toContain("matrix.name == 'session-stream-api'");
     expect(acquire?.if).toContain("matrix.name == 'brain-mux'");
+    expect(acquire?.if).toContain("matrix.name == 'session-stream-api'");
     expect(acquire?.env).toEqual({
       AEX_MODEL_CATALOG_BINDING_JSON: "${{ vars.AEX_MODEL_CATALOG_BINDING_JSON }}"
     });
@@ -384,6 +391,8 @@ describe("public main-push publication", () => {
     expect(acquire?.run).toContain("invalid or open shape");
     expect(acquire?.run).toContain("must not carry a query, fragment, or parent path");
     expect(recipe?.env).not.toHaveProperty("AEX_MODEL_CATALOG_COLLECTION_FILE");
+    expect(recipe?.run).toContain('matrix.name }}" = "brain-mux"');
+    expect(recipe?.run).toContain('matrix.name }}" = "session-stream-api"');
     // The repository variable is the ONLY catalogue authority, in either file.
     for (const text of [source, publishSource]) {
       expect(text).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_FILE");

@@ -97,9 +97,8 @@ fn context_refuses_a_recipe_whose_recorded_digest_does_not_match_its_command() {
 }
 
 #[test]
-fn context_accepts_the_complete_release_bound_brain_catalog_recipe() {
+fn context_accepts_complete_release_bound_catalog_recipes() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let unit = shipped_unit("brain-mux");
     let signing = p256::ecdsa::SigningKey::from_slice(&[7; 32]).expect("fixture key");
     let trust_roots_json = canon::to_string(&serde_json::json!({
         "keys": [{
@@ -118,19 +117,22 @@ fn context_accepts_the_complete_release_bound_brain_catalog_recipe() {
         tool_catalog_sha256:
             "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
     };
-    let plan = artifact::plan_with_model_catalog(&unit, Some(&inputs)).expect("release plan");
-    let binary = temp.path().join("brain-mux");
-    std::fs::write(&binary, fake_aarch64_elf(43)).expect("ELF fixture");
+    for unit_name in ["brain-mux", "session-stream-api"] {
+        let unit = shipped_unit(unit_name);
+        let plan = artifact::plan_with_model_catalog(&unit, Some(&inputs)).expect("release plan");
+        let binary = temp.path().join(unit_name);
+        std::fs::write(&binary, fake_aarch64_elf(43)).expect("ELF fixture");
 
-    prepare_context(
-        &unit,
-        &plan,
-        &binary,
-        &temp.path().join("release-bound-context"),
-        source(),
-        pinned_toolchain(),
-    )
-    .expect("complete release-bound recipe");
+        prepare_context(
+            &unit,
+            &plan,
+            &binary,
+            &temp.path().join(format!("release-bound-{unit_name}")),
+            source(),
+            pinned_toolchain(),
+        )
+        .expect("complete release-bound recipe");
+    }
 }
 
 #[test]

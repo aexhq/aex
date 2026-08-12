@@ -77,7 +77,7 @@ run "the_image_is_digest_pinned" {
   }
 }
 
-run "the_circuit_breaker_is_enabled_and_rolls_back" {
+run "the_circuit_breaker_is_enabled_without_automatic_rollback" {
   command = plan
 
   assert {
@@ -86,8 +86,8 @@ run "the_circuit_breaker_is_enabled_and_rolls_back" {
   }
 
   assert {
-    condition     = one(aws_ecs_service.autoscaled[0].deployment_circuit_breaker).rollback == true
-    error_message = "A tripped circuit breaker must roll back."
+    condition     = one(aws_ecs_service.autoscaled[0].deployment_circuit_breaker).rollback == false
+    error_message = "A tripped circuit breaker must stop the deployment for a fix-forward release, not attempt an automatic rollback."
   }
 }
 
@@ -370,6 +370,19 @@ run "rejects_disabling_the_circuit_breaker" {
     circuit_breaker = {
       enable   = false
       rollback = false
+    }
+  }
+
+  expect_failures = [var.circuit_breaker]
+}
+
+run "rejects_enabling_automatic_rollback" {
+  command = plan
+
+  variables {
+    circuit_breaker = {
+      enable   = true
+      rollback = true
     }
   }
 

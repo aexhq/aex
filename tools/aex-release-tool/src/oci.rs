@@ -257,7 +257,7 @@ fn validate_unit_and_plan(unit: &Unit, plan: &BuildPlan) -> Result<()> {
         .all(|(key, value)| plan.env.get(key) == Some(value));
     let environment_keys_are_closed = plan.env.keys().all(|key| {
         expected.env.contains_key(key)
-            || (unit.id == "brain-mux"
+            || (crate::artifact::requires_model_catalog(unit)
                 && matches!(
                     key.as_str(),
                     crate::artifact::MODEL_CATALOG_TRUST_ROOTS_JSON_VAR
@@ -278,7 +278,7 @@ fn validate_unit_and_plan(unit: &Unit, plan: &BuildPlan) -> Result<()> {
     .filter_map(|key| plan.env.get(key))
     .collect::<Vec<_>>();
     let catalog_binding_is_complete = catalog_values.is_empty()
-        || (unit.id == "brain-mux"
+        || (crate::artifact::requires_model_catalog(unit)
             && catalog_values.len() == 5
             && catalog_values.iter().all(|value| !value.is_empty()));
     if plan.unit != unit.id

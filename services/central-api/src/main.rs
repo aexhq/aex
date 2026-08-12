@@ -5,7 +5,7 @@
 //!
 //! The binary is a composition root only: it installs telemetry, validates
 //! configuration, admits its capability manifest, builds the real adapters,
-//! proves every one of them answers **before** the listener binds, assembles the
+//! proves the shared start-up dependencies answer **before** the listener binds, assembles the
 //! router from the generated route table, and serves it until the drain
 //! completes. Behaviour lives in the library crates it composes.
 //!
@@ -98,7 +98,7 @@ async fn main() -> ExitCode {
 /// serves it until the drain completes.
 #[allow(
     clippy::too_many_lines,
-    reason = "the composition root deliberately keeps every login, probed authority, service and drain binding visible in one audit surface"
+    reason = "the composition root deliberately keeps every login, start-up dependency, service and drain binding visible in one audit surface"
 )]
 async fn run(
     config: &Config,
@@ -249,15 +249,13 @@ async fn run(
 
     let billing_authority = Arc::new(finance_api::aurora::AuroraBillingAuthority::new(
         Arc::new(aurora.clone()),
-        config.finance_role.clone(),
+        finance_api::config::REQUIRED_ROLE.to_owned(),
     ));
-    // The finance probe is a grant fact rather than a `SELECT 1`: it asks
-    // PostgreSQL whether this login is actually a member of the role that may
-    // write the journal. A money surface that serves before it can prove its own
-    // grants fails at its first write instead of at start-up.
-    finance_api::authority::BillingAuthority::probe_role(billing_authority.as_ref())
-        .await
-        .map_err(|error| CentralApiRunError::Dependency("aurora-finance", error.to_string()))?;
+    // The prelaunch composition intentionally uses the cluster's one managed
+    // login. `finance-api`'s per-role membership probe is correct for its
+    // standalone role-scoped login, but requiring it here contradicts that
+    // topology and makes the first shared-login task unable to start. The
+    // common Aurora login has already answered its real connection probe above.
     let billing = Arc::new(finance_api::billing::BillingService::new(
         Arc::clone(&billing_authority),
         Arc::new(finance_api::gateway::CommandEdgeGateway::new(

@@ -2,7 +2,7 @@
 //!
 //! Two properties, and the second is the one that matters for a merge: an
 //! incomplete environment must be refused **by name**. This deployable reads
-//! twenty-two variables where the three it replaces read thirteen, eleven and
+//! twenty-three variables where the three it replaces read thirteen, eleven and
 //! twelve, so "it did not start" without a variable name is a deployment nobody
 //! can debug.
 
@@ -155,7 +155,6 @@ fn complete() -> BTreeMap<&'static str, String> {
         ),
         (config::DOWNLOAD_GRANT_TTL_MS, "300000".to_owned()),
         (config::DRAIN_DEADLINE_MS, "20000".to_owned()),
-        (config::FINANCE_ROLE, "aex_finance_api".to_owned()),
         (
             config::IDENTITY_PEPPER_SECRET_ID,
             "aex/dev/identity-pepper/current".to_owned(),

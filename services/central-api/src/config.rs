@@ -25,9 +25,9 @@
 //! * A `ROLE` variable per schema. The Lambda deployables each carry one and
 //!   compare it to a constant, which proves only that the operator typed the
 //!   constant: the role a connection actually assumes comes from the secret,
-//!   not from the environment. The one exception is [`FINANCE_ROLE`], which
-//!   `finance-api`'s authority passes to `pg_has_role` in its own start-up
-//!   probe, so it is a functional input rather than a tautology.
+//!   not from the environment. This prelaunch composition deliberately uses
+//!   the one cluster login and therefore does not run a per-role membership
+//!   probe at start-up.
 //!   Two `VERCEL_*` values used to be excluded here on the grounds that the
 //!   browser ceremony exchange was not a route this process mounts. It is one
 //!   now: this composition performs the provider authorization-code exchange
@@ -72,8 +72,6 @@ pub const DEVICE_VERIFICATION_URI: &str = "AEX_CENTRAL_API_DEVICE_VERIFICATION_U
 pub const DOWNLOAD_GRANT_TTL_MS: &str = "AEX_CENTRAL_API_DOWNLOAD_GRANT_TTL_MS";
 /// How long a drain may run before the listener is abandoned.
 pub const DRAIN_DEADLINE_MS: &str = "AEX_CENTRAL_API_DRAIN_DEADLINE_MS";
-/// The `PostgreSQL` role the finance grant probe checks membership of.
-pub const FINANCE_ROLE: &str = "AEX_CENTRAL_API_FINANCE_ROLE";
 /// The identity credential pepper secret.
 pub const IDENTITY_PEPPER_SECRET_ID: &str = "AEX_CENTRAL_API_IDENTITY_PEPPER_SECRET_ID";
 /// The largest request body this composition accepts.
@@ -119,7 +117,6 @@ pub const ALL: &[&str] = &[
     DEVICE_VERIFICATION_URI,
     DOWNLOAD_GRANT_TTL_MS,
     DRAIN_DEADLINE_MS,
-    FINANCE_ROLE,
     GOOGLE_OAUTH_SECRET_ID,
     IDENTITY_PEPPER_SECRET_ID,
     MAX_BODY_BYTES,
@@ -166,8 +163,6 @@ pub struct Config {
     pub database: String,
     /// The credentials secret this deployable connects with.
     pub aurora_secret_arn: String,
-    /// The role the finance grant probe checks membership of.
-    pub finance_role: String,
     /// The API-key pepper secret.
     pub api_key_pepper_secret_id: String,
     /// The identity pepper secret.
@@ -288,7 +283,6 @@ impl Config {
             aurora_cluster_arn: required(&lookup, AURORA_CLUSTER_ARN)?,
             database: required(&lookup, DATABASE)?,
             aurora_secret_arn: required(&lookup, AURORA_SECRET_ARN)?,
-            finance_role: required(&lookup, FINANCE_ROLE)?,
             api_key_pepper_secret_id: required(&lookup, API_KEY_PEPPER_SECRET_ID)?,
             identity_pepper_secret_id: required(&lookup, IDENTITY_PEPPER_SECRET_ID)?,
             google_oauth_secret_id: required(&lookup, GOOGLE_OAUTH_SECRET_ID)?,
