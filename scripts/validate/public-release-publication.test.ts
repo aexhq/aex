@@ -114,6 +114,10 @@ describe("public main-push publication", () => {
     const packagers = compileJob.steps.find(
       (step: { readonly name?: string }) => step.name === "Install the cross-compiler and packagers"
     );
+    const rustCrossArchiveCache = compileJob.steps.find(
+      (step: { readonly name?: string }) =>
+        step.name === "Restore the pinned Rust cross-tool archive cache"
+    );
     const rustCrossToolchain = compileJob.steps.find(
       (step: { readonly name?: string }) =>
         step.name === "Install and verify the pinned Rust cross-linker toolchain"
@@ -136,10 +140,43 @@ describe("public main-push publication", () => {
     expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'microvm-image'");
     expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'rust-binary'");
     expect(rustCrossToolchain?.if).toContain("startsWith(steps.recipe.outputs.kind, 'rust-oci-')");
+    expect(rustCrossArchiveCache?.if).toBe(rustCrossToolchain?.if);
+    expect(rustCrossArchiveCache?.uses).toBe(
+      "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830"
+    );
+    expect(rustCrossArchiveCache?.with.path).toBe(
+      "${{ runner.tool_cache }}/aex-rust-cross-tools/downloads"
+    );
+    expect(rustCrossArchiveCache?.with).not.toHaveProperty("restore-keys");
+    const cacheKey = rustCrossArchiveCache?.with.key as string;
+    expect(cacheKey).toContain("${{ runner.os }}-${{ runner.arch }}");
+    expect(cacheKey).toContain(
+      "https_ziglang.org_download_0.15.2_zig-x86_64-linux-0.15.2.tar.xz_sha256_02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239"
+    );
+    expect(cacheKey).toContain(
+      "https_github.com_rust-cross_cargo-zigbuild_releases_download_v0.22.3_cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz_sha256_6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190"
+    );
     expect(rustCrossToolchain?.run).toContain("zig-x86_64-linux-0.15.2.tar.xz");
     expect(rustCrossToolchain?.run).toContain("02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239");
     expect(rustCrossToolchain?.run).toContain("cargo-zigbuild/releases/download/v0.22.3");
     expect(rustCrossToolchain?.run).toContain("6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190");
+    expect(rustCrossToolchain?.run.match(/--retry 5/g)).toHaveLength(2);
+    expect(rustCrossToolchain?.run.match(/--retry-all-errors/g)).toHaveLength(2);
+    expect(rustCrossToolchain?.run.match(/--retry-delay 2/g)).toHaveLength(2);
+    expect(rustCrossToolchain?.run.match(/--retry-max-time 180/g)).toHaveLength(2);
+    expect(rustCrossToolchain?.run.match(/--connect-timeout 15/g)).toHaveLength(2);
+    expect(rustCrossToolchain?.run.match(/--max-time 300/g)).toHaveLength(2);
+    expect(rustCrossToolchain?.run.match(/--max-filesize 268435456/g)).toHaveLength(2);
+    expect(rustCrossToolchain?.run.match(/--proto-redir '=https'/g)).toHaveLength(2);
+    // Cache admission is fail closed: both SHA checks occur after the optional
+    // download block, so a restored archive and a fresh archive take the same
+    // verifier path before either is extracted or executed.
+    expect(rustCrossToolchain?.run).toMatch(
+      /if \[\[ ! -f "\$zig_archive" \]\]; then[\s\S]*?fi\n\s*echo "02aa270f[0-9a-f]+  \$zig_archive"[\s\S]*?sha256sum --check --strict[\s\S]*?tar -xJf "\$zig_archive"/
+    );
+    expect(rustCrossToolchain?.run).toMatch(
+      /if \[\[ ! -f "\$cargo_zigbuild_archive" \]\]; then[\s\S]*?fi\n\s*echo "6a014d41[0-9a-f]+  \$cargo_zigbuild_archive"[\s\S]*?sha256sum --check --strict[\s\S]*?tar -xJf "\$cargo_zigbuild_archive"/
+    );
     expect(rustCrossToolchain?.run).toContain('echo "$tool_root/zig" >> "$GITHUB_PATH"');
     expect(rustCrossToolchain?.run).toContain('echo "$tool_root/bin" >> "$GITHUB_PATH"');
     expect(rustCrossToolchain?.run).toContain('"$tool_root/zig/zig" version');

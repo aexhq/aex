@@ -219,17 +219,31 @@ jobs:
           version: v0.34.1
           driver-opts: image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
 
+      - name: Restore the pinned Rust cross-tool archive cache
+        if: ${{ steps.recipe.outputs.kind == 'rust-lambda' || steps.recipe.outputs.kind == 'microvm-image' || steps.recipe.outputs.kind == 'rust-binary' || startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: ${{ runner.tool_cache }}/aex-rust-cross-tools/downloads
+          key: aex-rust-cross-${{ runner.os }}-${{ runner.arch }}-https_ziglang.org_download_0.15.2_zig-x86_64-linux-0.15.2.tar.xz_sha256_02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239-https_github.com_rust-cross_cargo-zigbuild_releases_download_v0.22.3_cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz_sha256_6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190
+
       - name: Install and verify the pinned Rust cross-linker toolchain
         if: ${{ steps.recipe.outputs.kind == 'rust-lambda' || steps.recipe.outputs.kind == 'microvm-image' || steps.recipe.outputs.kind == 'rust-binary' || startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         run: |
           set -euo pipefail
           tool_root="$RUNNER_TEMP/aex-rust-cross-tools"
+          archive_cache="$RUNNER_TOOL_CACHE/aex-rust-cross-tools/downloads"
           mkdir -p "$tool_root/bin" "$tool_root/zig" "$tool_root/cargo-zigbuild"
+          mkdir -p "$archive_cache"
 
-          zig_archive="$tool_root/zig-x86_64-linux-0.15.2.tar.xz"
-          curl --fail --location --proto '=https' --tlsv1.2 \
-            --output "$zig_archive" \
-            https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+          zig_archive="$archive_cache/zig-x86_64-linux-0.15.2.tar.xz"
+          if [[ ! -f "$zig_archive" ]]; then
+            curl --fail --silent --show-error --location \
+              --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 180 \
+              --connect-timeout 15 --max-time 300 --max-filesize 268435456 \
+              --output "$zig_archive" \
+              https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+          fi
           echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  $zig_archive" \
             | sha256sum --check --strict
           tar -xJf "$zig_archive" --strip-components=1 -C "$tool_root/zig"
@@ -237,10 +251,15 @@ jobs:
             | sha256sum --check --strict
           [[ "$("$tool_root/zig/zig" version)" == "0.15.2" ]]
 
-          cargo_zigbuild_archive="$tool_root/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz"
-          curl --fail --location --proto '=https' --tlsv1.2 \
-            --output "$cargo_zigbuild_archive" \
-            https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.22.3/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz
+          cargo_zigbuild_archive="$archive_cache/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz"
+          if [[ ! -f "$cargo_zigbuild_archive" ]]; then
+            curl --fail --silent --show-error --location \
+              --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 180 \
+              --connect-timeout 15 --max-time 300 --max-filesize 268435456 \
+              --output "$cargo_zigbuild_archive" \
+              https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.22.3/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz
+          fi
           echo "6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190  $cargo_zigbuild_archive" \
             | sha256sum --check --strict
           tar -xJf "$cargo_zigbuild_archive" -C "$tool_root/cargo-zigbuild"
