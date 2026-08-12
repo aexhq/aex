@@ -191,6 +191,7 @@ const SESSION_STREAM_MOUNTS: &[&str] = &[
     "observations_traces_listen",
     "observations_traces_stream",
     "provider_credential_get",
+    "provider_credential_register",
     "provider_credential_revoke",
     "provider_credentials_list",
     "regional_operation_cancel",
