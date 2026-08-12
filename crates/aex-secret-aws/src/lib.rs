@@ -24,7 +24,7 @@
 //! - custody or keystore table rows (`aex-secret-custody-dynamodb`,
 //!   `aex-secret-keystore-dynamodb`)
 //! - the custody model (`aex-secret-domain`)
-//! - plaintext admission over `HTTP` (`regional-secret-api`)
+//! - plaintext admission over `HTTP` (`session-stream-api`)
 
 pub mod context;
 pub mod crypto;

@@ -50,14 +50,14 @@ fn nothing_about_this_table_can_expire_or_stream() {
 /// `TransactWriteItems`: every write here is the atomic version-plus-pointer
 /// pair, so a bare `PutItem` or `UpdateItem` — which could move the active
 /// pointer without the version row behind it — is granted to nobody at all.
-/// `regional-secret-api` holds the transaction because it creates a workspace's
+/// `session-stream-api` holds the transaction because it creates a workspace's
 /// **first** branch key lazily on that workspace's first secret write, which is
 /// one conditional transaction per workspace ever. Rotation stays exclusively
 /// `regional-secret-key-admin`'s, enforced by the code path rather than by the
 /// grant, because create and rotate are the same provider action.
 #[test]
 fn only_the_two_creating_roles_may_write_and_only_ever_atomically() {
-    const MAY_WRITE: [&str; 2] = ["regional-secret-key-admin", "regional-secret-api"];
+    const MAY_WRITE: [&str; 2] = ["regional-secret-key-admin", "session-stream-api"];
 
     let definition = definition();
     let grants = definition["iam"].as_array().expect("an array");

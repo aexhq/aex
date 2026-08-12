@@ -235,10 +235,10 @@ fn every_audience_names_exactly_one_deployable() {
         .iter()
         .map(|audience| audience.deployable())
         .collect();
-    assert_eq!(seen.len(), 6);
+    assert_eq!(seen.len(), 5);
     seen.sort_unstable();
     seen.dedup();
-    assert_eq!(seen.len(), 6, "two audiences named the same deployable");
+    assert_eq!(seen.len(), 5, "two audiences named the same deployable");
     for audience in AssertionAudience::ALL {
         let document = serde_json::to_string(&audience).expect("an audience encodes");
         assert_eq!(
@@ -260,7 +260,7 @@ fn only_the_tool_executor_is_outside_what_a_customer_credential_may_name() {
     // The set a projected workspace-key row carries is the customer-presentable
     // one, and the single bit between it and the whole vocabulary is the tool
     // executor. Pinning the difference rather than the membership is what makes
-    // a seventh audience a decision instead of an accident: whoever adds it has
+    // a sixth audience a decision instead of an accident: whoever adds it has
     // to say which side it falls on, here.
     let outside: Vec<_> = AssertionAudience::ALL
         .into_iter()

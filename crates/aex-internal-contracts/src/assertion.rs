@@ -55,8 +55,6 @@ pub const MAX_ASSERTION_TEXT_LEN: usize = 1_024;
 pub enum AssertionAudience {
     /// `regional-session-api`.
     RegionalSession,
-    /// `regional-secret-api`.
-    RegionalSecret,
     /// `regional-observation-api`.
     RegionalObservation,
     /// `regional-otlp`.
@@ -81,9 +79,8 @@ pub enum AssertionAudience {
 
 impl AssertionAudience {
     /// Every audience, in wire order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5] = [
         Self::RegionalSession,
-        Self::RegionalSecret,
         Self::RegionalObservation,
         Self::RegionalOtlp,
         Self::RegionalStream,
@@ -96,9 +93,8 @@ impl AssertionAudience {
     /// granting". It is the set of audiences whose envelopes are minted from
     /// something other than a presented credential, and a workspace key that
     /// claimed one would be claiming a principal kind it cannot be.
-    pub const CUSTOMER_PRESENTABLE: [Self; 5] = [
+    pub const CUSTOMER_PRESENTABLE: [Self; 4] = [
         Self::RegionalSession,
-        Self::RegionalSecret,
         Self::RegionalObservation,
         Self::RegionalOtlp,
         Self::RegionalStream,
@@ -109,7 +105,6 @@ impl AssertionAudience {
     pub const fn is_customer_presentable(self) -> bool {
         match self {
             Self::RegionalSession
-            | Self::RegionalSecret
             | Self::RegionalObservation
             | Self::RegionalOtlp
             | Self::RegionalStream => true,
@@ -122,7 +117,6 @@ impl AssertionAudience {
     pub const fn deployable(self) -> &'static str {
         match self {
             Self::RegionalSession => "regional-session-api",
-            Self::RegionalSecret => "regional-secret-api",
             Self::RegionalObservation => "regional-observation-api",
             Self::RegionalOtlp => "regional-otlp",
             Self::RegionalStream => "regional-stream",
@@ -139,7 +133,6 @@ impl AssertionAudience {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::RegionalSession => "regional_session",
-            Self::RegionalSecret => "regional_secret",
             Self::RegionalObservation => "regional_observation",
             Self::RegionalOtlp => "regional_otlp",
             Self::RegionalStream => "regional_stream",

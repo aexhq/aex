@@ -16,7 +16,7 @@
 //! - `KMS`, the Encryption `SDK` or any cryptography (`aex-secret-aws`);
 //! - custody or keystore tables (`aex-secret-custody-dynamodb`,
 //!   `aex-secret-keystore-dynamodb`);
-//! - plaintext admission over `HTTP` (`regional-secret-api`).
+//! - plaintext admission over `HTTP` (`session-stream-api`).
 
 pub mod context;
 pub mod custody;

@@ -10,7 +10,7 @@
 //! [`AuthorizationProjection::read_admission_snapshot`] is the request path.
 //! Everything else here is a cold or diagnostic read.
 //!
-//! It lives behind the `authz-projection` feature so `regional-secret-api` and
+//! It lives behind the `authz-projection` feature so `session-stream-api` and
 //! `regional-otlp` can read a placement without linking the session row codec
 //! (D-21).
 

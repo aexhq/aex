@@ -5,7 +5,7 @@
 //!
 //! - **the only write path here is creation** (D-20, narrowed by D-2): making a
 //!   workspace's *first* branch key is a library operation in [`provision`],
-//!   because `regional-secret-api` must be able to establish one lazily on a
+//!   because `session-stream-api` must be able to establish one lazily on a
 //!   first write rather than wait on a cross-plane orchestration that does not
 //!   exist. **Rotation is not here and must never be** — it stays a provider
 //!   operation invoked only by `regional-secret-key-admin`

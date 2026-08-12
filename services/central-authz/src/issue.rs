@@ -893,7 +893,6 @@ mod tests {
         let assertion = issued_envelope(&response);
         let binding = workspace_key_binding(uuid7(key_uuid()), &digest());
         for other in [
-            AssertionAudience::RegionalSecret,
             AssertionAudience::RegionalObservation,
             AssertionAudience::RegionalOtlp,
             AssertionAudience::RegionalStream,

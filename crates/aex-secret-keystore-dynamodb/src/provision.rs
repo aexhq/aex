@@ -3,7 +3,7 @@
 //! This narrows the crate's D-20 invariant — "this crate deliberately
 //! implements no write path" — by exactly one operation, and the narrowing is
 //! deliberate and bounded: *creation of a workspace's first branch key* becomes
-//! a library operation so that `regional-secret-api` can perform it lazily on a
+//! a library operation so that `session-stream-api` can perform it lazily on a
 //! first write; **rotation stays exclusively with `regional-secret-key-admin`.**
 //! There is no `rotate` here and there must never be one.
 //!
@@ -337,7 +337,7 @@ pub async fn wrap_material(
 /// Reads a workspace's active branch key, creating it when it has none.
 ///
 /// This is the **single named entry point** D-2 calls for, and both
-/// `regional-secret-api` (on a first write) and `regional-secret-key-admin`'s
+/// `session-stream-api` (on a first write) and `regional-secret-key-admin`'s
 /// `create` command go through it.
 ///
 /// The create is conditional on `attribute_not_exists`, so two concurrent first

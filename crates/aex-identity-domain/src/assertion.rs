@@ -123,11 +123,10 @@ impl Plane {
 pub const fn audience_code(audience: AssertionAudience) -> u8 {
     match audience {
         AssertionAudience::RegionalSession => 1,
-        AssertionAudience::RegionalSecret => 2,
-        AssertionAudience::RegionalObservation => 3,
-        AssertionAudience::RegionalOtlp => 4,
-        AssertionAudience::RegionalStream => 5,
-        AssertionAudience::ToolExec => 6,
+        AssertionAudience::RegionalObservation => 2,
+        AssertionAudience::RegionalOtlp => 3,
+        AssertionAudience::RegionalStream => 4,
+        AssertionAudience::ToolExec => 5,
     }
 }
 
@@ -136,11 +135,10 @@ pub const fn audience_code(audience: AssertionAudience) -> u8 {
 pub const fn audience_from_code(byte: u8) -> Option<AssertionAudience> {
     match byte {
         1 => Some(AssertionAudience::RegionalSession),
-        2 => Some(AssertionAudience::RegionalSecret),
-        3 => Some(AssertionAudience::RegionalObservation),
-        4 => Some(AssertionAudience::RegionalOtlp),
-        5 => Some(AssertionAudience::RegionalStream),
-        6 => Some(AssertionAudience::ToolExec),
+        2 => Some(AssertionAudience::RegionalObservation),
+        3 => Some(AssertionAudience::RegionalOtlp),
+        4 => Some(AssertionAudience::RegionalStream),
+        5 => Some(AssertionAudience::ToolExec),
         _ => None,
     }
 }

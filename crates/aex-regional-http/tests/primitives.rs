@@ -443,7 +443,7 @@ fn runtime_capability_admission_fails_closed() {
         .insert("AEX_SECRET_KMS_KEY_ARN".into(), "secret".into());
     assert!(admit(&manifest, &extra).is_err());
     let mut wrong_deployable = valid.clone();
-    wrong_deployable.deployable = "regional-secret-api".into();
+    wrong_deployable.deployable = "another-regional-api".into();
     assert!(admit(&manifest, &wrong_deployable).is_err());
     let mut off_plane = valid;
     off_plane.values.insert(
