@@ -43,17 +43,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use aex_regional_http::capability::{
     Capability as _, CapabilityBinding, CompositionError, CompositionManifest, ContentEncrypt,
-    Declares, DeployableId, ResolvedConfig, SessionOperationInvoke, StreamSocket, WorkClaim,
+    Declares, DeployableId, ResolvedConfig, SecretPlaintextAdmission, SessionOperationInvoke,
+    StreamSocket, WorkClaim,
 };
 
 use crate::config::{self, Config};
 
 /// This binary's capability declaration.
 ///
-/// Four capabilities, and deliberately no secret-decrypt capability. There is no
-/// `SecretPlaintextAdmission` and no `SecretDecrypt`: this edge reads ciphertext
-/// metadata and never decrypts, which is why `AEX_SECRET_KMS_KEY_ARN` stays in
-/// [`crate::config::FORBIDDEN`].
+/// Five capabilities, and deliberately no general secret-decrypt capability.
+/// `SecretPlaintextAdmission` is the narrow provider-credential sealing path;
+/// reveal and rewrap remain outside this public edge.
 #[allow(
     dead_code,
     reason = "the declaration is the capability list; its only use is the type-level `Declares` bound"
@@ -64,6 +64,7 @@ impl Declares<WorkClaim> for Composition {}
 impl Declares<SessionOperationInvoke> for Composition {}
 impl Declares<StreamSocket> for Composition {}
 impl Declares<ContentEncrypt> for Composition {}
+impl Declares<SecretPlaintextAdmission> for Composition {}
 
 /// The manifest the start-up check runs against.
 ///
@@ -79,6 +80,7 @@ pub fn manifest() -> Result<CompositionManifest, CompositionError> {
             SessionOperationInvoke::ID,
             StreamSocket::ID,
             ContentEncrypt::ID,
+            SecretPlaintextAdmission::ID,
         ]),
         bindings: vec![
             // The one write handle in the process. Naming it here is what makes
@@ -91,6 +93,12 @@ pub fn manifest() -> Result<CompositionManifest, CompositionError> {
             // The sockets' authority. A stream reads it; nothing writes it here.
             CapabilityBinding::resource(config::OBSERVATION_TABLE, StreamSocket::ID),
             CapabilityBinding::arn(config::CONTENT_KMS_KEY_ARN, ContentEncrypt::ID),
+            CapabilityBinding::resource(config::SECRET_CUSTODY_TABLE, SecretPlaintextAdmission::ID),
+            CapabilityBinding::resource(
+                config::SECRET_KEYSTORE_TABLE,
+                SecretPlaintextAdmission::ID,
+            ),
+            CapabilityBinding::arn(config::SECRET_KMS_KEY_ARN, SecretPlaintextAdmission::ID),
         ],
     })
 }
@@ -121,6 +129,18 @@ pub fn resolved(config: &Config) -> ResolvedConfig {
             (
                 config::CONTENT_KMS_KEY_ARN.to_owned(),
                 config.content_kms_key.value.clone(),
+            ),
+            (
+                config::SECRET_CUSTODY_TABLE.to_owned(),
+                config.secret_custody_table.clone(),
+            ),
+            (
+                config::SECRET_KEYSTORE_TABLE.to_owned(),
+                config.secret_keystore_table.clone(),
+            ),
+            (
+                config::SECRET_KMS_KEY_ARN.to_owned(),
+                config.secret_kms_key.value.clone(),
             ),
         ]),
     }

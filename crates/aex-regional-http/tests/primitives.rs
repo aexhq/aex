@@ -578,7 +578,7 @@ fn every_generated_regional_route_has_exactly_one_planned_owner() {
     }
     assert_eq!(
         route_owner(RouteId::ProviderCredentialRegister),
-        Some(RouteOwner::SecretApi)
+        Some(RouteOwner::SessionApi)
     );
     assert_eq!(
         route_owner(RouteId::SessionObservationsEventsListen),

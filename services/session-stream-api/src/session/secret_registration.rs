@@ -1,4 +1,4 @@
-//! The provider-credential plaintext boundary, over the real adapters.
+//! Provider-credential plaintext admission inside the consolidated regional edge.
 //!
 //! The launch surface owns one write: register a provider credential. It seals
 //! the API key under a minted credential identity and atomically commits the
@@ -8,9 +8,7 @@ use std::sync::Arc;
 
 use aex_regional_http::context::RequestContext;
 use aex_regional_http::idempotency::IdempotencyIdentity;
-use aex_regional_http::mount::{UnaryDispatch, not_served};
 use aex_regional_http::projection::{self, authority_failure};
-use aex_regional_http::router::RouteOwner;
 use aex_secret_aws::crypto::SecretCrypto;
 use aex_secret_custody_dynamodb::codec::{
     CredentialState, ProviderCredential as StoredCredential, SecretMetadata as StoredSecret,
@@ -29,16 +27,11 @@ use aex_session_dynamodb::replay::{
     Backoff, DecodeReceipt, IdempotencyScope, RECEIPT_RETENTION, Receipt, ReceiptBody,
     ReceiptStore, ReplayRequest, commit_or_replay, key_digest,
 };
-use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
 use aex_wire::ids::{PrefixedId as _, ProviderCredentialId, ResourceName, Uuid7, WorkspaceId};
 use aex_wire::models;
-use aex_wire::routes::{RouteId, route};
-use aex_wire::server::{
-    AcceptKind, Created, ProviderCredentialsApi, RequestContext as WireContext, WithETag,
-    dispatch_provider_credentials,
-};
+use aex_wire::server::Created;
 use aex_wire::types::{Region, Timestamp};
 
 /// The per-workspace provider-credential bound (D-13, owner batch B8).
@@ -74,7 +67,7 @@ pub const fn secret_limits() -> SecretLimits {
 /// composition assertion belongs (D-4). Before this cluster it held
 /// `{custody, custody_table}` while the crypto adapter was built and handed to a
 /// `SecretEdge` the router never saw — which is why no handler could seal.
-pub struct Shared {
+pub struct Registration {
     /// The custody authority.
     pub custody: Arc<dyn SecretCustodyStore>,
     /// The physical `regional-secret-custody` table name.
@@ -91,10 +84,21 @@ pub struct Shared {
     pub limits: SecretLimits,
 }
 
-impl std::fmt::Debug for Shared {
+/// Narrow port exposed to the generated provider-credential dispatcher.
+#[async_trait::async_trait]
+pub trait ProviderCredentialRegistration: Send + Sync {
+    /// Seals and commits one provider credential.
+    async fn register(
+        &self,
+        cx: &RequestContext,
+        body: models::ProviderCredentialRegisterRequest,
+    ) -> WireResult<Created<models::ProviderCredential>>;
+}
+
+impl std::fmt::Debug for Registration {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("Shared")
+            .debug_struct("Registration")
             .field("custody_table", &self.custody_table)
             .field("plane", &self.plane)
             .field("region", &self.region)
@@ -186,36 +190,31 @@ impl DecodeReceipt for RegisteredCredential {
     }
 }
 
-/// One request's view of the deployable.
-pub struct Routes {
-    shared: Arc<Shared>,
-    cx: RequestContext,
-}
-
-impl Routes {
-    /// Binds the shared adapters to one verified request.
+impl Registration {
+    /// Binds the narrow plaintext-admission capability into the consolidated
+    /// regional process. No other session handler receives these adapters.
     #[must_use]
-    pub const fn new(shared: Arc<Shared>, cx: RequestContext) -> Self {
-        Self { shared, cx }
+    pub const fn new(
+        custody: Arc<dyn SecretCustodyStore>,
+        custody_table: String,
+        crypto: Arc<dyn SecretCrypto>,
+        branch_keys: Arc<dyn BranchKeyAuthority>,
+        plane: Plane,
+        region: Region,
+    ) -> Self {
+        Self {
+            custody,
+            custody_table,
+            crypto,
+            branch_keys,
+            plane,
+            region,
+            limits: secret_limits(),
+        }
     }
 
-    /// Every route whose handler is complete, in `RouteId` order.
-    ///
-    /// Derived from the deferral ledger, not listed here: what this deployable
-    /// owns and the contract does not defer. The rest is mounted as the
-    /// generated refusal arm.
-    #[must_use]
-    pub fn served() -> Vec<RouteId> {
-        RouteOwner::SecretApi
-            .routes()
-            .into_iter()
-            .filter(|id| !route(*id).deferred)
-            .collect()
-    }
-
-    fn now(&self) -> WireResult<Timestamp> {
-        self.cx
-            .now()
+    fn now(cx: &RequestContext) -> WireResult<Timestamp> {
+        cx.now()
             .map_err(|_| WireError::new(ErrorCode::InternalError))
     }
 
@@ -230,6 +229,7 @@ impl Routes {
     /// spelling would be a second place for the additional data to drift.
     async fn seal(
         &self,
+        cx: &RequestContext,
         workspace: WorkspaceId,
         name: &ResourceName,
         generation: SourceGeneration,
@@ -237,9 +237,9 @@ impl Routes {
         now: Timestamp,
     ) -> WireResult<StoredGeneration> {
         let context = EncryptionContext {
-            plane: self.shared.plane,
-            region: self.shared.region,
-            organization: self.cx.auth.organization_id,
+            plane: self.plane,
+            region: self.region,
+            organization: cx.auth.organization_id,
             workspace,
             name: name.clone(),
             generation,
@@ -253,7 +253,6 @@ impl Routes {
         // openable branch key has no seal path, and answering anything but a
         // refusal would mean writing a row nothing could ever open.
         let branch_key = self
-            .shared
             .branch_keys
             .active_or_create(workspace)
             .await
@@ -261,7 +260,6 @@ impl Routes {
                 WireError::new(ErrorCode::InternalError).with_message(error.to_string())
             })?;
         let sealed = self
-            .shared
             .crypto
             .seal(&context, &branch_key.wrapped_material, plaintext, now)
             .await
@@ -286,13 +284,14 @@ impl Routes {
     /// Commits one credential registration under the request's replay identity.
     async fn commit_registration(
         &self,
+        cx: &RequestContext,
         metadata: &StoredSecret,
         generation: &StoredGeneration,
         binding: &StoredCredential,
         value: &models::ProviderCredential,
         now: Timestamp,
     ) -> WireResult<models::ProviderCredential> {
-        let identity = self.cx.idempotency.as_ref().ok_or_else(|| {
+        let identity = cx.idempotency.as_ref().ok_or_else(|| {
             WireError::new(ErrorCode::InternalError)
                 .with_message("this route requires a replay identity".to_owned())
         })?;
@@ -308,7 +307,7 @@ impl Routes {
         })?;
         let receipt = receipt_for(&scope, identity, RegisteredCredential::KIND, value, now)?;
 
-        let custody = self.shared.custody.as_ref();
+        let custody = self.custody.as_ref();
         let receipts = CustodyReceipts(custody);
         let outcome = commit_or_replay::<RegisteredCredential, _, _>(
             &receipts,
@@ -324,12 +323,12 @@ impl Routes {
             },
             || async {
                 let plan = expressions::register_provider_credential(
-                    &self.shared.custody_table,
+                    &self.custody_table,
                     generation,
                     metadata,
                     binding,
                     &receipt,
-                    Quota::provider_credentials(self.shared.limits.max_provider_credentials),
+                    Quota::provider_credentials(self.limits.max_provider_credentials),
                 )?;
                 custody.commit(&plan).await?;
                 Ok(RegisteredCredential(value.clone()))
@@ -338,6 +337,17 @@ impl Routes {
         .await
         .map_err(|error| write_failure(&error))?;
         Ok(outcome.into_inner().0)
+    }
+}
+
+#[async_trait::async_trait]
+impl ProviderCredentialRegistration for Registration {
+    async fn register(
+        &self,
+        cx: &RequestContext,
+        body: models::ProviderCredentialRegisterRequest,
+    ) -> WireResult<Created<models::ProviderCredential>> {
+        Registration::register(self, cx, body).await
     }
 }
 
@@ -411,24 +421,7 @@ fn write_failure(error: &StoreError) -> WireError {
     }
 }
 
-impl std::fmt::Debug for Routes {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Routes")
-            .field("route", &self.cx.route)
-            .finish_non_exhaustive()
-    }
-}
-
-impl ProviderCredentialsApi for Routes {
-    async fn provider_credential_get(
-        &self,
-        _cx: &WireContext,
-        _provider_credential_id: ProviderCredentialId,
-    ) -> WireResult<WithETag<models::ProviderCredential>> {
-        Err(not_served(RouteId::ProviderCredentialGet))
-    }
-
+impl Registration {
     /// `POST /api/workspace/provider-credentials` — register a BYOK key.
     ///
     /// The seal is the whole operation (D-12). **The key is not validated
@@ -446,13 +439,13 @@ impl ProviderCredentialsApi for Routes {
     /// no error for; and it is not caller-supplied, because the generated
     /// request carries only `{provider, name, apiKey}` and a fourth field would
     /// make the customer responsible for a namespace they cannot see.
-    async fn provider_credential_register(
+    pub async fn register(
         &self,
-        _cx: &WireContext,
+        cx: &RequestContext,
         body: models::ProviderCredentialRegisterRequest,
     ) -> WireResult<Created<models::ProviderCredential>> {
-        let workspace = self.cx.auth.workspace_id;
-        let now = self.now()?;
+        let workspace = cx.auth.workspace_id;
+        let now = Self::now(cx)?;
         let plaintext = SecretPlaintext::new(body.api_key.into_bytes()).map_err(|error| {
             WireError::new(ErrorCode::InvalidRequest).with_message(error.to_string())
         })?;
@@ -474,6 +467,7 @@ impl ProviderCredentialsApi for Routes {
 
         let generation = self
             .seal(
+                cx,
                 workspace,
                 &secret_name,
                 SourceGeneration::FIRST,
@@ -511,95 +505,8 @@ impl ProviderCredentialsApi for Routes {
         };
         let value = projection::provider_credential(&binding);
         let committed = self
-            .commit_registration(&metadata, &generation, &binding, &value, now)
+            .commit_registration(cx, &metadata, &generation, &binding, &value, now)
             .await?;
         Ok(Created(committed))
-    }
-
-    async fn provider_credential_revoke(
-        &self,
-        _cx: &WireContext,
-        _provider_credential_id: ProviderCredentialId,
-        _body: models::EmptyRequest,
-    ) -> WireResult<models::ProviderCredential> {
-        Err(not_served(RouteId::ProviderCredentialRevoke))
-    }
-
-    async fn provider_credentials_list(
-        &self,
-        _cx: &WireContext,
-        _query: models::ProviderCredentialsListQuery,
-    ) -> WireResult<models::ProviderCredentialPage> {
-        Err(not_served(RouteId::ProviderCredentialsList))
-    }
-}
-
-#[async_trait::async_trait]
-impl UnaryDispatch for Routes {
-    fn owner(&self) -> RouteOwner {
-        RouteOwner::SecretApi
-    }
-
-    fn served(&self) -> Vec<RouteId> {
-        Self::served()
-    }
-
-    async fn dispatch(
-        &self,
-        cx: &RequestContext,
-        accept: AcceptKind,
-        raw: RawRequest<'_>,
-        limits: RequestLimits,
-    ) -> WireResult<RawResponse> {
-        let wire = cx.to_wire(accept);
-        let outcome = dispatch_provider_credentials(self, &wire, raw, limits).await?;
-        match outcome {
-            aex_wire::dispatch::DispatchOutcome::Unary(response) => Ok(response),
-            aex_wire::dispatch::DispatchOutcome::Ndjson(never) => match never.0 {},
-        }
-    }
-}
-
-/// The mounted dispatcher: the shared adapters, plus a `Routes` per request.
-///
-/// [`Routes`] carries the request context because every authority write here is
-/// workspace-scoped, so it cannot be the value `mount_unary` holds for the life
-/// of the process. This is that value, and it costs one `Arc` clone per request.
-///
-/// It is published rather than written twice, once here and once in the `served`
-/// target: two spellings of the composition would let the tested router and the
-/// mounted router drift apart, which is the one thing the `served` target exists
-/// to rule out.
-#[derive(Debug)]
-pub struct Dispatcher(Arc<Shared>);
-
-impl Dispatcher {
-    /// Binds the dispatcher to the shared adapters.
-    #[must_use]
-    pub const fn new(shared: Arc<Shared>) -> Self {
-        Self(shared)
-    }
-}
-
-#[async_trait::async_trait]
-impl UnaryDispatch for Dispatcher {
-    fn owner(&self) -> RouteOwner {
-        RouteOwner::SecretApi
-    }
-
-    fn served(&self) -> Vec<RouteId> {
-        Routes::served()
-    }
-
-    async fn dispatch(
-        &self,
-        cx: &RequestContext,
-        accept: AcceptKind,
-        raw: RawRequest<'_>,
-        limits: RequestLimits,
-    ) -> WireResult<RawResponse> {
-        Routes::new(Arc::clone(&self.0), cx.clone())
-            .dispatch(cx, accept, raw, limits)
-            .await
     }
 }

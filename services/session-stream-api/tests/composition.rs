@@ -10,8 +10,8 @@
 use std::collections::BTreeMap;
 
 use aex_regional_http::capability::{
-    Capability as _, CompositionError, ContentEncrypt, SessionOperationInvoke, StreamSocket,
-    WorkClaim,
+    Capability as _, CompositionError, ContentEncrypt, SecretPlaintextAdmission,
+    SessionOperationInvoke, StreamSocket, WorkClaim,
 };
 use aex_regional_http::config::RegionalHttpConfigError;
 use aex_regional_http::drain::MAX_DRAIN_DEADLINE_MS;
@@ -101,6 +101,17 @@ fn polling() -> BTreeMap<&'static str, String> {
             config::SECRET_CUSTODY_TABLE,
             "aex-dev-regional-secret-custody".to_owned(),
         ),
+        (
+            config::SECRET_KEYSTORE_TABLE,
+            "aex-dev-regional-secret-keystore".to_owned(),
+        ),
+        (
+            config::SECRET_KMS_KEY_ARN,
+            "arn:aws:kms:eu-west-1:000000000000:key/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                .to_owned(),
+        ),
+        (config::BRANCH_KEY_CACHE_BYTES, "1048576".to_owned()),
+        (config::BRANCH_KEY_CACHE_TTL_MS, "60000".to_owned()),
         (
             config::RUNTIME_ACTIVITY_TABLE,
             "aex-dev-runtime-activity".to_owned(),
@@ -518,12 +529,12 @@ fn the_two_edges_are_two_audiences_and_no_process_wide_budget() {
 
 // --- capability: what replaced the deleted `AEX_WORK_TABLE` refusal -----------
 
-/// The three refusals that survived. `AEX_WORK_TABLE` is deliberately not among
+/// The two refusals that survived. `AEX_WORK_TABLE` is deliberately not among
 /// them: the session half requires it, so the environment can no longer carry
 /// the stream's no-write guarantee.
 #[test]
-fn the_edge_cannot_be_bound_to_a_queue_or_the_secret_key() {
-    assert_eq!(config::FORBIDDEN.len(), 3);
+fn the_edge_cannot_be_bound_to_a_queue() {
+    assert_eq!(config::FORBIDDEN.len(), 2);
     for (name, _) in config::FORBIDDEN {
         let mut vars = polling();
         vars.insert(name, "bound".to_owned());
@@ -559,6 +570,7 @@ fn the_work_table_is_required_rather_than_forbidden_and_the_capability_names_it(
     assert!(manifest.capabilities.contains(SessionOperationInvoke::ID));
     assert!(manifest.capabilities.contains(StreamSocket::ID));
     assert!(manifest.capabilities.contains(ContentEncrypt::ID));
+    assert!(manifest.capabilities.contains(SecretPlaintextAdmission::ID));
 }
 
 #[test]
@@ -624,11 +636,11 @@ fn the_finite_half_owns_every_regional_non_stream_route_except_the_peers() {
             "`{id}` is a frame stream"
         );
     }
-    // Provider credential registration still belongs to the plaintext-bearing
-    // secret edge, and this deployable must not claim it.
+    // Provider credential registration now enters through this consolidated
+    // regional public edge.
     assert_eq!(
         route_owner(RouteId::ProviderCredentialRegister),
-        Some(RouteOwner::SecretApi)
+        Some(RouteOwner::SessionApi)
     );
 }
 

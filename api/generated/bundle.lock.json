@@ -39,7 +39,7 @@
     "api/schemas/registries/evolution.yaml": "sha256:d744c5441ff29e0b96b72dd0397362db1c9ac4c3afa6275843240455f8da02e0",
     "api/schemas/registries/ids.yaml": "sha256:b0821154b3ca9d5c5977a2a452bba053d0ee4515772d7564565a1c0a4e8ef582",
     "api/schemas/registries/limits.yaml": "sha256:f2b74c3ed982ab5db0a870373b6fab86e48c1c351d20001ef30acf25c25c976b",
-    "api/schemas/registries/routes-meta.yaml": "sha256:fbe79dfe9eb685880406100b967c577c3b7e7ae3f74a735695e2b0e3b724c0cf",
+    "api/schemas/registries/routes-meta.yaml": "sha256:abb1b52287f272eb07372d141ebf3ab4a4acd8bd645e508e1cbfbe5f2d19cf36",
     "api/schemas/registries/scopes.yaml": "sha256:36f4997b926011789b2e5a98d12bcd6a7a9a94445cd53d01d7844956a6c46eb2",
     "api/schemas/usage/usage.yaml": "sha256:7cb53fd3e5e180324c2e10e4b7c5b74a9453b782de3ab5dcab16948646b3f353",
     "rust-toolchain.toml": "sha256:4ebecf0dfad52e2954fd762b8ff09925e8c35f6909d360327c71518b4d853670"

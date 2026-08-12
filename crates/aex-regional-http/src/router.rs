@@ -19,8 +19,6 @@ pub const EDGE_PRECEDENCE: [PrecedenceStage; 13] = PrecedenceStage::ALL;
 pub enum RouteOwner {
     /// Finite session/resource API.
     SessionApi,
-    /// Plaintext secret/provider-credential admission API.
-    SecretApi,
     /// Long-lived NDJSON service.
     Stream,
     /// Observation query/export peer.
@@ -31,9 +29,8 @@ pub enum RouteOwner {
 
 impl RouteOwner {
     /// Every owner, in declaration order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 4] = [
         Self::SessionApi,
-        Self::SecretApi,
         Self::Stream,
         Self::ObservationApi,
         Self::Otlp,
@@ -52,7 +49,6 @@ impl RouteOwner {
     pub const fn deployable(self) -> &'static str {
         match self {
             Self::SessionApi | Self::Stream => "session-stream-api",
-            Self::SecretApi => "regional-secret-api",
             Self::ObservationApi => "regional-observation-api",
             Self::Otlp => "regional-otlp",
         }
@@ -68,7 +64,6 @@ impl RouteOwner {
     pub const fn half(self) -> &'static str {
         match self {
             Self::SessionApi => "session-stream-api:unary",
-            Self::SecretApi => "regional-secret-api",
             Self::Stream => "session-stream-api:ndjson",
             Self::ObservationApi => "regional-observation-api",
             Self::Otlp => "regional-otlp",
@@ -90,10 +85,8 @@ impl RouteOwner {
 
     /// The planned subset of `group` for this deployable, in `RouteId` order.
     ///
-    /// A group is one authoring fragment, and two fragments are split across two
-    /// deployables: `regional:secrets` (metadata reads here, plaintext admission
-    /// there) and `regional:provider-credentials`. A composition narrows this
-    /// planned slice to its actual-service set before mounting.
+    /// A composition narrows this planned slice to its actual-service set before
+    /// mounting.
     #[must_use]
     pub fn routes_in(self, group: RouteGroup) -> Vec<RouteId> {
         group
@@ -137,7 +130,6 @@ pub fn route_owner(id: RouteId) -> Option<RouteOwner> {
             TransportKind::Ndjson => RouteOwner::Stream,
             TransportKind::Unary | TransportKind::Binary => RouteOwner::SessionApi,
         }),
-        "regional-secret-api" => Some(RouteOwner::SecretApi),
         "regional-observation-api" => Some(RouteOwner::ObservationApi),
         "regional-otlp" => Some(RouteOwner::Otlp),
         _ => None,

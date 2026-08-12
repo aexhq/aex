@@ -1825,8 +1825,8 @@
       "scenarios": [
         "SC-BYOK-CUSTODY"
       ],
-      "servedArtifact": "regional-secret-api",
-      "servingArtifact": "regional-secret-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Register a dedicated BYOK provider credential; carries plaintext once.",
       "transport": "unary"

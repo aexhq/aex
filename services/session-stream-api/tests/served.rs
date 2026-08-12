@@ -89,6 +89,21 @@ struct NoLiveFiles;
 
 struct NoOperationWorker;
 
+struct NoCredentialRegistration;
+
+#[async_trait::async_trait]
+impl session_stream_api::session::secret_registration::ProviderCredentialRegistration
+    for NoCredentialRegistration
+{
+    async fn register(
+        &self,
+        _cx: &RequestContext,
+        _body: models::ProviderCredentialRegisterRequest,
+    ) -> aex_wire::error::WireResult<aex_wire::server::Created<models::ProviderCredential>> {
+        Err(WireError::new(ErrorCode::InternalError))
+    }
+}
+
 #[async_trait::async_trait]
 impl session_stream_api::session::operation_worker::OperationWorkerInvoker for NoOperationWorker {
     async fn invoke(
@@ -1326,8 +1341,7 @@ fn shared_with_workspace(
             CUSTODY_TABLE,
         ),
         custody_table: CUSTODY_TABLE.to_owned(),
-        plane: aex_secret_domain::context::Plane::Dev,
-        region: aex_wire::types::Region::EuWest1,
+        credential_registration: Arc::new(NoCredentialRegistration),
         registry: registry as Arc<dyn RegistryStore>,
         // Both content authorities are bound to an offline transport. Every
         // route this suite drives — the five point reads and the five listings —
@@ -2070,17 +2084,14 @@ async fn the_revocation_reaches_the_authority_as_a_transaction() {
     );
 }
 
-/// The `provider-credentials` fragment is split across two deployables, so this
-/// trait implementation carries methods for the other half. They are unreachable
-/// through the router, and that is what makes the split safe rather than merely
-/// conventional.
 #[test]
-fn the_other_half_of_the_provider_credentials_fragment_is_unreachable_here() {
+fn the_complete_provider_credentials_fragment_is_served_here() {
     let served = Routes::served();
-    let theirs = RouteOwner::SecretApi.routes_in(RouteGroup::ProviderCredentials);
-    assert!(!theirs.is_empty(), "the group has a secret-api half");
-    for id in theirs {
-        assert!(!served.contains(&id), "`{id}` is the secret edge's");
+    for id in RouteOwner::SessionApi.routes_in(RouteGroup::ProviderCredentials) {
+        assert!(
+            served.contains(&id),
+            "`{id}` is served by the consolidated edge"
+        );
     }
 }
 
@@ -2530,8 +2541,7 @@ fn usage_router(usage: Arc<FakeUsage>) -> axum::Router {
             CUSTODY_TABLE,
         ),
         custody_table: CUSTODY_TABLE.to_owned(),
-        plane: aex_secret_domain::context::Plane::Dev,
-        region: aex_wire::types::Region::EuWest1,
+        credential_registration: Arc::new(NoCredentialRegistration),
         registry: Arc::new(FakeRegistry::default()) as Arc<dyn RegistryStore>,
         content: Arc::new(aex_content_dynamodb::store::ContentStore::new(
             offline_dynamodb(),

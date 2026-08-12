@@ -104,6 +104,12 @@ pub struct Shared {
     /// physical name is composed by the infrastructure stream rather than
     /// guessed here.
     pub custody_table: String,
+    /// The only plaintext-bearing capability in this process.
+    ///
+    /// Kept behind its narrow port so the other session handlers cannot reach
+    /// the secret key, branch-key store, or plaintext admission operation.
+    pub credential_registration:
+        Arc<dyn crate::session::secret_registration::ProviderCredentialRegistration>,
     /// The named-registry authority.
     pub registry: Arc<dyn RegistryStore>,
     /// The content-descriptor authority, for the payload a registered value
@@ -174,14 +180,6 @@ pub struct Shared {
     pub usage: Arc<dyn UsageProjectionReads>,
     /// The signing ring every continuation is minted and verified under.
     pub cursor_keys: Arc<CursorKeyRing>,
-    /// The plane and region every encryption context is bound to.
-    ///
-    /// Carried rather than re-derived from a table name: the context digest a
-    /// custody read verifies against is a total function of these two plus the
-    /// tenant, and guessing either would make every verification fail.
-    pub plane: aex_secret_domain::context::Plane,
-    /// The region half of the same binding.
-    pub region: aex_wire::types::Region,
     /// The runtime-activity authority, which owns workspace continuity and the
     /// true-idle verdict.
     ///
@@ -1238,9 +1236,12 @@ impl ProviderCredentialsApi for Routes {
     async fn provider_credential_register(
         &self,
         _cx: &WireContext,
-        _body: models::ProviderCredentialRegisterRequest,
+        body: models::ProviderCredentialRegisterRequest,
     ) -> WireResult<Created<models::ProviderCredential>> {
-        Err(not_served(RouteId::ProviderCredentialRegister))
+        self.shared
+            .credential_registration
+            .register(&self.cx, body)
+            .await
     }
 
     /// Fences one BYOK binding.

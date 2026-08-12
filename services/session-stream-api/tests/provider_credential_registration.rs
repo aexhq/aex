@@ -1,5 +1,4 @@
-//! The routes `regional-secret-api` genuinely serves, driven through the real
-//! router.
+//! Provider-credential registration semantics inside `session-stream-api`.
 //!
 //! The doubles record the typed participants and whether every action is
 //! conditional, not provider expression spelling. Exact `DynamoDB` request
@@ -19,8 +18,6 @@ use aex_regional_http::context::{
     AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization, RequestContext,
 };
 use aex_regional_http::idempotency::{IdempotencyIdentity, IdentityContext};
-use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission, mount_unary};
-use aex_regional_http::router::RouteOwner;
 use aex_secret_aws::crypto::{SealedSecret, SecretCrypto, SecretCryptoError};
 use aex_secret_custody_dynamodb::codec::SecretMetadata as StoredSecret;
 use aex_secret_custody_dynamodb::store::{Page, SecretCustodyStore};
@@ -33,21 +30,16 @@ use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::replay::Receipt;
-use aex_wire::error::{ErrorCode, WireError};
+use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::{IdempotencyKey, PrincipalScope};
 use aex_wire::ids::{
     ApiKeyId, PrefixedId, ProviderCredentialId, ResourceName, SessionId, Uuid7, WorkspaceId,
 };
 use aex_wire::models;
-use aex_wire::routes::{RouteId, route};
+use aex_wire::routes::RouteId;
 use aex_wire::scopes::ScopeSet;
-use aex_wire::server::RouteGroup;
 use aex_wire::types::{Region, RequestId, Timestamp};
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use http_body_util::BodyExt as _;
-use regional_secret_api::handlers::{Dispatcher, Routes, Shared, secret_limits};
-use tower::ServiceExt as _;
+use session_stream_api::session::secret_registration::Registration;
 
 const TABLE: &str = "dev-eu-west-1-regional-secret-custody";
 
@@ -362,150 +354,24 @@ fn context(request_id: RequestId, route_id: RouteId) -> RequestContext {
     }
 }
 
-struct Admit;
-
-#[async_trait::async_trait]
-impl EdgeAdmission for Admit {
-    async fn admit(&self, request: &AdmissionRequest<'_>) -> Result<RequestContext, WireError> {
-        Ok(context(request.request_id.clone(), request.route))
-    }
-}
-
-fn router(custody: Arc<FakeCustody>) -> axum::Router {
-    sealing_router(custody, Arc::new(FakeCrypto::default()))
-}
-
-fn sealing_router(custody: Arc<FakeCustody>, crypto: Arc<FakeCrypto>) -> axum::Router {
-    let shared = Arc::new(Shared {
-        custody: custody as Arc<dyn SecretCustodyStore>,
-        custody_table: TABLE.to_owned(),
-        crypto: crypto as Arc<dyn SecretCrypto>,
-        branch_keys: Arc::new(FakeBranchKeys),
-        plane: Plane::Dev,
-        region: Region::EuWest1,
-        limits: secret_limits(),
-    });
-    mount_unary(
-        Arc::new(Dispatcher::new(shared)),
-        Arc::new(Admit),
-        aex_wire::dispatch::RequestLimits::DEFAULT,
+fn registration(custody: Arc<FakeCustody>, crypto: Arc<FakeCrypto>) -> Registration {
+    Registration::new(
+        custody as Arc<dyn SecretCustodyStore>,
+        TABLE.to_owned(),
+        crypto as Arc<dyn SecretCrypto>,
+        Arc::new(FakeBranchKeys),
+        Plane::Dev,
+        Region::EuWest1,
     )
-    .expect("the served set mounts")
-    .router
 }
 
-async fn send(
-    router: &axum::Router,
-    method: &str,
-    uri: &str,
-    body: &str,
-) -> (StatusCode, serde_json::Value) {
-    let request = Request::builder().method(method).uri(uri);
-    let request = if body.is_empty() {
-        request.body(Body::empty())
-    } else {
-        request
-            .header("content-type", "application/json")
-            .body(Body::from(body.to_owned()))
-    }
-    .expect("a request");
-    let response = router.clone().oneshot(request).await.expect("a response");
-    let status = response.status();
-    let bytes = response
-        .into_body()
-        .collect()
-        .await
-        .expect("a body")
-        .to_bytes();
-    let json = if bytes.is_empty() {
-        serde_json::Value::Null
-    } else {
-        serde_json::from_slice(&bytes).expect("the response body is JSON")
-    };
-    (status, json)
+fn request() -> models::ProviderCredentialRegisterRequest {
+    serde_json::from_str(r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#)
+        .expect("the generated request")
 }
 
-// --- the served set -----------------------------------------------------------------
-
-#[test]
-fn the_served_set_is_a_subset_of_the_owned_set() {
-    let served = Routes::served();
-    assert!(!served.is_empty());
-    for id in &served {
-        assert_eq!(
-            aex_regional_http::router::route_owner(*id),
-            Some(RouteOwner::SecretApi),
-            "`{id}`"
-        );
-    }
-}
-
-#[test]
-fn the_served_set_matches_the_generated_actual_mount_authority() {
-    let registry: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../api/generated/registries/routes.json"
-    ))
-    .expect("generated route registry");
-    let generated: Vec<RouteId> = registry["routes"]
-        .as_array()
-        .expect("route rows")
-        .iter()
-        .filter(|route| route["servedArtifact"] == "regional-secret-api")
-        .map(|route| {
-            RouteId::parse(route["operationId"].as_str().expect("operation id"))
-                .expect("generated operation id")
-        })
-        .collect();
-    assert_eq!(Routes::served(), generated);
-    assert_eq!(
-        generated,
-        vec![RouteId::ProviderCredentialRegister],
-        "this deployable now serves every route it owns"
-    );
-}
-
-#[test]
-fn the_credential_read_half_is_unreachable_here() {
-    let served = Routes::served();
-    for id in RouteOwner::SessionApi.routes_in(RouteGroup::ProviderCredentials) {
-        assert!(!served.contains(&id), "`{id}` is the session API's");
-    }
-}
-
-/// An owned route the contract defers is mounted and refuses honestly, rather
-/// than being absent and leaving a caller unable to tell a published-but-unbuilt
-/// operation from a mistyped path.
-///
-/// P3.3a and P3.3b mounted the last two, so this now holds vacuously — which is
-/// the point, and is why it is kept rather than deleted: if a fifth
-/// plaintext-bearing route is ever authored under this owner, it starts life
-/// failing here.
-#[tokio::test]
-async fn an_owned_but_unserved_route_answers_the_published_refusal() {
-    let custody = Arc::new(FakeCustody::default());
-    let router = router(custody);
-    let unserved: Vec<_> = RouteOwner::SecretApi
-        .routes()
-        .into_iter()
-        .filter(|id| !Routes::served().contains(id))
-        .collect();
-    assert!(
-        unserved.is_empty(),
-        "`regional-secret-api` has unbuilt routes again: {unserved:?}"
-    );
-    for id in unserved {
-        let descriptor = route(id);
-        assert!(descriptor.deferred, "`{id}` is unserved and not deferred");
-        let (status, body) = send(
-            &router,
-            descriptor.method.as_str(),
-            &descriptor.template.replace("{name}", "fixture"),
-            "{}",
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "`{id}`");
-        assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
-    }
+fn request_id() -> RequestId {
+    RequestId::parse("credential-registration-fixture").expect("a request id")
 }
 
 // --- register: the credential binding transaction -----------------------------------
@@ -517,24 +383,23 @@ async fn an_owned_but_unserved_route_answers_the_published_refusal() {
 async fn a_registration_commits_the_backing_secret_and_the_binding_together() {
     let custody = Arc::new(FakeCustody::default());
     let crypto = Arc::new(FakeCrypto::default());
-    let router = sealing_router(Arc::clone(&custody), Arc::clone(&crypto));
-    let (status, body) = send(
-        &router,
-        "POST",
-        "/api/workspace/provider-credentials",
-        r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-
-    let credential: models::ProviderCredential =
-        serde_json::from_value(body.clone()).expect("the published schema");
+    let registrar = registration(Arc::clone(&custody), Arc::clone(&crypto));
+    let credential = registrar
+        .register(
+            &context(request_id(), RouteId::ProviderCredentialRegister),
+            request(),
+        )
+        .await
+        .expect("registration succeeds")
+        .0;
     assert_eq!(credential.name.as_str(), "prod-key");
     assert_eq!(credential.provider, models::ProviderId::Openai);
     assert_eq!(credential.state, models::ProviderCredentialState::Ready);
     assert_eq!(credential.revision, 1);
     assert!(
-        !body.to_string().contains("sk-live-abcdefgh"),
+        !serde_json::to_string(&credential)
+            .expect("the response encodes")
+            .contains("sk-live-abcdefgh"),
         "the response echoed the key"
     );
 
@@ -575,19 +440,17 @@ async fn a_registration_commits_the_backing_secret_and_the_binding_together() {
 #[tokio::test]
 async fn two_registrations_under_one_label_are_two_bindings() {
     let custody = Arc::new(FakeCustody::default());
-    let router = router(Arc::clone(&custody));
+    let registrar = registration(Arc::clone(&custody), Arc::new(FakeCrypto::default()));
     let mut ids = Vec::new();
     for _ in 0..2 {
-        let (status, body) = send(
-            &router,
-            "POST",
-            "/api/workspace/provider-credentials",
-            r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
-        )
-        .await;
-        assert_eq!(status, StatusCode::CREATED);
-        let credential: models::ProviderCredential =
-            serde_json::from_value(body).expect("the published schema");
+        let credential = registrar
+            .register(
+                &context(request_id(), RouteId::ProviderCredentialRegister),
+                request(),
+            )
+            .await
+            .expect("registration succeeds")
+            .0;
         ids.push(credential.id);
     }
     assert_ne!(ids[0], ids[1], "the identity of a binding is its `pcr_` id");
@@ -621,17 +484,15 @@ async fn a_replayed_registration_answers_the_original_minted_identity() {
         expires_at: moment("2036-08-01T12:00:00.000Z"),
     };
     let custody = Arc::new(FakeCustody::replaying(stored));
-    let router = router(Arc::clone(&custody));
-    let (status, body) = send(
-        &router,
-        "POST",
-        "/api/workspace/provider-credentials",
-        r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    let answered: models::ProviderCredential =
-        serde_json::from_value(body).expect("the published schema");
+    let registrar = registration(Arc::clone(&custody), Arc::new(FakeCrypto::default()));
+    let answered = registrar
+        .register(
+            &context(request_id(), RouteId::ProviderCredentialRegister),
+            request(),
+        )
+        .await
+        .expect("the replay succeeds")
+        .0;
     assert_eq!(
         answered.id, original.id,
         "a retry must reproduce the binding, not mint a second one"
@@ -644,17 +505,13 @@ async fn a_replayed_registration_answers_the_original_minted_identity() {
 #[tokio::test]
 async fn a_registration_past_the_credential_bound_answers_limit_exceeded() {
     let custody = Arc::new(FakeCustody::losing(Participant::CUSTODY_CREDENTIAL_COUNT));
-    let router = router(Arc::clone(&custody));
-    let (status, body) = send(
-        &router,
-        "POST",
-        "/api/workspace/provider-credentials",
-        r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
-    )
-    .await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(
-        body["error"]["code"].as_str(),
-        Some(ErrorCode::LimitExceeded.as_str())
-    );
+    let registrar = registration(Arc::clone(&custody), Arc::new(FakeCrypto::default()));
+    let error = registrar
+        .register(
+            &context(request_id(), RouteId::ProviderCredentialRegister),
+            request(),
+        )
+        .await
+        .expect_err("the quota refuses the registration");
+    assert_eq!(error.code, ErrorCode::LimitExceeded);
 }

@@ -245,19 +245,10 @@ fn no_central_route_has_a_regional_owner() {
 }
 
 #[test]
-fn the_provider_credential_group_is_divided_between_two_deployables() {
-    // Plaintext registration belongs to the secret edge; credential reads and
-    // revocation belong to the session API.
+fn the_session_api_owns_the_complete_provider_credential_group() {
     let group = RouteGroup::ProviderCredentials;
     let session = RouteOwner::SessionApi.routes_in(group);
-    let secret = RouteOwner::SecretApi.routes_in(group);
-    assert!(!session.is_empty(), "{group:?} has a session-api half");
-    assert!(!secret.is_empty(), "{group:?} has a secret-api half");
-    assert_eq!(
-        session.len() + secret.len(),
-        group.routes().len(),
-        "{group:?} is exactly divided"
-    );
+    assert_eq!(session, group.routes(), "{group:?} has one public owner");
 }
 
 #[test]
@@ -282,7 +273,7 @@ fn the_stream_owns_every_ndjson_route_and_no_other() {
 
 #[tokio::test]
 async fn a_mount_answers_exactly_the_owned_route_set() {
-    for owner in [RouteOwner::SessionApi, RouteOwner::SecretApi] {
+    for owner in [RouteOwner::SessionApi] {
         let mounted = mount_unary(
             Arc::new(EchoDispatch(owner)),
             Arc::new(AlwaysAdmit),
@@ -330,40 +321,6 @@ async fn a_mount_answers_exactly_the_owned_route_set() {
 }
 
 #[tokio::test]
-async fn a_route_owned_by_another_deployable_is_not_mounted() {
-    let mounted = mount_unary(
-        Arc::new(EchoDispatch(RouteOwner::SessionApi)),
-        Arc::new(AlwaysAdmit),
-        RequestLimits::DEFAULT,
-    )
-    .expect("mounts");
-    // Registration shares its collection path with the session API's listing
-    // route. The session router owns the path but not POST, so its structural
-    // refusal is `405` and the foreign handler is still unreachable.
-    for id in RouteOwner::SecretApi.routes() {
-        let descriptor = route(id);
-        let response = mounted
-            .router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(descriptor.method.as_str())
-                    .uri(concrete_path(id))
-                    .header("content-type", "application/json")
-                    .body(Body::from("{\"value\":\"x\"}"))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-        assert_eq!(
-            response.status(),
-            StatusCode::METHOD_NOT_ALLOWED,
-            "`{id}` is the secret edge's and must not answer on the session API"
-        );
-    }
-}
-
-#[tokio::test]
 async fn an_ndjson_route_is_absent_from_a_finite_api() {
     let mounted = mount_unary(
         Arc::new(EchoDispatch(RouteOwner::SessionApi)),
@@ -393,7 +350,7 @@ async fn an_ndjson_route_is_absent_from_a_finite_api() {
 #[tokio::test]
 async fn a_refused_admission_never_reaches_the_dispatcher() {
     let mounted = mount_unary(
-        Arc::new(EchoDispatch(RouteOwner::SecretApi)),
+        Arc::new(EchoDispatch(RouteOwner::SessionApi)),
         Arc::new(AlwaysRefuse),
         RequestLimits::DEFAULT,
     )
@@ -427,7 +384,7 @@ async fn the_declared_envelope_is_the_transport_body_ceiling() {
     // limit to the declared ceiling, or a body inside the published contract is
     // refused at the extractor before admission ever measures it.
     let mounted = mount_unary(
-        Arc::new(EchoDispatch(RouteOwner::SecretApi)),
+        Arc::new(EchoDispatch(RouteOwner::SessionApi)),
         Arc::new(AlwaysAdmit),
         RequestLimits::DEFAULT,
     )

@@ -75,7 +75,7 @@
       "resources": ["table"]
     },
     {
-      "role": "regional-secret-api",
+      "role": "session-stream-api",
       "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:Query"],
       "resources": ["table"]
     },

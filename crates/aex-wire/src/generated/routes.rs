@@ -2209,7 +2209,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         operation_id: "provider_credential_register",
         plane: Plane::Regional,
         fragment: "provider-credentials",
-        serving_artifact: "regional-secret-api",
+        serving_artifact: "session-stream-api",
         deferred: false,
         method: HttpMethod::Post,
         template: "/api/workspace/provider-credentials",

@@ -15,7 +15,9 @@
 //! `AppState` has no field that can produce one, and no amount of environment
 //! binding gives a stream handler a path to a write. See [`crate::capability`].
 //!
-//! The other three refusals were forbidden by *both* halves and are unchanged.
+//! The remaining refusals were forbidden by both original halves and are
+//! unchanged. Provider-credential registration now lives here too, so the
+//! secret key and branch-key store are explicit required bindings.
 
 use aex_regional_http::config::{
     Arn, Lookup, RegionalHttpConfigError, arn_in_region, bounded_u64, bounded_usize, forbidden,
@@ -92,6 +94,14 @@ pub const CONTENT_TABLE: &str = "AEX_CONTENT_TABLE";
 pub const REGISTRY_TABLE: &str = "AEX_REGISTRY_TABLE";
 /// The `regional-secret-custody` table, read for ciphertext metadata only.
 pub const SECRET_CUSTODY_TABLE: &str = "AEX_SECRET_CUSTODY_TABLE";
+/// The `regional-secret-keystore` table used by credential registration.
+pub const SECRET_KEYSTORE_TABLE: &str = "AEX_SECRET_KEYSTORE_TABLE";
+/// The secret KMS key. Never the content key.
+pub const SECRET_KMS_KEY_ARN: &str = "AEX_SECRET_KMS_KEY_ARN";
+/// Branch-key cache byte budget.
+pub const BRANCH_KEY_CACHE_BYTES: &str = "AEX_SECRET_BRANCH_KEY_CACHE_BYTES";
+/// Branch-key cache lifetime in milliseconds.
+pub const BRANCH_KEY_CACHE_TTL_MS: &str = "AEX_SECRET_BRANCH_KEY_CACHE_TTL_MS";
 /// The `runtime-activity` table.
 pub const RUNTIME_ACTIVITY_TABLE: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
 /// Compute usage ingress shared with runtime-control resume accounting.
@@ -159,7 +169,7 @@ pub const STREAM_CONNECTION_BUFFER_BYTES: &str = "AEX_STREAM_CONNECTION_BUFFER_B
 pub const STREAM_WRITE_STALL_MS: &str = "AEX_STREAM_WRITE_STALL_MS";
 
 /// Every variable a healthy `session-stream-api` requires in `poll` mode.
-pub const REQUIRED: [&str; 44] = [
+pub const REQUIRED: [&str; 48] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
@@ -176,6 +186,10 @@ pub const REQUIRED: [&str; 44] = [
     CONTENT_TABLE,
     REGISTRY_TABLE,
     SECRET_CUSTODY_TABLE,
+    SECRET_KEYSTORE_TABLE,
+    SECRET_KMS_KEY_ARN,
+    BRANCH_KEY_CACHE_BYTES,
+    BRANCH_KEY_CACHE_TTL_MS,
     RUNTIME_ACTIVITY_TABLE,
     USAGE_COMPUTE_QUEUE_URL,
     USAGE_STORAGE_QUEUE_URL,
@@ -211,13 +225,12 @@ pub const REQUIRED: [&str; 44] = [
 /// The binary publishes no queue message: after committing durable work it
 /// asynchronously invokes the exact operation-worker Lambda alias. The worker
 /// owns its queue, retries and deletion fan-out; binding that queue here would
-/// give the public edge a second dispatch path. It also holds no secret KMS key,
-/// because it reads ciphertext metadata and never decrypts.
+/// give the public edge a second dispatch path.
 ///
 /// `AEX_WORK_TABLE` is deliberately absent: the session half requires it. The
 /// guarantee it used to carry for the stream half is now [`crate::capability`]'s
 /// job, where the compiler enforces it instead of the environment.
-pub const FORBIDDEN: [(&str, &str); 3] = [
+pub const FORBIDDEN: [(&str, &str); 2] = [
     (
         "AEX_OPERATION_QUEUE_URL",
         "this edge publishes no queue message; the hint is derived from the work stream",
@@ -225,10 +238,6 @@ pub const FORBIDDEN: [(&str, &str); 3] = [
     (
         "AEX_CONTENT_QUEUE_URL",
         "this edge publishes no queue message",
-    ),
-    (
-        "AEX_SECRET_KMS_KEY_ARN",
-        "this edge reads ciphertext metadata and holds no decrypt capability",
     ),
 ];
 
@@ -299,6 +308,14 @@ pub struct Config {
     pub registry_table: String,
     /// `regional-secret-custody` table.
     pub secret_custody_table: String,
+    /// `regional-secret-keystore` table.
+    pub secret_keystore_table: String,
+    /// Secret KMS key used only by provider-credential registration.
+    pub secret_kms_key: Arn,
+    /// Branch-key cache byte budget.
+    pub branch_key_cache_bytes: usize,
+    /// Branch-key cache lifetime in milliseconds.
+    pub branch_key_cache_ttl_ms: u64,
     /// `runtime-activity` table.
     pub runtime_activity_table: String,
     /// Compute usage ingress used by same-generation resume.
@@ -389,6 +406,7 @@ impl Config {
                 }
             })?;
         let content_kms_key = arn_in_region(lookup, CONTENT_KMS_KEY_ARN, region, "kms")?;
+        let secret_kms_key = arn_in_region(lookup, SECRET_KMS_KEY_ARN, region, "kms")?;
         let session_operation_worker = arn_in_region(
             lookup,
             SESSION_OPERATION_WORKER_FUNCTION_ARN,
@@ -619,6 +637,20 @@ impl Config {
             content_table: required(lookup, CONTENT_TABLE)?,
             registry_table: required(lookup, REGISTRY_TABLE)?,
             secret_custody_table: required(lookup, SECRET_CUSTODY_TABLE)?,
+            secret_keystore_table: required(lookup, SECRET_KEYSTORE_TABLE)?,
+            secret_kms_key,
+            branch_key_cache_bytes: bounded_usize(
+                lookup,
+                BRANCH_KEY_CACHE_BYTES,
+                1_024,
+                64 * 1_024 * 1_024,
+            )?,
+            branch_key_cache_ttl_ms: bounded_u64(
+                lookup,
+                BRANCH_KEY_CACHE_TTL_MS,
+                1_000,
+                3_600_000,
+            )?,
             runtime_activity_table: required(lookup, RUNTIME_ACTIVITY_TABLE)?,
             usage_compute_queue_url,
             usage_storage_queue_url,
@@ -683,6 +715,12 @@ impl Config {
             query_page_items: self.max_page_items,
             query_page_bytes: self.max_page_bytes,
         }
+    }
+
+    /// Cache partition bound into every provider-credential ciphertext.
+    #[must_use]
+    pub fn crypto_partition(&self) -> String {
+        format!("{}:{}", self.plane.as_str(), self.region.as_str())
     }
 }
 

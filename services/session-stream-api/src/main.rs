@@ -47,6 +47,7 @@ use regional_observation_api::wake::WakeHub;
 use session_stream_api::capability::Composition;
 use session_stream_api::config::{Config, WakeMode};
 use session_stream_api::session::handlers::{Dispatcher, Shared};
+use session_stream_api::session::secret_registration::Registration;
 use session_stream_api::stream::mount::{AppState, Edge};
 use session_stream_api::stream::wakes::{AuthorityStream, StreamSpec};
 use session_stream_api::stream::{QuotaLimits, QuotaManager};
@@ -230,6 +231,7 @@ async fn run(
 
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
+    let kms = aws_sdk_kms::Client::new(&aws);
     let objects = aws_sdk_s3::Client::new(&aws);
     let parameters = ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
     let secrets = SecretStore::new(aws_sdk_secretsmanager::Client::new(&aws));
@@ -408,6 +410,32 @@ async fn run(
             stores.session_table.clone(),
         ),
     );
+    let credential_registration = Arc::new(Registration::new(
+        Arc::new(stores.custody.clone()),
+        stores.custody.table().to_owned(),
+        Arc::new(aex_secret_aws::crypto::EnvelopeCrypto::new(
+            Box::new(aex_secret_aws::keystore::KmsBranchKeys::new(
+                kms.clone(),
+                config.secret_kms_key.value.clone(),
+            )),
+            config.crypto_partition(),
+        )),
+        Arc::new(aex_secret_keystore_dynamodb::LazyBranchKeys::new(
+            dynamodb.clone(),
+            kms,
+            aex_secret_keystore_dynamodb::KeyStoreBinding::new(
+                config.secret_keystore_table.clone(),
+                config.secret_kms_key.value.clone(),
+            ),
+            config.plane.as_str(),
+            config.region.as_str(),
+        )),
+        match config.plane {
+            aex_identity_domain::assertion::Plane::Dev => aex_secret_domain::context::Plane::Dev,
+            aex_identity_domain::assertion::Plane::Prd => aex_secret_domain::context::Plane::Prd,
+        },
+        config.region,
+    ));
     let dispatcher = Dispatcher::new(Arc::new(Shared {
         catalog,
         deployment: config.deployment.clone(),
@@ -416,11 +444,7 @@ async fn run(
         custody: Arc::new(stores.custody.clone()),
         custody_reads: stores.custody.clone(),
         custody_table: stores.custody.table().to_owned(),
-        plane: match config.plane {
-            aex_identity_domain::assertion::Plane::Dev => aex_secret_domain::context::Plane::Dev,
-            aex_identity_domain::assertion::Plane::Prd => aex_secret_domain::context::Plane::Prd,
-        },
-        region: config.region,
+        credential_registration,
         registry: Arc::new(stores.registry.clone()),
         content: Arc::new(stores.content.clone()),
         // One presigner for the whole deployable (E D-10). The upload routes,

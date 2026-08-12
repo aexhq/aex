@@ -17,6 +17,7 @@ pub mod operation_worker;
 pub mod registry;
 pub mod registry_download;
 pub mod routes;
+pub mod secret_registration;
 pub mod stores;
 pub mod uploads;
 pub mod usage;
