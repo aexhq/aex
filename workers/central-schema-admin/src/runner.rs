@@ -7,8 +7,8 @@
 //! exceptional and reaches the operator through a declared precondition and a
 //! sibling repair file, never through improvisation.
 
-use sqlx::Row as _;
 use sqlx::postgres::PgConnection;
+use sqlx::{Connection as _, Row as _};
 
 use crate::grants::GrantSet;
 
@@ -19,16 +19,63 @@ pub const HISTORY_TABLE: &str = "schema_admin._sqlx_migrations";
 
 /// Hosted-only extension installation and its immediate privilege boundary.
 ///
-/// The portable grant document cannot name these schemas because they do not
-/// exist outside Aurora. Each namespace loses `PUBLIC` access immediately
-/// after creation and before extension code can be installed into it.
+/// Aurora's extension scripts create their public runtime schemas themselves;
+/// their `pg_extension` target is the private schema-admin namespace. Before a
+/// first install, an exact empty, non-extension-owned runtime-schema residue is
+/// removed with `RESTRICT`. An installed or non-empty schema is never dropped.
+const CLEAR_AWS_COMMONS_RESIDUE_SQL: &str = r"DO $aex$
+DECLARE
+  runtime_schema oid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'aws_commons') THEN
+    RETURN;
+  END IF;
+  SELECT oid INTO runtime_schema FROM pg_namespace WHERE nspname = 'aws_commons';
+  IF runtime_schema IS NULL THEN
+    RETURN;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_depend
+     WHERE classid = 'pg_namespace'::regclass
+       AND objid = runtime_schema
+       AND refclassid = 'pg_extension'::regclass
+  ) THEN
+    RAISE EXCEPTION 'schema aws_commons is extension-owned while extension aws_commons is absent';
+  END IF;
+  DROP SCHEMA aws_commons RESTRICT;
+END
+$aex$";
+
+const CLEAR_AWS_LAMBDA_RESIDUE_SQL: &str = r"DO $aex$
+DECLARE
+  runtime_schema oid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'aws_lambda') THEN
+    RETURN;
+  END IF;
+  SELECT oid INTO runtime_schema FROM pg_namespace WHERE nspname = 'aws_lambda';
+  IF runtime_schema IS NULL THEN
+    RETURN;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_depend
+     WHERE classid = 'pg_namespace'::regclass
+       AND objid = runtime_schema
+       AND refclassid = 'pg_extension'::regclass
+  ) THEN
+    RAISE EXCEPTION 'schema aws_lambda is extension-owned while extension aws_lambda is absent';
+  END IF;
+  DROP SCHEMA aws_lambda RESTRICT;
+END
+$aex$";
+
 const OUTBOX_EXTENSION_INSTALL_SQL: [&str; 6] = [
-    "CREATE SCHEMA IF NOT EXISTS aws_commons",
+    CLEAR_AWS_COMMONS_RESIDUE_SQL,
+    "CREATE EXTENSION IF NOT EXISTS aws_commons WITH SCHEMA schema_admin",
     "REVOKE ALL ON SCHEMA aws_commons FROM PUBLIC",
-    "CREATE EXTENSION IF NOT EXISTS aws_commons WITH SCHEMA aws_commons",
-    "CREATE SCHEMA IF NOT EXISTS aws_lambda",
+    CLEAR_AWS_LAMBDA_RESIDUE_SQL,
+    "CREATE EXTENSION IF NOT EXISTS aws_lambda WITH SCHEMA schema_admin",
     "REVOKE ALL ON SCHEMA aws_lambda FROM PUBLIC",
-    "CREATE EXTENSION IF NOT EXISTS aws_lambda WITH SCHEMA aws_lambda",
 ];
 
 /// Why an online operation did not complete.
@@ -146,12 +193,20 @@ pub async fn configure_outbox_wake(
     connection: &mut PgConnection,
     lambda_arn: &str,
 ) -> Result<(), RunnerError> {
+    let mut transaction = connection
+        .begin()
+        .await
+        .map_err(|error| RunnerError::Database(error.to_string()))?;
     for statement in OUTBOX_EXTENSION_INSTALL_SQL {
         sqlx::query(statement)
-            .execute(&mut *connection)
+            .execute(&mut *transaction)
             .await
             .map_err(|error| RunnerError::Database(error.to_string()))?;
     }
+    transaction
+        .commit()
+        .await
+        .map_err(|error| RunnerError::Database(error.to_string()))?;
     let dry_run: i32 = sqlx::query_scalar(
         "SELECT status_code \
            FROM aws_lambda.invoke($1::text, '{}'::json, NULL::text, 'DryRun'::text)",
@@ -770,21 +825,40 @@ pub async fn seed_signing_key(
 #[cfg(test)]
 mod tests {
     use super::{
-        HISTORY_SCHEMA, HISTORY_TABLE, OUTBOX_EXTENSION_INSTALL_SQL, PepperRow, RunnerError,
+        CLEAR_AWS_COMMONS_RESIDUE_SQL, CLEAR_AWS_LAMBDA_RESIDUE_SQL, HISTORY_SCHEMA, HISTORY_TABLE,
+        OUTBOX_EXTENSION_INSTALL_SQL, PepperRow, RunnerError,
     };
 
     #[test]
-    fn hosted_extension_namespaces_are_denied_before_installation() {
+    fn hosted_extensions_own_their_runtime_schemas_and_repair_only_empty_residue() {
+        assert_eq!(OUTBOX_EXTENSION_INSTALL_SQL.len(), 6);
         assert_eq!(
-            OUTBOX_EXTENSION_INSTALL_SQL,
-            [
-                "CREATE SCHEMA IF NOT EXISTS aws_commons",
-                "REVOKE ALL ON SCHEMA aws_commons FROM PUBLIC",
-                "CREATE EXTENSION IF NOT EXISTS aws_commons WITH SCHEMA aws_commons",
-                "CREATE SCHEMA IF NOT EXISTS aws_lambda",
-                "REVOKE ALL ON SCHEMA aws_lambda FROM PUBLIC",
-                "CREATE EXTENSION IF NOT EXISTS aws_lambda WITH SCHEMA aws_lambda",
-            ]
+            OUTBOX_EXTENSION_INSTALL_SQL[0],
+            CLEAR_AWS_COMMONS_RESIDUE_SQL
+        );
+        assert_eq!(
+            OUTBOX_EXTENSION_INSTALL_SQL[3],
+            CLEAR_AWS_LAMBDA_RESIDUE_SQL
+        );
+        assert_eq!(
+            OUTBOX_EXTENSION_INSTALL_SQL[1],
+            "CREATE EXTENSION IF NOT EXISTS aws_commons WITH SCHEMA schema_admin"
+        );
+        assert_eq!(
+            OUTBOX_EXTENSION_INSTALL_SQL[4],
+            "CREATE EXTENSION IF NOT EXISTS aws_lambda WITH SCHEMA schema_admin"
+        );
+        for (repair, schema) in [
+            (CLEAR_AWS_COMMONS_RESIDUE_SQL, "aws_commons"),
+            (CLEAR_AWS_LAMBDA_RESIDUE_SQL, "aws_lambda"),
+        ] {
+            assert!(repair.contains("refclassid = 'pg_extension'::regclass"));
+            assert!(repair.contains(&format!("DROP SCHEMA {schema} RESTRICT")));
+        }
+        assert!(
+            OUTBOX_EXTENSION_INSTALL_SQL
+                .iter()
+                .all(|statement| !statement.contains("CREATE SCHEMA"))
         );
     }
 

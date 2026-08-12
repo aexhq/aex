@@ -8,9 +8,9 @@ use testcontainers::core::{CmdWaitFor, ExecCommand};
 
 const AWS_COMMONS_CONTROL: &str =
     "comment = 'hosted fixture commons'\ndefault_version = '1.2'\nrelocatable = false\n";
-const AWS_COMMONS_SQL: &str = "-- hosted fixture commons\n";
+const AWS_COMMONS_SQL: &str = "CREATE SCHEMA aws_commons;\n";
 const AWS_LAMBDA_CONTROL: &str = "comment = 'hosted fixture lambda'\ndefault_version = '1.0'\nrelocatable = true\nrequires = 'aws_commons'\n";
-const AWS_LAMBDA_SQL: &str = "CREATE FUNCTION invoke(function_name text, payload json, context text, invocation_type text)\nRETURNS TABLE(status_code integer)\nLANGUAGE sql\nAS 'SELECT CASE WHEN invocation_type = ''DryRun'' THEN 204 ELSE 202 END';\n";
+const AWS_LAMBDA_SQL: &str = "CREATE SCHEMA aws_lambda;\nCREATE FUNCTION aws_lambda.invoke(function_name text, payload json, context text, invocation_type text)\nRETURNS TABLE(status_code integer)\nLANGUAGE sql\nAS 'SELECT CASE WHEN invocation_type = ''DryRun'' THEN 204 ELSE 202 END';\n";
 
 struct Fixture {
     engine: PostgresContainer,
@@ -48,10 +48,9 @@ impl Fixture {
 
     /// Adds only the two Aurora extension packages to this disposable engine.
     ///
-    /// Their catalog shape matches the hosted packages: `aws_commons` is
-    /// non-relocatable without a control-file schema, while relocatable
-    /// `aws_lambda` requires it. The production installer still creates and
-    /// installs both packages through `PostgreSQL` itself.
+    /// Their catalog shape matches the hosted packages: both scripts create
+    /// their named runtime schemas, `aws_commons` is non-relocatable without a
+    /// control-file schema, and relocatable `aws_lambda` requires it.
     async fn install_hosted_extension_packages(&self) {
         self.engine
             .container()
@@ -95,10 +94,15 @@ async fn hosted_outbox_extensions_install_without_public_and_replay_exactly() {
             .expect("the public-schema absence reads");
     assert!(!public_exists, "the hosted fixture matches the live plane");
 
+    sqlx::query("CREATE SCHEMA aws_commons")
+        .execute(&mut connection)
+        .await
+        .expect("the failed hosted attempt left an empty commons residue");
+
     let lambda_arn = "arn:aws:lambda:eu-west-1:111111111111:function:aex-dev-outbox-wake:live";
     configure_outbox_wake(&mut connection, lambda_arn)
         .await
-        .expect("the hosted extensions install without a default target schema");
+        .expect("the empty residue is repaired before the hosted scripts create their schemas");
     configure_outbox_wake(&mut connection, lambda_arn)
         .await
         .expect("the exact hosted install is idempotent");
@@ -115,6 +119,28 @@ async fn hosted_outbox_extensions_install_without_public_and_replay_exactly() {
     .expect("the extension catalog reads");
     assert_eq!(
         extensions,
+        vec![
+            ("aws_commons".to_owned(), "schema_admin".to_owned()),
+            ("aws_lambda".to_owned(), "schema_admin".to_owned()),
+        ]
+    );
+
+    let runtime_schema_owners: Vec<(String, String)> = sqlx::query_as(
+        "SELECT namespace.nspname::text, extension.extname::text \
+           FROM pg_namespace AS namespace \
+           JOIN pg_depend AS dependency \
+             ON dependency.classid = 'pg_namespace'::regclass \
+            AND dependency.objid = namespace.oid \
+            AND dependency.refclassid = 'pg_extension'::regclass \
+           JOIN pg_extension AS extension ON extension.oid = dependency.refobjid \
+          WHERE namespace.nspname IN ('aws_commons', 'aws_lambda') \
+          ORDER BY namespace.nspname",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .expect("the runtime schema ownership reads");
+    assert_eq!(
+        runtime_schema_owners,
         vec![
             ("aws_commons".to_owned(), "aws_commons".to_owned()),
             ("aws_lambda".to_owned(), "aws_lambda".to_owned()),
@@ -151,4 +177,48 @@ async fn hosted_outbox_extensions_install_without_public_and_replay_exactly() {
             .await
             .expect("the configured target reads");
     assert_eq!(targets, vec![lambda_arn.to_owned()]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nonempty_unowned_extension_schema_is_never_dropped() {
+    let fixture = Fixture::start().await;
+    fixture.install_hosted_extension_packages().await;
+    let mut connection = fixture.connect().await;
+    native_migrator()
+        .run(&mut connection)
+        .await
+        .expect("the bundle applies");
+    sqlx::query("CREATE SCHEMA aws_commons")
+        .execute(&mut connection)
+        .await
+        .expect("the unowned residue schema is created");
+    sqlx::query("CREATE TABLE aws_commons.keep_me (id integer PRIMARY KEY)")
+        .execute(&mut connection)
+        .await
+        .expect("the residue is made nonempty");
+
+    let error = configure_outbox_wake(
+        &mut connection,
+        "arn:aws:lambda:eu-west-1:111111111111:function:aex-dev-outbox-wake:live",
+    )
+    .await
+    .expect_err("a nonempty residue fails closed");
+    assert!(
+        error.to_string().contains("cannot drop schema aws_commons"),
+        "unexpected error: {error}"
+    );
+
+    let residue_survived: bool =
+        sqlx::query_scalar("SELECT to_regclass('aws_commons.keep_me') IS NOT NULL")
+            .fetch_one(&mut connection)
+            .await
+            .expect("the residue survival reads");
+    assert!(residue_survived, "the nonempty schema was not dropped");
+    let installed_extensions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_extension WHERE extname IN ('aws_commons', 'aws_lambda')",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("the extension catalog reads");
+    assert_eq!(installed_extensions, 0, "the failed install stayed atomic");
 }
