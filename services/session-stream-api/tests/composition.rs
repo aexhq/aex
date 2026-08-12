@@ -53,14 +53,12 @@ fn catalog_json(plane: &str, region: &str, account: &str) -> String {
 
 /// The complete `poll`-mode environment, which is what dev runs.
 fn polling() -> BTreeMap<&'static str, String> {
-    BTreeMap::from([
+    let mut vars = BTreeMap::from([
         (config::PLANE, "dev".to_owned()),
         (config::REGION, "eu-west-1".to_owned()),
         (config::RELEASE_DIGEST, "sha256:deadbeef".to_owned()),
         (config::PORT, "8080".to_owned()),
-        // Deliberately below the 30 s ECS stop timeout. This is no longer a
-        // comment anybody could ignore: `MAX_DRAIN_DEADLINE_MS` is the reader's
-        // upper bound, so a deadline above the stop timeout refuses the process.
+        // Below the 30 s ECS stop timeout; the reader enforces this upper bound.
         (config::DRAIN_DEADLINE_MS, "25000".to_owned()),
         (
             config::CREDENTIAL_PEPPER_REF,
@@ -97,21 +95,6 @@ fn polling() -> BTreeMap<&'static str, String> {
             config::REGISTRY_TABLE,
             "aex-dev-regional-registry".to_owned(),
         ),
-        (
-            config::SECRET_CUSTODY_TABLE,
-            "aex-dev-regional-secret-custody".to_owned(),
-        ),
-        (
-            config::SECRET_KEYSTORE_TABLE,
-            "aex-dev-regional-secret-keystore".to_owned(),
-        ),
-        (
-            config::SECRET_KMS_KEY_ARN,
-            "arn:aws:kms:eu-west-1:000000000000:key/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-                .to_owned(),
-        ),
-        (config::BRANCH_KEY_CACHE_BYTES, "1048576".to_owned()),
-        (config::BRANCH_KEY_CACHE_TTL_MS, "60000".to_owned()),
         (
             config::RUNTIME_ACTIVITY_TABLE,
             "aex-dev-runtime-activity".to_owned(),
@@ -168,7 +151,29 @@ fn polling() -> BTreeMap<&'static str, String> {
         // ceiling and a 25 s drain deadline, 10 s left the last producer exactly
         // zero slack. See `a_write_stall_that_cannot_be_observed_inside_the_drain_is_refused`.
         (config::STREAM_WRITE_STALL_MS, "9000".to_owned()),
-    ])
+    ]);
+    vars.extend(secret_registration());
+    vars
+}
+
+fn secret_registration() -> [(&'static str, String); 5] {
+    [
+        (
+            config::SECRET_CUSTODY_TABLE,
+            "aex-dev-regional-secret-custody".to_owned(),
+        ),
+        (
+            config::SECRET_KEYSTORE_TABLE,
+            "aex-dev-regional-secret-keystore".to_owned(),
+        ),
+        (
+            config::SECRET_KMS_KEY_ARN,
+            "arn:aws:kms:eu-west-1:000000000000:key/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                .to_owned(),
+        ),
+        (config::BRANCH_KEY_CACHE_BYTES, "1048576".to_owned()),
+        (config::BRANCH_KEY_CACHE_TTL_MS, "60000".to_owned()),
+    ]
 }
 
 fn streaming() -> BTreeMap<&'static str, String> {

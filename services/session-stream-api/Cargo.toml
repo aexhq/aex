@@ -40,6 +40,7 @@ composition = "unit"
 served = "unit"
 streaming = "unit"
 performance_contract = "e2e"
+provider_credential_registration = "unit"
 
 [[bin]]
 name = "session-stream-api"

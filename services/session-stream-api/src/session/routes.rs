@@ -18,12 +18,17 @@ pub fn session_route_ids() -> Vec<RouteId> {
             {
                 return false;
             }
-            match descriptor.fragment {
-                "operations" | "registry" | "sessions" | "files" | "uploads" | "usage"
-                | "workspace" => true,
-                "provider-credentials" => true,
-                _ => false,
-            }
+            matches!(
+                descriptor.fragment,
+                "operations"
+                    | "registry"
+                    | "sessions"
+                    | "files"
+                    | "uploads"
+                    | "usage"
+                    | "workspace"
+                    | "provider-credentials"
+            )
         })
         .collect()
 }

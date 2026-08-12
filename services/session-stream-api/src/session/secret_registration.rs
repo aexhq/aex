@@ -439,6 +439,12 @@ impl Registration {
     /// no error for; and it is not caller-supplied, because the generated
     /// request carries only `{provider, name, apiKey}` and a fourth field would
     /// make the customer responsible for a namespace they cannot see.
+    ///
+    /// # Errors
+    ///
+    /// Returns the route's typed wire error when input is invalid, sealing or
+    /// custody is unavailable, quota is exhausted, or the idempotent commit
+    /// cannot be completed.
     pub async fn register(
         &self,
         cx: &RequestContext,

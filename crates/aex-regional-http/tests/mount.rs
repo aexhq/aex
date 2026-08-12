@@ -432,14 +432,17 @@ async fn the_declared_envelope_is_the_transport_body_ceiling() {
 
 #[test]
 fn dispatcher_refuses_a_route_it_does_not_own() {
-    // Owned by the secret edge, served there, and not this deployable's: "no
-    // such resource here" is the true statement, not "declared but not built".
-    let refusal = not_served(RouteId::ProviderCredentialRegister);
+    // Owned by the observation edge and not the session deployable: "no such
+    // resource here" is the true statement, not "declared but not built".
+    let foreign = RouteOwner::ObservationApi
+        .routes()
+        .into_iter()
+        .next()
+        .expect("the observation edge owns a route");
+    let refusal = not_served(foreign);
     assert_eq!(refusal.code, ErrorCode::NotFound);
     assert!(
-        !RouteOwner::SessionApi
-            .routes()
-            .contains(&RouteId::ProviderCredentialRegister),
+        !RouteOwner::SessionApi.routes().contains(&foreign),
         "the refused route is genuinely unmounted"
     );
 }

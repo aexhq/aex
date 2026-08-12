@@ -2931,6 +2931,7 @@
           "admission": "unit",
           "composition": "unit",
           "performance_contract": "e2e",
+          "provider_credential_registration": "unit",
           "served": "unit",
           "streaming": "unit"
         },
