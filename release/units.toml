@@ -692,31 +692,6 @@ stop_timeout_s = 30
 port = 8080
 
 [[unit]]
-id = "regional-secret-api"
-kind = "rust-lambda"
-plane = "regional"
-package = "regional-secret-api"
-bin = "regional-secret-api"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_REGIONAL_SECRET_"
-config_schema_version = 1
-health_path = "/internal/healthz"
-ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
-alarm_spec = "regional-secret-api"
-live_suite = "aex-live-regional-secret-api"
-
-# Isolated reserved concurrency and memory: the only deployable that holds
-# plaintext must not share a burst pool with anything else.
-[unit.lambda]
-memory_mb = 512
-timeout_s = 29
-reserved_concurrency = 40
-
-[[unit]]
 id = "regional-observation-api"
 kind = "rust-lambda"
 plane = "regional"

@@ -17,7 +17,6 @@
     { "unit": "session-stream-api", "package": "session-stream-api", "class": "contract", "layer": "unit", "filterset": "all()" },
     { "unit": "session-stream-api", "package": "session-stream-api", "class": "conformance", "layer": "unit", "filterset": "all()" },
     { "unit": "session-stream-api", "package": "session-stream-api", "class": "property", "layer": "unit", "filterset": "all()" },
-    { "unit": "regional-secret-api", "package": "regional-secret-api", "class": "contract", "layer": "unit", "filterset": "all()" },
     { "unit": "regional-observation-api", "package": "regional-observation-api", "class": "contract", "layer": "unit", "filterset": "all()" },
     { "unit": "regional-otlp", "package": "regional-otlp", "class": "contract", "layer": "unit", "filterset": "all()" },
     { "unit": "regional-otlp", "package": "regional-otlp", "class": "property", "layer": "unit", "filterset": "all()" },

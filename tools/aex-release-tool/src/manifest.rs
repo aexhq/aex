@@ -371,7 +371,6 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
         "regional-api",
         &[
             "session-stream-api",
-            "regional-secret-api",
             "regional-observation-api",
             "regional-otlp",
         ],

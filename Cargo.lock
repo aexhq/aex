@@ -752,10 +752,6 @@ name = "aex-live-regional-otlp"
 version = "0.1.0"
 
 [[package]]
-name = "aex-live-regional-secret-api"
-version = "0.1.0"
-
-[[package]]
 name = "aex-live-regional-secret-key-admin"
 version = "0.1.0"
 
@@ -6661,38 +6657,6 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "regional-secret-api"
-version = "0.1.0"
-dependencies = [
- "aex-identity-domain",
- "aex-internal-contracts",
- "aex-platform-telemetry",
- "aex-regional-http",
- "aex-secret-aws",
- "aex-secret-custody-dynamodb",
- "aex-secret-domain",
- "aex-secret-keystore-dynamodb",
- "aex-session-dynamodb",
- "aex-telemetry-schema",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-kms",
- "aws-sdk-secretsmanager",
- "axum",
- "http-body-util",
- "lambda_http",
- "serde",
- "serde_json",
- "thiserror",
- "time",
- "tokio",
- "tower",
  "uuid",
 ]
 

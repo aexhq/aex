@@ -222,7 +222,6 @@ id = "SC-BYOK-CUSTODY"
 owner = "regional-stores"
 deferred = "The dedicated BYOK provider-credential register, metadata read/list, revocation, and key-administration path has no executable live target yet; generic user-managed secrets are not part of this product."
 observes = [
-  "artifact:regional-secret-api",
   "artifact:regional-secret-key-admin",
   "artifact:session-stream-api",
 ]

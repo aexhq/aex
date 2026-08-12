@@ -421,20 +421,6 @@
   },
   {
     "reason_class": "requires_deployment",
-    "subject": "services/regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "services/regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
     "subject": "services/session-stream-api",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
@@ -913,27 +899,6 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-regional-otlp",
     "owner": "observations-usage",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "tests/live/aex-live-regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "tests/live/aex-live-regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "tests/live/aex-live-regional-secret-api",
-    "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
@@ -2206,27 +2171,6 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "services/regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "services/regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "services/regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
     "subject": "services/session-stream-api",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
@@ -2941,41 +2885,6 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.kms.branch_key_rotation` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-secret-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-regional-secret-key-admin",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
@@ -3113,6 +3022,13 @@
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.kms.branch_key_rotation` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

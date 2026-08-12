@@ -112,7 +112,6 @@ pub const SERVICES: &[&str] = &[
     "finance-ingest",
     "regional-observation-api",
     "regional-otlp",
-    "regional-secret-api",
     "session-stream-api",
 ];
 
@@ -178,7 +177,6 @@ pub const LIVE_TARGETS: &[&str] = &[
     "regional-control",
     "regional-observation-api",
     "regional-otlp",
-    "regional-secret-api",
     "regional-secret-key-admin",
     "runtime-control-worker",
     "session-operation-worker",
