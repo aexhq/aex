@@ -78,6 +78,14 @@ pub struct SchemaHead {
     pub regional_bundle_digest: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeployedPrefix {
+    schema: String,
+    through: String,
+    files: Vec<BundleFile>,
+}
+
 /// The `-- aex-migration:` header every migration body carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
@@ -280,7 +288,7 @@ pub fn build_bundle(root: &Path) -> Result<Bundle> {
     let head = files
         .last()
         .map_or_else(|| "00000000000000".to_owned(), |file| file.version.clone());
-    Ok(Bundle {
+    let bundle = Bundle {
         schema: "aex.migration-bundle.v1".to_owned(),
         head,
         files,
@@ -288,7 +296,55 @@ pub fn build_bundle(root: &Path) -> Result<Bundle> {
         admin_image_digest: None,
         regional_generation: None,
         regional_tables_digest: None,
-    })
+    };
+    let deployed_prefix = central.join("deployed-prefix.lock.json");
+    if deployed_prefix.is_file() {
+        verify_deployed_prefix(root, &bundle)?;
+    }
+    Ok(bundle)
+}
+
+/// Verify the source bundle against the committed identity of migrations that
+/// have reached a hosted database.
+///
+/// # Errors
+/// Returns [`Exit::ManifestInvalid`] when an applied version was inserted,
+/// removed, renamed or changed. New versions above the deployed head remain
+/// append-only release candidates and are intentionally outside this prefix.
+pub fn verify_deployed_prefix(root: &Path, bundle: &Bundle) -> Result<()> {
+    let path = root.join("migrations/central/deployed-prefix.lock.json");
+    let bytes = std::fs::read(&path).map_err(|err| io(&path.display().to_string(), &err))?;
+    let prefix: DeployedPrefix = serde_json::from_slice(&bytes).map_err(|err| {
+        ToolError::single(
+            Exit::ManifestInvalid,
+            "migration-deployed-prefix-invalid",
+            format!(
+                "`{}` is not a valid deployed-prefix identity: {err}",
+                path.display()
+            ),
+        )
+    })?;
+    let actual: Vec<BundleFile> = bundle
+        .files
+        .iter()
+        .filter(|file| file.version <= prefix.through)
+        .cloned()
+        .collect();
+    if prefix.schema != "aex.deployed-migration-prefix.v1"
+        || prefix.files.is_empty()
+        || prefix.files.last().map(|file| file.version.as_str()) != Some(prefix.through.as_str())
+        || actual != prefix.files
+    {
+        return Err(ToolError::single(
+            Exit::ManifestInvalid,
+            "migration-deployed-prefix-changed",
+            format!(
+                "migrations through deployed head `{}` differ from their committed byte identities",
+                prefix.through
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Verify a bundle against the declared head.

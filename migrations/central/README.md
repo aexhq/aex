@@ -46,9 +46,16 @@ records each file's digest, length, header and repair sibling, plus the digest o
 verify` reports `migration-bundle-missing` without it, and
 `migration-outside-bundle` for a `.sql` file it does not name.
 
+`deployed-prefix.lock.json` separately records the exact bytes that have
+reached a hosted database. Bundle construction compares every version through
+that recorded head before producing any release identity. Advancing the prefix
+requires hosted success evidence; ordinary migration generation never rewrites
+it.
+
 ## Ownership
 
-The central identity/control stream owns the SQL bodies in versions `000000`
-through `000300`. The central-finance stream owns the runner and the finance
-bodies from `000400` on. The runner owner mechanically renamed the peer's invalid
-four-digit filenames during the merge; their order and SQL bodies were preserved.
+The central identity/control stream owns identity and control SQL bodies. The
+central-finance stream owns the runner and finance SQL bodies. Both contribute
+to one globally ordered chain, so ownership is semantic rather than a version
+range. The runner owner mechanically renamed the peer's invalid four-digit
+filenames during the merge; their order and SQL bodies were preserved.

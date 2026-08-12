@@ -135,6 +135,116 @@ async fn checksum_drift_on_an_applied_version_fails_closed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn google_only_identity_constraint_advances_without_rewriting_rows() {
+    let fixture = Fixture::start().await;
+    let migrator = native_migrator();
+    let mut connection = fixture.connect().await;
+    migrator
+        .run_to(20_260_801_001_400, &mut connection)
+        .await
+        .expect("the predecessor head applies");
+    let user_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO identity.user \
+           (id, email, status, revision, created_at, updated_at) \
+         VALUES ($1, $2, 'active', 1, now(), now())",
+    )
+    .bind(user_id)
+    .bind(format!("{user_id}@example.com"))
+    .execute(&mut connection)
+    .await
+    .expect("user row");
+    sqlx::query(
+        "INSERT INTO identity.external_identity \
+           (id, user_id, provider, provider_account_id, linked_at) \
+         VALUES ($1, $2, 'google', $3, now())",
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(user_id)
+    .bind(user_id.to_string())
+    .execute(&mut connection)
+    .await
+    .expect("google identity");
+
+    migrator
+        .run(&mut connection)
+        .await
+        .expect("the Google-only constraint applies");
+    assert_eq!(
+        applied_head(&mut connection).await.expect("head"),
+        Some(20_260_801_001_500)
+    );
+    let provider: String =
+        sqlx::query_scalar("SELECT provider FROM identity.external_identity WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(&mut connection)
+            .await
+            .expect("identity remains");
+    assert_eq!(provider, "google");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_legacy_github_identity_aborts_the_constraint_transaction_without_data_loss() {
+    let fixture = Fixture::start().await;
+    let migrator = native_migrator();
+    let mut connection = fixture.connect().await;
+    migrator
+        .run_to(20_260_801_001_400, &mut connection)
+        .await
+        .expect("the predecessor head applies");
+    let user_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO identity.user \
+           (id, email, status, revision, created_at, updated_at) \
+         VALUES ($1, $2, 'active', 1, now(), now())",
+    )
+    .bind(user_id)
+    .bind(format!("{user_id}@example.com"))
+    .execute(&mut connection)
+    .await
+    .expect("user row");
+    sqlx::query(
+        "INSERT INTO identity.external_identity \
+           (id, user_id, provider, provider_account_id, linked_at) \
+         VALUES ($1, $2, 'github', $3, now())",
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(user_id)
+    .bind(user_id.to_string())
+    .execute(&mut connection)
+    .await
+    .expect("legacy GitHub identity");
+
+    migrator
+        .run(&mut connection)
+        .await
+        .expect_err("the incompatible row fails closed");
+    assert_eq!(
+        applied_head(&mut connection).await.expect("head"),
+        Some(20_260_801_001_400),
+        "the rejected migration never advances history"
+    );
+    let provider: String =
+        sqlx::query_scalar("SELECT provider FROM identity.external_identity WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(&mut connection)
+            .await
+            .expect("legacy identity remains");
+    assert_eq!(provider, "github", "the migration never rewrites the row");
+    sqlx::query(
+        "INSERT INTO identity.external_identity \
+           (id, user_id, provider, provider_account_id, linked_at) \
+         VALUES ($1, $2, 'github', $3, now())",
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(user_id)
+    .bind(format!("second-{user_id}"))
+    .execute(&mut connection)
+    .await
+    .expect("the original constraint was restored by transaction rollback");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_out_of_order_release_is_refused_before_it_applies_anything() {
     let fixture = Fixture::start().await;
     let mut connection = fixture.connect().await;

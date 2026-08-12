@@ -4,6 +4,7 @@ mod common;
 
 use aex_release_tool::migration::{
     Bundle, SchemaHead, build_bundle, reject_below_head_insert, verify_bundle,
+    verify_deployed_prefix,
 };
 
 const BODY: &str =
@@ -93,6 +94,38 @@ fn editing_a_body_below_the_applied_head_fails() {
     let current = build_bundle(&root).unwrap();
     let err = reject_below_head_insert(&previous, &current).unwrap_err();
     assert!(err.rules().contains(&"migration-below-head-changed"));
+}
+
+#[test]
+fn the_committed_deployed_prefix_matches_every_applied_migration_byte() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let bundle = build_bundle(&root).expect("the source bundle builds");
+    verify_deployed_prefix(&root, &bundle)
+        .expect("versions through the committed deployed head remain byte-exact");
+}
+
+#[test]
+fn bundle_construction_refuses_a_deliberate_deployed_prefix_mutation() {
+    let root = fixture(&[("20260801000100_baseline.sql", BODY)]);
+    let deployed = build_bundle(&root).expect("initial bundle");
+    std::fs::write(
+        root.join("migrations/central/deployed-prefix.lock.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "aex.deployed-migration-prefix.v1",
+            "through": deployed.head,
+            "files": deployed.files,
+        }))
+        .expect("prefix json"),
+    )
+    .expect("prefix lock");
+    std::fs::write(
+        root.join("migrations/central/20260801000100_baseline.sql"),
+        "-- aex-migration: tx=yes destructive=no phase=expand\nCREATE TABLE t (id int);\n",
+    )
+    .expect("mutated migration");
+
+    let error = build_bundle(&root).expect_err("an applied migration cannot change");
+    assert!(error.rules().contains(&"migration-deployed-prefix-changed"));
 }
 
 #[test]

@@ -52,7 +52,7 @@ CREATE TABLE identity.external_identity (
   provider            text NOT NULL,
   provider_account_id text NOT NULL,
   linked_at           timestamptz NOT NULL,
-  CONSTRAINT ext_provider_ck  CHECK (provider IN ('google')),
+  CONSTRAINT ext_provider_ck  CHECK (provider IN ('github','google')),
   CONSTRAINT ext_pai_len_ck   CHECK (char_length(provider_account_id) BETWEEN 1 AND 255));
 CREATE UNIQUE INDEX ext_provider_uk
   ON identity.external_identity (provider, provider_account_id);
