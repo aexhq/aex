@@ -119,7 +119,9 @@ run "async_failures_use_the_alias_policy_and_unconsumed_dlq" {
   command = plan
 
   variables {
-    async_failure_destination_arn = "arn:aws:sqs:eu-west-1:000000000000:aex-dev-control-wake-dlq"
+    async_failure_destination = {
+      arn = "arn:aws:sqs:eu-west-1:000000000000:aex-dev-control-wake-dlq"
+    }
   }
 
   assert {
@@ -128,9 +130,30 @@ run "async_failures_use_the_alias_policy_and_unconsumed_dlq" {
   }
 
   assert {
-    condition     = one(one(aws_lambda_function_event_invoke_config.this).destination_config).on_failure[0].destination == var.async_failure_destination_arn
+    condition     = one(one(aws_lambda_function_event_invoke_config.this).destination_config).on_failure[0].destination == var.async_failure_destination.arn
     error_message = "Failed asynchronous invocations must land in the configured alarmed DLQ."
   }
+}
+
+run "omitting_the_async_failure_destination_omits_the_policy" {
+  command = plan
+
+  assert {
+    condition     = length(aws_lambda_function_event_invoke_config.this) == 0
+    error_message = "An absent asynchronous failure destination must plan no invocation policy."
+  }
+}
+
+run "rejects_an_invalid_async_failure_destination_arn" {
+  command = plan
+
+  variables {
+    async_failure_destination = {
+      arn = "not-an-sqs-queue-arn"
+    }
+  }
+
+  expect_failures = [var.async_failure_destination]
 }
 
 run "rejects_an_environment_key_outside_the_aex_namespace" {

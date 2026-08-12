@@ -195,13 +195,15 @@ variable "public_function_url_enabled" {
   description = "Whether to expose the immutable alias through an unauthenticated, buffered HTTPS Function URL. The handler must authenticate the request at the application boundary."
 }
 
-variable "async_failure_destination_arn" {
-  type        = string
+variable "async_failure_destination" {
+  type = object({
+    arn = string
+  })
   default     = null
-  description = "Optional unconsumed, alarmed SQS DLQ ARN for failed asynchronous invocations. Setting it enables the alias-qualified async invocation policy."
+  description = "Optional unconsumed, alarmed SQS DLQ for failed asynchronous invocations. Object presence is the plan-known enablement signal; the ARN may come from a resource whose value is unknown until apply."
 
   validation {
-    condition     = var.async_failure_destination_arn == null || can(regex("^arn:aws[a-z-]*:sqs:[a-z0-9-]+:[0-9A-Za-z-]{1,64}:[A-Za-z0-9_-]+$", coalesce(var.async_failure_destination_arn, "none")))
+    condition     = var.async_failure_destination == null || can(regex("^arn:aws[a-z-]*:sqs:[a-z0-9-]+:[0-9A-Za-z-]{1,64}:[A-Za-z0-9_-]+$", try(var.async_failure_destination.arn, "none")))
     error_message = "When set, the asynchronous failure destination must be an SQS queue ARN."
   }
 }

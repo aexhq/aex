@@ -85,7 +85,7 @@ resource "aws_lambda_function_url" "public" {
 }
 
 resource "aws_lambda_function_event_invoke_config" "this" {
-  count = var.async_failure_destination_arn == null ? 0 : 1
+  count = var.async_failure_destination == null ? 0 : 1
 
   function_name                = aws_lambda_function.this.function_name
   qualifier                    = aws_lambda_alias.this.name
@@ -94,7 +94,7 @@ resource "aws_lambda_function_event_invoke_config" "this" {
 
   destination_config {
     on_failure {
-      destination = var.async_failure_destination_arn
+      destination = var.async_failure_destination.arn
     }
   }
 }

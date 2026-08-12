@@ -30,7 +30,7 @@ the bytes S3 is holding are not the bytes the release manifest pins.
 | `code_signing_config_arn` | `string` | Optional code-signing configuration. |
 | `alias_name` | `string` | Alias every caller targets; defaults to `live`. |
 | `public_function_url_enabled` | `bool` | Opt-in alias-qualified unauthenticated buffered Function URL; defaults to `false`. |
-| `async_failure_destination_arn` | `string` | Optional unconsumed SQS failure destination; setting it enables the alias-qualified async policy. |
+| `async_failure_destination` | `object({ arn = string })` | Optional unconsumed SQS failure destination. Object presence enables the alias-qualified async policy even when a producer's ARN is unknown during planning. |
 | `async_max_event_age_seconds` | `number` | Async event age, 60-21600; defaults to 21600. |
 | `async_max_retry_attempts` | `number` | Function-error retries, 0-2; defaults to 2. |
 | `tags` | `map(string)` | Tags. |

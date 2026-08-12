@@ -33,7 +33,7 @@ The module does not accept a second caller-supplied secret identity.
 | `vpc_security_group_ids` | `list(string)` | Security groups. |
 | `region` | `string` | AWS region. |
 | `kms_key_arn` | `string` | Customer-managed key for storage and the managed secret. |
-| `lambda_invoke_role_arn` | `string` | Optional role associated with the cluster's `Lambda` feature; its policy is composed outside this module. |
+| `lambda_invoke_role` | `object({ arn = string })` | Optional role associated with the cluster's `Lambda` feature. Object presence enables the association even when a producer's ARN is unknown during planning; its policy is composed outside this module. |
 | `preferred_backup_window` | `string` | Daily backup window in UTC. |
 | `tags` | `map(string)` | Tags. |
 
