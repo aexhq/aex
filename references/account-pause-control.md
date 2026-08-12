@@ -11,7 +11,7 @@ status: accepted
 related:
   - references/architecture.md
   - references/rewrite/central-finance.md
-  - references/rewrite/regional-session.md
+  - references/rewrite/regional-services.md
 ---
 
 # Account pause admission and interruption control
