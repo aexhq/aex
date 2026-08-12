@@ -1,6 +1,6 @@
 # Aex
 
-High-performance agent platform.
+Open distributed agent cloud platform
 
 [![npm version](https://img.shields.io/npm/v/@aexhq/sdk.svg)](https://www.npmjs.com/package/@aexhq/sdk)
 
