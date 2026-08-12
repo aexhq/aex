@@ -1,7 +1,17 @@
 ---
 title: Account pause admission and interruption control
 description: Regional consistency model for stopping spend after an account pause without putting account state in an application cache.
+keywords:
+  - account pause
+  - admission control
+  - regional consistency
+  - interruption
+audience: maintainers and implementation agents
 status: accepted
+related:
+  - references/architecture.md
+  - references/rewrite/central-finance.md
+  - references/rewrite/regional-session.md
 ---
 
 # Account pause admission and interruption control
