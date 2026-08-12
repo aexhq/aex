@@ -35,6 +35,8 @@ pub struct Entry {
     pub data: Vec<u8>,
     /// POSIX mode bits, without the file-type bits.
     pub mode: u32,
+    /// Relative link target for a symbolic-link member; absent for a file.
+    pub link_name: Option<String>,
 }
 
 impl Entry {
@@ -45,6 +47,7 @@ impl Entry {
             name: name.to_owned(),
             data,
             mode: 0o755,
+            link_name: None,
         }
     }
 
@@ -55,7 +58,25 @@ impl Entry {
             name: name.to_owned(),
             data,
             mode: 0o644,
+            link_name: None,
         }
+    }
+
+    /// A symbolic-link member.
+    #[must_use]
+    pub fn symlink(name: &str, link_name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            data: Vec::new(),
+            mode: 0o777,
+            link_name: Some(link_name.to_owned()),
+        }
+    }
+
+    /// Whether this member is a symbolic link.
+    #[must_use]
+    pub fn is_symlink(&self) -> bool {
+        self.link_name.is_some()
     }
 }
 
@@ -76,6 +97,20 @@ fn check_names(entries: &[Entry]) -> Result<()> {
                 ),
             ));
         }
+        if let Some(link_name) = &entry.link_name
+            && (!entry.data.is_empty()
+                || !safe_relative_link_name(link_name)
+                || resolve_link_name(&entry.name, link_name).is_none())
+        {
+            return Err(ToolError::single(
+                Exit::Usage,
+                "archive-link-name",
+                format!(
+                    "the link target for `{}` must be a normalized relative path and carry no file bytes",
+                    entry.name
+                ),
+            ));
+        }
     }
     let mut names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
     names.sort_unstable();
@@ -88,7 +123,60 @@ fn check_names(entries: &[Entry]) -> Result<()> {
             "the archive declares the same member twice",
         ));
     }
+    for link in entries.iter().filter(|entry| entry.is_symlink()) {
+        let prefix = format!("{}/", link.name);
+        if entries.iter().any(|entry| entry.name.starts_with(&prefix)) {
+            return Err(ToolError::single(
+                Exit::Usage,
+                "archive-link-nesting",
+                format!(
+                    "an archive member is nested below symbolic link `{}`",
+                    link.name
+                ),
+            ));
+        }
+    }
     Ok(())
+}
+
+pub(crate) fn resolve_link_name(member: &str, target: &str) -> Option<String> {
+    if !safe_relative_link_name(target) {
+        return None;
+    }
+    let mut resolved: Vec<&str> = member.split('/').collect();
+    resolved.pop()?;
+    for segment in target.split('/') {
+        if segment == ".." {
+            resolved.pop()?;
+        } else {
+            resolved.push(segment);
+        }
+    }
+    Some(resolved.join("/"))
+}
+
+fn safe_relative_link_name(target: &str) -> bool {
+    if target.is_empty()
+        || target.starts_with('/')
+        || target.contains('\\')
+        || target.as_bytes().get(1) == Some(&b':')
+    {
+        return false;
+    }
+    let mut saw_named_segment = false;
+    for segment in target.split('/') {
+        if segment.is_empty() || segment == "." {
+            return false;
+        }
+        if segment == ".." {
+            if saw_named_segment {
+                return false;
+            }
+        } else {
+            saw_named_segment = true;
+        }
+    }
+    true
 }
 
 /// Write a deterministic ZIP archive.
@@ -103,6 +191,13 @@ fn check_names(entries: &[Entry]) -> Result<()> {
 /// limits this writer deliberately does not extend past.
 pub fn write_zip(entries: &[Entry]) -> Result<Vec<u8>> {
     check_names(entries)?;
+    if entries.iter().any(Entry::is_symlink) {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "zip-symlink-unsupported",
+            "the deterministic ZIP writer does not encode symbolic links",
+        ));
+    }
     let mut sorted: Vec<&Entry> = entries.iter().collect();
     sorted.sort_by(|left, right| left.name.cmp(&right.name));
 
@@ -192,8 +287,8 @@ fn too_large() -> ToolError {
 /// every timestamp is `source_date_epoch`.
 ///
 /// # Errors
-/// Returns [`Exit::Usage`] when a member name is unsafe, duplicated, or longer
-/// than the 100-byte `ustar` name field.
+/// Returns [`Exit::Usage`] when a member name is unsafe, duplicated, or cannot
+/// fit the POSIX `ustar` name and prefix fields.
 pub fn write_tar(entries: &[Entry], source_date_epoch: u64) -> Result<Vec<u8>> {
     check_names(entries)?;
     let mut sorted: Vec<&Entry> = entries.iter().collect();
@@ -201,30 +296,33 @@ pub fn write_tar(entries: &[Entry], source_date_epoch: u64) -> Result<Vec<u8>> {
 
     let mut out = Vec::new();
     for entry in sorted {
-        if entry.name.len() > 100 {
+        let (prefix, name) = split_ustar_name(&entry.name)?;
+        let link_name = entry.link_name.as_deref().unwrap_or("").as_bytes();
+        if link_name.len() > 100 {
             return Err(ToolError::single(
                 Exit::Usage,
-                "archive-entry-name",
+                "archive-link-name",
                 format!(
-                    "`{}` exceeds the 100-byte ustar name field; a PAX extension would \
-                     add a second timestamp source",
+                    "the link target for `{}` exceeds the 100-byte ustar field",
                     entry.name
                 ),
             ));
         }
         let mut header = [0u8; 512];
-        header[..entry.name.len()].copy_from_slice(entry.name.as_bytes());
+        header[..name.len()].copy_from_slice(name);
         write_octal(&mut header[100..108], u64::from(entry.mode), 7);
         write_octal(&mut header[108..116], 0, 7); // uid
         write_octal(&mut header[116..124], 0, 7); // gid
         write_octal(&mut header[124..136], entry.data.len() as u64, 11);
         write_octal(&mut header[136..148], source_date_epoch, 11);
         header[148..156].fill(b' '); // checksum placeholder
-        header[156] = b'0'; // regular file
+        header[156] = if entry.is_symlink() { b'2' } else { b'0' };
+        header[157..157 + link_name.len()].copy_from_slice(link_name);
         header[257..263].copy_from_slice(b"ustar\0");
         header[263..265].copy_from_slice(b"00");
         write_octal(&mut header[329..337], 0, 7); // devmajor
         write_octal(&mut header[337..345], 0, 7); // devminor
+        header[345..345 + prefix.len()].copy_from_slice(prefix);
         let checksum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
         write_octal(&mut header[148..154], u64::from(checksum), 6);
         header[154] = 0;
@@ -236,6 +334,27 @@ pub fn write_tar(entries: &[Entry], source_date_epoch: u64) -> Result<Vec<u8>> {
     }
     out.extend(std::iter::repeat_n(0u8, 1024)); // two zero blocks
     Ok(out)
+}
+
+fn split_ustar_name(path: &str) -> Result<(&[u8], &[u8])> {
+    let bytes = path.as_bytes();
+    if bytes.len() <= 100 {
+        return Ok((&[], bytes));
+    }
+    if bytes.len() <= 255 {
+        for (index, byte) in bytes.iter().enumerate().rev() {
+            if *byte == b'/' && index <= 155 && bytes.len() - index - 1 <= 100 {
+                return Ok((&bytes[..index], &bytes[index + 1..]));
+            }
+        }
+    }
+    Err(ToolError::single(
+        Exit::Usage,
+        "archive-entry-name",
+        format!(
+            "`{path}` cannot fit the 100-byte name and 155-byte prefix fields of a POSIX ustar header"
+        ),
+    ))
 }
 
 /// Write a deterministic gzip stream: no filename, no comment, zero mtime and
@@ -374,6 +493,79 @@ mod tests {
     }
 
     #[test]
+    fn tar_round_trips_a_long_standalone_build_output_path_through_ustar_prefix() {
+        let path = format!(
+            "functions/api/auth/[provider]/start.func/node_modules/.bun/{}/node_modules/next/dist/server/app-render/index.js",
+            "next@16.3.0+abcdef0123456789"
+        );
+        assert!(path.len() > 100);
+        let archive = write_tar(&[Entry::regular(&path, b"module".to_vec())], 0).unwrap();
+        let name_end = archive[..100]
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(100);
+        let prefix_end = archive[345..500]
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(155);
+        let name = std::str::from_utf8(&archive[..name_end]).unwrap();
+        let prefix = std::str::from_utf8(&archive[345..345 + prefix_end]).unwrap();
+        assert_eq!(format!("{prefix}/{name}"), path);
+        assert_eq!(archive[156], b'0');
+    }
+
+    #[test]
+    fn tar_preserves_a_relative_symlink_without_members_below_it() {
+        let archive = write_tar(
+            &[
+                Entry::regular("functions/shared.func/index.js", b"module".to_vec()),
+                Entry::symlink("functions/page.func", "shared.func"),
+            ],
+            0,
+        )
+        .unwrap();
+        assert_eq!(archive[156], b'2');
+        assert_eq!(&archive[157..168], b"shared.func");
+        assert!(archive[124..136].starts_with(b"00000000000"));
+    }
+
+    #[test]
+    fn tar_rejects_unsafe_or_nested_symlink_members() {
+        for target in ["", "/absolute", "a/../b", "a\\b", "C:/absolute"] {
+            let error = write_tar(&[Entry::symlink("link", target)], 0).unwrap_err();
+            assert_eq!(error.rules(), vec!["archive-link-name"], "target {target}");
+        }
+        let nested = write_tar(
+            &[
+                Entry::symlink("functions/page.func", "shared.func"),
+                Entry::regular("functions/page.func/index.js", Vec::new()),
+            ],
+            0,
+        )
+        .unwrap_err();
+        assert_eq!(nested.rules(), vec!["archive-link-nesting"]);
+    }
+
+    #[test]
+    fn tar_resolves_links_from_the_member_parent_without_leaving_the_archive() {
+        write_tar(
+            &[
+                Entry::regular("shared.func/index.js", Vec::new()),
+                Entry::symlink("functions/routes/page.func", "../../shared.func"),
+            ],
+            0,
+        )
+        .unwrap();
+
+        let escaping = write_tar(
+            &[Entry::symlink("functions/page.func", "../../outside.func")],
+            0,
+        )
+        .unwrap_err();
+        assert_eq!(escaping.rules(), vec!["archive-link-name"]);
+    }
+
+    #[test]
     fn tar_gz_is_byte_stable() {
         let entries = vec![Entry::regular("index.html", b"<!doctype html>".to_vec())];
         assert_eq!(
@@ -383,8 +575,16 @@ mod tests {
     }
 
     #[test]
-    fn tar_rejects_a_name_longer_than_the_ustar_field() {
+    fn tar_rejects_an_unsplittable_basename_longer_than_the_ustar_name_field() {
         let long = "a".repeat(101);
+        let err = write_tar(&[Entry::regular(&long, Vec::new())], 0).unwrap_err();
+        assert_eq!(err.rules(), vec!["archive-entry-name"]);
+    }
+
+    #[test]
+    fn tar_rejects_a_path_longer_than_255_bytes() {
+        let long = format!("{}/file.js", "directory/".repeat(28));
+        assert!(long.len() > 255);
         let err = write_tar(&[Entry::regular(&long, Vec::new())], 0).unwrap_err();
         assert_eq!(err.rules(), vec!["archive-entry-name"]);
     }

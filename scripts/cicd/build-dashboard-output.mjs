@@ -1,8 +1,14 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 const linkPath = ".vercel/project.json";
 const outputConfigPath = ".vercel/output/config.json";
+export const DASHBOARD_BUILD_STEPS = Object.freeze([
+  Object.freeze(["run", "--filter", "@aexhq/wire", "build"]),
+  Object.freeze(["run", "--filter", "@aexhq/sdk", "build"]),
+  Object.freeze(["run", "vercel", "build", "--standalone", "--no-color"]),
+]);
 const localProject = `${JSON.stringify({
   orgId: "team_aex_public_build",
   projectId: "prj_aex_public_build",
@@ -37,30 +43,40 @@ function run(args) {
   if (completed.status !== 0) process.exitCode = completed.status ?? 1;
 }
 
-try {
-  await readFile(linkPath);
-  throw new Error(`${linkPath} already exists; refusing to overwrite a provider project link`);
-} catch (error) {
-  if (error?.code !== "ENOENT") throw error;
+export async function buildDashboardOutput() {
+  try {
+    await readFile(linkPath);
+    throw new Error(`${linkPath} already exists; refusing to overwrite a provider project link`);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  await mkdir(".vercel", { recursive: true });
+  await writeFile(linkPath, localProject, { encoding: "utf8", flag: "wx" });
+  try {
+    for (const [index, step] of DASHBOARD_BUILD_STEPS.entries()) {
+      run(step);
+      if (process.exitCode) {
+        throw new Error([
+          "dashboard wire dependency build failed",
+          "dashboard SDK dependency build failed",
+          "Vercel Build Output API build failed",
+        ][index]);
+      }
+    }
+    const config = JSON.parse(await readFile(outputConfigPath, "utf8"));
+    if (config.version !== 3) {
+      throw new Error(`${outputConfigPath} is not Build Output API version 3`);
+    }
+  } finally {
+    const current = await readFile(linkPath, "utf8").catch(() => null);
+    if (current !== localProject) {
+      throw new Error(`${linkPath} changed during the build; refusing to remove it`);
+    }
+    await rm(linkPath);
+  }
 }
 
-await mkdir(".vercel", { recursive: true });
-await writeFile(linkPath, localProject, { encoding: "utf8", flag: "wx" });
-try {
-  run(["run", "--filter", "@aexhq/wire", "build"]);
-  if (process.exitCode) throw new Error("dashboard wire dependency build failed");
-  run(["run", "--filter", "@aexhq/sdk", "build"]);
-  if (process.exitCode) throw new Error("dashboard SDK dependency build failed");
-  run(["run", "vercel", "build", "--no-color"]);
-  if (process.exitCode) throw new Error("Vercel Build Output API build failed");
-  const config = JSON.parse(await readFile(outputConfigPath, "utf8"));
-  if (config.version !== 3) {
-    throw new Error(`${outputConfigPath} is not Build Output API version 3`);
-  }
-} finally {
-  const current = await readFile(linkPath, "utf8").catch(() => null);
-  if (current !== localProject) {
-    throw new Error(`${linkPath} changed during the build; refusing to remove it`);
-  }
-  await rm(linkPath);
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  await buildDashboardOutput();
 }

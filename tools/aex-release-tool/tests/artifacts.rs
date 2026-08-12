@@ -3,6 +3,11 @@
 
 mod common;
 
+#[cfg(unix)]
+use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::io::Read as _;
+
 use aex_release_tool::artifact::{
     ArtifactEnvelope, Form, MODEL_CATALOG_COLLECTION_FILE_VAR, MODEL_CATALOG_COLLECTION_SHA256_VAR,
     MODEL_CATALOG_TRUST_ROOTS_JSON_VAR, MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR,
@@ -25,6 +30,177 @@ fn shipped_units() -> Units {
     )
     .expect("release/units.toml");
     toml::from_str(&text).expect("the shipped unit registry must parse")
+}
+
+#[cfg(unix)]
+fn tar_gz_members(bytes: &[u8]) -> BTreeMap<String, (u8, String, Vec<u8>)> {
+    let mut tar = Vec::new();
+    flate2::read::GzDecoder::new(bytes)
+        .read_to_end(&mut tar)
+        .unwrap();
+    let mut members = BTreeMap::new();
+    let mut offset = 0;
+    while offset + 512 <= tar.len() && tar[offset..offset + 512].iter().any(|byte| *byte != 0) {
+        let header = &tar[offset..offset + 512];
+        let name_end = header[..100]
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(100);
+        let prefix_end = header[345..500]
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(155);
+        let name = std::str::from_utf8(&header[..name_end]).unwrap();
+        let prefix = std::str::from_utf8(&header[345..345 + prefix_end]).unwrap();
+        let path = if prefix.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let size_end = header[124..136]
+            .iter()
+            .position(|byte| *byte == 0 || *byte == b' ')
+            .unwrap_or(12);
+        let size = usize::from_str_radix(
+            std::str::from_utf8(&header[124..124 + size_end])
+                .unwrap()
+                .trim(),
+            8,
+        )
+        .unwrap();
+        let start = offset + 512;
+        let end = start + size;
+        let link_end = header[157..257]
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(100);
+        let link = std::str::from_utf8(&header[157..157 + link_end])
+            .unwrap()
+            .to_owned();
+        members.insert(path, (header[156], link, tar[start..end].to_vec()));
+        offset = start + size.div_ceil(512) * 512;
+    }
+    members
+}
+
+#[cfg(unix)]
+fn standalone_build_output() -> tempfile::TempDir {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join(".vercel/output");
+    let shared = output.join("functions/shared.func");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::write(output.join("config.json"), b"{\"version\":3}\n").unwrap();
+    std::fs::write(
+        shared.join(".vc-config.json"),
+        b"{\"runtime\":\"nodejs22.x\"}\n",
+    )
+    .unwrap();
+    std::fs::write(shared.join("index.js"), b"export default 'standalone';\n").unwrap();
+    symlink("shared.func", output.join("functions/page.func")).unwrap();
+    symlink("shared.func/index.js", output.join("functions/route.js")).unwrap();
+    temp
+}
+
+#[cfg(unix)]
+#[test]
+fn build_output_preserves_safe_standalone_file_and_directory_symlinks() {
+    let temp = standalone_build_output();
+    let output = temp.path().join(".vercel/output");
+    let first = package(Form::BuildOutput, &output, 0, "bootstrap").unwrap();
+    let second = package(Form::BuildOutput, &output, 0, "bootstrap").unwrap();
+    assert_eq!(first, second);
+
+    let members = tar_gz_members(&first);
+    assert_eq!(
+        members["functions/page.func"],
+        (b'2', "shared.func".to_owned(), Vec::new())
+    );
+    assert_eq!(
+        members["functions/route.js"],
+        (b'2', "shared.func/index.js".to_owned(), Vec::new())
+    );
+    assert!(!members.contains_key("functions/page.func/index.js"));
+    assert_eq!(members["functions/shared.func/index.js"].0, b'0');
+}
+
+#[cfg(unix)]
+#[test]
+fn build_output_refuses_broken_escaping_and_cyclic_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    for (case, configure, rule) in [
+        (
+            "broken",
+            Box::new(|output: &std::path::Path| {
+                symlink("missing.js", output.join("broken.js")).unwrap();
+            }) as Box<dyn Fn(&std::path::Path)>,
+            "build-output-symlink-invalid",
+        ),
+        (
+            "escape",
+            Box::new(|output: &std::path::Path| {
+                let workspace = output.parent().unwrap().parent().unwrap();
+                std::fs::write(workspace.join("secret"), b"secret").unwrap();
+                symlink("../../secret", output.join("escape.js")).unwrap();
+            }),
+            "build-output-symlink-escape",
+        ),
+        (
+            "cycle",
+            Box::new(|output: &std::path::Path| {
+                std::fs::create_dir_all(output.join("loop")).unwrap();
+                symlink("..", output.join("loop/back")).unwrap();
+            }),
+            "build-output-symlink-cycle",
+        ),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join(".vercel/output");
+        std::fs::create_dir_all(&output).unwrap();
+        std::fs::write(output.join("config.json"), b"{\"version\":3}\n").unwrap();
+        configure(&output);
+        let error = package(Form::BuildOutput, &output, 0, "bootstrap").unwrap_err();
+        assert_eq!(error.rules(), vec![rule], "case {case}");
+    }
+}
+
+#[test]
+fn build_output_refuses_non_standalone_function_file_maps() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join(".vercel/output");
+    let function = output.join("functions/api.func");
+    std::fs::create_dir_all(&function).unwrap();
+    std::fs::write(output.join("config.json"), b"{\"version\":3}\n").unwrap();
+    std::fs::write(
+        function.join(".vc-config.json"),
+        b"{\"runtime\":\"nodejs22.x\",\"filePathMap\":{}}\n",
+    )
+    .unwrap();
+    let error = package(Form::BuildOutput, &output, 0, "bootstrap").unwrap_err();
+    assert_eq!(error.rules(), vec!["build-output-not-standalone"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn build_output_refuses_a_link_to_an_empty_unpacked_directory() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join(".vercel/output");
+    let function = output.join("functions/api.func");
+    std::fs::create_dir_all(&function).unwrap();
+    std::fs::create_dir_all(output.join("empty-target")).unwrap();
+    std::fs::write(output.join("config.json"), b"{\"version\":3}\n").unwrap();
+    std::fs::write(
+        function.join(".vc-config.json"),
+        b"{\"runtime\":\"nodejs22.x\"}\n",
+    )
+    .unwrap();
+    symlink("empty-target", output.join("empty-link")).unwrap();
+    let error = package(Form::BuildOutput, &output, 0, "bootstrap").unwrap_err();
+    assert_eq!(error.rules(), vec!["build-output-symlink-unpackaged"]);
 }
 
 #[test]

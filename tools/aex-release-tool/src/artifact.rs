@@ -9,7 +9,7 @@
 //! verification statement instead.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -820,7 +820,7 @@ pub fn package(
             let entries = collect_tree(input)?;
             pack::write_zip(&entries)
         }
-        Form::Tarball | Form::BuildOutput => {
+        Form::Tarball => {
             let entries = if input.is_dir() {
                 collect_tree(input)?
             } else {
@@ -833,6 +833,10 @@ pub fn package(
                     std::fs::read(input).map_err(|err| io(&input.display().to_string(), &err))?;
                 vec![pack::Entry::regular(&name, data)]
             };
+            pack::write_tar_gz(&entries, source_date_epoch)
+        }
+        Form::BuildOutput => {
+            let entries = collect_build_output(input)?;
             pack::write_tar_gz(&entries, source_date_epoch)
         }
         // Deliberately a passthrough. The published artifact is the packer's
@@ -859,6 +863,268 @@ pub fn package(
              build invocation.",
         )),
     }
+}
+
+fn collect_build_output(root: &Path) -> Result<Vec<pack::Entry>> {
+    let canonical_root = validate_build_output_root(root)?;
+    let mut files = BTreeMap::<String, pack::Entry>::new();
+    let mut function_configs = 0usize;
+    for entry in walkdir::WalkDir::new(&canonical_root)
+        .follow_links(false)
+        .sort_by_file_name()
+    {
+        let entry = entry.map_err(|err| {
+            ToolError::single(Exit::Usage, "io", format!("walking build output: {err}"))
+        })?;
+        if entry.file_type().is_dir() {
+            continue;
+        }
+        let relative = entry.path().strip_prefix(&canonical_root).map_err(|_| {
+            ToolError::single(
+                Exit::Usage,
+                "build-output-symlink-escape",
+                format!(
+                    "Build Output API member `{}` escaped its root",
+                    entry.path().display()
+                ),
+            )
+        })?;
+        let name = archive_name(relative)?;
+        let packaged = if entry.file_type().is_file() {
+            let data = std::fs::read(entry.path())
+                .map_err(|err| io(&entry.path().display().to_string(), &err))?;
+            if entry.file_name() == ".vc-config.json" {
+                validate_standalone_function_config(entry.path(), &data)?;
+                function_configs += 1;
+            }
+            pack::Entry::regular(&name, data)
+        } else if entry.file_type().is_symlink() {
+            let target = validate_build_output_symlink(entry.path(), &canonical_root)?;
+            pack::Entry::symlink(&name, &target)
+        } else {
+            return Err(ToolError::single(
+                Exit::Usage,
+                "build-output-non-regular",
+                format!(
+                    "Build Output API member `{}` is not a regular file or symlink",
+                    entry.path().display()
+                ),
+            ));
+        };
+        if files.insert(name.clone(), packaged).is_some() {
+            return Err(ToolError::single(
+                Exit::Usage,
+                "build-output-member-collision",
+                format!("Build Output API declares member `{name}` twice"),
+            ));
+        }
+    }
+    if function_configs == 0 {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "build-output-function-config",
+            "standalone Build Output API has no physical .vc-config.json",
+        ));
+    }
+    validate_build_output_links(&files)?;
+    Ok(files.into_values().collect())
+}
+
+fn validate_build_output_root(root: &Path) -> Result<PathBuf> {
+    let canonical =
+        std::fs::canonicalize(root).map_err(|err| io(&root.display().to_string(), &err))?;
+    if !canonical.is_dir() {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "build-output-not-directory",
+            format!("`{}` is not a Build Output API directory", root.display()),
+        ));
+    }
+    let config: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(canonical.join("config.json"))
+            .map_err(|err| io("Build Output API config.json", &err))?,
+    )
+    .map_err(|err| {
+        ToolError::single(
+            Exit::Usage,
+            "build-output-config",
+            format!("Build Output API config.json is not JSON: {err}"),
+        )
+    })?;
+    if config.get("version").and_then(serde_json::Value::as_u64) != Some(3) {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "build-output-config",
+            "Build Output API config.json must declare version 3",
+        ));
+    }
+    Ok(canonical)
+}
+
+fn validate_build_output_links(files: &BTreeMap<String, pack::Entry>) -> Result<()> {
+    let symlinks: Vec<_> = files
+        .values()
+        .filter(|entry| entry.is_symlink())
+        .map(|entry| format!("{}/", entry.name))
+        .collect();
+    if let Some((member, link)) = files.keys().find_map(|member| {
+        symlinks
+            .iter()
+            .find(|link| member.starts_with(link.as_str()))
+            .map(|link| (member, link))
+    }) {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "build-output-symlink-nesting",
+            format!("Build Output API member `{member}` is nested below symlink `{link}`"),
+        ));
+    }
+    for entry in files.values().filter(|entry| entry.is_symlink()) {
+        let target = pack::resolve_link_name(
+            &entry.name,
+            entry.link_name.as_deref().expect("filtered symbolic link"),
+        )
+        .ok_or_else(|| {
+            ToolError::single(
+                Exit::Usage,
+                "build-output-symlink-target",
+                format!(
+                    "Build Output API symlink `{}` escapes the archive",
+                    entry.name
+                ),
+            )
+        })?;
+        let directory_prefix = format!("{target}/");
+        let exact_regular = files
+            .get(&target)
+            .is_some_and(|candidate| !candidate.is_symlink());
+        let populated_directory = files
+            .keys()
+            .any(|candidate| candidate.starts_with(&directory_prefix));
+        if !exact_regular && !populated_directory {
+            return Err(ToolError::single(
+                Exit::Usage,
+                "build-output-symlink-unpackaged",
+                format!(
+                    "Build Output API symlink `{}` resolves to `{target}`, which has no packaged file or populated directory",
+                    entry.name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn archive_name(path: &Path) -> Result<String> {
+    path.to_str()
+        .map(|value| value.replace('\\', "/"))
+        .ok_or_else(|| {
+            ToolError::single(
+                Exit::Usage,
+                "archive-entry-name",
+                format!("Build Output API member `{}` is not UTF-8", path.display()),
+            )
+        })
+}
+
+fn validate_standalone_function_config(path: &Path, data: &[u8]) -> Result<()> {
+    let config: serde_json::Value = serde_json::from_slice(data).map_err(|err| {
+        ToolError::single(
+            Exit::Usage,
+            "build-output-function-config",
+            format!("`{}` is not JSON: {err}", path.display()),
+        )
+    })?;
+    if config.get("filePathMap").is_some() {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "build-output-not-standalone",
+            format!("`{}` still declares filePathMap", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_build_output_symlink(path: &Path, root: &Path) -> Result<String> {
+    let target = std::fs::read_link(path).map_err(|err| io(&path.display().to_string(), &err))?;
+    let target_text = target.to_str().ok_or_else(|| {
+        ToolError::single(
+            Exit::Usage,
+            "build-output-symlink-target",
+            format!(
+                "Build Output API symlink `{}` has a non-UTF-8 target",
+                path.display()
+            ),
+        )
+    })?;
+    if !safe_relative_symlink_target(target_text) {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "build-output-symlink-target",
+            format!(
+                "Build Output API symlink `{}` has a non-normal relative target",
+                path.display()
+            ),
+        ));
+    }
+    let resolved = std::fs::canonicalize(path).map_err(|err| {
+        ToolError::single(
+            Exit::Usage,
+            "build-output-symlink-invalid",
+            format!(
+                "Build Output API symlink `{}` is broken or cyclic: {err}",
+                path.display()
+            ),
+        )
+    })?;
+    if !resolved.starts_with(root) {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "build-output-symlink-escape",
+            format!(
+                "Build Output API symlink `{}` resolves outside its root",
+                path.display()
+            ),
+        ));
+    }
+    let parent = std::fs::canonicalize(path.parent().unwrap_or(root))
+        .map_err(|err| io(&path.display().to_string(), &err))?;
+    if resolved.is_dir() && parent.starts_with(&resolved) {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "build-output-symlink-cycle",
+            format!(
+                "Build Output API symlink `{}` points to an ancestor",
+                path.display()
+            ),
+        ));
+    }
+    Ok(target_text.to_owned())
+}
+
+fn safe_relative_symlink_target(target: &str) -> bool {
+    if target.is_empty()
+        || target.starts_with('/')
+        || target.contains('\\')
+        || target.as_bytes().get(1) == Some(&b':')
+        || Path::new(target).is_absolute()
+    {
+        return false;
+    }
+    let mut saw_named_segment = false;
+    for segment in target.split('/') {
+        if segment.is_empty() || segment == "." {
+            return false;
+        }
+        if segment == ".." {
+            if saw_named_segment {
+                return false;
+            }
+        } else {
+            saw_named_segment = true;
+        }
+    }
+    true
 }
 
 fn collect_tree(root: &Path) -> Result<Vec<pack::Entry>> {
@@ -2277,9 +2543,15 @@ alarm_spec = "regional-session-api"
     #[test]
     fn packaging_a_build_output_tree_is_byte_stable() {
         let temp = tempfile::tempdir().unwrap();
-        let tree = temp.path().join("out");
+        let tree = temp.path().join(".vercel/output");
         std::fs::create_dir_all(tree.join("static")).unwrap();
-        std::fs::write(tree.join("index.html"), b"<!doctype html>").unwrap();
+        std::fs::create_dir_all(tree.join("functions/index.func")).unwrap();
+        std::fs::write(tree.join("config.json"), b"{\"version\":3}\n").unwrap();
+        std::fs::write(
+            tree.join("functions/index.func/.vc-config.json"),
+            b"{\"runtime\":\"nodejs22.x\"}\n",
+        )
+        .unwrap();
         std::fs::write(tree.join("static/app.js"), b"console.log(1)").unwrap();
         let first = package(Form::BuildOutput, &tree, 0, "bootstrap").unwrap();
         let second = package(Form::BuildOutput, &tree, 0, "bootstrap").unwrap();
