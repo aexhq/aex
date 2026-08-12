@@ -28,6 +28,11 @@ run "the_web_acl_is_regional_and_attached_to_the_load_balancer_the_caller_named"
     condition     = aws_wafv2_web_acl.this.name == var.name
     error_message = "The web ACL must take the caller's name; it is the metric prefix an alarm is written against."
   }
+
+  assert {
+    condition     = aws_wafv2_web_acl.this.description == "Per-source-IP rate limit for 2 unauthenticated paths on aex-dev-central-device-flow"
+    error_message = "The description must use only the plain punctuation AWS WAF accepts; parentheses are rejected by the provider during apply."
+  }
 }
 
 run "the_default_action_allows_so_a_defect_here_is_not_an_outage" {

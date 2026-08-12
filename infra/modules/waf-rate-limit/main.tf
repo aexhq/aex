@@ -40,7 +40,7 @@ locals {
 
 resource "aws_wafv2_web_acl" "this" {
   name        = var.name
-  description = "Per-source-IP rate limit for ${length(var.paths)} unauthenticated path(s) on ${var.name}"
+  description = "Per-source-IP rate limit for ${length(var.paths)} unauthenticated paths on ${var.name}"
   scope       = "REGIONAL"
   tags        = var.tags
 
