@@ -17,8 +17,8 @@ export function PublicShell({ children, loginHref }: Readonly<{ children: ReactN
       <main id="main" className="site-main">{children}</main>
       <footer className="site-footer">
         <div className="aex-container site-footer__inner">
-          <p>Open source under Apache-2.0.</p>
-          <p><a href="mailto:support@aex.dev">support@aex.dev</a></p>
+          <p>Open source under Apache-2.0. <a href="https://github.com/aexhq/aex">GitHub</a></p>
+          <p>For partnerships and enquiries, contact <a href="mailto:support@aex.dev">support@aex.dev</a>.</p>
         </div>
       </footer>
     </>

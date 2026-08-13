@@ -6,6 +6,7 @@ import { loadMarketingPage, parseInline, parseMarketingPage, slugify } from "../
 
 const CONTENT_PATH = resolve(import.meta.dir, "../content/marketing/index.mdx");
 const README_PATH = resolve(import.meta.dir, "../../../README.md");
+const PUBLIC_SHELL_PATH = resolve(import.meta.dir, "../app/_components/public-shell.tsx");
 const page = loadMarketingPage(CONTENT_PATH);
 
 describe("the landing page content model", () => {
@@ -14,16 +15,19 @@ describe("the landing page content model", () => {
     expect(page.description.length).toBeGreaterThan(0);
     expect(page.intro).toHaveLength(1);
     expect(page.features.map((feature) => feature.title)).toEqual([
+      "800+ models",
       "Sessions",
-      "Workspaces",
-      "Models",
+      "Files, skills, and tools",
+      "Built-in tools",
+      "Compute and subagents",
       "Observability",
+      "Pricing",
     ]);
     expect(page.links.map((link) => link.href)).toEqual(["/docs", "https://aex.dev/signin?next=/app"]);
     const status = page.note.map((span) => span.value).join("");
 
-    expect(status).toContain("still in prelaunch");
-    expect(status).toContain("Do not use it in production yet");
+    expect(status).toContain("currently in alpha");
+    expect(status).toContain("Expect breaking changes");
   });
 
   test("keeps the repository entry point explicit about development status", () => {
@@ -51,6 +55,30 @@ describe("the landing page content model", () => {
     const source = readFileSync(CONTENT_PATH, "utf8");
 
     expect(source).not.toMatch(/\$\s?\d/);
+  });
+
+  test("states the implemented developer-facing capabilities", () => {
+    const source = readFileSync(CONTENT_PATH, "utf8");
+
+    expect(source).toContain("800+ models");
+    expect(source).toContain("Bring your own provider");
+    expect(source).toContain("`AGENTS.md`");
+    expect(source).toContain("skills, tool bundles");
+    expect(source).toContain("MCP configuration");
+    expect(source).toContain("Bash, `read_file`, `edit_file`, and `write_file`");
+    expect(source).toContain("apt, pip, and npm");
+    expect(source).toContain("recursive subagents");
+    expect(source).toContain("AG-UI events");
+    expect(source).toContain("free during alpha");
+  });
+
+  test("links the open source repository and partnership contact", () => {
+    const source = readFileSync(PUBLIC_SHELL_PATH, "utf8");
+
+    expect(source).toContain('href="https://github.com/aexhq/aex"');
+    expect(source).toContain("Open source under Apache-2.0");
+    expect(source).toContain("For partnerships and enquiries, contact");
+    expect(source).toContain('href="mailto:support@aex.dev"');
   });
 });
 

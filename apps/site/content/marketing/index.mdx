@@ -1,29 +1,51 @@
 ---
 title: AEX
-description: AEX is a distributed agent runtime in the cloud for running and managing agent sessions.
+description: AEX is a distributed agent runtime in the cloud for developers to build and run agent sessions for their apps.
 ---
 
-AEX is a distributed agent runtime in the cloud. Developers use it to run and
-manage agent sessions for their apps.
+AEX is a distributed agent runtime in the cloud for developers to build and run
+agent sessions for their apps. Each session has a model, an isolated Linux
+workspace, files, and tools. Control it through the TypeScript SDK or HTTP API.
 
 - [Read the docs](/docs)
 - [Log in](https://aex.dev/signin?next=/app)
 
+## 800+ models
+
+Use 800+ models across OpenAI, Anthropic, Google, DeepSeek, Z.ai, Moonshot AI,
+OpenRouter, and Vercel AI Gateway. Bring your own provider key and choose the
+model for each session.
+
 ## Sessions
 
-Start a session, continue it later, inspect its state, or stop it through one
-API.
+Run multi-message sessions for up to eight hours. Idle sessions suspend after
+three minutes and resume with the same workspace on the next message. Start,
+inspect, suspend, resume, or stop sessions through the API.
 
-## Workspaces
+## Files, skills, and tools
 
-Each session runs in an isolated cloud workspace with shell and file tools.
+Upload project files, `AGENTS.md`, custom instructions, skills, tool bundles,
+MCP configuration, and other assets. Mount the files each session needs.
 
-## Models
+## Built-in tools
 
-Use the model provider and credentials you already have.
+Every session includes Bash, `read_file`, `edit_file`, and `write_file`.
+Preinstall pinned apt, pip, and npm packages, then allow or block public network
+access.
+
+## Compute and subagents
+
+Choose from 512 MB, 1 GB, 2 GB, 4 GB, or 8 GB of memory. Agents can create
+recursive subagents in the same session and workspace.
 
 ## Observability
 
-Follow messages and telemetry while the agent works. AEX records usage too.
+Stream messages as AG-UI events. Query, stream, or export OpenTelemetry logs,
+spans, metrics, and traces, including after a session suspends or stops.
 
-> AEX is open source and still in prelaunch. Do not use it in production yet.
+## Pricing
+
+AEX runtime usage is free during alpha. Model usage is billed by the provider
+through your own key.
+
+> AEX is currently in alpha. Expect breaking changes and occasional interruptions.
