@@ -1,17 +1,21 @@
 ---
 title: AEX documentation
-description: Start with the explicit v1 client surface.
+description: Create a durable agent session with the public TypeScript SDK.
 ---
 
 # AEX documentation
 
-An AEX session is an eight-hour, multi-message conversation backed by one exact
-retained MicroVM generation. It accepts one text message at a time. When that
-activity finishes or is cancelled, send the next message to the same session;
-there is no separate public run resource.
+AEX runs multi-message agent work in a durable session with one isolated
+workspace. Start with the TypeScript SDK; the same public contract is available
+to the CLI and HTTP clients.
+
+## Quickstart
+
+Install `@aexhq/sdk`, provide your AEX workspace key and a registered provider
+credential, then create a session and send a message.
 
 ```ts
-import { Aex, assertId, newId } from "@aexhq/sdk";
+import { Aex, assertId } from "@aexhq/sdk";
 
 const aex = new Aex(process.env.AEX_WORKSPACE_API_KEY!);
 const session = await aex.sessions.sessionCreate({
@@ -31,43 +35,29 @@ await aex.sessions.sessionMessageSend({
   body: { text: "Inspect the repository and report the failing tests." },
   idempotencyKey: crypto.randomUUID(),
 });
-
-await aex.sessions.sessionSuspend({
-  sessionId: session.id,
-  body: {},
-  operationId: newId("operation"),
-});
 ```
 
-Provider credentials are dedicated, encrypted BYOK resources. A session pins
-one exact credential; AEX does not supply a managed model key at launch.
+Provider credentials are encrypted BYOK resources. A session pins one exact
+credential; AEX does not supply a managed model key at launch.
 
-## Lifecycle
+## Sessions
 
-The provider suspends an idle generation after 180 seconds and automatically
-resumes that same generation for a message or live-file call. Manual suspend
-and resume are also available. The hard eight-hour lifetime starts when the
-generation launches and is never extended by suspension.
+A session accepts one text message at a time and keeps its workspace across
+messages. Idle compute suspends after 180 seconds and resumes for the next
+message or live-file call. The hard eight-hour workspace lifetime is never
+extended by suspension.
 
-Termination permanently destroys the MicroVM and its live files while retaining
-session metadata, sealed messages, accounting, and telemetry. Runtime loss does
-the same: launch has no snapshot, crash recovery, clone/fork, trash, or restore
-path. Irreversible deletion is a separate operation.
+Termination destroys the MicroVM and its live files while retaining session
+metadata, messages, accounting, and telemetry. There is no snapshot, fork,
+trash, or restore path at launch.
 
 ## Files and tools
 
-Registered workspace files are durable opaque inputs. Session creation selects
-exact revisions and copies them into the MicroVM. Live session files exist only
-in that generation and support exact list/stat plus resumable, digest-verified
-upload and download. They are not persisted or snapshotted when the session
-ends.
+Registered workspace files are durable inputs copied into the MicroVM at
+session creation. Live session files exist only in that generation and support
+exact list, stat, resumable upload, and digest-verified download.
 
-The launch model-tool surface is exactly `read_file`, `edit_file`, `write_file`,
-and Bash, all inside the MicroVM. Instructions, skills, tool material, and MCP
-configuration can be ordinary workspace files, but they are not separate typed
-resources. There is no generic secret or interactive approval surface.
-
-Typed observations, OpenTelemetry ingestion, streams, and telemetry exports
-remain durable independently of session execution state.
-
-For help, email support@aex.dev.
+The launch model-tool surface is `read_file`, `edit_file`, `write_file`, and
+Bash. Instructions, skills, tool material, and MCP configuration can be
+ordinary workspace files. Typed observations and OpenTelemetry remain durable
+independently of session execution.

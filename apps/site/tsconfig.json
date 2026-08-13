@@ -3,7 +3,9 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "plugins": [{ "name": "next" }],
-    "types": ["node", "bun"]
+    "types": ["node", "bun"],
+    "module": "preserve",
+    "moduleResolution": "bundler"
   },
   "include": ["next-env.d.ts", "app/**/*.ts", "app/**/*.tsx", "generate/**/*.ts", "test/**/*.ts", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]

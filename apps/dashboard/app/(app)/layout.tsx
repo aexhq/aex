@@ -48,14 +48,14 @@ export default async function AppLayout({ children }: Readonly<{ children: React
       <a className="skip" href="#main">Skip to content</a>
       <header className="banner">
         <div className="frame banner-inner">
-          <a className="brand" href="/">AEX</a>
+          <a className="brand" href="/app">AEX</a>
           <ContextSwitcher bootstrap={bootstrap} />
         </div>
       </header>
       <AccountBanner accounts={bootstrap.accounts} organizations={bootstrap.organizations} />
       {children}
       <footer className="frame small muted" style={{ paddingBlock: "var(--aex-space-6)" }}>
-        <a href="https://aex.dev/docs">Documentation</a>
+        <a href="/docs">Documentation</a>
         <span aria-hidden="true"> · </span>
         <span>Shell read at {bootstrap.generatedAt}</span>
       </footer>

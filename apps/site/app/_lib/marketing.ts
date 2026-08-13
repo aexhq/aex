@@ -25,7 +25,7 @@
  * Every deviation throws. A landing page that silently drops a claim because a
  * heading level was mistyped is worse than a build that fails.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 /** A run of plain text, or a run of `inline code`. */
@@ -71,8 +71,22 @@ export interface MarketingPage {
 
 const LINK_ITEM = /^- \[([^\]]+)\]\(([^)]+)\)$/;
 
-export function marketingSourcePath(root: string = process.cwd()): string {
-  return resolve(root, "content", "marketing", "index.mdx");
+export function marketingSourcePath(root?: string): string {
+  return siteContentPath("marketing/index.mdx", root);
+}
+
+/** Resolve canonical site prose while either Next workspace is being built. */
+export function siteContentPath(relativePath: string, root?: string): string {
+  const candidates = root === undefined
+    ? [
+        resolve(process.cwd(), "content", relativePath),
+        resolve(process.cwd(), "apps", "site", "content", relativePath),
+        resolve(process.cwd(), "..", "site", "content", relativePath),
+      ]
+    : [resolve(root, "content", relativePath)];
+  const match = candidates.find((candidate) => existsSync(candidate));
+  if (match === undefined) throw new Error(`site content is missing: ${relativePath}`);
+  return match;
 }
 
 export function loadMarketingPage(path: string = marketingSourcePath()): MarketingPage {

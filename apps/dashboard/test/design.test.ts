@@ -3,11 +3,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
-const tokens = readFileSync(resolve(root, "app/tokens.css"), "utf8");
+const tokens = readFileSync(resolve(root, "../site/design/tokens.css"), "utf8");
 const chrome = readFileSync(resolve(root, "app/app.css"), "utf8");
 
 /**
- * The dashboard consumes the design system; it does not extend it in place.
+ * The dashboard consumes the shared design system; it does not extend it in place.
  *
  * These checks are what make the token merge with `apps/site` a deletion of one
  * file: if no rule outside `tokens.css` names a literal colour, and every custom

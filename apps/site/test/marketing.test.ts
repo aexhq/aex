@@ -12,14 +12,14 @@ describe("the landing page content model", () => {
   test("parses the hero, its actions, and its status note", () => {
     expect(page.title.length).toBeGreaterThan(0);
     expect(page.description.length).toBeGreaterThan(0);
-    expect(page.hero.heading).toBe("Durable infrastructure for agents that think and act");
+    expect(page.hero.heading).toBe("Infrastructure for agents that do real work");
     expect(page.hero.body.length).toBeGreaterThanOrEqual(1);
-    expect(page.hero.links.map((link) => link.href)).toEqual(["/docs", "#capability-surface"]);
+    expect(page.hero.links.map((link) => link.href)).toEqual(["/docs", "https://aex.dev/signin?next=/app"]);
     const status = page.hero.note.map((span) => span.value).join("");
 
     expect(status).toContain("active prelaunch development");
-    expect(status).toContain("not guaranteed to work");
-    expect(status).toContain("do not use AEX for production workloads yet");
+    expect(status).toContain("Expect breaking changes");
+    expect(status).toContain("do not use it for production workloads yet");
   });
 
   test("keeps the repository entry point explicit about development status", () => {
@@ -30,8 +30,9 @@ describe("the landing page content model", () => {
     expect(readme).toContain("do not rely on AEX for production workloads yet");
   });
 
-  test("carries exactly the two owner-specified sections, in order", () => {
-    expect(page.sections.map((section) => section.slug)).toEqual(["why-aex", "capability-surface"]);
+  test("keeps the landing page to two concise sections", () => {
+    expect(page.sections.map((section) => section.slug)).toEqual(["what-you-get", "start-here"]);
+    expect(page.sections.flatMap((section) => section.entries)).toHaveLength(6);
   });
 
   test("gives every entry a slug, a title, and a body", () => {
@@ -53,7 +54,6 @@ describe("the landing page content model", () => {
     const slugs = new Set(page.sections.map((section) => section.slug));
     const anchors = page.hero.links.filter((link) => link.href.startsWith("#")).map((link) => link.href.slice(1));
 
-    expect(anchors.length).toBeGreaterThan(0);
     expect(anchors.filter((anchor) => !slugs.has(anchor))).toEqual([]);
   });
 
@@ -68,15 +68,9 @@ describe("the landing page content model", () => {
   });
 
   test("publishes no rate-book value", () => {
-    // Two accepted decisions meet here. `references/rules.md` forbids public
-    // docs from carrying billing/rate policy, and Area 5 U-COGS keeps every
-    // real AEX rate-book revision out of the public repository. The page names
-    // the four meters instead. Publishing a figure is therefore a deliberate
-    // decision that has to change this gate too, not an edit that slips past it.
     const source = readFileSync(CONTENT_PATH, "utf8");
 
     expect(source).not.toMatch(/\$\s?\d/);
-    expect(source).toContain("compute, memory, retained storage and outbound data transfer");
   });
 });
 
