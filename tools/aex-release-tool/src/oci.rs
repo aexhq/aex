@@ -257,29 +257,16 @@ fn validate_unit_and_plan(unit: &Unit, plan: &BuildPlan) -> Result<()> {
         .all(|(key, value)| plan.env.get(key) == Some(value));
     let environment_keys_are_closed = plan.env.keys().all(|key| {
         expected.env.contains_key(key)
-            || (crate::artifact::requires_model_catalog(unit)
-                && matches!(
-                    key.as_str(),
-                    crate::artifact::MODEL_CATALOG_TRUST_ROOTS_JSON_VAR
-                        | crate::artifact::MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR
-                        | crate::artifact::MODEL_CATALOG_COLLECTION_FILE_VAR
-                        | crate::artifact::MODEL_CATALOG_COLLECTION_SHA256_VAR
-                        | crate::artifact::TOOL_CATALOG_SHA256_VAR
-                ))
+            || (crate::artifact::requires_catalog_binding(unit)
+                && matches!(key.as_str(), crate::artifact::TOOL_CATALOG_SHA256_VAR))
     });
-    let catalog_values = [
-        crate::artifact::MODEL_CATALOG_TRUST_ROOTS_JSON_VAR,
-        crate::artifact::MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR,
-        crate::artifact::MODEL_CATALOG_COLLECTION_FILE_VAR,
-        crate::artifact::MODEL_CATALOG_COLLECTION_SHA256_VAR,
-        crate::artifact::TOOL_CATALOG_SHA256_VAR,
-    ]
-    .into_iter()
-    .filter_map(|key| plan.env.get(key))
-    .collect::<Vec<_>>();
+    let catalog_values = [crate::artifact::TOOL_CATALOG_SHA256_VAR]
+        .into_iter()
+        .filter_map(|key| plan.env.get(key))
+        .collect::<Vec<_>>();
     let catalog_binding_is_complete = catalog_values.is_empty()
-        || (crate::artifact::requires_model_catalog(unit)
-            && catalog_values.len() == 5
+        || (crate::artifact::requires_catalog_binding(unit)
+            && catalog_values.len() == 1
             && catalog_values.iter().all(|value| !value.is_empty()));
     if plan.unit != unit.id
         || plan.kind != unit.kind

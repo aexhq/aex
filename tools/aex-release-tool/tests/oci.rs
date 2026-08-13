@@ -99,27 +99,13 @@ fn context_refuses_a_recipe_whose_recorded_digest_does_not_match_its_command() {
 #[test]
 fn context_accepts_complete_release_bound_catalog_recipes() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let signing = p256::ecdsa::SigningKey::from_slice(&[7; 32]).expect("fixture key");
-    let trust_roots_json = canon::to_string(&serde_json::json!({
-        "keys": [{
-            "keyId": "aex-catalog-fixture",
-            "sec1": hex::encode(signing.verifying_key().to_sec1_point(false).as_bytes()),
-        }],
-        "schema": "aex.model-catalog-trust-roots.v1",
-    }))
-    .expect("canonical trust roots");
-    let inputs = artifact::ModelCatalogBuildInputs {
-        trust_roots_sha256: canon::digest_bytes(trust_roots_json.as_bytes()),
-        trust_roots_json,
-        collection_file: "release-inputs/model-catalog-collection.json".to_owned(),
-        collection_sha256:
-            "sha256:7777777777777777777777777777777777777777777777777777777777777777".to_owned(),
+    let inputs = artifact::CatalogBuildInputs {
         tool_catalog_sha256:
             "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
     };
     for unit_name in ["brain-mux", "session-stream-api"] {
         let unit = shipped_unit(unit_name);
-        let plan = artifact::plan_with_model_catalog(&unit, Some(&inputs)).expect("release plan");
+        let plan = artifact::plan_with_catalog(&unit, Some(&inputs)).expect("release plan");
         let binary = temp.path().join(unit_name);
         std::fs::write(&binary, fake_aarch64_elf(43)).expect("ELF fixture");
 

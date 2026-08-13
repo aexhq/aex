@@ -278,9 +278,6 @@ enum ArtifactCommand {
         /// The unit.
         #[arg(long)]
         unit: String,
-        /// Refuse an unbound brain-mux before any build is invoked.
-        #[arg(long)]
-        require_model_catalog: bool,
     },
     /// Require the complete Git worktree/index/untracked set to be clean.
     OciSourceClean {
@@ -1315,10 +1312,7 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
                 .collect();
             emit(cli, &selected)
         }
-        ArtifactCommand::Plan {
-            unit,
-            require_model_catalog,
-        } => run_artifact_plan(cli, root, unit, *require_model_catalog),
+        ArtifactCommand::Plan { unit } => run_artifact_plan(cli, root, unit),
         ArtifactCommand::Package {
             unit,
             input,
@@ -1832,23 +1826,14 @@ fn run_regional_tables(cli: &Cli, root: &Path, out: &Path) -> Result<()> {
     )
 }
 
-fn run_artifact_plan(
-    cli: &Cli,
-    root: &Path,
-    unit: &str,
-    require_model_catalog: bool,
-) -> Result<()> {
+fn run_artifact_plan(cli: &Cli, root: &Path, unit: &str) -> Result<()> {
     let units = read_units(root)?;
     let found = units
         .units
         .iter()
         .find(|candidate| candidate.id == unit)
         .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
-    let plan = if require_model_catalog {
-        artifact::publication_plan(found, root)?
-    } else {
-        artifact::release_plan(found, root)?
-    };
+    let plan = artifact::release_plan(found, root)?;
     emit(cli, &plan)
 }
 

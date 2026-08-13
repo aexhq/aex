@@ -106,14 +106,11 @@ pub fn envelope_authorities(
         ToolError::single(
             Exit::CompositionIncompatible,
             "composition-catalogs-missing",
-            "the certified brain-mux artifact carries no model/tool catalogue identities",
+            "the certified brain-mux artifact carries no tool catalogue identity",
         )
     })?;
     let mut catalogs = BTreeMap::new();
-    for (name, digest) in [
-        ("model", catalog.model.as_ref()),
-        ("tool", catalog.tool.as_ref()),
-    ] {
+    for (name, digest) in [("tool", catalog.tool.as_ref())] {
         let digest = digest.ok_or_else(|| {
             ToolError::single(
                 Exit::CompositionIncompatible,

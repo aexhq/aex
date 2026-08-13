@@ -9,9 +9,8 @@ use std::collections::BTreeMap;
 use std::io::Read as _;
 
 use aex_release_tool::artifact::{
-    ArtifactEnvelope, Form, MODEL_CATALOG_COLLECTION_FILE_VAR, MODEL_CATALOG_COLLECTION_SHA256_VAR,
-    MODEL_CATALOG_TRUST_ROOTS_JSON_VAR, MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR,
-    ModelCatalogBuildInputs, package, plan, plan_with_model_catalog, publish_destination,
+    ArtifactEnvelope, CatalogBuildInputs, Form, package, plan, plan_with_catalog,
+    publish_destination,
 };
 use aex_release_tool::canon;
 use aex_release_tool::graph::inputs::Units;
@@ -288,20 +287,7 @@ fn recipes_name_the_real_build_output_instead_of_guessing_from_the_unit_id() {
 #[test]
 fn every_catalog_consumer_records_the_exact_catalog_build_bindings() {
     let units = shipped_units();
-    let signing = p256::ecdsa::SigningKey::from_slice(&[7; 32]).expect("fixture key");
-    let trust_roots_json = canon::to_string(&serde_json::json!({
-        "keys": [{
-            "keyId": "aex-catalog-fixture",
-            "sec1": hex::encode(signing.verifying_key().to_sec1_point(false).as_bytes()),
-        }],
-        "schema": "aex.model-catalog-trust-roots.v1",
-    }))
-    .expect("canonical trust roots");
-    let inputs = ModelCatalogBuildInputs {
-        trust_roots_sha256: canon::digest_bytes(trust_roots_json.as_bytes()),
-        trust_roots_json,
-        collection_file: "release-inputs/model-catalog-collection.json".to_owned(),
-        collection_sha256: digest(7),
+    let inputs = CatalogBuildInputs {
         tool_catalog_sha256:
             "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
     };
@@ -312,24 +298,8 @@ fn every_catalog_consumer_records_the_exact_catalog_build_bindings() {
             .find(|unit| unit.id == id)
             .unwrap_or_else(|| panic!("{id} unit"));
         let unstamped = plan(unit).expect("ordinary plan");
-        let stamped = plan_with_model_catalog(unit, Some(&inputs)).expect("release plan");
+        let stamped = plan_with_catalog(unit, Some(&inputs)).expect("release plan");
 
-        assert_eq!(
-            stamped.env[MODEL_CATALOG_TRUST_ROOTS_JSON_VAR],
-            inputs.trust_roots_json
-        );
-        assert_eq!(
-            stamped.env[MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR],
-            inputs.trust_roots_sha256
-        );
-        assert_eq!(
-            stamped.env[MODEL_CATALOG_COLLECTION_FILE_VAR],
-            inputs.collection_file
-        );
-        assert_eq!(
-            stamped.env[MODEL_CATALOG_COLLECTION_SHA256_VAR],
-            inputs.collection_sha256
-        );
         assert_eq!(
             stamped.env[aex_release_tool::artifact::TOOL_CATALOG_SHA256_VAR],
             inputs.tool_catalog_sha256

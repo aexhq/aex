@@ -12,8 +12,8 @@
 # string, and it is the job that waits for the gate.
 #
 # `for_publication` is not a publish switch and grants nothing. It only
-# tightens planning: a `brain-mux` destined for publication must plan against a
-# signed model catalog rather than the release-input blocker.
+# tightens planning: a `brain-mux` destined for publication must verify the
+# vendored models.dev snapshot against its committed digest.
 
 name: compile-artifacts
 
@@ -124,78 +124,13 @@ jobs:
           digest=$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$identity")
           echo "AEX_TOOL_CATALOG_SHA256=$digest" >> "$GITHUB_ENV"
 
-      - name: Acquire the last-good signed model-catalog binding
+      - name: Verify the vendored models.dev snapshot
         if: ${{ matrix.name == 'brain-mux' || matrix.name == 'session-stream-api' }}
-        env:
-          AEX_MODEL_CATALOG_BINDING_JSON: ${{ vars.AEX_MODEL_CATALOG_BINDING_JSON }}
         run: |
           set -euo pipefail
-          binding="${AEX_MODEL_CATALOG_BINDING_JSON:-}"
-          if [[ -z "$binding" ]]; then
-            echo "::warning title=${{ matrix.name }} built without a model catalog::AEX_MODEL_CATALOG_BINDING_JSON is empty, so this image compiles the release-input blocker instead of a signed model catalog. The binary refuses to start on every launch and the image can never become ready. Set the repository variable to the last-good signed binding before shipping this image."
-            exit 0
-          fi
-          (( ${#binding} <= 49152 )) || {
-            echo "model-catalog build binding exceeds the repository-variable bound" >&2
-            exit 21
-          }
-          canonical_binding=$(jq -cS . <<<"$binding")
-          [[ "$binding" == "$canonical_binding" ]] || {
-            echo "model-catalog build binding is not canonical compact JSON" >&2
-            exit 21
-          }
-          jq -e '
-            type == "object" and
-            keys == ["collectionSha256", "collectionUri", "schema", "trustRootsJson", "trustRootsSha256"] and
-            .schema == "aex.model-catalog-build-binding.v1" and
-            (.collectionUri | type == "string") and
-            (.collectionSha256 | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
-            (.trustRootsJson | type == "string" and length > 0) and
-            (.trustRootsSha256 | type == "string" and test("^sha256:[0-9a-f]{64}$"))
-          ' <<<"$binding" >/dev/null || {
-            echo "model-catalog build binding has an invalid or open shape" >&2
-            exit 21
-          }
-          uri=$(jq -er .collectionUri <<<"$binding")
-          digest=$(jq -er .collectionSha256 <<<"$binding")
-          roots_json=$(jq -er .trustRootsJson <<<"$binding")
-          roots_digest=$(jq -er .trustRootsSha256 <<<"$binding")
-          expected_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/"
-          [[ "$uri" == "$expected_prefix"* ]] || {
-            echo "model-catalog collection URI must be an immutable release asset in this repository" >&2
-            exit 21
-          }
-          [[ "$uri" != *'?'* && "$uri" != *'#'* && "$uri" != *'..'* ]] || {
-            echo "model-catalog collection URI must not carry a query, fragment, or parent path" >&2
-            exit 21
-          }
-          collection_file=".tmp/model-catalog/collection.json"
-          mkdir -p "$(dirname "$collection_file")"
-          roots_file=".tmp/model-catalog/trust-roots.json"
-          printf '%s' "$roots_json" > "$roots_file"
-          [[ "$roots_json" == "$(jq -cS . "$roots_file")" ]] || {
-            echo "model-catalog trust roots are not canonical compact JSON" >&2
-            exit 21
-          }
-          [[ "sha256:$(sha256sum "$roots_file" | cut -d' ' -f1)" == "$roots_digest" ]] || {
-            echo "model-catalog trust-root digest does not match the atomic binding" >&2
-            exit 21
-          }
-          curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
-            --max-time 60 --max-filesize 67108864 \
-            --output "$collection_file" "$uri"
-          actual="sha256:$(sha256sum "$collection_file" | cut -d' ' -f1)"
-          [[ "$actual" == "$digest" ]] || {
-            echo "downloaded model-catalog collection digest does not match its release binding" >&2
-            exit 21
-          }
-          {
-            echo "AEX_MODEL_CATALOG_TRUST_ROOTS_JSON=$roots_json"
-            echo "AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256=$roots_digest"
-            echo "AEX_MODEL_CATALOG_COLLECTION_URI=$uri"
-            echo "AEX_MODEL_CATALOG_COLLECTION_SHA256=$digest"
-            echo "AEX_MODEL_CATALOG_COLLECTION_FILE=$collection_file"
-          } >> "$GITHUB_ENV"
+          sha256sum --check scripts/models.digest
+          bun scripts/gen-models.ts
+          git diff --exit-code -- crates/aex-model-catalog/src/generated/admit.rs
 
       - name: Print the recipe
         id: recipe
@@ -203,9 +138,6 @@ jobs:
           set -euo pipefail
           mkdir -p "$RELEASE_DIR"
           required=()
-          if [ "${{ inputs.for_publication }}" = "true" ] && { [ "${{ matrix.name }}" = "brain-mux" ] || [ "${{ matrix.name }}" = "session-stream-api" ]; }; then
-            required+=(--require-model-catalog)
-          fi
           aex-release-tool artifact plan --unit "${{ matrix.name }}" "${required[@]}" | tee "$RELEASE_DIR/recipe.json"
           kind=$(jq -r .kind "$RELEASE_DIR/recipe.json")
           [[ -n "$kind" && "$kind" != "null" ]]

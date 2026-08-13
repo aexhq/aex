@@ -20,12 +20,7 @@ describe("public delivery ownership", () => {
       expect(source).not.toMatch(/\bbinding_ref\b/);
       expect(source).not.toMatch(/\brepository:\s*aexhq\/platform\b/);
       expect(source).not.toMatch(/\benvironment:\s*aex-(?:dev|prd)\b/);
-      if (path === ".github/workflows/model-catalog-publish.yml") {
-        expect(source).toContain("environment: aex-model-catalog-publisher");
-        expect(source.match(/aws-actions\/configure-aws-credentials/g)).toHaveLength(1);
-      } else {
-        expect(source).not.toMatch(/aws-actions\/configure-aws-credentials/);
-      }
+      expect(source).not.toMatch(/aws-actions\/configure-aws-credentials/);
     }
   });
 

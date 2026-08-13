@@ -383,9 +383,10 @@ describe("public main-push publication", () => {
     expect(blobReadback?.run).toContain('"--deny-${denied_runner_class}-runners"');
   });
 
-  test("catalog acquisition consumes one atomic last-good binding", () => {
-    // The binding is consumed where the compile happens. The publish job never
-    // sees it, which the cross-file negatives at the end of this test pin.
+  test("catalog acquisition verifies the vendored snapshot against its digest", () => {
+    // The snapshot verification happens where the compile happens. The publish
+    // job never sees a catalogue secret, which the cross-file negatives at the
+    // end of this test pin.
     const source = read(".github/workflows/_compile-artifacts.yml");
     const publishSource = read(".github/workflows/_build-artifacts.yml");
     const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
@@ -394,9 +395,9 @@ describe("public main-push publication", () => {
       (step: { readonly name?: string }) =>
         step.name === "Bind the immutable release tool catalogue"
     );
-    const acquire = build.steps.find(
+    const verifySnapshot = build.steps.find(
       (step: { readonly name?: string }) =>
-        step.name === "Acquire the last-good signed model-catalog binding"
+        step.name === "Verify the vendored models.dev snapshot"
     );
     const recipe = build.steps.find(
       (step: { readonly name?: string }) => step.name === "Print the recipe"
@@ -404,34 +405,17 @@ describe("public main-push publication", () => {
 
     expect(bindToolCatalog?.if).toContain("matrix.name == 'brain-mux'");
     expect(bindToolCatalog?.if).toContain("matrix.name == 'session-stream-api'");
-    expect(acquire?.if).toContain("matrix.name == 'brain-mux'");
-    expect(acquire?.if).toContain("matrix.name == 'session-stream-api'");
-    expect(acquire?.env).toEqual({
-      AEX_MODEL_CATALOG_BINDING_JSON: "${{ vars.AEX_MODEL_CATALOG_BINDING_JSON }}"
-    });
-    expect(acquire?.run).toContain("aex.model-catalog-build-binding.v1");
-    expect(acquire?.run).toContain('[[ "$binding" == "$canonical_binding" ]]');
-    expect(acquire?.run).toContain(
-      'expected_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/"'
+    expect(verifySnapshot?.if).toContain("matrix.name == 'brain-mux'");
+    expect(verifySnapshot?.if).toContain("matrix.name == 'session-stream-api'");
+    expect(verifySnapshot?.run).toContain("sha256sum --check scripts/models.digest");
+    expect(verifySnapshot?.run).toContain("bun scripts/gen-models.ts");
+    expect(verifySnapshot?.run).toContain(
+      "git diff --exit-code -- crates/aex-model-catalog/src/generated/admit.rs"
     );
-    expect(acquire?.run).toContain(
-      "--proto '=https' --proto-redir '=https' --tlsv1.2"
-    );
-    expect(acquire?.run).toContain("--max-time 60 --max-filesize 67108864");
-    expect(acquire?.run).toContain("collection_file=\".tmp/model-catalog/collection.json\"");
-    expect(acquire?.run).toContain("sha256sum \"$collection_file\"");
-    expect(acquire?.run).toContain("sha256sum \"$roots_file\"");
-    expect(acquire?.run).toContain("AEX_MODEL_CATALOG_TRUST_ROOTS_JSON=$roots_json");
-    expect(acquire?.run).toContain("AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256=$roots_digest");
-    expect(acquire?.run).toContain("AEX_MODEL_CATALOG_COLLECTION_SHA256=$digest");
-    expect(acquire?.run).toContain("AEX_MODEL_CATALOG_COLLECTION_FILE=$collection_file");
-    expect(acquire?.run).toContain("invalid or open shape");
-    expect(acquire?.run).toContain("must not carry a query, fragment, or parent path");
     expect(recipe?.env).not.toHaveProperty("AEX_MODEL_CATALOG_COLLECTION_FILE");
-    expect(recipe?.run).toContain('matrix.name }}" = "brain-mux"');
-    expect(recipe?.run).toContain('matrix.name }}" = "session-stream-api"');
-    // The repository variable is the ONLY catalogue authority, in either file.
+    // The compile lane owns no model-catalogue authority, in either file.
     for (const text of [source, publishSource]) {
+      expect(text).not.toContain("AEX_MODEL_CATALOG_BINDING_JSON");
       expect(text).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_FILE");
       expect(text).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_URI");
       expect(text).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_SHA256");
@@ -445,24 +429,6 @@ describe("public main-push publication", () => {
     expect(publishBuild.steps.map((step: { readonly name?: string }) => step.name)).not.toContain(
       "Print the recipe"
     );
-  });
-
-  test("catalog authority documentation keeps external prerequisites explicit", () => {
-    const doc = read("references/model-catalog-authority.md");
-    for (const name of [
-      "AEX_MODEL_CATALOG_BINDING_JSON",
-      "AEX_MODEL_CATALOG_AWS_ROLE_ARN",
-      "AEX_MODEL_CATALOG_KMS_KEY_ARN",
-      "AEX_MODEL_CATALOG_PUBLISH_CONFIRMATION",
-      "aex-model-catalog-publisher"
-    ]) {
-      expect(doc).toContain(name);
-    }
-    expect(doc).toMatch(/current\r?\nlast-good signed collection/);
-    expect(doc).toContain("replace `AEX_MODEL_CATALOG_BINDING_JSON` in one operation");
-    expect(doc).toContain("Monitoring is not publication authority");
-    expect(doc).toMatch(/provider observation cannot remove a signed entry/);
-    expect(doc).toContain("No application encryption key");
   });
 
   test("composition handoff derives inputs and publishes only after certified envelopes", () => {
