@@ -15,7 +15,6 @@ related:
   - references/repo.md
   - references/contributing.md
   - references/ghcr-visibility-bootstrap.md
-  - references/model-catalog-authority.md
   - references/release-evidence.md
 ---
 
@@ -57,18 +56,13 @@ The sole manual publication setup is the one-time, fail-closed
 only digest-addressed package content; normal publication never changes package
 visibility.
 
-The signed model-catalog is a separate protected authority. Public main reads
-the one canonical `AEX_MODEL_CATALOG_BINDING_JSON` repository variable
-documented in [`model-catalog-authority.md`](model-catalog-authority.md); its
-absence intentionally leaves the published `brain-mux` gate failing. Do not
-populate it with fixtures, an application KMS key, or a moving asset URL.
-
-[`model-catalog-publish.yml`](../.github/workflows/model-catalog-publish.yml)
-runs when one reviewed `release/model-catalog/*.source.json` changes on `main`
-and also permits exact manual dispatch. It uses the dedicated protected
-KMS/OIDC authority and emits a canonical build-binding asset for independent,
-atomic installation. It never edits repository variables or secrets, and live
-provider monitoring is not a publication input.
+The model catalog is compile-time: the checked-in models.dev snapshot at
+`release/models-dev/api.json` with its committed `scripts/models.digest` is the
+whole admission authority, and the generated admit table is verified by CI.
+Bump the snapshot by running `bun scripts/fetch-models-dev.ts`, reviewing the
+generated diff, and committing both; the change rides the normal release
+train. There is no repository variable, no KMS authority, and no publication
+workflow.
 
 ## Main-push artifact evidence
 
@@ -86,7 +80,7 @@ content-addressed unit/signature assets, and certifies every deployable row
 declared in `release/units.toml` before composition. That registry declares the
 required build/test receipt classes and `release/semantic-receipts.json` declares the real package
 selections for semantic classes. Missing producers, build/test receipts,
-package identity, provenance, signatures, or model-catalog bindings remain
+package identity, provenance, signatures, or tool-catalog bindings remain
 publication failures. Supply-chain scanners and their derived receipt classes
 are explicitly deferred during startup; see [`backlog.md`](backlog.md).
 

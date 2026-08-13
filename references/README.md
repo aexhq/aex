@@ -37,9 +37,8 @@ executable sources.
 | Deferred work and revisit triggers | [`backlog.md`](backlog.md) |
 | One-time public GHCR namespace bootstrap | [`ghcr-visibility-bootstrap.md`](ghcr-visibility-bootstrap.md) |
 | One-time npm trusted publisher bootstrap for the SDK | [`npm-trusted-publisher-bootstrap.md`](npm-trusted-publisher-bootstrap.md) |
-| Model-catalog authority bootstrap and publication | [`model-catalog-authority.md`](model-catalog-authority.md) |
 | Model-provider transport and catalog simplification (2026-08-12) — proposal, superseded in part; see the follow-up folder | [`model-provider-library-simplification-2026-08-12.md`](model-provider-library-simplification-2026-08-12.md) |
-| Model-provider library simplification — owner decisions, spikes, implementation plans (2026-08-13) — **accepted; implementation deferred** | [`model-provider-library-simplification-2026-08-13/README.md`](model-provider-library-simplification-2026-08-13/README.md) |
+| Model-provider library simplification — owner decisions, spikes, implementation plans (2026-08-13) — **implemented 2026-08-13** | [`model-provider-library-simplification-2026-08-13/README.md`](model-provider-library-simplification-2026-08-13/README.md) |
 | Release-bound E2E and public user receipt producer | [`release-evidence.md`](release-evidence.md) |
 | Contributor and review procedure | [`contributing.md`](contributing.md) |
 | Durable-doc and generated-artifact placement | [`repository-hygiene.md`](repository-hygiene.md) |

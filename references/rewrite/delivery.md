@@ -190,12 +190,11 @@ certification and environment admission remain the evidence gates.
 
 ### 3.1 `[package.metadata.aex]` — landed
 
-All manifests carry ownership metadata. `aex-live-model-catalog` names
-`brain-mux` as its deployable: the catalogue is loaded and enforced inside that
-runtime rather than shipped as a standalone service. The former reference to a
-nonexistent artifact-metadata manifest is removed, so the live companion
-has a real started-artifact subject and `graph verify` no longer reports
-`aex-metadata-missing-deployable`.
+All manifests carry ownership metadata. ex-live-brain-mux names
+rain-mux as its deployable: the compiled models.dev catalogue is enforced
+inside that runtime rather than shipped as a standalone service. The former
+signed-catalog authority and its live companion (ex-live-model-catalog) are
+deleted (2026-08-13).
 
 ### 3.2 Lambda and Fargate resource shapes — landed
 
