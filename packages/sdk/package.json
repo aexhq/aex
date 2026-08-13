@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/sdk",
-  "version": "0.51.0",
+  "version": "0.52.0",
   "description": "Zero-dependency TypeScript SDK for the AEX v1 public API.",
   "aex": {
     "owner": "clients",
