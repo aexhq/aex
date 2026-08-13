@@ -12,9 +12,11 @@
  *   title: ...
  *   description: ...
  *   ---
- *   # Heading                 the page heading, exactly one
- *   Paragraph                 page body, one or more
+ *   Paragraph                 introduction, one or more
  *   - [Label](/href)          page links, exactly one list
+ *   ## Feature               feature name, one or more
+ *   Paragraph                feature explanation, one or more
+ *   > Note                   status note, exactly one
  *
  * Every deviation throws. A landing page that silently drops a claim because a
  * heading level was mistyped is worse than a build that fails.
@@ -36,12 +38,18 @@ export interface ContentLink {
   readonly href: string;
 }
 
+export interface Feature {
+  readonly title: string;
+  readonly body: readonly Paragraph[];
+}
+
 export interface MarketingPage {
   readonly title: string;
   readonly description: string;
-  readonly heading: string;
-  readonly body: readonly Paragraph[];
+  readonly intro: readonly Paragraph[];
   readonly links: readonly ContentLink[];
+  readonly features: readonly Feature[];
+  readonly note: Paragraph;
 }
 
 const LINK_ITEM = /^- \[([^\]]+)\]\(([^)]+)\)$/;
@@ -79,32 +87,53 @@ export function parseMarketingPage(source: string): MarketingPage {
     .map((block) => block.trim())
     .filter((block) => block.length > 0);
 
-  const [headingBlock, ...contentBlocks] = blocks;
-  if (headingBlock === undefined || !headingBlock.startsWith("# ")) {
-    throw new Error("marketing content must open with a single `# ` heading");
-  }
-
-  const { body: pageBody, links } = parseBody(contentBlocks);
-  return { title, description, heading: headingBlock.slice(2).trim(), body: pageBody, links };
+  return { title, description, ...parseContent(blocks) };
 }
 
-function parseBody(blocks: readonly string[]): Pick<MarketingPage, "body" | "links"> {
-  const body: Paragraph[] = [];
+function parseContent(blocks: readonly string[]): Pick<MarketingPage, "intro" | "links" | "features" | "note"> {
+  const intro: Paragraph[] = [];
   let links: ContentLink[] | undefined;
+  const features: Feature[] = [];
+  let feature: { title: string; body: Paragraph[] } | undefined;
+  let note: Paragraph | undefined;
+
+  const closeFeature = (): void => {
+    if (feature === undefined) return;
+    if (feature.body.length === 0) throw new Error(`feature "${feature.title}" has no explanation`);
+    features.push(feature);
+    feature = undefined;
+  };
 
   for (const block of blocks) {
+    if (block.startsWith("# ")) throw new Error("the landing page does not use a top-level heading");
+    if (block.startsWith("## ")) {
+      closeFeature();
+      feature = { title: block.slice(3).trim(), body: [] };
+      continue;
+    }
     if (block.startsWith("- ")) {
+      if (feature !== undefined) throw new Error("the link list must appear before the features");
       if (links !== undefined) throw new Error("the landing page accepts exactly one link list");
       links = block.split("\n").map(parseLinkItem);
       continue;
     }
-    if (block.startsWith("#")) throw new Error("the landing page accepts only its opening heading");
-    body.push(parseInline(joinLines(block)));
+    if (block.startsWith("> ")) {
+      if (note !== undefined) throw new Error("the landing page accepts exactly one status note");
+      note = parseInline(unwrapQuote(block));
+      continue;
+    }
+    if (block.startsWith("#")) throw new Error(`unsupported marketing heading: ${block}`);
+    const paragraph = parseInline(joinLines(block));
+    if (feature === undefined) intro.push(paragraph);
+    else feature.body.push(paragraph);
   }
+  closeFeature();
 
-  if (body.length === 0) throw new Error("the landing page needs at least one paragraph");
+  if (intro.length === 0) throw new Error("the landing page needs an introduction");
   if (links === undefined || links.length === 0) throw new Error("the landing page needs a link list");
-  return { body, links };
+  if (features.length === 0) throw new Error("the landing page needs at least one feature");
+  if (note === undefined) throw new Error("the landing page needs a status note");
+  return { intro, links, features, note };
 }
 
 /** Splits a paragraph into plain and `code` runs. Unbalanced backticks throw. */
@@ -129,6 +158,18 @@ function parseLinkItem(line: string): ContentLink {
   const match = LINK_ITEM.exec(line.trim());
   if (match === null) throw new Error(`expected a "- [label](href)" list item, got: ${line}`);
   return { label: match[1] as string, href: match[2] as string };
+}
+
+function unwrapQuote(block: string): string {
+  return joinLines(
+    block
+      .split("\n")
+      .map((line) => {
+        if (!line.startsWith(">")) throw new Error(`a note must prefix every line with ">", got: ${line}`);
+        return line.replace(/^>\s?/, "");
+      })
+      .join("\n")
+  );
 }
 
 function joinLines(block: string): string {

@@ -1,19 +1,29 @@
 ---
 title: AEX
-description: AEX runs agents in durable sessions with an isolated workspace.
+description: AEX is a distributed agent runtime in the cloud for running and managing agent sessions.
 ---
 
-# AEX
-
-AEX runs agents in durable sessions. Each session keeps its messages and one
-isolated MicroVM, so work can pause and resume in the same workspace.
-
-You bring the model and provider credential. AEX pins both to the session and
-keeps the credential outside the MicroVM. Usage and telemetry remain available
-when the MicroVM is suspended or terminated.
-
-The code is open source. AEX is still in prelaunch development, so expect
-breaking changes and interruptions. Do not use it for production work yet.
+AEX is a distributed agent runtime in the cloud. Developers use it to run and
+manage agent sessions for their apps.
 
 - [Read the docs](/docs)
 - [Log in](https://aex.dev/signin?next=/app)
+
+## Sessions
+
+Start a session, continue it later, inspect its state, or stop it through one
+API.
+
+## Workspaces
+
+Each session runs in an isolated cloud workspace with shell and file tools.
+
+## Models
+
+Use the model provider and credentials you already have.
+
+## Observability
+
+Follow messages and telemetry while the agent works. AEX records usage too.
+
+> AEX is open source and still in prelaunch. Do not use it in production yet.

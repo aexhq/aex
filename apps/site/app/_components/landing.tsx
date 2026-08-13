@@ -6,22 +6,34 @@ import { Inline } from "./inline";
 export const marketingPage = loadMarketingPage();
 
 export function LandingPage(): ReactElement {
-  const { heading, body, links } = marketingPage;
+  const { intro, links, features, note } = marketingPage;
   return (
-    <article className="site-essay" aria-labelledby="landing-heading">
-      <div className="aex-container site-essay__inner">
-        <h1 id="landing-heading">{heading}</h1>
-        <div className="site-essay__body">
-          {body.map((paragraph, position) => (
-            <p key={`paragraph-${position}`}><Inline paragraph={paragraph} /></p>
+    <div className="site-overview">
+      <div className="aex-container site-overview__inner">
+        <div className="site-overview__intro">
+          {intro.map((paragraph, position) => (
+            <p key={`intro-${position}`}><Inline paragraph={paragraph} /></p>
           ))}
         </div>
-        <nav className="site-essay__links" aria-label="Get started">
+        <nav className="site-overview__links" aria-label="Get started">
           {links.map((link) => (
             <a href={link.href} key={link.href}>{link.label}</a>
           ))}
         </nav>
+        <dl className="site-feature-list">
+          {features.map((feature) => (
+            <div className="site-feature" key={feature.title}>
+              <dt>{feature.title}</dt>
+              <dd>
+                {feature.body.map((paragraph, position) => (
+                  <p key={`${feature.title}-${position}`}><Inline paragraph={paragraph} /></p>
+                ))}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <p className="site-overview__note"><Inline paragraph={note} /></p>
       </div>
-    </article>
+    </div>
   );
 }

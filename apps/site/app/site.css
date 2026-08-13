@@ -13,6 +13,10 @@ body {
   background: color-mix(in srgb, var(--aex-color-canvas) 92%, transparent);
 }
 
+body:has(.site-overview) .site-header {
+  display: none;
+}
+
 .site-header__inner,
 .site-nav,
 .site-footer__inner {
@@ -72,11 +76,11 @@ body {
   font-size: var(--aex-text-sm);
 }
 
-.site-essay {
+.site-overview {
   padding-block: var(--aex-space-10) var(--aex-space-11);
 }
 
-.site-essay__inner {
+.site-overview__inner {
   display: flex;
   max-width: var(--aex-width-prose);
   flex-direction: column;
@@ -84,32 +88,57 @@ body {
   gap: var(--aex-space-6);
 }
 
-.site-essay h1 {
-  font-size: var(--aex-text-3xl);
-  font-weight: var(--aex-weight-semibold);
-  letter-spacing: var(--aex-tracking-tight);
-}
-
-.site-essay__body {
+.site-overview__intro {
   display: flex;
   flex-direction: column;
-  gap: var(--aex-space-5);
+  gap: var(--aex-space-4);
 }
 
-.site-essay__body p {
-  color: var(--aex-color-text-muted);
+.site-overview__intro p {
   font-size: var(--aex-text-lg);
   line-height: 1.7;
 }
 
-.site-essay__links {
+.site-overview__links {
   display: flex;
   gap: var(--aex-space-4);
   font-size: var(--aex-text-sm);
 }
 
-.site-essay__links a {
+.site-overview__links a {
   text-underline-offset: 0.18em;
+}
+
+.site-feature-list {
+  width: 100%;
+  margin: var(--aex-space-2) 0 0;
+  border-top: var(--aex-border-width) solid var(--aex-color-border);
+}
+
+.site-feature {
+  display: grid;
+  grid-template-columns: 10rem 1fr;
+  gap: var(--aex-space-5);
+  padding-block: var(--aex-space-5);
+  border-bottom: var(--aex-border-width) solid var(--aex-color-border);
+}
+
+.site-feature dt {
+  font-weight: var(--aex-weight-medium);
+}
+
+.site-feature dd {
+  margin: 0;
+  color: var(--aex-color-text-muted);
+}
+
+.site-feature dd p + p {
+  margin-top: var(--aex-space-3);
+}
+
+.site-overview__note {
+  color: var(--aex-color-text-muted);
+  font-size: var(--aex-text-sm);
 }
 
 .site-docs {
@@ -188,10 +217,11 @@ body {
     gap: var(--aex-space-3);
   }
 
-  .site-essay {
+  .site-overview {
     padding-block: var(--aex-space-9);
   }
 
+  .site-feature,
   .site-docs__layout {
     grid-template-columns: 1fr;
   }
