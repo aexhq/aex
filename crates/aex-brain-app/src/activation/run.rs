@@ -1096,7 +1096,7 @@ impl Session<'_> {
             self.resume = Some(Box::new(effect));
             return Ok(None);
         }
-            match recover(&effect, Self::support()) {
+        match recover(&effect, Self::support()) {
             RecoveryDecision::Interrupt { evidence } => {
                 let mut draft = self.draft("effecting");
                 self.settle_unknown_current(&mut draft, effect.id, evidence)?;

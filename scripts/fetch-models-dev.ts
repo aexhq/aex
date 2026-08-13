@@ -9,6 +9,8 @@
 //!   --keep  leaves the fetched snapshot in place (default is no-op when
 //!           unchanged; it always rewrites when it changed).
 
+import { createHash } from "node:crypto";
+
 const URL = "https://models.dev/api.json";
 const SNAPSHOT_PATH = "release/models-dev/api.json";
 
@@ -33,10 +35,7 @@ if (existing && Buffer.compare(existing, body) === 0) {
   process.exit(0);
 }
 
-const digest = crypto
-  .createHash("sha256")
-  .update(body)
-  .digest("hex");
+const digest = createHash("sha256").update(body).digest("hex");
 await Bun.write(SNAPSHOT_PATH, body);
 await Bun.write(
   "scripts/models.digest",

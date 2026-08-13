@@ -19,7 +19,9 @@ const PROVIDERS = [
   "vercel",
 ] as const;
 
-const PROVIDER_ID: Record<string, string> = {
+type ProviderKey = (typeof PROVIDERS)[number];
+
+const PROVIDER_ID: Record<ProviderKey, string> = {
   openai: "Openai",
   anthropic: "Anthropic",
   google: "Google",
@@ -30,7 +32,7 @@ const PROVIDER_ID: Record<string, string> = {
   vercel: "VercelAiGateway",
 };
 
-const DIALECT_CLASS: Record<string, string> = {
+const DIALECT_CLASS: Record<ProviderKey, string> = {
   openai: "OpenAiResponses",
   anthropic: "AnthropicMessages",
   google: "GeminiGenerateContent",
@@ -43,7 +45,7 @@ const DIALECT_CLASS: Record<string, string> = {
 
 // models.dev omits an `api` field for the providers whose base URL is fixed by
 // their SDK; the compiled defaults below are those SDKs' fixed origins.
-const BASE_URL_DEFAULTS: Record<string, string> = {
+const BASE_URL_DEFAULTS: Partial<Record<ProviderKey, string>> = {
   openai: "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com/v1",
   google: "https://generativelanguage.googleapis.com/v1beta",
@@ -147,7 +149,11 @@ const lines: string[] = [
   `// Source: the models.dev snapshot pinned by ${DIGEST_PATH} (sha256 ${digest}).`,
   "//! The compiled models.dev admit table: identity, limits, tool capability,",
   "//! and the dialect class of every admitted model row.",
-  "#![allow(missing_docs, clippy::unreadable_literal, reason = \"generated rows are data, not API\")]",
+  "#![allow(",
+  "    missing_docs,",
+  "    clippy::unreadable_literal,",
+  '    reason = "generated rows are data, not API"',
+  ")]",
   "",
   "use aex_model_vocabulary::DialectClass;",
   "use aex_wire::provider::ProviderId;",
@@ -177,7 +183,11 @@ const lines: string[] = [
 ];
 for (const meta of metas) {
   lines.push(
-    `    ProviderMeta { provider: ProviderId::${meta.provider_id}, base_url: ${escape(meta.base_url)}, api_from_models_dev: ${meta.api_from_models_dev} },`,
+    "    ProviderMeta {",
+    `        provider: ProviderId::${meta.provider_id},`,
+    `        base_url: ${escape(meta.base_url)},`,
+    `        api_from_models_dev: ${meta.api_from_models_dev},`,
+    "    },",
   );
 }
 lines.push("];");
@@ -186,7 +196,15 @@ lines.push("/// Every admitted model row, sorted by (provider, model id).");
 lines.push("pub const MODELS: &[AdmittedModel] = &[");
 for (const row of rows) {
   lines.push(
-    `    AdmittedModel { provider: ProviderId::${row.provider_id}, model: ${escape(row.model)}, context_window_tokens: ${row.context_window_tokens}, max_output_tokens: ${row.max_output_tokens}, tools: ${row.tools}, parallel_tools: ${row.parallel_tools}, dialect: DialectClass::${row.dialect} },`,
+    "    AdmittedModel {",
+    `        provider: ProviderId::${row.provider_id},`,
+    `        model: ${escape(row.model)},`,
+    `        context_window_tokens: ${row.context_window_tokens},`,
+    `        max_output_tokens: ${row.max_output_tokens},`,
+    `        tools: ${row.tools},`,
+    `        parallel_tools: ${row.parallel_tools},`,
+    `        dialect: DialectClass::${row.dialect},`,
+    "    },",
   );
 }
 lines.push("];");

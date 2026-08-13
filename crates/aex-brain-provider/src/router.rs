@@ -444,7 +444,10 @@ impl RigProviderRouter {
 /// One attempt: build the model handle and drive the stream. `on_started`
 /// fires once per dispatch, on the first decoded item, and commits the
 /// durable `ResponseStarted` evidence.
-#[allow(clippy::too_many_arguments, reason = "one dispatch: client, request and stream sinks together")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one dispatch: client, request and stream sinks together"
+)]
 async fn dispatch_once<F, Fut>(
     client: &DispatchClient,
     dialect: DialectClass,
