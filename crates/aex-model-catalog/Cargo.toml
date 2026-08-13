@@ -16,10 +16,10 @@ workspace = true
 owner = "providers"
 role = "domain"
 artifact = "none"
-live_suite = "aex-live-model-catalog"
+live_suite = "aex-live-brain-mux"
 layers = ["unit"]
 concerns = ["property"]
-seams = ["provider.openai.stream", "provider.anthropic.stream", "provider.deepseek.stream", "provider.zai.stream", "provider.moonshotai.stream", "provider.google.stream"]
+seams = []
 security_tier = "internal"
 risk = ["untrusted_input"]
 scenarios = []
@@ -30,12 +30,8 @@ properties = "unit"
 [dependencies]
 aex-model-vocabulary = { path = "../aex-model-vocabulary" }
 aex-wire = { path = "../aex-wire" }
-base64.workspace = true
-blake3.workspace = true
-bytes.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-time.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

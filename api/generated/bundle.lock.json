@@ -1,5 +1,5 @@
 {
-  "contractDigest": "sha256:dddf87f6715de38e24d77e348f34f1d066254b797719a09a995d660373335a66",
+  "contractDigest": "sha256:308866d3e6ae0f8108ee3b81c1b852256a3bc1d80cb6d774f221d3d91fab4721",
   "generator": {
     "formatter": "aex-contract-gen internal renderer (rustfmt fixed point)",
     "name": "aex-contract-gen",
@@ -23,7 +23,7 @@
     "api/openapi/regional/otlp.yaml": "sha256:b7f9a95d31802770d9e4b4100eb28c8c90cd571f35c11d699755bb6389cc0f5e",
     "api/openapi/regional/provider-credentials.yaml": "sha256:b401b7a9b79339130108e5eec993adf8d22fb62c1006746e47e5e55da7facf8a",
     "api/openapi/regional/registry.yaml": "sha256:638c18b9844f3dc9f331b652dc0713949715d8f923ac3c9f0e5bec86b68939b0",
-    "api/openapi/regional/sessions.yaml": "sha256:231ebf836f4993fdd529316e141417235a58950c29edc4a64f7863877be554a9",
+    "api/openapi/regional/sessions.yaml": "sha256:4c077a0a7e16e38f20d43de5691ad6c7b23508a454652067e754bb83ce15a644",
     "api/openapi/regional/telemetry-lifecycle.yaml": "sha256:3cda41108f03cb9343071e43e3c48f60bcf5103bfc0701885a6d207800f3024e",
     "api/openapi/regional/uploads.yaml": "sha256:4062a26d4654212b5d97d7a0da92402753081f78496ab521904d8fc008769cd9",
     "api/openapi/regional/usage.yaml": "sha256:67ad0a6c523831aa8d00e62e4b891734697535c57292b44565be0f1bf21ebb1d",
@@ -35,7 +35,7 @@
     "api/schemas/provider/provider.yaml": "sha256:4f98083e209d7e309c89cd001acd96095ca27898e97cc995b0fc7cf477d9447a",
     "api/schemas/regional/content.yaml": "sha256:a8ecb48e76e9fe7bf3c0fd4b9b7072b13768be09ece1a560708346c1affb01ce",
     "api/schemas/regional/sessions.yaml": "sha256:bc5534066798a3f92e2edfc610916f541b32964b23992c372f119fba9d0345ca",
-    "api/schemas/registries/errors.yaml": "sha256:e9b62f465a1a980a46cb6ae4d7aa525f46565cef2b68f017262938eb0d2f22c0",
+    "api/schemas/registries/errors.yaml": "sha256:bad8b61d1021d397c0e8e11b9bbf4f0e422fa6515d93bbe977d919c9f1b5a213",
     "api/schemas/registries/evolution.yaml": "sha256:d744c5441ff29e0b96b72dd0397362db1c9ac4c3afa6275843240455f8da02e0",
     "api/schemas/registries/ids.yaml": "sha256:b0821154b3ca9d5c5977a2a452bba053d0ee4515772d7564565a1c0a4e8ef582",
     "api/schemas/registries/limits.yaml": "sha256:f2b74c3ed982ab5db0a870373b6fab86e48c1c351d20001ef30acf25c25c976b",

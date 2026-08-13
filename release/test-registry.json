@@ -10,7 +10,7 @@
   "totals": {
     "awaiting_owner": 32,
     "capacity_gates": 19,
-    "live_targets": 35,
+    "live_targets": 34,
     "packages": 147,
     "seams_claimed": 34,
     "seams_declared": 36,
@@ -309,42 +309,8 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-brain-provider-custody": {
-      "name": "aex-brain-provider-custody",
-      "kind": "cargo",
-      "meta": {
-        "owner": "providers",
-        "role": "adapter",
-        "artifact": "none",
-        "live_suite": "aex-live-brain-mux",
-        "layers": [
-          "unit",
-          "integration"
-        ],
-        "concerns": [
-          "contract",
-          "property",
-          "fault",
-          "security"
-        ],
-        "seams": [],
-        "security_tier": "secret",
-        "risk": [
-          "none"
-        ],
-        "scenarios": [],
-        "targets": {
-          "authority": "unit"
-        },
-        "not_applicable": {
-          "integration": "port-composition adapter with no datastore or transport engine of its own; DynamoDB and KMS integration evidence belongs to the regional-stores adapters"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "crates/aex-brain-provider-gateway": {
-      "name": "aex-brain-provider-gateway",
+    "crates/aex-brain-provider": {
+      "name": "aex-brain-provider",
       "kind": "cargo",
       "meta": {
         "owner": "providers",
@@ -379,6 +345,40 @@
           "protocol": "integration"
         },
         "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "crates/aex-brain-provider-custody": {
+      "name": "aex-brain-provider-custody",
+      "kind": "cargo",
+      "meta": {
+        "owner": "providers",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-brain-mux",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [],
+        "security_tier": "secret",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {
+          "authority": "unit"
+        },
+        "not_applicable": {
+          "integration": "port-composition adapter with no datastore or transport engine of its own; DynamoDB and KMS integration evidence belongs to the regional-stores adapters"
+        }
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -1159,21 +1159,42 @@
         "owner": "providers",
         "role": "domain",
         "artifact": "none",
-        "live_suite": "aex-live-model-catalog",
+        "live_suite": "aex-live-brain-mux",
         "layers": [
           "unit"
         ],
         "concerns": [
           "property"
         ],
-        "seams": [
-          "provider.openai.stream",
-          "provider.anthropic.stream",
-          "provider.deepseek.stream",
-          "provider.zai.stream",
-          "provider.moonshotai.stream",
-          "provider.google.stream"
+        "seams": [],
+        "security_tier": "internal",
+        "risk": [
+          "untrusted_input"
         ],
+        "scenarios": [],
+        "targets": {
+          "properties": "unit"
+        },
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "crates/aex-model-vocabulary": {
+      "name": "aex-model-vocabulary",
+      "kind": "cargo",
+      "meta": {
+        "owner": "providers",
+        "role": "domain",
+        "artifact": "none",
+        "live_suite": "aex-live-brain-mux",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
         "security_tier": "internal",
         "risk": [
           "untrusted_input"
@@ -3603,47 +3624,6 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "tests/live/aex-live-model-catalog": {
-      "name": "aex-live-model-catalog",
-      "kind": "cargo",
-      "meta": {
-        "owner": "providers",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "brain-mux",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "provider.anthropic.stream",
-          "provider.deepseek.stream",
-          "provider.google.stream",
-          "provider.moonshotai.stream",
-          "provider.openai.stream",
-          "provider.zai.stream"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {
-          "catalog_source": "e2e",
-          "deepseek_qualification": "e2e",
-          "genesis": "e2e",
-          "qualification_output": "e2e"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
     "tests/live/aex-live-observation-export-launcher": {
       "name": "aex-live-observation-export-launcher",
       "kind": "cargo",
@@ -4670,6 +4650,7 @@
         "scenarios": [],
         "targets": {
           "conformance": "unit",
+          "hosted_extensions": "integration",
           "migrations": "integration",
           "resource_envelope": "e2e",
           "smoke": "smoke"
@@ -5333,7 +5314,6 @@
     "aex-live-finance-settlement-worker",
     "aex-live-hands-agent",
     "aex-live-hands-image",
-    "aex-live-model-catalog",
     "aex-live-observation-export-launcher",
     "aex-live-observation-export-task",
     "aex-live-observation-reconciler",
@@ -5529,28 +5509,22 @@
       "aex-live-brain-mux"
     ],
     "provider.anthropic.stream": [
-      "aex-live-brain-mux",
-      "aex-live-model-catalog"
+      "aex-live-brain-mux"
     ],
     "provider.deepseek.stream": [
-      "aex-live-brain-mux",
-      "aex-live-model-catalog"
+      "aex-live-brain-mux"
     ],
     "provider.google.stream": [
-      "aex-live-brain-mux",
-      "aex-live-model-catalog"
+      "aex-live-brain-mux"
     ],
     "provider.moonshotai.stream": [
-      "aex-live-brain-mux",
-      "aex-live-model-catalog"
+      "aex-live-brain-mux"
     ],
     "provider.openai.stream": [
-      "aex-live-brain-mux",
-      "aex-live-model-catalog"
+      "aex-live-brain-mux"
     ],
     "provider.zai.stream": [
-      "aex-live-brain-mux",
-      "aex-live-model-catalog"
+      "aex-live-brain-mux"
     ],
     "stripe.test_mode.webhook": [
       "aex-live-central-api",

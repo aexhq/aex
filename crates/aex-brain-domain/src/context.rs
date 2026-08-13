@@ -92,13 +92,13 @@ pub fn decide(
     let target = window.saturating_mul(u64::from(policy.target_percent_of_window)) / 100;
     let mandatory = hydrated_bytes > policy.max_hydrated_context_bytes;
     let stable_prefix = stable_prefix_tokens(state, prompt_tokens);
+    let min_cacheable = u64::from(model.dialect().min_cacheable_prefix_tokens());
     ContextDecision {
         compaction_owed: prompt_tokens >= trigger || mandatory,
         compaction_mandatory: mandatory,
         prompt_tokens,
         target_tokens: target,
-        anchor_cacheable: model.limits().min_cacheable_prefix_tokens == 0
-            || stable_prefix >= u64::from(model.limits().min_cacheable_prefix_tokens),
+        anchor_cacheable: min_cacheable == 0 || stable_prefix >= min_cacheable,
         protected_turns: state.model_history.len().min(PROTECTED_TAIL_TURNS),
     }
 }
@@ -263,13 +263,14 @@ mod tests {
     use aex_model_catalog::document::CapabilitySet;
     use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
 
-    fn capability(window: u64, minimum_cacheable: Option<u64>) -> QualifiedModel {
-        let mut entry = fixture::entry(ProviderId::Anthropic, "m", CapabilitySet::default());
-        entry.limits.context_window_tokens = u32::try_from(window).expect("fixture window fits");
-        entry.limits.min_cacheable_prefix_tokens = minimum_cacheable.map_or(0, |tokens| {
-            u32::try_from(tokens).expect("fixture cache threshold fits")
-        });
-        fixture::qualified(entry)
+    fn capability(window: u64) -> QualifiedModel {
+        fixture::qualified_entry_sized(
+            ProviderId::Anthropic,
+            "m",
+            CapabilitySet::default(),
+            u32::try_from(window).expect("fixture window fits"),
+            8_192,
+        )
     }
 
     fn text(value: &str) -> CanonicalBlock {
@@ -305,7 +306,7 @@ mod tests {
         };
         let decision = decide(
             &state_with(4, cached),
-            &capability(1_000, None),
+            &capability(1_000),
             &ContextPolicy::default(),
             0,
         );
@@ -320,7 +321,7 @@ mod tests {
     fn one_batched_pass_targets_half_the_window() {
         let decision = decide(
             &state_with(4, NormalizedUsage::default()),
-            &capability(1_000, None),
+            &capability(1_000),
             &ContextPolicy::default(),
             0,
         );
@@ -331,7 +332,7 @@ mod tests {
     fn hydration_above_the_ceiling_makes_compaction_mandatory() {
         let decision = decide(
             &state_with(2, NormalizedUsage::default()),
-            &capability(1_000_000, None),
+            &capability(1_000_000),
             &ContextPolicy::default(),
             MAX_HYDRATED_CONTEXT_BYTES + 1,
         );
@@ -349,20 +350,26 @@ mod tests {
                     ..NormalizedUsage::default()
                 },
             ),
-            &capability(1_000, Some(1_024)),
+            &capability(1_000),
             &ContextPolicy::default(),
             0,
         );
         assert!(!short.anchor_cacheable);
-        let uncached = decide(
-            &state_with(4, NormalizedUsage::default()),
-            &capability(1_000, None),
+        let cached = decide(
+            &state_with(
+                4,
+                NormalizedUsage {
+                    input_tokens: 4_200,
+                    ..NormalizedUsage::default()
+                },
+            ),
+            &capability(1_000),
             &ContextPolicy::default(),
             0,
         );
         assert!(
-            uncached.anchor_cacheable,
-            "a model that never caches is not a failure"
+            cached.anchor_cacheable,
+            "a stable prefix above the dialect's cacheable floor may anchor"
         );
     }
 

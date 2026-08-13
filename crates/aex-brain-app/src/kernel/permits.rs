@@ -32,8 +32,6 @@ pub enum PermitKind {
     ComputeLane,
     /// Bytes reserved for hydrated context.
     ContextBytes,
-    /// Bytes reserved for stream buffers.
-    StreamBufferBytes,
     /// Bytes reserved for the warm fold cache.
     ///
     /// A separate budget on purpose: the cache may never borrow memory that accepted work

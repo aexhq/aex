@@ -880,8 +880,9 @@ pub struct GatewayRoute {
 
 /// The durable evidence one dispatch produced.
 ///
-/// `request_bytes` and `response_bytes` are the input to
-/// `data_transfer.egress_byte.v1`; token counts on
+/// The transport authority is rig, which does not publish byte counts or
+/// stream bounds; those configuration facts died with the hand-rolled
+/// transport (model-provider simplification 2026-08-13). Token counts on
 /// [`NormalizedUsage`] are zero-dollar BYOK facts and are not on this type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -896,7 +897,7 @@ pub struct ProviderReceipt {
     pub dialect: DialectClass,
     /// Which credential binding was used. Identity only.
     pub credential: CredentialBindingRef,
-    /// The provider's own request id, where it publishes one.
+    /// The provider's own request id, where one publishes one.
     pub provider_request_id: Option<ProviderRequestId>,
     /// Bounded actual-route metadata for a gateway dispatch, otherwise absent.
     pub gateway_route: Option<GatewayRoute>,
@@ -910,19 +911,10 @@ pub struct ProviderReceipt {
     pub first_frame_at: Option<Timestamp>,
     /// When the dispatch settled.
     pub completed_at: Timestamp,
-    /// Request bytes written.
-    pub request_bytes: u64,
-    /// Response bytes read.
-    pub response_bytes: u64,
-    /// Decoded frame count.
-    pub frames: u32,
     /// Rate-limit feedback the provider published, if any.
     pub rate_limit: Option<ReceiptRateLimit>,
     /// A hash of the sealed response, where one was produced.
     pub response_receipt: Option<ContentHash>,
-    /// The bounds in force for this dispatch, recorded because they are
-    /// configuration rather than protocol facts (D-28).
-    pub bounds: ReceiptBounds,
 }
 
 impl ProviderReceipt {
@@ -939,15 +931,8 @@ impl ProviderReceipt {
             .is_some_and(|first| first >= self.started_at && first <= self.completed_at);
         (200..300).contains(&self.http_status)
             && self.attempts > 0
-            && self.frames > 0
-            && self.request_bytes > 0
-            && self.response_bytes > 0
             && self.completed_at >= self.started_at
             && first_frame_is_ordered
-            && self.bounds.max_frame_bytes > 0
-            && self.bounds.max_response_bytes > 0
-            && self.bounds.idle_frame_timeout_ms > 0
-            && self.bounds.total_deadline_ms > 0
             && self.dialect.provider() == self.provider
             && self.provider == message.provider
             && self.model == message.model
@@ -987,18 +972,4 @@ pub enum RateLimitSource {
     /// The provider publishes no rate-limit feedback at all.
     #[default]
     NotProvided,
-}
-
-/// The shared-safety bounds a dispatch ran under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReceiptBounds {
-    /// Maximum bytes in one SSE frame.
-    pub max_frame_bytes: u32,
-    /// Maximum bytes in the whole response.
-    pub max_response_bytes: u64,
-    /// Milliseconds allowed between frames.
-    pub idle_frame_timeout_ms: u32,
-    /// Milliseconds allowed for the whole stream.
-    pub total_deadline_ms: u32,
 }

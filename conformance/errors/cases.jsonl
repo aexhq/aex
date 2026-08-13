@@ -58,7 +58,6 @@
 {"class":"state","code":"package_integrity_mismatch","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"validation","code":"unknown_provider","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
 {"class":"validation","code":"unknown_model","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
-{"class":"state","code":"unqualified_provider_model","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"not_found","code":"provider_credential_not_found","precedenceStage":"tombstone_and_parent","retryable":false,"status":404}
 {"class":"state","code":"provider_credential_revoked","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"validation","code":"invalid_auto_topup_policy","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}

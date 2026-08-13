@@ -1,17 +1,14 @@
-//! Generates the build-bound task shape and model-catalog authority.
+//! Generates the build-bound task shape.
 
 use std::fs;
 use std::path::PathBuf;
 
-#[path = "../../crates/aex-model-catalog/build_binding.rs"]
-mod model_catalog_build_binding;
 #[path = "task_shape_policy.rs"]
 mod task_shape_policy;
 
 fn main() {
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo supplies OUT_DIR"));
     generate_task_shape(&out);
-    model_catalog_build_binding::generate("brain-mux");
 }
 
 fn generate_task_shape(out: &std::path::Path) {

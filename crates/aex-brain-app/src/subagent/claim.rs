@@ -127,7 +127,6 @@ const fn permit_reason(full: &PermitSetFull) -> QueuedReason {
         | PermitKind::NetworkLane
         | PermitKind::ComputeLane
         | PermitKind::ContextBytes
-        | PermitKind::StreamBufferBytes
         | PermitKind::WarmCacheBytes => QueuedReason::RegionalCapacity,
     }
 }

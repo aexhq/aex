@@ -16,7 +16,7 @@ use aex_brain_app::ports::tool::{ControlStateView, DetachedStatus};
 use aex_brain_app::ports::{
     BoxFuture, CancelToken, DispatchTicket, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
     HandsOperationStart, HandsOperationStatus, HandsPort, PreparedToolCall, ProviderDispatchError,
-    ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ResultBounds, StreamBudget,
+    ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ResultBounds,
     ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError,
     UnknownResolution,
 };
@@ -90,7 +90,6 @@ impl ProviderPort for RecordingProvider {
         ticket: &'a DispatchTicket,
         _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         _cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
@@ -314,15 +313,6 @@ fn catalog_pin() -> CatalogPin {
     request().selection.catalog()
 }
 
-fn budget() -> StreamBudget {
-    StreamBudget {
-        buffer_bytes: 1_024 * 1_024,
-        response_bytes: 8 * 1_024 * 1_024,
-        deadline: Timestamp(60_000),
-        idle_timeout_ms: 30_000,
-    }
-}
-
 /// The port is dyn-compatible, which is what lets the composition root choose an adapter at
 /// runtime instead of monomorphizing `brain-mux` over thirteen streams' types.
 #[test]
@@ -340,7 +330,6 @@ fn every_port_is_dyn_compatible() {
         &ticket(effect),
         credential(),
         &request(),
-        &budget(),
         &NullPreviewSink,
         &CancelToken::new(),
     ));
@@ -376,7 +365,6 @@ fn a_dispatch_carries_the_ticket_it_was_authorized_by() {
         &ticket(effect),
         credential(),
         &request(),
-        &budget(),
         &NullPreviewSink,
         &CancelToken::new(),
     ));

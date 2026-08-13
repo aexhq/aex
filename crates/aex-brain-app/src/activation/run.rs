@@ -26,8 +26,8 @@ use crate::ports::{
     BoxFuture, CancelToken, Claim, ClaimError, CommitError, ConditionFailure, ControlStateView,
     DecisionContext, DetachedStatus, DueRowIsolation, DueScanCursor, FenceGuard,
     MAX_DUE_ROW_ISOLATIONS, NullPreviewSink, PreparedToolCall, ReleaseDisposition,
-    SessionAuthority, StoreError, StreamBudget, ToolAdvertisement, ToolOutcome, ToolRoutingError,
-    WakeDelivery, WakeOrigin, WakeState,
+    SessionAuthority, StoreError, ToolAdvertisement, ToolOutcome, ToolRoutingError, WakeDelivery,
+    WakeOrigin, WakeState,
 };
 use aex_brain_domain::canonical::canonicalize_value;
 use aex_brain_domain::child::QueuedReason;
@@ -80,10 +80,11 @@ pub(super) fn model_tool_fields(
         });
     }
     let advertised_count = advertised.definitions.len();
-    if advertised_count > usize::from(model.limits().max_tools) {
+    let max_tools = model.dialect().max_tools();
+    if advertised_count > usize::from(max_tools) {
         return Err(ActivationError::ToolLimitExceeded {
             advertised: advertised_count,
-            max: model.limits().max_tools,
+            max: max_tools,
         });
     }
     let choice = if advertised.definitions.is_empty() {
@@ -1095,7 +1096,7 @@ impl Session<'_> {
             self.resume = Some(Box::new(effect));
             return Ok(None);
         }
-        match recover(&effect, self.support()) {
+            match recover(&effect, Self::support()) {
             RecoveryDecision::Interrupt { evidence } => {
                 let mut draft = self.draft("effecting");
                 self.settle_unknown_current(&mut draft, effect.id, evidence)?;
@@ -1120,17 +1121,10 @@ impl Session<'_> {
         }
     }
 
-    fn support(&self) -> DurableOperationSupport {
-        self.state
-            .config
-            .as_ref()
-            .map_or(DurableOperationSupport::None, |config| {
-                self.ports.catalog.durable_operation_support(
-                    &config.catalog_pin,
-                    config.provider,
-                    &config.model,
-                )
-            })
+    const fn support() -> DurableOperationSupport {
+        // The launch answer for every compiled provider: none exposes a
+        // proven generation-resume or result-lookup operation.
+        DurableOperationSupport::None
     }
 
     /// One plan-and-act cycle.
@@ -1463,15 +1457,6 @@ impl Session<'_> {
         }
     }
 
-    fn stream_budget(&self, deadline: Timestamp) -> StreamBudget {
-        StreamBudget {
-            buffer_bytes: self.policy.stream_buffer_bytes,
-            response_bytes: self.policy.stream_response_bytes,
-            deadline,
-            idle_timeout_ms: self.policy.stream_idle_timeout_ms,
-        }
-    }
-
     /// Prepares, dispatches and settles one model call.
     #[allow(
         clippy::too_many_lines,
@@ -1613,7 +1598,6 @@ impl Session<'_> {
                 &ticket,
                 config.credential,
                 &request,
-                &self.stream_budget(deadline),
                 &NullPreviewSink,
                 self.guard.cancel(),
             )

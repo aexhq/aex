@@ -1,15 +1,16 @@
-//! Catalog qualification properties: the thin `QualifiedModel` handle, the
-//! `CatalogError` vocabulary, the request digest, and the fixture surface.
+//! Catalog qualification properties: the compiled admit table, the thin
+//! `QualifiedModel` handle, the `CatalogError` vocabulary, and the request
+//! digest.
 
 use aex_model_catalog::QualifiedModel;
 use aex_model_catalog::canonical::{
     CanonicalMessage, CanonicalModelRequest, CorrelationId, ReasoningRequest, Role, SystemBlock,
     ToolChoice,
 };
-use aex_model_catalog::document::CapabilitySet;
+use aex_model_catalog::document::{Capability, CapabilitySet};
 use aex_model_catalog::fixture;
 use aex_model_catalog::primitives::{BoundedString, ModelSlug};
-use aex_model_catalog::qualified::CatalogError;
+use aex_model_catalog::qualified::{CatalogError, admit};
 use aex_wire::provider::ProviderId;
 use aex_wire::{CanonicalJson, ContentHash, ResourceName};
 
@@ -23,14 +24,26 @@ fn a_qualified_model_exposes_the_entry_facts() {
     assert_eq!(model.provider(), ProviderId::Openai);
     assert_eq!(model.model().as_str(), "gpt-5.2");
     assert_eq!(
-        model.state(),
-        aex_model_catalog::document::EntryState::Staged
-    );
-    assert_eq!(
         model.dialect(),
-        aex_model_catalog::document::Dialect::OpenAiResponses
+        aex_model_vocabulary::DialectClass::OpenAiResponses
     );
+    assert_eq!(model.limits().context_window_tokens, 200_000);
+    assert_eq!(model.limits().max_output_tokens, 8_192);
     assert!(model.catalog().to_wire().starts_with("mc1_"));
+}
+
+#[test]
+fn the_two_bit_capability_set_behaves_as_declared() {
+    assert!(!CapabilitySet::EMPTY.has(Capability::Tools));
+    let tools = CapabilitySet::from_slice(&[Capability::Tools]);
+    assert!(tools.has(Capability::Tools));
+    assert!(!tools.has(Capability::ParallelTools));
+    let both = tools.with(Capability::ParallelTools);
+    assert!(both.has(Capability::Tools) && both.has(Capability::ParallelTools));
+    assert_eq!(
+        fixture::qualified_entry(ProviderId::Zai, "glm-4.6", both).capabilities(),
+        both
+    );
 }
 
 #[test]
@@ -50,6 +63,47 @@ fn the_catalog_error_vocabulary_carries_its_wire_code() {
     assert_eq!(
         unknown_model.error_code(),
         aex_wire::ErrorCode::UnknownModel
+    );
+}
+
+#[test]
+fn the_compiled_table_admits_every_provider_family() {
+    for provider in ProviderId::ALL {
+        let row = fixture::table()
+            .iter()
+            .find(|row| row.provider == *provider)
+            .expect("every provider family has at least one row");
+        let qualified = admit(row.provider, row.model).expect("the row admits");
+        assert_eq!(qualified.provider(), row.provider);
+        assert_eq!(qualified.model().as_str(), row.model);
+    }
+}
+
+#[test]
+fn admission_is_ordered_and_exact() {
+    let qualified = admit(ProviderId::Deepseek, "deepseek-v4-pro").expect("admitted");
+    assert_eq!(
+        qualified.dialect(),
+        aex_model_vocabulary::DialectClass::DeepSeekChat
+    );
+    assert!(matches!(
+        admit(ProviderId::Deepseek, "deepseek"),
+        Err(CatalogError::UnknownModel { .. })
+    ));
+    assert!(matches!(
+        admit(ProviderId::Openai, "deepseek-v4-pro"),
+        Err(CatalogError::UnknownModel { .. })
+    ));
+}
+
+#[test]
+fn the_snapshot_revision_is_the_vendored_digest() {
+    let qualified = admit(ProviderId::Openai, "gpt-5.2").expect("admitted");
+    assert_eq!(
+        qualified.catalog(),
+        aex_model_catalog::CatalogRevision(aex_model_catalog::Blake3Digest::from_bytes(
+            fixture::snapshot_digest()
+        ))
     );
 }
 
@@ -102,7 +156,7 @@ fn hash_consistency_detects_a_stale_hash() {
 }
 
 #[test]
-fn the_fixture_qualified_entry_mints_a_handle_without_a_signed_document() {
+fn the_fixture_mints_a_handle_without_touching_the_table() {
     let model = model();
     let _: &ModelSlug = model.model();
     let _: CanonicalJson = CanonicalJson::parse("{}").expect("json");

@@ -30,14 +30,14 @@ pub mod canonical;
 pub mod document;
 pub mod failure;
 pub mod fixture;
+pub mod generated;
 pub mod primitives;
 pub mod qualified;
-pub mod receipt;
 pub mod wire_pending;
 
 pub use failure::{ProviderFailureClass, ProviderFailureKind, RedactedDetail};
 pub use primitives::{
     Blake3Digest, BoundError, BoundedString, ModelSlug, ProviderRequestId, ToolCallId, ToolName,
 };
-pub use qualified::{CatalogError, QualifiedModel};
+pub use qualified::{CatalogError, QualifiedModel, SNAPSHOT_REVISION, admit};
 pub use wire_pending::CatalogRevision;

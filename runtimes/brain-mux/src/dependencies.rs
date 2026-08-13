@@ -261,7 +261,6 @@ mod tests {
     fn probe(store: &Arc<Fake>, queue: &Arc<Fake>) -> (Arc<HealthState>, Arc<DependencyProbe>) {
         let health = HealthState::starting(50, 200);
         health.bindings_validated();
-        health.catalog_verified();
         health.schema_matched();
         let dependencies = DependencyProbe::new(
             Arc::clone(&health),

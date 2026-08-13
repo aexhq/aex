@@ -220,15 +220,13 @@ fn a_terminal_agent_owes_nothing() {
 /// compacts it, which is the failure mode this rule exists to prevent.
 #[test]
 fn the_context_trigger_counts_the_whole_window() {
-    let mut entry = fixture::entry(
+    let capability = fixture::qualified_entry_sized(
         ProviderId::Deepseek,
         "deepseek-chat",
         CapabilitySet::default(),
+        1_000,
+        100,
     );
-    entry.limits.context_window_tokens = 1_000;
-    entry.limits.max_output_tokens = 100;
-    entry.limits.min_cacheable_prefix_tokens = 512;
-    let capability = fixture::qualified(entry);
     let mut state = FoldState::empty();
     state.usage = TURN_USAGE;
     let policy = ContextPolicy::default();

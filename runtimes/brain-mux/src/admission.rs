@@ -29,8 +29,6 @@ use std::sync::Arc;
 pub struct ActivationResources {
     /// Peak resident bytes reserved before any journal body is read.
     pub context_bytes: u64,
-    /// Maximum provider stream buffer held by one activation.
-    pub stream_buffer_bytes: u64,
     /// Provider streams required by one provider dispatch.
     pub provider_streams: u64,
     /// Network-lane units required by one unit of tool concurrency weight.
@@ -40,11 +38,10 @@ pub struct ActivationResources {
 }
 
 impl ActivationResources {
-    const fn requests(self) -> [(PermitKind, u64); 3] {
+    const fn requests(self) -> [(PermitKind, u64); 2] {
         [
             (PermitKind::Activation, 1),
             (PermitKind::ContextBytes, self.context_bytes),
-            (PermitKind::StreamBufferBytes, self.stream_buffer_bytes),
         ]
     }
 
@@ -52,9 +49,6 @@ impl ActivationResources {
     pub(crate) const fn validate(self) -> Result<(), &'static str> {
         if self.context_bytes == 0 {
             return Err("the activation context reservation must be positive");
-        }
-        if self.stream_buffer_bytes == 0 {
-            return Err("the activation stream-buffer reservation must be positive");
         }
         if self.provider_streams == 0 {
             return Err("the activation provider-stream reservation must be positive");
@@ -273,12 +267,7 @@ impl Admission {
             Ok(reservations) => reservations,
             // Memory is deferred rather than shed: the bytes will be free again shortly
             // and the work is admissible, unlike an activation over the safety cap.
-            Err(full)
-                if matches!(
-                    full.kind,
-                    PermitKind::ContextBytes | PermitKind::StreamBufferBytes
-                ) =>
-            {
+            Err(full) if matches!(full.kind, PermitKind::ContextBytes) => {
                 return AdmissionOutcome::Deferred {
                     requeue_after: core::time::Duration::from_millis(250),
                 };
@@ -322,7 +311,6 @@ mod tests {
     fn resources(context_bytes: u64) -> ActivationResources {
         ActivationResources {
             context_bytes,
-            stream_buffer_bytes: 1,
             provider_streams: 1,
             network_lane: 1,
             hands_rpcs: 1,
@@ -337,7 +325,6 @@ mod tests {
             Arc::new(PermitSet::new(BTreeMap::from([
                 (PermitKind::Activation, activations),
                 (PermitKind::ContextBytes, context_pool),
-                (PermitKind::StreamBufferBytes, activations),
                 (PermitKind::ProviderStream, activations),
                 (PermitKind::HandsRpc, activations),
             ]))),
@@ -468,8 +455,7 @@ mod tests {
     fn one_exhausted_resource_leaks_no_other_reservation() {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 2_u64),
-            (PermitKind::ContextBytes, 2_u64),
-            (PermitKind::StreamBufferBytes, 0_u64),
+            (PermitKind::ContextBytes, 0_u64),
             (PermitKind::ProviderStream, 2_u64),
             (PermitKind::HandsRpc, 2_u64),
         ])));
@@ -488,7 +474,6 @@ mod tests {
         for kind in [
             PermitKind::Activation,
             PermitKind::ContextBytes,
-            PermitKind::StreamBufferBytes,
             PermitKind::ProviderStream,
             PermitKind::HandsRpc,
         ] {
@@ -502,7 +487,6 @@ mod tests {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 1_u64),
             (PermitKind::ContextBytes, 64_u64),
-            (PermitKind::StreamBufferBytes, 8_u64),
             (PermitKind::ProviderStream, 1_u64),
             (PermitKind::HandsRpc, 1_u64),
         ])));
@@ -516,7 +500,6 @@ mod tests {
             Arc::new(DrainGate::new()),
             ActivationResources {
                 context_bytes: 64,
-                stream_buffer_bytes: 8,
                 provider_streams: 1,
                 network_lane: 1,
                 hands_rpcs: 1,
@@ -528,7 +511,6 @@ mod tests {
         for (kind, units) in [
             (PermitKind::Activation, 1),
             (PermitKind::ContextBytes, 64),
-            (PermitKind::StreamBufferBytes, 8),
             (PermitKind::ProviderStream, 0),
             (PermitKind::HandsRpc, 0),
         ] {
@@ -538,7 +520,6 @@ mod tests {
         for kind in [
             PermitKind::Activation,
             PermitKind::ContextBytes,
-            PermitKind::StreamBufferBytes,
             PermitKind::ProviderStream,
             PermitKind::HandsRpc,
         ] {
@@ -551,7 +532,6 @@ mod tests {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 8_u64),
             (PermitKind::ContextBytes, 1_u64),
-            (PermitKind::StreamBufferBytes, 1_u64),
             (PermitKind::ProviderStream, 1_u64),
             (PermitKind::HandsRpc, 1_u64),
         ])));

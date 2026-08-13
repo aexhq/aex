@@ -2104,7 +2104,6 @@
             "unsupported_package_ecosystem",
             "unknown_provider",
             "unknown_model",
-            "unqualified_provider_model",
             "provider_credential_not_found",
             "provider_credential_revoked",
             "account_paused",
@@ -2645,7 +2644,6 @@
             "session_terminated",
             "session_deleting",
             "session_deleted",
-            "unqualified_provider_model",
             "provider_credential_revoked",
             "account_paused",
             "wrong_workspace_region",
@@ -4717,15 +4715,6 @@
           "remedy": null,
           "retryable": false,
           "status": 400
-        },
-        {
-          "class": "state",
-          "code": "unqualified_provider_model",
-          "message": "the provider and model pair has no live conformance receipt",
-          "precedenceStage": "domain_state",
-          "remedy": null,
-          "retryable": false,
-          "status": 409
         },
         {
           "class": "not_found",

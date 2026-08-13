@@ -134,12 +134,6 @@ pub struct ActivationPolicy {
     pub context: ContextPolicy,
     /// How long one external effect attempt may run, in milliseconds.
     pub effect_deadline_ms: i64,
-    /// The most bytes one provider stream may buffer.
-    pub stream_buffer_bytes: usize,
-    /// The most bytes one provider response may carry.
-    pub stream_response_bytes: usize,
-    /// The longest gap between two frames before a stream is considered stalled.
-    pub stream_idle_timeout_ms: u32,
     /// The most deliveries one receive asks for.
     pub receive_batch: usize,
     /// How long a receive long-polls.
@@ -195,9 +189,6 @@ impl Default for ActivationPolicy {
             restore_resident_bytes: 64 * 1_024 * 1_024,
             context: ContextPolicy::default(),
             effect_deadline_ms: 600_000,
-            stream_buffer_bytes: 1_024 * 1_024,
-            stream_response_bytes: 8 * 1_024 * 1_024,
-            stream_idle_timeout_ms: 30_000,
             receive_batch: 10,
             long_poll: core::time::Duration::from_secs(20),
             requeue_after: core::time::Duration::from_millis(250),

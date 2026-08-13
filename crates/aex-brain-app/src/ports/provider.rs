@@ -1,7 +1,7 @@
-//! `ProviderPort` — implemented by `aex-brain-provider-gateway`.
+//! `ProviderPort` — implemented by `aex-brain-provider`.
 
 use super::BoxFuture;
-use super::proof::{CancelToken, DispatchTicket, PreviewSink, StreamBudget};
+use super::proof::{CancelToken, DispatchTicket, PreviewSink};
 use aex_brain_domain::effect::{DispatchEvidence, DispatchProof, DispatchStage};
 use aex_brain_domain::wire_pending::SessionCredentialPin;
 use aex_model_catalog::ProviderRequestId;
@@ -11,12 +11,13 @@ use aex_model_catalog::canonical::{
 
 pub use aex_model_catalog::{ProviderFailureClass, ProviderFailureKind, RedactedDetail};
 
-/// One model dispatch over the six admitted `BYOK` providers.
+/// One model dispatch over the eight compiled `BYOK` provider families.
 ///
-/// There is exactly one implementation: a gateway that routes to `openai`, `anthropic`,
-/// `deepseek`, `zai`, `moonshotai` or `google`. No aggregator, no arbitrary base URL and no
-/// cross-provider fallback, because a request served by a provider the customer did not
-/// name is a request they cannot reconcile against their own bill.
+/// There is exactly one implementation: a rig-backed router that sends only
+/// `(provider, model)` pairs the compiled models.dev admit table carries. No
+/// aggregator, no arbitrary base URL and no cross-provider fallback, because a
+/// request served by a provider the customer did not name is a request they
+/// cannot reconcile against their own bill.
 pub trait ProviderPort: Send + Sync + 'static {
     /// Dispatches `request` and streams it to completion.
     ///
@@ -26,15 +27,14 @@ pub trait ProviderPort: Send + Sync + 'static {
     ///
     /// The ticket is the proof that the durable `dispatch_started` write already committed.
     /// An implementation must not send a byte before it holds one, and must never send a
-    /// second generation after an ambiguous send or an accepted generation. A verified
-    /// catalog may authorize a bounded in-call retry only after a definitive `429` or `503`
+    /// second generation after an ambiguous send or an accepted generation. The bounded
+    /// in-call retry may re-send only after a definitive `429` or `503`
     /// non-generation rejection.
     fn dispatch<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
         credential: SessionCredentialPin,
         request: &'a CanonicalModelRequest,
-        budget: &'a StreamBudget,
         preview: &'a dyn PreviewSink,
         cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>>;

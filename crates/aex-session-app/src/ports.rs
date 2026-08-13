@@ -544,8 +544,8 @@ pub trait AuthorityCommitter: Send + Sync {
     async fn commit(&self, plan: &SessionTransaction) -> Result<CommitOutcome, CommitError>;
 }
 
-/// A provider and model pair a signed catalog qualified, and the release that
-/// qualified it.
+/// A provider and model pair the compiled catalog admitted, and the release
+/// that admitted it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QualifiedModel {
     /// The qualified provider.
@@ -560,8 +560,9 @@ pub struct QualifiedModel {
 
 /// Why a catalog refused a pair.
 ///
-/// Three arms because the route declares exactly three codes for it, and each
-/// tells the caller a different thing to fix.
+/// Two arms because the compiled table admits every row it carries, so the
+/// only refusals are the unknown provider and the unknown model
+/// (model-provider simplification 2026-08-13).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum QualificationRefusal {
     /// The catalog has no such provider.
@@ -570,9 +571,6 @@ pub enum QualificationRefusal {
     /// The catalog has the provider but not the model.
     #[error("the catalog has no such model for this provider")]
     UnknownModel,
-    /// The pair exists but is not admissible for new work.
-    #[error("the provider and model pair has no live conformance receipt")]
-    Unqualified,
 }
 
 impl QualificationRefusal {
@@ -582,34 +580,23 @@ impl QualificationRefusal {
         match self {
             Self::UnknownProvider => aex_wire::error::ErrorCode::UnknownProvider,
             Self::UnknownModel => aex_wire::error::ErrorCode::UnknownModel,
-            Self::Unqualified => aex_wire::error::ErrorCode::UnqualifiedProviderModel,
         }
     }
 }
 
-/// Qualifies a provider and model pair against the signed model catalog.
+/// Qualifies a provider and model pair against the compiled model catalog.
 ///
-/// **Synchronous, and that is the point** (A D-11). The catalog is loaded and
-/// verified once at process start and is a pure deterministic input, so an
-/// `async fn` would add a `.await` and a failure mode to what is a function
-/// call, and a per-request read would put a network dependency on the admission
-/// path. A process that cannot verify its catalog fails to start; it never
-/// serves creates against an unverified one.
-///
-/// A trait rather than `aex_model_catalog::Catalog` held by value, which is
-/// what A D-11 proposed on the stated grounds that `aex-model-catalog` is a
-/// pure crate. **It is not**: it links `aws-lc-rs`, a native crypto library
-/// with a C and assembler build, so depending on it here would make this pure
-/// application crate's build require a C toolchain. The substance of D-11 — no
-/// await, no I/O, no per-request read, the three codes straight from the
-/// catalog — is unchanged; only the seam moved to where the crypto already is.
+/// **Synchronous, and that is the point** (A D-11). The catalog is the
+/// compiled models.dev admit table, so an `async fn` would add a `.await` and
+/// a failure mode to what is a function call, and a per-request read would put
+/// a network dependency on the admission path.
 pub trait ModelQualifier: Send + Sync {
     /// Resolves a pair for a **new** session: every catalog gate applies.
     ///
     /// # Errors
     ///
-    /// Returns [`QualificationRefusal`] for an unknown provider, an unknown
-    /// model, or a pair with no live conformance receipt.
+    /// Returns [`QualificationRefusal`] for an unknown provider or an unknown
+    /// model.
     fn admit(
         &self,
         provider: aex_wire::provider::ProviderId,

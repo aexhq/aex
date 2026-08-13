@@ -15,16 +15,16 @@
 
 use super::{AdmissionControl, AdmissionDecision};
 use crate::ports::{
-    AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
-    ClockPort, CommitError, CommitReceipt, ConditionFailure, DecisionContext, DetachedStatus,
-    DispatchTicket, DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage,
-    DurableWake, EffectStore, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
-    HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalCursor, JournalPage,
-    JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery, MalformedWakeReason,
-    PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome, ProviderPort,
-    ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SessionAuthority, SteadyInstant,
-    StoreError, StreamBudget, ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolPort,
-    ToolRoute, ToolRoutingError, WakeBatch, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+    AgentHead, BoxFuture, CancelToken, CatalogError, CatalogPort, Claim, ClaimError, ClockPort,
+    CommitError, CommitReceipt, ConditionFailure, DecisionContext, DetachedStatus, DispatchTicket,
+    DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage, DurableWake, EffectStore,
+    FenceGuard, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
+    HandsOperationStatus, HandsPort, IdPort, JournalCursor, JournalPage, JournalStore, LeaseStore,
+    MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery, MalformedWakeReason, PreparedToolCall,
+    PreviewSink, ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
+    ReleaseDisposition, ResultBounds, SessionAuthority, SteadyInstant, StoreError,
+    ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError,
+    WakeBatch, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
 };
 use aex_brain_domain::budget::BudgetNode;
 use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
@@ -37,7 +37,7 @@ use aex_brain_domain::ids::{
     ToolName, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
-use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
+use aex_brain_domain::wire_pending::{CanonicalModelRequest, ProviderId};
 use aex_model_catalog::{CatalogError as ModelCatalogError, QualifiedModel};
 use aex_wire::ids::{GenerationId, PrefixedId, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
@@ -204,7 +204,6 @@ impl IdPort for CountingIds {
 #[derive(Debug)]
 pub struct FixedCatalog {
     models: Mutex<BTreeMap<(ProviderId, String), QualifiedModel>>,
-    support: Mutex<DurableOperationSupport>,
 }
 
 impl FixedCatalog {
@@ -213,7 +212,6 @@ impl FixedCatalog {
     pub fn with_model(model: QualifiedModel) -> Self {
         let catalog = Self {
             models: Mutex::new(BTreeMap::new()),
-            support: Mutex::new(DurableOperationSupport::None),
         };
         catalog
             .models
@@ -222,19 +220,9 @@ impl FixedCatalog {
             .insert((model.provider(), model.model().as_str().to_owned()), model);
         catalog
     }
-
-    /// Declares that this catalog's models expose a proven durable operation.
-    pub fn prove_durable_operations(&self) {
-        *self.support.lock().expect("not poisoned") =
-            DurableOperationSupport::ResultLookup { ttl_ms: 60_000 };
-    }
 }
 
 impl CatalogPort for FixedCatalog {
-    fn digest(&self, pin: &CatalogPin) -> Result<CatalogDigest, CatalogError> {
-        Ok(CatalogDigest(pin.0))
-    }
-
     fn model(
         &self,
         pin: &CatalogPin,
@@ -253,15 +241,6 @@ impl CatalogPort for FixedCatalog {
                     model: model.clone(),
                 })
             })
-    }
-
-    fn durable_operation_support(
-        &self,
-        _pin: &CatalogPin,
-        _provider: ProviderId,
-        _model: &ModelSlug,
-    ) -> DurableOperationSupport {
-        *self.support.lock().expect("not poisoned")
     }
 }
 
@@ -323,7 +302,6 @@ impl ProviderPort for ScriptedProvider {
         ticket: &'a DispatchTicket,
         credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         _cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {

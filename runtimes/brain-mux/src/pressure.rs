@@ -763,7 +763,6 @@ mod tests {
     ) -> (Arc<HealthState>, Arc<InMemoryExporter>, PressureSampler) {
         let health = HealthState::starting(50, 32);
         health.bindings_validated();
-        health.catalog_verified();
         health.schema_matched();
         health.store_reachable(true);
         let exporter = Arc::new(InMemoryExporter::new());

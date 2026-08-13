@@ -722,20 +722,6 @@
   },
   {
     "reason_class": "requires_deployment",
-    "subject": "tests/live/aex-live-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "tests/live/aex-live-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-observation-export-launcher",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
@@ -1415,42 +1401,42 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-brain-provider-gateway",
+    "subject": "crates/aex-brain-provider",
     "owner": "providers",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `provider.anthropic.stream` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-brain-provider-gateway",
+    "subject": "crates/aex-brain-provider",
     "owner": "providers",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `provider.deepseek.stream` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-brain-provider-gateway",
+    "subject": "crates/aex-brain-provider",
     "owner": "providers",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `provider.google.stream` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-brain-provider-gateway",
+    "subject": "crates/aex-brain-provider",
     "owner": "providers",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `provider.moonshotai.stream` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-brain-provider-gateway",
+    "subject": "crates/aex-brain-provider",
     "owner": "providers",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `provider.openai.stream` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-brain-provider-gateway",
+    "subject": "crates/aex-brain-provider",
     "owner": "providers",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `provider.zai.stream` cannot be satisfied by any local substitute"
@@ -1615,48 +1601,6 @@
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.anthropic.stream` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.deepseek.stream` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.google.stream` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.moonshotai.stream` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.openai.stream` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.zai.stream` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
@@ -2686,48 +2630,6 @@
     "owner": "hands",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.anthropic.stream` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.deepseek.stream` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.google.stream` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.moonshotai.stream` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.openai.stream` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `provider.zai.stream` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

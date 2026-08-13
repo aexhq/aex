@@ -30,7 +30,6 @@ pub struct HealthState {
     reactor: crate::reactor::PublishedSummary,
     reactor_delay_bound_ms: AtomicU32,
     bindings_validated: AtomicBool,
-    catalog_verified: AtomicBool,
     store_reachable: AtomicBool,
     schema_matched: AtomicBool,
     draining: AtomicBool,
@@ -66,11 +65,6 @@ impl HealthState {
     /// Records that configuration and every secret binding validated.
     pub fn bindings_validated(&self) {
         self.bindings_validated.store(true, Ordering::SeqCst);
-    }
-
-    /// Records that the pinned catalog loaded and its signature verified.
-    pub fn catalog_verified(&self) {
-        self.catalog_verified.store(true, Ordering::SeqCst);
     }
 
     /// Records the store's last probe result.
@@ -162,7 +156,6 @@ impl HealthState {
             }),
             HealthRoute::Ready => readiness(&ReadinessInputs {
                 bindings: dependency(self.bindings_validated.load(Ordering::SeqCst)),
-                catalog: dependency(self.catalog_verified.load(Ordering::SeqCst)),
                 store: dependency(self.store_reachable.load(Ordering::SeqCst)),
                 schema_hashes: dependency(self.schema_matched.load(Ordering::SeqCst)),
                 draining: self.draining.load(Ordering::SeqCst),
@@ -293,7 +286,6 @@ mod tests {
 
     fn ready(state: &HealthState) {
         state.bindings_validated();
-        state.catalog_verified();
         state.store_reachable(true);
         state.schema_matched();
     }

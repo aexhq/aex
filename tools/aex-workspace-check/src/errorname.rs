@@ -243,13 +243,7 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "crates/aex-session-app/src/plan.rs",
         ],
     ),
-    (
-        "PoolError",
-        &[
-            "crates/aex-brain-mcp/src/pool.rs",
-            "crates/aex-brain-provider-gateway/src/pool.rs",
-        ],
-    ),
+    ("PoolError", &["crates/aex-brain-mcp/src/pool.rs"]),
     (
         "PortError",
         &[
@@ -276,10 +270,7 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
     ),
     (
         "QualificationError",
-        &[
-            "crates/aex-brain-mcp/src/client.rs",
-            "tests/live/aex-live-model-catalog/src/deepseek_qualification.rs",
-        ],
+        &["crates/aex-brain-mcp/src/client.rs"],
     ),
     (
         "QueryError",
@@ -290,10 +281,7 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
     ),
     (
         "ReadinessError",
-        &[
-            "crates/aex-regional-http/src/health.rs",
-            "tests/live/aex-live-model-catalog/src/executor.rs",
-        ],
+        &["crates/aex-regional-http/src/health.rs"],
     ),
     (
         "ReceiptError",
@@ -302,7 +290,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "crates/aex-usage-compute-dynamodb/src/stream.rs",
             "crates/aex-usage-storage-dynamodb/src/stream.rs",
             "crates/aex-usage-transfer-dynamodb/src/stream.rs",
-            "tests/live/aex-live-model-catalog/src/lib.rs",
         ],
     ),
     (
