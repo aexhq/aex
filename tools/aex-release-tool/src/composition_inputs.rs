@@ -109,18 +109,15 @@ pub fn envelope_authorities(
             "the certified brain-mux artifact carries no tool catalogue identity",
         )
     })?;
-    let mut catalogs = BTreeMap::new();
-    for (name, digest) in [("tool", catalog.tool.as_ref())] {
-        let digest = digest.ok_or_else(|| {
-            ToolError::single(
-                Exit::CompositionIncompatible,
-                "composition-catalog-missing",
-                format!("the certified brain-mux artifact carries no `{name}` catalogue digest"),
-            )
-        })?;
-        require_sha256(digest, "composition-catalog-digest")?;
-        catalogs.insert(name.to_owned(), digest.clone());
-    }
+    let digest = catalog.tool.as_ref().ok_or_else(|| {
+        ToolError::single(
+            Exit::CompositionIncompatible,
+            "composition-catalog-missing",
+            "the certified brain-mux artifact carries no `tool` catalogue digest",
+        )
+    })?;
+    require_sha256(digest, "composition-catalog-digest")?;
+    let catalogs = BTreeMap::from([("tool".to_owned(), digest.clone())]);
     Ok((
         store,
         EnvelopeAuthorities {

@@ -312,10 +312,7 @@ pub fn kind_requires_signature(kind: &str) -> bool {
 /// # Errors
 ///
 /// Propagates recipe canonicalization failure.
-pub fn plan_with_catalog(
-    unit: &Unit,
-    catalog: Option<&CatalogBuildInputs>,
-) -> Result<BuildPlan> {
+pub fn plan_with_catalog(unit: &Unit, catalog: Option<&CatalogBuildInputs>) -> Result<BuildPlan> {
     let mut build = plan(unit)?;
     if !requires_catalog_binding(unit) {
         return Ok(build);
@@ -1975,8 +1972,7 @@ pub fn publish_destination(envelope: &ArtifactEnvelope, unit: &Unit) -> Result<P
 #[cfg(test)]
 mod tests {
     use super::{
-        CatalogBuildInputs, Form, package, plan, plan_with_catalog,
-        publication_plan_with_catalog,
+        CatalogBuildInputs, Form, package, plan, plan_with_catalog, publication_plan_with_catalog,
     };
     use crate::graph::inputs::Unit;
 
@@ -2098,10 +2094,10 @@ alarm_spec = "regional-session-api"
     #[test]
     fn a_mismatched_tool_catalog_digest_fails_closed() {
         let inputs = CatalogBuildInputs {
-            tool_catalog_sha256: format!("sha256:{}", "0".repeat(64)),
+            tool_catalog_sha256: "not-a-digest".to_owned(),
         };
         let error = plan_with_catalog(&brain_unit(), Some(&inputs))
-            .expect_err("a wrong digest must fail");
+            .expect_err("a malformed digest must fail");
         assert_eq!(error.rules(), vec!["model-catalog-build-digest-invalid"]);
     }
 

@@ -181,22 +181,21 @@ fn every_shipped_workflow_passes_the_structural_gates() {
 
 #[test]
 fn protected_catalog_consumers_require_preflight_before_build() {
-    // Compilation moved to its own read-only workflow, so the preflight and the
-    // build it guards both live there now.
+    // The snapshot verification runs before compilation in the same read-only
+    // workflow, so the generated table a build compiles is the verified one.
     let workflow =
         std::fs::read_to_string(repo_root().join(".github/workflows/_compile-artifacts.yml"))
             .expect("compile workflow");
     let preflight = workflow
-        .find("--require-model-catalog")
-        .expect("protected catalog preflight");
+        .find("Verify the vendored models.dev snapshot")
+        .expect("snapshot verification step");
     let build = workflow.find("- name: Build").expect("build step");
     assert!(
         preflight < build,
-        "catalog preflight must run before compilation"
+        "snapshot verification must run before compilation"
     );
-    assert!(workflow.contains("inputs.for_publication"));
-    assert!(workflow.contains("matrix.name }}\" = \"brain-mux"));
-    assert!(workflow.contains("matrix.name }}\" = \"session-stream-api"));
+    assert!(workflow.contains("matrix.name == 'brain-mux'"));
+    assert!(workflow.contains("matrix.name == 'session-stream-api'"));
     assert!(workflow.contains("env.update(recipe['env'])"));
 
     // The publishing half still owns `publish`, and must never regain the

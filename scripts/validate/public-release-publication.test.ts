@@ -90,7 +90,7 @@ describe("public main-push publication", () => {
     expect(main.jobs.compile.uses).toBe("./.github/workflows/_compile-artifacts.yml");
     expect(main.jobs.compile.needs).toEqual(["tools", "route"]);
     expect(main.jobs.compile.with.matrix).toBe("${{ needs.route.outputs.artifact_matrix }}");
-    expect(main.jobs.compile.with.for_publication).toBeTrue();
+    expect(main.jobs.compile.with.for_publication).toBeUndefined();
     // No caller-side grant at all: a reusable workflow cannot hold more than
     // its caller, and main.yml's root grant is `contents: read`.
     expect(main.jobs.compile.permissions).toBeUndefined();

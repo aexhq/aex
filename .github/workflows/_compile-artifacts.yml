@@ -11,9 +11,9 @@
 # registry. `_build-artifacts.yml` holds every write scope and every identity
 # string, and it is the job that waits for the gate.
 #
-# `for_publication` is not a publish switch and grants nothing. It only
-# tightens planning: a `brain-mux` destined for publication must verify the
-# vendored models.dev snapshot against its committed digest.
+# `contents: read`, no secrets, and no step that reaches a
+# registry. `_build-artifacts.yml` holds every write scope and every identity
+# string, and it is the job that waits for the gate.
 
 name: compile-artifacts
 
@@ -26,11 +26,6 @@ on:
       lane:
         type: string
         required: true
-      for_publication:
-        description: Plan as if the result will be published; adds no capability.
-        type: boolean
-        required: false
-        default: false
       release_tool_sha256:
         description: SHA-256 of the run's prepared aex-release-tool.
         type: string

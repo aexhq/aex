@@ -232,7 +232,6 @@ jobs:
     with:
       matrix: ${{ needs.route.outputs.artifact_matrix }}
       lane: main
-      for_publication: true
       release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
       workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
