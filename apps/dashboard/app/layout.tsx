@@ -7,13 +7,13 @@ import "./app.css";
 
 export const metadata = {
   metadataBase: new URL("https://aex.dev"),
-  title: "AEX — infrastructure for agents that do real work",
-  description: "Durable sessions, isolated workspaces, and observable tools for AI agents.",
+  title: "AEX",
+  description: "AEX runs agents in durable sessions with an isolated workspace.",
   openGraph: {
-    title: "AEX — infrastructure for agents that do real work",
-    description: "Durable sessions, isolated workspaces, and observable tools for AI agents.",
+    title: "AEX",
+    description: "AEX runs agents in durable sessions with an isolated workspace.",
     type: "website",
-    images: [{ url: "/og.png", width: 1731, height: 909, alt: "Infrastructure for agents that do real work" }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "AEX" }],
   },
   twitter: {
     card: "summary_large_image",

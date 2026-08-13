@@ -1,53 +1,19 @@
 ---
-title: AEX — infrastructure for agents that do real work
-description: Durable sessions, isolated workspaces, and observable tools for AI agents.
+title: AEX
+description: AEX runs agents in durable sessions with an isolated workspace.
 ---
 
-# Infrastructure for agents that do real work
+# AEX
 
-AEX gives an AI agent a durable session, an isolated workspace, and the tools
-to keep working after a model turn ends.
+AEX runs agents in durable sessions. Each session keeps its messages and one
+isolated MicroVM, so work can pause and resume in the same workspace.
+
+You bring the model and provider credential. AEX pins both to the session and
+keeps the credential outside the MicroVM. Usage and telemetry remain available
+when the MicroVM is suspended or terminated.
+
+The code is open source. AEX is still in prelaunch development, so expect
+breaking changes and interruptions. Do not use it for production work yet.
 
 - [Read the docs](/docs)
 - [Log in](https://aex.dev/signin?next=/app)
-
-> AEX is in active prelaunch development. Expect breaking changes and
-> interruptions; do not use it for production workloads yet.
-
-## What you get
-
-The small set of primitives an agent needs to do useful work.
-
-### Durable sessions
-
-Continue a multi-message task in the same session. Idle compute suspends and
-the same workspace resumes when work returns.
-
-### A real workspace
-
-Each session gets an isolated MicroVM with Bash and revision-aware file tools.
-Live files stay inside that exact generation.
-
-### Bring your model
-
-Connect a provider credential you control. A session pins the provider, model,
-and encrypted credential you selected.
-
-### Observable by default
-
-Typed observations and OpenTelemetry remain available independently of the
-session's compute state.
-
-## Start here
-
-Use the public SDK, or inspect the open-source implementation.
-
-### TypeScript SDK
-
-Install `@aexhq/sdk`, create a session, and send the first message. The docs keep
-the complete minimal example.
-
-### Open source
-
-The SDK, contracts, CLI, runtime, and public web surface live at
-`github.com/aexhq/aex` under Apache-2.0.

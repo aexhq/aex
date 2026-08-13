@@ -10,7 +10,7 @@ export function PublicShell({ children, loginHref }: Readonly<{ children: ReactN
           <nav className="site-nav" aria-label="Primary">
             <a className="site-nav__link" href="/docs">Docs</a>
             <a className="site-nav__link site-nav__github" href="https://github.com/aexhq/aex">GitHub</a>
-            <a className="aex-button aex-button--secondary site-login" href={loginHref}>Log in</a>
+            <a className="site-nav__link" href={loginHref}>Log in</a>
           </nav>
         </div>
       </header>
