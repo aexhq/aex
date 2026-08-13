@@ -796,7 +796,7 @@ impl Worker {
                     .to_wire(),
                 key_epoch: payload.epoch,
                 projection_sequence: sequence(message.created_at),
-                updated_at: timestamp(payload.changed_at)?,
+                updated_at: payload.changed_at,
             })
             .await
     }
@@ -1045,7 +1045,7 @@ struct KeyAuthorizationPayload {
     workspace_id: Uuid,
     organization_id: Uuid,
     region: Region,
-    changed_at: OffsetDateTime,
+    changed_at: Timestamp,
     epoch: u64,
 }
 

@@ -40,7 +40,7 @@ use aex_control_domain::{
 };
 use aex_session_dynamodb::projection_write::{KeyAuthorizationWrite, PlacementWrite, ProfileWrite};
 use aex_wire::ids::PrefixedId as _;
-use aex_wire::types::Region;
+use aex_wire::types::{Region, Timestamp};
 use async_trait::async_trait;
 use central_control_worker::runtime::{
     Mail, OutboxWake, RegionalCapacity, RegionalProjection, SigningAdmin, WakeDelay, WakeInvoker,
@@ -177,6 +177,10 @@ fn message(n: u8, topic: Topic, payload: serde_json::Value) -> OutboxMessage {
 }
 
 /// `api_key_create`'s message: the key exists centrally and nowhere else.
+///
+/// `changedAt` carries the exact 24-character wire spelling the route commits
+/// (`Timestamp::to_wire`), not `time`'s local serde representation, so the
+/// fixture models the cross-service shape the worker parses in production.
 fn api_key_created() -> OutboxMessage {
     message(
         10,
@@ -186,7 +190,9 @@ fn api_key_created() -> OutboxMessage {
             "workspaceId": workspace_id(),
             "organizationId": organization_id(),
             "region": REGION.as_str(),
-            "changedAt": epoch(),
+            "changedAt": Timestamp::from_datetime_trunc_ms(epoch())
+                .expect("the fixture instant is wire-representable")
+                .to_wire(),
             "epoch": 0,
         }),
     )
