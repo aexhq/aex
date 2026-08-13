@@ -65,8 +65,8 @@
     ]
   },
   "scenarios": {
-    "floor": 21,
-    "floorNote": "Every scenario but `SC-REGIONAL-ADMISSION` is deferred. `verify_release_candidate` already refuses an all-deferred registry, so this floor guards the other direction: a scenario that was runnable and is quietly deferred again.",
+    "floor": 22,
+    "floorNote": "SC-REGIONAL-ADMISSION and SC-REGISTRY-RESOURCES remain the runnable release scenarios. SC-SESSION-LIVE-FILES was deferred on 2026-08-13: its live target needs a registered provider credential in the evidence workspace and a live provider-credential register, neither of which exists, and no evidence environment supplies AEX_LIVE_PROVIDER/AEX_LIVE_MODEL/AEX_LIVE_PROVIDER_CREDENTIAL_ID. Re-enable it with the live-evidence expansion.",
     "deleting": {},
     "deferred": [
       "SC-AUTHZ-ASSERTION",
@@ -87,6 +87,7 @@
       "SC-SCHEMA-MIGRATE",
       "SC-SDK-INSTALL",
       "SC-SESSION-ADMIT",
+      "SC-SESSION-LIVE-FILES",
       "SC-SESSION-STREAM",
       "SC-SESSION-TERMINAL",
       "SC-USAGE-SETTLE"
