@@ -1,15 +1,15 @@
 //! rig client construction per dialect class.
 //!
 //! One client per dispatch, built over the shared workspace `reqwest::Client`
-//! with the decrypted key borrowed by value. The four OpenAI-compatible
-//! dialects (`deepseek`, `zai`, `moonshotai`, `openrouter`, `vercel`) all ride
-//! rig's OpenAI-chat-completions-compatible provider with a compiled
-//! `base_url` override; `openai`, `anthropic` and `google` use their native
-//! rig providers, whose auth headers are rig's own.
+//! with the decrypted key borrowed by value. DeepSeek, xAI, and Moonshot use
+//! their maintained Rig providers. Meta and Alibaba use Rig's generic
+//! OpenAI-compatible chat-completions client with their compiled official
+//! origins. OpenAI and Anthropic use native Rig providers. Aex owns no
+//! provider wire implementation.
 
 use aex_model_vocabulary::DialectClass;
 use aex_wire::provider::ProviderId;
-use rig_core::providers::{anthropic, deepseek, gemini, openai};
+use rig_core::providers::{anthropic, deepseek, moonshot, openai, xai};
 
 /// Why a compiled row cannot become a rig client.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -32,10 +32,14 @@ pub(crate) enum DispatchClient {
     OpenAi(openai::Client),
     /// Native Anthropic Messages.
     Anthropic(anthropic::Client),
-    /// Native Gemini `streamGenerateContent`.
-    Gemini(gemini::Client),
-    /// The five OpenAI-compatible chat-completions dialects.
-    Compatible(deepseek::Client),
+    /// Native DeepSeek OpenAI-compatible transport.
+    DeepSeek(deepseek::Client),
+    /// Native xAI Responses transport.
+    XAi(xai::Client),
+    /// Native Moonshot OpenAI-compatible transport.
+    Moonshot(moonshot::Client),
+    /// Rig's maintained generic OpenAI-compatible chat-completions transport.
+    OpenAiCompatible(openai::CompletionsClient),
 }
 
 impl DispatchClient {
@@ -73,25 +77,38 @@ impl DispatchClient {
                     .build()
                     .expect("a compiled origin builds an anthropic client"),
             )),
-            DialectClass::GeminiGenerateContent => Ok(Self::Gemini(
-                gemini::Client::builder()
-                    .api_key(key)
-                    .base_url(url)
-                    .http_client(http.clone())
-                    .build()
-                    .expect("a compiled origin builds a gemini client"),
-            )),
-            DialectClass::DeepSeekChat
-            | DialectClass::ZaiChat
-            | DialectClass::MoonshotChat
-            | DialectClass::OpenRouterChat
-            | DialectClass::VercelAiGatewayChat => Ok(Self::Compatible(
+            DialectClass::DeepSeekChat => Ok(Self::DeepSeek(
                 deepseek::Client::builder()
                     .api_key(key)
                     .base_url(url)
                     .http_client(http.clone())
                     .build()
-                    .expect("a compiled origin builds a compatible client"),
+                    .expect("a compiled origin builds a deepseek client"),
+            )),
+            DialectClass::XAiResponses => Ok(Self::XAi(
+                xai::Client::builder()
+                    .api_key(key)
+                    .base_url(url)
+                    .http_client(http.clone())
+                    .build()
+                    .expect("a compiled origin builds an xai client"),
+            )),
+            DialectClass::MoonshotChat => Ok(Self::Moonshot(
+                moonshot::Client::builder()
+                    .api_key(key)
+                    .base_url(url)
+                    .http_client(http.clone())
+                    .build()
+                    .expect("a compiled origin builds a moonshot client"),
+            )),
+            DialectClass::MetaChat | DialectClass::AlibabaChat => Ok(Self::OpenAiCompatible(
+                openai::Client::builder()
+                    .api_key(key)
+                    .base_url(url)
+                    .http_client(http.clone())
+                    .build()
+                    .expect("a compiled origin builds an openai-compatible client")
+                    .completions_api(),
             )),
         }
     }

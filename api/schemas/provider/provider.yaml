@@ -1,21 +1,20 @@
-# The eight customer-owned BYOK provider authorities.
+# The seven candidate official BYOK provider authorities.
 #
 # The order below is the Rust discriminant order. `anthropic` has no alias: the
 # common misspelling `anthrophic` is a mandatory invalid conformance case.
 module: provider
 schemas:
   ProviderId:
-    doc: The eight customer-owned BYOK authorities. Gateway authorities use fixed endpoints; arbitrary base URLs are not accepted.
+    doc: The candidate official BYOK authorities. Only models admitted by the current Rig-backed catalog are selectable; arbitrary base URLs are not accepted.
     type: enum
     values:
       - { value: openai, doc: "The `OpenAI` API." }
       - { value: anthropic, doc: "Anthropic." }
       - { value: deepseek, doc: "The `DeepSeek` API." }
-      - { value: zai, doc: "The Z.ai API." }
+      - { value: xai, doc: "The official xAI API." }
+      - { value: meta, doc: "The official Meta API." }
       - { value: moonshotai, doc: "The Moonshot AI API." }
-      - { value: google, doc: "Google." }
-      - { value: openrouter, doc: "`OpenRouter`, authenticated with the customer's `OpenRouter` key." }
-      - { value: vercel_ai_gateway, doc: "`Vercel AI Gateway`, authenticated with the customer's `AI Gateway` key." }
+      - { value: alibaba, doc: "The international Alibaba Model Studio API." }
 
   ModelSelection:
     doc: An explicit provider and model pair; a model-only override is rejected.
@@ -23,4 +22,3 @@ schemas:
     fields:
       provider: { type: provider_id, doc: "The provider." }
       model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
-      credentialId: { type: id, of: provider_credential, optional: true, doc: "Which BYOK binding to use." }

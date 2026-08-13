@@ -2,10 +2,11 @@
 //!
 //! Nothing here performs I/O or reads a clock. A spawn plan is a pure function of the
 //! parent's folded state, the session's capacity and the request, which is what lets the
-//! 1/5/10/15/50/100/200-child cases be asserted exactly rather than observed.
+//! 1/5/10/12-child cases be asserted exactly rather than observed.
 
 use aex_brain_domain::budget::{
-    BudgetError, BudgetGrant, BudgetNode, DIMENSIONS, Dimension, StructuralLimits,
+    BudgetError, BudgetGrant, BudgetNode, DIMENSIONS, Dimension, MAX_SUBAGENT_DEPTH,
+    MAX_SUBAGENTS_PER_SESSION, StructuralLimits,
 };
 use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::commit::{SPAWN_PAGE_CHILDREN, fanout_pages};
@@ -164,8 +165,45 @@ pub fn plan_spawn(
     if state.finish.is_some() {
         return Err(SpawnError::Terminal);
     }
-    let structural = state.structural;
+    let structural = StructuralLimits {
+        max_depth: state.structural.max_depth.min(MAX_SUBAGENT_DEPTH),
+        max_fanout: state
+            .structural
+            .max_fanout
+            .min(MAX_SUBAGENTS_PER_SESSION as u32),
+    };
     BudgetNode::check_fanout(request.count, structural)?;
+    let session_allocated = capacity
+        .session
+        .reserved
+        .get(Dimension::TotalChildrenCreated)
+        .saturating_add(
+            capacity
+                .session
+                .used
+                .get(Dimension::TotalChildrenCreated),
+        );
+    if u64::from(request.count)
+        > MAX_SUBAGENTS_PER_SESSION.saturating_sub(session_allocated)
+    {
+        return Err(SpawnError::Budget(BudgetError::Exhausted {
+            dimension: Dimension::TotalChildrenCreated,
+            limit: capacity
+                .session
+                .limit
+                .get(Dimension::TotalChildrenCreated)
+                .min(MAX_SUBAGENTS_PER_SESSION),
+            reserved: capacity
+                .session
+                .reserved
+                .get(Dimension::TotalChildrenCreated),
+            used: capacity
+                .session
+                .used
+                .get(Dimension::TotalChildrenCreated),
+            wanted: u64::from(request.count),
+        }));
+    }
 
     // Reserve every grant first, on a copy. If any dimension is short, the parent is left
     // exactly as it was: a partially reserved parent would leak the difference for ever.
@@ -271,8 +309,8 @@ pub fn grant_only_reduces(parent: &BudgetNode, grant: BudgetGrant) -> bool {
 #[must_use]
 pub const fn launch_structural() -> StructuralLimits {
     StructuralLimits {
-        max_depth: 8,
-        max_fanout: 128,
+        max_depth: MAX_SUBAGENT_DEPTH,
+        max_fanout: MAX_SUBAGENTS_PER_SESSION as u32,
     }
 }
 
@@ -318,9 +356,8 @@ mod tests {
     /// number would be indistinguishable to the parent's model from children failing.
     #[test]
     fn every_declared_child_count_produces_exactly_that_many_children() {
-        for count in [1_u32, 5, 10, 15, 50, 100, 200] {
-            let mut state = folded(100_000);
-            state.structural.max_fanout = 256;
+        for count in [1_u32, 5, 10, 12] {
+            let state = folded(100_000);
             let plan = plan_spawn(parent(), &state, &capacity(), &request(count))
                 .unwrap_or_else(|error| panic!("{count} children: {error}"));
             assert_eq!(plan.count(), count as usize, "{count} children");
@@ -334,38 +371,26 @@ mod tests {
     #[test]
     fn a_retried_plan_derives_identical_child_identities() {
         let state = folded(10_000);
-        let first = plan_spawn(parent(), &state, &capacity(), &request(50)).expect("plans");
-        let second = plan_spawn(parent(), &state, &capacity(), &request(50)).expect("plans");
+        let first = plan_spawn(parent(), &state, &capacity(), &request(12)).expect("plans");
+        let second = plan_spawn(parent(), &state, &capacity(), &request(12)).expect("plans");
         assert_eq!(first, second);
         assert_eq!(first.children()[0].child, child_agent_id(parent(), 0));
-        assert_eq!(first.children()[49].child, child_agent_id(parent(), 49));
+        assert_eq!(first.children()[11].child, child_agent_id(parent(), 11));
     }
 
-    /// The page size is derived from the transaction envelope, so a fanout larger than one
-    /// page becomes whole pages plus a durable intent to resume from.
+    /// The lifetime ceiling is smaller than the transaction envelope, so every
+    /// legal MVP fanout is one atomic page and needs no resume intent.
     #[test]
-    fn a_fanout_larger_than_one_page_carries_a_durable_intent() {
-        let mut state = folded(100_000);
-        state.structural.max_fanout = 256;
-        let single = plan_spawn(parent(), &state, &capacity(), &request(SPAWN_PAGE_CHILDREN))
+    fn every_legal_fanout_is_one_atomic_page() {
+        let state = folded(100_000);
+        let single = plan_spawn(parent(), &state, &capacity(), &request(12))
             .expect("plans");
         assert_eq!(single.pages.len(), 1);
         assert_eq!(
             single.intent, None,
             "one page needs no intent to resume from"
         );
-
-        let paged = plan_spawn(
-            parent(),
-            &state,
-            &capacity(),
-            &request(SPAWN_PAGE_CHILDREN + 1),
-        )
-        .expect("plans");
-        assert_eq!(paged.pages.len(), 2);
-        assert!(paged.intent.is_some());
-        assert_eq!(paged.pages[0].children.len(), SPAWN_PAGE_CHILDREN as usize);
-        assert_eq!(paged.pages[1].children.len(), 1);
+        assert!(12 < SPAWN_PAGE_CHILDREN);
     }
 
     /// Capacity is consumed as the page is planned, so a page of 32 into one free slot
@@ -490,11 +515,10 @@ mod tests {
         );
     }
 
-    /// The shard count follows the measured conflict curve rather than a fixed 64.
+    /// Join sharding still derives from the admitted size rather than a fixed count.
     #[test]
     fn the_join_shard_count_follows_the_measured_curve() {
-        let mut state = folded(100_000);
-        state.structural.max_fanout = 256;
+        let state = folded(100_000);
         assert_eq!(
             plan_spawn(parent(), &state, &capacity(), &request(1))
                 .expect("plans")
@@ -502,11 +526,64 @@ mod tests {
             1
         );
         assert_eq!(
-            plan_spawn(parent(), &state, &capacity(), &request(200))
+            plan_spawn(parent(), &state, &capacity(), &request(12))
                 .expect("plans")
                 .shards,
-            32
+            aex_brain_domain::wire_pending::join_shards(12)
         );
+    }
+
+    #[test]
+    fn the_thirteenth_lifetime_identity_is_refused_even_after_completion() {
+        let state = folded(100_000);
+        let mut capacity = capacity();
+        capacity
+            .session
+            .used
+            .set(Dimension::TotalChildrenCreated, 12);
+        let error = plan_spawn(parent(), &state, &capacity, &request(1))
+            .expect_err("completed children still consume lifetime identities");
+        assert!(matches!(
+            error,
+            SpawnError::Budget(aex_brain_domain::budget::BudgetError::Exhausted {
+                dimension: Dimension::TotalChildrenCreated,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn depth_three_is_terminal_for_spawning_even_if_a_config_is_looser() {
+        let mut state = folded(100_000);
+        state.budget.depth = 2;
+        state.structural.max_depth = u16::MAX;
+        plan_spawn(parent(), &state, &capacity(), &request(1))
+            .expect("a depth-two parent may allocate a depth-three child");
+        state.budget.depth = 3;
+        let error = plan_spawn(parent(), &state, &capacity(), &request(1))
+            .expect_err("a depth-three agent cannot spawn");
+        assert!(matches!(
+            error,
+            SpawnError::Budget(aex_brain_domain::budget::BudgetError::DepthExceeded {
+                depth: 4,
+                max_depth: 3
+            })
+        ));
+    }
+
+    #[test]
+    fn a_looser_config_cannot_admit_thirteen_identities_at_once() {
+        let mut state = folded(100_000);
+        state.structural.max_fanout = u32::MAX;
+        let error = plan_spawn(parent(), &state, &capacity(), &request(13))
+            .expect_err("the MVP ceiling is not configurable upward");
+        assert!(matches!(
+            error,
+            SpawnError::Budget(aex_brain_domain::budget::BudgetError::FanoutExceeded {
+                requested: 13,
+                max_fanout: 12
+            })
+        ));
     }
 
     #[test]

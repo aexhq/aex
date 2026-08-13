@@ -32,6 +32,10 @@ fn guard(tail: Option<JournalSeq>) -> FenceGuardRef {
 
 fn decision(appends: Vec<JournalRecord>, children: Vec<ChildWrite>) -> DecisionCommit {
     let next_tail = JournalSeq(appends.len().max(1) as u64 - 1);
+    let spawned = children
+        .iter()
+        .filter(|write| matches!(write, ChildWrite::Spawn { .. }))
+        .count() as u64;
     DecisionCommit {
         guard: guard(None),
         appends,
@@ -43,7 +47,10 @@ fn decision(appends: Vec<JournalRecord>, children: Vec<ChildWrite>) -> DecisionC
         },
         effects: Vec::new(),
         budget: Vec::new(),
-        session_budget: Vec::new(),
+        session_budget: (spawned > 0)
+            .then(|| BudgetDelta::new(Dimension::TotalChildrenCreated, spawned))
+            .into_iter()
+            .collect(),
         children,
         joins: Vec::new(),
         wakes: Vec::new(),
@@ -171,10 +178,10 @@ fn spawn_page(children: u32) -> DecisionCommit {
     }];
     writes.extend((0..children).map(spawn));
     let mut page = decision(Vec::new(), writes);
-    page.session_budget = vec![BudgetDelta::new(
+    page.session_budget.push(BudgetDelta::new(
         Dimension::ActiveChildren,
         u64::from(children),
-    )];
+    ));
     page
 }
 

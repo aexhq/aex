@@ -123,6 +123,18 @@ impl PooledClient {
         Arc::ptr_eq(&self.client, &other.client)
     }
 
+    /// Exact screened target used by the maintained MCP transport.
+    #[must_use]
+    pub const fn target(&self) -> &url::Url {
+        &self.target
+    }
+
+    /// Clones the tenant/address-pinned HTTP client into rmcp's transport.
+    #[must_use]
+    pub fn http_client(&self) -> reqwest::Client {
+        self.client.as_ref().clone()
+    }
+
     /// Starts one POST against the exact screened target.
     ///
     /// Callers add request-scoped secret headers; the pooled client never owns

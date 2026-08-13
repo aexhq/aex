@@ -8,11 +8,6 @@ server: https://{awsRegion}.api.aex.dev
 serverDescription: The workspace's pinned regional host.
 securityScheme: workspaceApiKey
 fragments:
-  - workspace
   - sessions
-  - operations
-  - files
   - registry
   - uploads
-  - provider-credentials
-  - usage

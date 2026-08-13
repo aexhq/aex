@@ -14,7 +14,7 @@ use crate::wire_pending::{EffectClass, ExecutorRoute};
 
 /// Snapshot-bound SHA-256 identity of [`builtin_catalog_bytes`].
 pub const BUILTIN_CATALOG_DIGEST: &str =
-    "sha256:af3f04d7bad8dcbbbbc2974bab6f01cac413e486492f946985173a1004d074ae";
+    "sha256:3f32bc680e8e033c646fb262fe3137e54622e8219ff79530d7a62189b1ce272e";
 
 /// Builds and validates the immutable built-in rows in canonical name order.
 ///
@@ -23,7 +23,13 @@ pub const BUILTIN_CATALOG_DIGEST: &str =
 /// Returns a build error if a compiled name, schema, credential, or invariant
 /// is invalid. Such an error is a build/startup defect, never a runtime skip.
 pub fn builtin_entries() -> Result<Vec<ToolManifestEntry>, CatalogBuildError> {
-    let mut entries = [READ_FILE_SPEC, EDIT_FILE_SPEC, WRITE_FILE_SPEC, BASH_SPEC]
+    let mut entries = [
+        READ_FILE_SPEC,
+        EDIT_FILE_SPEC,
+        WRITE_FILE_SPEC,
+        BASH_SPEC,
+        STORAGE_PERSIST_SPEC,
+    ]
         .iter()
         .map(build_entry)
         .collect::<Result<Vec<_>, _>>()?;
@@ -198,6 +204,10 @@ fn title(name: &str) -> String {
 }
 
 fn description(name: &str) -> String {
+    if name == "storage_persist" {
+        return "Persist one exact sandbox file as the latest value of a named workspace file."
+            .to_owned();
+    }
     format!("Execute the canonical `{name}` tool under its pinned bounds and recovery policy.")
 }
 
@@ -218,6 +228,7 @@ const C: UsageDimensionSet = UsageDimensionSet::COMPUTE;
 const CM: UsageDimensionSet = C.union(UsageDimensionSet::MEMORY);
 const CMT: UsageDimensionSet = CM.union(UsageDimensionSet::DATA_TRANSFER);
 const NONE: UsageDimensionSet = UsageDimensionSet::EMPTY;
+const STORAGE: UsageDimensionSet = UsageDimensionSet::STORAGE;
 
 const fn bounds(input: u32, result: u32, context: u32, timeout: u32, weight: u16) -> ToolBounds {
     ToolBounds {
@@ -310,6 +321,22 @@ const EDIT_FILE_SPEC: Spec = spec!(
     60_000,
     2,
     NONE,
+    None
+);
+
+const STORAGE_PERSIST_SPEC: Spec = spec!(
+    "storage_persist",
+    PlatformStorage,
+    ToolExec,
+    IdempotentManaged,
+    QueryDurableOperation,
+    WhenPolicyRequires,
+    8_192,
+    8_192,
+    4_096,
+    600_000,
+    2,
+    STORAGE,
     None
 );
 
@@ -906,6 +933,17 @@ fn input_schema(name: &str) -> Value {
                 ("replaceAll", json!({"type":"boolean"})),
             ],
         ),
+        "storage_persist" => object(
+            &["path", "name"],
+            vec![
+                ("path", text(1, 4_096)),
+                (
+                    "name",
+                    json!({"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}),
+                ),
+                ("mediaType", text(1, 255)),
+            ],
+        ),
         "apply_patch" => object(
             &["patch"],
             vec![
@@ -1245,6 +1283,31 @@ fn result_schema(name: &str) -> Value {
                 ("path", text(0, 4_096)),
                 ("revision", pattern(HASH)),
                 ("replacements", integer(Some(1), None)),
+            ],
+        ),
+        "storage_persist" => object(
+            &[
+                "name",
+                "sha256",
+                "sizeBytes",
+                "mediaType",
+                "preview",
+                "previewEncoding",
+                "previewBytes",
+                "truncated",
+                "fullResultPath",
+            ],
+            vec![
+                ("name", text(1, 128)),
+                ("sha256", pattern(HASH)),
+                ("sizeBytes", decimal_string()),
+                ("mediaType", text(1, 255)),
+                ("preview", text(0, 5_464)),
+                ("previewEncoding", enumeration(&["utf8", "base64"])),
+                ("previewBytes", integer(Some(0), Some(4_096))),
+                ("truncated", json!({"type":"boolean"})),
+                ("fullResultPath", text(1, 4_096)),
+                ("downloadPath", text(1, 512)),
             ],
         ),
         "apply_patch" => object(

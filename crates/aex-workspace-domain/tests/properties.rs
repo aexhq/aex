@@ -16,6 +16,10 @@ use aex_workspace_domain::{
 };
 use proptest::prelude::*;
 
+use aex_workspace_domain::{
+    FilePublish, FileSource, ReadyFile, admit_pending, publish_ready,
+};
+
 fn workspace() -> WorkspaceId {
     WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10]))
 }
@@ -55,6 +59,64 @@ fn proposed(body: &[u8]) -> ProposedValue {
 // ---------------------------------------------------------------------------
 
 proptest! {
+    #[test]
+    fn an_older_async_file_intent_never_publishes_over_a_newer_one(
+        older in any::<Vec<u8>>(),
+        newer in any::<Vec<u8>>(),
+    ) {
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [19; 10]));
+        let name = aex_wire::ids::ResourceName::parse("property.bin").expect("name");
+        let at = |millis| aex_wire::types::Timestamp::from_unix_millis(millis).expect("time");
+        let older_admission = admit_pending(
+            None,
+            workspace,
+            name.clone(),
+            FileSource::Url,
+            at(1),
+        );
+        let newer_admission = admit_pending(
+            Some(&older_admission.current),
+            workspace,
+            name,
+            FileSource::Upload,
+            at(2),
+        );
+        let older_ready = ReadyFile {
+            digest: aex_content_domain::ContentDigest::of(&older),
+            size_bytes: older.len() as u64,
+            media_type: "application/octet-stream".to_owned(),
+            object_key: "property/older".to_owned(),
+        };
+        prop_assert!(matches!(
+            publish_ready(
+                &newer_admission.current,
+                older_admission.current.intent(),
+                older_ready,
+                at(3),
+            ),
+            FilePublish::Stale { .. }
+        ));
+        let newer_ready = ReadyFile {
+            digest: aex_content_domain::ContentDigest::of(&newer),
+            size_bytes: newer.len() as u64,
+            media_type: "application/octet-stream".to_owned(),
+            object_key: "property/newer".to_owned(),
+        };
+        let FilePublish::Published(published) = publish_ready(
+            &newer_admission.current,
+            newer_admission.current.intent(),
+            newer_ready,
+            at(4),
+        ) else {
+            prop_assert!(false, "latest intent must publish");
+            return Ok(());
+        };
+        prop_assert_eq!(
+            published.ready().expect("ready").digest,
+            aex_content_domain::ContentDigest::of(&newer)
+        );
+    }
+
     #![proptest_config(ProptestConfig { cases: 192, ..ProptestConfig::default() })]
 
     /// 56 `registry_overwrite_semantics`.

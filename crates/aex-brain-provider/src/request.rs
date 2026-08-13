@@ -6,8 +6,9 @@
 
 use aex_model_catalog::canonical::{
     CanonicalBlock, CanonicalMessage, CanonicalModelRequest, CanonicalToolDef, Role,
-    ToolChoice as CanonicalToolChoice, ToolResultPart,
+    StructuredOutputRequest, ToolChoice as CanonicalToolChoice, ToolResultPart,
 };
+use aex_model_catalog::document::{Capability, StructuredOutputLevel};
 use aex_model_vocabulary::DialectClass;
 use rig_core::OneOrMany;
 use rig_core::completion::message::{
@@ -22,6 +23,12 @@ pub enum RequestBuildError {
     /// A canonical block could not be translated into provider content.
     #[error("canonical request member cannot be translated: {0}")]
     Untranslatable(&'static str),
+    /// The current model/Rig route did not certify a requested capability.
+    #[error("the qualified model does not support {0}")]
+    UnsupportedCapability(&'static str),
+    /// A canonical JSON value was not a JSON Schema object or boolean.
+    #[error("the structured-output schema is invalid")]
+    InvalidSchema,
 }
 
 /// Builds the rig completion request for one dispatch.
@@ -35,6 +42,7 @@ pub fn build(
     request: &CanonicalModelRequest,
     dialect: DialectClass,
 ) -> Result<CompletionRequest, RequestBuildError> {
+    validate_capabilities(request)?;
     let mut history: Vec<Message> = Vec::new();
     for block in &request.system {
         history.push(Message::System {
@@ -45,6 +53,7 @@ pub fn build(
         history.push(translate_message(message)?);
     }
 
+    let (output_schema, json_object_only) = structured_output(request)?;
     Ok(CompletionRequest {
         model: Some(request.selection.model().as_str().to_owned()),
         preamble: None,
@@ -67,10 +76,66 @@ pub fn build(
             .map(|milli| f64::from(milli) / 1000.0),
         max_tokens: Some(u64::from(request.max_output_tokens)),
         tool_choice: Some(translate_tool_choice(&request.tool_choice)),
-        additional_params: additional_params(request, dialect),
-        output_schema: None,
+        additional_params: additional_params(request, dialect, json_object_only),
+        output_schema,
         record_telemetry_content: false,
     })
+}
+
+fn validate_capabilities(request: &CanonicalModelRequest) -> Result<(), RequestBuildError> {
+    let capabilities = request.selection.capabilities();
+    if !request.tools.is_empty() && !capabilities.has(Capability::Tools) {
+        return Err(RequestBuildError::UnsupportedCapability("tool calling"));
+    }
+    if request.parallel_tools && !capabilities.has(Capability::ParallelTools) {
+        return Err(RequestBuildError::UnsupportedCapability(
+            "parallel tool calling",
+        ));
+    }
+    match (&request.structured_output, request.selection.structured_output()) {
+        (None, _) => Ok(()),
+        (Some(StructuredOutputRequest::JsonObject), StructuredOutputLevel::None) => Err(
+            RequestBuildError::UnsupportedCapability("structured JSON output"),
+        ),
+        (Some(StructuredOutputRequest::JsonSchema { .. }), StructuredOutputLevel::JsonSchema) => {
+            Ok(())
+        }
+        (Some(StructuredOutputRequest::JsonSchema { .. }), _) => Err(
+            RequestBuildError::UnsupportedCapability("native JSON Schema output"),
+        ),
+        (Some(StructuredOutputRequest::JsonObject), _) => Ok(()),
+    }
+}
+
+fn structured_output(
+    request: &CanonicalModelRequest,
+) -> Result<(Option<schemars::Schema>, bool), RequestBuildError> {
+    let Some(output) = &request.structured_output else {
+        return Ok((None, false));
+    };
+    match output {
+        StructuredOutputRequest::JsonObject => {
+            if request.selection.structured_output() == StructuredOutputLevel::JsonObject {
+                return Ok((None, true));
+            }
+            let value = serde_json::json!({
+                "title": "response",
+                "type": "object"
+            });
+            Ok((Some(value.try_into().map_err(|_| RequestBuildError::InvalidSchema)?), false))
+        }
+        StructuredOutputRequest::JsonSchema { name, schema, .. } => {
+            let mut value: serde_json::Value = serde_json::from_str(schema.as_str())
+                .map_err(|_| RequestBuildError::InvalidSchema)?;
+            let object = value
+                .as_object_mut()
+                .ok_or(RequestBuildError::InvalidSchema)?;
+            object
+                .entry("title".to_owned())
+                .or_insert_with(|| serde_json::Value::String(name.to_string()));
+            Ok((Some(value.try_into().map_err(|_| RequestBuildError::InvalidSchema)?), false))
+        }
+    }
 }
 
 fn translate_message(message: &CanonicalMessage) -> Result<Message, RequestBuildError> {
@@ -226,6 +291,7 @@ fn translate_tool_result_parts(
 fn additional_params(
     request: &CanonicalModelRequest,
     dialect: DialectClass,
+    json_object_only: bool,
 ) -> Option<serde_json::Value> {
     let mut params = serde_json::Map::new();
     if let Some(top_p_milli) = request.top_p_milli {
@@ -239,10 +305,10 @@ fn additional_params(
             dialect,
             DialectClass::OpenAiResponses
                 | DialectClass::DeepSeekChat
-                | DialectClass::ZaiChat
+                | DialectClass::XAiResponses
+                | DialectClass::MetaChat
                 | DialectClass::MoonshotChat
-                | DialectClass::OpenRouterChat
-                | DialectClass::VercelAiGatewayChat
+                | DialectClass::AlibabaChat
         )
     {
         params.insert(
@@ -254,6 +320,12 @@ fn additional_params(
                     .map(aex_model_catalog::BoundedString::as_str)
                     .collect::<Vec<_>>()
             ),
+        );
+    }
+    if json_object_only {
+        params.insert(
+            "response_format".to_owned(),
+            serde_json::json!({ "type": "json_object" }),
         );
     }
     if params.is_empty() {

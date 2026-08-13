@@ -1,96 +1,154 @@
-# Prepaid balance, top-up policy and immutable issued statements.
-#
-# Every money field on the wire is a canonical decimal integer string of whole
-# cents. No amount crosses this boundary as a floating-point number.
+# Essential prepaid billing. Card entry remains on Stripe-hosted pages and no
+# raw card field exists anywhere in this contract.
 module: central
 schemas:
-  BillingBalance:
-    doc: The prepaid balance of one organization.
-    type: object
-    fields:
-      organizationId: { type: id, of: organization, doc: "The organization." }
-      currency: { type: ref, to: Currency, doc: "Always USD." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic balance revision." }
-      availableCents: { type: cents, doc: "Spendable now." }
-      reservedCents: { type: cents, doc: "Held against admitted work." }
-      pendingCents: { type: cents, doc: "Recorded but not yet settled." }
-      operationalState: { type: ref, to: AccountOperationalState, doc: "What the balance implies." }
-      updatedAt: { type: timestamp, doc: "When the balance last changed." }
-
   Currency:
-    doc: The only supported currency.
+    doc: The only launch currency.
     type: enum
     values:
       - { value: USD, doc: "United States dollar." }
 
+  BillingBalance:
+    doc: The current prepaid position of the caller's personal account.
+    type: object
+    fields:
+      accountId: { type: id, of: account, doc: "The personal account." }
+      currency: { type: ref, to: Currency, doc: "Always USD at launch." }
+      availableCents: { type: cents, doc: "Credit available for new reservations." }
+      reservedCents: { type: cents, doc: "Credit held for admitted sessions." }
+      pendingCents: { type: cents, doc: "Rated usage not yet settled to the ledger." }
+      updatedAt: { type: timestamp, doc: "When this projection last changed." }
+
+  CardBrand:
+    doc: Customer-safe card-network display metadata reported by Stripe.
+    type: enum
+    values:
+      - { value: visa, doc: "Visa." }
+      - { value: mastercard, doc: "Mastercard." }
+      - { value: amex, doc: "American Express." }
+      - { value: discover, doc: "Discover." }
+      - { value: diners, doc: "Diners Club." }
+      - { value: jcb, doc: "JCB." }
+      - { value: unionpay, doc: "UnionPay." }
+      - { value: unknown, doc: "A network Stripe did not map to this display vocabulary." }
+
+  PaymentMethod:
+    doc: Display-only metadata for one Stripe card; never PAN, CVC, or a client secret.
+    type: object
+    fields:
+      id: { type: id, of: payment_method, doc: "Aex's opaque card reference." }
+      brand: { type: ref, to: CardBrand, doc: "Card network." }
+      last4: { type: string, min: 4, max: 4, pattern: "^[0-9]{4}$", doc: "Last four digits for display." }
+      expiryMonth: { type: integer, min: 1, max: 12, doc: "Expiry month." }
+      expiryYear: { type: integer, min: 2020, max: 9999, doc: "Four-digit expiry year." }
+      isDefault: { type: boolean, doc: "Whether Stripe reports this as the default card." }
+      createdAt: { type: timestamp, doc: "When verified webhook state registered it." }
+
+  PaymentMethodPage:
+    doc: The bounded set of cards attached to the caller's account.
+    type: object
+    fields:
+      items: { type: array, max: 32, items: { type: ref, to: PaymentMethod }, doc: "Cards, newest first." }
+
+  PaymentMethodSessionRequest:
+    doc: Request a Stripe-hosted card setup session.
+    type: object
+    fields:
+      consent: { type: boolean, doc: "Must be true: the caller explicitly consents to saving this card for future prepaid payments." }
+      successUrl: { type: https_url, optional: true, doc: "Browser return after successful setup." }
+      cancelUrl: { type: https_url, optional: true, doc: "Browser return after cancellation." }
+
   TopUpCheckoutRequest:
-    doc: Create a hosted top-up checkout.
+    doc: Request a one-time Stripe-hosted prepaid top-up.
     type: object
     fields:
-      amountCents: { type: cents, doc: "The amount to add, in whole cents." }
-      successUrl: { type: https_url, optional: true, doc: "Where to return after success." }
-      cancelUrl: { type: https_url, optional: true, doc: "Where to return after cancellation." }
+      amountCents: { type: cents, doc: "Credit to buy in whole cents, within configured bounds." }
+      successUrl: { type: https_url, optional: true, doc: "Browser return after provider success; not money authority." }
+      cancelUrl: { type: https_url, optional: true, doc: "Browser return after cancellation." }
 
-  PortalSessionRequest:
-    doc: Create a hosted billing portal session.
-    type: object
-    fields:
-      returnUrl: { type: https_url, optional: true, doc: "Where to return when the user is done." }
+  BillingTransactionKind:
+    doc: The customer-visible reason for an immutable balanced ledger transaction.
+    type: enum
+    values:
+      - { value: top_up, doc: "Verified prepaid credit purchase." }
+      - { value: usage, doc: "Settled trusted usage." }
+      - { value: refund, doc: "Credit returned by a verified refund." }
+      - { value: reversal, doc: "A compensating entry for a prior transaction." }
+      - { value: reservation, doc: "Credit reserved for admitted work." }
+      - { value: reservation_release, doc: "Unused reservation returned." }
 
-  AutoTopupPolicy:
-    doc: The complete automatic top-up policy.
-    type: object
-    fields:
-      organizationId: { type: id, of: organization, doc: "The organization." }
-      enabled: { type: boolean, doc: "Whether automatic top-up runs." }
-      thresholdCents: { type: cents, doc: "Balance at or below which a top-up is attempted." }
-      amountCents: { type: cents, doc: "How much each automatic top-up adds." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic policy revision." }
-      updatedAt: { type: timestamp, doc: "When the policy last changed." }
+  BillingTransactionDirection:
+    doc: Whether the transaction increases or decreases available prepaid value.
+    type: enum
+    values:
+      - { value: credit, doc: "Increases prepaid value." }
+      - { value: debit, doc: "Decreases prepaid value." }
 
-  AutoTopupPolicyRequest:
-    doc: Replace the automatic top-up policy; every field is required.
+  BillingTransaction:
+    doc: One immutable customer-visible ledger transaction.
     type: object
     fields:
-      enabled: { type: boolean, doc: "Whether automatic top-up runs." }
-      thresholdCents: { type: cents, doc: "Balance at or below which a top-up is attempted." }
-      amountCents: { type: cents, doc: "How much each automatic top-up adds." }
+      id: { type: id, of: billing_transaction, doc: "Transaction identity." }
+      kind: { type: ref, to: BillingTransactionKind, doc: "Why it was posted." }
+      direction: { type: ref, to: BillingTransactionDirection, doc: "Its effect on prepaid value." }
+      amountCents: { type: cents, doc: "Absolute amount in whole cents." }
+      currency: { type: ref, to: Currency, doc: "Always USD at launch." }
+      balanceAfterCents: { type: cents, doc: "Available balance after this transaction." }
+      sessionId: { type: id, of: session, optional: true, doc: "Session attribution when applicable." }
+      reversesTransactionId: { type: id, of: billing_transaction, optional: true, doc: "The compensated transaction, for reversals." }
+      occurredAt: { type: timestamp, doc: "Authoritative ledger time." }
 
-  StatementSummary:
-    doc: The header of one immutable issued statement.
+  BillingTransactionPage:
+    doc: One newest-first page of immutable ledger transactions.
     type: object
     fields:
-      id: { type: id, of: statement, doc: "Identity." }
-      organizationId: { type: id, of: organization, doc: "The organization." }
-      period: { type: ref, to: TimeRange, doc: "The billed period." }
-      currency: { type: ref, to: Currency, doc: "Always USD." }
-      totalCents: { type: cents, doc: "The issued total." }
-      artifactHash: { type: content_hash, doc: "Hash of the issued artifact." }
-      issuedAt: { type: timestamp, doc: "When it was issued." }
-
-  StatementSummaryPage:
-    doc: One page of statement headers, newest first.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: StatementSummary }, doc: "The page." }
+      items: { type: array, max: 100, items: { type: ref, to: BillingTransaction }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
-  StatementLine:
-    doc: One priced category line. Lines sum exactly to the statement total.
-    type: object
-    fields:
-      category: { type: ref, to: UsageCategory, doc: "The priced category." }
-      totalCents: { type: cents, doc: "The line total." }
+  BillingUsageCategory:
+    doc: The independently measured and rated launch categories.
+    type: enum
+    values:
+      - { value: model, doc: "Provider model input/output/cache tokens." }
+      - { value: runtime, doc: "Trusted sandbox compute and memory." }
+      - { value: storage, doc: "Retained workspace/session bytes over time." }
+      - { value: transfer, doc: "Measured outbound bytes." }
 
-  Statement:
-    doc: One immutable issued statement. The platform never rerenders history.
+  BillingUsageSettlement:
+    doc: Whether this rated row has been posted to the money ledger.
+    type: enum
+    values:
+      - { value: pending, doc: "Trusted and rated but not yet posted." }
+      - { value: settled, doc: "Covered by an immutable ledger transaction." }
+
+  BillingUsageItem:
+    doc: One bounded rated-usage aggregate with exact charge evidence.
     type: object
     fields:
-      id: { type: id, of: statement, doc: "Identity." }
-      organizationId: { type: id, of: organization, doc: "The organization." }
-      period: { type: ref, to: TimeRange, doc: "The billed period." }
-      currency: { type: ref, to: Currency, doc: "Always USD." }
-      totalCents: { type: cents, doc: "The issued total." }
-      artifactHash: { type: content_hash, doc: "Hash of the issued artifact." }
-      issuedAt: { type: timestamp, doc: "When it was issued." }
-      lines: { type: array, max: 64, items: { type: ref, to: StatementLine }, doc: "The priced lines." }
+      category: { type: ref, to: BillingUsageCategory, doc: "What was measured." }
+      sessionId: { type: id, of: session, optional: true, doc: "Session attribution when present." }
+      provider: { type: ref, to: ProviderId, optional: true, doc: "Official provider for model usage." }
+      model: { type: string, min: 1, max: 256, optional: true, doc: "Provider model identifier for model usage." }
+      quantity: { type: decimal, doc: "Measured quantity before rating." }
+      chargedQuantity: { type: decimal, doc: "Quantity actually charged after policy." }
+      unit: { type: string, min: 1, max: 64, doc: "Stable unit such as input_tokens or byte_minutes." }
+      amountCents: { type: cents, doc: "Exact rated amount in whole cents." }
+      currency: { type: ref, to: Currency, doc: "Always USD at launch." }
+      settlement: { type: ref, to: BillingUsageSettlement, doc: "Ledger coverage." }
+      serviceTime: { type: ref, to: TimeRange, doc: "Half-open service-time range." }
+
+  BillingUsageCoverage:
+    doc: The trustworthy completeness boundary for one usage answer.
+    type: object
+    fields:
+      completeThrough: { type: timestamp, doc: "All accepted facts at or before this instant are represented." }
+      includesThrough: { type: timestamp, doc: "No fact after this instant is represented." }
+      hasGap: { type: boolean, doc: "Whether a poisoned or missing fact prevents complete settlement." }
+
+  BillingUsagePage:
+    doc: One bounded page of rated usage and its explicit completeness boundary.
+    type: object
+    fields:
+      items: { type: array, max: 100, items: { type: ref, to: BillingUsageItem }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
+      coverage: { type: ref, to: BillingUsageCoverage, doc: "How complete this answer is." }

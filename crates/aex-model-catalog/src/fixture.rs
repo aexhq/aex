@@ -56,6 +56,31 @@ pub fn qualified_entry_sized(
     context_window_tokens: u32,
     max_output_tokens: u32,
 ) -> QualifiedModel {
+    qualified_entry_sized_and_output(
+        provider,
+        model,
+        capabilities,
+        context_window_tokens,
+        max_output_tokens,
+        if capabilities.has(crate::document::Capability::StructuredOutput) {
+            crate::document::StructuredOutputLevel::JsonSchema
+        } else {
+            crate::document::StructuredOutputLevel::None
+        },
+    )
+}
+
+/// The [`QualifiedModel`] for a fixture row with an exact structured-output
+/// level, for transport qualification tests.
+#[must_use]
+pub fn qualified_entry_sized_and_output(
+    provider: ProviderId,
+    model: &str,
+    capabilities: CapabilitySet,
+    context_window_tokens: u32,
+    max_output_tokens: u32,
+    structured_output: crate::document::StructuredOutputLevel,
+) -> QualifiedModel {
     qualified(
         Box::leak(Box::new(AdmittedModel {
             provider,
@@ -64,6 +89,7 @@ pub fn qualified_entry_sized(
             max_output_tokens,
             tools: capabilities.has(crate::document::Capability::Tools),
             parallel_tools: capabilities.has(crate::document::Capability::ParallelTools),
+            structured_output,
             dialect: fixture_dialect(provider),
         })),
         model,
@@ -77,11 +103,10 @@ pub const fn fixture_dialect(provider: ProviderId) -> DialectClass {
         ProviderId::Openai => DialectClass::OpenAiResponses,
         ProviderId::Anthropic => DialectClass::AnthropicMessages,
         ProviderId::Deepseek => DialectClass::DeepSeekChat,
-        ProviderId::Zai => DialectClass::ZaiChat,
+        ProviderId::Xai => DialectClass::XAiResponses,
+        ProviderId::Meta => DialectClass::MetaChat,
         ProviderId::Moonshotai => DialectClass::MoonshotChat,
-        ProviderId::Google => DialectClass::GeminiGenerateContent,
-        ProviderId::Openrouter => DialectClass::OpenRouterChat,
-        ProviderId::VercelAiGateway => DialectClass::VercelAiGatewayChat,
+        ProviderId::Alibaba => DialectClass::AlibabaChat,
     }
 }
 

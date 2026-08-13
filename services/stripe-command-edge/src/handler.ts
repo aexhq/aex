@@ -20,8 +20,8 @@ import type {
 const COMMAND_KINDS = new Set([
   "ensure_customer",
   "create_top_up_checkout",
-  "create_portal_session",
-  "charge_saved_method",
+  "create_payment_method_session",
+  "detach_payment_method",
   "lookup_effect_outcome",
   "refund_charge",
 ]);
@@ -76,8 +76,8 @@ function envelopeFrom(value: unknown): PaymentCommandEnvelope {
   }
   if (
     envelope.command.kind === "lookup_effect_outcome" &&
-    (envelope.command.expect !== "charge_saved_method" ||
-      (envelope.command.provider !== null && typeof envelope.command.provider !== "string"))
+    envelope.command.provider !== null &&
+    typeof envelope.command.provider !== "string"
   ) {
     throw new Error("lookup command is unsupported");
   }
@@ -219,89 +219,49 @@ export async function executePaymentCommand(
           : { url: object.url, expiresAt: new Date(object.expires_at * 1000).toISOString() },
       );
     }
-    case "create_portal_session": {
-      const object = await client.billingPortal.sessions.create(
-        {
-          customer: envelope.command.customer,
-          return_url: envelope.command.returnUrl,
-        },
-        options,
-      );
-      return succeeded(envelope, object.id, object.created, 0, {
-        url: object.url,
-        // Stripe does not publish an expiry timestamp for portal sessions. AEX
-        // exposes a conservative five-minute grant rather than claiming the
-        // provider URL is durable.
-        expiresAt: new Date((object.created + 300) * 1000).toISOString(),
-      });
-    }
-    case "charge_saved_method": {
-      const amount = cents(envelope.command.amount);
-      const object = await client.paymentIntents.create(
-        {
-          amount,
-          currency: "usd",
-          customer: envelope.command.customer,
-          payment_method: envelope.command.method,
-          confirm: true,
-          off_session: true,
-          metadata: effectMetadata,
-        },
-        options,
-      );
-      if (object.status === "succeeded") {
-        return succeeded(envelope, object.id, object.created, amount);
+    case "create_payment_method_session": {
+      const consentedAt = Date.parse(envelope.command.consentedAt);
+      if (!Number.isFinite(consentedAt) || consentedAt > Date.now()) {
+        throw new Error("card consent time is invalid");
       }
-      if (object.status === "requires_action") {
-        return {
-          outcome: "failed",
-          effect: envelope.command.effect,
-          failure: {
-            class: "authentication_required",
-            providerCode: object.status,
-            declineCode: null,
-            retryable: false,
+      const object = await client.checkout.sessions.create(
+        {
+          mode: "setup",
+          customer: envelope.command.customer,
+          success_url: envelope.command.successUrl,
+          cancel_url: envelope.command.cancelUrl,
+          setup_intent_data: { metadata: effectMetadata },
+          client_reference_id: envelope.command.organization,
+          metadata: {
+            ...effectMetadata,
+            aex_card_consent_at: envelope.command.consentedAt,
           },
-        };
-      }
+        },
+        options,
+      );
+      return succeeded(
+        envelope,
+        object.id,
+        object.created,
+        0,
+        object.url === null
+          ? null
+          : { url: object.url, expiresAt: new Date(object.expires_at * 1000).toISOString() },
+      );
+    }
+    case "detach_payment_method": {
+      const object = await client.paymentMethods.detach(envelope.command.method, {}, options);
+      return succeeded(envelope, object.id, object.created, 0);
+    }
+    case "lookup_effect_outcome": {
+      // Lookups are command-specific and run in the reconciliation worker. The
+      // request edge never guesses a successful effect from an unrelated
+      // object family.
       return {
         outcome: "unknown",
         effect: envelope.command.effect,
-        evidence: { evidence: "ambiguous_response", providerCode: object.status },
+        evidence: { evidence: "ambiguous_response", providerCode: "reconciliation_required" },
       };
-    }
-    case "lookup_effect_outcome": {
-      if (envelope.command.expect !== "charge_saved_method") {
-        return {
-          outcome: "unknown",
-          effect: envelope.command.effect,
-          evidence: { evidence: "ambiguous_response", providerCode: "unsupported_lookup_kind" },
-        };
-      }
-      const object =
-        envelope.command.provider === null
-          ? (
-              await client.paymentIntents.search({
-                query: `metadata['aex_effect_id']:'${envelope.command.effect}'`,
-                limit: 1,
-              })
-            ).data[0]
-          : await client.paymentIntents.retrieve(envelope.command.provider);
-      if (object?.metadata.aex_effect_id !== envelope.command.effect) {
-        return {
-          outcome: "unknown",
-          effect: envelope.command.effect,
-          evidence: { evidence: "ambiguous_response", providerCode: "effect_metadata_mismatch" },
-        };
-      }
-      if (object === undefined || object.status !== "succeeded") {
-        return {
-          outcome: "unknown",
-          effect: envelope.command.effect,
-          evidence: { evidence: "ambiguous_response", providerCode: object?.status ?? null },
-        };
-      }
-      return succeeded(envelope, object.id, object.created, object.amount);
     }
     case "refund_charge": {
       const amount = cents(envelope.command.amount);

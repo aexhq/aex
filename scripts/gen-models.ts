@@ -12,11 +12,10 @@ const PROVIDERS = [
   "openai",
   "anthropic",
   "deepseek",
-  "zai",
+  "xai",
+  "meta",
   "moonshotai",
-  "google",
-  "openrouter",
-  "vercel",
+  "alibaba",
 ] as const;
 
 type ProviderKey = (typeof PROVIDERS)[number];
@@ -24,23 +23,21 @@ type ProviderKey = (typeof PROVIDERS)[number];
 const PROVIDER_ID: Record<ProviderKey, string> = {
   openai: "Openai",
   anthropic: "Anthropic",
-  google: "Google",
   deepseek: "Deepseek",
-  zai: "Zai",
+  xai: "Xai",
+  meta: "Meta",
   moonshotai: "Moonshotai",
-  openrouter: "Openrouter",
-  vercel: "VercelAiGateway",
+  alibaba: "Alibaba",
 };
 
 const DIALECT_CLASS: Record<ProviderKey, string> = {
   openai: "OpenAiResponses",
   anthropic: "AnthropicMessages",
-  google: "GeminiGenerateContent",
   deepseek: "DeepSeekChat",
-  zai: "ZaiChat",
+  xai: "XAiResponses",
+  meta: "MetaChat",
   moonshotai: "MoonshotChat",
-  openrouter: "OpenRouterChat",
-  vercel: "VercelAiGatewayChat",
+  alibaba: "AlibabaChat",
 };
 
 // models.dev omits an `api` field for the providers whose base URL is fixed by
@@ -48,8 +45,7 @@ const DIALECT_CLASS: Record<ProviderKey, string> = {
 const BASE_URL_DEFAULTS: Partial<Record<ProviderKey, string>> = {
   openai: "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com/v1",
-  google: "https://generativelanguage.googleapis.com/v1beta",
-  vercel: "https://ai-gateway.vercel.sh/v1",
+  xai: "https://api.x.ai/v1",
 };
 
 const SNAPSHOT_PATH = "release/models-dev/api.json";
@@ -70,6 +66,7 @@ type Row = {
   max_output_tokens: number;
   tools: boolean;
   parallel_tools: boolean;
+  structured_output: string;
   dialect: string;
 };
 
@@ -104,6 +101,22 @@ for (const key of PROVIDERS) {
     if (typeof model.tool_call !== "boolean") {
       throw new Error(`bad tool_call on ${key}/${id}`);
     }
+    // The session product is a text agent runtime. Non-agent image, audio,
+    // video, embedding and reranking rows are not partially admitted.
+    if (
+      model.tool_call !== true ||
+      !model.modalities?.input?.includes("text") ||
+      !model.modalities?.output?.includes("text")
+    ) {
+      continue;
+    }
+    const structuredOutput = model.structured_output === true
+      ? key === "deepseek"
+        ? "JsonObject"
+        : key === "xai" || key === "moonshotai"
+          ? "None"
+          : "JsonSchema"
+      : "None";
     rows.push({
       provider: key,
       provider_id: PROVIDER_ID[key],
@@ -115,6 +128,11 @@ for (const key of PROVIDERS) {
       // tool-capable row is therefore admitted for parallel tool requests;
       // providers that only serialize tool calls simply call them in order.
       parallel_tools: model.tool_call,
+      // models.dev is a capability hint. The level is narrowed by the exact
+      // Rig 0.41 transport: DeepSeek supports json_object, xAI and Moonshot
+      // currently drop output_schema, and the remaining compatible paths use
+      // Rig's native JSON Schema mapping.
+      structured_output: structuredOutput,
       dialect: DIALECT_CLASS[key],
     });
   }
@@ -172,6 +190,7 @@ const lines: string[] = [
   "    pub max_output_tokens: u32,",
   "    pub tools: bool,",
   "    pub parallel_tools: bool,",
+  "    pub structured_output: crate::document::StructuredOutputLevel,",
   "    pub dialect: DialectClass,",
   "}",
   "",
@@ -200,6 +219,7 @@ for (const row of rows) {
     `        max_output_tokens: ${row.max_output_tokens},`,
     `        tools: ${row.tools},`,
     `        parallel_tools: ${row.parallel_tools},`,
+    `        structured_output: crate::document::StructuredOutputLevel::${row.structured_output},`,
     `        dialect: DialectClass::${row.dialect},`,
     "    },",
   );

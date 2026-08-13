@@ -1,4 +1,4 @@
-﻿use super::{
+use super::{
     Endpoints, HandshakeError, OauthClient, OauthClientError, challenge_of, github_profile,
     google_profile, redact, state_matches,
 };

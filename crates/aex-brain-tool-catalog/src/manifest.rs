@@ -187,6 +187,8 @@ pub enum ToolBoundary {
     Subagent,
     /// Brain-owned fetch and search.
     ManagedWeb,
+    /// Trusted platform persistence of a selected sandbox file.
+    PlatformStorage,
     /// A registered MCP server.
     Mcp,
     /// Guest filesystem operations.
@@ -560,7 +562,8 @@ const fn route_matches(boundary: ToolBoundary, route: ExecutorRoute) -> bool {
         ) | (
             ToolBoundary::ManagedWeb,
             ExecutorRoute::ManagedWeb | ExecutorRoute::ToolExec
-        ) | (ToolBoundary::Mcp, ExecutorRoute::Mcp)
+        ) | (ToolBoundary::PlatformStorage, ExecutorRoute::ToolExec)
+            | (ToolBoundary::Mcp, ExecutorRoute::Mcp)
             | (
                 ToolBoundary::HandsFilesystem,
                 ExecutorRoute::HandsFilesystem

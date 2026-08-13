@@ -9,9 +9,9 @@ use aex_brain_provider_custody::credential::{
 use aex_model_catalog::QualifiedModel;
 use aex_model_catalog::canonical::{
     CanonicalMessage, CanonicalModelRequest, CorrelationId, ReasoningRequest, Role, SystemBlock,
-    ToolChoice,
+    StructuredOutputRequest, ToolChoice,
 };
-use aex_model_catalog::document::CapabilitySet;
+use aex_model_catalog::document::{Capability, CapabilitySet, StructuredOutputLevel};
 use aex_model_catalog::fixture;
 use aex_model_catalog::primitives::BoundedString;
 use aex_wire::ids::{OrganizationId, PrefixedId as _, ProviderCredentialId, WorkspaceId};
@@ -193,4 +193,82 @@ fn the_request_translation_keeps_every_canonical_member() {
 fn the_canonical_corpus_still_round_trips_through_the_vocabulary() {
     let _: CanonicalJson = CanonicalJson::parse("{}").expect("json");
     let _: ResourceName = ResourceName::parse("read_file").expect("name");
+}
+
+#[test]
+fn unsupported_tools_and_structured_output_fail_before_transport() {
+    let mut request = request();
+    request.tools.push(aex_model_catalog::canonical::CanonicalToolDef {
+        name: ResourceName::parse("read_file").expect("name"),
+        description: BoundedString::truncating("read a file"),
+        input_schema: CanonicalJson::parse(r#"{"type":"object"}"#).expect("schema"),
+        strict: true,
+    });
+    assert!(matches!(
+        aex_brain_provider::translate_request(&request),
+        Err(aex_brain_provider::RequestBuildError::UnsupportedCapability(
+            "tool calling"
+        ))
+    ));
+
+    request.tools.clear();
+    request.structured_output = Some(StructuredOutputRequest::JsonObject);
+    assert!(matches!(
+        aex_brain_provider::translate_request(&request),
+        Err(aex_brain_provider::RequestBuildError::UnsupportedCapability(
+            "structured JSON output"
+        ))
+    ));
+}
+
+#[test]
+fn json_schema_is_carried_by_a_certified_rig_request() {
+    let mut request = request();
+    request.selection = fixture::qualified_entry(
+        ProviderId::Openai,
+        "gpt-5.2",
+        CapabilitySet::from_slice(&[Capability::StructuredOutput]),
+    );
+    request.structured_output = Some(StructuredOutputRequest::JsonSchema {
+        name: ResourceName::parse("answer").expect("name"),
+        schema: CanonicalJson::parse(
+            r#"{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}"#,
+        )
+        .expect("schema"),
+        strict: true,
+    });
+    let rig = aex_brain_provider::translate_request(&request).expect("certified schema translates");
+    let schema = rig.output_schema.expect("schema reaches Rig");
+    assert_eq!(schema.as_object().and_then(|value| value.get("title")), Some(&serde_json::json!("answer")));
+}
+
+#[test]
+fn json_object_only_is_distinct_from_json_schema() {
+    let mut request = request();
+    request.selection = fixture::qualified_entry_sized_and_output(
+        ProviderId::Deepseek,
+        "deepseek-v4-pro",
+        CapabilitySet::from_slice(&[Capability::StructuredOutput]),
+        200_000,
+        8_192,
+        StructuredOutputLevel::JsonObject,
+    );
+    request.structured_output = Some(StructuredOutputRequest::JsonObject);
+    let rig = aex_brain_provider::translate_request(&request).expect("json object translates");
+    assert_eq!(
+        rig.additional_params.as_ref().and_then(|value| value.get("response_format")),
+        Some(&serde_json::json!({ "type": "json_object" }))
+    );
+
+    request.structured_output = Some(StructuredOutputRequest::JsonSchema {
+        name: ResourceName::parse("answer").expect("name"),
+        schema: CanonicalJson::parse(r#"{"type":"object"}"#).expect("schema"),
+        strict: true,
+    });
+    assert!(matches!(
+        aex_brain_provider::translate_request(&request),
+        Err(aex_brain_provider::RequestBuildError::UnsupportedCapability(
+            "native JSON Schema output"
+        ))
+    ));
 }

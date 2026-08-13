@@ -30,10 +30,10 @@ pub enum CommandKind {
     EnsureCustomer,
     /// Create a hosted top-up checkout.
     CreateTopUpCheckout,
-    /// Create a hosted billing portal session.
-    CreatePortalSession,
-    /// Charge a saved payment method.
-    ChargeSavedMethod,
+    /// Create a hosted card-setup checkout.
+    CreatePaymentMethodSession,
+    /// Detach one account-owned payment method.
+    DetachPaymentMethod,
     /// Look up the outcome of an effect that ended indeterminate.
     LookupEffectOutcome,
     /// Refund a charge.
@@ -45,8 +45,8 @@ impl CommandKind {
     pub const ALL: [Self; 6] = [
         Self::EnsureCustomer,
         Self::CreateTopUpCheckout,
-        Self::CreatePortalSession,
-        Self::ChargeSavedMethod,
+        Self::CreatePaymentMethodSession,
+        Self::DetachPaymentMethod,
         Self::LookupEffectOutcome,
         Self::RefundCharge,
     ];
@@ -57,8 +57,8 @@ impl CommandKind {
         match self {
             Self::EnsureCustomer => "ensure_customer",
             Self::CreateTopUpCheckout => "create_top_up_checkout",
-            Self::CreatePortalSession => "create_portal_session",
-            Self::ChargeSavedMethod => "charge_saved_method",
+            Self::CreatePaymentMethodSession => "create_payment_method_session",
+            Self::DetachPaymentMethod => "detach_payment_method",
             Self::LookupEffectOutcome => "lookup_effect_outcome",
             Self::RefundCharge => "refund_charge",
         }
@@ -145,28 +145,31 @@ pub enum PaymentCommand {
         /// How tax is handled.
         tax: TaxMode,
     },
-    /// Create a hosted billing portal session.
-    CreatePortalSession {
+    /// Create a Stripe-hosted setup checkout. The provider collects all card
+    /// data; Aex receives only verified display metadata by webhook.
+    CreatePaymentMethodSession {
         /// The admitted effect.
         effect: EffectId,
         /// The account it belongs to.
         organization: OrganizationId,
-        /// Where to return when the user is done.
-        return_url: HttpsUrl,
+        /// Where to return after setup succeeds.
+        success_url: HttpsUrl,
+        /// Where to return after cancellation.
+        cancel_url: HttpsUrl,
         /// The provider customer.
         customer: ProviderCustomerRef,
+        /// When the caller explicitly consented to save the card.
+        consented_at: Timestamp,
     },
-    /// Charge a saved payment method.
-    ChargeSavedMethod {
+    /// Detach one provider method after finance resolved and fenced ownership.
+    DetachPaymentMethod {
         /// The admitted effect.
         effect: EffectId,
         /// The account it belongs to.
         organization: OrganizationId,
-        /// How much to charge.
-        amount: Cents,
         /// The provider customer.
         customer: ProviderCustomerRef,
-        /// The saved method.
+        /// The account-owned method.
         method: ProviderMethodRef,
     },
     /// Look up the outcome of an effect that ended indeterminate.
@@ -196,8 +199,8 @@ impl PaymentCommand {
         match self {
             Self::EnsureCustomer { effect, .. }
             | Self::CreateTopUpCheckout { effect, .. }
-            | Self::CreatePortalSession { effect, .. }
-            | Self::ChargeSavedMethod { effect, .. }
+            | Self::CreatePaymentMethodSession { effect, .. }
+            | Self::DetachPaymentMethod { effect, .. }
             | Self::LookupEffectOutcome { effect, .. }
             | Self::RefundCharge { effect, .. } => *effect,
         }
@@ -209,8 +212,8 @@ impl PaymentCommand {
         match self {
             Self::EnsureCustomer { .. } => CommandKind::EnsureCustomer,
             Self::CreateTopUpCheckout { .. } => CommandKind::CreateTopUpCheckout,
-            Self::CreatePortalSession { .. } => CommandKind::CreatePortalSession,
-            Self::ChargeSavedMethod { .. } => CommandKind::ChargeSavedMethod,
+            Self::CreatePaymentMethodSession { .. } => CommandKind::CreatePaymentMethodSession,
+            Self::DetachPaymentMethod { .. } => CommandKind::DetachPaymentMethod,
             Self::LookupEffectOutcome { .. } => CommandKind::LookupEffectOutcome,
             Self::RefundCharge { .. } => CommandKind::RefundCharge,
         }

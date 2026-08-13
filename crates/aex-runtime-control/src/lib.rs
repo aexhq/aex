@@ -20,6 +20,7 @@
 pub mod catalog;
 pub mod clock;
 pub mod generation;
+pub mod hand;
 pub mod idle;
 pub mod lifecycle;
 pub mod pressure;
@@ -39,6 +40,7 @@ pub use generation::{
     evaluate_request_binding, guest_root, is_canonical_root, may_incorporate_result, next_fence,
     supersedes,
 };
+pub use hand::{HandAction, HandDecisionError, HandId, HandRecord, HandState};
 pub use idle::{
     IDLE_EVALUATION_JITTER_MS, IdleAssessment, KEEPALIVE_MAX_MS, KeepaliveRefused,
     TRUE_IDLE_THRESHOLD_MS, issue_keepalive, lease_holds_at,

@@ -378,8 +378,8 @@ fn builtin_catalog_preserves_the_clean_cut_and_runtime_semantics() {
         .collect::<Vec<_>>();
     assert_eq!(
         names,
-        ["bash", "edit_file", "read_file", "write_file"],
-        "the four session-local tools are the complete public built-in catalog"
+        ["bash", "edit_file", "read_file", "storage_persist", "write_file"],
+        "the five MVP tools are the complete public built-in catalog"
     );
 
     for entry in entries.iter().filter(|entry| {
@@ -443,6 +443,23 @@ fn generated_argument_contracts_reject_hostile_shapes() {
     ] {
         validate_arguments(bash, &valid).expect("valid Bash command");
     }
+}
+
+#[test]
+fn storage_persist_is_the_provider_safe_spelling_of_the_product_tool() {
+    let entries = builtin_entries().expect("compiled catalog");
+    let tool = entries
+        .iter()
+        .find(|entry| entry.descriptor.name.as_str() == "storage_persist")
+        .expect("storage.persist product tool is advertised with provider-safe spelling");
+    assert_eq!(tool.descriptor.boundary, ToolBoundary::PlatformStorage);
+    assert_eq!(tool.descriptor.route, ExecutorRoute::ToolExec);
+    assert_eq!(tool.descriptor.effect, EffectClass::IdempotentManaged);
+    assert_eq!(
+        tool.descriptor.recovery,
+        RecoveryClass::QueryDurableOperation
+    );
+    assert!(ToolName::parse("storage.persist").is_err());
 }
 
 #[test]
@@ -600,8 +617,8 @@ fn advertisement_is_exactly_the_ready_session_local_tools() {
         let name = entry.descriptor.name.as_str();
         assert!(advertised.contains(name), "{name}");
     }
-    assert_eq!(advertised.entries.len(), 4);
-    for name in ["bash", "edit_file", "read_file", "write_file"] {
+    assert_eq!(advertised.entries.len(), 5);
+    for name in ["bash", "edit_file", "read_file", "storage_persist", "write_file"] {
         assert!(advertised.contains(name), "{name}");
     }
     assert!(

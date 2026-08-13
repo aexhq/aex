@@ -1,4 +1,4 @@
-//! The guest's HTTP surface: the six verbs, the attached stream, the provider
+//! The guest's HTTP surface: bounded verbs, the attached stream, the provider
 //! lifecycle hooks and the internal health paths — all on one port.
 //!
 //! One port because `CreateMicrovmImage` declares exactly one hook port and
@@ -16,8 +16,8 @@ use aex_hands_agent::session::{LifecycleHook, StartDecision, StartInput, Supervi
 use aex_hands_protocol::operation::{DeliveryMode, GuestRoot};
 use aex_hands_protocol::rpc::{
     AttachResponse, CancelRequest, Fence, GenerationBinding, GuestRequest, GuestResponse,
-    HandsOperationId, MAX_GUEST_BODY_BYTES, MAX_RESULT_CHUNK_BYTES, PROTOCOL_V1, ResultRequest,
-    ResultResponse, StartRequest, StatusRequest, StatusResponse, Verb,
+    HandsOperationId, HelloRequest, HelloResponse, MAX_GUEST_BODY_BYTES, MAX_RESULT_CHUNK_BYTES,
+    PROTOCOL_V1, ResultRequest, ResultResponse, StartRequest, StatusRequest, StatusResponse, Verb,
 };
 use aex_internal_contracts::SchemaVersion;
 use aex_wire::types::Timestamp;
@@ -445,6 +445,20 @@ fn answer(
     body: &[u8],
 ) -> Result<Vec<u8>, GuestError> {
     match verb {
+        Verb::Hello => {
+            let _request: HelloRequest = decode_guest_request(body, state)?;
+            encode_guest_response(
+                &HelloResponse {
+                    protocol_version: PROTOCOL_V1,
+                    max_body_bytes: MAX_GUEST_BODY_BYTES as u64,
+                    max_result_chunk_bytes: MAX_RESULT_CHUNK_BYTES,
+                    filesystem_tools: true,
+                    bash: true,
+                    sandbox_process_mcp: true,
+                },
+                state,
+            )
+        }
         Verb::Start => {
             let request: StartRequest = decode_guest_request(body, state)?;
             let input = StartInput {

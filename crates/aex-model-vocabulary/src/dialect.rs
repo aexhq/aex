@@ -18,16 +18,14 @@ pub enum DialectClass {
     AnthropicMessages,
     /// `DeepSeek` chat completions.
     DeepSeekChat,
-    /// Z.AI chat completions.
-    ZaiChat,
+    /// xAI Responses.
+    XAiResponses,
+    /// Meta's official OpenAI-compatible chat completions.
+    MetaChat,
     /// `Moonshot` chat completions.
     MoonshotChat,
-    /// Gemini `streamGenerateContent`.
-    GeminiGenerateContent,
-    /// `OpenRouter`'s OpenAI-compatible chat-completions surface.
-    OpenRouterChat,
-    /// `Vercel AI Gateway`'s OpenAI-compatible chat-completions surface.
-    VercelAiGatewayChat,
+    /// Alibaba Model Studio's official OpenAI-compatible chat completions.
+    AlibabaChat,
 }
 
 impl DialectClass {
@@ -38,11 +36,10 @@ impl DialectClass {
             Self::OpenAiResponses => ProviderId::Openai,
             Self::AnthropicMessages => ProviderId::Anthropic,
             Self::DeepSeekChat => ProviderId::Deepseek,
-            Self::ZaiChat => ProviderId::Zai,
+            Self::XAiResponses => ProviderId::Xai,
+            Self::MetaChat => ProviderId::Meta,
             Self::MoonshotChat => ProviderId::Moonshotai,
-            Self::GeminiGenerateContent => ProviderId::Google,
-            Self::OpenRouterChat => ProviderId::Openrouter,
-            Self::VercelAiGatewayChat => ProviderId::VercelAiGateway,
+            Self::AlibabaChat => ProviderId::Alibaba,
         }
     }
 

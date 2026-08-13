@@ -1,5 +1,5 @@
-//! The compiled per-model facts admission exposes: numeric limits and the
-//! two-bit tool capability set.
+//! The compiled per-model facts admission exposes: numeric limits, tool
+//! capabilities, and the certified structured-output level.
 //!
 //! Everything else the old catalog document carried — dialect revisions,
 //! endpoints, reasoning policy, cache policy, error maps, staged/deprecated
@@ -18,11 +18,13 @@ pub enum Capability {
     Tools,
     /// The model may emit parallel tool calls.
     ParallelTools,
+    /// The model and exact Rig transport support native structured output.
+    StructuredOutput,
 }
 
 impl Capability {
     /// Every capability, for exhaustive tests.
-    pub const ALL: [Self; 2] = [Self::Tools, Self::ParallelTools];
+    pub const ALL: [Self; 3] = [Self::Tools, Self::ParallelTools, Self::StructuredOutput];
 }
 
 /// A bit set over [`Capability`].
@@ -67,8 +69,22 @@ impl Capability {
         match self {
             Self::Tools => 1,
             Self::ParallelTools => 2,
+            Self::StructuredOutput => 4,
         }
     }
+}
+
+/// The strongest structured-output contract certified for one model on its
+/// exact Rig transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StructuredOutputLevel {
+    /// No native structured-output contract is admitted.
+    None,
+    /// The provider can require a JSON object but not a supplied schema.
+    JsonObject,
+    /// The provider can enforce a supplied JSON Schema.
+    JsonSchema,
 }
 
 /// The numeric bounds a model row declares.

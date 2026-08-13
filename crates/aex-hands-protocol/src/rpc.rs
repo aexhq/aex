@@ -1,4 +1,4 @@
-//! The six bounded JSON verbs between Brain and one Hands guest.
+//! The bounded JSON verbs between Tool Mux and one Hands guest.
 //!
 //! Every request carries a [`GenerationBinding`] in one [`GuestRequest`] envelope.
 //! The HTTP adapter bounds the complete body before decoding this envelope, then
@@ -52,9 +52,11 @@ pub const MAX_RESULT_CHUNK_BYTES: u64 = 180_000;
 /// The launch protocol version.
 pub const PROTOCOL_V1: SchemaVersion = SchemaVersion::V1;
 
-/// The six guest HTTP verbs.
+/// The guest HTTP verbs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Verb {
+    /// Prove protocol, bounds, capabilities, and exact generation before use.
+    Hello,
     /// Start one operation.
     Start,
     /// Ask about one operation.
@@ -71,7 +73,8 @@ pub enum Verb {
 
 impl Verb {
     /// Every verb, in route order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
+        Self::Hello,
         Self::Start,
         Self::Status,
         Self::Cancel,
@@ -84,6 +87,7 @@ impl Verb {
     #[must_use]
     pub const fn path(self) -> &'static str {
         match self {
+            Self::Hello => "/aex/hands/v1/hello",
             Self::Start => "/aex/hands/v1/start",
             Self::Status => "/aex/hands/v1/status",
             Self::Cancel => "/aex/hands/v1/cancel",
@@ -92,6 +96,29 @@ impl Verb {
             Self::File => "/aex/hands/v1/file",
         }
     }
+}
+
+/// Empty exact-generation handshake request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HelloRequest {}
+
+/// Exact bounds and capabilities a guest proves before Tool Mux dispatches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HelloResponse {
+    /// Protocol revision implemented by this guest.
+    pub protocol_version: SchemaVersion,
+    /// Largest accepted encoded request or response body.
+    pub max_body_bytes: u64,
+    /// Largest result pull window.
+    pub max_result_chunk_bytes: u64,
+    /// Whether structured official filesystem operations are installed.
+    pub filesystem_tools: bool,
+    /// Whether the explicit shell/exec operation is installed.
+    pub bash: bool,
+    /// Whether registered processes can host sandbox MCP.
+    pub sandbox_process_mcp: bool,
 }
 
 /// Which stream a diagnostic chunk came from.
@@ -439,6 +466,7 @@ mod tests {
         assert_eq!(
             Verb::ALL.map(Verb::path),
             [
+                "/aex/hands/v1/hello",
                 "/aex/hands/v1/start",
                 "/aex/hands/v1/status",
                 "/aex/hands/v1/cancel",

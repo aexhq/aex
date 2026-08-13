@@ -23,7 +23,6 @@ pathParams:
   fileDownloadId: { type: id, of: file_download, doc: "The ephemeral live-file download." }
   partNumber: { type: integer, min: 1, max: 1280, doc: "The one-based live transfer part." }
   uploadId: { type: id, of: upload, doc: "The staged upload." }
-  providerCredentialId: { type: id, of: provider_credential, doc: "The provider-credential binding." }
   limitId: { type: limit_id, doc: "The effective workspace limit." }
   name: { type: resource_name, doc: "The registered workspace-file name." }
 
@@ -50,7 +49,6 @@ scenarioOwners:
   central.workspaces: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
   regional.files: { servingArtifact: session-stream-api, scenarios: [SC-CONTENT-LIFECYCLE] }
   regional.operations: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-TERMINAL] }
-  regional.provider-credentials: { servingArtifact: session-stream-api, scenarios: [SC-BYOK-CUSTODY] }
   regional.registry: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT] }
   regional.sessions: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT, SC-SESSION-TERMINAL] }
   regional.uploads: { servingArtifact: session-stream-api, scenarios: [SC-CONTENT-LIFECYCLE] }
@@ -111,10 +109,6 @@ servedOperations:
     - billing_statements_list
     - billing_top_up_checkout_create
   session-stream-api:
-    - provider_credential_get
-    - provider_credential_register
-    - provider_credential_revoke
-    - provider_credentials_list
     - regional_operation_cancel
     - regional_operation_get
     - regional_operations_list

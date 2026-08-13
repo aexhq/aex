@@ -12,6 +12,13 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The MVP lifetime ceiling for non-root agent identities in one session.
+/// Completed and cancelled children still count.
+pub const MAX_SUBAGENTS_PER_SESSION: u64 = 12;
+
+/// The MVP lineage ceiling, with the root at depth zero.
+pub const MAX_SUBAGENT_DEPTH: u16 = 3;
+
 /// One accumulating budget dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -97,8 +104,8 @@ impl Default for StructuralLimits {
     /// compiled constants; these values exist so a test has a starting point.
     fn default() -> Self {
         Self {
-            max_depth: 8,
-            max_fanout: 128,
+            max_depth: MAX_SUBAGENT_DEPTH,
+            max_fanout: MAX_SUBAGENTS_PER_SESSION as u32,
         }
     }
 }
@@ -476,12 +483,15 @@ impl BudgetNode {
 #[must_use]
 pub fn launch_session_grant(cost_micro_usd: u64) -> BudgetGrant {
     let mut grant = DimensionVector::ZERO;
-    grant.set(Dimension::TotalChildrenCreated, 16_384);
+    grant.set(
+        Dimension::TotalChildrenCreated,
+        MAX_SUBAGENTS_PER_SESSION,
+    );
     grant.set(Dimension::ProviderCalls, u64::MAX);
     grant.set(Dimension::HandsCalls, 4_096);
     grant.set(Dimension::CostMicroUsd, cost_micro_usd);
-    grant.set(Dimension::ActiveChildren, 256);
-    grant.set(Dimension::QueuedChildren, 4_096);
+    grant.set(Dimension::ActiveChildren, MAX_SUBAGENTS_PER_SESSION);
+    grant.set(Dimension::QueuedChildren, MAX_SUBAGENTS_PER_SESSION);
     grant.set(Dimension::RetainedResultBytes, 256 * 1_024 * 1_024);
     grant
 }
@@ -602,9 +612,9 @@ mod tests {
     #[test]
     fn the_launch_grant_names_the_recorded_defaults() {
         let grant = launch_session_grant(5_000_000);
-        assert_eq!(grant.get(Dimension::ActiveChildren), 256);
-        assert_eq!(grant.get(Dimension::QueuedChildren), 4_096);
-        assert_eq!(grant.get(Dimension::TotalChildrenCreated), 16_384);
+        assert_eq!(grant.get(Dimension::ActiveChildren), 12);
+        assert_eq!(grant.get(Dimension::QueuedChildren), 12);
+        assert_eq!(grant.get(Dimension::TotalChildrenCreated), 12);
         assert_eq!(grant.get(Dimension::HandsCalls), 4_096);
         assert_eq!(grant.get(Dimension::CostMicroUsd), 5_000_000);
         assert_eq!(

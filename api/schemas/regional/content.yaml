@@ -180,6 +180,12 @@ schemas:
       sha256: { type: content_hash, doc: "Hash of the staged bytes." }
       sizeBytes: { type: decimal, doc: "Size of the staged bytes." }
 
+  BlobUrl:
+    doc: An HTTPS source fetched asynchronously under the platform SSRF, redirect, time and size policy.
+    type: object
+    fields:
+      url: { type: https_url, doc: "The exact initial HTTPS URL." }
+
   BlobInput:
     doc: Where a registered value's bytes come from.
     type: union
@@ -187,6 +193,7 @@ schemas:
     variants:
       - { value: inline, payload: BlobInline, doc: "Carried in the request." }
       - { value: upload, payload: BlobUpload, doc: "Staged through the upload surface." }
+      - { value: url, payload: BlobUrl, doc: "Fetched asynchronously; admission immediately replaces the current record with pending." }
 
   RegisteredState:
     doc: The only state a registered entry has; there is no version history.
@@ -291,10 +298,18 @@ schemas:
       createdAt: { type: timestamp, doc: "When staging began." }
       expiresAt: { type: timestamp, doc: "When the orphan grace expires." }
 
-  UploadCreateRequest:
-    doc: Stage a large registered-resource value.
+  UploadAdmission:
+    doc: One pending current-file overwrite and every bounded part grant needed to upload it; no extra public grant route exists.
     type: object
     fields:
+      upload: { type: ref, to: Upload, doc: "The admitted upload." }
+      grants: { type: array, max: 1000, items: { type: ref, to: UploadPartGrant }, doc: "Every part grant, in ascending order." }
+
+  UploadCreateRequest:
+    doc: Stage a large current workspace-file replacement.
+    type: object
+    fields:
+      name: { type: resource_name, doc: "The latest-only logical file name to replace immediately with pending." }
       sizeBytes: { type: decimal, doc: "The exact object size." }
       sha256: { type: content_hash, doc: "The exact whole-object hash." }
       contentType: { type: string, min: 1, max: 255, doc: "The media type." }
@@ -349,42 +364,6 @@ schemas:
     type: object
     fields:
       parts: { type: array, max: 10000, items: { type: ref, to: UploadPart }, doc: "Every written part." }
-
-  ProviderCredentialState:
-    doc: Whether a BYOK binding may still be selected.
-    type: enum
-    values:
-      - { value: ready, doc: "Selectable." }
-      - { value: revoked, doc: "Revoked; sessions holding it fail closed." }
-
-  ProviderCredential:
-    doc: A BYOK provider-credential binding. The key material never appears here.
-    type: object
-    fields:
-      id: { type: id, of: provider_credential, doc: "The stable binding identity." }
-      provider: { type: provider_id, doc: "Which provider the credential is for." }
-      name: { type: resource_name, doc: "A human label." }
-      state: { type: ref, to: ProviderCredentialState, doc: "Whether it is selectable." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      fingerprint: { type: content_hash, doc: "A one-way fingerprint of the key material." }
-      createdAt: { type: timestamp, doc: "When it was registered." }
-      updatedAt: { type: timestamp, doc: "When it last changed." }
-      revokedAt: { type: timestamp, optional: true, doc: "When it was revoked." }
-
-  ProviderCredentialPage:
-    doc: One page of provider-credential bindings.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: ProviderCredential }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  ProviderCredentialRegisterRequest:
-    doc: Register a BYOK provider credential. This request carries plaintext.
-    type: object
-    fields:
-      provider: { type: provider_id, doc: "Which provider the credential is for." }
-      name: { type: resource_name, doc: "A human label." }
-      apiKey: { type: string, min: 8, max: 8192, doc: "The provider key; write-only, never returned." }
 
   LimitSource:
     doc: Where an effective limit value came from.

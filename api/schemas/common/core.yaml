@@ -136,11 +136,8 @@ schemas:
     type: enum
     values:
       - { value: session_cancel, doc: "Cancel the session's current work and return it to idle." }
-      - { value: session_suspend, doc: "Suspend an idle session's exact retained generation." }
-      - { value: session_resume, doc: "Resume the same retained generation to idle." }
       - { value: session_terminate, doc: "Destroy session compute and live files while retaining metadata and messages." }
       - { value: session_delete, doc: "Irreversibly delete session-scoped user content." }
-      - { value: workspace_delete, doc: "Delete the workspace across both planes." }
 
   OperationStatus:
     doc: Where a durable operation is in its lifecycle.
@@ -200,8 +197,5 @@ schemas:
     tag: kind
     variants:
       - { value: session_cancel, payload: SessionCancelResult, doc: "Current-work cancellation result." }
-      - { value: session_suspend, payload: SessionSuspendResult, doc: "Manual suspension result." }
-      - { value: session_resume, payload: SessionResumeResult, doc: "Manual resumption result." }
       - { value: session_terminate, payload: SessionTerminateResult, doc: "Permanent compute/live-file termination result." }
       - { value: session_delete, payload: SessionTombstone, doc: "Irreversible deletion tombstone." }
-      - { value: workspace_delete, payload: WorkspaceTombstone, doc: "Workspace tombstone." }

@@ -111,14 +111,6 @@ pub enum Command {
         #[command(subcommand)]
         command: FileCommand,
     },
-    Registry {
-        #[command(subcommand)]
-        command: RegistryCommand,
-    },
-    Upload {
-        #[command(subcommand)]
-        command: UploadCommand,
-    },
     ProviderCredential {
         #[command(subcommand)]
         command: ProviderCredentialCommand,
@@ -329,83 +321,38 @@ pub enum OperationCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum FileCommand {
-    Live {
-        #[command(subcommand)]
-        command: FileModeCommand,
-    },
-}
-#[derive(Debug, Subcommand)]
-pub enum FileModeCommand {
-    List {
-        session: String,
-    },
-    Stat {
-        session: String,
-        path: String,
-    },
-    Download {
-        session: String,
-        path: String,
-        #[arg(long)]
-        destination: String,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum RegistryCommand {
-    File {
-        #[command(subcommand)]
-        command: RegistryFileCommand,
-    },
-}
-#[derive(Debug, Subcommand)]
-pub enum RegistryFileCommand {
-    List,
+    /// List current workspace files.
+    List(PageArgs),
+    /// Read current workspace-file metadata.
     Get {
         name: String,
     },
-    Set {
+    /// Replace a current value from local bytes or an HTTPS URL.
+    Put {
         name: String,
+        #[arg(long, conflicts_with = "url")]
+        path: Option<PathBuf>,
+        #[arg(long, conflicts_with = "path")]
+        url: Option<String>,
         #[arg(long)]
-        request: String,
+        media_type: Option<String>,
     },
-    Delete {
+    /// Upload arbitrary local bytes and publish them as the current value.
+    Upload {
         name: String,
+        path: PathBuf,
+        #[arg(long)]
+        media_type: Option<String>,
     },
+    /// Download and verify the current ready bytes.
     Download {
         name: String,
         #[arg(long)]
-        destination: String,
+        destination: PathBuf,
     },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum UploadCommand {
-    Create {
-        #[arg(long)]
-        size_bytes: u64,
-        #[arg(long)]
-        sha256: String,
-        #[arg(long)]
-        content_type: String,
-    },
-    Parts {
-        upload: String,
-        #[arg(long)]
-        part: Vec<u32>,
-    },
-    Complete {
-        upload: String,
-        #[arg(long)]
-        request: String,
-    },
-    Abort {
-        upload: String,
-    },
-    Put {
-        path: PathBuf,
-        #[arg(long)]
-        content_type: Option<String>,
+    /// Delete the current logical name. Already-absent is success.
+    Delete {
+        name: String,
     },
 }
 #[derive(Debug, Subcommand)]

@@ -3,6 +3,10 @@
   "apiVersion": "2026-06-24.dahlia",
   "connect": false,
   "enabledEvents": [
+    "payment_method.attached",
+    "payment_method.updated",
+    "payment_method.detached",
+    "checkout.session.completed",
     "payment_intent.succeeded",
     "payment_intent.payment_failed",
     "payment_intent.canceled",

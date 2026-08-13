@@ -66,9 +66,28 @@ function scalar(value: unknown): Scalar | undefined {
 /** The closed, PII-free fact projection. */
 function boundedFacts(object: Readonly<Record<string, unknown>>): Readonly<Record<string, Scalar>> {
   const facts: Record<string, Scalar> = {};
-  for (const key of ["amount", "amount_received", "currency", "status", "reason", "fee", "tax"]) {
+  for (const key of [
+    "amount",
+    "amount_received",
+    "currency",
+    "status",
+    "reason",
+    "fee",
+    "tax",
+    "customer",
+    "mode",
+    "payment_status",
+  ]) {
     const value = scalar(object[key]);
     if (value !== undefined) facts[key] = value;
+  }
+  const card = object.card;
+  if (typeof card === "object" && card !== null) {
+    const safeCard = card as Readonly<Record<string, unknown>>;
+    for (const key of ["brand", "last4", "exp_month", "exp_year"]) {
+      const value = scalar(safeCard[key]);
+      if (value !== undefined) facts[`card_${key}`] = value;
+    }
   }
   const lastError = object.last_payment_error;
   if (typeof lastError === "object" && lastError !== null) {

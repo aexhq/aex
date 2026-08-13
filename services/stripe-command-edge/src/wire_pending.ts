@@ -33,17 +33,18 @@ export type PaymentCommand =
       readonly tax: "provider_automatic" | "none";
     }
   | {
-      readonly kind: "create_portal_session";
+      readonly kind: "create_payment_method_session";
       readonly effect: string;
       readonly organization: string;
-      readonly returnUrl: string;
+      readonly successUrl: string;
+      readonly cancelUrl: string;
       readonly customer: string;
+      readonly consentedAt: string;
     }
   | {
-      readonly kind: "charge_saved_method";
+      readonly kind: "detach_payment_method";
       readonly effect: string;
       readonly organization: string;
-      readonly amount: number;
       readonly customer: string;
       readonly method: string;
     }

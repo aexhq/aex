@@ -24,6 +24,7 @@
 //! - authorization decisions about who may hold a grant.
 
 pub mod grant;
+pub mod file;
 pub mod registry;
 pub mod upload;
 
@@ -33,6 +34,12 @@ pub use grant::{
     ByteRange, ContentObjectLocation, DownloadGrant, GRANT_TTL, GrantContentDescriptor,
     GrantPlacement, GrantRejection, GrantSubject, MAX_SIGNED_RANGE_BYTES, ObjectChecksum,
     mint_grant,
+};
+pub use file::{
+    FileAdmission, FileIntent, FileMount, FilePublish, FileReferences, FileSource, FileState,
+    FreezeError, FrozenFile, ReadyFile, StoragePersistError, StoragePersistOutcome,
+    StoragePersistReceipts, StoragePersistRequest, StoragePersistResult, WorkspaceFile,
+    admit_inline, admit_pending, freeze_manifest, publish_failed, publish_ready,
 };
 pub use registry::{
     DeleteCommit, ProposedValue, RegisteredValueRef, RegistryCommit, RegistryPointer,

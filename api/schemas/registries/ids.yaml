@@ -5,6 +5,7 @@
 # newtypes in `aex_wire::ids`, and `api/generated/registries/ids.json`.
 ids:
   - { key: user, prefix: usr, rust: UserId, doc: "An authenticated person." }
+  - { key: account, prefix: acc, rust: AccountId, doc: "One personal prepaid account." }
   - { key: organization, prefix: org, rust: OrganizationId, doc: "The billing and ownership boundary." }
   - { key: membership, prefix: mem, rust: MembershipId, doc: "A person's role inside one organization." }
   - { key: invitation, prefix: inv, rust: InvitationId, doc: "A pending invitation to join an organization." }
@@ -24,3 +25,5 @@ ids:
   - { key: upload, prefix: upl, rust: UploadId, doc: "One staged multipart upload." }
   - { key: measurement, prefix: msr, rust: MeasurementId, doc: "One metered download measurement." }
   - { key: statement, prefix: stm, rust: StatementId, doc: "One immutable issued billing statement." }
+  - { key: payment_method, prefix: pmt, rust: PaymentMethodId, doc: "Card display metadata for a provider payment method." }
+  - { key: billing_transaction, prefix: txn, rust: BillingTransactionId, doc: "One immutable balanced ledger transaction." }

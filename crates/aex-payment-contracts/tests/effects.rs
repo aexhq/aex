@@ -23,9 +23,9 @@ fn effect() -> EffectId {
 #[test]
 fn the_provider_idempotency_key_is_derived_and_never_invented() {
     let first =
-        ProviderIdempotencyKey::derive(CommandKind::ChargeSavedMethod, organization(), effect());
+        ProviderIdempotencyKey::derive(CommandKind::CreatePaymentMethodSession, organization(), effect());
     let second =
-        ProviderIdempotencyKey::derive(CommandKind::ChargeSavedMethod, organization(), effect());
+        ProviderIdempotencyKey::derive(CommandKind::CreatePaymentMethodSession, organization(), effect());
     assert_eq!(first, second, "a retry must present the same key");
 
     // Every input is part of the key, so no two effects can collide.
@@ -40,7 +40,7 @@ fn the_provider_idempotency_key_is_derived_and_never_invented() {
     assert_ne!(
         first,
         ProviderIdempotencyKey::derive(
-            CommandKind::ChargeSavedMethod,
+            CommandKind::CreatePaymentMethodSession,
             organization(),
             other_effect
         )

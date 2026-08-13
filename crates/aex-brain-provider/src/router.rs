@@ -491,7 +491,7 @@ where
             )
             .await
         }
-        DispatchClient::Gemini(client) => {
+        DispatchClient::DeepSeek(client) => {
             consume_stream(
                 &client.completion_model(model_id),
                 request,
@@ -504,7 +504,33 @@ where
             )
             .await
         }
-        DispatchClient::Compatible(client) => {
+        DispatchClient::XAi(client) => {
+            consume_stream(
+                &client.completion_model(model_id),
+                request,
+                dialect,
+                provider,
+                preview,
+                cancel,
+                response_started,
+                &mut on_started,
+            )
+            .await
+        }
+        DispatchClient::Moonshot(client) => {
+            consume_stream(
+                &client.completion_model(model_id),
+                request,
+                dialect,
+                provider,
+                preview,
+                cancel,
+                response_started,
+                &mut on_started,
+            )
+            .await
+        }
+        DispatchClient::OpenAiCompatible(client) => {
             consume_stream(
                 &client.completion_model(model_id),
                 request,

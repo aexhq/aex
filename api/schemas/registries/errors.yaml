@@ -51,8 +51,6 @@ errors:
   - { code: package_integrity_mismatch, status: 409, retryable: false, class: state, stage: domain_state, message: "a package artifact failed its integrity check" }
   - { code: unknown_provider, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "no such provider" }
   - { code: unknown_model, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "no such model for that provider" }
-  - { code: provider_credential_not_found, status: 404, retryable: false, class: not_found, stage: tombstone_and_parent, message: "no such provider credential binding" }
-  - { code: provider_credential_revoked, status: 409, retryable: false, class: state, stage: domain_state, message: "the provider credential binding was revoked" }
   - { code: invalid_auto_topup_policy, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the auto top-up policy is not internally consistent" }
   - { code: payment_method_required, status: 402, retryable: false, class: state, stage: domain_state, message: "the organization has no usable saved payment method" }
   - { code: authentication_unavailable, status: 503, retryable: true, class: unavailable, stage: authentication, message: "the authorization authority could not be reached" }
@@ -61,6 +59,7 @@ errors:
   - { code: precondition_failed, status: 412, retryable: false, class: precondition, stage: precondition, message: "the `If-Match` or generation precondition did not hold" }
   - { code: wrong_workspace_region, status: 409, retryable: false, class: conflict, stage: placement, message: "the workspace is placed in a different region", remedy: "reissue the request against the `apiUrl` in `details`" }
   - { code: usage_unavailable, status: 503, retryable: true, class: unavailable, stage: domain_state, message: "the usage projection could not be read", remedy: "retry the identical query" }
+  - { code: usage_coverage_gap, status: 409, retryable: true, class: state, stage: domain_state, message: "trusted usage has a coverage gap and cannot be presented as complete", remedy: "retry after billing reconciliation advances the coverage frontier" }
   - { code: rate_limited, status: 429, retryable: true, class: quota, stage: domain_state, message: "too many requests" }
   - { code: upstream_error, status: 502, retryable: true, class: unavailable, stage: commit, message: "a dependency failed" }
   - { code: workspace_provision_pending, status: 503, retryable: true, class: unavailable, stage: commit, message: "workspace provisioning may still be completing", remedy: "retry the identical request with the same Idempotency-Key" }

@@ -15,8 +15,8 @@ scopes:
   - { scope: "workspaces:delete", doc: "Admit the global workspace-deletion operation." }
   - { scope: "api_keys:read", doc: "List workspace API key metadata." }
   - { scope: "api_keys:write", doc: "Mint and revoke workspace API keys." }
-  - { scope: "billing:read", doc: "Read balances, statements and usage." }
-  - { scope: "billing:write", doc: "Create checkouts, portal sessions and top-up policy." }
+  - { scope: "billing:read", doc: "Read prepaid balance, card metadata, transactions and rated usage." }
+  - { scope: "billing:write", doc: "Set up or remove cards and create manual top-up checkouts." }
   - { scope: "operations:read", doc: "Read durable operation records." }
   - { scope: "operations:write", doc: "Request cancellation of a durable operation." }
   - { scope: "workspace:read", doc: "Read the current workspace and its effective limits." }
@@ -26,5 +26,3 @@ scopes:
   - { scope: "files:live", doc: "Access live session files, automatically resuming the same suspended generation." }
   - { scope: "resources:read", doc: "Read registered opaque workspace files and mint their download grants." }
   - { scope: "resources:write", doc: "Replace and delete registered opaque workspace files and stage uploads." }
-  - { scope: "provider_credentials:read", doc: "Read dedicated BYOK provider-credential binding metadata." }
-  - { scope: "provider_credentials:write", doc: "Register and revoke dedicated BYOK provider credentials." }

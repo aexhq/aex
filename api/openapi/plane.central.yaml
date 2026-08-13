@@ -8,11 +8,7 @@ server: https://api.aex.dev
 serverDescription: The single bootstrap host; it is not regional.
 securityScheme: accountToken
 fragments:
-  - identity
   - auth
   - bootstrap
-  - organizations
-  - workspaces
   - api-keys
   - billing
-  - operations

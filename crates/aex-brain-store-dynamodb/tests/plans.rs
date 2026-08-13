@@ -398,6 +398,9 @@ fn every_compiled_action_is_conditional() {
     commit
         .session_budget
         .push(BudgetDelta::new(Dimension::ActiveChildren, 1));
+    commit
+        .session_budget
+        .push(BudgetDelta::new(Dimension::TotalChildrenCreated, 1));
     commit.children.push(spawn(0));
     commit.joins.push(JoinWrite::Open {
         join: JoinId(v7(1_767_225_600_005, 6)),
@@ -527,6 +530,10 @@ fn the_client_request_token_is_a_function_of_the_commit_identity() {
 fn a_full_spawn_page_compiles_and_one_more_child_does_not() {
     let mut commit = base(Vec::new());
     commit.children = (0..SPAWN_PAGE_CHILDREN).map(spawn).collect();
+    commit.session_budget.push(BudgetDelta::new(
+        Dimension::TotalChildrenCreated,
+        u64::from(SPAWN_PAGE_CHILDREN),
+    ));
     let compiled =
         plan::compile(&tables(), &context(), &commit).expect("a full page fits one transaction");
     assert!(
@@ -537,6 +544,10 @@ fn a_full_spawn_page_compiles_and_one_more_child_does_not() {
 
     let mut over = base(Vec::new());
     over.children = (0..=SPAWN_PAGE_CHILDREN).map(spawn).collect();
+    over.session_budget.push(BudgetDelta::new(
+        Dimension::TotalChildrenCreated,
+        u64::from(SPAWN_PAGE_CHILDREN + 1),
+    ));
     assert!(
         plan::compile(&tables(), &context(), &over).is_err(),
         "the envelope must be enforced before the round trip, not by DynamoDB"

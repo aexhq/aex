@@ -1,18 +1,16 @@
-# Accounts, organizations, workspaces, keys and the device flow.
+# One personal account, one fixed workspace, GitHub browser sessions and API
+# keys. Organization/member/device-flow product types intentionally do not
+# exist in the launch contract.
 module: central
 schemas:
   AccountPauseReason:
-    doc: >-
-      Why an account is paused, and therefore which remedy exists. One value per
-      durable `finance.billing_account.state` hold: collapsing all four onto
-      `top_up_required` told a customer under a dispute hold to make a payment
-      that would not restore service.
+    doc: Why the personal prepaid account cannot admit paid work.
     type: enum
     values:
       - { value: top_up_required, doc: "The prepaid balance is exhausted; a top-up restores service." }
-      - { value: payment_hold, doc: "A charge is held pending payment; a top-up does not clear it." }
-      - { value: dispute_hold, doc: "A chargeback is open; nothing the customer pays restores service." }
-      - { value: account_closed, doc: "The account is closed. There is no remedy." }
+      - { value: payment_hold, doc: "A payment is unresolved; another payment does not automatically clear it." }
+      - { value: dispute_hold, doc: "A chargeback is open and requires reconciliation." }
+      - { value: account_closed, doc: "The account is closed." }
 
   AccountActiveState:
     doc: An account in good standing.
@@ -22,15 +20,13 @@ schemas:
       changedAt: { type: timestamp, doc: "When the state last changed." }
 
   AccountPausedState:
-    doc: A paused account and what it takes to restore it.
+    doc: A paused account and its customer-visible remedy.
     type: object
     fields:
-      reason: { type: ref, to: AccountPauseReason, doc: "Why the account is paused." }
+      reason: { type: ref, to: AccountPauseReason, doc: "Why it is paused." }
       revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic state revision." }
       changedAt: { type: timestamp, doc: "When the state last changed." }
-      minimumRestoreCents: { type: cents, optional: true, doc: "Smallest top-up that restores service. Present exactly when `reason` is `top_up_required`; the other three holds have no paying remedy, and naming an amount for them would be a false one." }
-      retentionFundedUntil: { type: timestamp, optional: true, doc: "How long retained content stays funded. Published and permanently absent: storage is billed monthly and unfunded storage is enforced through the account pause, so no authority owns this instant yet." }
-      deletionScheduledAt: { type: timestamp, optional: true, doc: "When unfunded content is scheduled for deletion. Published and permanently absent: this is the regional content lifecycle's fact and that authority does not exist yet." }
+      minimumRestoreCents: { type: cents, optional: true, doc: "Smallest restoring top-up, only for top_up_required." }
 
   AccountOperationalState:
     doc: Whether the account may consume paid capacity.
@@ -41,307 +37,83 @@ schemas:
       - { value: paused, payload: AccountPausedState, doc: "Paused." }
 
   WorkspaceOperationalState:
-    doc: The workspace view of the account operational state it inherits.
+    doc: The fixed workspace's inherited personal-account state.
     type: object
     fields:
-      inheritedFrom: { type: ref, to: OperationalStateSource, doc: "Always the account." }
-      organizationId: { type: id, of: organization, doc: "The organization the state comes from." }
+      accountId: { type: id, of: account, doc: "The personal account." }
       state: { type: ref, to: AccountOperationalState, doc: "The inherited state." }
 
-  OperationalStateSource:
-    doc: Where a workspace operational state comes from.
-    type: enum
-    values:
-      - { value: account, doc: "Inherited from the owning account." }
-
-  OrganizationRole:
-    doc: The caller role inside one organization.
-    type: enum
-    values:
-      - { value: owner, doc: "Full control including deletion and billing." }
-      - { value: admin, doc: "Manage members, workspaces and keys." }
-      - { value: member, doc: "Use the organization resources." }
-
-  Organization:
-    doc: The billing and ownership boundary.
-    type: object
-    fields:
-      id: { type: id, of: organization, doc: "Identity." }
-      name: { type: string, min: 1, max: 128, doc: "Display name." }
-      slug: { type: string, min: 1, max: 64, pattern: "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$", doc: "URL-safe name." }
-      callerRole: { type: ref, to: OrganizationRole, doc: "What the calling principal may do here." }
-      createdAt: { type: timestamp, doc: "When it was created." }
-
-  OrganizationPage:
-    doc: One page of organizations.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: Organization }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  OrganizationCreateRequest:
-    doc: Create an organization.
-    type: object
-    fields:
-      name: { type: string, min: 1, max: 128, doc: "Display name." }
-
-  MembershipStatus:
-    doc: Whether a membership is usable.
-    type: enum
-    values:
-      - { value: active, doc: "The only membership status v1 exposes." }
-
-  Membership:
-    doc: A person's role inside one organization.
-    type: object
-    fields:
-      id: { type: id, of: membership, doc: "Identity." }
-      organizationId: { type: id, of: organization, doc: "The organization." }
-      userId: { type: id, of: user, doc: "The person." }
-      email: { type: string, min: 3, max: 320, doc: "The person's email address." }
-      role: { type: ref, to: OrganizationRole, doc: "The role." }
-      status: { type: ref, to: MembershipStatus, doc: "Whether the membership is usable." }
-      createdAt: { type: timestamp, doc: "When it was created." }
-
-  MembershipPage:
-    doc: One page of memberships.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: Membership }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  InvitationRole:
-    doc: The role an invitation grants; ownership is never invited.
-    type: enum
-    values:
-      - { value: admin, doc: "Manage members, workspaces and keys." }
-      - { value: member, doc: "Use the organization resources." }
-
-  InvitationStatus:
-    doc: Where an invitation is in its lifecycle.
-    type: enum
-    values:
-      - { value: pending, doc: "Sent, not yet resolved." }
-      - { value: accepted, doc: "Redeemed into a membership." }
-      - { value: revoked, doc: "Withdrawn." }
-      - { value: expired, doc: "Timed out." }
-
-  Invitation:
-    doc: A pending invitation to join an organization.
-    type: object
-    fields:
-      id: { type: id, of: invitation, doc: "Identity." }
-      organizationId: { type: id, of: organization, doc: "The organization." }
-      email: { type: string, min: 3, max: 320, doc: "Who was invited." }
-      role: { type: ref, to: InvitationRole, doc: "The role it grants." }
-      status: { type: ref, to: InvitationStatus, doc: "Lifecycle position." }
-      createdAt: { type: timestamp, doc: "When it was sent." }
-      expiresAt: { type: timestamp, doc: "When it stops being redeemable." }
-      resolvedAt: { type: timestamp, optional: true, doc: "When it was accepted, revoked or expired." }
-
-  InvitationCreateRequest:
-    doc: Invite a person to an organization.
-    type: object
-    fields:
-      email: { type: string, min: 3, max: 320, doc: "Who to invite." }
-      role: { type: ref, to: InvitationRole, doc: "The role to grant." }
-
-  InvitationAcceptResult:
-    doc: >-
-      What one acceptance redeemed. An invitation carries no secret, so
-      acceptance names nothing: every pending invitation addressed to the
-      caller's verified email is redeemed in one transaction. The list is
-      empty when nothing was pending, which is what a repeated call answers.
-    type: object
-    fields:
-      memberships: { type: array, max: 100, items: { type: ref, to: Membership }, doc: "One membership per invitation redeemed by this call, created or raised to the invited role. Bounded by the same 100 the acceptance transaction reads." }
-
-  WorkspaceStatus:
-    doc: Whether a workspace admits work.
-    type: enum
-    values:
-      - { value: active, doc: "Admitting work." }
-      - { value: deleting, doc: "A deletion operation is running." }
-
   Workspace:
-    doc: A region-pinned execution and content boundary.
+    doc: The account's fixed eu-west-1 execution and content boundary.
     type: object
     fields:
       id: { type: id, of: workspace, doc: "Identity." }
-      organizationId: { type: id, of: organization, doc: "The owning organization." }
       name: { type: string, min: 1, max: 128, doc: "Display name." }
-      slug: { type: string, min: 1, max: 64, pattern: "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$", doc: "URL-safe name." }
-      region: { type: region, doc: "Immutable placement." }
-      apiUrl: { type: https_url, doc: "The regional host this workspace answers on." }
-      status: { type: ref, to: WorkspaceStatus, doc: "Whether it admits work." }
+      region: { type: region, doc: "Immutable placement; eu-west-1 at launch." }
+      apiUrl: { type: https_url, doc: "Regional session endpoint." }
       operationalState: { type: ref, to: WorkspaceOperationalState, doc: "Inherited account state." }
-      createdAt: { type: timestamp, doc: "When it was created." }
-      deletionOperationId: { type: id, of: operation, optional: true, doc: "The running deletion operation." }
-
-  WorkspacePage:
-    doc: One page of workspaces.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: Workspace }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  WorkspaceCreateRequest:
-    doc: Create a region-pinned workspace. Region is required and immutable.
-    type: object
-    fields:
-      organizationId: { type: id, of: organization, doc: "The owning organization." }
-      name: { type: string, min: 1, max: 128, doc: "Display name." }
-      region: { type: region, doc: "Where the workspace lives, forever." }
-
-  WorkspaceDeleteRequest:
-    doc: Admit the global workspace-deletion operation.
-    type: object
-    fields:
-      confirmation: { type: id, of: workspace, doc: "The workspace id, restated." }
-
-  WorkspaceTombstone:
-    doc: What remains of a deleted workspace.
-    type: object
-    fields:
-      workspaceId: { type: id, of: workspace, doc: "The deleted workspace." }
-      organizationId: { type: id, of: organization, doc: "The owning organization." }
-      deletedAt: { type: timestamp, doc: "When deletion committed." }
-      operationId: { type: id, of: operation, doc: "The operation that deleted it." }
+      createdAt: { type: timestamp, doc: "When first login provisioned it." }
 
   ApiKey:
-    doc: Workspace API key metadata. There is no public last-used timestamp.
+    doc: Workspace API key metadata. Secret material is never returned by reads.
     type: object
     fields:
       id: { type: id, of: api_key, doc: "Identity." }
-      workspaceId: { type: id, of: workspace, doc: "The workspace it authorizes." }
+      workspaceId: { type: id, of: workspace, doc: "The fixed workspace it authorizes." }
       name: { type: string, min: 1, max: 128, doc: "Display name." }
-      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes it carries." }
+      scopes: { type: array, max: 16, items: { type: scope }, doc: "The scopes it carries." }
       createdAt: { type: timestamp, doc: "When it was minted." }
       revokedAt: { type: timestamp, optional: true, doc: "When it was revoked." }
 
   ApiKeyPage:
-    doc: One page of API key metadata.
+    doc: One bounded page of API key metadata.
     type: object
     fields:
-      items: { type: array, max: 1000, items: { type: ref, to: ApiKey }, doc: "The page." }
+      items: { type: array, max: 100, items: { type: ref, to: ApiKey }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
   ApiKeyCreateRequest:
-    doc: Mint a workspace API key.
+    doc: Mint a key for the account's fixed workspace.
     type: object
     fields:
-      workspaceId: { type: id, of: workspace, doc: "The workspace to authorize." }
+      workspaceId: { type: id, of: workspace, doc: "Must name the fixed workspace." }
       name: { type: string, min: 1, max: 128, doc: "Display name." }
-      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes to grant." }
+      scopes: { type: array, max: 16, items: { type: scope }, doc: "Launch scopes to grant." }
 
   NewApiKey:
-    doc: A freshly minted key. The value never appears in a later read.
+    doc: A freshly minted key; its value is returned once and never stored.
     type: object
     fields:
       id: { type: id, of: api_key, doc: "Identity." }
-      workspaceId: { type: id, of: workspace, doc: "The workspace it authorizes." }
+      workspaceId: { type: id, of: workspace, doc: "The fixed workspace." }
       name: { type: string, min: 1, max: 128, doc: "Display name." }
-      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes it carries." }
+      scopes: { type: array, max: 16, items: { type: scope }, doc: "The scopes it carries." }
       createdAt: { type: timestamp, doc: "When it was minted." }
       value: { type: string, min: 60, max: 128, doc: "The one-time secret value." }
 
-  DeviceAuthorizationRequest:
-    doc: Begin the CLI device-authorization flow.
-    type: object
-    fields:
-      clientId: { type: string, min: 1, max: 128, doc: "The public client identifier." }
-      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes requested." }
-
-  DeviceAuthorization:
-    doc: A pending device authorization the user must approve in a browser.
-    type: object
-    fields:
-      deviceCode: { type: string, min: 32, max: 256, doc: "The polling secret." }
-      userCode: { type: string, min: 6, max: 16, doc: "The short code the user types." }
-      verificationUri: { type: https_url, doc: "Where the user approves." }
-      verificationUriComplete: { type: https_url, doc: "The same page with the code prefilled." }
-      expiresAt: { type: timestamp, doc: "When the device code stops working." }
-      intervalSeconds: { type: integer, min: 1, max: 60, doc: "Minimum polling interval." }
-
-  DeviceTokenRequest:
-    doc: Exchange an approved device code for an account token.
-    type: object
-    fields:
-      clientId: { type: string, min: 1, max: 128, doc: "The public client identifier." }
-      deviceCode: { type: string, min: 32, max: 256, doc: "The polling secret." }
-
-  DeviceToken:
-    doc: An issued account token.
-    type: object
-    fields:
-      accountToken: { type: string, min: 16, max: 4096, doc: "The bearer token; store it, never log it." }
-      expiresAt: { type: timestamp, doc: "When the token stops verifying." }
-      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes it carries." }
-
-  DeviceDecision:
-    doc: What a person chose about a device authorization.
-    type: enum
-    values:
-      - { value: approve, doc: "Let the device redeem an account token." }
-      - { value: deny, doc: "Refuse the device; the code can never be redeemed." }
-
-  DeviceDecisionRequest:
-    doc: Approve or deny a pending device authorization by its user code.
-    type: object
-    fields:
-      userCode: { type: string, min: 6, max: 16, doc: "The short code the device displayed." }
-      decision: { type: ref, to: DeviceDecision, doc: "What the person chose." }
-
-  DeviceDecisionResult:
-    doc: The recorded outcome of a device decision.
-    type: object
-    fields:
-      decision: { type: ref, to: DeviceDecision, doc: "What was recorded; never differs from the request." }
-      decidedAt: { type: timestamp, doc: "When the decision was written." }
-      scopes: { type: array, max: 64, items: { type: scope }, doc: "The scopes the device asked for, so the page can name what it granted." }
-
-  IdentityProvider:
-    doc: An external sign-in provider AEX links a person to.
-    type: enum
-    values:
-      - { value: github, doc: "GitHub." }
-      - { value: google, doc: "Google." }
-
   DashboardSessionRequest:
-    doc: >-
-      Complete a browser sign-in by handing this plane the authorization code a
-      provider redirect returned. `central-identity-api` performs the token
-      exchange with the provider itself, so nothing the caller asserts about who
-      they are is believed: the person is whoever the provider answers with.
+    doc: Complete a GitHub OAuth browser sign-in using PKCE-bound state.
     type: object
     fields:
-      provider: { type: ref, to: IdentityProvider, doc: "Which provider issued the code." }
-      code: { type: string, min: 1, max: 2048, doc: "The single-use authorization code the redirect returned. It is redeemed exactly once and never retried: a code the provider may already have consumed cannot be re-presented." }
-      state: { type: string, min: 43, max: 128, doc: "The `state` the provider echoed back. It is the RFC 7636 S256 challenge of `codeVerifier`, and the exchange refuses any request where it is not." }
-      codeVerifier: { type: string, min: 43, max: 128, doc: "The RFC 7636 PKCE verifier the browser held in its own cookie for this plane's origin. Possessing it is what proves the redirect belongs to the browser that started this sign-in: a cross-site forgery carries somebody else's `state` and cannot present a verifier that hashes to it." }
+      code: { type: string, min: 1, max: 2048, doc: "Single-use GitHub authorization code." }
+      state: { type: string, min: 43, max: 128, doc: "The echoed S256 challenge." }
+      codeVerifier: { type: string, min: 43, max: 128, doc: "The browser-held PKCE verifier." }
 
   DashboardSessionCredential:
-    doc: A minted browser session, returned exactly once.
+    doc: A rotated browser session returned exactly once.
     type: object
     fields:
-      session: { type: string, min: 16, max: 4096, doc: "The bearer credential; hold it in a cookie the browser will not hand to script." }
-      userId: { type: id, of: user, doc: "The person it authenticates." }
+      session: { type: string, min: 16, max: 4096, doc: "Bearer credential for an HttpOnly cookie." }
+      userId: { type: id, of: user, doc: "The GitHub-linked person." }
       expiresAt: { type: timestamp, doc: "When it stops verifying." }
 
-  OrganizationAccount:
-    doc: One organization's operational state in a multi-organization dashboard snapshot.
-    type: object
-    fields:
-      organizationId: { type: id, of: organization, doc: "The organization this state governs." }
-      state: { type: ref, to: AccountOperationalState, doc: "The organization's current operational state." }
-
   DashboardBootstrap:
-    doc: The one bounded read that fills the dashboard shell.
+    doc: The single bounded read that fills the launch dashboard shell.
     type: object
     fields:
       userId: { type: id, of: user, doc: "The signed-in person." }
-      email: { type: string, min: 3, max: 320, doc: "Their email address." }
-      accounts: { type: array, max: 100, items: { type: ref, to: OrganizationAccount }, doc: "Current operational state for each organization in this snapshot." }
-      organizations: { type: array, max: 100, items: { type: ref, to: Organization }, doc: "Organizations they belong to." }
-      workspaces: { type: array, max: 500, items: { type: ref, to: Workspace }, doc: "Workspaces they can reach." }
-      generatedAt: { type: timestamp, doc: "When this snapshot was taken." }
+      email: { type: string, min: 3, max: 320, doc: "Their verified GitHub email." }
+      accountId: { type: id, of: account, doc: "Their personal prepaid account." }
+      accountState: { type: ref, to: AccountOperationalState, doc: "Current paid-capacity state." }
+      workspace: { type: ref, to: Workspace, doc: "The fixed eu-west-1 workspace." }
+      generatedAt: { type: timestamp, doc: "When this snapshot was assembled." }

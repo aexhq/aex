@@ -214,7 +214,10 @@ fn an_oversized_decision_never_reaches_the_transport() {
         },
         effects: Vec::new(),
         budget: Vec::new(),
-        session_budget: Vec::new(),
+        session_budget: vec![aex_brain_domain::budget::BudgetDelta::new(
+            aex_brain_domain::budget::Dimension::TotalChildrenCreated,
+            64,
+        )],
         children,
         joins: Vec::new(),
         wakes: Vec::new(),

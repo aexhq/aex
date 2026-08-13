@@ -8,7 +8,7 @@
 use aex_wire::ErrorCode;
 use aex_wire::provider::ProviderId;
 
-use crate::document::{CapabilitySet, ModelLimits};
+use crate::document::{CapabilitySet, ModelLimits, StructuredOutputLevel};
 use crate::generated::{self, AdmittedModel, MODELS};
 use crate::primitives::{Blake3Digest, ModelSlug};
 use crate::wire_pending::CatalogRevision;
@@ -89,7 +89,17 @@ impl QualifiedModel {
         if self.entry.parallel_tools {
             set = set.with(crate::document::Capability::ParallelTools);
         }
+        if self.entry.structured_output != StructuredOutputLevel::None {
+            set = set.with(crate::document::Capability::StructuredOutput);
+        }
         set
+    }
+
+    /// The strongest native structured-output contract this exact route has
+    /// passed.
+    #[must_use]
+    pub const fn structured_output(&self) -> StructuredOutputLevel {
+        self.entry.structured_output
     }
 
     /// The numeric bounds.
@@ -210,9 +220,10 @@ mod tests {
             (ProviderId::Deepseek, "deepseek-v4-flash"),
             (ProviderId::Deepseek, "deepseek-v4-pro"),
             (ProviderId::Anthropic, "claude-opus-4-5"),
-            (ProviderId::Google, "gemini-2.5-flash"),
-            (ProviderId::Zai, "glm-4.6"),
+            (ProviderId::Xai, "grok-4.3"),
+            (ProviderId::Meta, "muse-spark-1.2"),
             (ProviderId::Moonshotai, "kimi-k2.5"),
+            (ProviderId::Alibaba, "qwen3.7-plus"),
         ] {
             let qualified = admit(provider, model).expect("admitted");
             assert_eq!(qualified.provider(), provider);
@@ -238,12 +249,22 @@ mod tests {
     }
 
     #[test]
-    fn a_slash_containing_gateway_id_admits_as_a_body_field() {
-        let qualified = admit(ProviderId::Openrouter, "deepseek/deepseek-v4-pro")
-            .expect("a gateway row admits");
+    fn only_the_seven_official_candidate_families_are_compiled() {
+        let providers = generated::PROVIDERS
+            .iter()
+            .map(|meta| meta.provider)
+            .collect::<Vec<_>>();
         assert_eq!(
-            qualified.dialect(),
-            aex_model_vocabulary::DialectClass::OpenRouterChat
+            providers,
+            vec![
+                ProviderId::Openai,
+                ProviderId::Anthropic,
+                ProviderId::Deepseek,
+                ProviderId::Xai,
+                ProviderId::Meta,
+                ProviderId::Moonshotai,
+                ProviderId::Alibaba,
+            ]
         );
     }
 }

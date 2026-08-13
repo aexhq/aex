@@ -3,6 +3,7 @@ import { resolveCentralBaseUrl, resolveRegionalBaseUrl } from "./routing.js";
 import { FetchTransport, type AexTransport, type WireRequest } from "../transport/transport.js";
 import { CONTRACT_DIGEST, ROUTES, type RouteId } from "../generated/routes.js";
 import { GeneratedResources, type ExecuteOptions } from "../generated/resources.js";
+import { WorkspaceFiles } from "../files/workspace-files.js";
 
 const SDK_VERSION = "0.52.0";
 
@@ -27,6 +28,8 @@ export interface AexOptions {
  */
 export class Aex extends GeneratedResources {
   readonly transport: AexTransport;
+  /** Latest-only workspace files, including verified direct upload/download helpers. */
+  readonly workspaceFiles: WorkspaceFiles;
   readonly #credential: ParsedCredential;
   readonly #signal: AbortSignal | undefined;
 
@@ -47,6 +50,7 @@ export class Aex extends GeneratedResources {
         regional: resolveRegionalBaseUrl(this.#credential, options),
       }, options.fetch);
     }
+    this.workspaceFiles = new WorkspaceFiles(this, options.fetch);
   }
 
   async execute<T>(routeId: RouteId, bindings: Readonly<Record<string, string>> = {},

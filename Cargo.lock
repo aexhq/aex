@@ -134,6 +134,7 @@ dependencies = [
  "rand 0.10.2",
  "reqwest",
  "rig-core",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "socket2 0.5.10",
@@ -753,6 +754,15 @@ name = "aex-live-stripe-webhook-edge"
 version = "0.1.0"
 
 [[package]]
+name = "aex-live-tool-mux"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "aex-live-usage-compute-worker"
 version = "0.1.0"
 
@@ -1233,6 +1243,21 @@ dependencies = [
  "tokio",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "aex-tool-mux"
+version = "0.1.0"
+dependencies = [
+ "aex-hands-protocol",
+ "aex-runtime-control",
+ "aex-wire",
+ "async-trait",
+ "blake3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]
@@ -7698,6 +7723,22 @@ dependencies = [
  "tracing",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "tool-mux"
+version = "0.1.0"
+dependencies = [
+ "aex-hands-protocol",
+ "aex-runtime-control",
+ "aex-tool-mux",
+ "aex-wire",
+ "axum",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
 ]
 
 [[package]]

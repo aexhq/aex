@@ -7,7 +7,7 @@ use aex_model_catalog::canonical::{
     CanonicalMessage, CanonicalModelRequest, CorrelationId, ReasoningRequest, Role, SystemBlock,
     ToolChoice,
 };
-use aex_model_catalog::document::{Capability, CapabilitySet};
+use aex_model_catalog::document::{Capability, CapabilitySet, StructuredOutputLevel};
 use aex_model_catalog::fixture;
 use aex_model_catalog::primitives::{BoundedString, ModelSlug};
 use aex_model_catalog::qualified::{CatalogError, admit};
@@ -33,7 +33,7 @@ fn a_qualified_model_exposes_the_entry_facts() {
 }
 
 #[test]
-fn the_two_bit_capability_set_behaves_as_declared() {
+fn the_capability_set_and_structured_output_level_behave_as_declared() {
     assert!(!CapabilitySet::EMPTY.has(Capability::Tools));
     let tools = CapabilitySet::from_slice(&[Capability::Tools]);
     assert!(tools.has(Capability::Tools));
@@ -41,15 +41,21 @@ fn the_two_bit_capability_set_behaves_as_declared() {
     let both = tools.with(Capability::ParallelTools);
     assert!(both.has(Capability::Tools) && both.has(Capability::ParallelTools));
     assert_eq!(
-        fixture::qualified_entry(ProviderId::Zai, "glm-4.6", both).capabilities(),
+        fixture::qualified_entry(ProviderId::Xai, "grok-4.3", both).capabilities(),
         both
+    );
+    let structured = both.with(Capability::StructuredOutput);
+    let qualified = fixture::qualified_entry(ProviderId::Openai, "gpt-5.2", structured);
+    assert_eq!(
+        qualified.structured_output(),
+        StructuredOutputLevel::JsonSchema
     );
 }
 
 #[test]
 fn the_catalog_error_vocabulary_carries_its_wire_code() {
     let unknown_provider = CatalogError::UnknownProvider {
-        provider: ProviderId::Google,
+        provider: ProviderId::Meta,
     };
     assert_eq!(
         unknown_provider.error_code(),

@@ -379,6 +379,18 @@ pub struct DecisionCommit {
 /// Why a decision would not fit one transaction.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EnvelopeViolation {
+    /// Child creation and the session-lifetime counter must be one atomic
+    /// authority change.
+    #[error("spawned {spawned} children but charged {charged} session lifetime identities")]
+    SubagentAdmissionMismatch {
+        /// Child control rows in this decision.
+        spawned: u64,
+        /// Session lifetime identities charged in this decision.
+        charged: u64,
+    },
+    /// One decision attempted to create the same identity more than once.
+    #[error("a child identity appears more than once in one decision")]
+    DuplicateChildIdentity,
     /// Hands effects must bind exactly one canonical generation and other effects must not.
     #[error("effect kind {kind:?} has an invalid runtime generation binding")]
     InvalidGenerationBinding {
@@ -579,6 +591,31 @@ impl DecisionCommit {
     /// binding, exceeds the action, aggregate-byte or per-item ceiling, when its appends
     /// are not contiguous from the guard's tail, or when it carries no action at all.
     pub fn validate(&self) -> Result<EnvelopeCost, EnvelopeViolation> {
+        let spawned = self
+            .children
+            .iter()
+            .filter(|write| matches!(write, ChildWrite::Spawn { .. }))
+            .count() as u64;
+        let charged = self
+            .session_budget
+            .iter()
+            .filter(|delta| delta.dimension == Dimension::TotalChildrenCreated)
+            .map(|delta| delta.quantity)
+            .sum::<u64>();
+        if spawned != charged {
+            return Err(EnvelopeViolation::SubagentAdmissionMismatch { spawned, charged });
+        }
+        let distinct = self
+            .children
+            .iter()
+            .filter_map(|write| match write {
+                ChildWrite::Spawn { child, .. } => Some(*child),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        if distinct.len() as u64 != spawned {
+            return Err(EnvelopeViolation::DuplicateChildIdentity);
+        }
         for effect in &self.effects {
             if let EffectWrite::Prepare {
                 kind, generation, ..
@@ -690,7 +727,14 @@ mod tests {
             },
             effects: Vec::new(),
             budget: Vec::new(),
-            session_budget: Vec::new(),
+            session_budget: if children.is_empty() {
+                Vec::new()
+            } else {
+                vec![crate::budget::BudgetDelta::new(
+                    crate::budget::Dimension::TotalChildrenCreated,
+                    children.len() as u64,
+                )]
+            },
             children,
             joins: Vec::new(),
             wakes: Vec::new(),
@@ -738,6 +782,29 @@ mod tests {
         assert!(
             matches!(error, EnvelopeViolation::TooManyActions { actions } if actions > MAX_TRANSACTION_ACTIONS),
             "{error:?}"
+        );
+    }
+
+    #[test]
+    fn child_rows_cannot_commit_without_the_atomic_session_lifetime_charge() {
+        let mut decision = commit(Vec::new(), vec![spawn(0)]);
+        decision.session_budget.clear();
+        assert_eq!(
+            decision.validate(),
+            Err(EnvelopeViolation::SubagentAdmissionMismatch {
+                spawned: 1,
+                charged: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn a_duplicate_child_identity_cannot_consume_two_slots() {
+        let child = spawn(0);
+        let decision = commit(Vec::new(), vec![child.clone(), child]);
+        assert_eq!(
+            decision.validate(),
+            Err(EnvelopeViolation::DuplicateChildIdentity)
         );
     }
 

@@ -8,7 +8,7 @@
     },
     {
       "id": "session.materialized_agents",
-      "value": 256
+      "value": 13
     },
     {
       "id": "session.initial_files_bytes",
@@ -24,18 +24,18 @@
         "max_turns": 32,
         "max_steps_per_turn": 16,
         "turn_deadline_ms": 600000,
-        "max_depth": 4,
-        "max_fanout": 32
+        "max_depth": 3,
+        "max_fanout": 12
       }
     },
     {
       "id": "session.run_budget",
       "value": {
         "max_run_duration_ms": 28800000,
-        "total_children_created": 128,
+        "total_children_created": 12,
         "provider_calls": 96,
         "hands_calls": 64,
-        "queued_children": 32,
+        "queued_children": 12,
         "retained_result_bytes": 8388608
       }
     },

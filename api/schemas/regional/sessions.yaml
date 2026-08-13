@@ -25,7 +25,6 @@ schemas:
     values:
       - { value: user, doc: "The customer explicitly terminated it." }
       - { value: lifetime_expired, doc: "The eight-hour provider lifetime ended." }
-      - { value: provider_credential_revoked, doc: "Its pinned BYOK provider credential was revoked." }
       - { value: runtime_lost, doc: "The retained runtime was lost; crash recovery is not part of this release." }
 
   NetworkMode:
@@ -76,12 +75,12 @@ schemas:
       hands: { type: ref, to: HandsNetworkRequest, doc: "The guest policy." }
 
   SessionCreateRequest:
-    doc: Create an eight-hour multi-turn session with one explicitly pinned BYOK provider credential.
+    doc: Create an eight-hour multi-turn session with one write-only, session-scoped BYOK provider key.
     type: object
     fields:
       provider: { type: provider_id, doc: "The direct BYOK provider." }
       model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
-      providerCredentialId: { type: id, of: provider_credential, doc: "The exact BYOK binding; the platform never guesses between bindings." }
+      providerApiKey: { type: string, min: 8, max: 8192, doc: "The provider key; write-only, encrypted into this session and never returned." }
       registered: { type: ref, to: SessionRegisteredSelection, optional: true, doc: "Opaque workspace files to mount." }
       compute: { type: ref, to: SessionComputeRequest, optional: true, doc: "The baseline compute shape." }
       network: { type: ref, to: SessionNetworkRequest, optional: true, doc: "The guest network policy." }
@@ -127,8 +126,6 @@ schemas:
     fields:
       provider: { type: provider_id, doc: "The provider." }
       model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
-      providerCredentialId: { type: id, of: provider_credential, doc: "The pinned BYOK binding." }
-      catalogRevision: { type: string, min: 68, max: 68, pattern: "^mc1_[0-9a-f]{64}$", doc: "The signed model-catalog release that qualified this provider and model pair." }
       compute: { type: ref, to: ResolvedCompute, doc: "Resolved capacity." }
       network: { type: ref, to: ResolvedNetwork, doc: "Resolved network policy." }
       registered: { type: ref, to: SessionRegisteredSelection, doc: "Resolved mounted files." }

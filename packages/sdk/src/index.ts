@@ -32,6 +32,12 @@ export { RETRY_POLICY, executeWithRetry } from "./transport/retry.js";
 export { FetchTransport } from "./transport/transport.js";
 export type { AexTransport, WireRequest, WireResponse } from "./transport/transport.js";
 export { Page } from "./transport/pagination.js";
+export { WorkspaceFiles } from "./files/workspace-files.js";
+export type {
+  CurrentWorkspaceFile,
+  WorkspaceFileInput,
+  WorkspaceFilePutOptions,
+} from "./files/workspace-files.js";
 export { Download, MAX_SINGLE_GET_BYTES, planDownloadRanges } from "./downloads/download.js";
 export type { DownloadRange } from "./downloads/download.js";
 export { parseNdjsonFrames } from "./observations/stream.js";
