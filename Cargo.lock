@@ -124,7 +124,8 @@ name = "aex-brain-provider-custody"
 version = "0.1.0"
 dependencies = [
  "aex-brain-app",
- "aex-brain-provider-gateway",
+ "aex-brain-domain",
+ "aex-model-catalog",
  "aex-secret-aws",
  "aex-secret-custody-dynamodb",
  "aex-secret-domain",
@@ -132,7 +133,11 @@ dependencies = [
  "async-trait",
  "futures",
  "proptest",
+ "reqwest",
+ "serde",
+ "thiserror",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
@@ -141,6 +146,7 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-app",
  "aex-brain-domain",
+ "aex-brain-provider-custody",
  "aex-model-catalog",
  "aex-secret-domain",
  "aex-wire",

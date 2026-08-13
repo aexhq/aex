@@ -749,7 +749,7 @@ async fn read_error_body(
     if let Ok(text) = core::str::from_utf8(&bytes) {
         let redacted = crate::redact::redact::<
             { crate::budget::DEFAULT_MAX_ERROR_BODY_BYTES as usize },
-        >(text, &[key.expose_for_redaction()]);
+        >(text, &[key.plaintext()]);
         bytes = redacted.as_str().as_bytes().to_vec();
     }
     BoundedBody::new(bytes, truncated)

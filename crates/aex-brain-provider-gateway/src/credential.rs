@@ -1,16 +1,9 @@
-//! Provider-credential resolution and in-process custody (plan 08 §7).
+//! Credential resolution, decrypted-key cache, and single-flight.
 //!
-//! # What this module does not own
-//!
-//! The `pcr_` binding directory itself belongs to `aex-secret-domain` plus
-//! `aex-secret-custody-dynamodb` in the `regional-secret-custody` table
-//! (OD-23). A `BYOK` key is a workspace secret; giving it a second custody home
-//! would create a second encryption authority. This module defines the two
-//! ports it needs, consumes them, and ships [`DenyAllCredentialDirectory`] as
-//! the typed placeholder until the owning stream lands.
-//!
-//! There is deliberately **no** plaintext-from-environment path. Not "disabled
-//! by default" — absent, with a test asserting no such constructor exists.
+//! The port definitions — the binding type, the directory/decryptor traits,
+//! the error vocabulary, and the decrypted key — live in
+//! `aex-brain-provider-custody` and are re-exported here until this crate's
+//! transport core is retired (model-provider simplification 2026-08-13).
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
@@ -19,295 +12,20 @@ use std::time::{Duration, Instant};
 
 use aex_wire::ids::{OrganizationId, ProviderCredentialId, WorkspaceId};
 use aex_wire::provider::ProviderId;
-use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 pub use aex_brain_domain::wire_pending::SessionCredentialPin;
+pub use aex_brain_provider_custody::credential::{
+    BindingState, CredentialResolveError, CredentialRevision, DenyAllCredentialDecryptor,
+    DenyAllCredentialDirectory, ProviderApiKey, ProviderCredentialBinding,
+    ProviderCredentialDecryptor, ProviderCredentialDirectory, RevocationEpoch,
+};
 pub use aex_model_catalog::canonical::CredentialBindingRef;
 
 use crate::credential_flight::{
     FlightAdmission, FlightJoin, FlightLease, FlightOutcome, FlightRegistry, FlightValidity,
     MAX_FLIGHT_ELECTIONS,
 };
-use crate::transport::AuthScheme;
-use crate::wire_pending::{
-    BoxFuture, CiphertextRef, EncryptionContext, RevocationEpoch, SourceGeneration,
-};
-
-/// An immutable revision of a binding. Rotation creates a new one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct CredentialRevision(pub u64);
-
-/// Whether a binding may still be used.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BindingState {
-    /// Usable.
-    Ready,
-    /// Revoked; the epoch moved past every pin taken against it.
-    Revoked,
-    /// Deleted.
-    Deleted,
-}
-
-/// One workspace-scoped provider credential binding.
-///
-/// Immutable: every field is fixed at creation, and a rotation produces a new
-/// `revision` rather than mutating this one. That is what lets a session pin a
-/// binding and get the same behaviour for its whole life.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProviderCredentialBinding {
-    /// The stable `pcr_` identity.
-    pub id: ProviderCredentialId,
-    /// The owning workspace.
-    pub workspace: WorkspaceId,
-    /// Which provider the binding is for. A mismatch is a typed error, never a
-    /// silent substitution.
-    pub provider: ProviderId,
-    /// The immutable revision.
-    pub revision: CredentialRevision,
-    /// The secret-source generation the ciphertext belongs to.
-    pub generation: SourceGeneration,
-    /// The workspace revocation epoch at the time this binding was read.
-    pub revocation_epoch: RevocationEpoch,
-    /// Whether this is the workspace's default binding for its provider.
-    pub is_default: bool,
-    /// Whether it may still be used.
-    pub state: BindingState,
-    /// The sealed ciphertext fetched from the exact hidden source generation.
-    /// Never plaintext.
-    pub ciphertext: CiphertextRef,
-    /// The encryption context a decrypt must present.
-    pub context: EncryptionContext,
-    /// Digest persisted beside the ciphertext and checked before any KMS call.
-    pub context_digest: [u8; 32],
-}
-
-impl ProviderCredentialBinding {
-    /// The non-secret identity recorded on a canonical provider receipt.
-    #[must_use]
-    pub const fn receipt_ref(&self) -> CredentialBindingRef {
-        CredentialBindingRef {
-            id: self.id,
-            revision: self.revision.0,
-            generation: self.generation.0,
-        }
-    }
-}
-
-/// Why one credential-authority operation failed before its current send.
-///
-/// The enclosing dispatch still preserves `ResponseStarted` when an earlier
-/// in-call retry attempt already reached the provider.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum CredentialResolveError {
-    /// The regional authority cannot yet mint a workspace-bound provider
-    /// credential record safely.
-    #[error(
-        "provider credential registration authority is unavailable: no port exposes the wrapped branch key required by SecretCrypto::seal, and the workspace secret-name mint/collision contract is undecided"
-    )]
-    RegistrationAuthorityUnavailable,
-    /// No such binding.
-    #[error("no provider credential binding matched")]
-    NotFound {
-        /// What was asked for, where the caller named one.
-        requested: Option<ProviderCredentialId>,
-    },
-    /// The binding is for another provider.
-    #[error("binding is for `{binding}`, not `{requested}`")]
-    ProviderMismatch {
-        /// The binding's provider.
-        binding: ProviderId,
-        /// The requested provider.
-        requested: ProviderId,
-    },
-    /// The workspace revocation epoch moved past the pin.
-    #[error("the credential was revoked: admitted at {admitted:?}, now {current:?}")]
-    Revoked {
-        /// The epoch the session pinned.
-        admitted: RevocationEpoch,
-        /// The epoch now in force.
-        current: RevocationEpoch,
-    },
-    /// The binding was deleted.
-    #[error("the credential binding was deleted")]
-    Deleted,
-    /// The workspace has no default binding for the provider.
-    #[error("workspace has no default credential for `{provider}`")]
-    NoDefault {
-        /// Which provider.
-        provider: ProviderId,
-    },
-    /// More than one default. A data-invariant violation, alarmed.
-    #[error("workspace has {count} default credentials for one provider")]
-    AmbiguousDefault {
-        /// How many were found.
-        count: u16,
-    },
-    /// The ciphertext did not decrypt.
-    #[error("the credential did not decrypt")]
-    DecryptFailed,
-    /// The directory or the key store could not be reached.
-    #[error("the credential directory could not be reached")]
-    Transport,
-}
-
-impl CredentialResolveError {
-    /// The public wire code this failure renders as.
-    #[must_use]
-    pub const fn error_code(&self) -> aex_wire::ErrorCode {
-        match self {
-            Self::Revoked { .. } => aex_wire::ErrorCode::ProviderCredentialRevoked,
-            _ => aex_wire::ErrorCode::ProviderCredentialNotFound,
-        }
-    }
-}
-
-/// The binding directory this crate consumes.
-///
-/// Production composition resolves this from regional secret custody. The
-/// registration write path remains separately fail closed until its secret-name
-/// and wrapped branch-key contracts are decided.
-pub trait ProviderCredentialDirectory: Send + Sync + 'static {
-    /// Resolves a binding, either by explicit id or by the workspace default.
-    fn resolve(
-        &self,
-        organization: OrganizationId,
-        workspace: WorkspaceId,
-        provider: ProviderId,
-        id: Option<ProviderCredentialId>,
-    ) -> BoxFuture<'_, Result<ProviderCredentialBinding, CredentialResolveError>>;
-
-    /// Re-reads the mutable binding and secret fences immediately before send.
-    fn revalidate<'a>(
-        &'a self,
-        binding: &'a ProviderCredentialBinding,
-    ) -> BoxFuture<'a, Result<RevocationEpoch, CredentialResolveError>>;
-}
-
-/// The decryptor this crate consumes.
-///
-/// A production implementation must consume the regional secret authority's
-/// exact ciphertext generation and encryption context. No local alternate
-/// custody path is permitted.
-pub trait ProviderCredentialDecryptor: Send + Sync + 'static {
-    /// Decrypts a binding's ciphertext immediately before dispatch.
-    fn decrypt<'a>(
-        &'a self,
-        binding: &'a ProviderCredentialBinding,
-        now: aex_wire::types::Timestamp,
-    ) -> BoxFuture<'a, Result<ProviderApiKey, CredentialResolveError>>;
-}
-
-/// The typed placeholder until the owning stream lands.
-///
-/// It refuses every resolution. That is the correct closed default: the
-/// alternative — reading a plaintext key from the environment — is exactly the
-/// path this design exists to remove, so it is not implemented at all.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DenyAllCredentialDirectory;
-impl ProviderCredentialDirectory for DenyAllCredentialDirectory {
-    fn resolve(
-        &self,
-        _organization: OrganizationId,
-        _workspace: WorkspaceId,
-        _provider: ProviderId,
-        id: Option<ProviderCredentialId>,
-    ) -> BoxFuture<'_, Result<ProviderCredentialBinding, CredentialResolveError>> {
-        let _ = id;
-        Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
-    }
-
-    fn revalidate<'a>(
-        &'a self,
-        binding: &'a ProviderCredentialBinding,
-    ) -> BoxFuture<'a, Result<RevocationEpoch, CredentialResolveError>> {
-        let _ = binding;
-        Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
-    }
-}
-
-/// A decryptor that refuses everything, paired with the deny-all directory.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DenyAllCredentialDecryptor;
-impl ProviderCredentialDecryptor for DenyAllCredentialDecryptor {
-    fn decrypt<'a>(
-        &'a self,
-        binding: &'a ProviderCredentialBinding,
-        _now: aex_wire::types::Timestamp,
-    ) -> BoxFuture<'a, Result<ProviderApiKey, CredentialResolveError>> {
-        let _ = binding;
-        Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
-    }
-}
-
-/// A decrypted provider key.
-///
-/// No `Clone`, no `Debug`, no `Display`, no `Serialize`, no `Deref<Target =
-/// str>`. The plaintext leaves this type through exactly one method,
-/// [`ProviderApiKey::sensitive_header`], which returns a `HeaderValue` already
-/// marked sensitive. The cache may share the allocation with an in-flight
-/// value; the final owner drop zeroizes it.
-pub struct ProviderApiKey(Arc<Zeroizing<String>>);
-
-impl ProviderApiKey {
-    /// Wraps decrypted material.
-    ///
-    /// Called only by a [`ProviderCredentialDecryptor`] implementation.
-    #[must_use]
-    pub fn new(plaintext: String) -> Self {
-        Self(Arc::new(Zeroizing::new(plaintext)))
-    }
-
-    fn from_shared(plaintext: Arc<Zeroizing<String>>) -> Self {
-        Self(plaintext)
-    }
-
-    /// Hands the shared allocation to the cache and to a flight's waiters.
-    ///
-    /// Not a plaintext accessor: it moves the same reference-counted zeroizing
-    /// allocation, and nothing can read the string through what it returns.
-    fn into_shared(self) -> Arc<Zeroizing<String>> {
-        self.0
-    }
-
-    /// Builds the one header the transport attaches, already marked sensitive
-    /// so `reqwest` and `tracing` both redact it.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CredentialResolveError::DecryptFailed`] when the material
-    /// contains a byte no HTTP header value may carry, which means the stored
-    /// ciphertext did not decrypt to a key.
-    pub fn sensitive_header(
-        &self,
-        scheme: AuthScheme,
-    ) -> Result<(reqwest::header::HeaderName, reqwest::header::HeaderValue), CredentialResolveError>
-    {
-        let rendered = match scheme {
-            AuthScheme::BearerAuthorization => {
-                Zeroizing::new(format!("Bearer {}", self.0.as_str()))
-            }
-            AuthScheme::AnthropicApiKey { .. } | AuthScheme::GoogleApiKeyHeader => {
-                Zeroizing::new(self.0.as_str().to_owned())
-            }
-        };
-        let name = reqwest::header::HeaderName::from_static(scheme.header_name());
-        let mut value = reqwest::header::HeaderValue::from_str(&rendered)
-            .map_err(|_| CredentialResolveError::DecryptFailed)?;
-        value.set_sensitive(true);
-        Ok((name, value))
-    }
-
-    /// The plaintext, for the redactor only.
-    ///
-    /// Crate-private: the redactor needs the exact bytes to remove them from a
-    /// provider-echoed error body, and nothing else in the crate may look.
-    pub(crate) fn expose_for_redaction(&self) -> &str {
-        self.0.as_str()
-    }
-}
 
 /// The cache key. Every component participates, so a rotation or a generation
 /// bump can never hit a stale entry.
@@ -324,7 +42,7 @@ pub struct CredentialCacheKey {
     /// Which revision.
     pub revision: CredentialRevision,
     /// Which generation.
-    pub generation: SourceGeneration,
+    pub generation: aex_secret_domain::SourceGeneration,
 }
 
 impl From<&ProviderCredentialBinding> for CredentialCacheKey {
@@ -662,14 +380,10 @@ mod tests {
 
     use super::{
         BindingState, CredentialCache, CredentialResolveError, CredentialRevision,
-        DenyAllCredentialDecryptor, DenyAllCredentialDirectory, ProviderApiKey,
-        ProviderCredentialBinding, ProviderCredentialDecryptor, ProviderCredentialDirectory,
-        SessionCredentialPin, resolve,
+        DenyAllCredentialDirectory, ProviderApiKey, ProviderCredentialBinding,
+        ProviderCredentialDecryptor, ProviderCredentialDirectory, SessionCredentialPin, resolve,
     };
-    use crate::transport::AuthScheme;
-    use crate::wire_pending::{
-        BoxFuture, CiphertextRef, EncryptionContext, RevocationEpoch, SourceGeneration,
-    };
+    use crate::wire_pending::{BoxFuture, CiphertextRef, EncryptionContext, RevocationEpoch, SourceGeneration};
 
     fn workspace() -> WorkspaceId {
         WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [1; 10]))
@@ -808,38 +522,6 @@ mod tests {
         }
     }
 
-    /// Whether a named type implements a named trait.
-    ///
-    /// Rust has no negative bound, so `ProviderApiKey: !Debug` cannot be
-    /// asserted directly. Item resolution can assert it: the inherent constant
-    /// is reachable only while the bound holds, and an unreachable inherent
-    /// constant falls back to the blanket trait constant. Every use below
-    /// asserts the same bound against a type that does implement it, which is
-    /// what shows the probe still detects an implementation that exists rather
-    /// than always answering no.
-    macro_rules! implements {
-        ($subject:ty: $($bound:tt)+) => {{
-            /// Exactly one of the two constants is reachable for any one
-            /// subject, and which one is reachable is the whole answer, so the
-            /// other is dead by construction rather than by oversight.
-            #[allow(dead_code, reason = "one of the two constants is dead by construction")]
-            trait Absent {
-                const IMPLEMENTS: bool = false;
-            }
-            impl<T: ?Sized> Absent for T {}
-
-            #[allow(dead_code, reason = "a type-level question is never constructed")]
-            struct Probe<T: ?Sized>(core::marker::PhantomData<T>);
-
-            #[allow(dead_code, reason = "one of the two constants is dead by construction")]
-            impl<T: ?Sized + $($bound)+> Probe<T> {
-                const IMPLEMENTS: bool = true;
-            }
-
-            <Probe<$subject>>::IMPLEMENTS
-        }};
-    }
-
     fn now() -> aex_wire::types::Timestamp {
         aex_wire::types::Timestamp::from_unix_millis(1).expect("timestamp")
     }
@@ -865,23 +547,6 @@ mod tests {
             error.error_code(),
             aex_wire::ErrorCode::ProviderCredentialNotFound
         );
-    }
-
-    #[tokio::test]
-    async fn the_placeholder_decryptor_refuses_everything() {
-        let decryptor = DenyAllCredentialDecryptor;
-        // `ProviderApiKey` has no `Debug`, so the success arm cannot be
-        // formatted into a panic message — which is the point.
-        match decryptor
-            .decrypt(&binding(ProviderId::Openai, BindingState::Ready, 0), now())
-            .await
-        {
-            Ok(_) => panic!("the placeholder must refuse"),
-            Err(error) => assert_eq!(
-                error,
-                CredentialResolveError::RegistrationAuthorityUnavailable
-            ),
-        }
     }
 
     #[tokio::test]
@@ -981,42 +646,6 @@ mod tests {
         .expect("an unrevoked pin resolves");
     }
 
-    #[test]
-    fn the_sensitive_header_is_marked_sensitive_and_hides_in_debug() {
-        let key = ProviderApiKey::new("sk-secret-value-0123456789".to_owned());
-        let (name, value) = key
-            .sensitive_header(AuthScheme::BearerAuthorization)
-            .expect("header");
-        assert_eq!(name.as_str(), "authorization");
-        assert!(value.is_sensitive());
-        assert!(!format!("{value:?}").contains("sk-secret"));
-    }
-
-    #[test]
-    fn anthropic_and_google_send_the_bare_key_not_a_bearer_prefix() {
-        let key = ProviderApiKey::new("sk-ant-0123456789".to_owned());
-        let (name, _) = key
-            .sensitive_header(AuthScheme::AnthropicApiKey {
-                version: "2023-06-01",
-            })
-            .expect("header");
-        assert_eq!(name.as_str(), "x-api-key");
-        let (name, _) = key
-            .sensitive_header(AuthScheme::GoogleApiKeyHeader)
-            .expect("header");
-        assert_eq!(name.as_str(), "x-goog-api-key");
-    }
-
-    #[test]
-    fn a_key_with_an_illegal_header_byte_fails_rather_than_being_sanitised() {
-        let key = ProviderApiKey::new("sk-\nInjected: header".to_owned());
-        assert_eq!(
-            key.sensitive_header(AuthScheme::BearerAuthorization)
-                .expect_err("a newline cannot enter a header"),
-            CredentialResolveError::DecryptFailed
-        );
-    }
-
     #[tokio::test]
     async fn the_cache_reuses_a_fresh_entry_and_expires_a_stale_one() {
         let cache = CredentialCache::new(4, core::time::Duration::from_millis(50));
@@ -1030,9 +659,9 @@ mod tests {
             .decrypt(&binding, &Constant("sk-two"), now())
             .await
             .expect("cached");
-        assert_eq!(reused.expose_for_redaction(), "sk-one");
+        assert_eq!(reused.plaintext(), "sk-one");
         assert!(
-            std::sync::Arc::ptr_eq(&first.0, &reused.0),
+            std::sync::Arc::ptr_eq(first.shared_allocation(), reused.shared_allocation()),
             "a hot hit should share the zeroizing allocation, not copy plaintext"
         );
 
@@ -1041,7 +670,7 @@ mod tests {
             .decrypt(&binding, &Constant("sk-two"), now())
             .await
             .expect("expired then decrypted again");
-        assert_eq!(refreshed.expose_for_redaction(), "sk-two");
+        assert_eq!(refreshed.plaintext(), "sk-two");
     }
 
     #[tokio::test]
@@ -1059,7 +688,7 @@ mod tests {
             .decrypt(&rotated, &Constant("sk-new"), now())
             .await
             .expect("rotated");
-        assert_eq!(after.expose_for_redaction(), "sk-new");
+        assert_eq!(after.plaintext(), "sk-new");
         assert_eq!(cache.len(), 2);
     }
 
@@ -1078,7 +707,7 @@ mod tests {
             .decrypt(&second, &Constant("sk-second"), now())
             .await
             .expect("organization-isolated decrypt");
-        assert_eq!(resolved.expose_for_redaction(), "sk-second");
+        assert_eq!(resolved.plaintext(), "sk-second");
         assert_eq!(cache.len(), 2);
     }
 
@@ -1141,15 +770,13 @@ mod tests {
             .iter()
             .map(|outcome| {
                 let key = outcome.as_ref().expect("every caller receives the decrypt");
-                assert_eq!(key.expose_for_redaction(), "sk-burst");
-                &key.0
+                assert_eq!(key.plaintext(), "sk-burst");
+                key.shared_allocation()
             })
             .collect();
         let first = shared[0];
         assert!(
-            shared
-                .iter()
-                .all(|candidate| Arc::ptr_eq(*candidate, first)),
+            shared.iter().all(|candidate| Arc::ptr_eq(*candidate, first)),
             "a burst must share one zeroizing allocation, not copy plaintext per caller"
         );
         assert_eq!(
@@ -1228,7 +855,7 @@ mod tests {
             .decrypt(&binding, &Constant("sk-after-failure"), now())
             .await
             .expect("nothing negative was kept, so the next caller resolves again");
-        assert_eq!(recovered.expose_for_redaction(), "sk-after-failure");
+        assert_eq!(recovered.plaintext(), "sk-after-failure");
     }
 
     #[tokio::test]
@@ -1259,7 +886,7 @@ mod tests {
             // asked for. Erasing it is not attempted; the pre-send
             // revalidation fence is what refuses their send.
             let key = outcome.expect("a retired flight still settles its own waiters");
-            assert_eq!(key.expose_for_redaction(), "sk-revoked");
+            assert_eq!(key.plaintext(), "sk-revoked");
         }
         assert!(
             cache.is_empty(),
@@ -1270,7 +897,7 @@ mod tests {
             .decrypt(&binding, &Constant("sk-fresh"), now())
             .await
             .expect("a later caller resolves and decrypts again");
-        assert_eq!(refreshed.expose_for_redaction(), "sk-fresh");
+        assert_eq!(refreshed.plaintext(), "sk-fresh");
         assert_eq!(decryptor.calls(), 1);
     }
 
@@ -1301,7 +928,7 @@ mod tests {
 
         decryptor.release();
         let key = follower.await.expect("the re-elected caller completes");
-        assert_eq!(key.expose_for_redaction(), "sk-re-elected");
+        assert_eq!(key.plaintext(), "sk-re-elected");
     }
 
     #[tokio::test]
@@ -1332,22 +959,6 @@ mod tests {
         assert!(burst.await.iter().all(Result::is_ok));
         assert!(cache.len() <= 2, "cache grew to {}", cache.len());
         assert_eq!(cache.active_flights(), 0);
-    }
-
-    #[test]
-    fn the_decrypted_key_gained_no_render_or_copy_interface() {
-        // Sharing one allocation between a flight's waiters must not have
-        // widened the one way plaintext is allowed to leave this type.
-        assert!(!implements!(ProviderApiKey: core::fmt::Debug));
-        assert!(implements!(String: core::fmt::Debug));
-        assert!(!implements!(ProviderApiKey: core::fmt::Display));
-        assert!(implements!(String: core::fmt::Display));
-        assert!(!implements!(ProviderApiKey: Clone));
-        assert!(implements!(String: Clone));
-        assert!(!implements!(ProviderApiKey: serde::Serialize));
-        assert!(implements!(String: serde::Serialize));
-        assert!(!implements!(ProviderApiKey: core::ops::Deref<Target = str>));
-        assert!(implements!(String: core::ops::Deref<Target = str>));
     }
 
     #[test]

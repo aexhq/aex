@@ -31,6 +31,7 @@ protocol = "integration"
 [dependencies]
 aex-brain-app = { path = "../aex-brain-app" }
 aex-brain-domain = { path = "../aex-brain-domain" }
+aex-brain-provider-custody = { path = "../aex-brain-provider-custody" }
 aex-model-catalog = { path = "../aex-model-catalog" }
 aex-secret-domain = { path = "../aex-secret-domain" }
 aex-wire = { path = "../aex-wire" }

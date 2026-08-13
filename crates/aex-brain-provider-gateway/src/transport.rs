@@ -21,6 +21,8 @@ use aex_model_catalog::document::EndpointPin;
 use aex_model_catalog::primitives::BoundedString;
 use bytes::Bytes;
 
+pub use aex_brain_provider_custody::credential::AuthScheme;
+
 /// What a request asks the transport to send as its `Accept`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Accept {
@@ -43,38 +45,10 @@ impl Accept {
 
 /// How the shared core authenticates a request.
 ///
-/// A **tag**, not a value. There is no variant carrying key material and no
-/// constructor taking any, which is what makes credential leakage from a
-/// provider module a type error rather than a review item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthScheme {
-    /// `Authorization: Bearer <key>` — `openai`, `deepseek`, `zai`,
-    /// `moonshotai`.
-    BearerAuthorization,
-    /// `x-api-key: <key>` plus a pinned `anthropic-version` — `anthropic`.
-    AnthropicApiKey {
-        /// The pinned API version. Always `2023-06-01` (D-17).
-        version: &'static str,
-    },
-    /// `x-goog-api-key: <key>` — `google`.
-    ///
-    /// The `?key=` query form is forbidden in this codebase: it would place the
-    /// customer credential in a `URL` that reaches proxies, access logs and
-    /// error strings (D-15).
-    GoogleApiKeyHeader,
-}
-
-impl AuthScheme {
-    /// The header name the key is written into.
-    #[must_use]
-    pub const fn header_name(self) -> &'static str {
-        match self {
-            Self::BearerAuthorization => "authorization",
-            Self::AnthropicApiKey { .. } => "x-api-key",
-            Self::GoogleApiKeyHeader => "x-goog-api-key",
-        }
-    }
-}
+/// A **tag**, not a value: defined and owned by
+/// `aex-brain-provider-custody::credential`. There is no variant carrying key
+/// material and no constructor taking any, which is what makes credential
+/// leakage from a provider module a type error rather than a review item.
 
 /// A fully built provider request, minus the credential.
 ///
@@ -387,7 +361,7 @@ async fn execute_core(
     }
 
     built.send().await.map_err(|error| ExecuteError::Transport {
-        detail: crate::redact::redact(&error.to_string(), &[key.expose_for_redaction()]),
+        detail: crate::redact::redact(&error.to_string(), &[key.plaintext()]),
     })
 }
 
