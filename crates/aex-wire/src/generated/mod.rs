@@ -3,7 +3,7 @@
 //! Generated contract surface of `aex-wire`.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:308866d3e6ae0f8108ee3b81c1b852256a3bc1d80cb6d774f221d3d91fab4721`.
+//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]

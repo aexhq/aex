@@ -1,30 +1,27 @@
 //! Authenticated, bounded HTTP transport from Brain to one exact Hands generation.
 //!
 //! The AWS endpoint token stays in trusted memory and is attached only after the
-//! endpoint URL and request frame have been validated. Responses are streamed:
-//! the fixed preamble is decoded first, including its payload ceiling, before a
-//! payload-sized buffer is allocated.
+//! endpoint URL and bounded JSON request have been validated. Responses are
+//! streamed into the same exact ceiling even when no content length is present.
 
 use core::time::Duration;
 
 use aex_brain_app::ports::{HandsError, ProviderFailureKind, RedactedDetail};
 use aex_brain_domain::effect::{DispatchProof, DispatchStage};
-use aex_hands_agent::wire::{
-    FrameExpectation, PROTOCOL_V1, REQUEST_PREAMBLE_LEN, RESPONSE_PREAMBLE_LEN, RequestPreamble,
-    ResponseStatus, Verb, decode_response, decode_response_preamble, encode_request,
-};
 use aex_hands_control_aws::{AGENT_PORT, EndpointToken};
-use aex_hands_protocol::rpc::Fence;
+use aex_hands_protocol::rpc::{
+    Fence, GenerationBinding, GuestRequest, GuestResponse, MAX_GUEST_BODY_BYTES, PROTOCOL_V1, Verb,
+};
 use aex_wire::ids::GenerationId;
 use reqwest::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_TYPE, HeaderValue};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::{CONNECTION_IDLE_MS, MAX_FRAME_BYTES};
+use crate::CONNECTION_IDLE_MS;
 
 const AUTH_HEADER: &str = "X-aws-proxy-auth";
 const PORT_HEADER: &str = "X-aws-proxy-port";
-const BINARY_MEDIA_TYPE: &str = "application/octet-stream";
+const JSON_MEDIA_TYPE: &str = "application/json";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// One provider endpoint and memory-only token bound to an exact generation fence.
@@ -91,19 +88,6 @@ impl core::fmt::Debug for AuthenticatedGuestEndpoint {
     }
 }
 
-/// One typed guest response plus liveness evidence from its frame preamble.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GuestReply<T> {
-    /// The typed response payload.
-    pub payload: T,
-    /// The highest generation fence the guest has observed.
-    pub fence: Fence,
-    /// The guest supervisor incarnation.
-    pub guest_revision: u32,
-    /// The first eight bytes of the running agent build identity.
-    pub agent_build: [u8; 8],
-}
-
 /// Reusable HTTPS/HTTP2 client for authenticated Hands guest RPC.
 ///
 /// One instance is intended per Brain process. `reqwest` negotiates HTTP/2 over
@@ -147,14 +131,14 @@ impl HttpGuestTransport {
     /// # Errors
     ///
     /// Returns [`HandsError::Transport`] for request construction, transport,
-    /// HTTP status, frame, or typed-payload failures.
+    /// HTTP status, body-bound, or typed-payload failures.
     pub async fn call<Request, Response>(
         &self,
         endpoint: &AuthenticatedGuestEndpoint,
         verb: Verb,
         request: &Request,
         timeout: Duration,
-    ) -> Result<GuestReply<Response>, HandsError>
+    ) -> Result<Response, HandsError>
     where
         Request: Serialize + ?Sized,
         Response: DeserializeOwned,
@@ -170,8 +154,8 @@ impl HttpGuestTransport {
         if !status.is_success() {
             return Err(http_status(status.as_u16()));
         }
-        let bytes = read_bounded_response(response, endpoint, verb).await?;
-        decode_reply(&bytes, endpoint, verb)
+        let bytes = read_bounded_response(response).await?;
+        decode_reply(&bytes, endpoint)
     }
 
     fn build_request<Request: Serialize + ?Sized>(
@@ -181,36 +165,26 @@ impl HttpGuestTransport {
         request: &Request,
         timeout: Duration,
     ) -> Result<reqwest::Request, HandsError> {
-        let payload = serde_json::to_vec(request).map_err(|_| {
+        let envelope = GuestRequest {
+            binding: GenerationBinding {
+                schema_version: PROTOCOL_V1,
+                generation: endpoint.generation,
+                fence: endpoint.fence,
+            },
+            request,
+        };
+        let payload = serde_json::to_vec(&envelope).map_err(|_| {
             pre_dispatch(
                 ProviderFailureKind::InvalidRequest,
                 "the Hands request could not be encoded",
             )
         })?;
-        if payload.len() > MAX_FRAME_BYTES as usize {
+        if payload.len() > MAX_GUEST_BODY_BYTES {
             return Err(pre_dispatch(
                 ProviderFailureKind::InvalidRequest,
-                "the Hands request exceeds the frame ceiling",
+                "the Hands request exceeds the JSON body ceiling",
             ));
         }
-        let payload_len = u32::try_from(payload.len()).map_err(|_| {
-            pre_dispatch(
-                ProviderFailureKind::InvalidRequest,
-                "the Hands request length is not representable",
-            )
-        })?;
-        let frame = encode_request(
-            &RequestPreamble {
-                schema_version: PROTOCOL_V1,
-                verb,
-                flags: 0,
-                generation: endpoint.generation,
-                fence: endpoint.fence,
-                payload_len,
-            },
-            &payload,
-        );
-        debug_assert_eq!(frame.len(), REQUEST_PREAMBLE_LEN + payload.len());
         let url = verb_url(&endpoint.endpoint, verb)?;
         let auth = HeaderValue::from_str(endpoint.token.expose()).map_err(|_| {
             pre_dispatch(
@@ -222,11 +196,11 @@ impl HttpGuestTransport {
             .post(url)
             .header(AUTH_HEADER, auth)
             .header(PORT_HEADER, AGENT_PORT)
-            .header(CONTENT_TYPE, BINARY_MEDIA_TYPE)
-            .header(ACCEPT, BINARY_MEDIA_TYPE)
+            .header(CONTENT_TYPE, JSON_MEDIA_TYPE)
+            .header(ACCEPT, JSON_MEDIA_TYPE)
             .header(ACCEPT_ENCODING, "identity")
             .timeout(timeout)
-            .body(frame)
+            .body(payload)
             .build()
             .map_err(|_| {
                 pre_dispatch(
@@ -277,28 +251,24 @@ fn verb_url(endpoint: &str, verb: Verb) -> Result<reqwest::Url, HandsError> {
     Ok(url)
 }
 
-async fn read_bounded_response(
-    mut response: reqwest::Response,
-    endpoint: &AuthenticatedGuestEndpoint,
-    verb: Verb,
-) -> Result<Vec<u8>, HandsError> {
-    let largest = RESPONSE_PREAMBLE_LEN + MAX_FRAME_BYTES as usize;
+async fn read_bounded_response(mut response: reqwest::Response) -> Result<Vec<u8>, HandsError> {
     if response
         .content_length()
-        .is_some_and(|length| length > largest as u64)
+        .is_some_and(|length| length > MAX_GUEST_BODY_BYTES as u64)
     {
         return Err(response_started(
             DispatchStage::Terminal,
             ProviderFailureKind::ProtocolViolation,
-            "the Hands response content length exceeds the frame ceiling",
+            "the Hands response content length exceeds the JSON body ceiling",
         ));
     }
 
-    // The fixed preamble is the only initial allocation. Once it is complete,
-    // its authenticated generation/fence and declared payload length determine
-    // the exact maximum total this request will retain.
-    let mut bytes = Vec::with_capacity(RESPONSE_PREAMBLE_LEN);
-    let mut declared_total = None;
+    let capacity = response
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok())
+        .unwrap_or(0)
+        .min(MAX_GUEST_BODY_BYTES);
+    let mut bytes = Vec::with_capacity(capacity);
     while let Some(chunk) = response.chunk().await.map_err(|_| {
         response_started(
             DispatchStage::Streaming,
@@ -306,61 +276,14 @@ async fn read_bounded_response(
             "the Hands response stream failed",
         )
     })? {
-        let mut rest = chunk.as_ref();
-        if declared_total.is_none() {
-            let needed = RESPONSE_PREAMBLE_LEN.saturating_sub(bytes.len());
-            let prefix = needed.min(rest.len());
-            bytes.extend_from_slice(&rest[..prefix]);
-            rest = &rest[prefix..];
-            if bytes.len() == RESPONSE_PREAMBLE_LEN {
-                let preamble = decode_response_preamble(
-                    &bytes,
-                    &FrameExpectation {
-                        generation: endpoint.generation,
-                        min_fence: endpoint.fence,
-                        schema_version: PROTOCOL_V1,
-                        max_frame_bytes: MAX_FRAME_BYTES,
-                    },
-                )
-                .map_err(|_| {
-                    response_started(
-                        DispatchStage::Terminal,
-                        ProviderFailureKind::ProtocolViolation,
-                        "the Hands response preamble was invalid",
-                    )
-                })?;
-                if preamble.verb != verb {
-                    return Err(response_started(
-                        DispatchStage::Terminal,
-                        ProviderFailureKind::ProtocolViolation,
-                        "the Hands response named a different verb",
-                    ));
-                }
-                let total = RESPONSE_PREAMBLE_LEN + preamble.payload_len as usize;
-                if response
-                    .content_length()
-                    .is_some_and(|length| length != total as u64)
-                {
-                    return Err(response_started(
-                        DispatchStage::Terminal,
-                        ProviderFailureKind::ProtocolViolation,
-                        "the Hands response content length disagrees with its frame",
-                    ));
-                }
-                bytes.reserve_exact(total.saturating_sub(bytes.len()));
-                declared_total = Some(total);
-            }
+        if bytes.len().saturating_add(chunk.len()) > MAX_GUEST_BODY_BYTES {
+            return Err(response_started(
+                DispatchStage::Terminal,
+                ProviderFailureKind::ProtocolViolation,
+                "the Hands response exceeds the JSON body ceiling",
+            ));
         }
-        if let Some(total) = declared_total {
-            if bytes.len().saturating_add(rest.len()) > total {
-                return Err(response_started(
-                    DispatchStage::Terminal,
-                    ProviderFailureKind::ProtocolViolation,
-                    "the Hands response carried bytes beyond its declared frame",
-                ));
-            }
-            bytes.extend_from_slice(rest);
-        }
+        bytes.extend_from_slice(&chunk);
     }
     Ok(bytes)
 }
@@ -368,51 +291,36 @@ async fn read_bounded_response(
 fn decode_reply<Response: DeserializeOwned>(
     bytes: &[u8],
     endpoint: &AuthenticatedGuestEndpoint,
-    verb: Verb,
-) -> Result<GuestReply<Response>, HandsError> {
-    let frame = decode_response(
-        bytes,
-        &FrameExpectation {
-            generation: endpoint.generation,
-            min_fence: endpoint.fence,
-            schema_version: PROTOCOL_V1,
-            max_frame_bytes: MAX_FRAME_BYTES,
-        },
-    )
-    .map_err(|_| {
-        response_started(
-            DispatchStage::Terminal,
-            ProviderFailureKind::ProtocolViolation,
-            "the Hands response frame was invalid",
-        )
-    })?;
-    if frame.preamble.verb != verb {
-        return Err(response_started(
-            DispatchStage::Terminal,
-            ProviderFailureKind::ProtocolViolation,
-            "the Hands response named a different verb",
-        ));
-    }
-    if frame.preamble.status == ResponseStatus::ProtocolError {
-        return Err(response_started(
-            DispatchStage::Terminal,
-            ProviderFailureKind::ProtocolViolation,
-            "the Hands guest returned a typed protocol error",
-        ));
-    }
-    let payload = serde_json::from_slice(frame.payload).map_err(|_| {
+) -> Result<Response, HandsError> {
+    let envelope: GuestResponse<Response> = serde_json::from_slice(bytes).map_err(|_| {
         response_started(
             DispatchStage::Terminal,
             ProviderFailureKind::ProtocolViolation,
             "the Hands response payload was not the expected type",
         )
     })?;
-    Ok(GuestReply {
-        payload,
-        fence: frame.preamble.fence,
-        guest_revision: frame.preamble.guest_revision,
-        agent_build: frame.preamble.agent_build,
-    })
+    if envelope.binding.schema_version != PROTOCOL_V1 {
+        return Err(response_started(
+            DispatchStage::Terminal,
+            ProviderFailureKind::ProtocolViolation,
+            "the Hands response used an unsupported protocol version",
+        ));
+    }
+    if envelope.binding.generation != endpoint.generation {
+        return Err(response_started(
+            DispatchStage::Terminal,
+            ProviderFailureKind::ProtocolViolation,
+            "the Hands response named another generation",
+        ));
+    }
+    if envelope.binding.fence < endpoint.fence {
+        return Err(response_started(
+            DispatchStage::Terminal,
+            ProviderFailureKind::ProtocolViolation,
+            "the Hands response fence is stale",
+        ));
+    }
+    Ok(envelope.response)
 }
 
 fn pre_dispatch(kind: ProviderFailureKind, message: &str) -> HandsError {
@@ -477,12 +385,10 @@ mod tests {
     use super::{AuthenticatedGuestEndpoint, HttpGuestTransport, decode_reply};
     use aex_brain_app::ports::HandsError;
     use aex_brain_domain::effect::{DispatchProof, DispatchStage};
-    use aex_hands_agent::wire::{
-        FrameExpectation, PROTOCOL_V1, ResponsePreamble, ResponseStatus, Verb, decode_request,
-        encode_response,
-    };
     use aex_hands_control_aws::EndpointToken;
-    use aex_hands_protocol::rpc::Fence;
+    use aex_hands_protocol::rpc::{
+        Fence, GenerationBinding, GuestRequest, GuestResponse, PROTOCOL_V1, Verb,
+    };
     use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
     use aex_wire::types::Timestamp;
     use serde_json::{Value, json};
@@ -505,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn the_request_is_exactly_framed_authenticated_and_port_scoped() {
+    fn the_request_is_bounded_json_authenticated_and_port_scoped() {
         let transport = HttpGuestTransport::new().expect("transport");
         let endpoint = endpoint();
         let request = transport
@@ -534,25 +440,22 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("8080")
         );
+        assert_eq!(
+            request
+                .headers()
+                .get("content-type")
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
         let body = request
             .body()
             .and_then(reqwest::Body::as_bytes)
             .expect("in-memory body");
-        let frame = decode_request(
-            body,
-            &FrameExpectation {
-                generation: endpoint.generation,
-                min_fence: endpoint.fence,
-                schema_version: PROTOCOL_V1,
-                max_frame_bytes: super::MAX_FRAME_BYTES,
-            },
-        )
-        .expect("frame");
-        assert_eq!(frame.preamble.verb, Verb::Status);
-        assert_eq!(
-            serde_json::from_slice::<Value>(frame.payload).expect("typed payload"),
-            json!({"operation":"fixture"})
-        );
+        let envelope: GuestRequest<Value> = serde_json::from_slice(body).expect("JSON envelope");
+        assert_eq!(envelope.binding.schema_version, PROTOCOL_V1);
+        assert_eq!(envelope.binding.generation, endpoint.generation);
+        assert_eq!(envelope.binding.fence, endpoint.fence);
+        assert_eq!(envelope.request, json!({"operation":"fixture"}));
     }
 
     #[test]
@@ -577,37 +480,57 @@ mod tests {
     }
 
     #[test]
-    fn a_typed_reply_preserves_liveness_evidence_and_exact_generation() {
+    fn a_typed_json_reply_decodes_and_malformed_json_is_refused() {
         let endpoint = endpoint();
-        let payload = serde_json::to_vec(&json!({"status":"ok"})).expect("json");
-        let frame = encode_response(
-            &ResponsePreamble {
+        let payload = serde_json::to_vec(&GuestResponse {
+            binding: GenerationBinding {
                 schema_version: PROTOCOL_V1,
-                verb: Verb::Status,
-                status: ResponseStatus::Payload,
                 generation: endpoint.generation,
-                fence: Fence(6),
-                payload_len: u32::try_from(payload.len()).expect("length"),
-                guest_revision: 7,
-                agent_build: [9; 8],
+                fence: endpoint.fence,
             },
-            &payload,
-        );
-        let reply = decode_reply::<Value>(&frame, &endpoint, Verb::Status).expect("reply");
-        assert_eq!(reply.payload, json!({"status":"ok"}));
-        assert_eq!(reply.fence, Fence(6));
-        assert_eq!(reply.guest_revision, 7);
-        assert_eq!(reply.agent_build, [9; 8]);
-
-        let mut foreign = frame;
-        foreign[23] ^= 1;
+            response: json!({"status":"ok"}),
+        })
+        .expect("json");
+        let reply = decode_reply::<Value>(&payload, &endpoint).expect("reply");
+        assert_eq!(reply, json!({"status":"ok"}));
         assert!(matches!(
-            decode_reply::<Value>(&foreign, &endpoint, Verb::Status),
+            decode_reply::<Value>(b"not-json", &endpoint),
             Err(HandsError::Transport {
                 stage: DispatchStage::Terminal,
                 proof: DispatchProof::ResponseStarted,
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn a_foreign_generation_or_stale_response_fence_is_refused() {
+        let endpoint = endpoint();
+        for binding in [
+            GenerationBinding {
+                schema_version: PROTOCOL_V1,
+                generation: generation(2),
+                fence: endpoint.fence,
+            },
+            GenerationBinding {
+                schema_version: PROTOCOL_V1,
+                generation: endpoint.generation,
+                fence: Fence(endpoint.fence.0 - 1),
+            },
+        ] {
+            let payload = serde_json::to_vec(&GuestResponse {
+                binding,
+                response: json!({"status":"ok"}),
+            })
+            .expect("json");
+            assert!(matches!(
+                decode_reply::<Value>(&payload, &endpoint),
+                Err(HandsError::Transport {
+                    stage: DispatchStage::Terminal,
+                    proof: DispatchProof::ResponseStarted,
+                    ..
+                })
+            ));
+        }
     }
 }

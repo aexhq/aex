@@ -892,30 +892,25 @@ mod tests {
         .expect("no fault");
         let assertion = issued_envelope(&response);
         let binding = workspace_key_binding(uuid7(key_uuid()), &digest());
-        for other in [
-            AssertionAudience::RegionalObservation,
-            AssertionAudience::RegionalOtlp,
-            AssertionAudience::RegionalStream,
-        ] {
-            assert_eq!(
-                verify(
-                    assertion.as_bytes(),
-                    &keys(),
-                    &VerificationInputs {
-                        now_ms: u64::try_from(NOW_MS).expect("positive"),
-                        audience: Audience {
-                            plane: Plane::Dev,
-                            region: Region::EuWest1,
-                            service: other,
-                        },
-                        credential_binding: &binding,
-                        projection: &Fresh,
+        let other = AssertionAudience::ToolExec;
+        assert_eq!(
+            verify(
+                assertion.as_bytes(),
+                &keys(),
+                &VerificationInputs {
+                    now_ms: u64::try_from(NOW_MS).expect("positive"),
+                    audience: Audience {
+                        plane: Plane::Dev,
+                        region: Region::EuWest1,
+                        service: other,
                     },
-                ),
-                Err(VerifyError::AudienceMismatch),
-                "{other:?}"
-            );
-        }
+                    credential_binding: &binding,
+                    projection: &Fresh,
+                },
+            ),
+            Err(VerifyError::AudienceMismatch),
+            "{other:?}"
+        );
     }
 
     #[tokio::test]

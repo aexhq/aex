@@ -11,7 +11,6 @@ keywords:
 audience: implementation agents and maintainers
 status: proposal
 related:
-  - references/model-catalog-authority.md
   - references/architecture.md
   - references/backlog.md
   - references/glossary.md
@@ -251,8 +250,9 @@ retracted.
 The signed-catalog *content* is what this document proposes to delete. The signed
 catalog's *authority* — the KMS P-256 signing key, the GitHub OIDC publisher
 role, the protected `model-catalog-publish.yml` lane, the immutable last-good
-binding, the predecessor chain, and revision-based emergency disable described in
-[`model-catalog-authority.md`](model-catalog-authority.md) — is a distinct,
+binding, the predecessor chain, and revision-based emergency disable (recorded
+in the now-deleted `model-catalog-authority.md`; its decisions are folded into
+[`model-provider-library-simplification-2026-08-13/README.md`](model-provider-library-simplification-2026-08-13/README.md)) — is a distinct,
 already-accepted subsystem. Two coherent endings:
 
 - **A (full replacement):** delete the authority too; admission becomes

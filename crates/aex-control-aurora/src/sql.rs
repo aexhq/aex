@@ -163,6 +163,17 @@ SELECT version, purpose, state, secret_ref \
   FROM control.credential_pepper \
  WHERE purpose = :purpose AND state = 'active'";
 
+/// The cursor verification set: current first, then retiring versions.
+///
+/// The fourth row is an overflow witness. The startup loader accepts one active
+/// plus at most two retiring rows and refuses if this query returns four.
+pub const LIVE_CONTROL_PEPPERS: &str = "\
+SELECT version, purpose, state, secret_ref \
+  FROM control.credential_pepper \
+ WHERE purpose = :purpose AND state IN ('active', 'retiring') \
+ ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END, version DESC \
+ LIMIT 4";
+
 /// The coarse account state of one organization.
 ///
 /// The `HTTP` edge runs this once per non-pause-exempt request, after the
@@ -659,6 +670,7 @@ pub const ALL: &[(&str, &str)] = &[
     ("ACTIVE_SIGNING_KEY", ACTIVE_SIGNING_KEY),
     ("CONTROL_PEPPER_BY_VERSION", CONTROL_PEPPER_BY_VERSION),
     ("ACTIVE_CONTROL_PEPPER", ACTIVE_CONTROL_PEPPER),
+    ("LIVE_CONTROL_PEPPERS", LIVE_CONTROL_PEPPERS),
     ("GET_ACCOUNT_STATE", GET_ACCOUNT_STATE),
     ("GET_ACCOUNT_PROFILE", GET_ACCOUNT_PROFILE),
     ("GET_WORKSPACE_EPOCH", GET_WORKSPACE_EPOCH),

@@ -1,15 +1,12 @@
 use super::{
-    Endpoints, HandshakeError, HttpProviderHandshake, OauthClient, OauthClientError, challenge_of,
-    form, google_profile, parse_google_token, redact, state_matches,
+    Endpoints, HandshakeError, OauthClient, OauthClientError, challenge_of, github_profile,
+    google_profile, redact, state_matches,
 };
 use aex_identity_domain::Provider;
 use base64::Engine as _;
-use std::time::Duration;
 use time::OffsetDateTime;
 
-fn client() -> OauthClient {
-    OauthClient::new("goog-client", "goog-secret").expect("a client")
-}
+const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
 fn id_token(claims: &serde_json::Value) -> String {
     let encode = |value: &serde_json::Value| {
@@ -31,188 +28,170 @@ fn google_fixture(now: OffsetDateTime) -> serde_json::Value {
         "sub": "1234567890",
         "exp": now.unix_timestamp() + 300,
         "iat": now.unix_timestamp() - 5,
+        "nonce": challenge_of(VERIFIER),
         "email": "Person@Example.COM",
         "email_verified": true,
         "name": "A Person",
-        "picture": "https://example.com/a.png",
+        "picture": "https://example.com/a.png"
     })
 }
 
 #[test]
 fn a_challenge_is_the_rfc_7636_s256_of_its_verifier() {
     assert_eq!(
-        challenge_of("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+        challenge_of(VERIFIER),
         "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
     );
 }
 
 #[test]
 fn a_state_matches_only_the_verifier_it_was_derived_from() {
-    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-    assert!(state_matches(verifier, &challenge_of(verifier)));
+    assert!(state_matches(VERIFIER, &challenge_of(VERIFIER)));
     for forged in [
         "",
         "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM ",
         "e9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
         &challenge_of("another-verifier-entirely-0000000000000000000"),
     ] {
-        assert!(!state_matches(verifier, forged), "{forged}");
+        assert!(!state_matches(VERIFIER, forged), "{forged}");
     }
 }
 
 #[test]
-fn the_compiled_google_endpoint_pins_its_exact_https_authority_and_path() {
-    let endpoint = Endpoints::default().google_token;
-    let parsed = url::Url::parse(&endpoint).expect("the compiled endpoint parses");
-    assert_eq!(parsed.scheme(), "https");
-    assert_eq!(parsed.host_str(), Some("oauth2.googleapis.com"));
-    assert_eq!(parsed.port(), None);
-    assert_eq!(parsed.path(), "/token");
-    assert_eq!(parsed.username(), "");
-    assert_eq!(parsed.password(), None);
-    assert_eq!(parsed.query(), None);
-    assert_eq!(parsed.fragment(), None);
+fn compiled_provider_endpoints_pin_their_exact_https_authorities_and_paths() {
+    let endpoints = Endpoints::default();
+    for (endpoint, host, path) in [
+        (endpoints.google_token, "oauth2.googleapis.com", "/token"),
+        (
+            endpoints.github_token,
+            "github.com",
+            "/login/oauth/access_token",
+        ),
+        (endpoints.github_user, "api.github.com", "/user"),
+        (endpoints.github_emails, "api.github.com", "/user/emails"),
+    ] {
+        let parsed = oauth2::url::Url::parse(&endpoint).expect("the compiled endpoint parses");
+        assert_eq!(parsed.scheme(), "https");
+        assert_eq!(parsed.host_str(), Some(host));
+        assert_eq!(parsed.port(), None);
+        assert_eq!(parsed.path(), path);
+        assert!(parsed.query().is_none());
+        assert!(parsed.fragment().is_none());
+    }
 }
 
 #[test]
-fn a_client_with_a_blank_half_is_refused_at_construction() {
+fn oauth_clients_refuse_blank_halves_and_never_debug_the_secret() {
     assert_eq!(
-        OauthClient::new(" ", "secret"),
+        OauthClient::new("", "secret"),
         Err(OauthClientError::BlankId)
     );
     assert_eq!(
-        OauthClient::new("id", "  "),
+        OauthClient::new("id", " "),
         Err(OauthClientError::BlankSecret)
     );
+    let client = OauthClient::new("github-client", "github-secret").expect("a client");
+    let debug = format!("{client:?}");
+    assert!(debug.contains("github-client"));
+    assert!(!debug.contains("github-secret"));
 }
 
 #[test]
-fn the_google_client_never_renders_its_secret() {
-    let rendered = format!("{:?}", client());
-    assert!(rendered.contains("goog-client"), "{rendered}");
-    assert!(!rendered.contains("goog-secret"), "{rendered}");
-    assert_eq!(client().id(), "goog-client");
-}
-
-#[test]
-fn a_form_body_percent_encodes_every_value() {
-    assert_eq!(
-        form(&[("code", "a b&c"), ("redirect_uri", "https://x.dev/cb")]),
-        "code=a+b%26c&redirect_uri=https%3A%2F%2Fx.dev%2Fcb"
-    );
-}
-
-#[test]
-fn provider_statuses_cannot_smuggle_a_token_past_their_meaning() {
-    assert_eq!(
-        parse_google_token(reqwest::StatusCode::TOO_MANY_REQUESTS, b"{}", "goog-secret")
-            .expect_err("rate limited"),
-        HandshakeError::RateLimited
-    );
-    for status in [
-        reqwest::StatusCode::BAD_REQUEST,
-        reqwest::StatusCode::UNAUTHORIZED,
-        reqwest::StatusCode::FORBIDDEN,
-    ] {
-        assert!(matches!(
-            parse_google_token(
-                status,
-                br#"{"id_token":"header.claims.signature"}"#,
-                "goog-secret"
-            )
-            .expect_err("refused"),
-            HandshakeError::Refused(_)
-        ));
-    }
-    for status in [
-        reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-        reqwest::StatusCode::BAD_GATEWAY,
-        reqwest::StatusCode::SERVICE_UNAVAILABLE,
-    ] {
-        assert!(matches!(
-            parse_google_token(
-                status,
-                br#"{"id_token":"header.claims.signature"}"#,
-                "goog-secret"
-            )
-            .expect_err("unavailable"),
-            HandshakeError::Unreachable(_)
-        ));
-    }
-}
-
-#[test]
-fn a_google_person_is_built_from_a_checked_id_token() {
-    let now = OffsetDateTime::now_utc();
-    let profile =
-        google_profile(&id_token(&google_fixture(now)), "goog-client", now).expect("a person");
-    assert_eq!(profile.provider, Provider::Google);
-    assert_eq!(profile.provider_account_id.as_str(), "1234567890");
-    assert_eq!(profile.email.as_str(), "person@example.com");
-}
-
-#[test]
-fn every_claim_this_platform_acts_on_is_checked() {
+fn google_claim_mismatches_and_unverified_addresses_are_refused() {
     let now = OffsetDateTime::now_utc();
     for (field, value) in [
         ("iss", serde_json::json!("https://accounts.evil.example")),
         ("aud", serde_json::json!("another-client")),
         ("exp", serde_json::json!(now.unix_timestamp() - 1)),
         ("iat", serde_json::json!(now.unix_timestamp() + 3_600)),
+        ("nonce", serde_json::json!("another-sign-in")),
         ("email_verified", serde_json::json!(false)),
         ("email", serde_json::Value::Null),
     ] {
         let mut claims = google_fixture(now);
         claims[field] = value;
-        let error = google_profile(&id_token(&claims), "goog-client", now)
-            .unwrap_err_or_else_message(field);
-        assert!(matches!(error, HandshakeError::Unusable(_)), "{field}");
+        assert!(
+            matches!(
+                google_profile(
+                    &id_token(&claims),
+                    "goog-client",
+                    &challenge_of(VERIFIER),
+                    now
+                ),
+                Err(HandshakeError::Unusable(_))
+            ),
+            "{field}"
+        );
     }
 }
 
 #[test]
-fn an_invalid_avatar_is_dropped_and_an_invalid_name_never_blocks_sign_in() {
+fn google_normalizes_a_verified_identity() {
     let now = OffsetDateTime::now_utc();
-    let mut claims = google_fixture(now);
-    claims["picture"] = serde_json::json!("javascript:alert(1)");
-    claims["name"] = serde_json::json!("x".repeat(129));
-    let profile = google_profile(&id_token(&claims), "goog-client", now).expect("a person");
-    assert_eq!(profile.image_url, None);
-    assert_eq!(profile.name, None);
+    let profile = google_profile(
+        &id_token(&google_fixture(now)),
+        "goog-client",
+        &challenge_of(VERIFIER),
+        now,
+    )
+    .expect("a verified identity");
+    assert_eq!(profile.provider, Provider::Google);
+    assert_eq!(profile.provider_account_id.as_str(), "1234567890");
+    assert_eq!(profile.email.as_str(), "person@example.com");
 }
 
 #[test]
-fn a_diagnostic_never_carries_the_client_secret_or_a_credential_shaped_run() {
+fn github_uses_only_a_verified_primary_email_and_normalizes_it() {
+    let user = serde_json::from_value(serde_json::json!({
+        "id": 42,
+        "login": "octocat",
+        "name": "The Octocat",
+        "avatar_url": "https://avatars.githubusercontent.com/u/42"
+    }))
+    .expect("documented GitHub user");
+    let emails = serde_json::from_value(serde_json::json!([
+        {"email": "unverified@example.com", "primary": false, "verified": false},
+        {"email": "Person@Example.COM", "primary": true, "verified": true}
+    ]))
+    .expect("documented GitHub emails");
+    let profile = github_profile(user, emails).expect("a verified identity");
+    assert_eq!(profile.provider, Provider::GitHub);
+    assert_eq!(profile.provider_account_id.as_str(), "42");
+    assert_eq!(profile.email.as_str(), "person@example.com");
+    assert_eq!(profile.name.as_deref(), Some("The Octocat"));
+}
+
+#[test]
+fn github_refuses_an_unverified_or_non_primary_address() {
+    for emails in [
+        serde_json::json!([{"email": "x@example.com", "primary": true, "verified": false}]),
+        serde_json::json!([{"email": "x@example.com", "primary": false, "verified": true}]),
+        serde_json::json!([]),
+    ] {
+        let user = serde_json::from_value(serde_json::json!({
+            "id": 42,
+            "login": "octocat",
+            "name": null,
+            "avatar_url": null
+        }))
+        .expect("documented GitHub user");
+        let emails = serde_json::from_value(emails).expect("documented GitHub emails");
+        assert!(matches!(
+            github_profile(user, emails),
+            Err(HandshakeError::Unusable(_))
+        ));
+    }
+}
+
+#[test]
+fn a_diagnostic_never_carries_a_client_secret_or_credential_shaped_run() {
     let rendered = redact(
-        "error connecting with client_secret=google-secret and token provider_0123456789abcdefghijklmnop",
-        "google-secret",
+        "error client_secret=github-secret token=gho_0123456789abcdefghijklmnop",
+        "github-secret",
     );
-    assert!(!rendered.contains("google-secret"), "{rendered}");
+    assert!(!rendered.contains("github-secret"), "{rendered}");
     assert!(
-        !rendered.contains("provider_0123456789abcdefghijklmnop"),
+        !rendered.contains("gho_0123456789abcdefghijklmnop"),
         "{rendered}"
     );
-}
-
-#[test]
-fn the_pinned_client_policy_builds() {
-    HttpProviderHandshake::new(
-        client(),
-        "https://dev.aex.dev/api/auth/callback".to_owned(),
-        Duration::from_secs(5),
-    )
-    .expect("the pinned configuration builds");
-}
-
-trait ExpectErrNamed<T, E> {
-    fn unwrap_err_or_else_message(self, field: &str) -> E;
-}
-
-impl<T, E> ExpectErrNamed<T, E> for Result<T, E> {
-    fn unwrap_err_or_else_message(self, field: &str) -> E {
-        match self {
-            Ok(_) => panic!("`{field}` was accepted"),
-            Err(error) => error,
-        }
-    }
 }

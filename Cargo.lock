@@ -23,7 +23,7 @@ dependencies = [
  "loom",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "uuid",
 ]
 
@@ -40,7 +40,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "uuid",
 ]
 
@@ -51,7 +51,6 @@ dependencies = [
  "aex-brain-app",
  "aex-brain-domain",
  "aex-brain-tool-catalog",
- "aex-hands-agent",
  "aex-hands-control-aws",
  "aex-hands-protocol",
  "aex-hands-tools",
@@ -64,7 +63,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "uuid",
 ]
@@ -93,7 +92,7 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "url",
  "uuid",
@@ -114,7 +113,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "url",
 ]
@@ -138,7 +137,7 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2 0.5.10",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "url",
  "uuid",
@@ -161,7 +160,7 @@ dependencies = [
  "proptest",
  "reqwest",
  "serde",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "zeroize",
 ]
@@ -176,12 +175,14 @@ dependencies = [
  "aex-operation-domain",
  "aex-session-domain",
  "aex-session-dynamodb",
+ "aex-session-telemetry-aws",
  "aex-test-harness",
  "aex-wire",
  "aex-work-dynamodb",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-sdk-s3",
  "aws-sdk-sqs",
  "aws-smithy-http-client",
  "aws-smithy-types",
@@ -192,7 +193,7 @@ dependencies = [
  "http 1.5.0",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "uuid",
@@ -208,7 +209,7 @@ dependencies = [
  "aex-wire",
  "proptest",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "uuid",
 ]
@@ -227,7 +228,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
 ]
 
@@ -247,7 +248,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -277,7 +278,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "uuid",
@@ -302,11 +303,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "tower",
- "tower-http 0.7.0",
  "tracing",
  "uuid",
 ]
@@ -316,7 +316,7 @@ name = "aex-central-test-support"
 version = "0.1.0"
 dependencies = [
  "aex-test-harness",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "uuid",
 ]
@@ -332,7 +332,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -352,7 +352,7 @@ dependencies = [
  "hex",
  "proptest",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -362,7 +362,7 @@ version = "0.1.0"
 dependencies = [
  "aex-wire",
  "proptest",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
 ]
 
@@ -387,7 +387,7 @@ dependencies = [
  "proptest",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -404,7 +404,7 @@ dependencies = [
  "sha2 0.11.0",
  "similar-asserts",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.19",
  "walkdir",
 ]
 
@@ -420,7 +420,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "uuid",
@@ -443,7 +443,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "uuid",
@@ -460,7 +460,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "subtle",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "uuid",
  "zeroize",
@@ -476,7 +476,7 @@ dependencies = [
  "async-trait",
  "futures",
  "serde",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "uuid",
 ]
@@ -489,7 +489,7 @@ dependencies = [
  "blake3",
  "proptest",
  "serde",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "uuid",
 ]
@@ -509,7 +509,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "tracing",
@@ -529,7 +529,7 @@ dependencies = [
  "aws-types",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -542,7 +542,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -555,7 +555,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tracing",
 ]
 
@@ -569,7 +569,7 @@ dependencies = [
  "futures",
  "proptest",
  "serde",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "uuid",
@@ -589,7 +589,7 @@ dependencies = [
  "futures",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "uuid",
@@ -608,7 +608,7 @@ dependencies = [
  "serde",
  "sha2 0.11.0",
  "subtle",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "uuid",
  "zeroize",
@@ -623,7 +623,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -698,18 +698,6 @@ name = "aex-live-hands-image"
 version = "0.1.0"
 
 [[package]]
-name = "aex-live-observation-export-launcher"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-observation-export-task"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-observation-reconciler"
-version = "0.1.0"
-
-[[package]]
 name = "aex-live-provider-cost-reconciler"
 version = "0.1.0"
 
@@ -719,14 +707,6 @@ version = "0.1.0"
 
 [[package]]
 name = "aex-live-regional-control"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-regional-observation-api"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-regional-otlp"
 version = "0.1.0"
 
 [[package]]
@@ -796,7 +776,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "toml",
@@ -811,7 +791,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -826,101 +806,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "aex-observation-app"
-version = "0.1.0"
-dependencies = [
- "aex-observation-domain",
- "aex-wire",
- "async-trait",
- "futures",
- "serde",
- "sha2 0.11.0",
- "thiserror",
- "time",
- "uuid",
-]
-
-[[package]]
-name = "aex-observation-domain"
-version = "0.1.0"
-dependencies = [
- "aex-wire",
- "blake3",
- "proptest",
- "serde",
- "sha2 0.11.0",
- "thiserror",
- "time",
- "uuid",
-]
-
-[[package]]
-name = "aex-observation-export"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "bytes",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror",
- "time",
-]
-
-[[package]]
-name = "aex-observation-query"
-version = "0.1.0"
-dependencies = [
- "aex-observation-domain",
- "aex-wire",
- "proptest",
- "serde",
- "serde_json",
- "thiserror",
- "time",
- "uuid",
-]
-
-[[package]]
-name = "aex-observation-store-dynamodb"
-version = "0.1.0"
-dependencies = [
- "aex-observation-app",
- "aex-observation-domain",
- "aex-operation-domain",
- "aex-session-dynamodb",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-s3",
- "aws-smithy-http-client",
- "aws-smithy-runtime-api",
- "aws-smithy-types",
- "bytes",
- "futures",
- "http 1.5.0",
- "proptest",
- "serde",
- "serde_json",
- "thiserror",
- "time",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "aex-observation-test-support"
-version = "0.1.0"
-dependencies = [
- "aex-test-harness",
- "thiserror",
- "time",
- "uuid",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -931,28 +817,7 @@ dependencies = [
  "blake3",
  "proptest",
  "serde_json",
- "thiserror",
- "time",
-]
-
-[[package]]
-name = "aex-otlp-admission"
-version = "0.1.0"
-dependencies = [
- "aex-internal-contracts",
- "aex-observation-domain",
- "aex-wire",
- "bytes",
- "flate2",
- "proptest",
- "prost",
- "prost-build",
- "prost-types",
- "protoc-bin-vendored",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
 ]
 
@@ -965,18 +830,15 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
-name = "aex-platform-telemetry"
+name = "aex-platform-diagnostics"
 version = "0.1.0"
 dependencies = [
- "aex-telemetry-schema",
- "parking_lot",
- "serde_json",
- "thiserror",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -992,7 +854,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "tracing",
@@ -1028,11 +890,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "tower",
- "tower-http 0.7.0",
  "tracing",
  "uuid",
  "zeroize",
@@ -1049,7 +910,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "uuid",
 ]
@@ -1072,7 +933,7 @@ dependencies = [
  "hex",
  "proptest",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -1096,7 +957,7 @@ dependencies = [
  "serde_norway",
  "sha2 0.11.0",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "toml",
  "walkdir",
@@ -1123,7 +984,7 @@ dependencies = [
  "blake3",
  "proptest",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -1138,7 +999,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -1155,7 +1016,7 @@ dependencies = [
  "futures",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -1179,7 +1040,7 @@ dependencies = [
  "hex",
  "serde_json",
  "sqlx",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "uuid",
@@ -1202,7 +1063,7 @@ dependencies = [
  "proptest",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "zeroize",
 ]
@@ -1226,7 +1087,7 @@ dependencies = [
  "proptest",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
 ]
 
@@ -1238,7 +1099,7 @@ dependencies = [
  "blake3",
  "proptest",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "zeroize",
 ]
 
@@ -1258,7 +1119,7 @@ dependencies = [
  "aws-smithy-types",
  "proptest",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
 ]
@@ -1282,7 +1143,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
 ]
@@ -1300,7 +1161,7 @@ dependencies = [
  "proptest",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
 ]
 
@@ -1311,7 +1172,6 @@ dependencies = [
  "aex-brain-domain",
  "aex-content-domain",
  "aex-internal-contracts",
- "aex-observation-domain",
  "aex-operation-domain",
  "aex-runtime-control",
  "aex-secret-domain",
@@ -1335,20 +1195,26 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "xxhash-rust",
 ]
 
 [[package]]
-name = "aex-telemetry-schema"
+name = "aex-session-telemetry-aws"
 version = "0.1.0"
 dependencies = [
- "proptest",
- "serde",
- "thiserror",
- "toml",
+ "aex-wire",
+ "aws-sdk-s3",
+ "base64 0.23.0",
+ "bytes",
+ "hex",
+ "opentelemetry-proto",
+ "prost",
+ "sha2 0.11.0",
+ "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]
@@ -1362,7 +1228,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "testcontainers",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "toml",
@@ -1387,10 +1253,27 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "aex-usage-authority-dynamodb"
+version = "0.1.0"
+dependencies = [
+ "aex-usage-app",
+ "aex-usage-domain",
+ "async-trait",
+ "aws-sdk-dynamodb",
+ "aws-sdk-sqs",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -1399,22 +1282,13 @@ version = "0.1.0"
 dependencies = [
  "aex-test-harness",
  "aex-usage-app",
+ "aex-usage-authority-dynamodb",
  "aex-usage-domain",
  "aex-wire",
- "async-trait",
- "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
- "aws-smithy-runtime-api",
- "aws-smithy-types",
- "futures",
- "serde",
  "serde_json",
- "thiserror",
- "time",
  "tokio",
- "uuid",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -1428,7 +1302,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
 ]
 
@@ -1445,7 +1319,7 @@ dependencies = [
  "futures",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "uuid",
@@ -1468,7 +1342,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
 ]
 
@@ -1478,22 +1352,13 @@ version = "0.1.0"
 dependencies = [
  "aex-test-harness",
  "aex-usage-app",
+ "aex-usage-authority-dynamodb",
  "aex-usage-domain",
  "aex-wire",
- "async-trait",
- "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
- "aws-smithy-runtime-api",
- "aws-smithy-types",
- "futures",
- "serde",
  "serde_json",
- "thiserror",
- "time",
  "tokio",
- "uuid",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -1502,22 +1367,13 @@ version = "0.1.0"
 dependencies = [
  "aex-test-harness",
  "aex-usage-app",
+ "aex-usage-authority-dynamodb",
  "aex-usage-domain",
  "aex-wire",
- "async-trait",
- "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
- "aws-smithy-runtime-api",
- "aws-smithy-types",
- "futures",
- "serde",
  "serde_json",
- "thiserror",
- "time",
  "tokio",
- "uuid",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -1527,7 +1383,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "zeroize",
 ]
@@ -1550,7 +1406,7 @@ dependencies = [
  "proptest",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
 ]
@@ -1564,7 +1420,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "toml",
 ]
 
@@ -1576,7 +1432,7 @@ dependencies = [
  "aex-wire",
  "blake3",
  "proptest",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
 ]
 
@@ -1896,58 +1752,6 @@ name = "aws-sdk-dynamodb"
 version = "1.119.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0176c1927f2e065f43cecde84602f769959b34ab53a317da92a64022ba09345"
-dependencies = [
- "arc-swap",
- "aws-credential-types",
- "aws-runtime",
- "aws-smithy-async",
- "aws-smithy-http",
- "aws-smithy-json",
- "aws-smithy-observability",
- "aws-smithy-runtime",
- "aws-smithy-runtime-api",
- "aws-smithy-schema",
- "aws-smithy-types",
- "aws-types",
- "bytes",
- "fastrand",
- "http 0.2.12",
- "http 1.5.0",
- "regex-lite",
- "tracing",
-]
-
-[[package]]
-name = "aws-sdk-dynamodbstreams"
-version = "1.107.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c9527aa535e21ea5358e737318972f08ec68a076b7425ab254d2cc3854a8ece"
-dependencies = [
- "arc-swap",
- "aws-credential-types",
- "aws-runtime",
- "aws-smithy-async",
- "aws-smithy-http",
- "aws-smithy-json",
- "aws-smithy-observability",
- "aws-smithy-runtime",
- "aws-smithy-runtime-api",
- "aws-smithy-schema",
- "aws-smithy-types",
- "aws-types",
- "bytes",
- "fastrand",
- "http 0.2.12",
- "http 1.5.0",
- "regex-lite",
- "tracing",
-]
-
-[[package]]
-name = "aws-sdk-ecs"
-version = "1.136.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bd6e03cac8400440aeb04c1e8c88fa76d4b11c4eeb4075a0e7829ed3c012c60"
 dependencies = [
  "arc-swap",
  "aws-credential-types",
@@ -2479,7 +2283,7 @@ dependencies = [
  "regex-lite",
  "roxmltree",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -2833,7 +2637,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_urlencoded",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "tokio-stream",
@@ -2896,7 +2700,7 @@ dependencies = [
  "aex-identity-domain",
  "aex-internal-contracts",
  "aex-model-catalog",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-runtime-activity-dynamodb",
  "aex-runtime-control",
  "aex-runtime-control-aws",
@@ -2904,7 +2708,7 @@ dependencies = [
  "aex-secret-custody-dynamodb",
  "aex-secret-domain",
  "aex-session-dynamodb",
- "aex-telemetry-schema",
+ "aex-session-telemetry-aws",
  "aex-usage-app",
  "aex-usage-domain",
  "aex-wire",
@@ -2912,6 +2716,7 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws-sdk-kms",
  "aws-sdk-lambdamicrovms",
+ "aws-sdk-s3",
  "aws-sdk-secretsmanager",
  "aws-sdk-sqs",
  "base64 0.23.0",
@@ -2919,10 +2724,11 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "toml",
+ "tracing",
  "uuid",
  "zeroize",
 ]
@@ -3035,7 +2841,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -3081,10 +2887,9 @@ dependencies = [
  "aex-identity-app",
  "aex-identity-aurora",
  "aex-identity-domain",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-rds-data",
  "aex-regional-http",
- "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -3099,11 +2904,12 @@ dependencies = [
  "http 1.5.0",
  "http-body-util",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "toml",
  "tower",
+ "tracing",
  "uuid",
 ]
 
@@ -3117,9 +2923,8 @@ dependencies = [
  "aex-control-domain",
  "aex-identity-domain",
  "aex-internal-contracts",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-rds-data",
- "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -3130,7 +2935,7 @@ dependencies = [
  "lambda_runtime",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "tracing",
@@ -3149,9 +2954,8 @@ dependencies = [
  "aex-control-domain",
  "aex-identity-app",
  "aex-identity-domain",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-rds-data",
- "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -3162,10 +2966,11 @@ dependencies = [
  "lambda_http",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "tower",
+ "tracing",
  "uuid",
 ]
 
@@ -3180,10 +2985,9 @@ dependencies = [
  "aex-control-domain",
  "aex-identity-app",
  "aex-internal-contracts",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-rds-data",
  "aex-session-dynamodb",
- "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -3197,10 +3001,11 @@ dependencies = [
  "lambda_runtime",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "tower",
+ "tracing",
  "uuid",
 ]
 
@@ -3215,9 +3020,8 @@ dependencies = [
  "aex-identity-app",
  "aex-identity-aurora",
  "aex-identity-domain",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-rds-data",
- "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -3226,16 +3030,16 @@ dependencies = [
  "axum",
  "base64 0.23.0",
  "lambda_http",
+ "oauth2",
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "subtle",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "tower",
- "url",
+ "tracing",
  "uuid",
 ]
 
@@ -3243,8 +3047,6 @@ dependencies = [
 name = "central-schema-admin"
 version = "0.1.0"
 dependencies = [
- "aex-platform-telemetry",
- "aex-telemetry-schema",
  "aex-test-harness",
  "aex-wire",
  "aws-config",
@@ -3257,7 +3059,7 @@ dependencies = [
  "sha2 0.11.0",
  "sqlx",
  "testcontainers",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "toml",
  "uuid",
@@ -3294,8 +3096,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -3443,11 +3247,10 @@ dependencies = [
  "aex-content-aws",
  "aex-content-dynamodb",
  "aex-identity-domain",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-regional-http",
  "aex-registry-dynamodb",
  "aex-session-dynamodb",
- "aex-telemetry-schema",
  "aex-wire",
  "aex-work-dynamodb",
  "aex-workspace-domain",
@@ -3459,17 +3262,9 @@ dependencies = [
  "lambda_runtime",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
-]
-
-[[package]]
-name = "convert_case"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "affbf0190ed2caf063e3def54ff444b449371d55c58e513a95ab98eca50adb49"
-dependencies = [
- "unicode-segmentation",
+ "tracing",
 ]
 
 [[package]]
@@ -4038,9 +3833,8 @@ dependencies = [
  "aex-finance-domain",
  "aex-internal-contracts",
  "aex-payment-contracts",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-rds-data",
- "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -4056,11 +3850,12 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "toml",
  "tower",
+ "tracing",
  "uuid",
 ]
 
@@ -4071,9 +3866,8 @@ dependencies = [
  "aex-finance-domain",
  "aex-internal-contracts",
  "aex-payment-contracts",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-rds-data",
- "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -4082,10 +3876,11 @@ dependencies = [
  "lambda_runtime",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "toml",
+ "tracing",
  "uuid",
 ]
 
@@ -4096,9 +3891,8 @@ dependencies = [
  "aex-finance-domain",
  "aex-internal-contracts",
  "aex-payment-contracts",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-rds-data",
- "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -4110,10 +3904,11 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "toml",
+ "tracing",
  "uuid",
 ]
 
@@ -4123,9 +3918,8 @@ version = "0.1.0"
 dependencies = [
  "aex-finance-app",
  "aex-internal-contracts",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-rds-data",
- "aex-telemetry-schema",
  "aex-usage-app",
  "aex-usage-domain",
  "aex-wire",
@@ -4137,9 +3931,10 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "toml",
+ "tracing",
  "uuid",
 ]
 
@@ -4148,12 +3943,6 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
-
-[[package]]
-name = "fixedbitset"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flate2"
@@ -4192,12 +3981,6 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
-
-[[package]]
-name = "foldhash"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "foldhash"
@@ -4484,8 +4267,7 @@ dependencies = [
  "aex-hands-protocol",
  "aex-hands-tools",
  "aex-internal-contracts",
- "aex-platform-telemetry",
- "aex-telemetry-schema",
+ "aex-platform-diagnostics",
  "aex-wire",
  "axum",
  "blake3",
@@ -4495,9 +4277,10 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "tower",
+ "tracing",
 ]
 
 [[package]]
@@ -4510,7 +4293,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -4521,22 +4304,13 @@ checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
-version = "0.15.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
-dependencies = [
- "foldhash 0.1.5",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash 0.2.0",
+ "foldhash",
 ]
 
 [[package]]
@@ -4547,7 +4321,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash 0.2.0",
+ "foldhash",
 ]
 
 [[package]]
@@ -4787,7 +4561,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -5020,7 +4794,7 @@ dependencies = [
  "jni-sys",
  "log",
  "simd_cesu8",
- "thiserror",
+ "thiserror 2.0.19",
  "walkdir",
  "windows-link",
 ]
@@ -5368,12 +5142,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multimap"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
-
-[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5485,80 +5253,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "observation-export-launcher"
-version = "0.1.0"
+name = "oauth2"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
 dependencies = [
- "aex-observation-domain",
- "aex-observation-store-dynamodb",
- "aex-platform-telemetry",
- "aex-telemetry-schema",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-lc-rs",
- "aws-sdk-dynamodb",
- "aws-sdk-ecs",
- "lambda_runtime",
+ "base64 0.21.7",
+ "chrono",
+ "getrandom 0.2.17",
+ "http 1.5.0",
+ "rand 0.8.7",
  "serde",
  "serde_json",
- "thiserror",
- "time",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "observation-export-task"
-version = "0.1.0"
-dependencies = [
- "aex-observation-domain",
- "aex-observation-export",
- "aex-observation-query",
- "aex-observation-store-dynamodb",
- "aex-operation-domain",
- "aex-otlp-admission",
- "aex-platform-telemetry",
- "aex-telemetry-schema",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-lc-rs",
- "aws-sdk-dynamodb",
- "aws-sdk-s3",
- "axum",
- "http-body-util",
- "regional-observation-api",
- "serde_json",
- "thiserror",
- "time",
- "tokio",
- "tower",
- "tracing",
-]
-
-[[package]]
-name = "observation-reconciler"
-version = "0.1.0"
-dependencies = [
- "aex-observation-domain",
- "aex-observation-store-dynamodb",
- "aex-platform-telemetry",
- "aex-telemetry-schema",
- "aex-wire",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-s3",
- "aws-sdk-sqs",
- "aws-smithy-http-client",
- "aws-smithy-runtime-api",
- "aws-smithy-types",
- "http 1.5.0",
- "lambda_runtime",
- "serde_json",
- "thiserror",
- "time",
- "tokio",
- "tracing",
+ "serde_path_to_error",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "url",
 ]
 
 [[package]]
@@ -5578,6 +5288,40 @@ name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
+
+[[package]]
+name = "opentelemetry"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0142c63252a9e054e68a4c61a5778f7b14f576274d593f8ce883d191a099682"
+dependencies = [
+ "js-sys",
+]
+
+[[package]]
+name = "opentelemetry-proto"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56d658ba1faf63f7b9c492cfbe6e0ec365440a16132d3270c1065f7b33f1b638"
+dependencies = [
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "prost",
+]
+
+[[package]]
+name = "opentelemetry_sdk"
+version = "0.32.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b59f80e1ac4d5ff7a2db8fb6c80badb7f0f3f858211fba08dd9aaec750894f9"
+dependencies = [
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
+ "opentelemetry",
+ "portable-atomic",
+ "thiserror 2.0.19",
+]
 
 [[package]]
 name = "ordered-float"
@@ -5731,17 +5475,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "petgraph"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
-dependencies = [
- "fixedbitset",
- "hashbrown 0.15.5",
- "indexmap 2.14.0",
-]
-
-[[package]]
 name = "phf"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5885,16 +5618,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prettyplease"
-version = "0.2.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
-dependencies = [
- "proc-macro2",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "primefield"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5931,15 +5654,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro-crate"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
-dependencies = [
- "toml_edit",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5959,7 +5673,7 @@ dependencies = [
  "bitflags",
  "num-traits",
  "rand 0.9.5",
- "rand_chacha",
+ "rand_chacha 0.9.0",
  "rand_xorshift",
  "regex-syntax",
  "rusty-fork",
@@ -5975,25 +5689,6 @@ checksum = "528ac67416ff8646872a3c02cad9cc4ee5dc9f9540c9b10771855c95cb2e5ae1"
 dependencies = [
  "bytes",
  "prost-derive",
-]
-
-[[package]]
-name = "prost-build"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
-dependencies = [
- "heck",
- "itertools",
- "log",
- "multimap",
- "petgraph",
- "prettyplease",
- "prost",
- "prost-types",
- "regex",
- "syn 2.0.119",
- "tempfile",
 ]
 
 [[package]]
@@ -6019,76 +5714,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "protoc-bin-vendored"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1c381df33c98266b5f08186583660090a4ffa0889e76c7e9a5e175f645a67fa"
-dependencies = [
- "protoc-bin-vendored-linux-aarch_64",
- "protoc-bin-vendored-linux-ppcle_64",
- "protoc-bin-vendored-linux-s390_64",
- "protoc-bin-vendored-linux-x86_32",
- "protoc-bin-vendored-linux-x86_64",
- "protoc-bin-vendored-macos-aarch_64",
- "protoc-bin-vendored-macos-x86_64",
- "protoc-bin-vendored-win32",
-]
-
-[[package]]
-name = "protoc-bin-vendored-linux-aarch_64"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c350df4d49b5b9e3ca79f7e646fde2377b199e13cfa87320308397e1f37e1a4c"
-
-[[package]]
-name = "protoc-bin-vendored-linux-ppcle_64"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a55a63e6c7244f19b5c6393f025017eb5d793fd5467823a099740a7a4222440c"
-
-[[package]]
-name = "protoc-bin-vendored-linux-s390_64"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dba5565db4288e935d5330a07c264a4ee8e4a5b4a4e6f4e83fad824cc32f3b0"
-
-[[package]]
-name = "protoc-bin-vendored-linux-x86_32"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8854774b24ee28b7868cd71dccaae8e02a2365e67a4a87a6cd11ee6cdbdf9cf5"
-
-[[package]]
-name = "protoc-bin-vendored-linux-x86_64"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b38b07546580df720fa464ce124c4b03630a6fb83e05c336fea2a241df7e5d78"
-
-[[package]]
-name = "protoc-bin-vendored-macos-aarch_64"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89278a9926ce312e51f1d999fee8825d324d603213344a9a706daa009f1d8092"
-
-[[package]]
-name = "protoc-bin-vendored-macos-x86_64"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81745feda7ccfb9471d7a4de888f0652e806d5795b61480605d4943176299756"
-
-[[package]]
-name = "protoc-bin-vendored-win32"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95067976aca6421a523e491fce939a3e65249bac4b977adee0ee9771568e8aa3"
-
-[[package]]
 name = "provider-cost-reconciler"
 version = "0.1.0"
 dependencies = [
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-rds-data",
- "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -6098,10 +5728,11 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -6134,8 +5765,8 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.5",
- "thiserror",
+ "socket2 0.5.10",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
  "web-time",
@@ -6158,7 +5789,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror",
+ "thiserror 2.0.19",
  "tinyvec",
  "tracing",
  "web-time",
@@ -6173,7 +5804,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -6201,11 +5832,22 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
+dependencies = [
+ "libc",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
 dependencies = [
- "rand_chacha",
+ "rand_chacha 0.9.0",
  "rand_core 0.9.5",
 ]
 
@@ -6218,6 +5860,16 @@ dependencies = [
  "chacha20",
  "getrandom 0.4.3",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -6367,7 +6019,7 @@ dependencies = [
  "lambda_runtime",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
 ]
@@ -6377,93 +6029,15 @@ name = "regional-control"
 version = "0.1.0"
 dependencies = [
  "aex-internal-contracts",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-session-dynamodb",
- "aex-telemetry-schema",
  "aex-wire",
  "aws-config",
  "aws-sdk-dynamodb",
  "lambda_runtime",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
-]
-
-[[package]]
-name = "regional-observation-api"
-version = "0.1.0"
-dependencies = [
- "aex-identity-domain",
- "aex-internal-contracts",
- "aex-observation-app",
- "aex-observation-domain",
- "aex-observation-query",
- "aex-observation-store-dynamodb",
- "aex-operation-domain",
- "aex-otlp-admission",
- "aex-platform-telemetry",
- "aex-regional-http",
- "aex-session-dynamodb",
- "aex-telemetry-schema",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-s3",
- "aws-sdk-secretsmanager",
- "aws-sdk-ssm",
- "aws-smithy-http-client",
- "aws-smithy-types",
- "axum",
- "bytes",
- "futures",
- "http 1.5.0",
- "lambda_http",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror",
- "time",
- "tokio",
- "tower",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "regional-otlp"
-version = "0.1.0"
-dependencies = [
- "aex-identity-domain",
- "aex-internal-contracts",
- "aex-observation-domain",
- "aex-observation-store-dynamodb",
- "aex-otlp-admission",
- "aex-platform-telemetry",
- "aex-regional-http",
- "aex-session-dynamodb",
- "aex-telemetry-schema",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-s3",
- "aws-sdk-secretsmanager",
- "aws-smithy-http-client",
- "aws-smithy-types",
- "axum",
- "base64 0.23.0",
- "futures",
- "http 1.5.0",
- "lambda_http",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror",
- "time",
- "tokio",
- "tower",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -6471,10 +6045,9 @@ name = "regional-secret-key-admin"
 version = "0.1.0"
 dependencies = [
  "aex-identity-domain",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-regional-http",
  "aex-secret-keystore-dynamodb",
- "aex-telemetry-schema",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -6483,9 +6056,10 @@ dependencies = [
  "aws-smithy-types",
  "clap",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
+ "tracing",
  "zeroize",
 ]
 
@@ -6525,7 +6099,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tower",
- "tower-http 0.6.11",
+ "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -6576,29 +6150,15 @@ dependencies = [
  "ordered-float",
  "pin-project-lite",
  "reqwest",
- "rig-derive",
  "schemars 1.2.2",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "tokio-tungstenite",
  "tracing",
  "tracing-futures",
  "url",
-]
-
-[[package]]
-name = "rig-derive"
-version = "0.41.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb868fcebdf3ba425e3afad2e4926bb6d9e1188a856843b00bcee2e15c07424f"
-dependencies = [
- "convert_case",
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -6632,7 +6192,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sse-stream",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -6654,12 +6214,11 @@ version = "0.1.0"
 dependencies = [
  "aex-hands-control-aws",
  "aex-internal-contracts",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-runtime-activity-dynamodb",
  "aex-runtime-control",
  "aex-runtime-control-aws",
  "aex-session-dynamodb",
- "aex-telemetry-schema",
  "aex-usage-domain",
  "aex-wire",
  "aws-config",
@@ -6672,9 +6231,10 @@ dependencies = [
  "lambda_runtime",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "tower",
+ "tracing",
 ]
 
 [[package]]
@@ -7126,9 +6686,8 @@ version = "0.1.0"
 dependencies = [
  "aex-identity-domain",
  "aex-internal-contracts",
- "aex-observation-store-dynamodb",
  "aex-operation-domain",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-regional-http",
  "aex-runtime-activity-dynamodb",
  "aex-runtime-control",
@@ -7136,21 +6695,23 @@ dependencies = [
  "aex-session-app",
  "aex-session-domain",
  "aex-session-dynamodb",
- "aex-telemetry-schema",
+ "aex-session-telemetry-aws",
  "aex-wire",
  "aex-work-dynamodb",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-sdk-s3",
  "aws-sdk-sqs",
  "aws_lambda_events",
  "futures",
  "lambda_runtime",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
+ "tracing",
  "xxhash-rust",
 ]
 
@@ -7171,11 +6732,8 @@ dependencies = [
  "aex-identity-domain",
  "aex-internal-contracts",
  "aex-model-catalog",
- "aex-observation-domain",
- "aex-observation-query",
- "aex-observation-store-dynamodb",
  "aex-operation-domain",
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-regional-http",
  "aex-registry-dynamodb",
  "aex-runtime-activity-dynamodb",
@@ -7188,7 +6746,7 @@ dependencies = [
  "aex-session-app",
  "aex-session-domain",
  "aex-session-dynamodb",
- "aex-telemetry-schema",
+ "aex-session-telemetry-aws",
  "aex-usage-domain",
  "aex-usage-query-dynamodb",
  "aex-wire",
@@ -7197,7 +6755,6 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
- "aws-sdk-dynamodbstreams",
  "aws-sdk-kms",
  "aws-sdk-lambda",
  "aws-sdk-lambdamicrovms",
@@ -7214,14 +6771,14 @@ dependencies = [
  "hex",
  "http 1.5.0",
  "http-body-util",
- "regional-observation-api",
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "tower",
+ "tracing",
  "uuid",
 ]
 
@@ -7479,7 +7036,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "smallvec",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tokio",
  "tokio-stream",
@@ -7523,7 +7080,7 @@ dependencies = [
  "sqlx-postgres",
  "sqlx-sqlite",
  "syn 2.0.119",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "url",
 ]
@@ -7550,7 +7107,7 @@ dependencies = [
  "sha1 0.11.0",
  "sha2 0.11.0",
  "sqlx-core",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tracing",
  "uuid",
@@ -7586,7 +7143,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tracing",
  "uuid",
@@ -7612,7 +7169,7 @@ dependencies = [
  "percent-encoding",
  "serde",
  "sqlx-core",
- "thiserror",
+ "thiserror 2.0.19",
  "time",
  "tracing",
  "url",
@@ -7799,7 +7356,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -7849,7 +7406,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -7858,11 +7415,31 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.19",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -8043,18 +7620,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "toml_edit"
-version = "0.25.13+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6975367e4d2ef766d86af01ffad14b622fecc8d4357a998fbc4deb6e9bacaf9b"
-dependencies = [
- "indexmap 2.14.0",
- "toml_datetime",
- "toml_parser",
- "winnow",
-]
-
-[[package]]
 name = "toml_parser"
 version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8117,8 +7682,7 @@ dependencies = [
  "aex-control-domain",
  "aex-identity-domain",
  "aex-internal-contracts",
- "aex-platform-telemetry",
- "aex-telemetry-schema",
+ "aex-platform-diagnostics",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -8129,8 +7693,9 @@ dependencies = [
  "blake3",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
+ "tracing",
  "uuid",
  "zeroize",
 ]
@@ -8170,27 +7735,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "url",
-]
-
-[[package]]
-name = "tower-http"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b11f75e912b0c2be01b63d8cf8057b8c3f97cf34abb3d431a3a4c8675498e233"
-dependencies = [
- "bitflags",
- "bytes",
- "futures-util",
- "http 1.5.0",
- "http-body 1.1.0",
- "http-body-util",
- "percent-encoding",
- "pin-project-lite",
- "tokio",
- "tower-layer",
- "tower-service",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -8313,7 +7857,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "sha1 0.10.7",
- "thiserror",
+ "thiserror 2.0.19",
  "utf-8",
 ]
 
@@ -8448,8 +7992,7 @@ checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 name = "usage-compute-worker"
 version = "0.1.0"
 dependencies = [
- "aex-platform-telemetry",
- "aex-telemetry-schema",
+ "aex-platform-diagnostics",
  "aex-usage-app",
  "aex-usage-compute-dynamodb",
  "aex-usage-domain",
@@ -8458,17 +8001,17 @@ dependencies = [
  "aws-sdk-sqs",
  "lambda_runtime",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
 name = "usage-receipt-dispatcher"
 version = "0.1.0"
 dependencies = [
- "aex-platform-telemetry",
+ "aex-platform-diagnostics",
  "aex-rds-data",
- "aex-telemetry-schema",
  "async-trait",
  "aws-config",
  "aws-sdk-rdsdata",
@@ -8477,9 +8020,10 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
  "toml",
+ "tracing",
  "uuid",
 ]
 
@@ -8487,8 +8031,7 @@ dependencies = [
 name = "usage-storage-worker"
 version = "0.1.0"
 dependencies = [
- "aex-platform-telemetry",
- "aex-telemetry-schema",
+ "aex-platform-diagnostics",
  "aex-usage-app",
  "aex-usage-domain",
  "aex-usage-storage-dynamodb",
@@ -8497,16 +8040,16 @@ dependencies = [
  "aws-sdk-sqs",
  "lambda_runtime",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
 name = "usage-transfer-worker"
 version = "0.1.0"
 dependencies = [
- "aex-platform-telemetry",
- "aex-telemetry-schema",
+ "aex-platform-diagnostics",
  "aex-usage-app",
  "aex-usage-domain",
  "aex-usage-transfer-dynamodb",
@@ -8515,8 +8058,9 @@ dependencies = [
  "aws-sdk-sqs",
  "lambda_runtime",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.19",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -8953,9 +8497,6 @@ name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "wit-bindgen"

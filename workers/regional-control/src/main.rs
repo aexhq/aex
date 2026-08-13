@@ -7,6 +7,8 @@ use aex_internal_contracts::control::{RegionalControlEnvelope, RegionalControlRe
 use aex_wire::types::Region;
 use lambda_runtime::{LambdaEvent, service_fn};
 
+const DEPLOYABLE: &str = "regional-control";
+
 mod keys {
     pub const REGION: &str = "AEX_REGION";
     pub const SESSION_TABLE: &str = "AEX_SESSION_TABLE";
@@ -65,27 +67,34 @@ where
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("{DEPLOYABLE}: diagnostics installation failed: {error}");
+        return ExitCode::FAILURE;
+    }
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("regional-control: refusing to start: {error}");
+            tracing::error!(
+                target: "aex::diagnostics",
+                event_name = "process.configuration_rejected",
+                deployable = DEPLOYABLE,
+                error = %error,
+                "process configuration rejected"
+            );
+            eprintln!("{DEPLOYABLE}: refusing to start: {error}");
             eprintln!(
-                "regional-control: required configuration: {}",
+                "{DEPLOYABLE}: required configuration: {}",
                 keys::ALL.join(", ")
             );
             return ExitCode::FAILURE;
         }
     };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.as_str().to_owned(),
-        ),
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = DEPLOYABLE,
+        region = config.region.as_str(),
+        "process started"
     );
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let store = Arc::new(
@@ -107,11 +116,10 @@ async fn main() -> ExitCode {
         },
     ))
     .await;
-    let _ = telemetry.flush(settings.flush_deadline);
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("regional-control: runtime stopped: {error}");
+            eprintln!("{DEPLOYABLE}: runtime stopped: {error}");
             ExitCode::FAILURE
         }
     }

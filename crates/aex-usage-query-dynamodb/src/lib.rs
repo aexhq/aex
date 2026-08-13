@@ -18,7 +18,7 @@
 //!   here would give this crate a key and a policy, and `tests/write_incapability.rs`
 //!   would stop being a fact about its own sources. The serving unit owns the
 //!   *binding* — route, principal scope, region, workspace, normalized query and
-//!   the pinned generation — exactly as `aex-observation-query` does, and this
+//!   the pinned generation — exactly as every regional query adapter does, and this
 //!   crate hands it the plan position to carry.
 
 pub mod expressions;

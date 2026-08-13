@@ -10,7 +10,6 @@ use std::collections::BTreeSet;
 
 use aex_wire::error::{ErrorClass, ErrorCode, ObservedErrorCode, PrecedenceStage, WireError};
 use aex_wire::idempotency::IdempotencyKind;
-use aex_wire::models::TelemetryGapReason;
 use aex_wire::routes::{
     BodyClass, EtagPolicy, Plane, ROUTES, RouteId, TransportKind, match_route, route,
 };
@@ -448,30 +447,6 @@ fn pause_exempt_routes_are_exactly_the_declared_exemptions() {
         assert!(
             exempt,
             "{operation} claims a pause exemption it has no basis for"
-        );
-    }
-}
-
-#[test]
-fn the_replay_expired_gap_reason_exists_but_no_contract_surface_produces_it() {
-    // The reason stays in the vocabulary so a historical gap record still
-    // decodes. Nothing in the contract can mint one: it is reachable only from a
-    // streaming buffer that the launch architecture does not have.
-    assert!(TelemetryGapReason::ALL.contains(&TelemetryGapReason::ReplayExpired));
-    assert_eq!(TelemetryGapReason::ReplayExpired.as_str(), "replay_expired");
-    let produced: BTreeSet<&str> = ROUTES
-        .iter()
-        .filter_map(|descriptor| descriptor.response_schema)
-        .collect();
-    assert!(
-        produced.contains("TelemetryGap"),
-        "the gap shape must still be readable"
-    );
-    for descriptor in ROUTES {
-        assert!(
-            descriptor.request_schema != Some("TelemetryGap"),
-            "{} lets a caller submit a gap",
-            descriptor.operation_id
         );
     }
 }

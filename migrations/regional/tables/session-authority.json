@@ -82,10 +82,10 @@
     }
   ],
   "stream": {
-    "enabled": true,
-    "viewType": "KEYS_ONLY",
-    "consumers": ["regional-stream"],
-    "rationale": "Least privilege: the stream consumer role learns pk and sk and nothing else. Replay and ordering are always Query by cursor; the stream is never truth."
+    "enabled": false,
+    "viewType": "NONE",
+    "consumers": [],
+    "rationale": "No product service consumes this authority stream. Session reads and event ordering use the authority table directly."
   },
   "timeToLive": {
     "enabled": true,
@@ -120,7 +120,6 @@
     "budget_return",
     "operation",
     "idempotency_receipt",
-    "outbox_event",
     "regional_workspace_control",
     "active_session",
     "account_pause_progress"
@@ -224,105 +223,6 @@
         "dynamodb:DescribeTable"
       ],
       "resources": ["table"]
-    },
-    {
-      "role": "regional-observation-api",
-      "actions": [
-        "dynamodb:DescribeTable",
-        "dynamodb:GetItem",
-        "dynamodb:BatchGetItem",
-        "dynamodb:Query"
-      ],
-      "resources": ["table", "index/*"]
-    },
-    {
-      "role": "regional-observation-api",
-      "actions": ["dynamodb:TransactGetItems"],
-      "resources": ["table"],
-      "itemTypes": ["operation"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["EXPORT#*", "OP#*"]
-      }
-    },
-    {
-      "role": "regional-observation-api",
-      "actions": ["dynamodb:TransactWriteItems"],
-      "resources": ["table"],
-      "itemTypes": ["operation", "session_operation_edge"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["EXPORT#*", "FRONT#*", "OP#*", "SESSION#*"]
-      }
-    },
-    {
-      "role": "observation-export-task",
-      "actions": ["dynamodb:DescribeTable", "dynamodb:GetItem"],
-      "resources": ["table"]
-    },
-    {
-      "role": "observation-export-task",
-      "actions": ["dynamodb:TransactGetItems"],
-      "resources": ["table"],
-      "itemTypes": ["operation"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["EXPORT#*", "OP#*"]
-      }
-    },
-    {
-      "role": "observation-export-task",
-      "actions": ["dynamodb:TransactWriteItems"],
-      "resources": ["table"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["EXPORT#*", "FRONT#*", "OP#*", "SESSION#*"]
-      }
-    },
-    {
-      "role": "observation-reconciler",
-      "actions": ["dynamodb:TransactGetItems"],
-      "resources": ["table"],
-      "itemTypes": ["operation"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["EXPORT#*", "OP#*"]
-      }
-    },
-    {
-      "role": "observation-reconciler",
-      "actions": ["dynamodb:TransactWriteItems"],
-      "resources": ["table"],
-      "itemTypes": ["operation"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["EXPORT#*", "FRONT#*", "OP#*", "SESSION#*"]
-      }
-    },
-    {
-      "role": "regional-stream",
-      "actions": [
-        "dynamodb:DescribeTable",
-        "dynamodb:GetItem",
-        "dynamodb:BatchGetItem",
-        "dynamodb:Query"
-      ],
-      "resources": ["table", "index/*"]
-    },
-    {
-      "role": "regional-stream",
-      "actions": [
-        "dynamodb:GetRecords",
-        "dynamodb:GetShardIterator",
-        "dynamodb:DescribeStream"
-      ],
-      "resources": ["stream"]
     }
   ],
   "tags": { "aex:plane": "regional", "aex:component": "session", "aex:data-class": "authority" }

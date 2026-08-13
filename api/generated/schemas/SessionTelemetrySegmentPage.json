@@ -1,0 +1,27 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionTelemetrySegmentPage.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One bounded page of immutable AEX-generated session telemetry.",
+  "properties": {
+    "items": {
+      "description": "The page.",
+      "items": {
+        "$ref": "aex:schema:SessionTelemetrySegment"
+      },
+      "maxItems": 100,
+      "type": "array"
+    },
+    "nextCursor": {
+      "description": "Continuation token.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-cursor": true
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "SessionTelemetrySegmentPage",
+  "type": "object"
+}

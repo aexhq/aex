@@ -344,51 +344,6 @@
     },
     {
       "class": "not_found",
-      "code": "export_not_found",
-      "message": "no such export",
-      "precedenceStage": "tombstone_and_parent",
-      "remedy": null,
-      "retryable": false,
-      "status": 404
-    },
-    {
-      "class": "state",
-      "code": "export_not_ready",
-      "message": "the export is still preparing",
-      "precedenceStage": "domain_state",
-      "remedy": null,
-      "retryable": true,
-      "status": 409
-    },
-    {
-      "class": "not_found",
-      "code": "export_expired",
-      "message": "the export expired",
-      "precedenceStage": "domain_state",
-      "remedy": null,
-      "retryable": false,
-      "status": 410
-    },
-    {
-      "class": "not_found",
-      "code": "export_revoked",
-      "message": "the export was revoked",
-      "precedenceStage": "domain_state",
-      "remedy": null,
-      "retryable": false,
-      "status": 410
-    },
-    {
-      "class": "unavailable",
-      "code": "export_capacity",
-      "message": "the export could not reserve its bounded worker capacity",
-      "precedenceStage": "domain_state",
-      "remedy": "retry after capacity is available or select a smaller export",
-      "retryable": true,
-      "status": 503
-    },
-    {
-      "class": "not_found",
       "code": "download_grant_expired",
       "message": "the download grant expired",
       "precedenceStage": "domain_state",
@@ -398,71 +353,8 @@
     },
     {
       "class": "validation",
-      "code": "telemetry_payload_too_large",
-      "message": "the OTLP payload exceeded its effective limit",
-      "precedenceStage": "transport_envelope",
-      "remedy": null,
-      "retryable": false,
-      "status": 413
-    },
-    {
-      "class": "validation",
-      "code": "invalid_telemetry",
-      "message": "the telemetry payload is not the pinned OTLP revision",
-      "precedenceStage": "body_limit_and_parse",
-      "remedy": null,
-      "retryable": false,
-      "status": 400
-    },
-    {
-      "class": "quota",
-      "code": "telemetry_quota_exceeded",
-      "message": "the telemetry admission quota was exceeded",
-      "precedenceStage": "domain_state",
-      "remedy": null,
-      "retryable": true,
-      "status": 429
-    },
-    {
-      "class": "state",
-      "code": "telemetry_incomplete",
-      "message": "the requested range has recorded gaps and completeness was required",
-      "precedenceStage": "domain_state",
-      "remedy": null,
-      "retryable": true,
-      "status": 409
-    },
-    {
-      "class": "validation",
-      "code": "unsupported_export_signal",
-      "message": "that signal cannot be exported in the requested format",
-      "precedenceStage": "body_limit_and_parse",
-      "remedy": null,
-      "retryable": false,
-      "status": 400
-    },
-    {
-      "class": "validation",
       "code": "invalid_query",
-      "message": "the observation query exceeded its structural bounds",
-      "precedenceStage": "body_limit_and_parse",
-      "remedy": null,
-      "retryable": false,
-      "status": 400
-    },
-    {
-      "class": "quota",
-      "code": "telemetry_query_budget_exhausted",
-      "message": "the observation query exhausted its scan budget before it could make progress",
-      "precedenceStage": "domain_state",
-      "remedy": "narrow the time range, add an indexed predicate, or request an export",
-      "retryable": false,
-      "status": 409
-    },
-    {
-      "class": "validation",
-      "code": "invalid_metric_aggregation",
-      "message": "the metric aggregation is not computable over the selection",
+      "message": "the query exceeded its structural bounds",
       "precedenceStage": "body_limit_and_parse",
       "remedy": null,
       "retryable": false,
@@ -611,15 +503,6 @@
       "remedy": "reissue the request against the `apiUrl` in `details`",
       "retryable": false,
       "status": 409
-    },
-    {
-      "class": "unavailable",
-      "code": "observability_unavailable",
-      "message": "the observation authority could not be reached",
-      "precedenceStage": "domain_state",
-      "remedy": null,
-      "retryable": true,
-      "status": 503
     },
     {
       "class": "unavailable",

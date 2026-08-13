@@ -290,7 +290,7 @@ fn a_root_run_boundary_is_one_six_action_session_centric_commit() {
     commit.control.phase = "awaiting_input".to_owned();
 
     let compiled = plan::compile(&tables(), &context, &commit).expect("boundary compiles");
-    assert_eq!(compiled.len(), 6);
+    assert_eq!(compiled.len(), 5);
     assert_eq!(
         compiled.participants(),
         &[
@@ -299,7 +299,6 @@ fn a_root_run_boundary_is_one_six_action_session_centric_commit() {
             Participant::SESSION_COMPLETED_EVENT,
             Participant::SESSION_RUN,
             Participant::SESSION_HEAD,
-            Participant::SESSION_TERMINAL_EVENT,
         ]
     );
     assert!(

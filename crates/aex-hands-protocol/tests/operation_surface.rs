@@ -103,7 +103,7 @@ fn a_plan_url_is_unreachable_without_the_pinned_endpoint() {
     );
 
     // The guest is launched against exactly one origin. A plan naming any other
-    // host is refused, so a forged frame cannot point the guest at an attacker.
+    // host is refused, so a forged request cannot point the guest at an attacker.
     let foreign = ContentEndpoint::parse("https://euw2.content.aex.dev").expect("endpoint");
     assert!(matches!(
         plan.authorize(

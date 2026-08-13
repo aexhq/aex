@@ -43,6 +43,7 @@ describe("provider configuration", () => {
     const environment = {
       AEX_DASHBOARD_ORIGIN: "https://dev.aex.dev",
       AEX_CENTRAL_URL: "https://dev-api.aex.dev",
+      AEX_OAUTH_GITHUB_CLIENT_ID: "github-client",
       AEX_OAUTH_GOOGLE_CLIENT_ID: "google-client",
     };
     const config = signInConfig(environment);
@@ -50,32 +51,40 @@ describe("provider configuration", () => {
       kind: "ready",
       origin: "https://dev.aex.dev",
       central: "https://dev-api.aex.dev",
-      clientId: "google-client",
+      clientIds: { github: "github-client", google: "google-client" },
     });
-    expect(configuredProviders(environment)).toEqual(["google"]);
-    expect(isProviderId("github")).toBe(false);
+    expect(configuredProviders(environment)).toEqual(["github", "google"]);
+    expect(isProviderId("github")).toBe(true);
     expect(DashboardSessionRequestSchema.safeParse({
       provider: "github",
       code: "one-use-code",
       state: STATE,
       codeVerifier: VERIFIER,
-    }).success).toBe(false);
+    }).success).toBe(true);
     expect(JSON.stringify(config).toLowerCase()).not.toContain("secret");
   });
 
   test("partial sign-in configuration fails closed", () => {
     expect(() => signInConfig({
       AEX_DASHBOARD_ORIGIN: "https://dev.aex.dev",
+      AEX_OAUTH_GITHUB_CLIENT_ID: "github-client",
       AEX_OAUTH_GOOGLE_CLIENT_ID: "google-client",
     })).toThrow("AEX_CENTRAL_URL");
     expect(() => signInConfig({
       AEX_CENTRAL_URL: "https://dev-api.aex.dev",
+      AEX_OAUTH_GITHUB_CLIENT_ID: "github-client",
       AEX_OAUTH_GOOGLE_CLIENT_ID: "google-client",
     })).toThrow("AEX_DASHBOARD_ORIGIN");
     expect(() => signInConfig({
       AEX_DASHBOARD_ORIGIN: "https://dev.aex.dev",
       AEX_CENTRAL_URL: "https://dev-api.aex.dev",
+      AEX_OAUTH_GITHUB_CLIENT_ID: "github-client",
     })).toThrow("AEX_OAUTH_GOOGLE_CLIENT_ID");
+    expect(() => signInConfig({
+      AEX_DASHBOARD_ORIGIN: "https://dev.aex.dev",
+      AEX_CENTRAL_URL: "https://dev-api.aex.dev",
+      AEX_OAUTH_GOOGLE_CLIENT_ID: "google-client",
+    })).toThrow("AEX_OAUTH_GITHUB_CLIENT_ID");
   });
 
   test("the central API origin is explicit and regional traffic stays in its plane", () => {
@@ -94,7 +103,7 @@ describe("provider configuration", () => {
     const redirectUri = callbackUrl("https://dash.aex.dev");
     expect(redirectUri).toBe("https://dash.aex.dev/api/auth/callback");
 
-    const parsed = new URL(authorizationUrl("google-client", redirectUri, STATE));
+    const parsed = new URL(authorizationUrl("google", "google-client", redirectUri, STATE));
     expect(parsed.protocol).toBe("https:");
     expect(parsed.host).toBe("accounts.google.com");
     expect(parsed.pathname).toBe("/o/oauth2/v2/auth");
@@ -103,6 +112,17 @@ describe("provider configuration", () => {
     expect(parsed.searchParams.get("state")).toBe(STATE);
     expect(parsed.searchParams.get("code_challenge")).toBe(STATE);
     expect(parsed.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(parsed.searchParams.get("nonce")).toBe(STATE);
+
+    const github = new URL(authorizationUrl("github", "github-client", redirectUri, STATE));
+    expect(github.protocol).toBe("https:");
+    expect(github.host).toBe("github.com");
+    expect(github.pathname).toBe("/login/oauth/authorize");
+    expect(github.searchParams.get("client_id")).toBe("github-client");
+    expect(github.searchParams.get("scope")).toBe("user:email");
+    expect(github.searchParams.get("state")).toBe(STATE);
+    expect(github.searchParams.get("code_challenge")).toBe(STATE);
+    expect(github.searchParams.get("nonce")).toBeNull();
   });
 });
 

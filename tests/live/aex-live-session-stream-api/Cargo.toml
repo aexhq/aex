@@ -52,8 +52,8 @@ name = "live-files"
 path = "tests/live_files.rs"
 required-features = ["live"]
 
-# `LOAD-STREAM-SOCKETS` and `PERF-BASELINE-JOURNAL-FOLD` are blocking gates whose
-# descriptors name this package. Until this target existed neither could run and
+# `PERF-BASELINE-JOURNAL-FOLD` is a blocking gate whose descriptor names this
+# package. Until this target existed it could not run and
 # nothing reported them as pending, because `aex-workload-unowned` only asked
 # whether a descriptor existed.
 [[test]]

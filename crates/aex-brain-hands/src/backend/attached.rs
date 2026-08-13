@@ -57,11 +57,10 @@ impl ProductionHandsBackend {
             }
             Err(error) => return Err(error),
         };
-        self.observe_guest(endpoint, &reply).await?;
         if let Some(view) = native_resume {
             self.settle_native_activity(view).await?;
         }
-        match reply.payload {
+        match reply {
             AttachResponse::Terminal {
                 operation: found,
                 existing,
@@ -143,12 +142,14 @@ impl ProductionHandsBackend {
             }
             _ => return Ok(None),
         };
-        crate::wire::verify_body(&bytes, terminal.body_len, terminal.digest).map_err(|_| {
-            result_rejected(
-                &start.operation,
-                "the attached terminal result failed length or digest verification",
-            )
-        })?;
+        let bytes = super::ResultAssembly::resume(operation, terminal.clone(), bytes, maximum)
+            .finish()
+            .map_err(|_| {
+                result_rejected(
+                    &start.operation,
+                    "the attached terminal result failed length or digest verification",
+                )
+            })?;
         self.settle_operation(generation, operation).await?;
         let inline = String::from_utf8(bytes).map_err(|_| {
             result_rejected(&start.operation, "the inline terminal result is not UTF-8")

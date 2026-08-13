@@ -52,6 +52,7 @@ aex-secret-aws = { path = "../../crates/aex-secret-aws" }
 aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb" }
 aex-secret-domain = { path = "../../crates/aex-secret-domain" }
 aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", features = ["session-authority"] }
+aex-session-telemetry-aws = { path = "../../crates/aex-session-telemetry-aws" }
 # The composed `ToolPort`. Production binds only executors with exact per-tool
 # coverage; catalog installation refuses any active row without an earned
 # implementation.
@@ -59,6 +60,7 @@ aex-brain-tool-catalog = { path = "../../crates/aex-brain-tool-catalog" }
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-kms.workspace = true
+aws-sdk-s3.workspace = true
 aws-sdk-lambdamicrovms.workspace = true
 aws-sdk-sqs.workspace = true
 aws-sdk-secretsmanager.workspace = true
@@ -66,8 +68,8 @@ base64.workspace = true
 futures.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
+tracing.workspace = true
 # The METER-02 probe library. A11-MUX imports `ActivationMeter`, `MemoryBudget`,
 # `MemoryReservation` and `CpuReconciler` from here rather than declaring its
 # own: two definitions of a billing unit is how a bill and a receipt come to

@@ -24,7 +24,6 @@ risk = ["untrusted_input"]
 scenarios = []
 
 [package.metadata.aex.targets]
-hostile_frames = "unit"
 no_cloud_authority = "unit"
 no_guest_billing = "unit"
 

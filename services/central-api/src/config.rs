@@ -93,6 +93,8 @@ pub const REQUEST_DEADLINE_MS: &str = "AEX_CENTRAL_API_REQUEST_DEADLINE_MS";
 /// A JSON object with `clientId` and `clientSecret`, bound to
 /// [`aex_central_http::capability::SignInHandshake`].
 pub const GOOGLE_OAUTH_SECRET_ID: &str = "AEX_CENTRAL_API_GOOGLE_OAUTH_SECRET_ID";
+/// The secret holding GitHub's registered OAuth client.
+pub const GITHUB_OAUTH_SECRET_ID: &str = "AEX_CENTRAL_API_GITHUB_OAUTH_SECRET_ID";
 /// Where a provider sends the browser back after a person authorizes.
 ///
 /// Configured rather than accepted from the request body: a caller that could
@@ -118,6 +120,7 @@ pub const ALL: &[&str] = &[
     DOWNLOAD_GRANT_TTL_MS,
     DRAIN_DEADLINE_MS,
     GOOGLE_OAUTH_SECRET_ID,
+    GITHUB_OAUTH_SECRET_ID,
     IDENTITY_PEPPER_SECRET_ID,
     MAX_BODY_BYTES,
     PAGE_LIMIT,
@@ -169,6 +172,8 @@ pub struct Config {
     pub identity_pepper_secret_id: String,
     /// The secret holding Google's registered OAuth client.
     pub google_oauth_secret_id: String,
+    /// The secret holding GitHub's registered OAuth client.
+    pub github_oauth_secret_id: String,
     /// Where a provider sends the browser back after a person authorizes.
     pub sign_in_redirect_uri: String,
     /// The cursor signing secret.
@@ -286,6 +291,7 @@ impl Config {
             api_key_pepper_secret_id: required(&lookup, API_KEY_PEPPER_SECRET_ID)?,
             identity_pepper_secret_id: required(&lookup, IDENTITY_PEPPER_SECRET_ID)?,
             google_oauth_secret_id: required(&lookup, GOOGLE_OAUTH_SECRET_ID)?,
+            github_oauth_secret_id: required(&lookup, GITHUB_OAUTH_SECRET_ID)?,
             sign_in_redirect_uri: https_url(&lookup, SIGN_IN_REDIRECT_URI)?,
             cursor_secret_id: required(&lookup, CURSOR_SECRET_ID)?,
             regional_functions,
@@ -328,6 +334,10 @@ impl Config {
                 (
                     GOOGLE_OAUTH_SECRET_ID.to_owned(),
                     self.google_oauth_secret_id.clone(),
+                ),
+                (
+                    GITHUB_OAUTH_SECRET_ID.to_owned(),
+                    self.github_oauth_secret_id.clone(),
                 ),
                 (
                     IDENTITY_PEPPER_SECRET_ID.to_owned(),

@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:308866d3e6ae0f8108ee3b81c1b852256a3bc1d80cb6d774f221d3d91fab4721`.
+//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -15,7 +15,6 @@ use crate::cursor::Cursor;
 use crate::error::ObservedErrorCode;
 use crate::ids::ApiKeyId;
 use crate::ids::ContentHash;
-use crate::ids::ExportId;
 use crate::ids::FileDownloadId;
 use crate::ids::FilePath;
 use crate::ids::FileUploadId;
@@ -24,18 +23,13 @@ use crate::ids::InvitationId;
 use crate::ids::MeasurementId;
 use crate::ids::MembershipId;
 use crate::ids::MessageId;
-use crate::ids::ObservationId;
 use crate::ids::OperationId;
 use crate::ids::OrganizationId;
 use crate::ids::ProviderCredentialId;
 use crate::ids::ResourceName;
 use crate::ids::SessionId;
-use crate::ids::SpanId;
 use crate::ids::StatementId;
-use crate::ids::TelemetryBatchId;
-use crate::ids::TelemetryGapId;
 use crate::ids::ToolCallId;
-use crate::ids::TraceId;
 use crate::ids::UploadId;
 use crate::ids::UserId;
 use crate::ids::WorkspaceId;
@@ -408,18 +402,22 @@ pub struct DeviceTokenRequest {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentityProvider {
+    /// GitHub.
+    Github,
     /// Google.
     Google,
 }
 
 impl IdentityProvider {
     /// Every value, in declared order.
-    pub const ALL: &'static [IdentityProvider] = &[IdentityProvider::Google];
+    pub const ALL: &'static [IdentityProvider] =
+        &[IdentityProvider::Github, IdentityProvider::Google];
 
     /// The wire spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Github => "github",
             Self::Google => "google",
         }
     }
@@ -964,16 +962,6 @@ pub enum ErrorDetails {
     Operation(ErrorDetailsOperation),
     /// Exactly where the body failed validation.
     Validation(ErrorDetailsValidation),
-    /// The telemetry gaps that blocked completeness.
-    Gap(ErrorDetailsGap),
-}
-
-/// The telemetry gaps that blocked a completeness requirement.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ErrorDetailsGap {
-    /// The blocking gaps.
-    pub gap_ids: Vec<TelemetryGapId>,
 }
 
 /// The effective limit that was exceeded.
@@ -1130,10 +1118,8 @@ pub enum OperationKind {
     SessionResume,
     /// Destroy session compute and live files while retaining metadata and messages.
     SessionTerminate,
-    /// Irreversibly delete session-scoped user content and telemetry.
+    /// Irreversibly delete session-scoped user content.
     SessionDelete,
-    /// Produce a telemetry export artifact.
-    TelemetryExport,
     /// Delete the workspace across both planes.
     WorkspaceDelete,
 }
@@ -1146,7 +1132,6 @@ impl OperationKind {
         OperationKind::SessionResume,
         OperationKind::SessionTerminate,
         OperationKind::SessionDelete,
-        OperationKind::TelemetryExport,
         OperationKind::WorkspaceDelete,
     ];
 
@@ -1159,7 +1144,6 @@ impl OperationKind {
             Self::SessionResume => "session_resume",
             Self::SessionTerminate => "session_terminate",
             Self::SessionDelete => "session_delete",
-            Self::TelemetryExport => "telemetry_export",
             Self::WorkspaceDelete => "workspace_delete",
         }
     }
@@ -1204,8 +1188,6 @@ pub enum OperationResult {
     SessionTerminate(SessionTerminateResult),
     /// Irreversible deletion tombstone.
     SessionDelete(SessionTombstone),
-    /// Export result.
-    TelemetryExport(TelemetryExportResult),
     /// Workspace tombstone.
     WorkspaceDelete(WorkspaceTombstone),
 }
@@ -1267,898 +1249,6 @@ pub struct WorkspaceAccess {
     pub generation_id: GenerationId,
     /// Whether this call first resumed the suspended generation.
     pub resumed: bool,
-}
-
-// --- observation -------------------------------------------------------
-
-/// What an export does when the window has recorded gaps.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExportCompleteness {
-    /// Refuse to produce an artifact over a gap.
-    Require,
-    /// Produce the artifact and record the gaps in the manifest.
-    AllowGaps,
-}
-
-impl ExportCompleteness {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ExportCompleteness] =
-        &[ExportCompleteness::Require, ExportCompleteness::AllowGaps];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Require => "require",
-            Self::AllowGaps => "allow_gaps",
-        }
-    }
-}
-
-/// The two export formats. Parquet is deliberately absent: its encoder is a typed refusal pending a
-/// writer that can be pinned to byte-identical output, and admitting an operation guaranteed to
-/// fail is worse than refusing the request. Re-adding it is a wire change.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExportFormat {
-    /// Newline-delimited JSON.
-    Ndjson,
-    /// OTLP JSON. Refuses `events` and trace summaries rather than coercing them.
-    OtlpJson,
-}
-
-impl ExportFormat {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ExportFormat] = &[ExportFormat::Ndjson, ExportFormat::OtlpJson];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Ndjson => "ndjson",
-            Self::OtlpJson => "otlp_json",
-        }
-    }
-}
-
-/// What one export walks. Deliberately not an `ObservationQuery`: an export has no caller-visible
-/// pagination, so a cursor, a limit and a walk direction are meaningless states rather than states
-/// to refuse at runtime. The partition list and the snapshot position are pinned at admission and
-/// live on the export row, which is the only channel the task has.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ExportQuery {
-    /// How much must be observed before the window is admissible.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub consistency: Option<ObservationConsistency>,
-    /// The bounded filter.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filter: Option<ObservationFilter>,
-    /// Which signal.
-    pub signal: ObservationSignal,
-    /// The observation-time window.
-    pub time_range: TimeRange,
-}
-
-/// Where an export is in its lifecycle.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExportStatus {
-    /// Being produced.
-    Preparing,
-    /// Downloadable.
-    Ready,
-    /// Generation ended without a publishable artifact; inspect the canonical operation failure.
-    Failed,
-    /// Past its retention.
-    Expired,
-    /// Explicitly revoked.
-    Revoked,
-}
-
-impl ExportStatus {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ExportStatus] = &[
-        ExportStatus::Preparing,
-        ExportStatus::Ready,
-        ExportStatus::Failed,
-        ExportStatus::Expired,
-        ExportStatus::Revoked,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Preparing => "preparing",
-            Self::Ready => "ready",
-            Self::Failed => "failed",
-            Self::Expired => "expired",
-            Self::Revoked => "revoked",
-        }
-    }
-}
-
-/// The calculations a metric aggregation may request.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MetricAggregationCalculation {
-    /// Sum.
-    Sum,
-    /// Count.
-    Count,
-    /// Minimum.
-    Min,
-    /// Maximum.
-    Max,
-    /// Arithmetic mean.
-    Avg,
-}
-
-impl MetricAggregationCalculation {
-    /// Every value, in declared order.
-    pub const ALL: &'static [MetricAggregationCalculation] = &[
-        MetricAggregationCalculation::Sum,
-        MetricAggregationCalculation::Count,
-        MetricAggregationCalculation::Min,
-        MetricAggregationCalculation::Max,
-        MetricAggregationCalculation::Avg,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Sum => "sum",
-            Self::Count => "count",
-            Self::Min => "min",
-            Self::Max => "max",
-            Self::Avg => "avg",
-        }
-    }
-}
-
-/// One aggregated group.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct MetricAggregationGroup {
-    /// The grouping attributes.
-    pub key: BTreeMap<String, String>,
-    /// How many points contributed.
-    pub sample_count: DecimalU128,
-    /// The computed value.
-    pub value: f64,
-}
-
-/// One page of aggregated groups plus the coverage they are complete over.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct MetricAggregationPage {
-    /// What the answer covers.
-    pub coverage: ObservationCoverage,
-    /// The page.
-    pub items: Vec<MetricAggregationGroup>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// A bounded metric aggregation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct MetricAggregationRequest {
-    /// What to compute.
-    pub calculation: MetricAggregationCalculation,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// The bounded filter.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filter: Option<ObservationFilter>,
-    /// Grouping attribute paths.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group_by: Option<Vec<String>>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-    /// The metric name.
-    pub metric: String,
-    /// The observation-time window.
-    pub time_range: TimeRange,
-}
-
-/// A known hole in the ordered series.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct MissingInterval {
-    /// The recorded gap.
-    pub gap_id: TelemetryGapId,
-    /// The affected window.
-    pub range: TimeRange,
-}
-
-/// One admitted observation, in the canonical envelope.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Observation {
-    /// When AEX admitted it.
-    pub accepted_at: Timestamp,
-    /// The signal-specific payload.
-    pub body: CanonicalJson,
-    /// Identity.
-    pub id: ObservationId,
-    /// When the producer says it happened.
-    pub observed_at: Timestamp,
-    /// Position in the ordered series.
-    pub sequence: DecimalU128,
-    /// The owning session, when attributable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
-    /// Which signal it belongs to.
-    pub signal: ObservationSignal,
-    /// The W3C span.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub span_id: Option<SpanId>,
-    /// The W3C trace.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<TraceId>,
-    /// The owning workspace.
-    pub workspace_id: WorkspaceId,
-}
-
-/// How much of the accepted series a read must observe.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ObservationConsistency {
-    /// Whatever is indexed now.
-    Indexed,
-    /// Everything accepted, waiting for indexing if needed.
-    Accepted,
-}
-
-impl ObservationConsistency {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ObservationConsistency] = &[
-        ObservationConsistency::Indexed,
-        ObservationConsistency::Accepted,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Indexed => "indexed",
-            Self::Accepted => "accepted",
-        }
-    }
-}
-
-/// What the answer is actually complete over. Never omitted. All four watermarks are accepted-time
-/// positions in epoch milliseconds (O-04).
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationCoverage {
-    /// Admission watermark, in epoch milliseconds.
-    pub accepted: DecimalU128,
-    /// Whether indexing has reached admission.
-    pub caught_up: bool,
-    /// Whether the window has no known holes.
-    pub complete: bool,
-    /// Earliest replayable position, in epoch milliseconds.
-    pub earliest_replay: DecimalU128,
-    /// Indexing watermark, in epoch milliseconds.
-    pub indexed: DecimalU128,
-    /// Known holes.
-    pub missing_intervals: Vec<MissingInterval>,
-    /// The pinned snapshot position, in epoch milliseconds.
-    pub snapshot: DecimalU128,
-    /// Gaps with no known bound.
-    pub unbounded_gaps: Vec<TelemetryGapId>,
-}
-
-/// A bounded filter AST. Structural bounds are enforced before construction.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-pub enum ObservationFilter {
-    /// Conjunction.
-    All(ObservationFilterAll),
-    /// Disjunction.
-    Any(ObservationFilterAny),
-    /// Negation.
-    Not(ObservationFilterNot),
-    /// Comparison.
-    Compare(ObservationFilterCompare),
-    /// Set membership.
-    In(ObservationFilterIn),
-    /// Presence.
-    Exists(ObservationFilterExists),
-}
-
-/// Every child must match.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationFilterAll {
-    /// The children.
-    pub filters: Vec<ObservationFilter>,
-}
-
-/// At least one child must match.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationFilterAny {
-    /// The children.
-    pub filters: Vec<ObservationFilter>,
-}
-
-/// A comparison against one field.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationFilterCompare {
-    /// The field path.
-    pub field: String,
-    /// The comparison.
-    pub operator: ObservationOperator,
-    /// The operand.
-    pub value: String,
-}
-
-/// Presence of a field.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationFilterExists {
-    /// The field path.
-    pub field: String,
-}
-
-/// Membership of a bounded value set.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationFilterIn {
-    /// The field path.
-    pub field: String,
-    /// The operands.
-    pub values: Vec<String>,
-}
-
-/// The child must not match.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationFilterNot {
-    /// The single child.
-    pub filters: Vec<ObservationFilter>,
-}
-
-/// One NDJSON frame. `stream` and `listen` emit nothing else.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ObservationFrame {
-    /// Observations.
-    Records(ObservationFrameRecords),
-    /// A surfaced gap.
-    Gap(ObservationFrameGap),
-    /// A resumable position.
-    Cursor(ObservationFrameCursor),
-    /// The terminal condition.
-    Rotate(ObservationFrameRotate),
-}
-
-/// A resumable position.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationFrameCursor {
-    /// What has been delivered so far.
-    pub coverage: ObservationCoverage,
-    /// The position.
-    pub cursor: Cursor,
-}
-
-/// A gap surfaced inline; it is never silently skipped.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationFrameGap {
-    /// The recorded gap.
-    pub gap: TelemetryGap,
-}
-
-/// A batch of observations. The server splits before the effective frame bound.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationFrameRecords {
-    /// The batch.
-    pub items: Vec<Observation>,
-}
-
-/// The terminal condition after a 200. A stream always ends with a reason.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationFrameRotate {
-    /// The last resumable position.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// The failure, when there was one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<ApiErrorBody>,
-    /// Why the stream ended.
-    pub reason: RotateReason,
-    /// Whether reconnecting from the last cursor can succeed.
-    pub retryable: bool,
-}
-
-/// Capture the current accepted position and follow it. Origins are rejected.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationListenRequest {
-    /// The bounded filter.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filter: Option<ObservationFilter>,
-    /// Which signal.
-    pub signal: ObservationSignal,
-}
-
-/// The comparison operators a filter leaf may use.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ObservationOperator {
-    /// Equal.
-    Eq,
-    /// Not equal.
-    Ne,
-    /// Less than.
-    Lt,
-    /// Less than or equal.
-    Lte,
-    /// Greater than.
-    Gt,
-    /// Greater than or equal.
-    Gte,
-    /// String prefix.
-    Prefix,
-}
-
-impl ObservationOperator {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ObservationOperator] = &[
-        ObservationOperator::Eq,
-        ObservationOperator::Ne,
-        ObservationOperator::Lt,
-        ObservationOperator::Lte,
-        ObservationOperator::Gt,
-        ObservationOperator::Gte,
-        ObservationOperator::Prefix,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Eq => "eq",
-            Self::Ne => "ne",
-            Self::Lt => "lt",
-            Self::Lte => "lte",
-            Self::Gt => "gt",
-            Self::Gte => "gte",
-            Self::Prefix => "prefix",
-        }
-    }
-}
-
-/// Which direction a read walks the ordered series.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ObservationOrder {
-    /// Oldest first.
-    Ascending,
-    /// Newest first.
-    Descending,
-}
-
-impl ObservationOrder {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ObservationOrder] =
-        &[ObservationOrder::Ascending, ObservationOrder::Descending];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Ascending => "ascending",
-            Self::Descending => "descending",
-        }
-    }
-}
-
-/// Exactly one origin. A stream that declares none or two is rejected.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "from", rename_all = "snake_case")]
-pub enum ObservationOrigin {
-    /// An exact prior position.
-    Cursor(ObservationOriginCursor),
-    /// An instant.
-    Time(ObservationOriginTime),
-    /// The earliest replayable position.
-    Earliest(ObservationOriginEarliest),
-}
-
-/// Resume from an exact prior position.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationOriginCursor {
-    /// The prior position.
-    pub cursor: Cursor,
-}
-
-/// Start from the earliest replayable position.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationOriginEarliest {}
-
-/// Start from an instant.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationOriginTime {
-    /// The instant.
-    pub at: Timestamp,
-}
-
-/// One page of observations plus the coverage it is complete over.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationPage {
-    /// What the answer covers.
-    pub coverage: ObservationCoverage,
-    /// The page.
-    pub items: Vec<Observation>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// A bounded, paged observation read.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationQuery {
-    /// How much must be observed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub consistency: Option<ObservationConsistency>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// The bounded filter.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filter: Option<ObservationFilter>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-    /// Walk direction.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub order: Option<ObservationOrder>,
-    /// Which signal.
-    pub signal: ObservationSignal,
-    /// The observation-time window.
-    pub time_range: TimeRange,
-}
-
-/// The six observable signals.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ObservationSignal {
-    /// Structured platform events.
-    Events,
-    /// Log records.
-    Logs,
-    /// Individual spans.
-    Spans,
-    /// Metric points.
-    Metrics,
-    /// Assembled traces.
-    Traces,
-    /// Every signal, interleaved.
-    Telemetry,
-}
-
-impl ObservationSignal {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ObservationSignal] = &[
-        ObservationSignal::Events,
-        ObservationSignal::Logs,
-        ObservationSignal::Spans,
-        ObservationSignal::Metrics,
-        ObservationSignal::Traces,
-        ObservationSignal::Telemetry,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Events => "events",
-            Self::Logs => "logs",
-            Self::Spans => "spans",
-            Self::Metrics => "metrics",
-            Self::Traces => "traces",
-            Self::Telemetry => "telemetry",
-        }
-    }
-}
-
-/// Replay from exactly one declared origin as NDJSON.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ObservationStreamRequest {
-    /// The bounded filter.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filter: Option<ObservationFilter>,
-    /// Exactly one origin.
-    pub origin: ObservationOrigin,
-    /// Which signal.
-    pub signal: ObservationSignal,
-}
-
-/// Why a stream ended after its 200.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RotateReason {
-    /// The connection reached its byte or time budget.
-    BudgetExhausted,
-    /// The serving process is going away.
-    ServerRotating,
-    /// The client stopped reading.
-    ClientIdle,
-    /// The observation authority became unreachable.
-    UpstreamUnavailable,
-    /// An error ended the stream; `error` names it.
-    Failed,
-}
-
-impl RotateReason {
-    /// Every value, in declared order.
-    pub const ALL: &'static [RotateReason] = &[
-        RotateReason::BudgetExhausted,
-        RotateReason::ServerRotating,
-        RotateReason::ClientIdle,
-        RotateReason::UpstreamUnavailable,
-        RotateReason::Failed,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::BudgetExhausted => "budget_exhausted",
-            Self::ServerRotating => "server_rotating",
-            Self::ClientIdle => "client_idle",
-            Self::UpstreamUnavailable => "upstream_unavailable",
-            Self::Failed => "failed",
-        }
-    }
-}
-
-/// The AEX receipt returned alongside the standard OTLP response.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TelemetryAdmissionReceipt {
-    /// Records admitted.
-    pub accepted: DecimalU128,
-    /// When admission committed.
-    pub accepted_at: Timestamp,
-    /// The admitted batch.
-    pub batch_id: TelemetryBatchId,
-    /// Decoded payload bytes.
-    pub bytes: DecimalU128,
-    /// Records rejected.
-    pub rejected: DecimalU128,
-}
-
-/// One telemetry export record. Session exports remain workspace-owned.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TelemetryExport {
-    /// The completeness rule it was produced under.
-    pub completeness: ExportCompleteness,
-    /// When it was admitted.
-    pub created_at: Timestamp,
-    /// When it stops being downloadable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<Timestamp>,
-    /// The artifact format.
-    pub format: ExportFormat,
-    /// Gaps inside the window.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gap_ids: Option<Vec<TelemetryGapId>>,
-    /// Identity.
-    pub id: ExportId,
-    /// Hash of the export manifest, once ready.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub manifest_hash: Option<ContentHash>,
-    /// When it became downloadable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ready_at: Option<Timestamp>,
-    /// When it was revoked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub revoked_at: Option<Timestamp>,
-    /// The session it was scoped to.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
-    /// Artifact size, once ready.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size_bytes: Option<DecimalU128>,
-    /// Lifecycle position.
-    pub status: ExportStatus,
-    /// The owning workspace.
-    pub workspace_id: WorkspaceId,
-}
-
-/// Admit a durable telemetry-export operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TelemetryExportRequest {
-    /// What to do about recorded gaps.
-    pub completeness: ExportCompleteness,
-    /// The artifact format.
-    pub format: ExportFormat,
-    /// What to export. Normalized and pinned onto the export row at admission, so two runs of one
-    /// export walk the same plan.
-    pub query: ExportQuery,
-}
-
-/// The result of a telemetry-export operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TelemetryExportResult {
-    /// When the artifact stops being downloadable.
-    pub expires_at: Timestamp,
-    /// The produced export.
-    pub export_id: ExportId,
-    /// The artifact format.
-    pub format: ExportFormat,
-    /// Hash of the export manifest.
-    pub manifest_hash: ContentHash,
-}
-
-/// A recorded hole in the observation series. There is no public repair route.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TelemetryGap {
-    /// Bytes known lost.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub byte_count: Option<DecimalU128>,
-    /// When it was recorded.
-    pub detected_at: Timestamp,
-    /// First affected position, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub from_sequence: Option<DecimalU128>,
-    /// Identity.
-    pub id: TelemetryGapId,
-    /// Observations known lost.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observation_count: Option<DecimalU128>,
-    /// Why it exists.
-    pub reason: TelemetryGapReason,
-    /// Whether the records can still be recovered.
-    pub recoverable: bool,
-    /// What repaired it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repair_source: Option<String>,
-    /// When it was repaired.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repaired_at: Option<Timestamp>,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// The owning session, when attributable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
-    /// Affected signals.
-    pub signals: Vec<ObservationSignal>,
-    /// The affected observation-time window, when its extent is known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub time_range: Option<TimeRange>,
-    /// Last affected position, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub to_sequence: Option<DecimalU128>,
-    /// The owning workspace.
-    pub workspace_id: WorkspaceId,
-}
-
-/// One page of recorded gaps.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TelemetryGapPage {
-    /// The page.
-    pub items: Vec<TelemetryGap>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// A bounded query over recorded gaps.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TelemetryGapQuery {
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-    /// Restrict by recoverability.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recoverable: Option<bool>,
-    /// Restrict to these signals.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub signals: Option<Vec<ObservationSignal>>,
-    /// The observation-time window.
-    pub time_range: TimeRange,
-}
-
-/// Why a gap exists.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TelemetryGapReason {
-    /// A batch failed admission.
-    AdmissionRejected,
-    /// A spooled chunk could not be recovered.
-    SpoolLost,
-    /// The producer reported dropping records.
-    ProducerDropped,
-    /// Retained for the vocabulary; unreachable at launch.
-    ReplayExpired,
-    /// The authority was unreachable during the window.
-    AuthorityUnavailable,
-}
-
-impl TelemetryGapReason {
-    /// Every value, in declared order.
-    pub const ALL: &'static [TelemetryGapReason] = &[
-        TelemetryGapReason::AdmissionRejected,
-        TelemetryGapReason::SpoolLost,
-        TelemetryGapReason::ProducerDropped,
-        TelemetryGapReason::ReplayExpired,
-        TelemetryGapReason::AuthorityUnavailable,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::AdmissionRejected => "admission_rejected",
-            Self::SpoolLost => "spool_lost",
-            Self::ProducerDropped => "producer_dropped",
-            Self::ReplayExpired => "replay_expired",
-            Self::AuthorityUnavailable => "authority_unavailable",
-        }
-    }
-}
-
-/// One assembled trace and the observations it was assembled from.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TraceDetail {
-    /// What the assembly covers.
-    pub coverage: ObservationCoverage,
-    /// The spans.
-    pub spans: Vec<Observation>,
-    /// The header.
-    pub summary: TraceSummary,
-}
-
-/// The header of one assembled trace.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TraceSummary {
-    /// Latest span end.
-    pub ended_at: Timestamp,
-    /// The root span name.
-    pub root_name: String,
-    /// How many spans were assembled.
-    pub span_count: DecimalU128,
-    /// Earliest span start.
-    pub started_at: Timestamp,
-    /// The W3C trace identifier.
-    pub trace_id: TraceId,
-    /// The owning workspace, when attributable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<WorkspaceId>,
 }
 
 // --- provider -------------------------------------------------------
@@ -3425,6 +2515,49 @@ pub struct SessionSuspendResult {
     pub suspended_at: Timestamp,
 }
 
+/// A five-minute S3 GET grant for one immutable OTLP protobuf segment.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionTelemetryDownloadGrant {
+    /// When the signature stops verifying.
+    pub expires_at: Timestamp,
+    /// The immutable object being granted.
+    pub segment: SessionTelemetrySegment,
+    /// The signed S3 URL; never printed by the CLI.
+    pub url: HttpsUrl,
+}
+
+/// One immutable official OTLP protobuf log segment generated by AEX after a committed session
+/// boundary.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionTelemetrySegment {
+    /// When S3 accepted the immutable object.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<Timestamp>,
+    /// The ordered content-addressed segment id.
+    pub id: String,
+    /// Always `application/x-protobuf`.
+    pub media_type: String,
+    /// The native session-event sequence.
+    pub sequence: DecimalU128,
+    /// SHA-256 of the exact protobuf bytes.
+    pub sha256: ContentHash,
+    /// The exact protobuf byte size.
+    pub size_bytes: DecimalU128,
+}
+
+/// One bounded page of immutable AEX-generated session telemetry.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionTelemetrySegmentPage {
+    /// The page.
+    pub items: Vec<SessionTelemetrySegment>,
+    /// Continuation token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
+}
+
 /// The result of permanently destroying compute and live files while preserving session metadata
 /// and sealed messages.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -3476,8 +2609,8 @@ impl SessionTerminationReason {
 }
 
 /// The minimal marker left after irreversible deletion. Compute and live files are terminated
-/// first; session, message, Brain user-content, observation, telemetry and export payloads are
-/// removed. Independent registered workspace files and aggregate billing/audit facts remain.
+/// first; session, message, and Brain user-content payloads are removed. Independent registered
+/// workspace files and aggregate billing/audit facts remain.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionTombstone {
@@ -4129,6 +3262,18 @@ pub struct SessionFilesLiveUploadPartPutQuery {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionMessagesListQuery {
+    /// Opaque continuation token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<Cursor>,
+    /// Page size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// Query parameters of `session_telemetry_segments_list`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionTelemetrySegmentsListQuery {
     /// Opaque continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,

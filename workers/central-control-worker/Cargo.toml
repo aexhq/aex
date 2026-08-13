@@ -43,10 +43,9 @@ aex-control-aurora = { path = "../../crates/aex-control-aurora" }
 aex-central-aws = { path = "../../crates/aex-central-aws" }
 aex-identity-app = { path = "../../crates/aex-identity-app" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
 aex-rds-data = { path = "../../crates/aex-rds-data" }
 aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = ["authz-projection-write"] }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-wire = { path = "../../crates/aex-wire" }
 axum.workspace = true
 async-trait.workspace = true
@@ -63,6 +62,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

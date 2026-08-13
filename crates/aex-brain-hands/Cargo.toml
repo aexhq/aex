@@ -1,7 +1,7 @@
 [package]
 name = "aex-brain-hands"
 version = "0.1.0"
-description = "`aex-brain-hands` owns the Brain-side exact-generation Hands adapter: operation dispatch, frame handling, fence checks, cancellation and result incorporation."
+description = "`aex-brain-hands` owns the Brain-side exact-generation Hands adapter: operation dispatch, bounded JSON transport, fence checks, cancellation and result incorporation."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -31,7 +31,6 @@ inline_targets = "the `brain-core` stream places this crate's evidence in inline
 aex-brain-app = { path = "../aex-brain-app" }
 aex-brain-domain = { path = "../aex-brain-domain" }
 aex-brain-tool-catalog = { path = "../aex-brain-tool-catalog" }
-aex-hands-agent = { path = "../aex-hands-agent" }
 aex-hands-control-aws = { path = "../aex-hands-control-aws" }
 aex-hands-protocol = { path = "../aex-hands-protocol" }
 aex-hands-tools = { path = "../aex-hands-tools" }

@@ -367,14 +367,7 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
     ("central-edge", &["central-api"]),
     ("central-control", &["central-control-worker"]),
     ("regional-keys", &["regional-secret-key-admin"]),
-    (
-        "regional-api",
-        &[
-            "session-stream-api",
-            "regional-observation-api",
-            "regional-otlp",
-        ],
-    ),
+    ("regional-api", &["session-stream-api"]),
     (
         "regional-workers",
         &[
@@ -383,9 +376,6 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
             "content-lifecycle-worker",
             "regional-capacity-controller",
             "regional-control",
-            "observation-reconciler",
-            "observation-export-launcher",
-            "observation-export-task",
             "usage-storage-worker",
             "usage-compute-worker",
             "usage-transfer-worker",

@@ -1,6 +1,6 @@
 //! Binary-safe, exact-generation live-workspace file transfer messages.
 //!
-//! The HTTP frame preamble carries the generation and fence. These payloads
+//! The bounded HTTP request envelope carries the generation and fence. These payloads
 //! therefore carry only the file intent and its bounded bytes; accepting one
 //! through an unbound or stale guest is impossible before this enum is decoded.
 
@@ -12,10 +12,10 @@ use crate::operation::{ByteRangeRequest, FileMode, GuestPath};
 /// Largest live-directory page the guest will produce.
 pub const MAX_FILE_LIST_ENTRIES: u32 = 1_000;
 
-/// Largest binary body carried by one authenticated guest frame.
+/// Largest binary chunk carried by one authenticated guest request.
 ///
 /// Base64 expands by four thirds. Seven hundred thousand bytes plus the closed
-/// JSON envelope stays below the one-MiB Hands frame ceiling.
+/// JSON envelope stays below the one-MiB Hands body ceiling.
 pub const FILE_FRAME_BYTES: u32 = 700_000;
 
 /// Fixed public multipart part size, except for the final part.
@@ -394,7 +394,7 @@ mod tests {
     use aex_wire::ids::{ContentHash, Uuid7};
 
     #[test]
-    fn the_largest_part_stays_inside_the_authenticated_frame() {
+    fn the_largest_part_stays_inside_the_bounded_json_body() {
         let request = FileRequest::UploadPartChunk {
             upload: FileUploadId(Uuid7::compose(1, [1; 10])),
             part_number: 1,

@@ -21,8 +21,8 @@ use aex_secret_domain::{
 };
 use aex_session_domain::{
     AccountRevision, AgentControl, AgentFence, AgentRevision, Approval, AuthorizationEpoch,
-    CancellationEpoch, IdempotencyReceipt, JournalPage, JournalSeq, Message, OutboxEvent, Run,
-    Session, SessionDeletionHead, SessionRevision, SessionTombstone, WorkAdmission,
+    CancellationEpoch, IdempotencyReceipt, JournalPage, JournalSeq, Message, Run, Session,
+    SessionDeletionHead, SessionRevision, SessionTombstone, WorkAdmission,
 };
 use aex_wire::ids::{
     AgentId, ObservationId, OperationId, OrganizationId, ProviderCredentialId, SessionId, UploadId,
@@ -700,8 +700,6 @@ pub enum Write {
     PutAgentWakeDedupe(Box<AgentWake>),
     /// Retire one exact fenced regional-work claim.
     CompleteWorkItem(Box<WorkCompletion>),
-    /// Append a native outbox event.
-    PutOutboxEvent(Box<OutboxEvent>),
     /// Append the public message-admitted event and outbox state.
     PutMessageAdmittedEvent(Box<MessageAdmittedEvent>),
     /// Add a pin.
@@ -753,7 +751,7 @@ impl Write {
             | Self::PutAgentWake(_)
             | Self::PutAgentWakeDedupe(_)
             | Self::CompleteWorkItem(_) => TableFamily::WorkAuthority,
-            Self::PutOutboxEvent(_) | Self::PutMessageAdmittedEvent(_) => TableFamily::Outbox,
+            Self::PutMessageAdmittedEvent(_) => TableFamily::Outbox,
             Self::PutPin(_) | Self::DeletePin(_) | Self::PutGrant(_) => {
                 TableFamily::ContentAuthority
             }
@@ -835,9 +833,6 @@ impl Write {
             Self::PutAgentWake(wake) => (wake.work_id.clone(), "STATE".to_owned()),
             Self::PutAgentWakeDedupe(wake) => (wake.dedupe_key.clone(), "DEDUPE".to_owned()),
             Self::CompleteWorkItem(item) => (item.work_id.clone(), "STATE".to_owned()),
-            Self::PutOutboxEvent(event) => {
-                (event.session.to_string(), format!("OUTBOX#{}", event.run))
-            }
             Self::PutMessageAdmittedEvent(event) => (
                 event.session.to_string(),
                 format!("EVENT#{:020}", event.sequence),
@@ -977,7 +972,6 @@ impl<'a> CreateWrites<'a> {
             | Write::PutAgentWake(_)
             | Write::PutAgentWakeDedupe(_)
             | Write::CompleteWorkItem(_)
-            | Write::PutOutboxEvent(_)
             | Write::PutMessageAdmittedEvent(_)
             | Write::PutPin(_)
             | Write::DeletePin(_)
@@ -1300,7 +1294,6 @@ impl SessionTransaction {
                 | Write::RedactOperationResult(_)
                 | Write::PutWorkItem(_)
                 | Write::CompleteWorkItem(_)
-                | Write::PutOutboxEvent(_)
                 | Write::PutPin(_)
                 | Write::DeletePin(_)
                 | Write::PutRegistryPointer(_)

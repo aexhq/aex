@@ -7,7 +7,7 @@
  *
  *   paused      402 `account_paused` — the account is a real product state
  *   throttled   429 `rate_limited` / `limit_exceeded` / `slow_down`
- *   unavailable 502/503/504 — `observability_unavailable`, `upstream_error`
+ *   unavailable 502/503/504 — `upstream_error`
  *   denied      403 `forbidden` / `insufficient_scope`
  *   expired     401 — the browser session is gone; re-authenticate
  *   missing     404/410 — the resource is gone, which is an answer, not a fault
@@ -90,60 +90,6 @@ export function pausedExplanation(pauseExempt: boolean): string {
     : "This operation does not answer while the account is paused.";
 }
 
-/* -------------------------------------------------------------- coverage --- */
-
-export interface MissingInterval {
-  readonly gapId: string;
-  readonly range: { readonly gte: string; readonly lt: string };
-}
-
-export interface ObservationCoverage {
-  readonly accepted: string;
-  readonly indexed: string;
-  readonly snapshot: string;
-  readonly earliestReplay: string;
-  readonly caughtUp: boolean;
-  readonly complete: boolean;
-  readonly missingIntervals: readonly MissingInterval[];
-  readonly unboundedGaps: readonly string[];
-}
-
-export type CoverageVerdict =
-  | { readonly kind: "complete"; readonly completeThrough: number }
-  | { readonly kind: "behind"; readonly completeThrough: number; readonly lagMs: number }
-  | {
-      readonly kind: "incomplete";
-      readonly completeThrough: number;
-      readonly lagMs: number;
-      readonly holes: readonly MissingInterval[];
-      readonly unboundedGaps: readonly string[];
-    };
-
-/**
- * Read the coverage the authority attached to its own answer.
- *
- * `complete` and `caughtUp` are separate facts and are reported separately: a
- * window can be whole but still trail admission, and a caught-up window can still
- * have holes. Neither is ever rounded up into "here is your data".
- */
-export function readCoverage(coverage: ObservationCoverage): CoverageVerdict {
-  const accepted = Number(coverage.accepted);
-  const indexed = Number(coverage.indexed);
-  const lagMs = Number.isFinite(accepted) && Number.isFinite(indexed) ? Math.max(0, accepted - indexed) : 0;
-  const holes = coverage.missingIntervals;
-  if (!coverage.complete || holes.length > 0 || coverage.unboundedGaps.length > 0) {
-    return {
-      kind: "incomplete",
-      completeThrough: indexed,
-      lagMs,
-      holes,
-      unboundedGaps: coverage.unboundedGaps,
-    };
-  }
-  if (!coverage.caughtUp) return { kind: "behind", completeThrough: indexed, lagMs };
-  return { kind: "complete", completeThrough: indexed };
-}
-
 /* ----------------------------------------------------------------- usage --- */
 
 export interface UsageFrontier {
@@ -153,7 +99,7 @@ export interface UsageFrontier {
 }
 
 /**
- * The shared observation instant for every usage category in the answer.
+ * The shared service instant for every usage category in the answer.
  * Returning `null` means at least one category has not admitted a fact yet, so
  * the dashboard cannot claim a complete cross-category coverage instant.
  */

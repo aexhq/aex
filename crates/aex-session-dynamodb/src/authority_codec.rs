@@ -18,8 +18,8 @@ use aex_session_domain::{
 };
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{
-    AgentId, FilePath, GenerationId, MessageId, OperationId, OrganizationId, SessionId,
-    TelemetryGapId, ToolCallId, Uuid7, WorkspaceId,
+    AgentId, FilePath, GenerationId, MessageId, OperationId, OrganizationId, SessionId, ToolCallId,
+    Uuid7, WorkspaceId,
 };
 use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
@@ -662,8 +662,6 @@ struct RunV1 {
     started_at: Option<Timestamp>,
     terminal_at: Option<Timestamp>,
     outcome: Option<RunOutcomeV1>,
-    telemetry_complete: Option<bool>,
-    telemetry_gaps: Option<Vec<TelemetryGapId>>,
 }
 
 impl From<&Run> for RunV1 {
@@ -680,8 +678,6 @@ impl From<&Run> for RunV1 {
             started_at: run.started_at,
             terminal_at: run.terminal_at,
             outcome: run.outcome.as_ref().map(Into::into),
-            telemetry_complete: run.telemetry_complete,
-            telemetry_gaps: run.telemetry_gaps.clone(),
         }
     }
 }
@@ -735,8 +731,6 @@ impl RunV1 {
             started_at: self.started_at,
             terminal_at: self.terminal_at,
             outcome,
-            telemetry_complete: self.telemetry_complete,
-            telemetry_gaps: self.telemetry_gaps,
         })
     }
 }
@@ -1418,7 +1412,7 @@ mod tests {
     use aex_content_domain::ContentDigest;
     use aex_session_domain::testing::{id, moment, running_session, session_fixture};
     use aex_session_domain::{MessagePart, RunOutcome, seal};
-    use aex_wire::ids::{FilePath, OperationId, TelemetryGapId, ToolCallId};
+    use aex_wire::ids::{FilePath, OperationId, ToolCallId};
     use aws_sdk_dynamodb::types::AttributeValue;
 
     use super::{
@@ -1604,8 +1598,6 @@ mod tests {
         run.outcome = Some(RunOutcome::Cancelled {
             by: id::<OperationId>(32),
         });
-        run.telemetry_complete = Some(false);
-        run.telemetry_gaps = Some(vec![id::<TelemetryGapId>(33)]);
         let item =
             encode_domain_run(&run, session.workspace, session.organization).expect("encode");
         assert_eq!(decode_domain_run(&item, session.workspace), Ok(run));

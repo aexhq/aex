@@ -74,67 +74,6 @@ export interface Message {
   readonly createdAt: string;
 }
 
-export interface MissingInterval {
-  readonly gapId: string;
-  readonly range: { readonly gte: string; readonly lt: string };
-}
-
-export interface ObservationCoverage {
-  readonly accepted: string;
-  readonly indexed: string;
-  readonly snapshot: string;
-  readonly earliestReplay: string;
-  readonly caughtUp: boolean;
-  readonly complete: boolean;
-  readonly missingIntervals: readonly MissingInterval[];
-  readonly unboundedGaps: readonly string[];
-}
-
-export interface Observation {
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly signal: "events" | "logs" | "spans" | "metrics" | "traces" | "telemetry";
-  readonly sequence: string;
-  readonly observedAt: string;
-  readonly acceptedAt: string;
-  readonly body: unknown;
-  readonly sessionId?: string;
-  readonly traceId?: string;
-  readonly spanId?: string;
-}
-
-export interface ObservationPage {
-  readonly items: readonly Observation[];
-  readonly coverage: ObservationCoverage;
-  readonly nextCursor?: string;
-}
-
-export interface TraceDetail {
-  readonly summary: {
-    readonly traceId: string;
-    readonly rootName?: string;
-    readonly spanCount: string;
-    readonly startedAt: string;
-    readonly endedAt: string;
-  };
-  readonly spans: readonly Observation[];
-  readonly coverage: ObservationCoverage;
-}
-
-export interface TelemetryGap {
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly reason: "admission_rejected" | "spool_lost" | "producer_dropped" | "replay_expired" | "authority_unavailable";
-  readonly recoverable: boolean;
-  readonly detectedAt: string;
-  readonly signals: readonly string[];
-  readonly timeRange?: { readonly gte: string; readonly lt: string };
-  readonly sessionId?: string;
-  readonly byteCount?: string;
-  readonly observationCount?: string;
-  readonly repairedAt?: string;
-}
-
 export interface UsageFrontier {
   readonly category: "storage" | "compute" | "memory" | "data_transfer";
   readonly region: string;

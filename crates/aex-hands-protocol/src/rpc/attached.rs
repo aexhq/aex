@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::operation::{OperationFailure, TerminalMetadata};
 
-use super::{CallHash, GuestRevision, HandsMessage, HandsOperationId, ResultChunk, StatusResponse};
+use super::{CallHash, HandsOperationId, ResultChunk, StatusResponse};
 
 /// What the guest answers an `attach` with.
 ///
@@ -21,8 +21,6 @@ pub enum AttachResponse {
     Terminal {
         /// Which operation.
         operation: HandsOperationId,
-        /// The guest incarnation that answered.
-        guest_revision: GuestRevision,
         /// Whether the guest found the operation already recorded.
         existing: bool,
         /// How it ended.
@@ -34,8 +32,6 @@ pub enum AttachResponse {
     NotTerminal {
         /// Which operation.
         operation: HandsOperationId,
-        /// The guest incarnation that answered.
-        guest_revision: GuestRevision,
         /// What the guest does know.
         state: Box<StatusResponse>,
     },
@@ -53,8 +49,4 @@ pub enum AttachResponse {
         /// Why.
         failure: OperationFailure,
     },
-}
-
-impl HandsMessage for AttachResponse {
-    const VERB: &'static str = "attach";
 }

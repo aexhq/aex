@@ -40,9 +40,8 @@ aex-control-aurora = { path = "../../crates/aex-control-aurora" }
 aex-control-domain = { path = "../../crates/aex-control-domain" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
 aex-rds-data = { path = "../../crates/aex-rds-data" }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-wire = { path = "../../crates/aex-wire" }
 aws-config.workspace = true
 aws-sdk-rdsdata.workspace = true

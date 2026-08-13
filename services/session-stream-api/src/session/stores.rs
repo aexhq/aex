@@ -8,7 +8,7 @@
 //! Since the stream merged into this process, the type is also the *boundary*:
 //! [`Stores`] is the only thing here holding a write handle, it can only be
 //! built by a caller holding a `Grant<WorkClaim>`, and the stream half's
-//! [`crate::stream::mount::AppState`] has no field that can name it.
+//! no read-only handler state can name it.
 
 use aex_content_aws::object_store::{BucketBinding, S3ContentObjects};
 use aex_content_dynamodb::store::ContentStore;
@@ -47,6 +47,8 @@ pub struct Stores {
     /// `session_files_*_download_create` and the four upload routes all reach S3
     /// through this field and nothing else constructs one.
     pub content_objects: S3ContentObjects,
+    /// Read/presign-only session telemetry capability.
+    pub session_telemetry: aex_session_telemetry_aws::SessionTelemetryReader,
     /// The physical `session-authority` table name.
     pub session_table: String,
     /// The physical `usage-query-projection` table name.
@@ -106,6 +108,10 @@ impl Stores {
                     kms_key_id: config.content_kms_key.value.clone(),
                 },
             ),
+            session_telemetry: aex_session_telemetry_aws::SessionTelemetryReader::new(
+                objects.clone(),
+                config.session_telemetry_bucket.clone(),
+            ),
             session_table: config.session_table.clone(),
             usage_query_table: config.usage_query_table.clone(),
             authz_projection_table: config.authz_projection_table.clone(),
@@ -136,6 +142,10 @@ impl Stores {
                 !self.authz_projection_table.is_empty(),
             ),
             ("content-bucket", !self.objects.bucket.is_empty()),
+            (
+                "session-telemetry-bucket",
+                self.session_telemetry.is_bound(),
+            ),
             (
                 "content-object-adapter",
                 !self.content_objects.binding().kms_key_id.is_empty(),

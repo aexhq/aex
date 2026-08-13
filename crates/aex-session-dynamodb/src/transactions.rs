@@ -161,7 +161,6 @@ pub const fn operation_cancel_owned(kind: aex_operation_domain::OperationKind) -
         | OperationKind::SessionTerminate
         | OperationKind::SessionDelete
         | OperationKind::WorkspaceDelete
-        | OperationKind::TelemetryExport
         | OperationKind::ContentGc => false,
     }
 }

@@ -255,8 +255,8 @@ fn recipes_name_the_real_build_output_instead_of_guessing_from_the_unit_id() {
     };
 
     assert_eq!(
-        recipe("regional-observation-api").input,
-        "target/lambda/regional-observation-api/bootstrap"
+        recipe("regional-control").input,
+        "target/lambda/regional-control/bootstrap"
     );
     assert_eq!(
         recipe("session-stream-api").input,
@@ -489,7 +489,7 @@ fn an_envelope_records_the_command_that_ran_and_says_when_it_was_not_the_recipe(
     let artifact = temp.path().join("bootstrap.zip");
     std::fs::write(&artifact, b"PK\x03\x04 fixture archive").unwrap();
 
-    let (recipe_envelope, recipe_ledger) = described("regional-observation-api", &artifact, None);
+    let (recipe_envelope, recipe_ledger) = described("regional-control", &artifact, None);
     assert_eq!(recipe_envelope.inputs.build_command.argv[1], "lambda");
     assert!(
         !recipe_ledger
@@ -504,7 +504,7 @@ fn an_envelope_records_the_command_that_ran_and_says_when_it_was_not_the_recipe(
         "--profile".to_owned(),
         "release-lambda".to_owned(),
     ];
-    let (envelope, ledger) = described("regional-observation-api", &artifact, Some(ran.clone()));
+    let (envelope, ledger) = described("regional-control", &artifact, Some(ran.clone()));
     assert_eq!(envelope.inputs.build_command.argv, ran);
     let row = ledger
         .iter()
@@ -539,7 +539,7 @@ fn a_locally_described_envelope_records_real_bytes_and_is_still_refused() {
     let artifact = temp.path().join("bootstrap.zip");
     std::fs::write(&artifact, b"PK\x03\x04 fixture archive").unwrap();
 
-    let err = local_build_of("regional-observation-api", &artifact).unwrap_err();
+    let err = local_build_of("regional-control", &artifact).unwrap_err();
     assert_eq!(
         err.exit.code(),
         20,

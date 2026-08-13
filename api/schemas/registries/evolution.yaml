@@ -4,7 +4,6 @@
 # configurable; it is recorded so the classifier can assert it.
 openEnums:
   - ErrorCodeValue
-  - ObservationFrame
 additiveResponseFields:
   - schema: Session
     fields: []

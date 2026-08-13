@@ -38,10 +38,10 @@ aws-sdk-dynamodb.workspace = true
 aws-sdk-sqs.workspace = true
 lambda_runtime.workspace = true
 tokio.workspace = true
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
 aex-usage-app = { path = "../../crates/aex-usage-app" }
 aex-usage-domain = { path = "../../crates/aex-usage-domain" }
 aex-usage-storage-dynamodb = { path = "../../crates/aex-usage-storage-dynamodb" }
 serde_json.workspace = true
 thiserror.workspace = true
+tracing.workspace = true

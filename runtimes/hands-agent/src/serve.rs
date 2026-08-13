@@ -13,24 +13,21 @@ use std::sync::Arc;
 use aex_hands_agent::boot::RunHook;
 use aex_hands_agent::journal::{Journal, JournalError, OperationMeta};
 use aex_hands_agent::session::{LifecycleHook, StartDecision, StartInput, Supervisor};
-use aex_hands_agent::wire::{
-    Frame, FrameError, FrameExpectation, RequestPreamble, ResponsePreamble, ResponseStatus, Verb,
-    decode_request, encode_response,
-};
 use aex_hands_protocol::operation::{DeliveryMode, GuestRoot};
 use aex_hands_protocol::rpc::{
-    AttachResponse, CancelRequest, Fence, HandsOperationId, ResultRequest, ResultResponse,
-    StartRequest, StatusRequest, StatusResponse,
+    AttachResponse, CancelRequest, Fence, GenerationBinding, GuestRequest, GuestResponse,
+    HandsOperationId, MAX_GUEST_BODY_BYTES, MAX_RESULT_CHUNK_BYTES, PROTOCOL_V1, ResultRequest,
+    ResultResponse, StartRequest, StatusRequest, StatusResponse, Verb,
 };
 use aex_internal_contracts::SchemaVersion;
 use aex_wire::types::Timestamp;
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::State;
-use axum::http::StatusCode;
+use axum::extract::{DefaultBodyLimit, State};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::sync::RwLock;
 
 use crate::execute::{Dispatch, Executor};
@@ -53,6 +50,36 @@ struct Bound {
     supervisor: Supervisor,
     /// Whether the pinned image carries the browser capability.
     browser: bool,
+}
+
+/// A bounded request or guest-local operation failure rendered over HTTP.
+#[derive(Debug)]
+struct GuestError {
+    status: StatusCode,
+    message: String,
+}
+
+impl GuestError {
+    fn invalid(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
+    fn stale(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            message: message.into(),
+        }
+    }
+
+    fn internal(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: message.into(),
+        }
+    }
 }
 
 /// The exact envelope AWS sends to the `/run` lifecycle hook.
@@ -92,8 +119,6 @@ pub struct Guest {
     files: crate::file::FileService,
     /// The current binding.
     bound: RwLock<Option<Bound>>,
-    /// The first eight bytes of this agent binary's `blake3`.
-    agent_build: [u8; 8],
     /// The real rootfs and package validator used by the provider build hooks.
     image: Arc<dyn ImageValidator>,
 }
@@ -105,7 +130,6 @@ impl Guest {
         journal: Journal,
         executor: Executor,
         files: crate::file::FileService,
-        agent_build: [u8; 8],
         image: Arc<dyn ImageValidator>,
     ) -> Self {
         Self {
@@ -113,7 +137,6 @@ impl Guest {
             executor,
             files,
             bound: RwLock::new(None),
-            agent_build,
             image,
         }
     }
@@ -255,8 +278,8 @@ pub fn router(guest: Arc<Guest>) -> Router {
         );
     }
     // Attach is `start`'s attached delivery mode, expressed as its own path only
-    // because HTTP cannot carry two response bodies. It is posted, framed and
-    // fenced exactly like the other four verbs; what differs is that the caller
+    // because HTTP cannot carry two response bodies. It is posted, bounded and
+    // fenced exactly like the other verbs; what differs is that the caller
     // keeps the connection and the terminal record comes back on it.
     router = router.route(Verb::Attach.path(), post(attach_handler));
     for hook in LifecycleHook::ALL {
@@ -265,7 +288,9 @@ pub fn router(guest: Arc<Guest>) -> Router {
             post(move |state, body| hook_handler(hook, state, body)),
         );
     }
-    router.with_state(guest)
+    router
+        .layer(DefaultBodyLimit::max(MAX_GUEST_BODY_BYTES))
+        .with_state(guest)
 }
 
 /// Liveness. Answers as soon as the process is up, bound or not.
@@ -342,51 +367,74 @@ async fn hook_handler(
 async fn verb_handler(verb: Verb, State(guest): State<Arc<Guest>>, body: Bytes) -> Response {
     let mut bound = guest.bound.write().await;
     let Some(state) = bound.as_mut() else {
-        // Before `/run` the guest has no generation, so it cannot even encode a
-        // response preamble. A plain 503 is the honest answer.
+        // Before `/run` the guest has no generation binding. A plain 503 is the
+        // honest answer.
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "no generation is bound; the run hook has not completed",
         )
             .into_response();
     };
-    let expectation = FrameExpectation {
-        generation: state.supervisor.generation(),
-        min_fence: state.supervisor.fence_floor(),
-        schema_version: aex_hands_agent::wire::PROTOCOL_V1,
-        max_frame_bytes: 1_048_576,
-    };
-    let decoded = match decode_request(&body, &expectation) {
-        Ok(frame) => frame,
-        Err(error) => return protocol_error(guest.as_ref(), state, verb, &error),
-    };
-    if decoded.preamble.verb != verb {
-        return protocol_error(
-            guest.as_ref(),
-            state,
-            verb,
-            &FrameError::Malformed {
-                at: "verb",
-                reason: format!(
-                    "the frame declares {:?} but was posted to {}",
-                    decoded.preamble.verb,
-                    verb.path()
-                ),
-            },
-        );
-    }
-    state.supervisor.adopt_fence(decoded.preamble.fence);
-    let answered = answer(guest.as_ref(), state, verb, &decoded);
+    let answered = answer(guest.as_ref(), state, verb, &body);
     match answered {
-        Ok(payload) => frame_response(
-            guest.as_ref(),
-            state,
-            verb,
-            ResponseStatus::Payload,
-            &payload,
-        ),
-        Err(error) => protocol_error(guest.as_ref(), state, verb, &error),
+        Ok(payload) => json_bytes_response(payload),
+        Err(error) => protocol_error(&error),
     }
+}
+
+/// Decodes one already-bounded JSON request and checks its cooperative freshness
+/// binding before any operation is dispatched.
+fn decode_guest_request<T: DeserializeOwned>(
+    body: &[u8],
+    state: &mut Bound,
+) -> Result<T, GuestError> {
+    let envelope: GuestRequest<T> = serde_json::from_slice(body)
+        .map_err(|_| GuestError::invalid("the body is not the request this route takes"))?;
+    if envelope.binding.schema_version != PROTOCOL_V1 {
+        return Err(GuestError::invalid(format!(
+            "unsupported protocol version {}",
+            envelope.binding.schema_version.0
+        )));
+    }
+    let expected_generation = state.supervisor.generation();
+    if envelope.binding.generation != expected_generation {
+        return Err(GuestError::stale(format!(
+            "request generation {} does not match {}",
+            envelope.binding.generation, expected_generation
+        )));
+    }
+    let fence_floor = state.supervisor.fence_floor();
+    if envelope.binding.fence < fence_floor {
+        return Err(GuestError::stale(format!(
+            "request fence {} is older than {}",
+            envelope.binding.fence.0, fence_floor.0
+        )));
+    }
+    state.supervisor.adopt_fence(envelope.binding.fence);
+    Ok(envelope.request)
+}
+
+fn encode_json<T: Serialize>(value: &T) -> Result<Vec<u8>, GuestError> {
+    let payload = serde_json::to_vec(value)
+        .map_err(|_| GuestError::internal("the guest response could not be encoded"))?;
+    if payload.len() > MAX_GUEST_BODY_BYTES {
+        return Err(GuestError::internal(
+            "the guest response exceeds the JSON body ceiling",
+        ));
+    }
+    Ok(payload)
+}
+
+/// Encodes one typed response with the binding observed after dispatch.
+fn encode_guest_response<T: Serialize>(value: &T, state: &Bound) -> Result<Vec<u8>, GuestError> {
+    encode_json(&GuestResponse {
+        binding: GenerationBinding {
+            schema_version: PROTOCOL_V1,
+            generation: state.supervisor.generation(),
+            fence: state.supervisor.fence_floor(),
+        },
+        response: value,
+    })
 }
 
 /// The typed payload one verb answers with.
@@ -394,16 +442,11 @@ fn answer(
     guest: &Guest,
     state: &mut Bound,
     verb: Verb,
-    frame: &Frame<'_, RequestPreamble>,
-) -> Result<Vec<u8>, FrameError> {
-    let decode = |what: &'static str| FrameError::Malformed {
-        at: what,
-        reason: "the payload is not the request this verb takes".to_owned(),
-    };
+    body: &[u8],
+) -> Result<Vec<u8>, GuestError> {
     match verb {
         Verb::Start => {
-            let request: StartRequest =
-                serde_json::from_slice(frame.payload).map_err(|_| decode("payload"))?;
+            let request: StartRequest = decode_guest_request(body, state)?;
             let input = StartInput {
                 operation: request.operation,
                 call_hash: request.call_hash,
@@ -439,23 +482,18 @@ fn answer(
                     }
                 }
             }
-            serde_json::to_vec(
-                &decision.response(request.operation, state.supervisor.guest_revision()),
-            )
-            .map_err(|_| decode("response"))
+            encode_guest_response(&decision.response(request.operation), state)
         }
         Verb::Status => {
-            let request: StatusRequest =
-                serde_json::from_slice(frame.payload).map_err(|_| decode("payload"))?;
+            let request: StatusRequest = decode_guest_request(body, state)?;
             let response = state
                 .supervisor
                 .status(request.operation)
                 .map_err(|error| journal_error(&error))?;
-            serde_json::to_vec(&response).map_err(|_| decode("response"))
+            encode_guest_response(&response, state)
         }
         Verb::Cancel => {
-            let request: CancelRequest =
-                serde_json::from_slice(frame.payload).map_err(|_| decode("payload"))?;
+            let request: CancelRequest = decode_guest_request(body, state)?;
             let response = state
                 .supervisor
                 .cancel(request.operation, request.reason)
@@ -482,25 +520,28 @@ fn answer(
                     .map_err(|error| journal_error(&error))?;
                 spawn_cancel_driver(guest, meta, record.pgid)?;
             }
-            serde_json::to_vec(&response).map_err(|_| decode("response"))
+            encode_guest_response(&response, state)
         }
         Verb::Result => {
-            let request: ResultRequest =
-                serde_json::from_slice(frame.payload).map_err(|_| decode("payload"))?;
+            let request: ResultRequest = decode_guest_request(body, state)?;
+            if request.max_bytes == 0 || request.max_bytes > MAX_RESULT_CHUNK_BYTES {
+                return Err(GuestError::invalid(
+                    "result maxBytes is outside the bounded response window",
+                ));
+            }
             let response = state
                 .supervisor
                 .result(request.operation, request.from_offset, request.max_bytes)
                 .map_err(|error| journal_error(&error))?;
-            serde_json::to_vec(&response).map_err(|_| decode("response"))
+            encode_guest_response(&response, state)
         }
-        Verb::Attach => Err(FrameError::Malformed {
-            at: "verb",
-            reason: "attach is a delivery mode on its own stream, not a posted verb".to_owned(),
-        }),
+        Verb::Attach => Err(GuestError::invalid(
+            "attach is a delivery mode on its own route",
+        )),
         Verb::File => {
             let request: aex_hands_protocol::files::FileRequest =
-                serde_json::from_slice(frame.payload).map_err(|_| decode("payload"))?;
-            serde_json::to_vec(&guest.files.answer(request)).map_err(|_| decode("response"))
+                decode_guest_request(body, state)?;
+            encode_guest_response(&guest.files.answer(request), state)
         }
     }
 }
@@ -512,7 +553,7 @@ fn answer(
 /// that cannot even start is a refused cancel, not a silently polite one: the
 /// error surfaces so Brain retries rather than waiting on an escalation that
 /// will never happen.
-fn spawn_cancel_driver(guest: &Guest, meta: OperationMeta, pgid: i32) -> Result<(), FrameError> {
+fn spawn_cancel_driver(guest: &Guest, meta: OperationMeta, pgid: i32) -> Result<(), GuestError> {
     let runner = Arc::clone(guest.executor.runner());
     let journal = guest.journal.clone();
     std::thread::Builder::new()
@@ -537,52 +578,42 @@ fn spawn_cancel_driver(guest: &Guest, meta: OperationMeta, pgid: i32) -> Result<
             }
         })
         .map(|_| ())
-        .map_err(|error| FrameError::Malformed {
-            at: "cancel",
-            reason: format!("the guest cannot drive the cancel ladder: {error}"),
+        .map_err(|error| {
+            GuestError::internal(format!("the guest cannot drive the cancel ladder: {error}"))
         })
 }
 
-/// A journal failure, as a frame error.
+/// A journal failure, as a guest HTTP error.
 ///
 /// Never collapsed into "the operation failed": a journal that cannot be read is
 /// a guest fault, and reporting it as an operation outcome would let a customer's
 /// command look finished when nobody knows whether it ran.
-fn journal_error(error: &JournalError) -> FrameError {
-    FrameError::Malformed {
-        at: "journal",
-        reason: error.to_string(),
-    }
+fn journal_error(error: &JournalError) -> GuestError {
+    GuestError::internal(error.to_string())
 }
 
-/// Encodes one framed response.
-fn frame_response(
-    guest: &Guest,
-    state: &Bound,
-    verb: Verb,
-    status: ResponseStatus,
-    payload: &[u8],
-) -> Response {
-    let preamble = ResponsePreamble {
-        schema_version: aex_hands_agent::wire::PROTOCOL_V1,
-        verb,
-        status,
-        generation: state.supervisor.generation(),
-        fence: state.supervisor.fence_floor(),
-        payload_len: u32::try_from(payload.len()).unwrap_or(u32::MAX),
-        guest_revision: state.supervisor.guest_revision().0,
-        agent_build: guest.agent_build,
-    };
-    (StatusCode::OK, encode_response(&preamble, payload)).into_response()
+/// Encodes one already-typed JSON response.
+fn json_bytes_response(payload: Vec<u8>) -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        payload,
+    )
+        .into_response()
 }
 
-/// Encodes a typed protocol error as a frame.
-fn protocol_error(guest: &Guest, state: &Bound, verb: Verb, error: &FrameError) -> Response {
+/// Encodes one bounded protocol error over ordinary HTTP semantics.
+fn protocol_error(error: &GuestError) -> Response {
     let payload = serde_json::to_vec(&serde_json::json!({
-        "error": error.to_string(),
+        "error": error.message.as_str(),
     }))
     .unwrap_or_default();
-    frame_response(guest, state, verb, ResponseStatus::ProtocolError, &payload)
+    (
+        error.status,
+        [(header::CONTENT_TYPE, "application/json")],
+        payload,
+    )
+        .into_response()
 }
 
 /// The guest clock, shared with the background reap and cancel threads.
@@ -600,18 +631,14 @@ mod tests {
     use crate::image::{ImageError, ImageValidator};
     use aex_hands_agent::boot::{RunHook, RunHookBounds};
     use aex_hands_agent::journal::Journal;
-    use aex_hands_agent::wire::{
-        FrameExpectation, PROTOCOL_V1, RequestPreamble, ResponseStatus, Verb, decode_response,
-        encode_request,
-    };
     use aex_hands_protocol::operation::{
         DeliveryMode, GuestPath, GuestRoot, OperationBounds, OperationRequest, StopSignal,
         TerminalState,
     };
     use aex_hands_protocol::rpc::{
         AttachResponse, CancelReason, CancelRequest, CancelResponse, Fence, GenerationBinding,
-        HandsOperationId, ResultRequest, ResultResponse, StartRequest, StatusRequest,
-        StatusResponse,
+        GuestRequest, GuestResponse, HandsOperationId, PROTOCOL_V1, ResultRequest, ResultResponse,
+        StartRequest, StatusRequest, StatusResponse, Verb,
     };
     use aex_hands_tools::port::{Pgid, ProcError};
     use aex_wire::ids::{ContentHash, GenerationId, PrefixedId as _, Uuid7};
@@ -724,36 +751,25 @@ mod tests {
         std::fs::create_dir_all(&workspace).expect("the workspace exists");
         let files = crate::file::FileService::open(GuestRoot::workspace(), workspace, dir)
             .expect("the file store opens");
-        Arc::new(Guest::new(
-            journal,
-            executor,
-            files,
-            [1, 2, 3, 4, 5, 6, 7, 8],
-            Arc::new(ValidImage),
-        ))
+        Arc::new(Guest::new(journal, executor, files, Arc::new(ValidImage)))
     }
 
-    fn framed(verb: Verb, payload: &[u8], fence: Fence) -> Vec<u8> {
-        encode_request(
-            &RequestPreamble {
+    fn enveloped(_verb: Verb, payload: &[u8], fence: Fence) -> Vec<u8> {
+        let request: serde_json::Value =
+            serde_json::from_slice(payload).expect("the typed test request decodes");
+        serde_json::to_vec(&GuestRequest {
+            binding: GenerationBinding {
                 schema_version: PROTOCOL_V1,
-                verb,
-                flags: 0,
                 generation: generation(),
                 fence,
-                payload_len: u32::try_from(payload.len()).expect("a bounded payload"),
             },
-            payload,
-        )
+            request,
+        })
+        .expect("the bounded request envelope encodes")
     }
 
     fn exec_start(delivery: DeliveryMode) -> StartRequest {
         StartRequest {
-            binding: GenerationBinding {
-                schema_version: PROTOCOL_V1,
-                generation: generation(),
-                fence: Fence(1),
-            },
             operation: operation(),
             call_hash: aex_hands_protocol::rpc::CallHash(ContentHash::from_bytes([9; 32])),
             request: OperationRequest::Exec {
@@ -787,15 +803,23 @@ mod tests {
         (status, bytes.to_vec())
     }
 
+    fn decode_json<T: serde::de::DeserializeOwned>(body: &[u8]) -> T {
+        let envelope: GuestResponse<T> =
+            serde_json::from_slice(body).expect("the typed JSON response decodes");
+        assert_eq!(envelope.binding.schema_version, PROTOCOL_V1);
+        assert_eq!(envelope.binding.generation, generation());
+        envelope.response
+    }
+
     #[tokio::test]
-    async fn an_unbound_guest_accepts_nothing_and_says_so_without_a_frame() {
+    async fn an_unbound_guest_accepts_nothing_and_says_so_without_a_binding() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let app = router(guest(dir.path(), Arc::new(FakeRunner::default())));
         let (status, _) = post(&app, Verb::Status.path(), Vec::new()).await;
         assert_eq!(
             status,
             StatusCode::SERVICE_UNAVAILABLE,
-            "before the run hook the guest has no generation, so it cannot even encode a preamble"
+            "before the run hook the guest has no generation binding"
         );
         let ready = app
             .clone()
@@ -848,7 +872,7 @@ mod tests {
         let (status, body) = post(
             &app,
             Verb::Start.path(),
-            framed(
+            enveloped(
                 Verb::Start,
                 &serde_json::to_vec(&start).expect("it serializes"),
                 Fence(1),
@@ -856,19 +880,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let expectation = FrameExpectation {
-            generation: generation(),
-            min_fence: Fence(0),
-            schema_version: PROTOCOL_V1,
-            max_frame_bytes: 1_048_576,
-        };
-        let frame = decode_response(&body, &expectation).expect("a framed response");
-        assert_eq!(frame.preamble.status, ResponseStatus::Payload);
-        assert_eq!(
-            frame.preamble.agent_build,
-            [1, 2, 3, 4, 5, 6, 7, 8],
-            "every response is a liveness probe, so the build stamp rides the preamble"
-        );
+        let _: aex_hands_protocol::rpc::StartResponse = decode_json(&body);
         assert_eq!(
             runner
                 .started
@@ -881,13 +893,12 @@ mod tests {
 
         // status
         let query = StatusRequest {
-            binding: start.binding,
             operation: operation(),
         };
         let (status, body) = post(
             &app,
             Verb::Status.path(),
-            framed(
+            enveloped(
                 Verb::Status,
                 &serde_json::to_vec(&query).expect("it serializes"),
                 Fence(1),
@@ -895,9 +906,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let frame = decode_response(&body, &expectation).expect("a framed response");
-        let answered: StatusResponse =
-            serde_json::from_slice(frame.payload).expect("a typed status");
+        let answered: StatusResponse = decode_json(&body);
         assert!(
             matches!(answered, StatusResponse::Terminal { .. }),
             "the foreground exec ran to completion: {answered:?}"
@@ -921,7 +930,7 @@ mod tests {
         let (status, body) = post(
             &app,
             Verb::Start.path(),
-            framed(
+            enveloped(
                 Verb::Start,
                 &serde_json::to_vec(&start).expect("it serializes"),
                 Fence(1),
@@ -929,15 +938,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let expectation = FrameExpectation {
-            generation: generation(),
-            min_fence: Fence(0),
-            schema_version: PROTOCOL_V1,
-            max_frame_bytes: 1_048_576,
-        };
-        let frame = decode_response(&body, &expectation).expect("a framed response");
-        let accepted: aex_hands_protocol::rpc::StartResponse =
-            serde_json::from_slice(frame.payload).expect("a typed start response");
+        let accepted: aex_hands_protocol::rpc::StartResponse = decode_json(&body);
         assert!(
             matches!(
                 accepted,
@@ -951,7 +952,6 @@ mod tests {
 
         // The reap runs on a background thread; poll status until it terminalizes.
         let query = StatusRequest {
-            binding: start.binding,
             operation: operation(),
         };
         let mut terminal = None;
@@ -959,7 +959,7 @@ mod tests {
             let (status, body) = post(
                 &app,
                 Verb::Status.path(),
-                framed(
+                enveloped(
                     Verb::Status,
                     &serde_json::to_vec(&query).expect("it serializes"),
                     Fence(1),
@@ -967,9 +967,7 @@ mod tests {
             )
             .await;
             assert_eq!(status, StatusCode::OK);
-            let frame = decode_response(&body, &expectation).expect("a framed response");
-            let answered: StatusResponse =
-                serde_json::from_slice(frame.payload).expect("a typed status");
+            let answered: StatusResponse = decode_json(&body);
             if let StatusResponse::Terminal {
                 terminal: found, ..
             } = answered
@@ -985,15 +983,14 @@ mod tests {
 
         // The terminal body is pullable through the result verb.
         let pull = ResultRequest {
-            binding: start.binding,
             operation: operation(),
             from_offset: 0,
-            max_bytes: 1_048_576,
+            max_bytes: aex_hands_protocol::rpc::MAX_RESULT_CHUNK_BYTES,
         };
         let (status, body) = post(
             &app,
             Verb::Result.path(),
-            framed(
+            enveloped(
                 Verb::Result,
                 &serde_json::to_vec(&pull).expect("it serializes"),
                 Fence(1),
@@ -1001,9 +998,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let frame = decode_response(&body, &expectation).expect("a framed response");
-        let answered: ResultResponse =
-            serde_json::from_slice(frame.payload).expect("a typed result");
+        let answered: ResultResponse = decode_json(&body);
         let ResultResponse::Terminal { chunk, .. } = answered else {
             panic!("a terminal operation pulls: {answered:?}");
         };
@@ -1086,7 +1081,7 @@ mod tests {
         let (status, _) = post(
             &app,
             Verb::Start.path(),
-            framed(
+            enveloped(
                 Verb::Start,
                 &serde_json::to_vec(&start).expect("it serializes"),
                 Fence(1),
@@ -1096,14 +1091,13 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
 
         let cancel = CancelRequest {
-            binding: start.binding,
             operation: operation(),
             reason: CancelReason::CustomerStop,
         };
         let (status, body) = post(
             &app,
             Verb::Cancel.path(),
-            framed(
+            enveloped(
                 Verb::Cancel,
                 &serde_json::to_vec(&cancel).expect("it serializes"),
                 Fence(1),
@@ -1111,15 +1105,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let expectation = FrameExpectation {
-            generation: generation(),
-            min_fence: Fence(0),
-            schema_version: PROTOCOL_V1,
-            max_frame_bytes: 1_048_576,
-        };
-        let frame = decode_response(&body, &expectation).expect("a framed response");
-        let answered: CancelResponse =
-            serde_json::from_slice(frame.payload).expect("a typed cancel response");
+        let answered: CancelResponse = decode_json(&body);
         assert!(
             matches!(answered, CancelResponse::Cancelling { .. }),
             "{answered:?}"
@@ -1127,7 +1113,6 @@ mod tests {
 
         // The ladder runs on a background thread; poll until it terminalizes.
         let query = StatusRequest {
-            binding: start.binding,
             operation: operation(),
         };
         let mut terminal = None;
@@ -1135,16 +1120,14 @@ mod tests {
             let (_, body) = post(
                 &app,
                 Verb::Status.path(),
-                framed(
+                enveloped(
                     Verb::Status,
                     &serde_json::to_vec(&query).expect("it serializes"),
                     Fence(1),
                 ),
             )
             .await;
-            let frame = decode_response(&body, &expectation).expect("a framed response");
-            let answered: StatusResponse =
-                serde_json::from_slice(frame.payload).expect("a typed status");
+            let answered: StatusResponse = decode_json(&body);
             if let StatusResponse::Terminal {
                 terminal: found, ..
             } = answered
@@ -1163,7 +1146,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_frame_for_another_generation_is_refused_as_a_typed_protocol_error() {
+    async fn a_request_for_another_generation_is_refused_before_dispatch() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let app = router(guest(dir.path(), Arc::new(FakeRunner::default())));
         post(
@@ -1174,43 +1157,74 @@ mod tests {
         .await;
 
         let stranger = GenerationId::from_uuid7(Uuid7::compose(99, [7; 10]));
-        let payload = serde_json::to_vec(&StatusRequest {
+        let body = serde_json::to_vec(&GuestRequest {
             binding: GenerationBinding {
                 schema_version: PROTOCOL_V1,
                 generation: stranger,
                 fence: Fence(1),
             },
+            request: StatusRequest {
+                operation: operation(),
+            },
+        })
+        .expect("it serializes");
+        let (status, _) = post(&app, Verb::Status.path(), body).await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "the generation binding is checked before operation dispatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_older_fence_is_refused_after_a_newer_request_is_observed() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let app = router(guest(dir.path(), Arc::new(FakeRunner::default())));
+        post(
+            &app,
+            aex_hands_agent::session::LifecycleHook::Run.path(),
+            aws_run_hook_body(),
+        )
+        .await;
+        let request = serde_json::to_vec(&StatusRequest {
             operation: operation(),
         })
         .expect("it serializes");
-        let body = encode_request(
-            &RequestPreamble {
-                schema_version: PROTOCOL_V1,
-                verb: Verb::Status,
-                flags: 0,
-                generation: stranger,
-                fence: Fence(1),
-                payload_len: u32::try_from(payload.len()).expect("a bounded payload"),
-            },
-            &payload,
-        );
-        let (status, body) = post(&app, Verb::Status.path(), body).await;
-        assert_eq!(status, StatusCode::OK);
-        let frame = decode_response(
-            &body,
-            &FrameExpectation {
-                generation: generation(),
-                min_fence: Fence(0),
-                schema_version: PROTOCOL_V1,
-                max_frame_bytes: 1_048_576,
-            },
+
+        let (fresh, _) = post(
+            &app,
+            Verb::Status.path(),
+            enveloped(Verb::Status, &request, Fence(8)),
         )
-        .expect("the refusal is itself a frame for the bound generation");
-        assert_eq!(
-            frame.preamble.status,
-            ResponseStatus::ProtocolError,
-            "the generation binding is checked before any payload byte is interpreted"
-        );
+        .await;
+        assert_eq!(fresh, StatusCode::OK);
+        let (stale, _) = post(
+            &app,
+            Verb::Status.path(),
+            enveloped(Verb::Status, &request, Fence(7)),
+        )
+        .await;
+        assert_eq!(stale, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn the_http_adapter_rejects_a_body_over_the_protocol_limit() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let app = router(guest(dir.path(), Arc::new(FakeRunner::default())));
+        post(
+            &app,
+            aex_hands_agent::session::LifecycleHook::Run.path(),
+            aws_run_hook_body(),
+        )
+        .await;
+
+        let (status, _) = post(
+            &app,
+            Verb::Status.path(),
+            vec![b' '; aex_hands_protocol::rpc::MAX_GUEST_BODY_BYTES + 1],
+        )
+        .await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[tokio::test]

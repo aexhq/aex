@@ -14,18 +14,21 @@ use uuid::Uuid;
 /// Which identity provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Provider {
+    /// GitHub.
+    GitHub,
     /// Google.
     Google,
 }
 
 impl Provider {
     /// Every provider.
-    pub const ALL: [Self; 1] = [Self::Google];
+    pub const ALL: [Self; 2] = [Self::GitHub, Self::Google];
 
     /// The database spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::GitHub => "github",
             Self::Google => "google",
         }
     }

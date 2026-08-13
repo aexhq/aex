@@ -562,13 +562,12 @@ pub struct ProcessIdentity {
     pub region: String,
 }
 
-/// Samples memory pressure and publishes it to admission, readiness and telemetry.
+/// Samples memory pressure and publishes it to admission, readiness and diagnostics.
 #[derive(Debug)]
 pub struct PressureSampler {
     health: Arc<HealthState>,
     gate: Arc<PressureGate>,
     files: Arc<dyn MemoryFiles>,
-    telemetry: aex_platform_telemetry::Handle,
     identity: ProcessIdentity,
     interval: core::time::Duration,
 }
@@ -585,8 +584,6 @@ pub struct PressureBindings {
     pub gate: Arc<PressureGate>,
     /// Where a sample is read from.
     pub files: Arc<dyn MemoryFiles>,
-    /// Where a transition is reported.
-    pub telemetry: aex_platform_telemetry::Handle,
     /// What a transition is attributed to.
     pub identity: ProcessIdentity,
 }
@@ -608,7 +605,6 @@ impl PressureSampler {
             health: bindings.health,
             gate: bindings.gate,
             files: bindings.files,
-            telemetry: bindings.telemetry,
             identity: bindings.identity,
             interval,
         }
@@ -624,7 +620,7 @@ impl PressureSampler {
     ///
     /// Readiness is republished on every sample rather than only on a transition. It is one
     /// atomic store, and it means the answer a load balancer gets never depends on a
-    /// diagnostic emit that a full telemetry queue is entitled to drop.
+    /// diagnostic event.
     #[must_use]
     pub fn round(&self) -> Option<PressureTransition> {
         let reading = read_memory(self.files.as_ref());
@@ -651,42 +647,17 @@ impl PressureSampler {
 
     /// Reports one transition. Exactly one record per transition, never one per sample.
     fn emit(&self, transition: PressureTransition) {
-        let mut record = aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_BRAIN_MEMORY_PRESSURE_TRANSITIONED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            self.identity.plane.clone(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            self.identity.region.clone(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_DEPLOYABLE,
-            crate::DEPLOYABLE,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PRESSURE_PREVIOUS_STATE,
-            transition.previous.as_str(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PRESSURE_STATE,
-            transition.current.as_str(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_MEMORY_SOURCE,
-            transition.reading.source_label(),
+        tracing::info!(
+            target: "aex::diagnostics",
+            event = "brain_memory_pressure_transitioned",
+            plane = %self.identity.plane,
+            region = %self.identity.region,
+            deployable = crate::DEPLOYABLE,
+            previous_state = transition.previous.as_str(),
+            state = transition.current.as_str(),
+            memory_source = transition.reading.source_label(),
+            memory_used_percent = transition.reading.used_percent(),
         );
-        // Present only when one was measured. An absent percentage is the honest record of a
-        // transition into or out of an unmeasurable state; a zero would read as an idle task.
-        if let Some(percent) = transition.reading.used_percent() {
-            record = record.with(
-                aex_telemetry_schema::generated::AEX_MEMORY_USED_PERCENT,
-                percent,
-            );
-        }
-        self.telemetry.emit(record);
     }
 }
 
@@ -700,7 +671,6 @@ mod tests {
     };
     use crate::control::HealthState;
     use crate::health::{LIVE_PATH, READY_PATH};
-    use aex_platform_telemetry::{AttributeValue, InMemoryExporter, Record};
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
@@ -758,37 +728,21 @@ mod tests {
         ])
     }
 
-    fn sampler(
-        files: &Arc<FakeFiles>,
-    ) -> (Arc<HealthState>, Arc<InMemoryExporter>, PressureSampler) {
+    fn sampler(files: &Arc<FakeFiles>) -> (Arc<HealthState>, PressureSampler) {
         let health = HealthState::starting(50, 32);
         health.bindings_validated();
         health.schema_matched();
         health.store_reachable(true);
-        let exporter = Arc::new(InMemoryExporter::new());
-        let telemetry = aex_platform_telemetry::Handle::install(
-            &aex_platform_telemetry::Settings::default(),
-            Some(Arc::clone(&exporter) as Arc<_>),
-        );
         let sampler = PressureSampler::new(PressureBindings {
             health: Arc::clone(&health),
             gate: Arc::new(PressureGate::new()),
             files: Arc::clone(files) as Arc<dyn MemoryFiles>,
-            telemetry,
             identity: ProcessIdentity {
                 plane: "dev".to_owned(),
                 region: "eu-west-1".to_owned(),
             },
         });
-        (health, exporter, sampler)
-    }
-
-    fn delivered(
-        exporter: &Arc<InMemoryExporter>,
-        telemetry: &aex_platform_telemetry::Handle,
-    ) -> Vec<Record> {
-        let _ = telemetry.flush(core::time::Duration::from_secs(1));
-        exporter.delivered()
+        (health, sampler)
     }
 
     /// The accepted first-launch watermarks. They are what the guardrail *is*, so they are
@@ -1072,7 +1026,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn each_watermark_crossing_emits_exactly_one_observation() {
         let files = cgroup_v2_at(10);
-        let (_health, exporter, sampler) = sampler(&files);
+        let (_health, sampler) = sampler(&files);
         assert!(
             sampler.round().is_some(),
             "the first sample is a transition"
@@ -1090,41 +1044,11 @@ mod tests {
             assert_eq!(sampler.gate().state(), expected, "at {percent}%");
         }
 
-        let records = delivered(&exporter, &sampler.telemetry);
         assert_eq!(sampler.gate().samples(), 6);
         assert_eq!(
             sampler.gate().transitions(),
             5,
             "the repeated 72 % sample is not a transition"
-        );
-        assert_eq!(records.len(), 5);
-        let states: Vec<_> = records
-            .iter()
-            .filter_map(|record| {
-                record.attribute(aex_telemetry_schema::generated::AEX_PRESSURE_STATE)
-            })
-            .collect();
-        assert_eq!(
-            states,
-            vec![
-                &AttributeValue::Text("normal".to_owned()),
-                &AttributeValue::Text("warning".to_owned()),
-                &AttributeValue::Text("admission-stop".to_owned()),
-                &AttributeValue::Text("critical".to_owned()),
-                &AttributeValue::Text("normal".to_owned()),
-            ]
-        );
-        assert_eq!(
-            records[2].attribute(aex_telemetry_schema::generated::AEX_MEMORY_USED_PERCENT),
-            Some(&AttributeValue::Integer(81))
-        );
-        assert_eq!(
-            records[2].attribute(aex_telemetry_schema::generated::AEX_PRESSURE_PREVIOUS_STATE),
-            Some(&AttributeValue::Text("warning".to_owned()))
-        );
-        assert_eq!(
-            records[2].attribute(aex_telemetry_schema::generated::AEX_MEMORY_SOURCE),
-            Some(&AttributeValue::Text("cgroup-v2".to_owned()))
         );
     }
 
@@ -1133,18 +1057,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn an_unmeasurable_transition_reports_its_source_and_no_percentage() {
         let files = FakeFiles::with(&[]);
-        let (_health, exporter, sampler) = sampler(&files);
-        let _ = sampler.round();
-        let records = delivered(&exporter, &sampler.telemetry);
-        assert_eq!(records.len(), 1);
-        assert_eq!(
-            records[0].attribute(aex_telemetry_schema::generated::AEX_MEMORY_SOURCE),
-            Some(&AttributeValue::Text("unavailable".to_owned()))
-        );
-        assert_eq!(
-            records[0].attribute(aex_telemetry_schema::generated::AEX_MEMORY_USED_PERCENT),
-            None
-        );
+        let (_health, sampler) = sampler(&files);
+        let transition = sampler.round().expect("unreadable is a transition");
+        assert_eq!(transition.reading.source_label(), "unavailable");
+        assert_eq!(transition.reading.used_percent(), None);
         assert_eq!(
             sampler.gate().state(),
             PressureState::Normal,
@@ -1162,7 +1078,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_measured_stop_takes_the_task_out_of_service_and_recovery_puts_it_back() {
         let files = cgroup_v2_at(10);
-        let (health, _exporter, sampler) = sampler(&files);
+        let (health, sampler) = sampler(&files);
         let _ = sampler.round();
         assert_eq!(health.respond("GET", READY_PATH).status, 200);
 
@@ -1206,7 +1122,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn an_aborted_and_joined_sampler_never_publishes_again() {
         let files = cgroup_v2_at(10);
-        let (_health, _exporter, sampler) = sampler(&files);
+        let (_health, sampler) = sampler(&files);
         let sampler = Arc::new(sampler);
         let running = tokio::spawn(Arc::clone(&sampler).run());
 

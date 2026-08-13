@@ -52,22 +52,6 @@ fn this_table_has_no_change_feed_no_index_and_no_timer() {
     );
 }
 
-#[test]
-fn the_collector_holds_nothing_at_all_on_this_table() {
-    // The OTLP collector used to hold `GetItem` here, for the one row of the
-    // removed redaction manifest. The platform's own credentials no longer
-    // enter a sandbox, so there is nothing in a session's telemetry for a
-    // collector to recognise and nothing on this table for it to read.
-    let definition = definition();
-    let grants = definition["iam"].as_array().expect("an array");
-    assert!(
-        grants
-            .iter()
-            .all(|grant| grant["role"].as_str() != Some("regional-otlp")),
-        "a telemetry role with a grant on the secret-custody table is a path that should not exist"
-    );
-}
-
 #[tokio::test]
 async fn a_set_writes_the_generation_before_the_metadata_that_names_it() {
     let (client, receiver) = capturing_client();

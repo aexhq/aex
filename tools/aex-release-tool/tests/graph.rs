@@ -959,8 +959,6 @@ fn the_shipped_prd_set_is_the_reduced_one() {
         "SC-HANDS-HOSTILE",
         "SC-BRAIN-TURN",
         "SC-SCHEMA-MIGRATE",
-        "SC-OBSERVATION-GAP",
-        "SC-OBSERVATION-EXPORT",
         "SC-FINANCE-RECONCILE",
         "SC-USAGE-SETTLE",
     ] {

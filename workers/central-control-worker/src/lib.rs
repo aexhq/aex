@@ -763,23 +763,15 @@ pub fn app(readiness: Readiness) -> axum::Router {
 ///
 /// Returns [`CentralControlWorkerRunError`] when configuration or composition is refused, or when
 /// the runtime stops.
-pub async fn run(
-    config: &Config,
-    telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), CentralControlWorkerRunError> {
+pub async fn run(config: &Config) -> Result<(), CentralControlWorkerRunError> {
     aex_central_http::capability::admit(&manifest(), &config.resolved())?;
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.as_str().to_owned(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.as_str().to_owned(),
-        ),
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = DEPLOYABLE.as_str(),
+        plane = config.plane.as_str(),
+        region = config.region.as_str(),
+        "process started"
     );
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let data_config = aex_rds_data::DataApiConfig::new(

@@ -7,12 +7,7 @@
 
 use std::sync::Arc;
 
-use aex_platform_telemetry::{FlushOutcome, Handle, Record, Settings};
 use aex_rds_data::{AwsTransport, DataApiClient};
-use aex_telemetry_schema::generated::{
-    AEX_DEPLOYABLE, AEX_PLANE, AEX_REGION, EVENT_AEX_PROCESS_CONFIGURATION_REJECTED,
-    EVENT_AEX_PROCESS_STARTED,
-};
 use aex_wire::dispatch::RequestLimits;
 use aex_wire::types::HttpsUrl;
 use finance_api::aurora::AuroraBillingAuthority;
@@ -37,33 +32,36 @@ const DEFAULT_RETURN_URL: &str = "https://aex.dev/dashboard/billing";
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    let settings = Settings::lambda();
-    let telemetry = Handle::install(&settings, None);
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("{DEPLOYABLE}: diagnostics installation failed: {error}");
+        return std::process::ExitCode::FAILURE;
+    }
 
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
-            telemetry.emit(
-                Record::event(EVENT_AEX_PROCESS_CONFIGURATION_REJECTED)
-                    .with(AEX_DEPLOYABLE, DEPLOYABLE),
+            tracing::error!(
+                target: "aex::diagnostics",
+                event_name = "process.configuration_rejected",
+                deployable = DEPLOYABLE,
+                error = %error,
+                "process configuration rejected"
             );
-            let _ = telemetry.flush(settings.flush_deadline);
             eprintln!("{DEPLOYABLE}: refusing to start: {error}");
             return std::process::ExitCode::FAILURE;
         }
     };
 
-    telemetry.emit(
-        Record::event(EVENT_AEX_PROCESS_STARTED)
-            .with(AEX_DEPLOYABLE, DEPLOYABLE)
-            .with(AEX_PLANE, config.plane.clone())
-            .with(AEX_REGION, config.region.clone()),
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = DEPLOYABLE,
+        plane = %config.plane,
+        region = %config.region,
+        "process started"
     );
 
     let outcome = run(config).await;
-    if let FlushOutcome::DeadlineExceeded { pending } = telemetry.flush(settings.flush_deadline) {
-        eprintln!("{DEPLOYABLE}: telemetry flush left {pending} record(s) undelivered");
-    }
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {

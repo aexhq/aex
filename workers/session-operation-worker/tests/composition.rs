@@ -35,10 +35,9 @@ fn complete() -> BTreeMap<&'static str, String> {
                 .to_owned(),
         ),
         (
-            config::OBSERVATION_TABLE,
-            "aex-dev-observation-authority".to_owned(),
+            config::SESSION_TELEMETRY_BUCKET,
+            "aex-dev-session-telemetry".to_owned(),
         ),
-        (config::OBS_DUTY_SHARDS, "64".to_owned()),
         (config::DUE_SCAN_SHARDS, "64".to_owned()),
         (config::LEASE_MS, "60000".to_owned()),
         (config::STEP_DEADLINE_MS, "30000".to_owned()),

@@ -35,23 +35,14 @@ integration = "integration"
 integration-engines = ["aex-test-harness/containers"]
 
 [dependencies]
-async-trait.workspace = true
-aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
-aws-sdk-sqs.workspace = true
-aws-smithy-types.workspace = true
-futures.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
-time.workspace = true
-uuid.workspace = true
-xxhash-rust.workspace = true
+aex-usage-authority-dynamodb = { path = "../aex-usage-authority-dynamodb" }
 aex-usage-app = { path = "../aex-usage-app" }
 aex-usage-domain = { path = "../aex-usage-domain" }
 
 [dev-dependencies]
-aws-smithy-runtime-api.workspace = true
+aws-sdk-sqs.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 # The integration target mints its fixture identifiers from the wire owner
 # rather than hand-typing them: the outbox boundary parses those strings into

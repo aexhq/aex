@@ -34,12 +34,12 @@ path = "src/main.rs"
 
 [dependencies]
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
 aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = ["session-authority"] }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-wire = { path = "../../crates/aex-wire" }
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 lambda_runtime.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true

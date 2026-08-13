@@ -21,19 +21,19 @@ fn handoff_registry() -> Units {
 schema = "aex.units.v1"
 
 [[unit]]
-id = "regional-otlp"
+id = "central-authz"
 kind = "rust-lambda"
-plane = "regional"
-package = "regional-otlp"
-bin = "regional-otlp"
+plane = "central"
+package = "central-authz"
+bin = "central-authz"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release-lambda"
 form = "zip"
 entrypoint = "bootstrap"
-config_env_namespace = "AEX_REGIONAL_OTLP_"
+config_env_namespace = "AEX_CENTRAL_AUTHZ_"
 config_schema_version = 1
 required_receipts = ["unit"]
-alarm_spec = "regional-otlp"
+alarm_spec = "central-authz"
 
 [unit.lambda]
 memory_mb = 1024
@@ -46,7 +46,11 @@ reserved_concurrency = 8
 
 fn handoff_envelope() -> ArtifactEnvelope {
     let mut value = valid_envelope();
-    value["identities"]["configEnvNamespace"] = serde_json::json!("AEX_REGIONAL_OTLP_");
+    value["unit"]["id"] = serde_json::json!("central-authz");
+    value["unit"]["plane"] = serde_json::json!("central");
+    value["output"]["location"]["uri"] = serde_json::json!("lambda/central-authz/deadbeef.zip");
+    value["sbom"]["uri"] = serde_json::json!("sbom/central-authz.json");
+    value["identities"]["configEnvNamespace"] = serde_json::json!("AEX_CENTRAL_AUTHZ_");
     serde_json::from_value::<ArtifactEnvelope>(value)
         .unwrap()
         .seal()
@@ -292,18 +296,18 @@ fn composition_handoff_emits_the_exact_verified_envelope_store() {
 
     assert_eq!(store.len(), 1);
     assert_eq!(
-        store["regional-otlp"].envelope_digest,
+        store["central-authz"].envelope_digest,
         envelope.envelope_digest
     );
     assert_eq!(
-        manifest.units["regional-otlp"].envelope_digest,
+        manifest.units["central-authz"].envelope_digest,
         envelope.envelope_digest
     );
     assert_eq!(
-        manifest.units["regional-otlp"].artifact_digest,
+        manifest.units["central-authz"].artifact_digest,
         envelope.output.digest
     );
-    let manifest_shape = manifest.units["regional-otlp"].lambda.unwrap();
+    let manifest_shape = manifest.units["central-authz"].lambda.unwrap();
     let registry_shape = registry.units[0].lambda.unwrap();
     assert_eq!(manifest_shape.memory_mb, registry_shape.memory_mb);
     assert_eq!(manifest_shape.timeout_s, registry_shape.timeout_s);
@@ -315,9 +319,9 @@ fn composition_handoff_emits_the_exact_verified_envelope_store() {
     let mut changed_shape = manifest;
     let changed_lambda = aex_release_tool::manifest::ManifestLambdaShape {
         memory_mb: 2_048,
-        ..changed_shape.units["regional-otlp"].lambda.unwrap()
+        ..changed_shape.units["central-authz"].lambda.unwrap()
     };
-    changed_shape.units.get_mut("regional-otlp").unwrap().lambda = Some(changed_lambda);
+    changed_shape.units.get_mut("central-authz").unwrap().lambda = Some(changed_lambda);
     let changed_shape = changed_shape.seal().unwrap();
     assert_ne!(changed_shape.release_id, original_release_id);
     changed_shape.validate(true).unwrap();
@@ -447,7 +451,7 @@ fn composition_handoff_reports_concrete_certification_and_receipt_gaps() {
         error
             .violations
             .iter()
-            .all(|violation| violation.detail.contains("regional-otlp"))
+            .all(|violation| violation.detail.contains("central-authz"))
     );
 }
 

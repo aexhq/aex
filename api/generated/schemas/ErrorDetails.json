@@ -30,10 +30,6 @@
     {
       "$ref": "aex:schema:ErrorDetailsValidation",
       "x-aex-discriminator-value": "validation"
-    },
-    {
-      "$ref": "aex:schema:ErrorDetailsGap",
-      "x-aex-discriminator-value": "gap"
     }
   ],
   "title": "ErrorDetails",

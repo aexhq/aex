@@ -34,7 +34,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
     (
         "AdmissionError",
         &[
-            "crates/aex-observation-app/src/use_cases.rs",
             "crates/aex-usage-domain/src/fact.rs",
             // The retired regional secret edge once carried a duplicate
             // `SecretPlaintext` / `Ciphertext` / `SecretRecord` kernel.
@@ -45,13 +44,7 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "services/session-stream-api/src/session/admission.rs",
         ],
     ),
-    (
-        "AuthorityError",
-        &[
-            "services/finance-api/src/authority.rs",
-            "services/regional-otlp/src/authority.rs",
-        ],
-    ),
+    ("AuthorityError", &["services/finance-api/src/authority.rs"]),
     (
         "BudgetError",
         &[
@@ -93,7 +86,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         "CursorError",
         &[
             "crates/aex-control-domain/src/cursor.rs",
-            "crates/aex-observation-query/src/cursor.rs",
             "crates/aex-operation-domain/src/cursor.rs",
             "crates/aex-regional-http/src/cursor.rs",
             "crates/aex-session-dynamodb/src/paging.rs",
@@ -103,9 +95,7 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         "DecodeError",
         &[
             "crates/aex-rds-data/src/error.rs",
-            "crates/aex-usage-compute-dynamodb/src/codec.rs",
-            "crates/aex-usage-storage-dynamodb/src/codec.rs",
-            "crates/aex-usage-transfer-dynamodb/src/codec.rs",
+            "crates/aex-usage-authority-dynamodb/src/codec.rs",
         ],
     ),
     (
@@ -149,7 +139,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         "EncodeError",
         &[
             "crates/aex-content-dynamodb/src/codec.rs",
-            "crates/aex-observation-export/src/encoder.rs",
             "crates/aex-registry-dynamodb/src/codec.rs",
             "crates/aex-runtime-activity-dynamodb/src/codec.rs",
             "crates/aex-secret-custody-dynamodb/src/codec.rs",
@@ -172,18 +161,8 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "FrameError",
-        &[
-            "crates/aex-hands-agent/src/wire.rs",
-            "services/regional-observation-api/src/ndjson.rs",
-        ],
-    ),
-    (
         "FrontierError",
-        &[
-            "crates/aex-observation-domain/src/frontier.rs",
-            "crates/aex-usage-domain/src/frontier.rs",
-        ],
+        &["crates/aex-usage-domain/src/frontier.rs"],
     ),
     (
         "HandsError",
@@ -217,7 +196,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
     (
         "KeyError",
         &[
-            "crates/aex-observation-domain/src/keys.rs",
             "crates/aex-session-dynamodb/src/component.rs",
             "crates/aex-usage-domain/src/keys.rs",
         ],
@@ -247,7 +225,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
     (
         "PortError",
         &[
-            "crates/aex-observation-app/src/ports.rs",
             "crates/aex-session-app/src/ports.rs",
             "crates/aex-usage-app/src/ports.rs",
         ],
@@ -257,7 +234,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         &[
             "crates/aex-brain-test-support/src/prefix.rs",
             "crates/aex-central-test-support/src/prefix.rs",
-            "crates/aex-observation-test-support/src/prefix.rs",
             "crates/aex-regional-test-support/src/prefix.rs",
         ],
     ),
@@ -274,10 +250,7 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
     ),
     (
         "QueryError",
-        &[
-            "crates/aex-observation-query/src/ast.rs",
-            "crates/aex-usage-query-dynamodb/src/expressions.rs",
-        ],
+        &["crates/aex-usage-query-dynamodb/src/expressions.rs"],
     ),
     (
         "ReadinessError",
@@ -287,17 +260,7 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         "ReceiptError",
         &[
             "crates/aex-hands-protocol/src/lifecycle.rs",
-            "crates/aex-usage-compute-dynamodb/src/stream.rs",
-            "crates/aex-usage-storage-dynamodb/src/stream.rs",
-            "crates/aex-usage-transfer-dynamodb/src/stream.rs",
-        ],
-    ),
-    (
-        "RowError",
-        &[
-            "crates/aex-usage-compute-dynamodb/src/attribute.rs",
-            "crates/aex-usage-storage-dynamodb/src/attribute.rs",
-            "crates/aex-usage-transfer-dynamodb/src/attribute.rs",
+            "crates/aex-usage-authority-dynamodb/src/stream.rs",
         ],
     ),
     (
@@ -319,27 +282,13 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         &[
             "crates/aex-brain-app/src/ports/store.rs",
             "crates/aex-identity-app/src/ports.rs",
-            "crates/aex-observation-store-dynamodb/src/store.rs",
             "crates/aex-session-dynamodb/src/error.rs",
-            "crates/aex-usage-compute-dynamodb/src/expressions.rs",
-            "crates/aex-usage-storage-dynamodb/src/expressions.rs",
-            "crates/aex-usage-transfer-dynamodb/src/expressions.rs",
-        ],
-    ),
-    (
-        "StreamError",
-        &[
-            "crates/aex-usage-compute-dynamodb/src/stream.rs",
-            "crates/aex-usage-storage-dynamodb/src/stream.rs",
-            "crates/aex-usage-transfer-dynamodb/src/stream.rs",
+            "crates/aex-usage-authority-dynamodb/src/expressions.rs",
         ],
     ),
     (
         "TransitionError",
-        &[
-            "crates/aex-observation-domain/src/batch.rs",
-            "crates/aex-operation-domain/src/operation.rs",
-        ],
+        &["crates/aex-operation-domain/src/operation.rs"],
     ),
     (
         "ValueError",

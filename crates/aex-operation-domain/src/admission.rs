@@ -226,12 +226,9 @@ mod tests {
 
     #[test]
     fn a_continued_kind_is_created_queued() {
-        let AdmissionOutcome::Inserted(created) = admit(
-            None,
-            None,
-            &request(OperationKind::TelemetryExport),
-            moment(1),
-        ) else {
+        let AdmissionOutcome::Inserted(created) =
+            admit(None, None, &request(OperationKind::ContentGc), moment(1))
+        else {
             panic!("expected an insert");
         };
         assert_eq!(created.status, OperationStatus::Queued);

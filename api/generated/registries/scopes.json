@@ -99,14 +99,6 @@
     {
       "description": "Register and revoke dedicated BYOK provider credentials.",
       "scope": "provider_credentials:write"
-    },
-    {
-      "description": "Query observations, gaps and exports.",
-      "scope": "telemetry:read"
-    },
-    {
-      "description": "Admit customer OTLP batches.",
-      "scope": "telemetry:write"
     }
   ]
 }

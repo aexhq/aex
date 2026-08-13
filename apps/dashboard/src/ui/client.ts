@@ -60,7 +60,7 @@ export interface ReadOptions {
   readonly deadlineMs?: Deadline;
   /** A panel that is not yet answerable — no workspace chosen, no id — stays idle. */
   readonly enabled?: boolean;
-  /** Present for the POST-shaped bounded reads: observation and usage queries. */
+  /** Present for POST-shaped bounded reads such as usage queries. */
   readonly body?: unknown;
 }
 

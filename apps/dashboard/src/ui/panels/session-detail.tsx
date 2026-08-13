@@ -1,15 +1,11 @@
 "use client";
 
-import { useState } from "react";
-
 import { DEADLINE_MS, useResource } from "../client";
-import { Badge, Card, CoverageNotice, Empty, Resolved } from "../components";
-import { readCoverage } from "../panel";
+import { Badge, Card, Empty, Resolved } from "../components";
 import { bytes, instant, label, sessionStatus } from "../status";
 import type {
   LiveFileEntryPage,
   Message,
-  ObservationPage,
   Page,
   Session,
 } from "../wire";
@@ -20,7 +16,6 @@ interface Scope {
   readonly sessionId: string;
   readonly billingHref?: string | undefined;
 }
-
 export function SessionHeader({ slug, region, sessionId, billingHref }: Scope) {
   const { state, reload } = useResource<Session>("session_get", {
     region,
@@ -49,7 +44,6 @@ export function SessionHeader({ slug, region, sessionId, billingHref }: Scope) {
     </Card>
   );
 }
-
 export function MessagesPanel({ region, sessionId, billingHref }: Scope) {
   const { state, reload } = useResource<Page<Message>>("session_messages_list", {
     region,
@@ -96,7 +90,6 @@ export function MessagesPanel({ region, sessionId, billingHref }: Scope) {
     </Card>
   );
 }
-
 export function LiveFilesPanel({ region, sessionId, billingHref }: Scope) {
   const { state, reload } = useResource<LiveFileEntryPage>("session_files_live_list", {
     region,
@@ -152,90 +145,6 @@ export function LiveFilesPanel({ region, sessionId, billingHref }: Scope) {
             </>
           )
         }
-      </Resolved>
-    </Card>
-  );
-}
-
-const WINDOW_HOURS = 24;
-
-export function SessionEventsPanel({ slug, region, sessionId, billingHref }: Scope) {
-  const [now] = useState(() => Date.now());
-  const timeRange = {
-    gte: new Date(now - WINDOW_HOURS * 3_600_000).toISOString().replace(/\.\d{3}Z$/, ".000Z"),
-    lt: new Date(now).toISOString().replace(/\.\d{3}Z$/, ".000Z"),
-  };
-  const { state, reload } = useResource<ObservationPage>("session_observations_events_query", {
-    region,
-    parameters: { sessionId },
-    body: { signal: "events", timeRange, limit: 100, order: "descending", consistency: "indexed" },
-    deadlineMs: DEADLINE_MS.analytics,
-  });
-
-  return (
-    <Card
-      title="Events"
-      description={`Session events observed in the last ${WINDOW_HOURS} hours.`}
-      actions={<button type="button" className="button" onClick={reload}>Refresh</button>}
-      flush
-    >
-      <Resolved state={state} reload={reload} billingHref={billingHref}>
-        {(page) => {
-          const verdict = readCoverage(page.coverage);
-          return (
-            <>
-              {verdict.kind === "complete" ? null : (
-                <div style={{ padding: "var(--aex-space-4)" }}>
-                  <CoverageNotice verdict={verdict} />
-                </div>
-              )}
-              {page.items.length === 0 ? (
-                <Empty
-                  title={
-                    verdict.kind === "complete"
-                      ? "No events in this window."
-                      : "No events survived in this window."
-                  }
-                  hint={
-                    verdict.kind === "complete"
-                      ? "The window is whole, so this is an answer rather than a gap."
-                      : "The window is not whole; absence here does not mean nothing happened."
-                  }
-                />
-              ) : (
-                <div className="scroller">
-                  <table>
-                    <caption className="sr-only">Session events</caption>
-                    <thead>
-                      <tr>
-                        <th scope="col">Observed</th>
-                        <th scope="col">Sequence</th>
-                        <th scope="col">Trace</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {page.items.map((observation) => (
-                        <tr key={observation.id}>
-                          <td className="small muted">{instant(observation.observedAt)}</td>
-                          <td className="numeric">{observation.sequence}</td>
-                          <td className="mono small">
-                            {observation.traceId ? (
-                              <a href={`/w/${slug}/sessions/${sessionId}/traces/${observation.traceId}`}>
-                                {observation.traceId.slice(0, 12)}…
-                              </a>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
-          );
-        }}
       </Resolved>
     </Card>
   );

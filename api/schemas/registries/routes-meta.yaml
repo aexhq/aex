@@ -10,7 +10,7 @@
 contractVersion: v1
 expected:
   central: 31
-  regional: 95
+  regional: 43
 pathParams:
   organizationId: { type: id, of: organization, doc: "The organization the request is scoped to." }
   workspaceId: { type: id, of: workspace, doc: "The workspace the request is scoped to." }
@@ -18,16 +18,14 @@ pathParams:
   statementId: { type: id, of: statement, doc: "The issued statement." }
   operationId: { type: id, of: operation, doc: "The durable operation record." }
   sessionId: { type: id, of: session, doc: "The session the request is scoped to." }
+  segmentId: { type: string, min: 85, max: 85, pattern: "^[0-9]{20}-[0-9a-f]{64}$", doc: "The immutable session-telemetry segment." }
   fileUploadId: { type: id, of: file_upload, doc: "The ephemeral live-file upload." }
   fileDownloadId: { type: id, of: file_download, doc: "The ephemeral live-file download." }
   partNumber: { type: integer, min: 1, max: 1280, doc: "The one-based live transfer part." }
   uploadId: { type: id, of: upload, doc: "The staged upload." }
-  exportId: { type: id, of: export, doc: "The telemetry export." }
-  gapId: { type: id, of: telemetry_gap, doc: "The recorded telemetry gap." }
   providerCredentialId: { type: id, of: provider_credential, doc: "The provider-credential binding." }
   limitId: { type: limit_id, doc: "The effective workspace limit." }
   name: { type: resource_name, doc: "The registered workspace-file name." }
-  traceId: { type: trace_id, doc: "A W3C 32-hex trace identifier." }
 
 # Closed delivery vocabulary. Planned ownership and actual mount claims below
 # must name an artifact on the operation's own API plane.
@@ -35,8 +33,6 @@ servingArtifacts:
   central-control-api: central
   central-identity-api: central
   finance-api: central
-  regional-observation-api: regional
-  regional-otlp: regional
   session-stream-api: regional
 
 # Planned delivery/test selection defaults. Most fragments are intended for one
@@ -53,13 +49,10 @@ scenarioOwners:
   central.organizations: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
   central.workspaces: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
   regional.files: { servingArtifact: session-stream-api, scenarios: [SC-CONTENT-LIFECYCLE] }
-  regional.observations: { servingArtifact: regional-observation-api, scenarios: [SC-OBSERVATION-QUERY] }
   regional.operations: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-TERMINAL] }
-  regional.otlp: { servingArtifact: regional-otlp, scenarios: [SC-OBSERVATION-ADMIT] }
   regional.provider-credentials: { servingArtifact: session-stream-api, scenarios: [SC-BYOK-CUSTODY] }
   regional.registry: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT] }
   regional.sessions: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT, SC-SESSION-TERMINAL] }
-  regional.telemetry-lifecycle: { servingArtifact: regional-observation-api, scenarios: [SC-OBSERVATION-EXPORT, SC-OBSERVATION-GAP] }
   regional.uploads: { servingArtifact: session-stream-api, scenarios: [SC-CONTENT-LIFECYCLE] }
   regional.usage: { servingArtifact: session-stream-api, scenarios: [SC-USAGE-SETTLE] }
   regional.workspace: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT] }
@@ -68,31 +61,7 @@ scenarioOwners:
 # these into the runtime RouteDescriptor and the delivery registry together.
 # NDJSON is a distinct long-lived service even when its unary peer is authored
 # in the same OpenAPI fragment.
-operationOwners:
-  observations_events_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  observations_events_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  observations_logs_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  observations_logs_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  observations_metrics_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  observations_metrics_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  observations_spans_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  observations_spans_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  observations_telemetry_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  observations_telemetry_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  observations_traces_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  observations_traces_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_events_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_events_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_logs_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_logs_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_metrics_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_metrics_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_spans_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_spans_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_telemetry_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_telemetry_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_traces_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
-  session_observations_traces_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+operationOwners: {}
 
 # Explicit architecture debt. Every entry names one exact operation whose
 # production handler is intentionally absent and why. The generator rejects an
@@ -141,51 +110,7 @@ servedOperations:
     - billing_statement_get
     - billing_statements_list
     - billing_top_up_checkout_create
-  regional-observation-api:
-    - observations_events_query
-    - observations_logs_query
-    - observations_metrics_aggregate
-    - observations_metrics_query
-    - observations_spans_query
-    - observations_telemetry_query
-    - observations_traces_query
-    - session_observations_events_query
-    - session_observations_logs_query
-    - session_observations_metrics_aggregate
-    - session_observations_metrics_query
-    - session_observations_spans_query
-    - session_observations_telemetry_query
-    - session_observations_trace_get
-    - session_observations_traces_query
-    - session_telemetry_export_create
-    - session_telemetry_export_download_create
-    - session_telemetry_export_get
-    - session_telemetry_export_revoke
-    - session_telemetry_gap_get
-    - session_telemetry_gaps_query
-    - telemetry_export_create
-    - telemetry_export_download_create
-    - telemetry_export_get
-    - telemetry_export_revoke
-    - telemetry_gap_get
-    - telemetry_gaps_query
-  regional-otlp:
-    - otlp_logs_ingest
-    - otlp_metrics_ingest
-    - otlp_traces_ingest
   session-stream-api:
-    - observations_events_listen
-    - observations_events_stream
-    - observations_logs_listen
-    - observations_logs_stream
-    - observations_metrics_listen
-    - observations_metrics_stream
-    - observations_spans_listen
-    - observations_spans_stream
-    - observations_telemetry_listen
-    - observations_telemetry_stream
-    - observations_traces_listen
-    - observations_traces_stream
     - provider_credential_get
     - provider_credential_register
     - provider_credential_revoke
@@ -198,18 +123,6 @@ servedOperations:
     - registry_files_get
     - registry_files_list
     - registry_files_put
-    - session_observations_events_listen
-    - session_observations_events_stream
-    - session_observations_logs_listen
-    - session_observations_logs_stream
-    - session_observations_metrics_listen
-    - session_observations_metrics_stream
-    - session_observations_spans_listen
-    - session_observations_spans_stream
-    - session_observations_telemetry_listen
-    - session_observations_telemetry_stream
-    - session_observations_traces_listen
-    - session_observations_traces_stream
     - session_cancel
     - session_create
     - session_delete
@@ -227,6 +140,8 @@ servedOperations:
     - session_get
     - session_message_send
     - session_messages_list
+    - session_telemetry_segment_download_create
+    - session_telemetry_segments_list
     - session_resume
     - session_suspend
     - session_terminate

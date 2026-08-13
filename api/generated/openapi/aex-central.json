@@ -805,32 +805,9 @@
           {
             "$ref": "aex:schema:ErrorDetailsValidation",
             "x-aex-discriminator-value": "validation"
-          },
-          {
-            "$ref": "aex:schema:ErrorDetailsGap",
-            "x-aex-discriminator-value": "gap"
           }
         ],
         "x-aex-discriminator": "type"
-      },
-      "ErrorDetailsGap": {
-        "additionalProperties": false,
-        "properties": {
-          "gapIds": {
-            "description": "The blocking gaps.",
-            "items": {
-              "pattern": "^gap_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "telemetry_gap"
-            },
-            "maxItems": 100,
-            "type": "array"
-          }
-        },
-        "required": [
-          "gapIds"
-        ],
-        "type": "object"
       },
       "ErrorDetailsLimit": {
         "additionalProperties": false,
@@ -976,13 +953,6 @@
         ],
         "type": "object"
       },
-      "ExportFormat": {
-        "enum": [
-          "ndjson",
-          "otlp_json"
-        ],
-        "type": "string"
-      },
       "HostedSession": {
         "additionalProperties": false,
         "properties": {
@@ -1007,6 +977,7 @@
       },
       "IdentityProvider": {
         "enum": [
+          "github",
           "google"
         ],
         "type": "string"
@@ -1375,7 +1346,6 @@
           "session_resume",
           "session_terminate",
           "session_delete",
-          "telemetry_export",
           "workspace_delete"
         ],
         "type": "string"
@@ -1449,10 +1419,6 @@
           {
             "$ref": "aex:schema:SessionTombstone",
             "x-aex-discriminator-value": "session_delete"
-          },
-          {
-            "$ref": "aex:schema:TelemetryExportResult",
-            "x-aex-discriminator-value": "telemetry_export"
           },
           {
             "$ref": "aex:schema:WorkspaceTombstone",
@@ -1934,39 +1900,6 @@
         },
         "required": [
           "items"
-        ],
-        "type": "object"
-      },
-      "TelemetryExportResult": {
-        "additionalProperties": false,
-        "properties": {
-          "expiresAt": {
-            "description": "When the artifact stops being downloadable.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "exportId": {
-            "description": "The produced export.",
-            "pattern": "^exp_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "export"
-          },
-          "format": {
-            "$ref": "aex:schema:ExportFormat",
-            "description": "The artifact format."
-          },
-          "manifestHash": {
-            "description": "Hash of the export manifest.",
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "expiresAt",
-          "exportId",
-          "format",
-          "manifestHash"
         ],
         "type": "object"
       },

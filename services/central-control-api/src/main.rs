@@ -21,11 +21,8 @@ use aex_central_http::router::EdgeStack;
 /// reach Aurora, cannot resolve its peppers and cannot sign a cursor can serve
 /// nothing, and a listener that answers a permanent failure on every route is
 /// worse than a process that refuses to start.
-async fn compose(
-    config: &Config,
-    telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), CentralControlApiRunError> {
-    use aex_identity_app::ports::{PepperKeystore as _, PepperPurpose};
+async fn compose(config: &Config) -> Result<(), CentralControlApiRunError> {
+    use aex_identity_app::ports::PepperPurpose;
 
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let data_api = aex_rds_data::DataApiConfig::new(
@@ -55,6 +52,7 @@ async fn compose(
         aex_central_aws::PepperStatements {
             active: aex_control_aurora::sql::ACTIVE_CONTROL_PEPPER,
             by_version: aex_control_aurora::sql::CONTROL_PEPPER_BY_VERSION,
+            verification_set: Some(aex_control_aurora::sql::LIVE_CONTROL_PEPPERS),
         },
     ));
     let api_peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
@@ -73,22 +71,27 @@ async fn compose(
         config.cursor_secret_id.clone(),
         directory,
     ));
-    cursor_peppers
-        .probe(PepperPurpose::Cursor)
+    let cursor_keys = cursor_peppers
+        .verification_set(PepperPurpose::Cursor)
         .await
         .map_err(|error| {
             CentralControlApiRunError::Dependency("cursor-secret", error.to_string())
         })?;
-    let (_, cursor_material) =
-        cursor_peppers
-            .active(PepperPurpose::Cursor)
-            .await
-            .map_err(|error| {
-                CentralControlApiRunError::Dependency("cursor-secret", error.to_string())
-            })?;
-    let cursor_secret = Arc::new(aex_control_domain::CursorSecret::new(
-        cursor_material.expose_copy(),
-    ));
+    let cursor_secret = Arc::new(
+        aex_control_domain::CursorSecret::with_id(
+            cursor_keys.current.0.get(),
+            cursor_keys.current.1.expose_copy(),
+        )
+        .with_overlap(
+            cursor_keys
+                .retiring
+                .into_iter()
+                .map(|(version, material)| (version.get(), material.expose_copy())),
+        )
+        .map_err(|error| {
+            CentralControlApiRunError::Dependency("cursor-secret", error.to_string())
+        })?,
+    );
 
     let concrete_store = Arc::new(aex_control_aurora::AuroraControlStore::new(client));
     let api_store: Arc<dyn api::Store> = concrete_store.clone();
@@ -118,7 +121,7 @@ async fn compose(
         clock,
         cursor_secret,
     );
-    run(config, service, edge, Probes::READY, telemetry).await
+    run(config, service, edge, Probes::READY).await
 }
 
 struct Ok1;
@@ -133,23 +136,20 @@ impl aex_rds_data::Row for Ok1 {
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    // Telemetry first: a configuration refusal must reach the wire, or a
-    // crash-looping deployment is visible only to whoever tails stderr.
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("central-control-api: refusing to start: {error}");
+        return std::process::ExitCode::FAILURE;
+    }
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
-            telemetry.emit(
-                aex_platform_telemetry::Record::event(
-                    aex_telemetry_schema::generated::EVENT_AEX_PROCESS_CONFIGURATION_REJECTED,
-                )
-                .with(
-                    aex_telemetry_schema::generated::AEX_DEPLOYABLE,
-                    DEPLOYABLE.as_str(),
-                ),
+            tracing::error!(
+                target: "aex::diagnostics",
+                event_name = "process.configuration_rejected",
+                deployable = DEPLOYABLE.as_str(),
+                error = %error,
+                "configuration rejected"
             );
-            let _ = telemetry.flush(settings.flush_deadline);
             eprintln!("central-control-api: refusing to start: {error}");
             eprintln!(
                 "central-control-api: required configuration: {}",
@@ -158,8 +158,7 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    let outcome = compose(&config, &telemetry).await;
-    let _ = telemetry.flush(settings.flush_deadline);
+    let outcome = compose(&config).await;
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {

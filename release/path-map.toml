@@ -90,6 +90,124 @@ kind = "repo-wide"
 
 # --- workspace members -------------------------------------------------------
 
+# Preserve ownership while the prelaunch observation/telemetry clean cut is
+# visible in change ranges. The replacement packages own the focused evidence;
+# this router edit itself widens the landing change to the full surviving graph.
+
+[[rule]]
+id = "retired-observation-app"
+prefix = "crates/aex-observation-app/"
+kind = "node"
+node = "cargo:aex-session-telemetry-aws"
+
+[[rule]]
+id = "retired-observation-domain"
+prefix = "crates/aex-observation-domain/"
+kind = "node"
+node = "cargo:aex-session-telemetry-aws"
+
+[[rule]]
+id = "retired-observation-export"
+prefix = "crates/aex-observation-export/"
+kind = "node"
+node = "cargo:aex-session-telemetry-aws"
+
+[[rule]]
+id = "retired-observation-query"
+prefix = "crates/aex-observation-query/"
+kind = "node"
+node = "cargo:aex-session-telemetry-aws"
+
+[[rule]]
+id = "retired-observation-store"
+prefix = "crates/aex-observation-store-dynamodb/"
+kind = "node"
+node = "cargo:aex-session-telemetry-aws"
+
+[[rule]]
+id = "retired-observation-test-support"
+prefix = "crates/aex-observation-test-support/"
+kind = "node"
+node = "cargo:aex-session-telemetry-aws"
+
+[[rule]]
+id = "retired-otlp-admission"
+prefix = "crates/aex-otlp-admission/"
+kind = "node"
+node = "cargo:aex-session-telemetry-aws"
+
+[[rule]]
+id = "retired-platform-telemetry"
+prefix = "crates/aex-platform-telemetry/"
+kind = "node"
+node = "cargo:aex-platform-diagnostics"
+
+[[rule]]
+id = "retired-telemetry-schema"
+prefix = "crates/aex-telemetry-schema/"
+kind = "node"
+node = "cargo:aex-platform-diagnostics"
+
+[[rule]]
+id = "retired-regional-observation-api"
+prefix = "services/regional-observation-api/"
+kind = "node"
+node = "cargo:session-stream-api"
+
+[[rule]]
+id = "retired-regional-otlp"
+prefix = "services/regional-otlp/"
+kind = "node"
+node = "cargo:session-stream-api"
+
+[[rule]]
+id = "retired-observation-export-launcher"
+prefix = "workers/observation-export-launcher/"
+kind = "node"
+node = "cargo:aex-session-telemetry-aws"
+
+[[rule]]
+id = "retired-observation-export-task"
+prefix = "workers/observation-export-task/"
+kind = "node"
+node = "cargo:aex-session-telemetry-aws"
+
+[[rule]]
+id = "retired-observation-reconciler"
+prefix = "workers/observation-reconciler/"
+kind = "node"
+node = "cargo:aex-session-telemetry-aws"
+
+[[rule]]
+id = "retired-observation-live-companions"
+prefix = "tests/live/aex-live-observation-export-launcher/"
+kind = "node"
+node = "cargo:aex-live-session-stream-api"
+
+[[rule]]
+id = "retired-observation-export-task-live-companion"
+prefix = "tests/live/aex-live-observation-export-task/"
+kind = "node"
+node = "cargo:aex-live-session-stream-api"
+
+[[rule]]
+id = "retired-observation-reconciler-live-companion"
+prefix = "tests/live/aex-live-observation-reconciler/"
+kind = "node"
+node = "cargo:aex-live-session-stream-api"
+
+[[rule]]
+id = "retired-regional-observation-api-live-companion"
+prefix = "tests/live/aex-live-regional-observation-api/"
+kind = "node"
+node = "cargo:aex-live-session-stream-api"
+
+[[rule]]
+id = "retired-regional-otlp-live-companion"
+prefix = "tests/live/aex-live-regional-otlp/"
+kind = "node"
+node = "cargo:aex-live-session-stream-api"
+
 # The three npm packages that live inside a Cargo member root. They are named
 # before the `derive-cargo` rules below because the first match wins, and a
 # derived rule would resolve them to a `cargo:` node that does not exist — an
@@ -155,7 +273,8 @@ kind = "derive-cargo"
 [[rule]]
 id = "cargo-load-harness"
 prefix = "tests/load/"
-kind = "derive-cargo"
+kind = "node"
+node = "cargo:aex-load-harness"
 
 [[rule]]
 id = "cargo-tools"

@@ -766,7 +766,6 @@ const fn write_tag(write: &Write) -> &'static str {
         Write::PutAgentWake(_) => "PutAgentWake",
         Write::PutAgentWakeDedupe(_) => "PutAgentWakeDedupe",
         Write::CompleteWorkItem(_) => "CompleteWorkItem",
-        Write::PutOutboxEvent(_) => "PutOutboxEvent",
         Write::PutMessageAdmittedEvent(_) => "PutMessageAdmittedEvent",
         Write::PutPin(_) => "PutPin",
         Write::DeletePin(_) => "DeletePin",

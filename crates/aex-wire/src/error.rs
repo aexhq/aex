@@ -10,9 +10,9 @@ use std::fmt;
 
 pub use crate::generated::errors::ErrorCode;
 pub use crate::generated::models::{
-    ApiError, ApiErrorBody, ErrorDetails, ErrorDetailsGap, ErrorDetailsLimit,
-    ErrorDetailsOperation, ErrorDetailsQuota, ErrorDetailsRegion, ErrorDetailsRequiredScope,
-    ErrorDetailsRetry, ErrorDetailsValidation,
+    ApiError, ApiErrorBody, ErrorDetails, ErrorDetailsLimit, ErrorDetailsOperation,
+    ErrorDetailsQuota, ErrorDetailsRegion, ErrorDetailsRequiredScope, ErrorDetailsRetry,
+    ErrorDetailsValidation,
 };
 use crate::ids::OperationId;
 use crate::types::RequestId;

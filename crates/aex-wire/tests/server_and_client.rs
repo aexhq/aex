@@ -1074,8 +1074,4 @@ fn regional_read_models_match_their_authoritative_producers() {
             "`{absent}` must not be a publishable grouping axis"
         );
     }
-
-    // Parquet's encoder is a typed refusal, so the wire must not be able to ask
-    // for it: a durable failure per request is a false capability.
-    assert!(serde_json::from_str::<aex_wire::models::ExportFormat>("\"parquet\"").is_err());
 }

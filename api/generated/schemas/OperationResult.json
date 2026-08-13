@@ -24,10 +24,6 @@
       "x-aex-discriminator-value": "session_delete"
     },
     {
-      "$ref": "aex:schema:TelemetryExportResult",
-      "x-aex-discriminator-value": "telemetry_export"
-    },
-    {
       "$ref": "aex:schema:WorkspaceTombstone",
       "x-aex-discriminator-value": "workspace_delete"
     }

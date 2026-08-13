@@ -3,7 +3,7 @@
 //! The effective-limit registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:308866d3e6ae0f8108ee3b81c1b852256a3bc1d80cb6d774f221d3d91fab4721`.
+//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -53,40 +53,15 @@ pub enum LimitId {
     /// `api.json_body` — Largest accepted encoded JSON request body.
     #[serde(rename = "api.json_body")]
     ApiJsonBody,
-    /// `telemetry.batch` — Encoded, decoded, record and normalized-observation admission bounds.
-    #[serde(rename = "telemetry.batch")]
-    TelemetryBatch,
-    /// `telemetry.ingest_rate` — Sustained and burst byte and request rates per workspace.
-    #[serde(rename = "telemetry.ingest_rate")]
-    TelemetryIngestRate,
-    /// `telemetry.metric_series` — Exact active metric-series ceiling per workspace.
-    #[serde(rename = "telemetry.metric_series")]
-    TelemetryMetricSeries,
-    /// `query.filter` — Structural bounds of an observation query filter.
-    #[serde(rename = "query.filter")]
-    QueryFilter,
     /// `query.page` — Largest accepted collection page in items and serialized bytes.
     #[serde(rename = "query.page")]
     QueryPage,
-    /// `stream.frame` — Largest NDJSON records frame in observations and encoded bytes.
-    #[serde(rename = "stream.frame")]
-    StreamFrame,
-    /// `metric.aggregate` — Interval, grouping, calculation, bucket and row aggregation bounds.
-    #[serde(rename = "metric.aggregate")]
-    MetricAggregate,
     /// `registry.entries` — Registered names one workspace may hold in one registry.
     #[serde(rename = "registry.entries")]
     RegistryEntries,
     /// `registry.value_bytes` — Largest canonical value document a registered name may carry.
     #[serde(rename = "registry.value_bytes")]
     RegistryValueBytes,
-    /// `telemetry.export` — Concurrent non-terminal telemetry exports per workspace, and the widest
-    /// observation-time window one export may cover. A cost guard rather than a correctness guard:
-    /// the active count is read eventually consistently, so a race may admit one or two over the
-    /// cap, which is a better failure than the transactional counter that leaks and blocks a
-    /// workspace permanently.
-    #[serde(rename = "telemetry.export")]
-    TelemetryExport,
 }
 
 impl LimitId {
@@ -99,16 +74,9 @@ impl LimitId {
         LimitId::SessionAgentExecution,
         LimitId::SessionRunBudget,
         LimitId::ApiJsonBody,
-        LimitId::TelemetryBatch,
-        LimitId::TelemetryIngestRate,
-        LimitId::TelemetryMetricSeries,
-        LimitId::QueryFilter,
         LimitId::QueryPage,
-        LimitId::StreamFrame,
-        LimitId::MetricAggregate,
         LimitId::RegistryEntries,
         LimitId::RegistryValueBytes,
-        LimitId::TelemetryExport,
     ];
 
     /// The wire spelling.
@@ -122,16 +90,9 @@ impl LimitId {
             Self::SessionAgentExecution => "session.agent_execution",
             Self::SessionRunBudget => "session.run_budget",
             Self::ApiJsonBody => "api.json_body",
-            Self::TelemetryBatch => "telemetry.batch",
-            Self::TelemetryIngestRate => "telemetry.ingest_rate",
-            Self::TelemetryMetricSeries => "telemetry.metric_series",
-            Self::QueryFilter => "query.filter",
             Self::QueryPage => "query.page",
-            Self::StreamFrame => "stream.frame",
-            Self::MetricAggregate => "metric.aggregate",
             Self::RegistryEntries => "registry.entries",
             Self::RegistryValueBytes => "registry.value_bytes",
-            Self::TelemetryExport => "telemetry.export",
         }
     }
 
@@ -146,16 +107,9 @@ impl LimitId {
             Self::SessionAgentExecution => LimitShape::Map,
             Self::SessionRunBudget => LimitShape::Map,
             Self::ApiJsonBody => LimitShape::Scalar,
-            Self::TelemetryBatch => LimitShape::Map,
-            Self::TelemetryIngestRate => LimitShape::Map,
-            Self::TelemetryMetricSeries => LimitShape::Scalar,
-            Self::QueryFilter => LimitShape::Map,
             Self::QueryPage => LimitShape::Map,
-            Self::StreamFrame => LimitShape::Map,
-            Self::MetricAggregate => LimitShape::Map,
             Self::RegistryEntries => LimitShape::Scalar,
             Self::RegistryValueBytes => LimitShape::Scalar,
-            Self::TelemetryExport => LimitShape::Map,
         }
     }
 
@@ -183,43 +137,9 @@ impl LimitId {
                 "retained_result_bytes",
             ],
             Self::ApiJsonBody => &[],
-            Self::TelemetryBatch => &[
-                "encoded_bytes",
-                "decoded_bytes",
-                "records",
-                "observation_bytes",
-                "attributes",
-                "attribute_key_bytes",
-                "attribute_value_bytes",
-                "array_elements",
-            ],
-            Self::TelemetryIngestRate => &[
-                "sustained_bytes_per_second",
-                "burst_bytes",
-                "sustained_requests_per_second",
-                "burst_requests",
-            ],
-            Self::TelemetryMetricSeries => &[],
-            Self::QueryFilter => &[
-                "depth",
-                "leaves",
-                "children_per_boolean",
-                "in_values",
-                "string_bytes",
-            ],
             Self::QueryPage => &["items", "serialized_bytes"],
-            Self::StreamFrame => &["records", "encoded_bytes"],
-            Self::MetricAggregate => &[
-                "interval_min_seconds",
-                "interval_max_seconds",
-                "group_fields",
-                "calculations",
-                "buckets_per_series",
-                "rows",
-            ],
             Self::RegistryEntries => &[],
             Self::RegistryValueBytes => &[],
-            Self::TelemetryExport => &["active", "window_days"],
         }
     }
 

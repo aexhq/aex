@@ -118,16 +118,16 @@ fn only_ephemeral_replay_scaffolding_is_reclaimed_by_ttl() {
 }
 
 #[test]
-fn the_stream_view_type_is_keys_only_so_a_consumer_learns_no_content() {
+fn the_retired_session_stream_exposes_no_change_feed() {
     let definition = table_definition();
-    assert_eq!(definition["stream"]["viewType"].as_str(), Some("KEYS_ONLY"));
+    assert_eq!(definition["stream"]["viewType"].as_str(), Some("NONE"));
     assert_eq!(
         definition["stream"]["consumers"]
             .as_array()
             .expect("a consumer list")
             .len(),
-        1,
-        "exactly one consumer reads this stream"
+        0,
+        "the removed observation stream leaves no consumer"
     );
 }
 

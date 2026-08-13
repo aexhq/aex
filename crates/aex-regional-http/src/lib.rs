@@ -32,7 +32,6 @@ pub mod page;
 pub mod projection;
 pub mod release_health;
 pub mod router;
-pub mod stream;
 
 pub use authz::{ParameterStore, RegionalProjection, SecretStore, TrustError, parse_pepper_ring};
 pub use capability::{CompositionManifest, admit};

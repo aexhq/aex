@@ -43,6 +43,7 @@ async-trait.workspace = true
 blake3.workspace = true
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
+aws-sdk-s3.workspace = true
 aws-sdk-sqs.workspace = true
 aws-smithy-types.workspace = true
 bytes.workspace = true
@@ -59,6 +60,7 @@ aex-brain-domain = { path = "../aex-brain-domain" }
 # calls these rather than forking the item shapes they own.
 aex-session-dynamodb = { path = "../aex-session-dynamodb" }
 aex-session-domain = { path = "../aex-session-domain" }
+aex-session-telemetry-aws = { path = "../aex-session-telemetry-aws" }
 aex-work-dynamodb = { path = "../aex-work-dynamodb" }
 aex-wire = { path = "../aex-wire" }
 

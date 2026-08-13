@@ -19,10 +19,10 @@ use std::str::FromStr;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub use crate::generated::ids::{
-    AgentId, ApiKeyId, ApprovalId, ExportId, FileDownloadId, FileUploadId, GenerationId, IdKind,
+    AgentId, ApiKeyId, ApprovalId, FileDownloadId, FileUploadId, GenerationId, IdKind,
     InvitationId, MeasurementId, MembershipId, MessageId, ObservationId, OperationId,
-    OrganizationId, ProviderCredentialId, SessionId, StatementId, TelemetryBatchId, TelemetryGapId,
-    ToolCallId, UploadId, UserId, WorkspaceId,
+    OrganizationId, ProviderCredentialId, SessionId, StatementId, ToolCallId, UploadId, UserId,
+    WorkspaceId,
 };
 use crate::types::{Region, ValueError, from_str_field};
 

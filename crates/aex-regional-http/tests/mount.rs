@@ -181,58 +181,28 @@ fn route_ownership_partitions_the_regional_route_table() {
     );
 }
 
-/// `session-stream-api` is one deployable serving two owners.
-///
-/// Merging `regional-session-api` and `regional-stream` cost the artifact string
-/// its ability to identify a mount strategy: the release graph requires every
-/// `servingArtifact` to be a real unit id, so both halves now name the merged
-/// unit. `route_owner` splits them by the transport the contract declares, and
-/// this proves that split is total and disjoint rather than a lucky heuristic.
+/// The regional launch surface is one finite API owner.
 #[test]
-fn the_two_halves_partition_the_merged_artifact_by_transport() {
-    let merged: Vec<RouteId> = RouteId::ALL
+fn the_session_api_owns_every_finite_regional_route() {
+    let regional: Vec<RouteId> = RouteId::ALL
         .iter()
         .copied()
-        .filter(|id| {
-            route(*id).plane == Plane::Regional
-                && route(*id).serving_artifact == "session-stream-api"
-        })
+        .filter(|id| route(*id).plane == Plane::Regional)
         .collect();
-    assert!(!merged.is_empty(), "the merged unit serves regional routes");
-
-    let unary = RouteOwner::SessionApi.routes();
-    let ndjson = RouteOwner::Stream.routes();
-    assert_eq!(
-        unary.len() + ndjson.len(),
-        merged.len(),
-        "every route on the merged artifact belongs to exactly one half"
-    );
     assert!(
-        unary.iter().all(|id| !ndjson.contains(id)),
-        "the two halves must not overlap"
+        !regional.is_empty(),
+        "the finite API serves regional routes"
     );
-    for id in &unary {
+    assert_eq!(RouteOwner::SessionApi.routes(), regional);
+    for id in RouteOwner::SessionApi.routes() {
+        assert_eq!(route_owner(id), Some(RouteOwner::SessionApi));
+        assert_eq!(route(id).serving_artifact, "session-stream-api");
         assert_ne!(
-            route(*id).transport,
+            route(id).transport,
             aex_wire::routes::TransportKind::Ndjson,
-            "`{id}` is a frame stream and belongs to the stream half"
+            "`{id}` must remain finite"
         );
     }
-    for id in &ndjson {
-        assert_eq!(
-            route(*id).transport,
-            aex_wire::routes::TransportKind::Ndjson,
-            "`{id}` is unary and belongs to the session half"
-        );
-    }
-
-    // Both halves deploy as one artifact, which is exactly what merging means.
-    assert_eq!(
-        RouteOwner::SessionApi.deployable(),
-        RouteOwner::Stream.deployable()
-    );
-    // A refusal still has to say which half it meant.
-    assert_ne!(RouteOwner::SessionApi.half(), RouteOwner::Stream.half());
 }
 
 #[test]
@@ -249,24 +219,6 @@ fn the_session_api_owns_the_complete_provider_credential_group() {
     let group = RouteGroup::ProviderCredentials;
     let session = RouteOwner::SessionApi.routes_in(group);
     assert_eq!(session, group.routes(), "{group:?} has one public owner");
-}
-
-#[test]
-fn the_stream_owns_every_ndjson_route_and_no_other() {
-    for id in RouteOwner::Stream.routes() {
-        assert_eq!(
-            route(id).transport,
-            aex_wire::routes::TransportKind::Ndjson,
-            "`{id}` is an NDJSON route"
-        );
-    }
-    for id in RouteId::ALL.iter().copied() {
-        if route(id).plane == Plane::Regional
-            && route(id).transport == aex_wire::routes::TransportKind::Ndjson
-        {
-            assert_eq!(route_owner(id), Some(RouteOwner::Stream), "`{id}`");
-        }
-    }
 }
 
 // --- mounting -----------------------------------------------------------------
@@ -318,33 +270,6 @@ async fn a_mount_answers_exactly_the_owned_route_set() {
             );
         }
     }
-}
-
-#[tokio::test]
-async fn an_ndjson_route_is_absent_from_a_finite_api() {
-    let mounted = mount_unary(
-        Arc::new(EchoDispatch(RouteOwner::SessionApi)),
-        Arc::new(AlwaysAdmit),
-        RequestLimits::DEFAULT,
-    )
-    .expect("mounts");
-    let stream = RouteOwner::Stream
-        .routes()
-        .first()
-        .copied()
-        .expect("the stream owns a route");
-    let response = mounted
-        .router
-        .oneshot(
-            Request::builder()
-                .method(route(stream).method.as_str())
-                .uri(concrete_path(stream))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -432,15 +357,12 @@ async fn the_declared_envelope_is_the_transport_body_ceiling() {
 
 #[test]
 fn dispatcher_refuses_a_route_it_does_not_own() {
-    // Owned by the observation edge and not the session deployable: "no such
-    // resource here" is the true statement, not "declared but not built".
-    let foreign = RouteOwner::ObservationApi
-        .routes()
-        .into_iter()
-        .next()
-        .expect("the observation edge owns a route");
+    // Central routes are outside this regional mount: "no such resource here"
+    // is the true statement, not "declared but not built".
+    let foreign = RouteId::ApiKeysList;
     let refusal = not_served(foreign);
     assert_eq!(refusal.code, ErrorCode::NotFound);
+    assert_eq!(route_owner(foreign), None);
     assert!(
         !RouteOwner::SessionApi.routes().contains(&foreign),
         "the refused route is genuinely unmounted"
@@ -515,41 +437,5 @@ fn an_owned_route_in_neither_set_fails_composition() {
             route: "provider_credential_get",
             deployable: RouteOwner::SessionApi.half(),
         }
-    );
-}
-
-#[test]
-fn a_wrongly_owned_route_is_a_mount_error() {
-    // `EchoDispatch` claims to be the OTLP deployable while the caller asks for
-    // the session API's set: the two disagree, and the mount must refuse rather
-    // than silently answer somebody else's routes.
-    struct Liar;
-    #[async_trait::async_trait]
-    impl UnaryDispatch for Liar {
-        fn owner(&self) -> RouteOwner {
-            RouteOwner::Otlp
-        }
-        async fn dispatch(
-            &self,
-            _cx: &RequestContext,
-            _accept: AcceptKind,
-            _raw: RawRequest<'_>,
-            _limits: RequestLimits,
-        ) -> WireResult<RawResponse> {
-            unreachable!("never dispatched")
-        }
-    }
-    let mounted = mount_unary(
-        Arc::new(Liar),
-        Arc::new(AlwaysAdmit),
-        RequestLimits::DEFAULT,
-    )
-    .expect("the OTLP set mounts");
-    assert_eq!(mounted.routes, RouteOwner::Otlp.routes());
-    assert!(
-        mounted
-            .routes
-            .iter()
-            .all(|id| route_owner(*id) == Some(RouteOwner::Otlp))
     );
 }

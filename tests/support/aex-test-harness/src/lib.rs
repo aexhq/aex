@@ -7,7 +7,7 @@
 //! fault ports and the pinned container-image registry that every one of those
 //! declarations also needed. `aex-central-test-support`,
 //! `aex-regional-test-support`, `aex-brain-test-support` and
-//! `aex-observation-test-support` re-export these types; they never define a
+//! Domain-specific test-support crates re-export these types; they never define a
 //! second one.
 //!
 //! # Invariants

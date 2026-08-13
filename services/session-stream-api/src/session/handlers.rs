@@ -70,7 +70,7 @@ use aex_wire::server::{
     dispatch_files, dispatch_provider_credentials, dispatch_regional_operations, dispatch_registry,
     dispatch_sessions, dispatch_usage, dispatch_workspace,
 };
-use aex_wire::types::Timestamp;
+use aex_wire::types::{DecimalU128, HttpsUrl, Timestamp};
 use aex_work_dynamodb::WorkApplicationCompiler;
 
 /// The adapters and start-up bindings every request shares.
@@ -140,6 +140,8 @@ pub struct Shared {
     pub registry_value_bytes: u64,
     /// The strongly consistent, read-only session-authority surface.
     pub sessions: Arc<dyn SessionQueries>,
+    /// Read/presign-only access to immutable AEX-generated OTLP segments.
+    pub session_telemetry: aex_session_telemetry_aws::SessionTelemetryReader,
     /// The cold workspace-description surface: profile and effective limits.
     ///
     /// Deliberately a separate port from the placement reader below. A display
@@ -260,6 +262,41 @@ impl std::fmt::Debug for Routes {
 fn budget(limit: Option<u32>) -> WireResult<PageBudget> {
     PageBudget::new(limit.unwrap_or(0))
         .map_err(|_| WireError::new(ErrorCode::InvalidRequest).with_message("page limit"))
+}
+
+fn session_telemetry_failure(
+    error: &aex_session_telemetry_aws::SessionTelemetryError,
+) -> WireError {
+    match error {
+        aex_session_telemetry_aws::SessionTelemetryError::InvalidSegmentId
+        | aex_session_telemetry_aws::SessionTelemetryError::InvalidPageSize => {
+            WireError::new(ErrorCode::InvalidRequest)
+        }
+        aex_session_telemetry_aws::SessionTelemetryError::NotFound => {
+            WireError::new(ErrorCode::NotFound)
+        }
+        _ => WireError::new(ErrorCode::UpstreamError),
+    }
+}
+
+fn public_session_telemetry_segment(
+    segment: aex_session_telemetry_aws::SegmentDescriptor,
+) -> WireResult<models::SessionTelemetrySegment> {
+    let sha256 = aex_wire::ids::ContentHash::parse(&format!("sha256:{}", segment.sha256))
+        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+    let created_at = segment
+        .created_at_ms
+        .map(Timestamp::from_unix_millis)
+        .transpose()
+        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+    Ok(models::SessionTelemetrySegment {
+        created_at,
+        id: segment.id,
+        media_type: aex_session_telemetry_aws::OTLP_PROTOBUF_MEDIA_TYPE.to_owned(),
+        sequence: DecimalU128::new(u128::from(segment.sequence)),
+        sha256,
+        size_bytes: DecimalU128::new(u128::from(segment.size_bytes)),
+    })
 }
 
 impl Routes {
@@ -1131,6 +1168,119 @@ impl SessionsApi for Routes {
             OperationKind::SessionSuspend,
         )
         .await
+    }
+
+    async fn session_telemetry_segment_download_create(
+        &self,
+        _cx: &WireContext,
+        session_id: SessionId,
+        segment_id: String,
+    ) -> WireResult<Created<models::SessionTelemetryDownloadGrant>> {
+        match self
+            .shared
+            .sessions
+            .load_session(self.cx.auth.workspace_id, session_id)
+            .await
+            .map_err(|error| authority_failure(&error))?
+        {
+            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
+            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
+            SessionScoped::Active(_) => {}
+        }
+        let descriptor = self
+            .shared
+            .session_telemetry
+            .describe(session_id, &segment_id)
+            .await
+            .map_err(|error| session_telemetry_failure(&error))?;
+        let url = self
+            .shared
+            .session_telemetry
+            .presign(session_id, &segment_id)
+            .await
+            .map_err(|error| session_telemetry_failure(&error))?;
+        let expires_at = Timestamp::from_unix_millis(
+            self.now()?.unix_millis().saturating_add(
+                i64::try_from(aex_session_telemetry_aws::DOWNLOAD_GRANT_TTL.as_millis())
+                    .unwrap_or(i64::MAX),
+            ),
+        )
+        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+        Ok(Created(models::SessionTelemetryDownloadGrant {
+            expires_at,
+            segment: public_session_telemetry_segment(descriptor)?,
+            url: HttpsUrl::parse(&url).map_err(|_| WireError::new(ErrorCode::UpstreamError))?,
+        }))
+    }
+
+    async fn session_telemetry_segments_list(
+        &self,
+        _cx: &WireContext,
+        session_id: SessionId,
+        query: models::SessionTelemetrySegmentsListQuery,
+    ) -> WireResult<models::SessionTelemetrySegmentPage> {
+        let parent = match self
+            .shared
+            .sessions
+            .load_session(self.cx.auth.workspace_id, session_id)
+            .await
+            .map_err(|error| authority_failure(&error))?
+        {
+            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
+            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
+            SessionScoped::Active(parent) => parent,
+        };
+        let binding = self.cursor_binding_for_session_epoch(
+            RouteId::SessionTelemetrySegmentsList,
+            "session.telemetry-segments",
+            session_id,
+            parent.deletion.epoch,
+        )?;
+        let continuation = match query.cursor.as_ref() {
+            Some(cursor) => {
+                let resumed = aex_regional_http::cursor::decode_state_resume::<String>(
+                    &self.shared.cursor_keys,
+                    cursor,
+                    &CursorRequestBinding::from(&binding),
+                    self.now()?,
+                )
+                .map_err(|error| WireError::from(ProjectionError::Cursor(error)))?;
+                if resumed.snapshot != binding.snapshot {
+                    return Err(WireError::from(ProjectionError::Cursor(
+                        aex_regional_http::cursor::CursorError::NotBound,
+                    )));
+                }
+                Some(resumed.state)
+            }
+            None => None,
+        };
+        let limit = i32::try_from(query.limit.unwrap_or(100))
+            .map_err(|_| WireError::new(ErrorCode::InvalidRequest))?;
+        let page = self
+            .shared
+            .session_telemetry
+            .list(session_id, continuation, limit)
+            .await
+            .map_err(|error| session_telemetry_failure(&error))?;
+        let next_cursor = page
+            .next
+            .as_ref()
+            .map(|next| {
+                aex_regional_http::cursor::encode_state(
+                    self.shared.cursor_keys.current(),
+                    &binding,
+                    next,
+                    self.now()?,
+                )
+                .map_err(|error| WireError::from(ProjectionError::Cursor(error)))
+            })
+            .transpose()?;
+        let items = page
+            .segments
+            .into_iter()
+            .map(public_session_telemetry_segment)
+            .collect::<WireResult<Vec<_>>>()?;
+        Ok(models::SessionTelemetrySegmentPage { items, next_cursor })
     }
 
     async fn session_terminate(

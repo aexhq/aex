@@ -1370,6 +1370,10 @@ fn shared_with_workspace(
         registry_entries: 1_000,
         registry_value_bytes: 65_536,
         sessions: sessions as Arc<dyn SessionQueries>,
+        session_telemetry: aex_session_telemetry_aws::SessionTelemetryReader::new(
+            offline_s3(),
+            "aex-dev-eu-west-1-session-telemetry",
+        ),
         operations: operations as Arc<dyn OperationApiStore>,
         operation_worker: Arc::new(NoOperationWorker),
         commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(
@@ -1504,33 +1508,17 @@ fn the_served_set_exactly_matches_the_generated_actual_mount_authority() {
         "../../../api/generated/registries/routes.json"
     ))
     .expect("generated route registry");
-    // Both halves of the merged deployable name the same artifact, so the
-    // transport is what selects the unary half. See
-    // `aex_regional_http::router::route_owner`.
     let generated: Vec<RouteId> = registry["routes"]
         .as_array()
         .expect("route rows")
         .iter()
-        .filter(|route| {
-            route["servedArtifact"] == "session-stream-api" && route["transport"] != "ndjson"
-        })
+        .filter(|route| route["servedArtifact"] == "session-stream-api")
         .map(|route| {
             RouteId::parse(route["operationId"].as_str().expect("operation id"))
                 .expect("generated operation id")
         })
         .collect();
     assert_eq!(Routes::served(), generated);
-
-    let session_export = registry["routes"]
-        .as_array()
-        .expect("route rows")
-        .iter()
-        .find(|route| route["operationId"] == "session_telemetry_export_create")
-        .expect("session telemetry export route");
-    assert_eq!(
-        session_export["servedArtifact"], "regional-observation-api",
-        "session telemetry export admission is mounted by its observation owner"
-    );
 }
 
 #[tokio::test]
@@ -1841,19 +1829,8 @@ async fn operation_cancel_refuses_every_released_kind_and_hides_internal_work() 
         Some(session),
     );
     let internal = stored_operation(55, OperationKind::ContentGc, OperationStatus::Running, None);
-    let telemetry = stored_operation(
-        56,
-        OperationKind::TelemetryExport,
-        OperationStatus::Queued,
-        Some(session),
-    );
     let operations = Arc::new(FakeOperations {
-        rows: std::sync::Mutex::new(vec![
-            terminate.clone(),
-            suspend.clone(),
-            internal.clone(),
-            telemetry.clone(),
-        ]),
+        rows: std::sync::Mutex::new(vec![terminate.clone(), suspend.clone(), internal.clone()]),
         ..FakeOperations::default()
     });
     let ((router, mounted), _) = build_with_operations(
@@ -1864,7 +1841,7 @@ async fn operation_cancel_refuses_every_released_kind_and_hides_internal_work() 
     assert!(mounted.contains(&RouteId::RegionalOperationCancel));
 
     let cancel = |operation: OperationId| format!("/api/operations/{operation}/cancellations");
-    for operation in [terminate.record.id, suspend.record.id, telemetry.record.id] {
+    for operation in [terminate.record.id, suspend.record.id] {
         let (status, body) = post(&router, &cancel(operation), "{}").await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert_eq!(
@@ -2566,6 +2543,10 @@ fn usage_router(usage: Arc<FakeUsage>) -> axum::Router {
         registry_entries: 1_000,
         registry_value_bytes: 65_536,
         sessions: Arc::new(FakeSessions::default()) as Arc<dyn SessionQueries>,
+        session_telemetry: aex_session_telemetry_aws::SessionTelemetryReader::new(
+            offline_s3(),
+            "aex-dev-eu-west-1-session-telemetry",
+        ),
         operations: Arc::new(FakeOperations::default()) as Arc<dyn OperationApiStore>,
         operation_worker: Arc::new(NoOperationWorker),
         commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(

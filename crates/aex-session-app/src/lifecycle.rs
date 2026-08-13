@@ -179,9 +179,7 @@ pub fn settle_lifecycle_operation(
                 seam: "session deletion requires its bounded multi-owner evidence cascade",
             }));
         }
-        OperationKind::WorkspaceDelete
-        | OperationKind::TelemetryExport
-        | OperationKind::ContentGc => return Err(not_session_kind()),
+        OperationKind::WorkspaceDelete | OperationKind::ContentGc => return Err(not_session_kind()),
     };
 
     head.status = head.lifecycle.status;
@@ -577,9 +575,7 @@ fn plan_lifecycle_admission(
                 head.active_run = None;
             }
         }
-        OperationKind::WorkspaceDelete
-        | OperationKind::TelemetryExport
-        | OperationKind::ContentGc => return Err(not_session_kind()),
+        OperationKind::WorkspaceDelete | OperationKind::ContentGc => return Err(not_session_kind()),
     }
     head.status = head.lifecycle.status;
     head.revision = session.revision.next();
@@ -781,7 +777,6 @@ const fn command_class(kind: OperationKind) -> CommandClass {
         | OperationKind::SessionDelete => CommandClass::PauseExempt,
         OperationKind::SessionResume
         | OperationKind::WorkspaceDelete
-        | OperationKind::TelemetryExport
         | OperationKind::ContentGc => CommandClass::PausableMutation,
     }
 }
@@ -793,9 +788,7 @@ const fn transaction_intent(kind: OperationKind) -> Result<TransactionIntent, Ap
         OperationKind::SessionResume => TransactionIntent::ResumeSession,
         OperationKind::SessionTerminate => TransactionIntent::TerminateSession,
         OperationKind::SessionDelete => TransactionIntent::DeleteSession,
-        OperationKind::WorkspaceDelete
-        | OperationKind::TelemetryExport
-        | OperationKind::ContentGc => return Err(not_session_kind()),
+        OperationKind::WorkspaceDelete | OperationKind::ContentGc => return Err(not_session_kind()),
     })
 }
 
@@ -884,8 +877,6 @@ mod tests {
             session_content_removed: true,
             messages_removed: true,
             brain_user_content_removed: true,
-            observations_removed: true,
-            export_objects_removed: true,
             billing_aggregate_retained: true,
             audit_fact_retained: true,
         }
@@ -1049,7 +1040,7 @@ mod tests {
         assert_eq!(settled.plan.validate().expect("valid").actions, 3);
 
         let mut incomplete = complete_delete_evidence();
-        incomplete.observations_removed = false;
+        incomplete.session_content_removed = false;
         assert!(
             settle_session_delete(
                 &deleting,
@@ -1185,7 +1176,7 @@ mod tests {
             owner: "session-operation-worker:test".to_owned(),
         };
         let mut evidence = complete_delete_evidence();
-        evidence.observations_removed = false;
+        evidence.session_content_removed = false;
         assert!(
             settle_session_delete(
                 &deleting,

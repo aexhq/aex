@@ -124,6 +124,7 @@ pub fn manifest() -> CompositionManifest {
             // credential that speaks as AEX at somebody else's authority is a
             // different right from writing this platform's own identity rows.
             CapabilityBinding::resource(config::GOOGLE_OAUTH_SECRET_ID, SignInHandshake::ID),
+            CapabilityBinding::resource(config::GITHUB_OAUTH_SECRET_ID, SignInHandshake::ID),
             CapabilityBinding::resource(config::REGIONAL_FUNCTION_ARNS, RegionalControlInvoke::ID),
             CapabilityBinding::arn(config::STRIPE_COMMAND_EDGE_ARN, PaymentCommandInvoke::ID),
             CapabilityBinding::resource(config::STATEMENT_BUCKET, StatementRead::ID),

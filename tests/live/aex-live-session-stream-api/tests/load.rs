@@ -5,27 +5,24 @@
 //! is a declared configuration fact rather than a self-skip: nothing here reads an
 //! environment variable and returns green.
 //!
-//! It exists because `LOAD-STREAM-SOCKETS` and `PERF-BASELINE-JOURNAL-FOLD` are
-//! **blocking** gates whose descriptors name this package, and until this file existed the
-//! package mapped no `load` target at all — so both gates were unrunnable and nothing said
+//! It exists because `PERF-BASELINE-JOURNAL-FOLD` is a **blocking** gate whose
+//! descriptor names this package, and until this file existed the package mapped no `load`
+//! target at all — so the gate was unrunnable and nothing said
 //! so. `aex-workload-unowned` only asked whether a descriptor existed, which it did.
 //!
 //! Two halves, deliberately separated, following the brain-core executor.
 //!
 //! 1. **Descriptor conformance** runs with no plane at all. It proves that every blocking
-//!    gate the registry assigns this package has a descriptor, that each descriptor parses
-//!    and verifies under the same rules the schema declares, and that the two numbers the
-//!    gates are actually about — a thousand sockets and a ten-thousand-event fold — are the
-//!    numbers the descriptors pin. A campaign whose descriptor is wrong measures the wrong
-//!    thing.
+//!    gate the registry assigns this package has a descriptor, that the descriptor parses
+//!    and verifies under the same rules the schema declares, and that the ten-thousand-event
+//!    fold shape is pinned. A campaign whose descriptor is wrong measures the wrong thing.
 //! 2. **Execution** needs a deployed plane. It reads its binding through
 //!    `aex_test_harness::required_env!`, which panics with the variable's name when it is
 //!    absent — a live prerequisite is a failure, never a skip.
 //!
-//! Note that the two descriptors sit under **different owner directories**:
-//! `regional-services` owns the socket campaign and `regional-domains` owns the fold
-//! baseline, while the executor belongs to the package both name as `target`. The loader
-//! therefore selects by `target` across the whole descriptor tree rather than by directory.
+//! The descriptor sits under `regional-domains`, while the executor belongs to the package
+//! it names as `target`. The loader therefore selects by `target` across the whole descriptor
+//! tree rather than by directory.
 
 use aex_load_harness::{GateKind, Phase, WorkloadDescriptor, WorkloadError};
 use std::collections::BTreeSet;
@@ -118,7 +115,7 @@ fn descriptors() -> Vec<(String, WorkloadDescriptor)> {
 /// `LOAD-REGIONAL-ADMISSION` and `PERF-BASELINE-CODECS` — which are recorded rather than
 /// blocking and have no descriptor yet; they are deliberately absent from this list, so
 /// adding one is a visible edit rather than a silent widening.
-const OWED_BLOCKING_GATES: [&str; 2] = ["LOAD-STREAM-SOCKETS", "PERF-BASELINE-JOURNAL-FOLD"];
+const OWED_BLOCKING_GATES: [&str; 1] = ["PERF-BASELINE-JOURNAL-FOLD"];
 
 #[test]
 fn every_blocking_gate_this_package_owes_has_a_descriptor() {
@@ -165,23 +162,6 @@ fn every_blocking_gate_names_the_record_its_threshold_comes_from() {
             }
         }
     }
-}
-
-/// The socket campaign is about one number. A campaign that held nine hundred sockets and
-/// passed would tell nobody that the thousandth is where the per-connection budget breaks.
-#[test]
-fn the_socket_campaign_holds_the_thousand_sockets_the_gate_is_about() {
-    let (_, sockets) = descriptors()
-        .into_iter()
-        .find(|(name, _)| name == "stream-sockets")
-        .expect("the socket campaign exists");
-    assert_eq!(
-        sockets.concurrency,
-        Some(1_000),
-        "PERF-11 is a claim about 1000 sustained sockets on a 1 vCPU / 2 GiB task"
-    );
-    assert_eq!(sockets.arrival, aex_load_harness::Arrival::Closed);
-    assert!(sockets.mix.is_normalized());
 }
 
 /// The fold baseline is a single-shape measurement, and the shape is the whole point: ten

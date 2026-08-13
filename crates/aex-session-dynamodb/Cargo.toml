@@ -81,7 +81,6 @@ thiserror.workspace = true
 time.workspace = true
 xxhash-rust.workspace = true
 aex-wire = { path = "../aex-wire" }
-aex-observation-domain = { path = "../aex-observation-domain" }
 aex-content-domain = { path = "../aex-content-domain", optional = true }
 aex-brain-domain = { path = "../aex-brain-domain", optional = true }
 aex-operation-domain = { path = "../aex-operation-domain", optional = true }

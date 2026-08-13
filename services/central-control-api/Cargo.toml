@@ -43,8 +43,7 @@ aex-control-domain = { path = "../../crates/aex-control-domain" }
 aex-identity-app = { path = "../../crates/aex-identity-app" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-rds-data = { path = "../../crates/aex-rds-data" }
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
 aex-wire = { path = "../../crates/aex-wire" }
 aws-config.workspace = true
 aws-sdk-lambda.workspace = true
@@ -57,6 +56,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

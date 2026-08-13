@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn an_error_detail_is_stripped_but_its_code_is_kept() {
-        let mut failed = operation(OperationKind::TelemetryExport);
+        let mut failed = operation(OperationKind::ContentGc);
         failed.result = None;
         failed.status = OperationStatus::Failed;
         failed.error = Some(OperationFailure {

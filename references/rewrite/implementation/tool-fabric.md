@@ -39,7 +39,7 @@ It must reject shell, filesystem, network, and unbounded payload requests.
 
 Likely ownership:
 
-- `crates/aex-brain-provider-gateway`
+- `crates/aex-brain-provider`
 - `crates/aex-brain-managed-web`
 - provider proof/transport adapters
 

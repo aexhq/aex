@@ -9,10 +9,7 @@ module "cluster" {
   tags = var.tags
 }
 
-# One log group. `regional-session-api` and `regional-stream` merged into
-# `session-stream-api`, so the unary and NDJSON halves write to one stream and an
-# operator correlating a request with the socket it opened no longer has to join
-# two groups by timestamp.
+# One log group for the regional request-path service.
 module "session_stream_log_group" {
   source = "../../modules/log-group"
 
@@ -77,18 +74,16 @@ module "public_lb" {
   tags               = var.tags
 }
 
-# One service, one target group, and as many rules as the merged pattern set
+# One service, one target group, and as many rules as the current pattern set
 # needs. Every regional first path segment has exactly one serving artifact, so
 # no two rules here can both match one request and evaluation order decides
 # nothing; a priority is an address, not a tie-break. Were a pattern ever added
 # that a second rule could also match, the lower number would win, so a narrower
 # rule would have to hold a lower priority than the wider one.
 #
-# `/api/streams` and the unary prefixes used to be split across two target groups
-# because they were two deployables. They are one now, so the split would only
-# have cost a second group and a second idle task pair. The prefixes remain
-# disjoint in the contract, which is what would let a future root put them back
-# behind two target groups without touching a route.
+# The current regional contract is unary and entirely owned by this service.
+# The two rules exist only because the ALB permits at most five condition values
+# per rule; no rule precedence is part of request ownership.
 module "session_stream_target" {
   source = "../../modules/alb-service-target"
 

@@ -339,7 +339,7 @@ pub fn expect_no_body(raw: &RawRequest<'_>) -> WireResult<()> {
 pub fn otlp_body<'a>(raw: &RawRequest<'a>, limits: RequestLimits) -> WireResult<&'a [u8]> {
     if raw.body.len() > limits.max_otlp_body_bytes {
         return Err(
-            WireError::new(ErrorCode::TelemetryPayloadTooLarge).with_message(format!(
+            WireError::new(ErrorCode::PayloadTooLarge).with_message(format!(
                 "the telemetry body is {} bytes, over the {} byte bound",
                 raw.body.len(),
                 limits.max_otlp_body_bytes

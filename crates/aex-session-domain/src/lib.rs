@@ -86,6 +86,6 @@ pub use session::{
     release_mutation_guard,
 };
 pub use terminal::{
-    MAX_OPEN_MESSAGES_PER_RUN, OutboxEvent, TerminalAttempt, TerminalCommit, TerminalRejection,
-    claim_terminal, sealed_ids,
+    MAX_OPEN_MESSAGES_PER_RUN, TerminalAttempt, TerminalCommit, TerminalRejection, claim_terminal,
+    sealed_ids,
 };

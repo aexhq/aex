@@ -42,20 +42,8 @@ errors:
   - { code: approval_binding_changed, status: 409, retryable: false, class: conflict, stage: domain_state, message: "the bound call drifted between the request and the decision, so the approval was cancelled", remedy: "re-read the approval and decide against its current bound call" }
   - { code: file_not_found, status: 404, retryable: false, class: not_found, stage: domain_state, message: "no such file entry" }
   - { code: content_missing, status: 409, retryable: false, class: state, stage: domain_state, message: "the referenced content is not present" }
-  - { code: export_not_found, status: 404, retryable: false, class: not_found, stage: tombstone_and_parent, message: "no such export" }
-  - { code: export_not_ready, status: 409, retryable: true, class: state, stage: domain_state, message: "the export is still preparing" }
-  - { code: export_expired, status: 410, retryable: false, class: not_found, stage: domain_state, message: "the export expired" }
-  - { code: export_revoked, status: 410, retryable: false, class: not_found, stage: domain_state, message: "the export was revoked" }
-  - { code: export_capacity, status: 503, retryable: true, class: unavailable, stage: domain_state, message: "the export could not reserve its bounded worker capacity", remedy: "retry after capacity is available or select a smaller export" }
   - { code: download_grant_expired, status: 410, retryable: false, class: not_found, stage: domain_state, message: "the download grant expired" }
-  - { code: telemetry_payload_too_large, status: 413, retryable: false, class: validation, stage: transport_envelope, message: "the OTLP payload exceeded its effective limit" }
-  - { code: invalid_telemetry, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the telemetry payload is not the pinned OTLP revision" }
-  - { code: telemetry_quota_exceeded, status: 429, retryable: true, class: quota, stage: domain_state, message: "the telemetry admission quota was exceeded" }
-  - { code: telemetry_incomplete, status: 409, retryable: true, class: state, stage: domain_state, message: "the requested range has recorded gaps and completeness was required" }
-  - { code: unsupported_export_signal, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "that signal cannot be exported in the requested format" }
-  - { code: invalid_query, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the observation query exceeded its structural bounds" }
-  - { code: telemetry_query_budget_exhausted, status: 409, retryable: false, class: quota, stage: domain_state, message: "the observation query exhausted its scan budget before it could make progress", remedy: "narrow the time range, add an indexed predicate, or request an export" }
-  - { code: invalid_metric_aggregation, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the metric aggregation is not computable over the selection" }
+  - { code: invalid_query, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the query exceeded its structural bounds" }
   - { code: invalid_network_policy, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "the requested network policy is not permitted" }
   - { code: unsupported_package_ecosystem, status: 400, retryable: false, class: validation, stage: body_limit_and_parse, message: "that package ecosystem is not supported" }
   - { code: package_resolution_failed, status: 409, retryable: false, class: state, stage: domain_state, message: "a requested package could not be resolved" }
@@ -72,7 +60,6 @@ errors:
   - { code: account_state_unavailable, status: 503, retryable: true, class: unavailable, stage: account_state, message: "the account state could not be established" }
   - { code: precondition_failed, status: 412, retryable: false, class: precondition, stage: precondition, message: "the `If-Match` or generation precondition did not hold" }
   - { code: wrong_workspace_region, status: 409, retryable: false, class: conflict, stage: placement, message: "the workspace is placed in a different region", remedy: "reissue the request against the `apiUrl` in `details`" }
-  - { code: observability_unavailable, status: 503, retryable: true, class: unavailable, stage: domain_state, message: "the observation authority could not be reached" }
   - { code: usage_unavailable, status: 503, retryable: true, class: unavailable, stage: domain_state, message: "the usage projection could not be read", remedy: "retry the identical query" }
   - { code: rate_limited, status: 429, retryable: true, class: quota, stage: domain_state, message: "too many requests" }
   - { code: upstream_error, status: 502, retryable: true, class: unavailable, stage: commit, message: "a dependency failed" }

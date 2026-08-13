@@ -1,17 +1,12 @@
-//! Bounded eight-owner session deletion continuation.
+//! Bounded six-owner session deletion continuation.
 //!
 //! Every invocation performs at most one durable progress transition or one
 //! guarded page delete before yielding. Provider effects remain in
-//! `runtime-control-worker`; observation/export object deletion remains in the
-//! observation reconciler. This coordinator records only content-free digests
-//! after those authorities prove their work complete.
+//! `runtime-control-worker`. This coordinator records only content-free digests
+//! after the owning authority proves its work complete.
 
 use std::collections::HashMap;
 
-use aex_observation_store_dynamodb::deletion::{
-    SessionObservationDeletion, SessionObservationDeletionError, SessionObservationDeletionRequest,
-    SessionObservationDeletionStatus, SessionObservationDeletionStore,
-};
 use aex_runtime_control::store::{ReadConsistency, RuntimeActivityStore as _};
 use aex_session_dynamodb::attr::{ITEM_TYPE, Item, PK, SK};
 use aex_session_dynamodb::deletion::{
@@ -41,25 +36,19 @@ pub(crate) struct DynamoDeletionCoordinator {
     sessions: SessionDeletionStore,
     operations: aex_session_dynamodb::store::OperationStore,
     runtime: aex_runtime_activity_dynamodb::RuntimeActivityDynamoStore,
-    observations: SessionObservationDeletionStore,
+    telemetry: aex_session_telemetry_aws::SessionTelemetryDeleter,
 }
 
 impl DynamoDeletionCoordinator {
     pub(crate) fn new(
         dynamodb: aws_sdk_dynamodb::Client,
         sqs: aws_sdk_sqs::Client,
+        s3: aws_sdk_s3::Client,
         tables: RegionalTables,
         runtime_queue_url: impl Into<String>,
-        observation_table: impl Into<String>,
-        observation_duty_shards: u8,
-    ) -> Result<Self, StoreError> {
-        let observations = SessionObservationDeletionStore::new(
-            dynamodb.clone(),
-            observation_table,
-            observation_duty_shards,
-        )
-        .map_err(observation_error)?;
-        Ok(Self {
+        session_telemetry_bucket: impl Into<String>,
+    ) -> Self {
+        Self {
             sessions: SessionDeletionStore::new(dynamodb.clone(), tables.session_authority.clone()),
             operations: aex_session_dynamodb::store::OperationStore::new(
                 dynamodb.clone(),
@@ -69,12 +58,15 @@ impl DynamoDeletionCoordinator {
                 dynamodb.clone(),
                 tables.runtime_activity.clone(),
             ),
+            telemetry: aex_session_telemetry_aws::SessionTelemetryDeleter::new(
+                s3,
+                session_telemetry_bucket,
+            ),
             dynamodb,
             sqs,
             runtime_queue_url: runtime_queue_url.into(),
             tables,
-            observations,
-        })
+        }
     }
 
     pub(crate) async fn prepare(
@@ -128,13 +120,6 @@ impl DynamoDeletionCoordinator {
                 .contains_key(&DeletionOwner::GenerationTerminated)
         {
             return self.prepare_runtime(&head, &snapshot, now).await;
-        }
-        if !snapshot.evidence.contains_key(&DeletionOwner::Observations)
-            || !snapshot
-                .evidence
-                .contains_key(&DeletionOwner::ExportObjects)
-        {
-            return self.prepare_observations(&snapshot, now).await;
         }
         if !snapshot.evidence.contains_key(&DeletionOwner::Messages) {
             return self.prepare_messages(&snapshot, now).await;
@@ -374,42 +359,6 @@ impl DynamoDeletionCoordinator {
             .await
     }
 
-    async fn prepare_observations(
-        &self,
-        snapshot: &SessionDeletionSnapshot,
-        now: Timestamp,
-    ) -> Result<LifecycleReadiness, StoreError> {
-        self.observations
-            .request(SessionObservationDeletionRequest {
-                workspace: snapshot.progress.workspace,
-                session: snapshot.progress.session,
-                operation: snapshot.progress.operation,
-                now,
-            })
-            .await
-            .map_err(observation_error)?;
-        if self
-            .observations
-            .status(
-                snapshot.progress.workspace,
-                snapshot.progress.session,
-                snapshot.progress.operation,
-            )
-            .await
-            .map_err(observation_error)?
-            != SessionObservationDeletionStatus::Complete
-        {
-            return Ok(LifecycleReadiness::Deferred);
-        }
-        if !snapshot.evidence.contains_key(&DeletionOwner::Observations) {
-            return self
-                .record(snapshot, DeletionOwner::Observations, now)
-                .await;
-        }
-        self.record(snapshot, DeletionOwner::ExportObjects, now)
-            .await
-    }
-
     async fn prepare_messages(
         &self,
         snapshot: &SessionDeletionSnapshot,
@@ -433,7 +382,7 @@ impl DynamoDeletionCoordinator {
             .await?;
             return Ok(LifecycleReadiness::Deferred);
         }
-        for prefix in ["MSG#", "SEALEDMSG#", "RUN#", "EVT#", "OUTBOX#", "APPROVAL#"] {
+        for prefix in ["MSG#", "SEALEDMSG#", "RUN#", "EVT#", "APPROVAL#"] {
             if self
                 .delete_prefix(
                     &self.tables.session_authority,
@@ -545,6 +494,16 @@ impl DynamoDeletionCoordinator {
         snapshot: &SessionDeletionSnapshot,
         now: Timestamp,
     ) -> Result<LifecycleReadiness, StoreError> {
+        if self
+            .telemetry
+            .delete_page(snapshot.progress.session, DELETE_PAGE)
+            .await
+            .map_err(|error| StoreError::Unavailable {
+                detail: format!("session telemetry deletion failed: {error}"),
+            })?
+        {
+            return Ok(LifecycleReadiness::Deferred);
+        }
         let session_partition =
             aex_session_dynamodb::keys::session_partition(snapshot.progress.session);
         if self
@@ -1015,20 +974,6 @@ fn evidence_digest(progress: SessionDeletionProgress, owner: DeletionOwner) -> E
         )
         .as_bytes(),
     )
-}
-
-fn observation_error(error: SessionObservationDeletionError) -> StoreError {
-    match error {
-        SessionObservationDeletionError::Store(error) => error,
-        SessionObservationDeletionError::Conflict => StoreError::PreconditionFailed {
-            participant: aex_session_dynamodb::plan::Participant::new(
-                "observation.session_deletion",
-            ),
-            observed: None,
-        },
-        SessionObservationDeletionError::Corrupt { detail } => StoreError::Invalid { detail },
-        SessionObservationDeletionError::NotFound => StoreError::Contended,
-    }
 }
 
 fn runtime_error(error: aex_runtime_control::store::RuntimeStoreError) -> StoreError {

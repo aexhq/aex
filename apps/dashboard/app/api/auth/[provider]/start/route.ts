@@ -38,7 +38,7 @@ export async function GET(request: Request, context: Context): Promise<Response>
   return new Response(null, {
     status: 303,
     headers: {
-      location: authorizationUrl(config.clientId, redirectUri, challenge),
+      location: authorizationUrl(provider, config.clientIds[provider], redirectUri, challenge),
       "Cache-Control": "private, no-store",
       "Set-Cookie": signInStateCookie(state, Math.floor(STATE_TTL_MS / 1_000)),
     },

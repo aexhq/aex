@@ -106,11 +106,10 @@ fn the_client_request_token_is_deterministic_and_intent_bound() {
 }
 
 #[test]
-fn session_route_partition_contains_credential_registration_but_no_stream_mutation() {
+fn session_route_partition_contains_credential_registration_and_only_finite_routes() {
     let routes = session_route_ids();
     assert!(routes.contains(&RouteId::ProviderCredentialGet));
     assert!(routes.contains(&RouteId::ProviderCredentialRegister));
-    assert!(!routes.contains(&RouteId::SessionObservationsEventsStream));
     assert!(
         routes
             .iter()

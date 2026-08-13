@@ -5,7 +5,8 @@
 //! the schema and is scanned by that crate's discipline suite:
 //! `aex_identity_aurora::sql::{ACTIVE_IDENTITY_PEPPER, IDENTITY_PEPPER_BY_VERSION}`
 //! for the identity schema, and
-//! `aex_control_aurora::sql::{ACTIVE_CONTROL_PEPPER, CONTROL_PEPPER_BY_VERSION}`
+//! `aex_control_aurora::sql::{ACTIVE_CONTROL_PEPPER, CONTROL_PEPPER_BY_VERSION,
+//! LIVE_CONTROL_PEPPERS}`
 //! for the control one. The composition root names the pair it is entitled to,
 //! which is the same place its login role is named.
 //!
@@ -28,6 +29,12 @@ pub struct PepperStatements {
     pub active: &'static str,
     /// The row for one `(purpose, version)`.
     pub by_version: &'static str,
+    /// The active row plus no more than three retiring rows.
+    ///
+    /// Four is deliberate: the keystore accepts at most three total rows, so
+    /// the fourth is the fail-closed overflow witness rather than a row hidden
+    /// by the query.
+    pub verification_set: Option<&'static str>,
 }
 
 /// One lifecycle row, as the Data `API` projects it.
@@ -128,6 +135,30 @@ impl PepperDirectory for DataApiPepperDirectory {
         }
         Ok(record)
     }
+
+    async fn verification_set(
+        &self,
+        purpose: PepperPurpose,
+    ) -> Result<Vec<PepperRecord>, StoreError> {
+        let statement = self.statements.verification_set.ok_or_else(|| {
+            StoreError::Fatal("this pepper directory has no verification-set query".to_owned())
+        })?;
+        let rows: Vec<PepperRow> = self
+            .client
+            .query(
+                Statement::new(statement)
+                    .bind("purpose", SqlValue::Text(purpose.as_str().to_owned())),
+            )
+            .await
+            .map_err(aex_identity_aurora::map_store_error)?;
+        let records = rows.into_iter().map(|row| row.0).collect::<Vec<_>>();
+        if records.iter().any(|record| record.purpose != purpose) {
+            return Err(StoreError::Decode(
+                "the lifecycle table answered a verification row for another purpose".to_owned(),
+            ));
+        }
+        Ok(records)
+    }
 }
 
 #[cfg(test)]
@@ -141,10 +172,12 @@ mod tests {
     const IDENTITY: PepperStatements = PepperStatements {
         active: aex_identity_aurora::sql::ACTIVE_IDENTITY_PEPPER,
         by_version: aex_identity_aurora::sql::IDENTITY_PEPPER_BY_VERSION,
+        verification_set: None,
     };
     const CONTROL: PepperStatements = PepperStatements {
         active: aex_control_aurora::sql::ACTIVE_CONTROL_PEPPER,
         by_version: aex_control_aurora::sql::CONTROL_PEPPER_BY_VERSION,
+        verification_set: Some(aex_control_aurora::sql::LIVE_CONTROL_PEPPERS),
     };
 
     #[test]
@@ -156,7 +189,13 @@ mod tests {
             );
             assert!(!statement.contains("control."), "{statement}");
         }
-        for statement in [CONTROL.active, CONTROL.by_version] {
+        for statement in [
+            CONTROL.active,
+            CONTROL.by_version,
+            CONTROL
+                .verification_set
+                .expect("control verification query"),
+        ] {
             assert!(
                 statement.contains("control.credential_pepper"),
                 "{statement}"
@@ -172,6 +211,9 @@ mod tests {
             IDENTITY.by_version,
             CONTROL.active,
             CONTROL.by_version,
+            CONTROL
+                .verification_set
+                .expect("control verification query"),
         ] {
             assert!(
                 statement.contains("version, purpose, state, secret_ref"),
@@ -203,5 +245,18 @@ mod tests {
                 "{statement}"
             );
         }
+    }
+
+    #[test]
+    fn a_verification_set_exposes_overflow_instead_of_truncating_silently() {
+        assert!(IDENTITY.verification_set.is_none());
+        let statement = CONTROL
+            .verification_set
+            .expect("control verification query");
+        assert!(
+            statement.contains("state IN ('active', 'retiring')"),
+            "{statement}"
+        );
+        assert!(statement.contains("LIMIT 4"), "{statement}");
     }
 }

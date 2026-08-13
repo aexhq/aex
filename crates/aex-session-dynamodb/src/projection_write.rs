@@ -357,10 +357,8 @@ mod tests {
         assert_eq!(decoded.name, "Production");
 
         let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
-        let audiences = AudienceSet::EMPTY
-            .insert(AssertionAudience::RegionalSession)
-            .insert(AssertionAudience::RegionalStream);
-        let scopes = ScopeSet::new([ScopeId::SessionsRead, ScopeId::TelemetryWrite]);
+        let audiences = AudienceSet::EMPTY.insert(AssertionAudience::RegionalSession);
+        let scopes = ScopeSet::new([ScopeId::SessionsRead, ScopeId::SessionsWrite]);
         for state in KeyAuthorizationState::ALL {
             let authorization = KeyAuthorizationWrite {
                 api_key,

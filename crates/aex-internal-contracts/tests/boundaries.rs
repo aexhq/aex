@@ -1,5 +1,6 @@
 //! The invariants that make an internal envelope safe to deploy in stages.
 
+use aex_internal_contracts::SchemaVersion;
 use aex_internal_contracts::assertion::{
     AssertionAudience, AssertionError, AssertionRefusal, AssertionResponse, AudienceSet,
     CredentialDigest, IssuedAssertion, MAX_ASSERTION_TEXT_LEN, ResolveSessionForWorkspace,
@@ -8,20 +9,15 @@ use aex_internal_contracts::assertion::{
 use aex_internal_contracts::control::{RegionalControlEnvelope, RegionalControlRequest};
 use aex_internal_contracts::journal::JournalEntryKind;
 use aex_internal_contracts::money::{MICROUSD_PER_CENT, Microusd, MicrousdDelta, MoneyError};
-use aex_internal_contracts::outbox::{OutboxEvent, RunStatus, SessionRevision, UsageClosureId};
+use aex_internal_contracts::outbox::RunStatus;
 use aex_internal_contracts::usage::{AuthorityKind, FactAuthority, FactId, Meter, ServiceTime};
-use aex_internal_contracts::{RunId, SchemaVersion};
 use aex_wire::Uuid7;
 use aex_wire::ids::{OrganizationId, PrefixedId, SessionId, UserId, WorkspaceId};
-use aex_wire::types::{Cents, DecimalU128, Region, Timestamp};
+use aex_wire::types::{Cents, DecimalU128, Region};
 use base64::Engine as _;
 
 fn user() -> UserId {
     UserId::parse("usr_01kyw2qa4ne00r40r40m30e209").expect("user id")
-}
-
-fn timestamp(millis: i64) -> Timestamp {
-    Timestamp::from_unix_millis(millis).expect("timestamp")
 }
 
 /// A stand-in envelope. This crate deliberately cannot build a real one: the
@@ -173,7 +169,7 @@ fn neither_request_can_carry_a_credential() {
                 .expect("workspace id"),
             presented_digest: CredentialDigest::new([3_u8; 32]),
             region: Region::EuWest1,
-            audience: AssertionAudience::RegionalObservation,
+            audience: AssertionAudience::ToolExec,
         })
         .expect("a request encodes"),
     ] {
@@ -235,10 +231,10 @@ fn every_audience_names_exactly_one_deployable() {
         .iter()
         .map(|audience| audience.deployable())
         .collect();
-    assert_eq!(seen.len(), 5);
+    assert_eq!(seen.len(), 2);
     seen.sort_unstable();
     seen.dedup();
-    assert_eq!(seen.len(), 5, "two audiences named the same deployable");
+    assert_eq!(seen.len(), 2, "two audiences named the same deployable");
     for audience in AssertionAudience::ALL {
         let document = serde_json::to_string(&audience).expect("an audience encodes");
         assert_eq!(
@@ -422,33 +418,6 @@ fn every_envelope_rejects_an_unknown_member() {
         .is_err(),
         "an unknown discriminator must be rejected"
     );
-}
-
-#[test]
-fn the_terminal_outbox_event_decodes_on_this_side_of_the_boundary() {
-    // `regional-stream` and the observation materializer both decode it, so it
-    // is a contract envelope rather than a domain value. Declared in the session
-    // domain it had no `Serialize` at all, which made "both decode it" a claim
-    // nothing could satisfy.
-    let event = OutboxEvent {
-        schema_version: SchemaVersion::V1,
-        session: SessionId::parse("ses_01kyw2qa4ne00r40r40m30e209").expect("session id"),
-        run: RunId::parse("run_01kyw2qa4pew48j2gb1g6gw3rg").expect("run id"),
-        status: RunStatus::Succeeded,
-        session_revision: SessionRevision(7),
-        usage_closure: UsageClosureId(Uuid7::compose(1_785_501_296_000, [3; 10])),
-        at: timestamp(1_785_501_296_789),
-    };
-    let json = serde_json::to_string(&event).expect("serialize");
-    let decoded: OutboxEvent = serde_json::from_str(&json).expect("decode");
-    assert_eq!(decoded, event);
-    assert!(json.contains("\"sessionRevision\":\"7\""));
-
-    // Strict on both halves: an unknown member and a missing version are typed
-    // failures, not tolerated drift.
-    let mut value: serde_json::Value = serde_json::from_str(&json).expect("value");
-    value["surprise"] = serde_json::Value::Bool(true);
-    assert!(serde_json::from_value::<OutboxEvent>(value).is_err());
 }
 
 #[test]

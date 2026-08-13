@@ -3,13 +3,11 @@
 //! Exactly one writer settles a run. The winner's commit contains — and only
 //! contains — the terminal run status and outcome, the seal of every open
 //! message of that run, the final agent control and journal tail, the session
-//! advance with `active_run` cleared, the terminal outbox event, the immutable
-//! usage-closure identity.
+//! advance with `active_run` cleared and the immutable usage-closure identity.
 //!
 //! A loser returns [`TerminalRejection::AlreadyTerminal`] carrying the winning
 //! outcome and produces **no writes at all** — not even a lifecycle fact.
-//! Observation projection, central settlement and stream delivery are
-//! after-commit hints and can never gate the barrier.
+//! After-commit work can never gate the barrier.
 
 use aex_internal_contracts::RunId;
 use aex_operation_domain::DeletionState;
@@ -25,13 +23,13 @@ use crate::session::Session;
 /// Largest number of open messages one run may carry into its terminal
 /// barrier.
 ///
-/// The complete production boundary commits seven fixed rows: agent control,
+/// The complete production boundary commits six fixed rows: agent control,
 /// `RunFinished` journal, public message-completed event, internal run, session
 /// head, active-session locator removal and the accounting outbox. Each
 /// still-open message costs its mutable base row plus immutable sealed
 /// projection. Forty-six is therefore the largest whole-message count below
-/// `DynamoDB`'s 100-action transaction envelope: `7 + 2 * 46 = 99`.
-pub const MAX_OPEN_MESSAGES_PER_RUN: usize = 46;
+/// `DynamoDB`'s 100-action transaction envelope: `6 + 2 * 47 = 100`.
+pub const MAX_OPEN_MESSAGES_PER_RUN: usize = 47;
 
 /// One attempt to settle a run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,12 +50,6 @@ pub struct TerminalAttempt {
     pub usage_closure: UsageClosureId,
 }
 
-// The one durable notification the barrier writes, and nothing outside the
-// transaction can prevent it. `regional-stream` and the observation materializer
-// both decode it, so the envelope itself lives in `aex-internal-contracts` and
-// this crate builds it rather than declaring it.
-pub use aex_internal_contracts::outbox::OutboxEvent;
-
 /// Everything the winning terminal commit contains.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalCommit {
@@ -69,8 +61,6 @@ pub struct TerminalCommit {
     pub session: Session,
     /// The final agent fence the barrier observed.
     pub agent_fence: AgentFence,
-    /// The terminal outbox event.
-    pub outbox: OutboxEvent,
     /// The immutable usage-closure identity.
     pub usage_closure: UsageClosureId,
 }
@@ -211,15 +201,6 @@ pub fn claim_terminal(
         run: settled,
         sealed_messages,
         agent_fence: current_fence,
-        outbox: OutboxEvent {
-            schema_version: aex_internal_contracts::SchemaVersion::V1,
-            session: session.id,
-            run: run.id,
-            status: attempt.outcome.status(),
-            session_revision: head.revision,
-            usage_closure: attempt.usage_closure,
-            at: attempt.at,
-        },
         session: head,
         usage_closure: attempt.usage_closure,
     })
@@ -269,7 +250,6 @@ mod tests {
         assert_eq!(commit.session.lifecycle.active, None);
         assert_eq!(commit.session.lifecycle.idle_since, Some(attempt.at));
         assert_eq!(commit.session.revision, session.revision.next());
-        assert_eq!(commit.outbox.run, run.id);
         assert_eq!(commit.usage_closure, attempt.usage_closure);
     }
 

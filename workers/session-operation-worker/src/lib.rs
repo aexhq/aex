@@ -448,31 +448,27 @@ pub struct DynamoLifecyclePort {
 }
 
 impl DynamoLifecyclePort {
-    /// Binds the session, work, runtime and observation authorities plus the
+    /// Binds the session, work and runtime authorities plus the
     /// runtime-control hint queue.
     ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the observation deletion duty-shard count is
-    /// zero and therefore cannot address its due index.
     pub fn new(
         dynamodb: aws_sdk_dynamodb::Client,
         sqs: aws_sdk_sqs::Client,
+        s3: aws_sdk_s3::Client,
         tables: aex_session_dynamodb::plan::RegionalTables,
         runtime_queue_url: impl Into<String>,
-        observation_table: impl Into<String>,
-        observation_duty_shards: u8,
-    ) -> Result<Self, StoreError> {
+        session_telemetry_bucket: impl Into<String>,
+    ) -> Self {
         let runtime_queue_url = runtime_queue_url.into();
         let deletion = deletion::DynamoDeletionCoordinator::new(
             dynamodb.clone(),
             sqs.clone(),
+            s3,
             tables.clone(),
             runtime_queue_url.clone(),
-            observation_table,
-            observation_duty_shards,
-        )?;
-        Ok(Self {
+            session_telemetry_bucket,
+        );
+        Self {
             sessions: aex_session_dynamodb::store::SessionReads::new(
                 dynamodb.clone(),
                 tables.session_authority.clone(),
@@ -490,7 +486,7 @@ impl DynamoLifecyclePort {
             runtime_queue_url,
             tables,
             deletion,
-        })
+        }
     }
 
     async fn session(
@@ -636,9 +632,9 @@ impl LifecyclePort for DynamoLifecyclePort {
             OperationKind::SessionResume => view.head.state == GenerationState::Running,
             OperationKind::SessionTerminate => view.head.state.is_terminal(),
             OperationKind::SessionCancel | OperationKind::SessionDelete => unreachable!(),
-            OperationKind::WorkspaceDelete
-            | OperationKind::TelemetryExport
-            | OperationKind::ContentGc => return Ok(LifecycleReadiness::Unowned),
+            OperationKind::WorkspaceDelete | OperationKind::ContentGc => {
+                return Ok(LifecycleReadiness::Unowned);
+            }
         };
         if ready {
             return Ok(LifecycleReadiness::Ready);

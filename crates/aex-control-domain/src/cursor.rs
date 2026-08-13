@@ -23,19 +23,90 @@ pub const CURSOR_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 /// The wire prefix.
 pub const CURSOR_PREFIX: &str = "cur_";
 
+/// Maximum accepted wire length, matching the public cursor limit.
+pub const CURSOR_MAX_ENCODED_BYTES: usize = 4_096;
+
+const MAGIC: &[u8; 4] = b"AEXC";
+const VERSION: u8 = 2;
+
 /// The keyed secret a cursor is signed with.
 ///
 /// Same shape and rotation as a credential pepper, different purpose, so a
 /// cursor MAC can never be confused with a credential verifier.
 #[derive(Clone)]
-pub struct CursorSecret(Zeroizing<[u8; 32]>);
+pub struct CursorSecret {
+    current: CursorKey,
+    overlap: Vec<CursorKey>,
+}
+
+#[derive(Clone)]
+struct CursorKey {
+    id: u16,
+    material: Zeroizing<[u8; 32]>,
+}
 
 impl CursorSecret {
     /// Wraps 32 secret bytes.
     #[must_use]
     pub fn new(bytes: [u8; 32]) -> Self {
-        Self(Zeroizing::new(bytes))
+        Self::with_id(1, bytes)
     }
+
+    /// Wraps the active key version and its 32 secret bytes.
+    #[must_use]
+    pub fn with_id(id: u16, bytes: [u8; 32]) -> Self {
+        Self {
+            current: CursorKey {
+                id,
+                material: Zeroizing::new(bytes),
+            },
+            overlap: Vec::new(),
+        }
+    }
+
+    /// Adds up to two unique verification-only keys for a future rolling rotation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CursorKeyRingError`] for a duplicate key ID or more than two
+    /// overlap keys.
+    pub fn with_overlap(
+        mut self,
+        overlap: impl IntoIterator<Item = (u16, [u8; 32])>,
+    ) -> Result<Self, CursorKeyRingError> {
+        for (id, bytes) in overlap {
+            if self.overlap.len() == 2 {
+                return Err(CursorKeyRingError::TooManyKeys);
+            }
+            if id == self.current.id || self.overlap.iter().any(|key| key.id == id) {
+                return Err(CursorKeyRingError::DuplicateKeyId);
+            }
+            self.overlap.push(CursorKey {
+                id,
+                material: Zeroizing::new(bytes),
+            });
+        }
+        Ok(self)
+    }
+
+    fn verification_key(&self, id: u16) -> Option<&CursorKey> {
+        if self.current.id == id {
+            Some(&self.current)
+        } else {
+            self.overlap.iter().find(|key| key.id == id)
+        }
+    }
+}
+
+/// Invalid cursor verification-key configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CursorKeyRingError {
+    /// Current and overlap key IDs must be unique.
+    #[error("cursor key IDs must be unique")]
+    DuplicateKeyId,
+    /// One current and at most two overlap keys are supported.
+    #[error("a cursor key ring permits at most two overlap keys")]
+    TooManyKeys,
 }
 
 impl std::fmt::Debug for CursorSecret {
@@ -81,7 +152,7 @@ pub enum CursorError {
 }
 
 /// The domain-separating prefix.
-const DOMAIN: &[u8] = b"aex/control/cursor/v1\x1f";
+const DOMAIN: &[u8] = b"aex/control/cursor/v2\x1f";
 
 /// The signed payload, as fixed-layout bytes.
 ///
@@ -91,9 +162,12 @@ const DOMAIN: &[u8] = b"aex/control/cursor/v1\x1f";
 /// # Panics
 ///
 /// Never: the endpoint is a generated route template, far shorter than 4 GiB.
-fn payload(claims: &CursorClaims, issued_at_ms: i64) -> Vec<u8> {
+fn payload(claims: &CursorClaims, issued_at_ms: i64, key_id: u16) -> Vec<u8> {
     let endpoint = claims.endpoint.as_bytes();
     let mut bytes = Vec::with_capacity(128 + endpoint.len());
+    bytes.extend_from_slice(MAGIC);
+    bytes.push(VERSION);
+    bytes.extend_from_slice(&key_id.to_be_bytes());
     bytes.extend_from_slice(&issued_at_ms.to_be_bytes());
     bytes.extend_from_slice(claims.principal_id.as_bytes());
     bytes.extend_from_slice(claims.scope_id.as_bytes());
@@ -135,8 +209,8 @@ pub const fn region_from_code(code: u8) -> Option<aex_wire::types::Region> {
 }
 
 /// The MAC over one payload.
-fn mac(secret: &CursorSecret, bytes: &[u8]) -> [u8; 32] {
-    let mut hmac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret.0.as_ref())
+fn mac(key: &CursorKey, bytes: &[u8]) -> [u8; 32] {
+    let mut hmac = <Hmac<Sha256> as KeyInit>::new_from_slice(key.material.as_ref())
         .expect("HMAC-SHA256 accepts a 32-byte key");
     hmac.update(DOMAIN);
     hmac.update(bytes);
@@ -146,9 +220,11 @@ fn mac(secret: &CursorSecret, bytes: &[u8]) -> [u8; 32] {
 /// Encodes a cursor.
 #[must_use]
 pub fn encode_cursor(secret: &CursorSecret, claims: &CursorClaims, now_ms: i64) -> String {
-    let bytes = payload(claims, now_ms);
-    let tag = mac(secret, &bytes);
-    format!("{CURSOR_PREFIX}{}.{}", base64url(&bytes), base64url(&tag))
+    let bytes = payload(claims, now_ms, secret.current.id);
+    let tag = mac(&secret.current, &bytes);
+    let encoded = format!("{CURSOR_PREFIX}{}.{}", base64url(&bytes), base64url(&tag));
+    debug_assert!(encoded.len() <= CURSOR_MAX_ENCODED_BYTES);
+    encoded
 }
 
 /// Decodes a cursor and checks every binding.
@@ -175,6 +251,9 @@ pub fn decode_cursor(
     expected: &CursorClaims,
     now_ms: i64,
 ) -> Result<(i64, Uuid), CursorError> {
+    if raw.len() > CURSOR_MAX_ENCODED_BYTES {
+        return Err(CursorError::Malformed);
+    }
     let body = raw
         .strip_prefix(CURSOR_PREFIX)
         .ok_or(CursorError::Malformed)?;
@@ -185,13 +264,17 @@ pub fn decode_cursor(
         return Err(CursorError::Malformed);
     }
 
-    let expected_mac = mac(secret, &bytes);
+    let key_id = parse_header(&bytes).ok_or(CursorError::Malformed)?;
+    let key = secret
+        .verification_key(key_id)
+        .ok_or(CursorError::BadSignature)?;
+    let expected_mac = mac(key, &bytes);
     if expected_mac.ct_eq(&presented).unwrap_u8() != 1 {
         return Err(CursorError::BadSignature);
     }
 
     let decoded = parse_payload(&bytes).ok_or(CursorError::Malformed)?;
-    if now_ms.saturating_sub(decoded.issued_at_ms) > CURSOR_TTL_MS {
+    if decoded.issued_at_ms > now_ms || now_ms - decoded.issued_at_ms > CURSOR_TTL_MS {
         return Err(CursorError::Expired);
     }
     if !bindings_match(&decoded.claims, expected) {
@@ -215,29 +298,38 @@ struct Decoded {
     claims: CursorClaims,
 }
 
+fn parse_header(bytes: &[u8]) -> Option<u16> {
+    if bytes.get(0..4)? != MAGIC || *bytes.get(4)? != VERSION {
+        return None;
+    }
+    Some(u16::from_be_bytes(bytes.get(5..7)?.try_into().ok()?))
+}
+
 /// Parses the fixed-layout payload.
 #[allow(
     clippy::missing_panics_doc,
     reason = "every slice index is bounds-checked before use"
 )]
 fn parse_payload(bytes: &[u8]) -> Option<Decoded> {
-    const FIXED: usize = 8 + 16 + 16 + 1 + 32 + 8 + 8 + 16 + 4;
+    const HEADER: usize = 4 + 1 + 2;
+    const FIXED: usize = HEADER + 8 + 16 + 16 + 1 + 32 + 8 + 8 + 16 + 4;
     if bytes.len() < FIXED {
         return None;
     }
-    let issued_at_ms = i64::from_be_bytes(bytes[0..8].try_into().ok()?);
-    let principal_id = Uuid::from_slice(&bytes[8..24]).ok()?;
-    let scope_id = Uuid::from_slice(&bytes[24..40]).ok()?;
-    let region = region_from_code(bytes[40])?;
-    let filter_hash: [u8; 32] = bytes[41..73].try_into().ok()?;
-    let snapshot_ms = i64::from_be_bytes(bytes[73..81].try_into().ok()?);
-    let last_created = i64::from_be_bytes(bytes[81..89].try_into().ok()?);
-    let last_id = Uuid::from_slice(&bytes[89..105]).ok()?;
-    let endpoint_len = u32::from_be_bytes(bytes[105..109].try_into().ok()?) as usize;
+    parse_header(bytes)?;
+    let issued_at_ms = i64::from_be_bytes(bytes[7..15].try_into().ok()?);
+    let principal_id = Uuid::from_slice(&bytes[15..31]).ok()?;
+    let scope_id = Uuid::from_slice(&bytes[31..47]).ok()?;
+    let region = region_from_code(bytes[47])?;
+    let filter_hash: [u8; 32] = bytes[48..80].try_into().ok()?;
+    let snapshot_ms = i64::from_be_bytes(bytes[80..88].try_into().ok()?);
+    let last_created = i64::from_be_bytes(bytes[88..96].try_into().ok()?);
+    let last_id = Uuid::from_slice(&bytes[96..112]).ok()?;
+    let endpoint_len = u32::from_be_bytes(bytes[112..116].try_into().ok()?) as usize;
     if bytes.len() != FIXED + endpoint_len {
         return None;
     }
-    let endpoint = std::str::from_utf8(&bytes[109..109 + endpoint_len])
+    let endpoint = std::str::from_utf8(&bytes[116..116 + endpoint_len])
         .ok()?
         .to_owned();
     Some(Decoded {
@@ -257,7 +349,8 @@ fn parse_payload(bytes: &[u8]) -> Option<Decoded> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CURSOR_TTL_MS, CursorClaims, CursorError, CursorSecret, decode_cursor, encode_cursor,
+        CURSOR_MAX_ENCODED_BYTES, CURSOR_TTL_MS, CursorClaims, CursorError, CursorSecret,
+        decode_cursor, encode_cursor,
     };
     use aex_wire::types::Region;
     use uuid::Uuid;
@@ -383,6 +476,88 @@ mod tests {
         assert_eq!(
             decode_cursor(&secret(), &raw, &claims(), CURSOR_TTL_MS + 1),
             Err(CursorError::Expired)
+        );
+    }
+
+    #[test]
+    fn a_future_issued_cursor_is_refused_without_saturating_its_age() {
+        let raw = encode_cursor(&secret(), &claims(), 1);
+        assert_eq!(
+            decode_cursor(&secret(), &raw, &claims(), 0),
+            Err(CursorError::Expired)
+        );
+    }
+
+    #[test]
+    fn a_retiring_key_verifies_but_never_writes() {
+        let old = CursorSecret::with_id(7, [7_u8; 32]);
+        let rotated = CursorSecret::with_id(8, [8_u8; 32])
+            .with_overlap([(7, [7_u8; 32])])
+            .expect("a unique overlap key");
+        let old_cursor = encode_cursor(&old, &claims(), 0);
+        assert_eq!(
+            decode_cursor(&rotated, &old_cursor, &claims(), 0),
+            Ok(claims().last)
+        );
+        let new_cursor = encode_cursor(&rotated, &claims(), 0);
+        assert_eq!(
+            decode_cursor(&old, &new_cursor, &claims(), 0),
+            Err(CursorError::BadSignature)
+        );
+    }
+
+    #[test]
+    fn a_key_ring_is_bounded_and_has_unique_ids() {
+        assert!(matches!(
+            CursorSecret::with_id(1, [1; 32]).with_overlap([(1, [2; 32])]),
+            Err(super::CursorKeyRingError::DuplicateKeyId)
+        ));
+        assert!(matches!(
+            CursorSecret::with_id(1, [1; 32]).with_overlap([
+                (2, [2; 32]),
+                (3, [3; 32]),
+                (4, [4; 32])
+            ]),
+            Err(super::CursorKeyRingError::TooManyKeys)
+        ));
+    }
+
+    #[test]
+    fn an_unknown_key_id_is_refused_even_when_material_matches() {
+        let raw = encode_cursor(&CursorSecret::with_id(99, [7_u8; 32]), &claims(), 0);
+        assert_eq!(
+            decode_cursor(&secret(), &raw, &claims(), 0),
+            Err(CursorError::BadSignature)
+        );
+    }
+
+    #[test]
+    fn an_unknown_envelope_version_and_oversize_wire_value_are_malformed() {
+        let raw = encode_cursor(&secret(), &claims(), 0);
+        let body = raw.strip_prefix(super::CURSOR_PREFIX).expect("the prefix");
+        let (payload, tag) = body.split_once('.').expect("payload and tag");
+        let mut bytes = super::unbase64url(payload).expect("the payload");
+        bytes[4] = 1;
+        let version_one = format!(
+            "{}{}.{}",
+            super::CURSOR_PREFIX,
+            super::base64url(&bytes),
+            tag
+        );
+        assert_eq!(
+            decode_cursor(&secret(), &version_one, &claims(), 0),
+            Err(CursorError::Malformed)
+        );
+
+        let oversize = format!(
+            "{}{}",
+            super::CURSOR_PREFIX,
+            "A".repeat(CURSOR_MAX_ENCODED_BYTES)
+        );
+        assert!(oversize.len() > CURSOR_MAX_ENCODED_BYTES);
+        assert_eq!(
+            decode_cursor(&secret(), &oversize, &claims(), 0),
+            Err(CursorError::Malformed)
         );
     }
 

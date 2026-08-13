@@ -46,14 +46,6 @@ blocking = true
 assert = "offered == completed + typed_rejected + queued_at_end && every rejection typed and retryable && jain_fairness >= 0.80 && max_queue_age <= declared"
 source = "Q-PERFORMANCE; Area 10 T3 row; 07-brain-core.md"
 
-[gate."LOAD-STREAM-SOCKETS"]
-owner = "regional-services"
-target = "aex-live-session-stream-api"
-kind = "budget"
-blocking = true
-assert = "1000 sustained sockets on a 1 vCPU / 2 GiB task within the 4 MiB per-connection budget && residual_tasks == 0 && residual_bytes == 0 after a disconnect storm && reconnect from the durable cursor is frame-equivalent"
-source = "PERF-11; 06-regional-services.md section 5"
-
 [gate."LOAD-REGIONAL-ADMISSION"]
 owner = "regional-stores"
 target = "aex-live-session-stream-api"
@@ -69,30 +61,6 @@ kind = "budget"
 blocking = true
 assert = "50000 queued facts across 500 orgs settle with bounded queueing && no cross-org serialization storm && no starvation of payment ingest && no unbounded Aurora growth"
 source = "03-central-finance-schema.md G9"
-
-[gate."OTLP-STAGED-COMMIT"]
-owner = "observations-usage"
-target = "aex-live-regional-otlp"
-kind = "budget"
-blocking = true
-assert = "a maximal 2000-point / 16 MiB decoded batch commits within the 100-action and 4 MiB DynamoDB envelopes under ten concurrent series-claim writers && crash cleanup verified at every boundary"
-source = "PERF-08; 11-observations.md G7 (serial, gating)"
-
-[gate."LOAD-OBSERVATION-ADMISSION"]
-owner = "observations-usage"
-target = "aex-live-regional-otlp"
-kind = "budget"
-blocking = true
-assert = "sustained 10 MiB/s workspace ingest and the 40 MiB burst && ingress closes with typed retry before retained evidence is at risk"
-source = "PERF-09; 11-observations.md G10(50)"
-
-[gate."LOAD-OBSERVATION-EXPORT"]
-owner = "observations-usage"
-target = "aex-live-observation-export-task"
-kind = "budget"
-blocking = true
-assert = "multi-GB NDJSON and Parquet exports with task loss at randomized checkpoints && flat RSS under the reservation budget && hash equality against a single-run baseline"
-source = "11-observations.md G10(51), G5(31)"
 
 [gate."LEAK-USAGE-PROBE-12H"]
 owner = "observations-usage"
@@ -131,7 +99,7 @@ owner = "contracts"
 target = "aex-live-session-stream-api"
 kind = "diagnostic"
 blocking = false
-assert = "criterion baselines recorded for 64 KiB JSON body decode, RFC 8785 canonicalization of 1 MiB, a blake3 Merkle page and a 4 MiB OTLP protobuf decode"
+assert = "criterion baselines recorded for 64 KiB JSON body decode, RFC 8785 canonicalization of 1 MiB, and a blake3 Merkle page"
 source = "Area 10; diagnostic only"
 
 # --- brain-core, added with the descriptors that discharge them ----------------

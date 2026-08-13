@@ -73,10 +73,6 @@ pub struct DeleteEvidence {
     pub messages_removed: bool,
     /// Brain journal/control rows containing user content are removed.
     pub brain_user_content_removed: bool,
-    /// Session-scoped observations and telemetry are removed.
-    pub observations_removed: bool,
-    /// Session export objects and grants are removed or irrevocably fenced.
-    pub export_objects_removed: bool,
     /// Aggregate billing facts required for accounting remain available.
     pub billing_aggregate_retained: bool,
     /// Content-free audit evidence required for compliance remains available.
@@ -95,8 +91,6 @@ impl DeleteEvidence {
                 self.brain_user_content_removed,
                 "brain_user_content_removed",
             ),
-            (self.observations_removed, "observations_removed"),
-            (self.export_objects_removed, "export_objects_removed"),
             (
                 self.billing_aggregate_retained,
                 "billing_aggregate_retained",
@@ -226,8 +220,6 @@ mod tests {
             session_content_removed: true,
             messages_removed: true,
             brain_user_content_removed: true,
-            observations_removed: true,
-            export_objects_removed: true,
             billing_aggregate_retained: true,
             audit_fact_retained: true,
         }
@@ -258,11 +250,11 @@ mod tests {
         let workspace = id::<WorkspaceId>(3);
         let now = Timestamp::from_unix_millis(10).expect("in range");
         let mut evidence = complete_evidence();
-        evidence.observations_removed = false;
+        evidence.session_content_removed = false;
         assert_eq!(
             complete_delete(&deleting, workspace, &evidence, now),
             Err(DeletionRejection::EvidenceIncomplete {
-                item: "observations_removed"
+                item: "session_content_removed"
             })
         );
         let tombstone = complete_delete(&deleting, workspace, &complete_evidence(), now)

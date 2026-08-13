@@ -12,8 +12,8 @@ use aex_hands_protocol::operation::{
     TerminalMetadata, TerminalState,
 };
 use aex_hands_protocol::rpc::{
-    CallHash, CancelReason, CancelResponse, Fence, GuestRevision, HandsOperationId, ResultChunk,
-    ResultResponse, StartResponse, StatusResponse,
+    CallHash, CancelReason, CancelResponse, Fence, HandsOperationId, ResultChunk, ResultResponse,
+    StartResponse, StatusResponse,
 };
 use aex_wire::ids::{ContentHash, GenerationId};
 use aex_wire::types::Timestamp;
@@ -134,20 +134,14 @@ impl StartDecision {
 
     /// The wire response for this decision.
     #[must_use]
-    pub fn response(
-        &self,
-        operation: HandsOperationId,
-        guest_revision: GuestRevision,
-    ) -> StartResponse {
+    pub fn response(&self, operation: HandsOperationId) -> StartResponse {
         match self {
             Self::Spawn { .. } => StartResponse::Accepted {
                 operation,
-                guest_revision,
                 existing: false,
             },
             Self::AlreadyStarted => StartResponse::Accepted {
                 operation,
-                guest_revision,
                 existing: true,
             },
             Self::Conflict { recorded_call_hash } => StartResponse::Conflict {
@@ -243,14 +237,7 @@ impl Supervisor {
         self.fence_floor
     }
 
-    /// The incarnation stamped into every response preamble.
-    #[must_use]
-    pub const fn guest_revision(&self) -> GuestRevision {
-        GuestRevision(self.incarnation)
-    }
-
-    /// Adopts a higher fence. A lower one is never adopted; the frame decoder has
-    /// already refused the request by the time this is reached.
+    /// Adopts a higher fence after the bounded request envelope has been checked.
     pub const fn adopt_fence(&mut self, fence: Fence) {
         if fence.0 > self.fence_floor.0 {
             self.fence_floor = fence;
@@ -375,7 +362,6 @@ impl Supervisor {
         if let Some(terminal) = self.journal.read_terminal(operation)? {
             return Ok(StatusResponse::Terminal {
                 operation,
-                guest_revision: self.guest_revision(),
                 terminal,
             });
         }
@@ -383,14 +369,10 @@ impl Supervisor {
             return Ok(StatusResponse::Unknown { operation });
         };
         if self.journal.read_process(operation)?.is_none() {
-            return Ok(StatusResponse::Accepted {
-                operation,
-                guest_revision: self.guest_revision(),
-            });
+            return Ok(StatusResponse::Accepted { operation });
         }
         Ok(StatusResponse::Running {
             operation,
-            guest_revision: self.guest_revision(),
             started_at: meta.started_at,
             phase: None,
             produced_bytes: self.journal.output_len(operation)?,
@@ -725,10 +707,9 @@ mod tests {
             "a replay must not produce a second side effect"
         );
         assert_eq!(
-            second.response(input.operation, fixture.supervisor.guest_revision()),
+            second.response(input.operation),
             StartResponse::Accepted {
                 operation: input.operation,
-                guest_revision: fixture.supervisor.guest_revision(),
                 existing: true
             }
         );

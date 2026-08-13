@@ -164,6 +164,10 @@ fn complete() -> BTreeMap<&'static str, String> {
             "aex/dev/sign-in/google/current".to_owned(),
         ),
         (
+            config::GITHUB_OAUTH_SECRET_ID,
+            "aex/dev/sign-in/github/current".to_owned(),
+        ),
+        (
             config::SIGN_IN_REDIRECT_URI,
             "https://dash.aex.dev/auth/callback".to_owned(),
         ),

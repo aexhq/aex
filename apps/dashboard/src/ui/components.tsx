@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 
 import {
   formatDuration,
-  type CoverageVerdict,
   type PanelState,
   type WireFailure,
 } from "./panel";
@@ -26,7 +25,6 @@ export function Badge({ status, label }: { status?: Status | undefined; label: s
     </span>
   );
 }
-
 /**
  * The one branch between "there is an answer" and "there is not one yet".
  *
@@ -148,7 +146,7 @@ function Retry({ onRetry, after }: { onRetry?: (() => void) | undefined; after: 
  * The one place a non-ready panel state becomes pixels.
  *
  * Nothing here invents data and nothing here calls a typed product state an error.
- * A paused account, a throttle and an unavailable observation store each get their
+ * A paused account, a throttle and an unavailable service each get their
  * own wording and their own remedy, because each has a different remedy.
  */
 export function PanelFallback({
@@ -240,60 +238,4 @@ export function PanelFallback({
         </Notice>
       );
   }
-}
-
-/**
- * What the observation authority said about its own answer, rendered verbatim.
- *
- * `complete` renders nothing: silence is the honest signal for whole data. The
- * other two verdicts are always shown above the rows they qualify, never below and
- * never behind a hover.
- */
-export function CoverageNotice({ verdict }: { verdict: CoverageVerdict }) {
-  if (verdict.kind === "complete") return null;
-  if (verdict.kind === "behind") {
-    return (
-      <Notice status="warning" title="Indexing is behind admission" live>
-        <p className="small">
-          Complete through {new Date(verdict.completeThrough).toISOString()} — about{" "}
-          {formatDuration(verdict.lagMs)} of accepted observations are not queryable yet. Recent
-          activity may be missing from these rows.
-        </p>
-      </Notice>
-    );
-  }
-  const holes = verdict.holes.length;
-  const unbounded = verdict.unboundedGaps.length;
-  return (
-    <Notice status="serious" title="This window has known holes" live>
-      <p className="small">
-        The authority reports {holes === 0 ? "no bounded" : holes} missing interval
-        {holes === 1 ? "" : "s"}
-        {unbounded > 0 ? ` and ${unbounded} gap${unbounded === 1 ? "" : "s"} with no known bound` : ""}.
-        These rows are what survived, not everything that happened.
-      </p>
-      {holes > 0 ? (
-        <details>
-          <summary>What is missing</summary>
-          <ul className="small">
-            {verdict.holes.map((hole) => (
-              <li key={hole.gapId}>
-                <code className="mono">{hole.gapId}</code> — {hole.range.gte} to {hole.range.lt}
-              </li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
-      {unbounded > 0 ? (
-        <details>
-          <summary>Gaps with no known bound</summary>
-          <ul className="small">
-            {verdict.unboundedGaps.map((gapId) => (
-              <li key={gapId}><code className="mono">{gapId}</code></li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
-    </Notice>
-  );
 }

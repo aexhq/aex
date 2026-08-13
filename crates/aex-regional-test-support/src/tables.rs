@@ -672,7 +672,6 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "observation-authority",
                 "regional-authz-projection",
                 "regional-capacity-authority",
                 "regional-content",
@@ -819,246 +818,19 @@ mod tests {
     }
 
     #[test]
-    fn regional_stream_holds_only_the_authority_reads_and_two_wake_streams_it_uses() {
+    fn retired_regional_stream_holds_no_table_authority() {
         let tables = load_all(&definitions_directory()).expect("the definitions load");
         let mut grants = Vec::new();
         for table in &tables {
             for grant in &table.iam {
                 if grant.role == "regional-stream" {
-                    grants.push((
-                        table.table.as_str(),
-                        grant.actions.as_slice(),
-                        grant.resources.as_slice(),
-                    ));
+                    grants.push(table.table.as_str());
                 }
             }
         }
-        grants.sort_by(|left, right| (left.0, left.2.join(",")).cmp(&(right.0, right.2.join(","))));
-
-        let strings = |values: &[&str]| {
-            values
-                .iter()
-                .map(|value| (*value).to_owned())
-                .collect::<Vec<_>>()
-        };
-        let mut expected = vec![
-            (
-                "observation-authority",
-                strings(&[
-                    "dynamodb:DescribeTable",
-                    "dynamodb:GetItem",
-                    "dynamodb:BatchGetItem",
-                    "dynamodb:Query",
-                ]),
-                strings(&["table", "index/*"]),
-            ),
-            (
-                "observation-authority",
-                strings(&[
-                    "dynamodb:GetRecords",
-                    "dynamodb:GetShardIterator",
-                    "dynamodb:DescribeStream",
-                ]),
-                strings(&["stream"]),
-            ),
-            (
-                "regional-authz-projection",
-                // `TransactGetItems` is the one-request admission snapshot: the
-                // key authorization row, the placement and the hot limit subset
-                // are read together so they cannot describe different instants.
-                strings(&[
-                    "dynamodb:GetItem",
-                    "dynamodb:TransactGetItems",
-                    "dynamodb:Query",
-                ]),
-                strings(&["table"]),
-            ),
-            (
-                "session-authority",
-                // `BatchGetItem` is the batched frontier bundle: one follow cycle
-                // reads the session head beside every signal frontier in one
-                // request, which spans both authorities.
-                strings(&[
-                    "dynamodb:DescribeTable",
-                    "dynamodb:GetItem",
-                    "dynamodb:BatchGetItem",
-                    "dynamodb:Query",
-                ]),
-                strings(&["table", "index/*"]),
-            ),
-            (
-                "session-authority",
-                strings(&[
-                    "dynamodb:GetRecords",
-                    "dynamodb:GetShardIterator",
-                    "dynamodb:DescribeStream",
-                ]),
-                strings(&["stream"]),
-            ),
-        ];
-        expected
-            .sort_by(|left, right| (left.0, left.2.join(",")).cmp(&(right.0, right.2.join(","))));
-        let actual = grants
-            .into_iter()
-            .map(|(table, actions, resources)| (table, actions.to_vec(), resources.to_vec()))
-            .collect::<Vec<_>>();
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn regional_observation_api_holds_only_its_query_and_export_control_tables() {
-        let tables = load_all(&definitions_directory()).expect("the definitions load");
-        let mut grants = Vec::new();
-        for table in &tables {
-            for grant in &table.iam {
-                if grant.role == "regional-observation-api" {
-                    grants.push((
-                        table.table.as_str(),
-                        grant.actions.as_slice(),
-                        grant.resources.as_slice(),
-                    ));
-                }
-            }
-        }
-        grants.sort_by(|left, right| (left.0, left.1.join(",")).cmp(&(right.0, right.1.join(","))));
-
-        let strings = |values: &[&str]| {
-            values
-                .iter()
-                .map(|value| (*value).to_owned())
-                .collect::<Vec<_>>()
-        };
-        let expected = vec![
-            (
-                "observation-authority",
-                strings(&[
-                    "dynamodb:DescribeTable",
-                    "dynamodb:GetItem",
-                    "dynamodb:BatchGetItem",
-                    "dynamodb:Query",
-                ]),
-                strings(&["table", "index/*"]),
-            ),
-            (
-                "observation-authority",
-                // Admission reads the existing export/operation pair through
-                // one cross-table transaction before deciding replay versus
-                // first creation.
-                strings(&["dynamodb:TransactGetItems"]),
-                strings(&["table"]),
-            ),
-            (
-                "observation-authority",
-                // The export row and operation row are one lifecycle pair, so
-                // their first write is atomic across both authority tables.
-                strings(&["dynamodb:TransactWriteItems"]),
-                strings(&["table"]),
-            ),
-            (
-                "regional-authz-projection",
-                // `TransactGetItems` is the one-request admission snapshot: the
-                // key authorization row, the placement and the hot limit subset
-                // are read together so they cannot describe different instants.
-                strings(&[
-                    "dynamodb:GetItem",
-                    "dynamodb:TransactGetItems",
-                    "dynamodb:Query",
-                ]),
-                strings(&["table"]),
-            ),
-            (
-                "session-authority",
-                // `BatchGetItem` is the batched frontier bundle: a session-scoped
-                // query reads the session head beside every signal frontier in
-                // one request, which spans both authorities.
-                strings(&[
-                    "dynamodb:DescribeTable",
-                    "dynamodb:GetItem",
-                    "dynamodb:BatchGetItem",
-                    "dynamodb:Query",
-                ]),
-                strings(&["table", "index/*"]),
-            ),
-            (
-                "session-authority",
-                // The operation half of the lifecycle pair participates in
-                // the same replay snapshot as the export half.
-                strings(&["dynamodb:TransactGetItems"]),
-                strings(&["table"]),
-            ),
-            (
-                "session-authority",
-                // The transaction writes the operation half while asserting
-                // the session/frontier admission snapshot has not changed.
-                strings(&["dynamodb:TransactWriteItems"]),
-                strings(&["table"]),
-            ),
-        ];
-        let mut expected = expected;
-        expected
-            .sort_by(|left, right| (left.0, left.1.join(",")).cmp(&(right.0, right.1.join(","))));
-        let actual = grants
-            .into_iter()
-            .map(|(table, actions, resources)| (table, actions.to_vec(), resources.to_vec()))
-            .collect::<Vec<_>>();
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn observation_api_pair_transactions_are_key_restricted_on_both_tables() {
-        let tables = load_all(&definitions_directory()).expect("the definitions load");
-        let mut writes = tables
-            .iter()
-            .flat_map(|table| {
-                table
-                    .iam
-                    .iter()
-                    .filter(|grant| {
-                        grant.role == "regional-observation-api"
-                            && grant.actions == ["dynamodb:TransactWriteItems"]
-                    })
-                    .map(|grant| (table.table.as_str(), grant))
-            })
-            .collect::<Vec<_>>();
-        writes.sort_by_key(|(table, _)| *table);
-
-        assert_eq!(
-            writes.iter().map(|(table, _)| *table).collect::<Vec<_>>(),
-            ["observation-authority", "session-authority"]
-        );
-        for (_, write) in writes {
-            assert_eq!(write.resources, ["table"]);
-            let condition = write
-                .condition
-                .as_ref()
-                .expect("pair transactions carry a leading-key condition");
-            assert_eq!(condition.operator, "ForAllValues:StringLike");
-            assert_eq!(condition.key, "dynamodb:LeadingKeys");
-            assert_eq!(
-                condition.values,
-                ["EXPORT#*", "FRONT#*", "OP#*", "SESSION#*"]
-            );
-        }
-
-        let primitive_writes = tables
-            .iter()
-            .flat_map(|table| &table.iam)
-            .filter(|grant| {
-                grant.role == "regional-observation-api"
-                    && grant.actions.iter().any(|action| {
-                        matches!(
-                            action.as_str(),
-                            "dynamodb:PutItem"
-                                | "dynamodb:UpdateItem"
-                                | "dynamodb:DeleteItem"
-                                | "dynamodb:BatchWriteItem"
-                        )
-                    })
-            })
-            .collect::<Vec<_>>();
         assert!(
-            primitive_writes.is_empty(),
-            "export admission must not regain non-transactional write authority"
+            grants.is_empty(),
+            "retired regional-stream still has table grants: {grants:?}"
         );
     }
 

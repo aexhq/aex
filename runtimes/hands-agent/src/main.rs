@@ -138,21 +138,6 @@ where
     }
 }
 
-/// The first eight bytes of this binary's own `blake3`, stamped into every
-/// response preamble so Brain can tell one agent build from another without
-/// trusting the guest's own story about which it is.
-fn agent_build() -> [u8; 8] {
-    let hash = std::env::current_exe()
-        .ok()
-        .and_then(|path| std::fs::read(path).ok())
-        .map(|bytes| *blake3::hash(&bytes).as_bytes());
-    let mut out = [0u8; 8];
-    if let Some(hash) = hash {
-        out.copy_from_slice(&hash[..8]);
-    }
-    out
-}
-
 /// Composes the guest.
 ///
 /// # Errors
@@ -170,7 +155,6 @@ pub fn compose(config: &Config) -> Result<Arc<serve::Guest>, HandsAgentRunError>
         journal,
         executor,
         files,
-        agent_build(),
         Arc::new(image::HostImageValidator::guest()),
     )))
 }
@@ -180,18 +164,12 @@ pub fn compose(config: &Config) -> Result<Arc<serve::Guest>, HandsAgentRunError>
 /// # Errors
 ///
 /// See [`HandsAgentRunError`].
-pub async fn run(
-    config: &Config,
-    telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), HandsAgentRunError> {
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_DEPLOYABLE,
-            "hands-agent",
-        ),
+pub async fn run(config: &Config) -> Result<(), HandsAgentRunError> {
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = "hands-agent",
+        "process started"
     );
     let guest = compose(config)?;
     let listener = tokio::net::TcpListener::bind(config.listen)
@@ -208,6 +186,14 @@ pub async fn run(
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> std::process::ExitCode {
+    // Agent diagnostics use the process's own stdout. The Hands protocol is
+    // HTTP on the configured listener, and supervised child stdout/stderr are
+    // separate pipes, so JSON log lines cannot enter either protocol stream.
+    // Customer root can still forge them; they are observation, never authority.
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("hands-agent: could not install diagnostics: {error}");
+        return std::process::ExitCode::FAILURE;
+    }
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
@@ -219,14 +205,7 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry).await;
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("hands-agent: telemetry flush left {pending} record(s) undelivered");
-    }
+    let outcome = run(&config).await;
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
@@ -238,7 +217,7 @@ async fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, HandsAgentConfigError, agent_build, compose};
+    use super::{Config, HandsAgentConfigError, compose};
     use aex_hands_agent::boot::{
         GUEST_ROOT, GUEST_ROOT_VAR, JOURNAL_ROOT_VAR, LISTEN_ADDR, LISTEN_ADDR_VAR, REQUIRED_VARS,
     };
@@ -322,16 +301,6 @@ mod tests {
             !unbound,
             "a guest with no binding accepts nothing, so there is no window where it is bound \
              but not replayed"
-        );
-    }
-
-    #[test]
-    fn the_agent_build_stamp_is_derived_from_the_binary_itself() {
-        let stamp = agent_build();
-        assert_eq!(stamp, agent_build(), "the stamp is stable within a build");
-        assert_ne!(
-            stamp, [0u8; 8],
-            "a zero stamp would mean Brain cannot tell one agent build from another"
         );
     }
 }

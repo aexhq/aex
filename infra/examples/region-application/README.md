@@ -8,15 +8,11 @@ path.
 Everything here is replaced on a deployment. Nothing here holds state, which is
 what makes it safe to plan and apply separately from `region-foundation`.
 
-`regional-session-api` was a Lambda, then a Fargate service of the same class
-as `regional-stream`. The two are now one deployable, `session-stream-api`,
-carrying the 1024/2048 task and the production floor of two tasks that
-`release/units.toml` records for it. That floor used to be four: two idle
-listeners per region, each holding a task pair, for two services that shared a
-plane, a shape, a stop timeout, an authority set and a `central-authz`
-dependency. Both halves still exist in the contract as separately ownable route
-sets, so splitting them apart again is a second unit row rather than a route
-change.
+`session-stream-api` carries the current regional request surface in one
+1024/2048 task with the production floor of two tasks recorded in
+`release/units.toml`. Despite its retained deployable name, the launch contract
+is unary: the retired NDJSON stream, observation-query, and customer-ingestion
+routes are absent rather than shipped dormant.
 
 The drain window is wired rather than duplicated: each service's target group
 publishes `deregistration_delay` and the service behind it consumes that same
@@ -54,83 +50,32 @@ regional VPC stands up no NAT gateway.
 `alb-public` owns the load balancer and the listener whose default action is a
 fixed 404. It owns no target group and no rule. The service attaches through
 `alb-service-target`: one target group, and as many rules against it as its
-pattern set needs, each at an explicitly required priority. The NDJSON half
-keeps the 10 band and the unary half the 20s, so the two remain legible in the
-listener even though one target group now serves both. Lower priorities are
-evaluated first, so a narrower rule must hold a lower number than any rule that
-would also match.
+pattern set needs, each at an explicitly required priority. The current rules
+occupy the 20 band. Lower priorities are evaluated first, so a narrower rule
+must hold a lower number than any rule that would also match.
 
 The per-rule quotas are `Condition Values per Rule` = 5 and `Condition Wildcards
 per Rule` = 6, neither adjustable; `Rules per Application Load Balancer` is 100
-and *is* adjustable. So a pattern set too wide for one rule is not a problem
-with the split, it just needs another rule. The stream service no longer needs
-that: its whole surface is `/api/streams/*`, one condition value in one rule at
-priority 10. The session API carries four prefixes across two rules, at 20 and
-21, because `/api/sessions` and `/api/sessions/*` are two condition values.
+and *is* adjustable. The current seven patterns therefore occupy two rules.
+Bare `/api/sessions`, `/api/workspace`, and `/api/operations` each need an
+explicit value because an ALB pattern ending in `/*` does not match the bare
+collection.
 
 ## The regional surface splits on its first segment
 
-`rules` is a required input on both services, and each one claims its routes by
-first path segment. Nothing here depends on rule precedence.
-
-It used to. `/api/sessions/{sessionId}/` was served by three services at once,
-and the segment that told them apart came *after* a variable session id -
-`/api/sessions/{sessionId}/events/stream` against
-`/api/sessions/{sessionId}/messages`. No *prefix* separated them, so this root
-routed only the part of the surface that did split and left `/api/sessions` out.
-The workspace-scoped observability routes had the same shape one level up:
-`/api/logs/query` was `regional-observation-api`'s and `/api/logs/stream` was
-the stream's, discriminated by the last segment.
-
-The API surface was changed instead. Every regional route now carries a first
-segment that names its owner, and `api/generated/registries/routes.json` is
-where that is checked rather than asserted here:
+`rules` is a required input, and the service claims every current regional
+route by a literal first path segment. Nothing here depends on rule precedence.
+`api/generated/registries/routes.json` is the authority:
 
 | Prefix | Owner | Regional routes |
 | --- | --- | --- |
-| `/api/sessions/`, `/api/workspace/`, `/api/operations/`, `/api/billing/` | `session-stream-api` (unary half) | 61 |
-| `/api/streams/` | `session-stream-api` (NDJSON half) | 24 |
-| `/api/observations/` | `regional-observation-api` | 27 |
-| `/api/secrets/` | `regional-secret-api` | 4 |
-| `/api/otlp/` | `regional-otlp` | 3 |
+| `/api/sessions/`, `/api/workspace/`, `/api/operations/`, `/api/billing/` | `session-stream-api` | 43 |
 
-Each prefix resolves to exactly one `servingArtifact`, so an ALB prefix match is
-sufficient to route and the earlier workaround is retired. The anchored
-two-wildcard patterns - `/api/sessions/*/events/*` and its five siblings - are no
-longer needed, and neither is the priority ordering they would have required.
-`operationId`s were deliberately left alone, so ids like
-`observations_logs_stream` and `secret_put` no longer echo their URL. The
-registry, not the path, is what binds an operation to its owner.
-
-Ownership is per *operation*, not per path, so a path can still lose only part
-of itself. `GET /api/workspace/secrets/{name}` is metadata and stays with
-`session-stream-api`; the `PUT` and `DELETE` on that same template carry
-plaintext and moved to `/api/secrets/{name}`. Nothing about the prefix property
-depends on that: both first segments still have exactly one owner.
-
-What is still *not* safe is matching on the trailing verb, as `/api/*/stream`
-and `/api/*/listen`. An ALB `*` matches across `/`, and `session-stream-api`
-serves `PUT /api/workspace/files/{name}` with a user-chosen name, so a file
-called `stream` would be routed to the wrong service. That shape is rejected on
-its merits, not on quota. The fixture asserts the inverse property directly: no
-forwarded pattern may wildcard its own first segment.
-
-`/api/sessions` and `/api/sessions/*` are two condition values, not one. An ALB
-pattern ending in `/*` does not match the bare collection, and `POST
-/api/sessions` and `GET /api/sessions` carry no session id.
-
-What this root still does not settle is the other three artifacts.
-`/api/observations/*`, `/api/secrets/*` and `/api/otlp/*` belong to
-`regional-observation-api`, `regional-secret-api` and `regional-otlp`, and this
-root deploys two services rather than five, so nothing here claims those three
-prefixes. A request to them reaches the listener's fixed 404 default. That is
-the honest outcome for a two-service root: the three prefixes are named here and
-in the fixture's comments so their absence is a recorded gap rather than a
-silent one, and no rule forwards them to a service that could not answer.
-
-So the fixture in `tests/` routes: `/api/streams/*` to the stream service in one
-rule, and `/api/workspace/*`, `/api/operations/*`, `/api/billing/*`,
-`/api/sessions` and `/api/sessions/*` to the session API across two more.
+All four prefixes resolve to `session-stream-api`, so the rules divide only at
+the five-condition quota. The fixture routes bare and nested workspace and
+operations paths plus `/api/billing/*` in one rule, then bare and nested session
+paths in the other. The listener's fixed 404 default honestly rejects every
+retired or unknown prefix.
 
 ## Sanitized values
 
@@ -145,7 +90,7 @@ in any `.tf` file here.
 | `sqs-queue` | Session operation queue and its dead-letter queue. |
 | `dynamodb-stream-pipe` | Journal mutations to operation hints. |
 | `ecs-cluster` | The cluster both services run in. |
-| `log-group` | One group per service; both request-path halves share the session-stream group. |
+| `log-group` | One group per service. |
 | `alb-public` | Public edge: load balancer, listeners, fixed 404 default. |
 | `alb-service-target` | One target group, with its listener rules. |
 | `service-discovery-private` | Private Cloud Map name for `tool-executor`. |
@@ -164,7 +109,7 @@ and the executor's private name are created here; that the executor carries its
 reviewed fixed-count shape and complete startup environment while admitting no
 undeclared client; that the request-path service's drain window is the one its
 target group publishes; that its forwarded patterns are `/api/` paths that do
-not collide; that no pattern wildcards its own first segment; that the stream
-half's whole surface is the single rule `/api/streams/*`; that the session API
+not collide; that no pattern wildcards its own first segment; that the two rules
+claim exactly the four current regional first segments; that the session API
 carries the reviewed Fargate shape; and that both roles are assumed by
 `ecs-tasks.amazonaws.com` rather than by Lambda.

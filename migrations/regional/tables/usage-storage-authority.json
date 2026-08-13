@@ -90,21 +90,6 @@
       "resources": ["table", "index/*"]
     },
     {
-      "role": "regional-otlp",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
-      "resources": ["table"]
-    },
-    {
-      "role": "observation-reconciler",
-      "actions": ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:TransactWriteItems"],
-      "resources": ["table", "index/*"]
-    },
-    {
-      "role": "observation-export-task",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
-      "resources": ["table"]
-    },
-    {
       "role": "runtime-control-worker",
       "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
       "resources": ["table"]

@@ -382,7 +382,7 @@ mod tests {
     fn every_embedded_migration_byte_matches_the_reviewed_bundle_lock() {
         let bundle = MigrationBundle::embedded()
             .expect("every SQLx migration byte matches its reviewed lock identity");
-        assert_eq!(bundle.head(), 20_260_801_001_500);
+        assert_eq!(bundle.head(), 20_260_813_000_100);
     }
 
     #[test]

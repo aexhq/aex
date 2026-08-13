@@ -594,6 +594,7 @@ fn environment(name: &str) -> Option<&'static str> {
             "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-identity"
         }
         "AEX_CENTRAL_IDENTITY_PEPPER_SECRET_ID" => "aex/dev/identity-pepper",
+        "AEX_CENTRAL_IDENTITY_GITHUB_OAUTH_SECRET_ID" => "aex/dev/sign-in/github",
         "AEX_CENTRAL_IDENTITY_GOOGLE_OAUTH_SECRET_ID" => "aex/dev/sign-in/google",
         "AEX_CENTRAL_IDENTITY_SIGN_IN_REDIRECT_URI" => "https://dash.aex.dev/auth/callback",
         "AEX_CENTRAL_IDENTITY_DATABASE" => "aex",

@@ -78,56 +78,50 @@ enum AdminError {
 
 /// The exit code that means "already current; nothing was mutated".
 const ALREADY_CURRENT: u8 = 3;
+const DEPLOYABLE: &str = "regional-secret-key-admin";
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("{DEPLOYABLE}: diagnostics installation failed: {error}");
+        return ExitCode::FAILURE;
+    }
     let cli = Cli::parse();
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("regional-secret-key-admin: refusing to run: {error}");
+            tracing::error!(
+                target: "aex::diagnostics",
+                event_name = "process.configuration_rejected",
+                deployable = DEPLOYABLE,
+                error = %error,
+                "process configuration rejected"
+            );
+            eprintln!("{DEPLOYABLE}: refusing to run: {error}");
             return ExitCode::FAILURE;
         }
     };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&cli, &config, &telemetry).await;
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!(
-            "regional-secret-key-admin: telemetry flush left {pending} record(s) undelivered"
-        );
-    }
+    let outcome = run(&cli, &config).await;
     match outcome {
         Ok(AdminOutcome::Created | AdminOutcome::Rotated) => ExitCode::SUCCESS,
         Ok(AdminOutcome::AlreadyCurrent) => ExitCode::from(ALREADY_CURRENT),
         Err(error) => {
-            eprintln!("regional-secret-key-admin: {error}");
+            eprintln!("{DEPLOYABLE}: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
-async fn run(
-    cli: &Cli,
-    config: &Config,
-    telemetry: &aex_platform_telemetry::Handle,
-) -> Result<AdminOutcome, AdminError> {
+async fn run(cli: &Cli, config: &Config) -> Result<AdminOutcome, AdminError> {
     let workspace = WorkspaceId::parse(cli.command.workspace())
         .map_err(|_| AdminError::Workspace(cli.command.workspace().to_owned()))?;
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.as_str().to_owned(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.as_str().to_owned(),
-        ),
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = DEPLOYABLE,
+        plane = config.plane.as_str(),
+        region = config.region.as_str(),
+        "process started"
     );
 
     // Startup admission has already refused a wrong keystore, a cross-region key

@@ -16,7 +16,7 @@ use aex_wire::ids::GenerationId;
 /// Materialization and guest-RPC backend consumed by [`HandsAdapter`].
 ///
 /// Implementations are responsible for the runtime-activity conditional writes, provider
-/// lifecycle calls, authenticated guest transport, and protocol frame bounds. The adapter
+/// lifecycle calls, authenticated guest transport, and protocol body bounds. The adapter
 /// deliberately does not expose an untyped address-only shortcut: every operation still
 /// names the exact canonical generation.
 pub trait HandsBackend: Send + Sync + 'static {

@@ -598,7 +598,6 @@ pub async fn commit_terminal(
             session: command.session,
             run: command.attempt.run,
         },
-        Write::PutOutboxEvent(Box::new(commit.outbox.clone())),
     ];
     writes.extend(commit.sealed_messages.iter().flat_map(|message| {
         [

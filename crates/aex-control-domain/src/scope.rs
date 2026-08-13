@@ -1,6 +1,6 @@
 //! The one scope vocabulary.
 //!
-//! [`Scope`] is `aex_wire::scopes::ScopeId` — the generated 27-entry registry —
+//! [`Scope`] is `aex_wire::scopes::ScopeId` — the generated 25-entry registry —
 //! re-exported rather than redefined. This module adds the *set* algebra the
 //! authorization decision needs: a `u64` bitset whose bit `n` is
 //! `ScopeId::ALL[n]`, which makes an intersection one instruction and makes the
@@ -18,13 +18,13 @@ use aex_wire::scopes::ScopeId;
 pub type Scope = ScopeId;
 
 /// How many scopes the registry holds, as a shift width.
-const REGISTRY_LEN: u32 = 27;
+const REGISTRY_LEN: u32 = 25;
 
 /// The registry is a `u64` bitset, so it can never exceed 64 entries.
 const _: () = assert!(ScopeId::ALL.len() <= 64);
 const _: () = assert!(ScopeId::ALL.len() == REGISTRY_LEN as usize);
 /// The launch registry size, asserted so an added scope is a visible diff.
-const _: () = assert!(ScopeId::ALL.len() == 27);
+const _: () = assert!(ScopeId::ALL.len() == 25);
 
 /// Why a scope list was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -105,8 +105,6 @@ impl ScopeSet {
         Scope::ResourcesWrite,
         Scope::ProviderCredentialsRead,
         Scope::ProviderCredentialsWrite,
-        Scope::TelemetryRead,
-        Scope::TelemetryWrite,
     ]);
 
     /// The ceiling on what a workspace API key may ever carry.
@@ -413,7 +411,7 @@ mod tests {
     #[test]
     fn the_string_round_trip_is_lossless_and_registry_ordered() {
         let set = ScopeSet::of(&[
-            Scope::TelemetryWrite,
+            Scope::ResourcesWrite,
             Scope::AccountRead,
             Scope::SessionsRead,
         ]);
@@ -422,7 +420,7 @@ mod tests {
             vec![
                 "account:read".to_owned(),
                 "sessions:read".to_owned(),
-                "telemetry:write".to_owned()
+                "resources:write".to_owned()
             ]
         );
         assert_eq!(ScopeSet::from_strings(&set.to_strings()), Ok(set));

@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:308866d3e6ae0f8108ee3b81c1b852256a3bc1d80cb6d774f221d3d91fab4721`.
+//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -23,7 +23,6 @@ use crate::dispatch::binary_body;
 use crate::dispatch::declared;
 use crate::dispatch::decode_body;
 use crate::dispatch::expect_no_body;
-use crate::dispatch::otlp_body;
 use crate::dispatch::path_param;
 use crate::dispatch::path_param_registry;
 use crate::dispatch::wrong_group;
@@ -31,7 +30,6 @@ use crate::error::WireResult;
 use crate::ids::AgentId;
 use crate::ids::ApiKeyId;
 use crate::ids::ApprovalId;
-use crate::ids::ExportId;
 use crate::ids::FileDownloadId;
 use crate::ids::FileUploadId;
 use crate::ids::GenerationId;
@@ -46,10 +44,7 @@ use crate::ids::ProviderCredentialId;
 use crate::ids::ResourceName;
 use crate::ids::SessionId;
 use crate::ids::StatementId;
-use crate::ids::TelemetryBatchId;
-use crate::ids::TelemetryGapId;
 use crate::ids::ToolCallId;
-use crate::ids::TraceId;
 use crate::ids::UploadId;
 use crate::ids::UserId;
 use crate::ids::WorkspaceId;
@@ -96,13 +91,7 @@ use crate::models::MembershipsListQuery;
 use crate::models::MessagePage;
 use crate::models::MessageSendRequest;
 use crate::models::MessageSendResult;
-use crate::models::MetricAggregationPage;
-use crate::models::MetricAggregationRequest;
 use crate::models::NewApiKey;
-use crate::models::ObservationListenRequest;
-use crate::models::ObservationPage;
-use crate::models::ObservationQuery;
-use crate::models::ObservationStreamRequest;
 use crate::models::Operation;
 use crate::models::OperationKind;
 use crate::models::OperationPage;
@@ -129,17 +118,13 @@ use crate::models::SessionFilesLiveUploadPartPutQuery;
 use crate::models::SessionListPage;
 use crate::models::SessionMessagesListQuery;
 use crate::models::SessionStatus;
+use crate::models::SessionTelemetryDownloadGrant;
+use crate::models::SessionTelemetrySegmentPage;
+use crate::models::SessionTelemetrySegmentsListQuery;
 use crate::models::SessionsListQuery;
 use crate::models::Statement;
 use crate::models::StatementSummaryPage;
-use crate::models::TelemetryAdmissionReceipt;
-use crate::models::TelemetryExport;
-use crate::models::TelemetryExportRequest;
-use crate::models::TelemetryGap;
-use crate::models::TelemetryGapPage;
-use crate::models::TelemetryGapQuery;
 use crate::models::TopUpCheckoutRequest;
-use crate::models::TraceDetail;
 use crate::models::Upload;
 use crate::models::UploadCompleteRequest;
 use crate::models::UploadCreateRequest;
@@ -158,7 +143,6 @@ use crate::routes::RouteId;
 use crate::server::Accepted;
 use crate::server::BinaryBody;
 use crate::server::Created;
-use crate::server::NdjsonStream;
 use crate::server::NoContent;
 use crate::server::RequestContext;
 use crate::server::WithETag;
@@ -183,12 +167,8 @@ pub enum RouteGroup {
     Files,
     /// `identity` on the central plane, served by `IdentityApi`.
     Identity,
-    /// `observations` on the regional plane, served by `ObservationsApi`.
-    Observations,
     /// `organizations` on the central plane, served by `OrganizationsApi`.
     Organizations,
-    /// `otlp` on the regional plane, served by `OtlpApi`.
-    Otlp,
     /// `provider-credentials` on the regional plane, served by `ProviderCredentialsApi`.
     ProviderCredentials,
     /// `operations` on the regional plane, served by `RegionalOperationsApi`.
@@ -197,8 +177,6 @@ pub enum RouteGroup {
     Registry,
     /// `sessions` on the regional plane, served by `SessionsApi`.
     Sessions,
-    /// `telemetry-lifecycle` on the regional plane, served by `TelemetryLifecycleApi`.
-    TelemetryLifecycle,
     /// `uploads` on the regional plane, served by `UploadsApi`.
     Uploads,
     /// `usage` on the regional plane, served by `UsageApi`.
@@ -219,14 +197,11 @@ impl RouteGroup {
         RouteGroup::CentralOperations,
         RouteGroup::Files,
         RouteGroup::Identity,
-        RouteGroup::Observations,
         RouteGroup::Organizations,
-        RouteGroup::Otlp,
         RouteGroup::ProviderCredentials,
         RouteGroup::RegionalOperations,
         RouteGroup::Registry,
         RouteGroup::Sessions,
-        RouteGroup::TelemetryLifecycle,
         RouteGroup::Uploads,
         RouteGroup::Usage,
         RouteGroup::Workspace,
@@ -244,14 +219,11 @@ impl RouteGroup {
             Self::CentralOperations => "central:operations",
             Self::Files => "regional:files",
             Self::Identity => "central:identity",
-            Self::Observations => "regional:observations",
             Self::Organizations => "central:organizations",
-            Self::Otlp => "regional:otlp",
             Self::ProviderCredentials => "regional:provider-credentials",
             Self::RegionalOperations => "regional:operations",
             Self::Registry => "regional:registry",
             Self::Sessions => "regional:sessions",
-            Self::TelemetryLifecycle => "regional:telemetry-lifecycle",
             Self::Uploads => "regional:uploads",
             Self::Usage => "regional:usage",
             Self::Workspace => "regional:workspace",
@@ -270,14 +242,11 @@ impl RouteGroup {
             Self::CentralOperations => Plane::Central,
             Self::Files => Plane::Regional,
             Self::Identity => Plane::Central,
-            Self::Observations => Plane::Regional,
             Self::Organizations => Plane::Central,
-            Self::Otlp => Plane::Regional,
             Self::ProviderCredentials => Plane::Regional,
             Self::RegionalOperations => Plane::Regional,
             Self::Registry => Plane::Regional,
             Self::Sessions => Plane::Regional,
-            Self::TelemetryLifecycle => Plane::Regional,
             Self::Uploads => Plane::Regional,
             Self::Usage => Plane::Regional,
             Self::Workspace => Plane::Regional,
@@ -296,14 +265,11 @@ impl RouteGroup {
             Self::CentralOperations => "CentralOperationsApi",
             Self::Files => "FilesApi",
             Self::Identity => "IdentityApi",
-            Self::Observations => "ObservationsApi",
             Self::Organizations => "OrganizationsApi",
-            Self::Otlp => "OtlpApi",
             Self::ProviderCredentials => "ProviderCredentialsApi",
             Self::RegionalOperations => "RegionalOperationsApi",
             Self::Registry => "RegistryApi",
             Self::Sessions => "SessionsApi",
-            Self::TelemetryLifecycle => "TelemetryLifecycleApi",
             Self::Uploads => "UploadsApi",
             Self::Usage => "UsageApi",
             Self::Workspace => "WorkspaceApi",
@@ -322,14 +288,11 @@ impl RouteGroup {
             Self::CentralOperations => CENTRAL_OPERATIONS_ROUTES,
             Self::Files => FILES_ROUTES,
             Self::Identity => IDENTITY_ROUTES,
-            Self::Observations => OBSERVATIONS_ROUTES,
             Self::Organizations => ORGANIZATIONS_ROUTES,
-            Self::Otlp => OTLP_ROUTES,
             Self::ProviderCredentials => PROVIDER_CREDENTIALS_ROUTES,
             Self::RegionalOperations => REGIONAL_OPERATIONS_ROUTES,
             Self::Registry => REGISTRY_ROUTES,
             Self::Sessions => SESSIONS_ROUTES,
-            Self::TelemetryLifecycle => TELEMETRY_LIFECYCLE_ROUTES,
             Self::Uploads => UPLOADS_ROUTES,
             Self::Usage => USAGE_ROUTES,
             Self::Workspace => WORKSPACE_ROUTES,
@@ -394,49 +357,6 @@ pub const FILES_ROUTES: &[RouteId] = &[
 /// Every route of `central:identity`, in `RouteId` order.
 pub const IDENTITY_ROUTES: &[RouteId] = &[RouteId::AccountGet];
 
-/// Every route of `regional:observations`, in `RouteId` order.
-pub const OBSERVATIONS_ROUTES: &[RouteId] = &[
-    RouteId::ObservationsEventsListen,
-    RouteId::ObservationsEventsQuery,
-    RouteId::ObservationsEventsStream,
-    RouteId::ObservationsLogsListen,
-    RouteId::ObservationsLogsQuery,
-    RouteId::ObservationsLogsStream,
-    RouteId::ObservationsMetricsAggregate,
-    RouteId::ObservationsMetricsListen,
-    RouteId::ObservationsMetricsQuery,
-    RouteId::ObservationsMetricsStream,
-    RouteId::ObservationsSpansListen,
-    RouteId::ObservationsSpansQuery,
-    RouteId::ObservationsSpansStream,
-    RouteId::ObservationsTelemetryListen,
-    RouteId::ObservationsTelemetryQuery,
-    RouteId::ObservationsTelemetryStream,
-    RouteId::ObservationsTracesListen,
-    RouteId::ObservationsTracesQuery,
-    RouteId::ObservationsTracesStream,
-    RouteId::SessionObservationsEventsListen,
-    RouteId::SessionObservationsEventsQuery,
-    RouteId::SessionObservationsEventsStream,
-    RouteId::SessionObservationsLogsListen,
-    RouteId::SessionObservationsLogsQuery,
-    RouteId::SessionObservationsLogsStream,
-    RouteId::SessionObservationsMetricsAggregate,
-    RouteId::SessionObservationsMetricsListen,
-    RouteId::SessionObservationsMetricsQuery,
-    RouteId::SessionObservationsMetricsStream,
-    RouteId::SessionObservationsSpansListen,
-    RouteId::SessionObservationsSpansQuery,
-    RouteId::SessionObservationsSpansStream,
-    RouteId::SessionObservationsTelemetryListen,
-    RouteId::SessionObservationsTelemetryQuery,
-    RouteId::SessionObservationsTelemetryStream,
-    RouteId::SessionObservationsTraceGet,
-    RouteId::SessionObservationsTracesListen,
-    RouteId::SessionObservationsTracesQuery,
-    RouteId::SessionObservationsTracesStream,
-];
-
 /// Every route of `central:organizations`, in `RouteId` order.
 pub const ORGANIZATIONS_ROUTES: &[RouteId] = &[
     RouteId::InvitationAccept,
@@ -445,13 +365,6 @@ pub const ORGANIZATIONS_ROUTES: &[RouteId] = &[
     RouteId::OrganizationCreate,
     RouteId::OrganizationGet,
     RouteId::OrganizationsList,
-];
-
-/// Every route of `regional:otlp`, in `RouteId` order.
-pub const OTLP_ROUTES: &[RouteId] = &[
-    RouteId::OtlpLogsIngest,
-    RouteId::OtlpMetricsIngest,
-    RouteId::OtlpTracesIngest,
 ];
 
 /// Every route of `regional:provider-credentials`, in `RouteId` order.
@@ -488,24 +401,10 @@ pub const SESSIONS_ROUTES: &[RouteId] = &[
     RouteId::SessionMessagesList,
     RouteId::SessionResume,
     RouteId::SessionSuspend,
+    RouteId::SessionTelemetrySegmentDownloadCreate,
+    RouteId::SessionTelemetrySegmentsList,
     RouteId::SessionTerminate,
     RouteId::SessionsList,
-];
-
-/// Every route of `regional:telemetry-lifecycle`, in `RouteId` order.
-pub const TELEMETRY_LIFECYCLE_ROUTES: &[RouteId] = &[
-    RouteId::SessionTelemetryExportCreate,
-    RouteId::SessionTelemetryExportDownloadCreate,
-    RouteId::SessionTelemetryExportGet,
-    RouteId::SessionTelemetryExportRevoke,
-    RouteId::SessionTelemetryGapGet,
-    RouteId::SessionTelemetryGapsQuery,
-    RouteId::TelemetryExportCreate,
-    RouteId::TelemetryExportDownloadCreate,
-    RouteId::TelemetryExportGet,
-    RouteId::TelemetryExportRevoke,
-    RouteId::TelemetryGapGet,
-    RouteId::TelemetryGapsQuery,
 ];
 
 /// Every route of `regional:uploads`, in `RouteId` order.
@@ -571,54 +470,12 @@ impl RouteId {
             Self::SessionFilesLiveUploadGet => RouteGroup::Files,
             Self::SessionFilesLiveUploadPartPut => RouteGroup::Files,
             Self::AccountGet => RouteGroup::Identity,
-            Self::ObservationsEventsListen => RouteGroup::Observations,
-            Self::ObservationsEventsQuery => RouteGroup::Observations,
-            Self::ObservationsEventsStream => RouteGroup::Observations,
-            Self::ObservationsLogsListen => RouteGroup::Observations,
-            Self::ObservationsLogsQuery => RouteGroup::Observations,
-            Self::ObservationsLogsStream => RouteGroup::Observations,
-            Self::ObservationsMetricsAggregate => RouteGroup::Observations,
-            Self::ObservationsMetricsListen => RouteGroup::Observations,
-            Self::ObservationsMetricsQuery => RouteGroup::Observations,
-            Self::ObservationsMetricsStream => RouteGroup::Observations,
-            Self::ObservationsSpansListen => RouteGroup::Observations,
-            Self::ObservationsSpansQuery => RouteGroup::Observations,
-            Self::ObservationsSpansStream => RouteGroup::Observations,
-            Self::ObservationsTelemetryListen => RouteGroup::Observations,
-            Self::ObservationsTelemetryQuery => RouteGroup::Observations,
-            Self::ObservationsTelemetryStream => RouteGroup::Observations,
-            Self::ObservationsTracesListen => RouteGroup::Observations,
-            Self::ObservationsTracesQuery => RouteGroup::Observations,
-            Self::ObservationsTracesStream => RouteGroup::Observations,
-            Self::SessionObservationsEventsListen => RouteGroup::Observations,
-            Self::SessionObservationsEventsQuery => RouteGroup::Observations,
-            Self::SessionObservationsEventsStream => RouteGroup::Observations,
-            Self::SessionObservationsLogsListen => RouteGroup::Observations,
-            Self::SessionObservationsLogsQuery => RouteGroup::Observations,
-            Self::SessionObservationsLogsStream => RouteGroup::Observations,
-            Self::SessionObservationsMetricsAggregate => RouteGroup::Observations,
-            Self::SessionObservationsMetricsListen => RouteGroup::Observations,
-            Self::SessionObservationsMetricsQuery => RouteGroup::Observations,
-            Self::SessionObservationsMetricsStream => RouteGroup::Observations,
-            Self::SessionObservationsSpansListen => RouteGroup::Observations,
-            Self::SessionObservationsSpansQuery => RouteGroup::Observations,
-            Self::SessionObservationsSpansStream => RouteGroup::Observations,
-            Self::SessionObservationsTelemetryListen => RouteGroup::Observations,
-            Self::SessionObservationsTelemetryQuery => RouteGroup::Observations,
-            Self::SessionObservationsTelemetryStream => RouteGroup::Observations,
-            Self::SessionObservationsTraceGet => RouteGroup::Observations,
-            Self::SessionObservationsTracesListen => RouteGroup::Observations,
-            Self::SessionObservationsTracesQuery => RouteGroup::Observations,
-            Self::SessionObservationsTracesStream => RouteGroup::Observations,
             Self::InvitationAccept => RouteGroup::Organizations,
             Self::InvitationCreate => RouteGroup::Organizations,
             Self::MembershipsList => RouteGroup::Organizations,
             Self::OrganizationCreate => RouteGroup::Organizations,
             Self::OrganizationGet => RouteGroup::Organizations,
             Self::OrganizationsList => RouteGroup::Organizations,
-            Self::OtlpLogsIngest => RouteGroup::Otlp,
-            Self::OtlpMetricsIngest => RouteGroup::Otlp,
-            Self::OtlpTracesIngest => RouteGroup::Otlp,
             Self::ProviderCredentialGet => RouteGroup::ProviderCredentials,
             Self::ProviderCredentialRegister => RouteGroup::ProviderCredentials,
             Self::ProviderCredentialRevoke => RouteGroup::ProviderCredentials,
@@ -639,20 +496,10 @@ impl RouteId {
             Self::SessionMessagesList => RouteGroup::Sessions,
             Self::SessionResume => RouteGroup::Sessions,
             Self::SessionSuspend => RouteGroup::Sessions,
+            Self::SessionTelemetrySegmentDownloadCreate => RouteGroup::Sessions,
+            Self::SessionTelemetrySegmentsList => RouteGroup::Sessions,
             Self::SessionTerminate => RouteGroup::Sessions,
             Self::SessionsList => RouteGroup::Sessions,
-            Self::SessionTelemetryExportCreate => RouteGroup::TelemetryLifecycle,
-            Self::SessionTelemetryExportDownloadCreate => RouteGroup::TelemetryLifecycle,
-            Self::SessionTelemetryExportGet => RouteGroup::TelemetryLifecycle,
-            Self::SessionTelemetryExportRevoke => RouteGroup::TelemetryLifecycle,
-            Self::SessionTelemetryGapGet => RouteGroup::TelemetryLifecycle,
-            Self::SessionTelemetryGapsQuery => RouteGroup::TelemetryLifecycle,
-            Self::TelemetryExportCreate => RouteGroup::TelemetryLifecycle,
-            Self::TelemetryExportDownloadCreate => RouteGroup::TelemetryLifecycle,
-            Self::TelemetryExportGet => RouteGroup::TelemetryLifecycle,
-            Self::TelemetryExportRevoke => RouteGroup::TelemetryLifecycle,
-            Self::TelemetryGapGet => RouteGroup::TelemetryLifecycle,
-            Self::TelemetryGapsQuery => RouteGroup::TelemetryLifecycle,
             Self::UploadAbort => RouteGroup::Uploads,
             Self::UploadComplete => RouteGroup::Uploads,
             Self::UploadCreate => RouteGroup::Uploads,
@@ -701,9 +548,6 @@ from_param_id!(
     FileUploadId,
     FileDownloadId,
     ObservationId,
-    TelemetryBatchId,
-    TelemetryGapId,
-    ExportId,
     UploadId,
     MeasurementId,
     StatementId,
@@ -1460,624 +1304,6 @@ pub async fn dispatch_identity<A: IdentityApi + ?Sized>(
     }
 }
 
-// --- regional:observations ---------------------------------------------------------------
-
-/// The `observations` fragment of the regional plane: 39 operations.
-/// Every method returns a future that is `Send`, so the composition crate can spawn it without
-/// wrapping. A method never names a status: the response type it returns is the status the route
-/// declares.
-pub trait ObservationsApi: Send + Sync + 'static {
-    /// The frame stream this implementation produces for an NDJSON route.
-    /// `aex-wire` deliberately does not name `Stream`: it has no async dependency, so the
-    /// composition crate supplies the concrete type and its own bound.
-    type FrameStream: Send + 'static;
-
-    /// `POST /api/streams/events/listen`
-    /// Listen for new workspace events observations.
-    fn observations_events_listen(
-        &self,
-        cx: &RequestContext,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/events/query`
-    /// Query workspace events observations.
-    fn observations_events_query(
-        &self,
-        cx: &RequestContext,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/events/stream`
-    /// Stream workspace events observations from one origin.
-    fn observations_events_stream(
-        &self,
-        cx: &RequestContext,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/streams/logs/listen`
-    /// Listen for new workspace logs observations.
-    fn observations_logs_listen(
-        &self,
-        cx: &RequestContext,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/logs/query`
-    /// Query workspace logs observations.
-    fn observations_logs_query(
-        &self,
-        cx: &RequestContext,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/logs/stream`
-    /// Stream workspace logs observations from one origin.
-    fn observations_logs_stream(
-        &self,
-        cx: &RequestContext,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/metrics/aggregate`
-    /// Aggregate workspace metric observations.
-    fn observations_metrics_aggregate(
-        &self,
-        cx: &RequestContext,
-        body: MetricAggregationRequest,
-    ) -> impl Future<Output = WireResult<MetricAggregationPage>> + Send;
-
-    /// `POST /api/streams/metrics/listen`
-    /// Listen for new workspace metrics observations.
-    fn observations_metrics_listen(
-        &self,
-        cx: &RequestContext,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/metrics/query`
-    /// Query workspace metrics observations.
-    fn observations_metrics_query(
-        &self,
-        cx: &RequestContext,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/metrics/stream`
-    /// Stream workspace metrics observations from one origin.
-    fn observations_metrics_stream(
-        &self,
-        cx: &RequestContext,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/streams/spans/listen`
-    /// Listen for new workspace spans observations.
-    fn observations_spans_listen(
-        &self,
-        cx: &RequestContext,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/spans/query`
-    /// Query workspace spans observations.
-    fn observations_spans_query(
-        &self,
-        cx: &RequestContext,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/spans/stream`
-    /// Stream workspace spans observations from one origin.
-    fn observations_spans_stream(
-        &self,
-        cx: &RequestContext,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/streams/telemetry/listen`
-    /// Listen for new workspace telemetry observations.
-    fn observations_telemetry_listen(
-        &self,
-        cx: &RequestContext,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/telemetry/query`
-    /// Query workspace telemetry observations.
-    fn observations_telemetry_query(
-        &self,
-        cx: &RequestContext,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/telemetry/stream`
-    /// Stream workspace telemetry observations from one origin.
-    fn observations_telemetry_stream(
-        &self,
-        cx: &RequestContext,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/streams/traces/listen`
-    /// Listen for new workspace traces observations.
-    fn observations_traces_listen(
-        &self,
-        cx: &RequestContext,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/traces/query`
-    /// Query workspace traces observations.
-    fn observations_traces_query(
-        &self,
-        cx: &RequestContext,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/traces/stream`
-    /// Stream workspace traces observations from one origin.
-    fn observations_traces_stream(
-        &self,
-        cx: &RequestContext,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/streams/{sessionId}/events/listen`
-    /// Listen for new session events observations.
-    fn session_observations_events_listen(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/{sessionId}/events/query`
-    /// Query session events observations.
-    fn session_observations_events_query(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/{sessionId}/events/stream`
-    /// Stream session events observations from one origin.
-    fn session_observations_events_stream(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/streams/{sessionId}/logs/listen`
-    /// Listen for new session logs observations.
-    fn session_observations_logs_listen(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/{sessionId}/logs/query`
-    /// Query session logs observations.
-    fn session_observations_logs_query(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/{sessionId}/logs/stream`
-    /// Stream session logs observations from one origin.
-    fn session_observations_logs_stream(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/{sessionId}/metrics/aggregate`
-    /// Aggregate session metric observations.
-    fn session_observations_metrics_aggregate(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: MetricAggregationRequest,
-    ) -> impl Future<Output = WireResult<MetricAggregationPage>> + Send;
-
-    /// `POST /api/streams/{sessionId}/metrics/listen`
-    /// Listen for new session metrics observations.
-    fn session_observations_metrics_listen(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/{sessionId}/metrics/query`
-    /// Query session metrics observations.
-    fn session_observations_metrics_query(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/{sessionId}/metrics/stream`
-    /// Stream session metrics observations from one origin.
-    fn session_observations_metrics_stream(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/streams/{sessionId}/spans/listen`
-    /// Listen for new session spans observations.
-    fn session_observations_spans_listen(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/{sessionId}/spans/query`
-    /// Query session spans observations.
-    fn session_observations_spans_query(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/{sessionId}/spans/stream`
-    /// Stream session spans observations from one origin.
-    fn session_observations_spans_stream(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/streams/{sessionId}/telemetry/listen`
-    /// Listen for new session telemetry observations.
-    fn session_observations_telemetry_listen(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/{sessionId}/telemetry/query`
-    /// Query session telemetry observations.
-    fn session_observations_telemetry_query(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/{sessionId}/telemetry/stream`
-    /// Stream session telemetry observations from one origin.
-    fn session_observations_telemetry_stream(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `GET /api/observations/{sessionId}/traces/{traceId}`
-    /// Read one assembled trace by its W3C identifier.
-    fn session_observations_trace_get(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        trace_id: TraceId,
-    ) -> impl Future<Output = WireResult<TraceDetail>> + Send;
-
-    /// `POST /api/streams/{sessionId}/traces/listen`
-    /// Listen for new session traces observations.
-    fn session_observations_traces_listen(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationListenRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-
-    /// `POST /api/observations/{sessionId}/traces/query`
-    /// Query session traces observations.
-    fn session_observations_traces_query(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationQuery,
-    ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
-
-    /// `POST /api/streams/{sessionId}/traces/stream`
-    /// Stream session traces observations from one origin.
-    fn session_observations_traces_stream(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: ObservationStreamRequest,
-    ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
-}
-
-/// Decodes, calls and encodes one `regional:observations` request.
-/// Total over `RouteId`: a route from another group is an internal error naming the mismatch, never
-/// a silently wrong handler.
-/// # Errors
-/// Returns the handler's own declared failure, or a decode failure the route declares. A code the
-/// route does not declare is refused at this boundary.
-pub async fn dispatch_observations<A: ObservationsApi + ?Sized>(
-    api: &A,
-    cx: &RequestContext,
-    raw: RawRequest<'_>,
-    limits: RequestLimits,
-) -> WireResult<DispatchOutcome<A::FrameStream>> {
-    let _reader = QueryReader::parse(raw.route, raw.query)?;
-    match raw.route {
-        RouteId::ObservationsEventsListen => {
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.observations_events_listen(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::ObservationsEventsQuery => {
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.observations_events_query(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::ObservationsEventsStream => {
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.observations_events_stream(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::ObservationsLogsListen => {
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.observations_logs_listen(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::ObservationsLogsQuery => {
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.observations_logs_query(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::ObservationsLogsStream => {
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.observations_logs_stream(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::ObservationsMetricsAggregate => {
-            let body = decode_body::<MetricAggregationRequest>(&raw, limits)?;
-            let handled = api.observations_metrics_aggregate(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::ObservationsMetricsListen => {
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.observations_metrics_listen(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::ObservationsMetricsQuery => {
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.observations_metrics_query(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::ObservationsMetricsStream => {
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.observations_metrics_stream(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::ObservationsSpansListen => {
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.observations_spans_listen(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::ObservationsSpansQuery => {
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.observations_spans_query(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::ObservationsSpansStream => {
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.observations_spans_stream(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::ObservationsTelemetryListen => {
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.observations_telemetry_listen(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::ObservationsTelemetryQuery => {
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.observations_telemetry_query(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::ObservationsTelemetryStream => {
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.observations_telemetry_stream(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::ObservationsTracesListen => {
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.observations_traces_listen(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::ObservationsTracesQuery => {
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.observations_traces_query(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::ObservationsTracesStream => {
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.observations_traces_stream(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsEventsListen => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.session_observations_events_listen(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsEventsQuery => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.session_observations_events_query(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionObservationsEventsStream => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.session_observations_events_stream(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsLogsListen => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.session_observations_logs_listen(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsLogsQuery => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.session_observations_logs_query(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionObservationsLogsStream => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.session_observations_logs_stream(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsMetricsAggregate => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<MetricAggregationRequest>(&raw, limits)?;
-            let handled = api.session_observations_metrics_aggregate(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionObservationsMetricsListen => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.session_observations_metrics_listen(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsMetricsQuery => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.session_observations_metrics_query(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionObservationsMetricsStream => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.session_observations_metrics_stream(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsSpansListen => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.session_observations_spans_listen(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsSpansQuery => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.session_observations_spans_query(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionObservationsSpansStream => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.session_observations_spans_stream(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsTelemetryListen => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.session_observations_telemetry_listen(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsTelemetryQuery => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.session_observations_telemetry_query(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionObservationsTelemetryStream => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.session_observations_telemetry_stream(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsTraceGet => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let trace_id = path_param::<TraceId>(&raw, "traceId")?;
-            expect_no_body(&raw)?;
-            let handled = api.session_observations_trace_get(cx, session_id, trace_id);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionObservationsTracesListen => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationListenRequest>(&raw, limits)?;
-            let handled = api.session_observations_traces_listen(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        RouteId::SessionObservationsTracesQuery => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationQuery>(&raw, limits)?;
-            let handled = api.session_observations_traces_query(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionObservationsTracesStream => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<ObservationStreamRequest>(&raw, limits)?;
-            let handled = api.session_observations_traces_stream(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Ndjson(answer))
-        }
-        other => Err(wrong_group(other, "regional:observations")),
-    }
-}
-
 // --- central:organizations ---------------------------------------------------------------
 
 /// The `organizations` fragment of the central plane: 6 operations.
@@ -2198,74 +1424,6 @@ pub async fn dispatch_organizations<A: OrganizationsApi + ?Sized>(
             Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
         }
         other => Err(wrong_group(other, "central:organizations")),
-    }
-}
-
-// --- regional:otlp ---------------------------------------------------------------
-
-/// The `otlp` fragment of the regional plane: 3 operations.
-/// Every method returns a future that is `Send`, so the composition crate can spawn it without
-/// wrapping. A method never names a status: the response type it returns is the status the route
-/// declares.
-pub trait OtlpApi: Send + Sync + 'static {
-    /// `POST /api/otlp/v1/logs`
-    /// Admit an OTLP logs batch.
-    fn otlp_logs_ingest(
-        &self,
-        cx: &RequestContext,
-        body: &[u8],
-    ) -> impl Future<Output = WireResult<TelemetryAdmissionReceipt>> + Send;
-
-    /// `POST /api/otlp/v1/metrics`
-    /// Admit an OTLP metrics batch.
-    fn otlp_metrics_ingest(
-        &self,
-        cx: &RequestContext,
-        body: &[u8],
-    ) -> impl Future<Output = WireResult<TelemetryAdmissionReceipt>> + Send;
-
-    /// `POST /api/otlp/v1/traces`
-    /// Admit an OTLP traces batch.
-    fn otlp_traces_ingest(
-        &self,
-        cx: &RequestContext,
-        body: &[u8],
-    ) -> impl Future<Output = WireResult<TelemetryAdmissionReceipt>> + Send;
-}
-
-/// Decodes, calls and encodes one `regional:otlp` request.
-/// Total over `RouteId`: a route from another group is an internal error naming the mismatch, never
-/// a silently wrong handler.
-/// # Errors
-/// Returns the handler's own declared failure, or a decode failure the route declares. A code the
-/// route does not declare is refused at this boundary.
-pub async fn dispatch_otlp<A: OtlpApi + ?Sized>(
-    api: &A,
-    cx: &RequestContext,
-    raw: RawRequest<'_>,
-    limits: RequestLimits,
-) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
-    let _reader = QueryReader::parse(raw.route, raw.query)?;
-    match raw.route {
-        RouteId::OtlpLogsIngest => {
-            let body = otlp_body(&raw, limits)?;
-            let handled = api.otlp_logs_ingest(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::OtlpMetricsIngest => {
-            let body = otlp_body(&raw, limits)?;
-            let handled = api.otlp_metrics_ingest(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::OtlpTracesIngest => {
-            let body = otlp_body(&raw, limits)?;
-            let handled = api.otlp_traces_ingest(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        other => Err(wrong_group(other, "regional:otlp")),
     }
 }
 
@@ -2553,7 +1711,7 @@ pub async fn dispatch_registry<A: RegistryApi + ?Sized>(
 
 // --- regional:sessions ---------------------------------------------------------------
 
-/// The `sessions` fragment of the regional plane: 10 operations.
+/// The `sessions` fragment of the regional plane: 12 operations.
 /// Every method returns a future that is `Send`, so the composition crate can spawn it without
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
@@ -2576,8 +1734,8 @@ pub trait SessionsApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<Created<Session>>> + Send;
 
     /// `POST /api/sessions/{sessionId}/deletions`
-    /// Irreversibly delete the session and session-scoped user content, observations, telemetry,
-    /// and export objects. Independent registered workspace files remain.
+    /// Irreversibly delete the session and session-scoped user content. Independent registered
+    /// workspace files remain.
     fn session_delete(
         &self,
         cx: &RequestContext,
@@ -2630,6 +1788,24 @@ pub trait SessionsApi: Send + Sync + 'static {
         session_id: SessionId,
         body: EmptyRequest,
     ) -> impl Future<Output = WireResult<Accepted>> + Send;
+
+    /// `POST /api/sessions/{sessionId}/telemetry/segments/{segmentId}/downloads`
+    /// Mint a five-minute download grant for one immutable OTLP protobuf segment.
+    fn session_telemetry_segment_download_create(
+        &self,
+        cx: &RequestContext,
+        session_id: SessionId,
+        segment_id: String,
+    ) -> impl Future<Output = WireResult<Created<SessionTelemetryDownloadGrant>>> + Send;
+
+    /// `GET /api/sessions/{sessionId}/telemetry/segments`
+    /// List immutable AEX-generated OTLP protobuf segments for a session.
+    fn session_telemetry_segments_list(
+        &self,
+        cx: &RequestContext,
+        session_id: SessionId,
+        query: SessionTelemetrySegmentsListQuery,
+    ) -> impl Future<Output = WireResult<SessionTelemetrySegmentPage>> + Send;
 
     /// `POST /api/sessions/{sessionId}/terminations`
     /// Permanently destroy compute and live files while retaining metadata and sealed messages.
@@ -2724,6 +1900,25 @@ pub async fn dispatch_sessions<A: SessionsApi + ?Sized>(
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
         }
+        RouteId::SessionTelemetrySegmentDownloadCreate => {
+            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
+            let segment_id = path_param::<String>(&raw, "segmentId")?;
+            expect_no_body(&raw)?;
+            let handled = api.session_telemetry_segment_download_create(cx, session_id, segment_id);
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::json(201, &answer.0)?))
+        }
+        RouteId::SessionTelemetrySegmentsList => {
+            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
+            let query = SessionTelemetrySegmentsListQuery {
+                cursor: reader.optional("cursor")?,
+                limit: reader.optional_bounded("limit", 1, 100)?,
+            };
+            expect_no_body(&raw)?;
+            let handled = api.session_telemetry_segments_list(cx, session_id, query);
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
+        }
         RouteId::SessionTerminate => {
             let session_id = path_param::<SessionId>(&raw, "sessionId")?;
             let body = decode_body::<EmptyRequest>(&raw, limits)?;
@@ -2743,225 +1938,6 @@ pub async fn dispatch_sessions<A: SessionsApi + ?Sized>(
             Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
         }
         other => Err(wrong_group(other, "regional:sessions")),
-    }
-}
-
-// --- regional:telemetry-lifecycle ---------------------------------------------------------------
-
-/// The `telemetry-lifecycle` fragment of the regional plane: 12 operations.
-/// Every method returns a future that is `Send`, so the composition crate can spawn it without
-/// wrapping. A method never names a status: the response type it returns is the status the route
-/// declares.
-pub trait TelemetryLifecycleApi: Send + Sync + 'static {
-    /// `POST /api/observations/{sessionId}/telemetry/exports`
-    /// Admit the durable session telemetry-export operation.
-    fn session_telemetry_export_create(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: TelemetryExportRequest,
-    ) -> impl Future<Output = WireResult<Accepted>> + Send;
-
-    /// `POST /api/observations/{sessionId}/telemetry/exports/{exportId}/downloads`
-    /// Mint a download grant for a ready session telemetry export.
-    fn session_telemetry_export_download_create(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        export_id: ExportId,
-        body: EmptyRequest,
-    ) -> impl Future<Output = WireResult<Created<DownloadGrant>>> + Send;
-
-    /// `GET /api/observations/{sessionId}/telemetry/exports/{exportId}`
-    /// Read one session telemetry export record.
-    fn session_telemetry_export_get(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        export_id: ExportId,
-    ) -> impl Future<Output = WireResult<TelemetryExport>> + Send;
-
-    /// `POST /api/observations/{sessionId}/telemetry/exports/{exportId}/revocations`
-    /// Revoke a session telemetry export and its outstanding grants.
-    fn session_telemetry_export_revoke(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        export_id: ExportId,
-        body: EmptyRequest,
-    ) -> impl Future<Output = WireResult<TelemetryExport>> + Send;
-
-    /// `GET /api/observations/{sessionId}/telemetry/gaps/{gapId}`
-    /// Read one recorded session telemetry gap.
-    fn session_telemetry_gap_get(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        gap_id: TelemetryGapId,
-    ) -> impl Future<Output = WireResult<TelemetryGap>> + Send;
-
-    /// `POST /api/observations/{sessionId}/telemetry/gaps/query`
-    /// Query recorded session telemetry gaps.
-    fn session_telemetry_gaps_query(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: TelemetryGapQuery,
-    ) -> impl Future<Output = WireResult<TelemetryGapPage>> + Send;
-
-    /// `POST /api/observations/telemetry/exports`
-    /// Admit the durable workspace telemetry-export operation.
-    fn telemetry_export_create(
-        &self,
-        cx: &RequestContext,
-        body: TelemetryExportRequest,
-    ) -> impl Future<Output = WireResult<Accepted>> + Send;
-
-    /// `POST /api/observations/telemetry/exports/{exportId}/downloads`
-    /// Mint a download grant for a ready telemetry export.
-    fn telemetry_export_download_create(
-        &self,
-        cx: &RequestContext,
-        export_id: ExportId,
-        body: EmptyRequest,
-    ) -> impl Future<Output = WireResult<Created<DownloadGrant>>> + Send;
-
-    /// `GET /api/observations/telemetry/exports/{exportId}`
-    /// Read one telemetry export record.
-    fn telemetry_export_get(
-        &self,
-        cx: &RequestContext,
-        export_id: ExportId,
-    ) -> impl Future<Output = WireResult<TelemetryExport>> + Send;
-
-    /// `POST /api/observations/telemetry/exports/{exportId}/revocations`
-    /// Revoke a telemetry export and its outstanding grants.
-    fn telemetry_export_revoke(
-        &self,
-        cx: &RequestContext,
-        export_id: ExportId,
-        body: EmptyRequest,
-    ) -> impl Future<Output = WireResult<TelemetryExport>> + Send;
-
-    /// `GET /api/observations/telemetry/gaps/{gapId}`
-    /// Read one recorded telemetry gap.
-    fn telemetry_gap_get(
-        &self,
-        cx: &RequestContext,
-        gap_id: TelemetryGapId,
-    ) -> impl Future<Output = WireResult<TelemetryGap>> + Send;
-
-    /// `POST /api/observations/telemetry/gaps/query`
-    /// Query recorded workspace telemetry gaps.
-    fn telemetry_gaps_query(
-        &self,
-        cx: &RequestContext,
-        body: TelemetryGapQuery,
-    ) -> impl Future<Output = WireResult<TelemetryGapPage>> + Send;
-}
-
-/// Decodes, calls and encodes one `regional:telemetry-lifecycle` request.
-/// Total over `RouteId`: a route from another group is an internal error naming the mismatch, never
-/// a silently wrong handler.
-/// # Errors
-/// Returns the handler's own declared failure, or a decode failure the route declares. A code the
-/// route does not declare is refused at this boundary.
-pub async fn dispatch_telemetry_lifecycle<A: TelemetryLifecycleApi + ?Sized>(
-    api: &A,
-    cx: &RequestContext,
-    raw: RawRequest<'_>,
-    limits: RequestLimits,
-) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
-    let _reader = QueryReader::parse(raw.route, raw.query)?;
-    match raw.route {
-        RouteId::SessionTelemetryExportCreate => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<TelemetryExportRequest>(&raw, limits)?;
-            let handled = api.session_telemetry_export_create(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
-        }
-        RouteId::SessionTelemetryExportDownloadCreate => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let export_id = path_param::<ExportId>(&raw, "exportId")?;
-            let body = decode_body::<EmptyRequest>(&raw, limits)?;
-            let handled =
-                api.session_telemetry_export_download_create(cx, session_id, export_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(201, &answer.0)?))
-        }
-        RouteId::SessionTelemetryExportGet => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let export_id = path_param::<ExportId>(&raw, "exportId")?;
-            expect_no_body(&raw)?;
-            let handled = api.session_telemetry_export_get(cx, session_id, export_id);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionTelemetryExportRevoke => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let export_id = path_param::<ExportId>(&raw, "exportId")?;
-            let body = decode_body::<EmptyRequest>(&raw, limits)?;
-            let handled = api.session_telemetry_export_revoke(cx, session_id, export_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionTelemetryGapGet => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let gap_id = path_param::<TelemetryGapId>(&raw, "gapId")?;
-            expect_no_body(&raw)?;
-            let handled = api.session_telemetry_gap_get(cx, session_id, gap_id);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::SessionTelemetryGapsQuery => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<TelemetryGapQuery>(&raw, limits)?;
-            let handled = api.session_telemetry_gaps_query(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::TelemetryExportCreate => {
-            let body = decode_body::<TelemetryExportRequest>(&raw, limits)?;
-            let handled = api.telemetry_export_create(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
-        }
-        RouteId::TelemetryExportDownloadCreate => {
-            let export_id = path_param::<ExportId>(&raw, "exportId")?;
-            let body = decode_body::<EmptyRequest>(&raw, limits)?;
-            let handled = api.telemetry_export_download_create(cx, export_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(201, &answer.0)?))
-        }
-        RouteId::TelemetryExportGet => {
-            let export_id = path_param::<ExportId>(&raw, "exportId")?;
-            expect_no_body(&raw)?;
-            let handled = api.telemetry_export_get(cx, export_id);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::TelemetryExportRevoke => {
-            let export_id = path_param::<ExportId>(&raw, "exportId")?;
-            let body = decode_body::<EmptyRequest>(&raw, limits)?;
-            let handled = api.telemetry_export_revoke(cx, export_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::TelemetryGapGet => {
-            let gap_id = path_param::<TelemetryGapId>(&raw, "gapId")?;
-            expect_no_body(&raw)?;
-            let handled = api.telemetry_gap_get(cx, gap_id);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        RouteId::TelemetryGapsQuery => {
-            let body = decode_body::<TelemetryGapQuery>(&raw, limits)?;
-            let handled = api.telemetry_gaps_query(cx, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
-        }
-        other => Err(wrong_group(other, "regional:telemetry-lifecycle")),
     }
 }
 

@@ -502,21 +502,15 @@ pub async fn run<A: ControlApi>(
     api: Arc<A>,
     edge: EdgeStack,
     probes: Probes,
-    telemetry: &aex_platform_telemetry::Handle,
 ) -> Result<(), CentralControlApiRunError> {
     aex_central_http::capability::admit(&manifest(), &config.resolved())?;
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.http.plane.as_str().to_owned(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.http.region.as_str().to_owned(),
-        ),
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = DEPLOYABLE.as_str(),
+        plane = config.http.plane.as_str(),
+        region = config.http.region.as_str(),
+        "process started"
     );
     lambda_http::run(app(api, edge, readiness(probes)))
         .await

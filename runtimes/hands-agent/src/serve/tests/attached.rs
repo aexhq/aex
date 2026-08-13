@@ -1,26 +1,16 @@
 //! Attached guest-serving acceptance tests.
 
 use super::{
-    Arc, AttachResponse, DeliveryMode, FakeRunner, Fence, FrameExpectation, PROTOCOL_V1,
-    ResponseStatus, ResultRequest, ResultResponse, StartRequest, StatusCode, TerminalState, Verb,
-    aws_run_hook_body, decode_response, exec_start, framed, generation, guest, operation, post,
-    router,
+    Arc, AttachResponse, DeliveryMode, FakeRunner, Fence, ResultRequest, ResultResponse,
+    StartRequest, StatusCode, TerminalState, Verb, aws_run_hook_body, decode_json, enveloped,
+    exec_start, guest, operation, post, router,
 };
-
-fn expectation() -> FrameExpectation {
-    FrameExpectation {
-        generation: generation(),
-        min_fence: Fence(0),
-        schema_version: PROTOCOL_V1,
-        max_frame_bytes: 1_048_576,
-    }
-}
 
 async fn attach(app: &axum::Router, start: &StartRequest) -> AttachResponse {
     let (status, body) = post(
         app,
         Verb::Attach.path(),
-        framed(
+        enveloped(
             Verb::Attach,
             &serde_json::to_vec(start).expect("it serializes"),
             Fence(1),
@@ -28,10 +18,7 @@ async fn attach(app: &axum::Router, start: &StartRequest) -> AttachResponse {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let frame = decode_response(&body, &expectation()).expect("a framed response");
-    assert_eq!(frame.preamble.status, ResponseStatus::Payload);
-    assert_eq!(frame.preamble.verb, Verb::Attach);
-    serde_json::from_slice(frame.payload).expect("a typed attach answer")
+    decode_json(&body)
 }
 
 #[tokio::test]
@@ -69,15 +56,14 @@ async fn an_attached_operation_returns_its_result_on_the_connection_that_started
     assert_eq!(runner.started.lock().expect("fixture lock").len(), 1);
 
     let pull = ResultRequest {
-        binding: start.binding,
         operation: operation(),
         from_offset: 0,
-        max_bytes: 1_048_576,
+        max_bytes: aex_hands_protocol::rpc::MAX_RESULT_CHUNK_BYTES,
     };
     let (status, body) = post(
         &app,
         Verb::Result.path(),
-        framed(
+        enveloped(
             Verb::Result,
             &serde_json::to_vec(&pull).expect("it serializes"),
             Fence(1),
@@ -85,11 +71,10 @@ async fn an_attached_operation_returns_its_result_on_the_connection_that_started
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let frame = decode_response(&body, &expectation()).expect("a framed response");
     let ResultResponse::Terminal {
         terminal: pulled,
         chunk,
-    } = serde_json::from_slice(frame.payload).expect("a typed result")
+    } = decode_json(&body)
     else {
         panic!("the same operation is terminal");
     };
@@ -139,16 +124,20 @@ async fn a_detached_delivery_posted_to_the_attach_path_is_refused_rather_than_se
     let (status, body) = post(
         &app,
         Verb::Attach.path(),
-        framed(
+        enveloped(
             Verb::Attach,
             &serde_json::to_vec(&start).expect("it serializes"),
             Fence(1),
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    let frame = decode_response(&body, &expectation()).expect("a framed response");
-    assert_eq!(frame.preamble.status, ResponseStatus::ProtocolError);
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let error: serde_json::Value = serde_json::from_slice(&body).expect("the HTTP error decodes");
+    assert!(
+        error["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("attached delivery"))
+    );
     assert!(runner.started.lock().expect("fixture lock").is_empty());
 }
 

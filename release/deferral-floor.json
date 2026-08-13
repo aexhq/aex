@@ -51,9 +51,7 @@
       "sessions_list",
       "session_restore",
       "session_stop",
-      "session_telemetry_export_create",
       "session_trash",
-      "telemetry_export_create",
       "upload_abort",
       "upload_complete",
       "upload_create",
@@ -65,7 +63,7 @@
     ]
   },
   "scenarios": {
-    "floor": 22,
+    "floor": 17,
     "floorNote": "SC-REGIONAL-ADMISSION and SC-REGISTRY-RESOURCES remain the runnable release scenarios. SC-SESSION-LIVE-FILES was deferred on 2026-08-13: its live target needs a registered provider credential in the evidence workspace and a live provider-credential register, neither of which exists, and no evidence environment supplies AEX_LIVE_PROVIDER/AEX_LIVE_MODEL/AEX_LIVE_PROVIDER_CREDENTIAL_ID. Re-enable it with the live-evidence expansion.",
     "deleting": {},
     "deferred": [
@@ -79,16 +77,11 @@
       "SC-FINANCE-RECONCILE",
       "SC-HANDS-HOSTILE",
       "SC-IDENTITY-ACCOUNT",
-      "SC-OBSERVATION-ADMIT",
-      "SC-OBSERVATION-EXPORT",
-      "SC-OBSERVATION-GAP",
-      "SC-OBSERVATION-QUERY",
       "SC-RUNTIME-CONTROL",
       "SC-SCHEMA-MIGRATE",
       "SC-SDK-INSTALL",
       "SC-SESSION-ADMIT",
       "SC-SESSION-LIVE-FILES",
-      "SC-SESSION-STREAM",
       "SC-SESSION-TERMINAL",
       "SC-USAGE-SETTLE"
     ],

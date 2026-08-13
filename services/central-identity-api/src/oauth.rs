@@ -31,8 +31,6 @@
 
 use aex_identity_app::use_cases::OauthProfile;
 use aex_identity_domain::Provider;
-use base64::Engine as _;
-use sha2::Digest as _;
 use subtle::ConstantTimeEq as _;
 
 mod client;
@@ -43,9 +41,9 @@ pub use client::{OauthClient, OauthClientError, load_oauth_client};
 pub use http::{ClientBuildError, HttpProviderHandshake};
 
 #[cfg(test)]
-use http::{Endpoints, form, redact};
+use http::{Endpoints, redact};
 #[cfg(test)]
-use profile::{google_profile, parse_google_token};
+use profile::{github_profile, google_profile};
 
 /// Why the handshake did not produce a person.
 ///
@@ -77,8 +75,11 @@ pub enum HandshakeError {
 /// 43 characters.
 #[must_use]
 pub fn challenge_of(verifier: &str) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(sha2::Sha256::digest(verifier.as_bytes()))
+    oauth2::PkceCodeChallenge::from_code_verifier_sha256(&oauth2::PkceCodeVerifier::new(
+        verifier.to_owned(),
+    ))
+    .as_str()
+    .to_owned()
 }
 
 /// Whether the `state` a redirect carried is the challenge of this verifier.

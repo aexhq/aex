@@ -72,6 +72,12 @@ pub mod keys {
     /// [`SignInHandshake`], so a deployable that did not declare that capability
     /// cannot be handed it.
     pub const GOOGLE_OAUTH_SECRET_ID: &str = "AEX_CENTRAL_IDENTITY_GOOGLE_OAUTH_SECRET_ID";
+    /// The secret holding GitHub's registered OAuth client.
+    ///
+    /// It has the same JSON envelope and capability boundary as the Google
+    /// client, but remains a separate secret so either provider can rotate
+    /// without coupling credentials.
+    pub const GITHUB_OAUTH_SECRET_ID: &str = "AEX_CENTRAL_IDENTITY_GITHUB_OAUTH_SECRET_ID";
     /// Where a provider sends the browser back after a person authorizes.
     ///
     /// Configured rather than accepted from the request body, and sent verbatim
@@ -88,6 +94,7 @@ pub mod keys {
         AURORA_SECRET_ARN,
         DATABASE,
         DEVICE_VERIFICATION_URI,
+        GITHUB_OAUTH_SECRET_ID,
         GOOGLE_OAUTH_SECRET_ID,
         MAX_BODY_BYTES,
         PEPPER_SECRET_ID,
@@ -136,6 +143,8 @@ pub struct Config {
     pub device_verification_uri: String,
     /// The secret holding Google's registered OAuth client.
     pub google_oauth_secret_id: String,
+    /// The secret holding GitHub's registered OAuth client.
+    pub github_oauth_secret_id: String,
     /// Where a provider sends the browser back after a person authorizes.
     pub sign_in_redirect_uri: String,
 }
@@ -190,6 +199,7 @@ impl Config {
             role,
             device_verification_uri: required(&lookup, keys::DEVICE_VERIFICATION_URI)?,
             google_oauth_secret_id: required(&lookup, keys::GOOGLE_OAUTH_SECRET_ID)?,
+            github_oauth_secret_id: required(&lookup, keys::GITHUB_OAUTH_SECRET_ID)?,
             sign_in_redirect_uri: https_url(&lookup, keys::SIGN_IN_REDIRECT_URI)?,
         })
     }
@@ -214,6 +224,10 @@ impl Config {
                 (
                     keys::GOOGLE_OAUTH_SECRET_ID.to_owned(),
                     self.google_oauth_secret_id.clone(),
+                ),
+                (
+                    keys::GITHUB_OAUTH_SECRET_ID.to_owned(),
+                    self.github_oauth_secret_id.clone(),
                 ),
             ]),
         }
@@ -262,7 +276,7 @@ where
 
 /// This binary's capability declaration.
 ///
-/// Identity DML, one pepper, and Google's sign-in OAuth client. No
+/// Identity DML, one pepper, and the provider-specific sign-in OAuth clients. No
 /// control write, no queue, no object store, no payment provider and no regional
 /// invoke: a binding for any of them is refused at start-up.
 ///
@@ -270,7 +284,7 @@ where
 /// folded into it, because they are genuinely two rights over two authorities:
 /// one writes rows in this platform's own schema, the other holds a credential
 /// that authenticates this platform *to somebody else*. A deployable that needs
-/// to create a user does not thereby need to be able to speak as AEX at Google,
+/// to create a user does not thereby need to be able to speak as AEX at a provider,
 /// and the manifest is where that distinction is enforceable rather than
 /// merely stated.
 #[allow(
@@ -291,6 +305,7 @@ pub fn manifest() -> CompositionManifest {
         bindings: vec![
             CapabilityBinding::arn(keys::AURORA_CLUSTER_ARN, IdentityWrite::ID),
             CapabilityBinding::resource(keys::PEPPER_SECRET_ID, IdentityWrite::ID),
+            CapabilityBinding::resource(keys::GITHUB_OAUTH_SECRET_ID, SignInHandshake::ID),
             CapabilityBinding::resource(keys::GOOGLE_OAUTH_SECRET_ID, SignInHandshake::ID),
         ],
     }
@@ -312,7 +327,7 @@ pub struct Probes {
     pub aurora: bool,
     /// The active identity pepper loaded.
     pub pepper: bool,
-    /// Google's OAuth client loaded and parsed.
+    /// Every configured provider OAuth client loaded and parsed.
     ///
     /// A process that cannot load them can never complete a sign-in, and a
     /// browser session is the only thing that can approve a device
@@ -409,21 +424,15 @@ pub async fn run<A: AuthApi, I: aex_wire::server::IdentityApi>(
     account: Arc<I>,
     edge: EdgeStack,
     probes: Probes,
-    telemetry: &aex_platform_telemetry::Handle,
 ) -> Result<(), CentralIdentityApiRunError> {
     aex_central_http::capability::admit(&manifest(), &config.resolved())?;
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.http.plane.as_str().to_owned(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.http.region.as_str().to_owned(),
-        ),
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = DEPLOYABLE.as_str(),
+        plane = config.http.plane.as_str(),
+        region = config.http.region.as_str(),
+        "process started"
     );
     lambda_http::run(app(api, account, edge, readiness(probes)))
         .await
@@ -480,6 +489,10 @@ mod tests {
             (
                 keys::DEVICE_VERIFICATION_URI,
                 "https://aex.dev/device".to_owned(),
+            ),
+            (
+                keys::GITHUB_OAUTH_SECRET_ID,
+                "aex/dev/sign-in/github/current".to_owned(),
             ),
             (
                 keys::GOOGLE_OAUTH_SECRET_ID,
@@ -670,15 +683,16 @@ mod tests {
     /// Each provider's client is its own binding under its own capability, so
     /// the review list names every credential this deployable may hold.
     #[test]
-    fn the_google_oauth_client_is_bound_to_the_handshake_capability() {
+    fn every_oauth_client_is_bound_to_the_handshake_capability() {
         let bindings = manifest().bindings;
-        let key = keys::GOOGLE_OAUTH_SECRET_ID;
-        let binding = bindings
-            .iter()
-            .find(|it| it.key == key)
-            .unwrap_or_else(|| panic!("`{key}` is not bound"));
-        assert_eq!(binding.capability, SignInHandshake::ID, "{key}");
-        assert!(!binding.arn, "`{key}` names a secret, not an ARN");
+        for key in [keys::GITHUB_OAUTH_SECRET_ID, keys::GOOGLE_OAUTH_SECRET_ID] {
+            let binding = bindings
+                .iter()
+                .find(|it| it.key == key)
+                .unwrap_or_else(|| panic!("`{key}` is not bound"));
+            assert_eq!(binding.capability, SignInHandshake::ID, "{key}");
+            assert!(!binding.arn, "`{key}` names a secret, not an ARN");
+        }
     }
 
     #[test]

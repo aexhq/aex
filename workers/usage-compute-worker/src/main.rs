@@ -31,6 +31,8 @@ use aex_usage_domain::ingress::FactDraftEnvelope;
 use aex_usage_domain::wire_pending::RegionId;
 use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
 
+const DEPLOYABLE: &str = "usage-compute-worker";
+
 /// Validated start-up configuration for `usage-compute-worker`.
 ///
 /// Nothing here has a default. A defaulted resource identifier silently binds
@@ -404,22 +406,14 @@ where
 /// # Errors
 ///
 /// Returns [`UsageComputeWorkerRunError::Runtime`] when the Lambda runtime stops.
-pub async fn run(
-    config: &Config,
-    telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), UsageComputeWorkerRunError> {
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.clone(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.as_str().to_owned(),
-        ),
+pub async fn run(config: &Config) -> Result<(), UsageComputeWorkerRunError> {
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = DEPLOYABLE,
+        plane = %config.plane,
+        region = config.region.as_str(),
+        "process started"
     );
 
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
@@ -626,28 +620,32 @@ fn failures(identifiers: &[String]) -> Vec<serde_json::Value> {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("{DEPLOYABLE}: diagnostics installation failed: {error}");
+        return ExitCode::FAILURE;
+    }
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
             // A deployable that cannot serve says why and stops. It never serves
             // a placeholder, because a placeholder over money evidence is a
             // silent under-bill nobody would notice.
-            eprintln!("usage-compute-worker: refusing to start: {error}");
+            tracing::error!(
+                target: "aex::diagnostics",
+                event_name = "process.configuration_rejected",
+                deployable = DEPLOYABLE,
+                error = %error,
+                "process configuration rejected"
+            );
+            eprintln!("{DEPLOYABLE}: refusing to start: {error}");
             return ExitCode::FAILURE;
         }
     };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry).await;
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("usage-compute-worker: telemetry flush left {pending} record(s) undelivered");
-    }
+    let outcome = run(&config).await;
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("usage-compute-worker: stopped: {error}");
+            eprintln!("{DEPLOYABLE}: stopped: {error}");
             ExitCode::FAILURE
         }
     }

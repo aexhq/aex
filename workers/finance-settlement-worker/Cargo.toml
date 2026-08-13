@@ -39,9 +39,8 @@ path = "src/main.rs"
 [dependencies]
 aex-finance-app = { path = "../../crates/aex-finance-app" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
 aex-rds-data = { path = "../../crates/aex-rds-data" }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-wire = { path = "../../crates/aex-wire" }
 async-trait.workspace = true
 aws-config.workspace = true
@@ -52,6 +51,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

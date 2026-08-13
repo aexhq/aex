@@ -90,8 +90,6 @@ impl Participant {
     pub const SESSION_ADMITTED_EVENT: Self = Self::new("session.admitted_event");
     /// The public `session.message_completed` native event.
     pub const SESSION_COMPLETED_EVENT: Self = Self::new("session.completed_event");
-    /// The run's terminal native event.
-    pub const SESSION_TERMINAL_EVENT: Self = Self::new("session.terminal_event");
     /// A bounded preview native event.
     pub const SESSION_PREVIEW_EVENT: Self = Self::new("session.preview_event");
     /// The durable idempotency receipt.

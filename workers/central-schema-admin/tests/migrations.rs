@@ -172,7 +172,7 @@ async fn google_only_identity_constraint_advances_without_rewriting_rows() {
         .expect("the Google-only constraint applies");
     assert_eq!(
         applied_head(&mut connection).await.expect("head"),
-        Some(20_260_801_001_500)
+        Some(20_260_813_000_100)
     );
     let provider: String =
         sqlx::query_scalar("SELECT provider FROM identity.external_identity WHERE user_id = $1")

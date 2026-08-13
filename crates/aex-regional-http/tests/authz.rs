@@ -691,11 +691,7 @@ async fn a_key_presented_to_the_wrong_audience_is_refused() {
     // admitted at the other with the same MAC.
     let (token, _) = workspace_key(Region::EuWest1, 5);
     let id = plain_route();
-    for other in [
-        AssertionAudience::RegionalObservation,
-        AssertionAudience::RegionalOtlp,
-        AssertionAudience::RegionalStream,
-    ] {
+    for other in [AssertionAudience::ToolExec] {
         let mut state = projected(AccountState::Active, Region::EuWest1);
         state.audiences = AudienceSet::EMPTY.insert(other);
         assert_eq!(
@@ -973,7 +969,7 @@ async fn a_long_lived_lease_observes_revocation_pause_audience_and_placement_cha
 
     // A key narrowed to no longer authorize this edge loses its open socket too.
     let mut narrowed = projected(AccountState::Active, Region::EuWest1);
-    narrowed.audiences = AudienceSet::EMPTY.insert(AssertionAudience::RegionalObservation);
+    narrowed.audiences = AudienceSet::EMPTY.insert(AssertionAudience::ToolExec);
     *snapshot.lock().expect("an uncontended fixture") = Ok(narrowed);
     assert_eq!(
         edge.revalidate(&authorization)

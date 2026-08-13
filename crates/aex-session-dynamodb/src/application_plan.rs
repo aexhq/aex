@@ -327,15 +327,6 @@ impl ExternalActionCompiler for OutboxCompiler {
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
         let (item, participant) = match action.write {
-            Some(Write::PutOutboxEvent(event)) => {
-                if Some(event.session) != binding.session {
-                    return Err(cross_tenant());
-                }
-                (
-                    crate::codec::encode_outbox_event(binding.workspace, event),
-                    Participant::SESSION_TERMINAL_EVENT,
-                )
-            }
             Some(Write::PutMessageAdmittedEvent(event)) => {
                 if Some(event.session) != binding.session {
                     return Err(cross_tenant());
@@ -363,15 +354,12 @@ impl ExternalActionCompiler for OutboxCompiler {
             }
             _ => {
                 return Err(StoreError::Invalid {
-                    detail: "the outbox family carries terminal or message-admitted events only"
-                        .to_owned(),
+                    detail: "the outbox family carries message-admitted events only".to_owned(),
                 });
             }
         };
         let mut expression = compile_conditions(&action.conditions)?;
-        // A terminal barrier emits its outbox event exactly once; a replayed
-        // barrier must lose the row rather than rewrite it, or a delivered event
-        // could be resurrected as pending.
+        // A message-admitted event is immutable and emitted exactly once.
         if !action
             .conditions
             .iter()
@@ -1685,44 +1673,6 @@ mod tests {
                 Err(aex_session_app::plan::PlanError::DuplicateWriteTarget(_))
             ),
             "one key addresses one receipt, which is what makes the conflict reachable"
-        );
-    }
-
-    #[test]
-    fn an_outbox_event_compiles_to_one_conditional_put() {
-        let (session, run, _agent, _message) = running_session();
-        let event = aex_session_domain::OutboxEvent {
-            schema_version: aex_internal_contracts::SchemaVersion::V1,
-            session: session.id,
-            run: run.id,
-            status: aex_session_domain::RunStatus::Succeeded,
-            session_revision: session.revision,
-            usage_closure: aex_session_domain::UsageClosureId(aex_wire::ids::Uuid7::compose(
-                1, [11; 10],
-            )),
-            at: aex_session_domain::testing::moment(9),
-        };
-        let input = SessionTransaction {
-            intent: TransactionIntent::CommitTerminal,
-            conditions: Vec::new(),
-            writes: vec![Write::PutOutboxEvent(Box::new(event))],
-            after_commit: Vec::new(),
-        };
-        let compiled = compile_application_transaction(
-            &RegionalTables::composed("dev", "eu-west-1"),
-            &input,
-            SessionBinding {
-                workspace: session.workspace,
-                organization: session.organization,
-                session: session.id,
-            },
-            &FamilyCompilers::new(),
-        )
-        .expect("the outbox family is registered");
-        assert_eq!(compiled.transaction.len(), 1);
-        assert_eq!(
-            compiled.transaction.participants(),
-            [crate::plan::Participant::SESSION_TERMINAL_EVENT]
         );
     }
 }

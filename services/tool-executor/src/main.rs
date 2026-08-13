@@ -30,17 +30,12 @@ enum RunError {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    // Telemetry first: a configuration refusal must reach the wire, or a
-    // crash-looping deployment is visible only to whoever tails stderr.
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("tool-executor: diagnostics installation failed: {error}");
+        return ExitCode::FAILURE;
+    }
 
     let outcome = run().await;
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("tool-executor: telemetry flush left {pending} record(s) undelivered");
-    }
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -52,6 +47,14 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), RunError> {
     let config = Config::from_env()?;
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = "tool-executor",
+        plane = config.plane.as_str(),
+        region = %config.region,
+        "process started"
+    );
     let aws = aws_config::load_from_env().await;
 
     // The one secret this process holds, unwrapped once and never written

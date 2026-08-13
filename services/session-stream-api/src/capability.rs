@@ -1,57 +1,24 @@
 //! This binary's capability declaration, and the compile-time tokens that make
 //! it more than a comment.
 //!
-//! # Why this module exists
-//!
-//! `regional-stream` used to prove "the stream admits no durable work" by
-//! refusing to start if `AEX_WORK_TABLE` was bound at all. That proof was cheap
-//! and genuinely strong, and merging the stream into the session API destroys
-//! it: the session half *requires* the same variable, and one process cannot
-//! both require and forbid it.
-//!
-//! What replaces it is narrower in what it inspects and wider in what it proves.
-//! The environment guard said "no process holding this binary may know the work
-//! table's name". This says "no code path reachable from a stream route may
-//! reach a write handle, and the compiler checks it". The second is what anyone
-//! actually wanted; the first was a proxy for it that happened to be enforceable
-//! in `main`.
-//!
-//! # The three mechanisms
-//!
-//! 1. [`Grant<C>`] is unforgeable outside this crate: [`Composition`] is the only
-//!    type implementing [`Declares`] here, so only this composition root can mint
-//!    one. [`crate::session::Stores::build`] demands a `Grant<WorkClaim>`, which
-//!    means the `WorkStore` write handle cannot be constructed anywhere else —
-//!    not in a stream handler, not in a test helper, not in a future refactor
-//!    that "just needs the table name".
-//! 2. The stream half's state
-//!    ([`crate::stream::mount::AppState`]) has no field of a write-capable type
-//!    and no field from which one can be derived. It holds an edge, a read-only
-//!    observation service, decode limits, socket quotas and the drain flag. A
-//!    stream handler that wanted a write would have to widen that struct, which
-//!    is a visible diff in a file called `mount.rs` rather than an invisible
-//!    consequence of an environment variable appearing in a task definition.
-//! 3. [`manifest`] is checked by [`aex_regional_http::capability::admit`] before
-//!    any AWS client is opened, and refuses a start-up whose declared
-//!    capabilities and configured resources disagree.
-//!
-//! Mechanism 2 is the one that carries the guarantee the deleted `FORBIDDEN`
-//! entry used to carry. Mechanisms 1 and 3 are what stop it from silently
-//! regressing.
+//! [`Grant<C>`] is unforgeable outside this crate: [`Composition`] is the only
+//! type implementing [`Declares`] here, so only this composition root can mint
+//! one. [`crate::session::Stores::build`] demands a `Grant<WorkClaim>`, and the
+//! manifest is checked before any AWS client is opened.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use aex_regional_http::capability::{
     Capability as _, CapabilityBinding, CompositionError, CompositionManifest, ContentEncrypt,
     Declares, DeployableId, ResolvedConfig, SecretPlaintextAdmission, SessionOperationInvoke,
-    StreamSocket, WorkClaim,
+    WorkClaim,
 };
 
 use crate::config::{self, Config};
 
 /// This binary's capability declaration.
 ///
-/// Five capabilities, and deliberately no general secret-decrypt capability.
+/// Four capabilities, and deliberately no general secret-decrypt capability.
 /// `SecretPlaintextAdmission` is the narrow provider-credential sealing path;
 /// reveal and rewrap remain outside this public edge.
 #[allow(
@@ -62,7 +29,6 @@ pub struct Composition;
 
 impl Declares<WorkClaim> for Composition {}
 impl Declares<SessionOperationInvoke> for Composition {}
-impl Declares<StreamSocket> for Composition {}
 impl Declares<ContentEncrypt> for Composition {}
 impl Declares<SecretPlaintextAdmission> for Composition {}
 
@@ -78,7 +44,6 @@ pub fn manifest() -> Result<CompositionManifest, CompositionError> {
         capabilities: BTreeSet::from([
             WorkClaim::ID,
             SessionOperationInvoke::ID,
-            StreamSocket::ID,
             ContentEncrypt::ID,
             SecretPlaintextAdmission::ID,
         ]),
@@ -90,8 +55,6 @@ pub fn manifest() -> Result<CompositionManifest, CompositionError> {
                 config::SESSION_OPERATION_WORKER_FUNCTION_ARN,
                 SessionOperationInvoke::ID,
             ),
-            // The sockets' authority. A stream reads it; nothing writes it here.
-            CapabilityBinding::resource(config::OBSERVATION_TABLE, StreamSocket::ID),
             CapabilityBinding::arn(config::CONTENT_KMS_KEY_ARN, ContentEncrypt::ID),
             CapabilityBinding::resource(config::SECRET_CUSTODY_TABLE, SecretPlaintextAdmission::ID),
             CapabilityBinding::resource(
@@ -121,10 +84,6 @@ pub fn resolved(config: &Config) -> ResolvedConfig {
             (
                 config::SESSION_OPERATION_WORKER_FUNCTION_ARN.to_owned(),
                 config.session_operation_worker.value.clone(),
-            ),
-            (
-                config::OBSERVATION_TABLE.to_owned(),
-                config.observation_table.clone(),
             ),
             (
                 config::CONTENT_KMS_KEY_ARN.to_owned(),

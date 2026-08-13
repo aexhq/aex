@@ -50,9 +50,7 @@ pub fn is_vendor_dependency(name: &str) -> bool {
         "axum"
             | "hyper"
             | "hyper-util"
-            | "opentelemetry"
-            | "opentelemetry-otlp"
-            | "opentelemetry_sdk"
+            | "opentelemetry-proto"
             | "prost"
             | "prost-types"
             | "reqwest"
@@ -762,10 +760,7 @@ mod tests {
 /// keeps two branches from merge-summing their way back to green.
 pub const MAIN_ONLY_DEPLOYABLES: &[&str] = &[
     "central-authz",
-    "observation-export-launcher",
-    "observation-export-task",
     "regional-control",
-    "regional-otlp",
     "runtime-control-worker",
     "usage-compute-worker",
     "usage-storage-worker",

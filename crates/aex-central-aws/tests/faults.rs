@@ -144,6 +144,56 @@ fn an_unreachable_directory_is_reported_rather_than_worked_around() {
 }
 
 #[test]
+fn a_startup_verification_set_refuses_duplicate_and_excess_versions() {
+    let record = |version, state, secret_ref: &str| aex_central_aws::pepper::PepperRecord {
+        version: PepperVersion::new(version),
+        purpose: PepperPurpose::Cursor,
+        state,
+        secret_ref: secret_ref.to_owned(),
+    };
+    let duplicate = keystore(
+        FakeDirectory::with(vec![
+            record(4, PepperState::Active, VERSION_ID),
+            record(4, PepperState::Retiring, "duplicate"),
+        ]),
+        Vec::new(),
+    );
+    assert!(matches!(
+        run(duplicate.verification_set(PepperPurpose::Cursor)),
+        Err(StoreError::Fatal(_))
+    ));
+
+    let excess = keystore(
+        FakeDirectory::with(vec![
+            record(4, PepperState::Active, VERSION_ID),
+            record(3, PepperState::Retiring, "retiring-3"),
+            record(2, PepperState::Retiring, "retiring-2"),
+            record(1, PepperState::Retiring, "retiring-1"),
+        ]),
+        Vec::new(),
+    );
+    assert!(matches!(
+        run(excess.verification_set(PepperPurpose::Cursor)),
+        Err(StoreError::Fatal(_))
+    ));
+}
+
+#[test]
+fn a_startup_verification_set_requires_exactly_one_current_version() {
+    let directory = FakeDirectory::with(vec![aex_central_aws::pepper::PepperRecord {
+        version: PepperVersion::new(3),
+        purpose: PepperPurpose::Cursor,
+        state: PepperState::Retiring,
+        secret_ref: VERSION_ID.to_owned(),
+    }]);
+    let store = keystore(directory, Vec::new());
+    match run(store.verification_set(PepperPurpose::Cursor)) {
+        Err(error) => assert_eq!(error, StoreError::NotFound),
+        Ok(_) => panic!("a retiring-only set was accepted without a current version"),
+    }
+}
+
+#[test]
 fn a_secret_payload_that_is_not_the_declared_shape_is_refused() {
     for body in [
         r#"{"version":1}"#,

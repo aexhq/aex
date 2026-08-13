@@ -174,22 +174,10 @@ fn every_route_registry_row_has_a_scenario_owner_without_polluting_the_wire_bund
 ///
 /// Deliberately hand-maintained: derive it from the same registry it guards and
 /// the check compares the registry with itself. Every transport is covered,
-/// streaming included — a filter that excused the ndjson half would leave
-/// twenty-four routes unguarded, which is how the retired `regional-session-api`
-/// name silently emptied this check once already.
+/// including the finite session telemetry artifact routes. The retired
+/// `regional-session-api` name once silently emptied this check, so the serving
+/// artifact boundary remains explicit here.
 const SESSION_STREAM_MOUNTS: &[&str] = &[
-    "observations_events_listen",
-    "observations_events_stream",
-    "observations_logs_listen",
-    "observations_logs_stream",
-    "observations_metrics_listen",
-    "observations_metrics_stream",
-    "observations_spans_listen",
-    "observations_spans_stream",
-    "observations_telemetry_listen",
-    "observations_telemetry_stream",
-    "observations_traces_listen",
-    "observations_traces_stream",
     "provider_credential_get",
     "provider_credential_register",
     "provider_credential_revoke",
@@ -219,20 +207,10 @@ const SESSION_STREAM_MOUNTS: &[&str] = &[
     "session_get",
     "session_message_send",
     "session_messages_list",
-    "session_observations_events_listen",
-    "session_observations_events_stream",
-    "session_observations_logs_listen",
-    "session_observations_logs_stream",
-    "session_observations_metrics_listen",
-    "session_observations_metrics_stream",
-    "session_observations_spans_listen",
-    "session_observations_spans_stream",
-    "session_observations_telemetry_listen",
-    "session_observations_telemetry_stream",
-    "session_observations_traces_listen",
-    "session_observations_traces_stream",
     "session_resume",
     "session_suspend",
+    "session_telemetry_segment_download_create",
+    "session_telemetry_segments_list",
     "session_terminate",
     "sessions_list",
     "upload_abort",
@@ -255,25 +233,6 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
     )
     .expect("route registry json");
     let rows = routes["routes"].as_array().expect("route rows");
-    let by_id: BTreeMap<_, _> = rows
-        .iter()
-        .map(|route| (route["operationId"].as_str().expect("operation id"), route))
-        .collect();
-
-    for operation in ["session_telemetry_export_create", "telemetry_export_create"] {
-        assert_eq!(
-            by_id[operation]
-                .get("servedArtifact")
-                .and_then(serde_json::Value::as_str),
-            Some("regional-observation-api"),
-            "mounted telemetry export admission must name its real artifact"
-        );
-        assert_eq!(
-            by_id[operation].get("deferredReason"),
-            None,
-            "mounted telemetry export admission cannot retain architecture debt"
-        );
-    }
     let stream_api: BTreeSet<_> = rows
         .iter()
         .filter(|route| route["servedArtifact"] == "session-stream-api")

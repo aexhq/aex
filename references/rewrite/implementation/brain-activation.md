@@ -27,7 +27,7 @@ DynamoDB journal, lease/fence, effect, and receipt records remain decisive.
 | `crates/aex-brain-domain/` | Activation phases, typed deferral reasons, effect transition rules, resource reservations, and cache keys. No transport or storage calls. |
 | `crates/aex-brain-app/` | Wake-to-settlement orchestration, concurrent restore reads, fold-cache use, phase-specific permits, park/resume, cancellation, and drain cleanup. |
 | `crates/aex-brain-store-dynamodb/` | Pending-state reads; fenced claim/release; strong session, journal/snapshot, and open-effect loads; durable continuation/effect transitions. |
-| `crates/aex-brain-provider-gateway/`, `crates/aex-brain-provider-custody/` | Pre-send permit and credential-generation fence, connection reuse, ambiguous provider outcomes, and credential/pool invalidation. |
+| `crates/aex-brain-provider/`, `crates/aex-brain-provider-custody/` | Pre-send permit and credential-generation fence, connection reuse, ambiguous provider outcomes, and credential/pool invalidation. |
 | `crates/aex-brain-mcp/`, `crates/aex-brain-managed-web/` | Revision-keyed pools, per-effect network checks, bounded concurrency, deterministic result commit ordering, and unknown non-task mutations. |
 | `crates/aex-brain-hands/` | Durable materialization park/resume and generation/fence/revision/token-keyed guest lease cache; no shell fast path outside Hands. |
 | `runtimes/brain-mux/` | Wake intake, affinity routing, task drain, health, metrics, and composition of the owners above. It contains no durable transition policy. |

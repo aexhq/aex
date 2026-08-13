@@ -328,6 +328,24 @@ impl PepperDirectory for FakeDirectory {
             .cloned()
             .ok_or(StoreError::NotFound)
     }
+
+    async fn verification_set(
+        &self,
+        purpose: PepperPurpose,
+    ) -> Result<Vec<PepperRecord>, StoreError> {
+        self.record();
+        if let Some(error) = self.refusal() {
+            return Err(error);
+        }
+        Ok(self
+            .rows
+            .lock()
+            .expect("not poisoned")
+            .iter()
+            .filter(|row| row.purpose == purpose && row.state.verifies())
+            .cloned()
+            .collect())
+    }
 }
 
 /// Runs one future on a current-thread runtime.

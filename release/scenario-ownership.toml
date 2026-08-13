@@ -218,12 +218,6 @@ provisions = [
 ]
 
 [[scenario]]
-id = "SC-SESSION-STREAM"
-owner = "regional-services"
-deferred = "The regional streaming transport has no executable scenario target yet."
-observes = ["artifact:session-stream-api"]
-
-[[scenario]]
 id = "SC-BYOK-CUSTODY"
 owner = "regional-stores"
 deferred = "The dedicated BYOK provider-credential register, metadata read/list, revocation, and key-administration path has no executable live target yet; generic user-managed secrets are not part of this product."
@@ -264,48 +258,6 @@ id = "SC-RUNTIME-CONTROL"
 owner = "hands"
 deferred = "The runtime-control production lifecycle has no executable live target yet."
 observes = ["artifact:runtime-control-worker"]
-
-# --- observation ----------------------------------------------------------------
-
-[[scenario]]
-id = "SC-OBSERVATION-ADMIT"
-owner = "observations-usage"
-# Reclassified 2026-08-10 while writing the P7.1 bodies. This scenario was
-# recorded as blocked by deployment alone. It is also blocked by a composition
-# fact that no plane fixes.
-deferred = "`services/regional-otlp` declares only a `[[bin]]` and has no library target, so `AdmissionAuthority`, `OtlpService` and `mount::router` — the production admission path from HTTP request to store write — are unreachable from any test outside that binary. An engine-backed body must first give the deployable a library target. Separately, `observation-authority` has no DynamoDB Local suite anywhere in the workspace, so its seven-index table has never been created by a test."
-observes = ["artifact:regional-otlp"]
-
-[scenario.prd]
-rule = "deployable_write"
-provisions = [
-  "organization",
-  "workspace",
-  "api_key",
-  "dynamo_item",
-]
-
-[[scenario]]
-id = "SC-OBSERVATION-QUERY"
-owner = "observations-usage"
-deferred = "The regional observation query surface has no executable live target yet."
-observes = ["artifact:regional-observation-api"]
-
-[[scenario]]
-id = "SC-OBSERVATION-EXPORT"
-owner = "observations-usage"
-deferred = "The export admission, launcher, and task chain has no executable live target yet."
-observes = [
-  "artifact:regional-observation-api",
-  "artifact:observation-export-launcher",
-  "artifact:observation-export-task",
-]
-
-[[scenario]]
-id = "SC-OBSERVATION-GAP"
-owner = "observations-usage"
-deferred = "The gap detection, reconciliation, and query lifecycle has no executable live target yet."
-observes = ["artifact:observation-reconciler", "artifact:regional-observation-api"]
 
 # --- runtime ---------------------------------------------------------------------
 

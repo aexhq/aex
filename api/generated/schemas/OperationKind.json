@@ -8,7 +8,6 @@
     "session_resume",
     "session_terminate",
     "session_delete",
-    "telemetry_export",
     "workspace_delete"
   ],
   "title": "OperationKind",

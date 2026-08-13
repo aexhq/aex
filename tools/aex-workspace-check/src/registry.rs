@@ -1426,13 +1426,13 @@ mod tests {
         )
     }
 
-    fn stream_sockets() -> WorkloadRow {
+    fn journal_fold() -> WorkloadRow {
         WorkloadRow {
-            path: "tests/load/workloads/regional-services/stream-sockets.toml".to_owned(),
-            id: "stream-sockets".to_owned(),
-            owner: "regional-services".to_owned(),
+            path: "tests/load/workloads/regional-domains/journal-fold.toml".to_owned(),
+            id: "journal-fold".to_owned(),
+            owner: "regional-domains".to_owned(),
             target: "aex-live-session-stream-api".to_owned(),
-            gates: vec!["LOAD-STREAM-SOCKETS".to_owned()],
+            gates: vec!["PERF-BASELINE-JOURNAL-FOLD".to_owned()],
         }
     }
 
@@ -1458,9 +1458,9 @@ mod tests {
             )],
             policy,
         );
-        inputs.workloads = vec![stream_sockets()];
+        inputs.workloads = vec![journal_fold()];
         let report = check(&inputs);
-        let pending = workload_row(&report, "LOAD-STREAM-SOCKETS")
+        let pending = workload_row(&report, "PERF-BASELINE-JOURNAL-FOLD")
             .expect("a blocking gate that cannot run is never silent");
         assert_eq!(pending.reason_class, "pending_workload");
         assert!(
@@ -1481,10 +1481,10 @@ mod tests {
             )],
             policy,
         );
-        inputs.workloads = vec![stream_sockets()];
+        inputs.workloads = vec![journal_fold()];
         let report = check(&inputs);
         assert!(
-            workload_row(&report, "LOAD-STREAM-SOCKETS").is_none(),
+            workload_row(&report, "PERF-BASELINE-JOURNAL-FOLD").is_none(),
             "a gate with both a descriptor and an executor owes nothing: {:?}",
             report.unearned
         );

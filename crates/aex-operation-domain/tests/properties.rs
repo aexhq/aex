@@ -388,7 +388,7 @@ proptest! {
     /// 49 `cursor_progress_monotone`.
     #[test]
     fn cursor_progress_monotone(reports in prop::collection::vec(0_u64..1_000, 1..16)) {
-        let running = start(&admitted(OperationKind::TelemetryExport), moment(1))
+        let running = start(&admitted(OperationKind::ContentGc), moment(1))
             .expect("starts")
             .operation;
         let mut current = running;
@@ -445,7 +445,7 @@ proptest! {
 fn commit_latch_is_total() {
     // 50 `commit_latch`. A continued kind is the one that is created `Queued`;
     // an inline kind is created already `Succeeded` by construction (D-07).
-    let queued = admitted(OperationKind::TelemetryExport);
+    let queued = admitted(OperationKind::ContentGc);
     assert_eq!(queued.status, OperationStatus::Queued);
     let running = start(&queued, moment(1)).expect("starts").operation;
     let latched = commit_point(&running, None, moment(2)).expect("latches");
@@ -604,20 +604,4 @@ fn redaction_preserves_the_envelope() {
             }
         }
     }
-}
-
-#[test]
-fn a_telemetry_export_is_never_cancelable_through_the_operation_row() {
-    // Two shipped crates disagreed about this: `cancelable_on_accept` said
-    // true while `aex_session_dynamodb::operation_cancel_owned` said false.
-    // An export's effect fence is the observation export row, so an
-    // operation-row update would acknowledge a command that cannot stop the
-    // launcher or the task. Cancellation lives on `telemetry_export_revoke`.
-    assert!(!OperationKind::TelemetryExport.cancelable_on_accept());
-    let queued = admitted(OperationKind::TelemetryExport);
-    assert_eq!(queued.status, OperationStatus::Queued);
-    assert!(
-        !queued.cancelable(),
-        "a 202 must not advertise a cancellation nothing behind it can honour"
-    );
 }

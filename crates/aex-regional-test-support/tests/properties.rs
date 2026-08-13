@@ -66,14 +66,6 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                             "runtime-control-worker" | "brain-mux" | "session-operation-worker"
                         )
                     }
-                    // The reconciler deletes exactly two shapes: an idle series
-                    // claim and OBS# revisions under a pinned deletion epoch.
-                    "observation-authority" => {
-                        matches!(
-                            grant.role.as_str(),
-                            "observation-reconciler" | "regional-otlp"
-                        )
-                    }
                     _ => false,
                 };
                 assert!(
@@ -138,29 +130,15 @@ fn session_delete_worker_can_remove_only_one_sessions_terminal_runtime_rows() {
 }
 
 #[test]
-fn session_operation_worker_holds_only_the_observation_deletion_control_actions() {
+fn observation_authority_and_its_session_operation_grant_are_removed() {
     let bundle = tables::rebuild().expect("the definitions load");
-    let observation = bundle
-        .tables
-        .iter()
-        .find(|table| table.table == "observation-authority")
-        .expect("observation authority");
-    let grants = observation
-        .iam
-        .iter()
-        .filter(|grant| grant.role == "session-operation-worker")
-        .collect::<Vec<_>>();
-    assert_eq!(grants.len(), 1);
-    assert_eq!(
-        grants[0].actions,
-        ["dynamodb:GetItem", "dynamodb:UpdateItem"]
+    assert!(
+        bundle
+            .tables
+            .iter()
+            .all(|table| table.table != "observation-authority"),
+        "the removed observation engine must not retain a table definition"
     );
-    assert_eq!(grants[0].resources, ["table"]);
-    assert_eq!(grants[0].item_types, ["scope_deletion"]);
-    let condition = grants[0].condition.as_ref().expect("leading-key fence");
-    assert_eq!(condition.operator, "ForAllValues:StringLike");
-    assert_eq!(condition.key, "dynamodb:LeadingKeys");
-    assert_eq!(condition.values, ["FRONT#*"]);
 }
 
 #[test]

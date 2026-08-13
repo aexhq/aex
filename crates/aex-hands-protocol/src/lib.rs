@@ -6,24 +6,24 @@
 //! # The six verbs
 //!
 //! ```text
-//! start(operation, call_hash, fence, bounds) -> accepted(operation, guest_revision)
+//! start(operation, call_hash, fence, bounds) -> accepted(operation)
 //! status(operation)
 //! cancel(operation, fence)
 //! result(operation, from_offset, max_bytes) -> terminal metadata + checksummed bytes
 //! ```
 //!
 //! This is a clean replacement, not a port. The retired surface —
-//! `hello`/`execute`/`output`/`result`/`heartbeat`/`shutdown` frames keyed by
+//! `hello`/`execute`/`output`/`result`/`heartbeat`/`shutdown` messages keyed by
 //! `callId = "<assistantSeq>:<toolUseId>"`, generation carried out of band on the
-//! transport envelope, guest-stamped usage counters, and a guest-written S3
+//! the request envelope, guest-stamped usage counters, and a guest-written S3
 //! completion marker — has **no successor**. The old `callId` encoded a journal
 //! position into a transport identity, so an operation became unaddressable
 //! after a fold change; [`HandsOperationId`] is Brain-minted and independent.
 //!
 //! # Invariants
 //!
-//! - byte length is checked against `max_frame_bytes` before any allocation;
-//! - [`GenerationBinding`] is validated before payload decode;
+//! - the HTTP body is bounded before typed JSON decode;
+//! - [`GenerationBinding`] is validated before operation dispatch;
 //! - a repeated `start` with an equal `(operation, call_hash)` returns
 //!   `Accepted { existing: true }`; an unequal hash returns `Conflict` and starts
 //!   no process;
@@ -53,9 +53,9 @@ pub use operation::{
 };
 pub use rpc::{
     AttachedEvent, CallHash, CancelReason, CancelRequest, CancelResponse, Fence, GenerationBinding,
-    GenerationExpectation, GuestRevision, HandsOperationId, MessageDecodeError, OutputStream,
-    ResultChunk, ResultRequest, ResultResponse, StartRequest, StartResponse, StatusRequest,
-    StatusResponse, decode_agent_message,
+    GuestRequest, GuestResponse, HandsOperationId, MAX_GUEST_BODY_BYTES, MAX_RESULT_CHUNK_BYTES,
+    OutputStream, PROTOCOL_V1, ResultChunk, ResultRequest, ResultResponse, StartRequest,
+    StartResponse, StatusRequest, StatusResponse, Verb,
 };
 
 pub use aex_wire::ids::GenerationId;

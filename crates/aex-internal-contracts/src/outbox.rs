@@ -1,29 +1,13 @@
-//! The terminal outbox event and the identities it carries.
-//!
-//! The terminal barrier writes exactly one durable notification, and two
-//! independently deployed processes read it: `regional-stream` delivers it, and
-//! the observation materializer projects it. That makes it an envelope crossing
-//! a process boundary rather than a value internal to the session domain, so it
-//! lives here and `aex-session-domain` imports it.
-//!
-//! [`RunStatus`], [`SessionRevision`] and [`UsageClosureId`] moved with it: an
-//! envelope whose members live in a crate the readers do not depend on is not
-//! decodable, which is the whole point of moving it.
+//! Internal run status and settlement identities shared across process boundaries.
 //!
 //! [`RunStatus`] is deliberately internal. Public run resources were removed in
 //! the session-centric MVP, while this private status still closes execution,
-//! usage and observation authorities. A boundary test pins its stored spelling.
+//! usage authorities. A boundary test pins its stored spelling.
 
 use core::fmt;
 
 use aex_wire::Uuid7;
-use aex_wire::ids::SessionId;
-
-use crate::RunId;
-use aex_wire::types::Timestamp;
 use serde::{Deserialize, Serialize};
-
-use crate::SchemaVersion;
 
 /// Where a run ended up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -111,30 +95,6 @@ impl fmt::Display for SessionRevision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct UsageClosureId(pub Uuid7);
-
-/// The native outbox event a terminal barrier emits.
-///
-/// It is the one durable notification the barrier writes, inside the same
-/// transaction as the settlement, so nothing outside that transaction can
-/// prevent it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct OutboxEvent {
-    /// Which envelope version this is.
-    pub schema_version: SchemaVersion,
-    /// The owning session.
-    pub session: SessionId,
-    /// The run that settled.
-    pub run: RunId,
-    /// The status it settled at.
-    pub status: RunStatus,
-    /// The session revision after the barrier.
-    pub session_revision: SessionRevision,
-    /// The usage closure the run is billed under.
-    pub usage_closure: UsageClosureId,
-    /// When the barrier committed.
-    pub at: Timestamp,
-}
 
 /// Canonical decimal-string serde for a `u64` counter.
 mod decimal_string {

@@ -27,12 +27,10 @@ pub enum OperationKind {
     SessionResume,
     /// Permanently destroy compute and ephemeral live files.
     SessionTerminate,
-    /// Irreversibly delete session-scoped user content and telemetry.
+    /// Irreversibly delete session-scoped user content.
     SessionDelete,
     /// Destroy a whole workspace.
     WorkspaceDelete,
-    /// Export telemetry.
-    TelemetryExport,
     /// Collect unreferenced content.
     ContentGc,
 }
@@ -48,14 +46,13 @@ pub enum Execution {
 
 impl OperationKind {
     /// Every kind, in canonical order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::SessionCancel,
         Self::SessionSuspend,
         Self::SessionResume,
         Self::SessionTerminate,
         Self::SessionDelete,
         Self::WorkspaceDelete,
-        Self::TelemetryExport,
         Self::ContentGc,
     ];
 
@@ -69,7 +66,6 @@ impl OperationKind {
             Self::SessionTerminate => "session_terminate",
             Self::SessionDelete => "session_delete",
             Self::WorkspaceDelete => "workspace_delete",
-            Self::TelemetryExport => "telemetry_export",
             Self::ContentGc => "content_gc",
         }
     }
@@ -89,23 +85,6 @@ impl OperationKind {
     /// Whether a caller may still cancel the operation the instant it is
     /// accepted.
     ///
-    /// `TelemetryExport` is **not** cancelable, and that is a correction rather
-    /// than a policy choice. This function used to say it was while
-    /// `aex_session_dynamodb`'s `operation_cancel_owned` said it was not, so
-    /// two shipped crates disagreed about a published capability. The store's
-    /// reasoning is the correct one and is repeated here so the two cannot
-    /// drift apart again: an export's effect fence is the observation export
-    /// row, and treating an operation-row update as its cancellation would
-    /// acknowledge a command that cannot stop the export launcher or the export
-    /// task. The capability is not lost, only relocated to the verb that owns
-    /// it — `telemetry_export_revoke`, already mounted, sets the row's
-    /// `cancelRequested` flag that both the launcher's claim condition and the
-    /// task's publication fence already honour.
-    ///
-    /// The export task moves the operation to `Running` in the same transaction
-    /// that accepts its fenced generation lease. Fine-grained progress remains
-    /// on `telemetry_export_get`; the operation status still truthfully says
-    /// whether a task has crossed the authoritative acceptance fence.
     #[must_use]
     pub const fn cancelable_on_accept(self) -> bool {
         !matches!(
@@ -116,7 +95,6 @@ impl OperationKind {
                 | Self::SessionTerminate
                 | Self::SessionDelete
                 | Self::WorkspaceDelete
-                | Self::TelemetryExport
         )
     }
 
@@ -140,7 +118,6 @@ impl OperationKind {
             Self::SessionTerminate => models::OperationKind::SessionTerminate,
             Self::SessionDelete => models::OperationKind::SessionDelete,
             Self::WorkspaceDelete => models::OperationKind::WorkspaceDelete,
-            Self::TelemetryExport => models::OperationKind::TelemetryExport,
             Self::ContentGc => return None,
         })
     }
@@ -158,7 +135,6 @@ impl OperationKind {
             models::OperationKind::SessionTerminate => Self::SessionTerminate,
             models::OperationKind::SessionDelete => Self::SessionDelete,
             models::OperationKind::WorkspaceDelete => Self::WorkspaceDelete,
-            models::OperationKind::TelemetryExport => Self::TelemetryExport,
         }
     }
 
@@ -449,9 +425,6 @@ impl OperationResult {
             }
             OperationKind::WorkspaceDelete => {
                 payload!(models::WorkspaceTombstone, WorkspaceDelete)
-            }
-            OperationKind::TelemetryExport => {
-                payload!(models::TelemetryExportResult, TelemetryExport)
             }
             OperationKind::ContentGc => Ok(None),
         }
@@ -886,44 +859,6 @@ pub fn cancel(operation: &Operation, now: Timestamp) -> Result<OperationCommit, 
     Ok(OperationCommit::of(next, false))
 }
 
-/// Terminalizes a queued telemetry export when its dedicated export revoke
-/// fence wins.
-///
-/// Generic operation cancellation deliberately refuses telemetry exports: the
-/// operation row cannot stop the launcher or task. The dedicated revoke route
-/// owns the actual effect fence in `observation-authority`; after it has won,
-/// this transition lets the same transaction record the matching canonical
-/// operation outcome.
-///
-/// # Errors
-///
-/// Returns [`CancelRejection::NotCancelable`] for any other operation kind or
-/// a committed export, and [`CancelRejection::AlreadyTerminal`] for a terminal
-/// outcome other than an earlier cancellation.
-pub fn revoke_telemetry_export(
-    operation: &Operation,
-    now: Timestamp,
-) -> Result<OperationCommit, CancelRejection> {
-    if operation.status.is_terminal() {
-        if operation.status == OperationStatus::Cancelled {
-            return Ok(OperationCommit::of(operation.clone(), false));
-        }
-        return Err(CancelRejection::AlreadyTerminal(operation.status));
-    }
-    if operation.kind != OperationKind::TelemetryExport || operation.committed_at.is_some() {
-        return Err(CancelRejection::NotCancelable {
-            kind: operation.kind,
-            committed: operation.committed_at.is_some(),
-        });
-    }
-    let mut next = operation.clone();
-    next.cancel_requested = true;
-    next.status = OperationStatus::Cancelled;
-    next.updated_at = now;
-    next.terminal_at = Some(now);
-    Ok(OperationCommit::of(next, false))
-}
-
 #[cfg(test)]
 mod tests {
     use aex_wire::CanonicalJson;
@@ -1030,26 +965,6 @@ mod tests {
         let requested = cancel(&running, moment(2)).expect("records").operation;
         assert_eq!(requested.status, OperationStatus::Running);
         assert!(requested.cancel_requested);
-    }
-
-    #[test]
-    fn the_dedicated_export_revoke_terminalizes_queued_and_running_exports() {
-        let queued = operation(OperationKind::TelemetryExport);
-        let running = start(&queued, moment(2)).expect("starts").operation;
-        for export in [queued, running] {
-            let revoked = super::revoke_telemetry_export(&export, moment(5))
-                .expect("the effect-owning revoke accepts the export")
-                .operation;
-            assert_eq!(revoked.status, OperationStatus::Cancelled);
-            assert!(revoked.cancel_requested);
-            assert_eq!(revoked.terminal_at, Some(moment(5)));
-            assert_eq!(
-                super::revoke_telemetry_export(&revoked, moment(6))
-                    .expect("an exact revoke replay is idempotent")
-                    .operation,
-                revoked
-            );
-        }
     }
 
     #[test]

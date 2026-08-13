@@ -28,5 +28,3 @@ scopes:
   - { scope: "resources:write", doc: "Replace and delete registered opaque workspace files and stage uploads." }
   - { scope: "provider_credentials:read", doc: "Read dedicated BYOK provider-credential binding metadata." }
   - { scope: "provider_credentials:write", doc: "Register and revoke dedicated BYOK provider credentials." }
-  - { scope: "telemetry:read", doc: "Query observations, gaps and exports." }
-  - { scope: "telemetry:write", doc: "Admit customer OTLP batches." }

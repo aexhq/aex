@@ -27,10 +27,8 @@ pub const SESSION_TABLE: &str = "AEX_SESSION_TABLE";
 pub const RUNTIME_ACTIVITY_TABLE: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
 /// Existing runtime-control-worker lifecycle queue.
 pub const RUNTIME_LIFECYCLE_QUEUE_URL: &str = "AEX_RUNTIME_LIFECYCLE_QUEUE_URL";
-/// Session-scoped observation and export deletion authority.
-pub const OBSERVATION_TABLE: &str = "AEX_OBSERVATION_TABLE";
-/// Closed observation deletion-duty shard count.
-pub const OBS_DUTY_SHARDS: &str = "AEX_OBS_DUTY_SHARDS";
+/// Existing immutable session-telemetry bucket whose session prefix deletion owns.
+pub const SESSION_TELEMETRY_BUCKET: &str = "AEX_SESSION_TELEMETRY_BUCKET";
 /// How many deterministic shards the due scan sweeps.
 pub const DUE_SCAN_SHARDS: &str = "AEX_DUE_SCAN_SHARDS";
 /// Claim lease in milliseconds.
@@ -41,7 +39,7 @@ pub const STEP_DEADLINE_MS: &str = "AEX_STEP_DEADLINE_MS";
 pub const MAX_ATTEMPTS: &str = "AEX_MAX_ATTEMPTS";
 
 /// Every variable a healthy `session-operation-worker` requires.
-pub const REQUIRED: [&str; 15] = [
+pub const REQUIRED: [&str; 14] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
@@ -51,8 +49,7 @@ pub const REQUIRED: [&str; 15] = [
     SESSION_TABLE,
     RUNTIME_ACTIVITY_TABLE,
     RUNTIME_LIFECYCLE_QUEUE_URL,
-    OBSERVATION_TABLE,
-    OBS_DUTY_SHARDS,
+    SESSION_TELEMETRY_BUCKET,
     DUE_SCAN_SHARDS,
     LEASE_MS,
     STEP_DEADLINE_MS,
@@ -95,10 +92,8 @@ pub struct Config {
     pub runtime_activity_table: String,
     /// Existing runtime-control-worker lifecycle queue.
     pub runtime_lifecycle_queue_url: String,
-    /// Observation authority table.
-    pub observation_table: String,
-    /// Observation deletion-duty shard count.
-    pub observation_duty_shards: u8,
+    /// Immutable session telemetry bucket.
+    pub session_telemetry_bucket: String,
     /// Deterministic due-scan shard count.
     pub due_scan_shards: u64,
     /// Claim lease in milliseconds.
@@ -155,11 +150,6 @@ impl Config {
                 ),
             });
         }
-        let observation_duty_shards = u8::try_from(bounded_u64(lookup, OBS_DUTY_SHARDS, 1, 255)?)
-            .map_err(|_| RegionalHttpConfigError::Invalid {
-            name: OBS_DUTY_SHARDS,
-            reason: "observation duty shards do not fit the deployed u8 keyspace".to_owned(),
-        })?;
         Ok(Self {
             plane,
             region,
@@ -173,8 +163,7 @@ impl Config {
             session_table: required(lookup, SESSION_TABLE)?,
             runtime_activity_table: required(lookup, RUNTIME_ACTIVITY_TABLE)?,
             runtime_lifecycle_queue_url: queue_url(lookup, RUNTIME_LIFECYCLE_QUEUE_URL, region)?,
-            observation_table: required(lookup, OBSERVATION_TABLE)?,
-            observation_duty_shards,
+            session_telemetry_bucket: required(lookup, SESSION_TELEMETRY_BUCKET)?,
             due_scan_shards,
             lease_ms: i64::try_from(bounded_u64(lookup, LEASE_MS, 1_000, 900_000)?).map_err(
                 |_| RegionalHttpConfigError::Invalid {

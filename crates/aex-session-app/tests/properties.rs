@@ -572,8 +572,8 @@ async fn the_maximum_open_message_set_fits_one_terminal_transaction() {
     let generic_actions = planned.plan.validate().expect("valid").actions;
     assert_eq!(
         generic_actions + 2,
-        MAX_ACTIONS - 1,
-        "the production Brain boundary adds two actions and a whole message costs two, leaving one unusable slot"
+        MAX_ACTIONS,
+        "the production Brain boundary adds two actions and a whole message costs two, filling the transaction exactly"
     );
     assert_eq!(
         planned

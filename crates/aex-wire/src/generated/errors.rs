@@ -3,7 +3,7 @@
 //! The closed v1 public error vocabulary.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:308866d3e6ae0f8108ee3b81c1b852256a3bc1d80cb6d774f221d3d91fab4721`.
+//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -99,35 +99,10 @@ pub enum ErrorCode {
     FileNotFound,
     /// `content_missing` — the referenced content is not present
     ContentMissing,
-    /// `export_not_found` — no such export
-    ExportNotFound,
-    /// `export_not_ready` — the export is still preparing
-    ExportNotReady,
-    /// `export_expired` — the export expired
-    ExportExpired,
-    /// `export_revoked` — the export was revoked
-    ExportRevoked,
-    /// `export_capacity` — the export could not reserve its bounded worker capacity
-    ExportCapacity,
     /// `download_grant_expired` — the download grant expired
     DownloadGrantExpired,
-    /// `telemetry_payload_too_large` — the OTLP payload exceeded its effective limit
-    TelemetryPayloadTooLarge,
-    /// `invalid_telemetry` — the telemetry payload is not the pinned OTLP revision
-    InvalidTelemetry,
-    /// `telemetry_quota_exceeded` — the telemetry admission quota was exceeded
-    TelemetryQuotaExceeded,
-    /// `telemetry_incomplete` — the requested range has recorded gaps and completeness was required
-    TelemetryIncomplete,
-    /// `unsupported_export_signal` — that signal cannot be exported in the requested format
-    UnsupportedExportSignal,
-    /// `invalid_query` — the observation query exceeded its structural bounds
+    /// `invalid_query` — the query exceeded its structural bounds
     InvalidQuery,
-    /// `telemetry_query_budget_exhausted` — the observation query exhausted its scan budget before
-    /// it could make progress
-    TelemetryQueryBudgetExhausted,
-    /// `invalid_metric_aggregation` — the metric aggregation is not computable over the selection
-    InvalidMetricAggregation,
     /// `invalid_network_policy` — the requested network policy is not permitted
     InvalidNetworkPolicy,
     /// `unsupported_package_ecosystem` — that package ecosystem is not supported
@@ -160,8 +135,6 @@ pub enum ErrorCode {
     PreconditionFailed,
     /// `wrong_workspace_region` — the workspace is placed in a different region
     WrongWorkspaceRegion,
-    /// `observability_unavailable` — the observation authority could not be reached
-    ObservabilityUnavailable,
     /// `usage_unavailable` — the usage projection could not be read
     UsageUnavailable,
     /// `rate_limited` — too many requests
@@ -219,20 +192,8 @@ impl ErrorCode {
         ErrorCode::ApprovalBindingChanged,
         ErrorCode::FileNotFound,
         ErrorCode::ContentMissing,
-        ErrorCode::ExportNotFound,
-        ErrorCode::ExportNotReady,
-        ErrorCode::ExportExpired,
-        ErrorCode::ExportRevoked,
-        ErrorCode::ExportCapacity,
         ErrorCode::DownloadGrantExpired,
-        ErrorCode::TelemetryPayloadTooLarge,
-        ErrorCode::InvalidTelemetry,
-        ErrorCode::TelemetryQuotaExceeded,
-        ErrorCode::TelemetryIncomplete,
-        ErrorCode::UnsupportedExportSignal,
         ErrorCode::InvalidQuery,
-        ErrorCode::TelemetryQueryBudgetExhausted,
-        ErrorCode::InvalidMetricAggregation,
         ErrorCode::InvalidNetworkPolicy,
         ErrorCode::UnsupportedPackageEcosystem,
         ErrorCode::PackageResolutionFailed,
@@ -249,7 +210,6 @@ impl ErrorCode {
         ErrorCode::AccountStateUnavailable,
         ErrorCode::PreconditionFailed,
         ErrorCode::WrongWorkspaceRegion,
-        ErrorCode::ObservabilityUnavailable,
         ErrorCode::UsageUnavailable,
         ErrorCode::RateLimited,
         ErrorCode::UpstreamError,
@@ -301,20 +261,8 @@ impl ErrorCode {
             Self::ApprovalBindingChanged => "approval_binding_changed",
             Self::FileNotFound => "file_not_found",
             Self::ContentMissing => "content_missing",
-            Self::ExportNotFound => "export_not_found",
-            Self::ExportNotReady => "export_not_ready",
-            Self::ExportExpired => "export_expired",
-            Self::ExportRevoked => "export_revoked",
-            Self::ExportCapacity => "export_capacity",
             Self::DownloadGrantExpired => "download_grant_expired",
-            Self::TelemetryPayloadTooLarge => "telemetry_payload_too_large",
-            Self::InvalidTelemetry => "invalid_telemetry",
-            Self::TelemetryQuotaExceeded => "telemetry_quota_exceeded",
-            Self::TelemetryIncomplete => "telemetry_incomplete",
-            Self::UnsupportedExportSignal => "unsupported_export_signal",
             Self::InvalidQuery => "invalid_query",
-            Self::TelemetryQueryBudgetExhausted => "telemetry_query_budget_exhausted",
-            Self::InvalidMetricAggregation => "invalid_metric_aggregation",
             Self::InvalidNetworkPolicy => "invalid_network_policy",
             Self::UnsupportedPackageEcosystem => "unsupported_package_ecosystem",
             Self::PackageResolutionFailed => "package_resolution_failed",
@@ -331,7 +279,6 @@ impl ErrorCode {
             Self::AccountStateUnavailable => "account_state_unavailable",
             Self::PreconditionFailed => "precondition_failed",
             Self::WrongWorkspaceRegion => "wrong_workspace_region",
-            Self::ObservabilityUnavailable => "observability_unavailable",
             Self::UsageUnavailable => "usage_unavailable",
             Self::RateLimited => "rate_limited",
             Self::UpstreamError => "upstream_error",
@@ -384,20 +331,8 @@ impl ErrorCode {
             Self::ApprovalBindingChanged => 409,
             Self::FileNotFound => 404,
             Self::ContentMissing => 409,
-            Self::ExportNotFound => 404,
-            Self::ExportNotReady => 409,
-            Self::ExportExpired => 410,
-            Self::ExportRevoked => 410,
-            Self::ExportCapacity => 503,
             Self::DownloadGrantExpired => 410,
-            Self::TelemetryPayloadTooLarge => 413,
-            Self::InvalidTelemetry => 400,
-            Self::TelemetryQuotaExceeded => 429,
-            Self::TelemetryIncomplete => 409,
-            Self::UnsupportedExportSignal => 400,
             Self::InvalidQuery => 400,
-            Self::TelemetryQueryBudgetExhausted => 409,
-            Self::InvalidMetricAggregation => 400,
             Self::InvalidNetworkPolicy => 400,
             Self::UnsupportedPackageEcosystem => 400,
             Self::PackageResolutionFailed => 409,
@@ -414,7 +349,6 @@ impl ErrorCode {
             Self::AccountStateUnavailable => 503,
             Self::PreconditionFailed => 412,
             Self::WrongWorkspaceRegion => 409,
-            Self::ObservabilityUnavailable => 503,
             Self::UsageUnavailable => 503,
             Self::RateLimited => 429,
             Self::UpstreamError => 502,
@@ -467,20 +401,8 @@ impl ErrorCode {
             Self::ApprovalBindingChanged => false,
             Self::FileNotFound => false,
             Self::ContentMissing => false,
-            Self::ExportNotFound => false,
-            Self::ExportNotReady => true,
-            Self::ExportExpired => false,
-            Self::ExportRevoked => false,
-            Self::ExportCapacity => true,
             Self::DownloadGrantExpired => false,
-            Self::TelemetryPayloadTooLarge => false,
-            Self::InvalidTelemetry => false,
-            Self::TelemetryQuotaExceeded => true,
-            Self::TelemetryIncomplete => true,
-            Self::UnsupportedExportSignal => false,
             Self::InvalidQuery => false,
-            Self::TelemetryQueryBudgetExhausted => false,
-            Self::InvalidMetricAggregation => false,
             Self::InvalidNetworkPolicy => false,
             Self::UnsupportedPackageEcosystem => false,
             Self::PackageResolutionFailed => false,
@@ -497,7 +419,6 @@ impl ErrorCode {
             Self::AccountStateUnavailable => true,
             Self::PreconditionFailed => false,
             Self::WrongWorkspaceRegion => false,
-            Self::ObservabilityUnavailable => true,
             Self::UsageUnavailable => true,
             Self::RateLimited => true,
             Self::UpstreamError => true,
@@ -550,20 +471,8 @@ impl ErrorCode {
             Self::ApprovalBindingChanged => ErrorClass::Conflict,
             Self::FileNotFound => ErrorClass::NotFound,
             Self::ContentMissing => ErrorClass::State,
-            Self::ExportNotFound => ErrorClass::NotFound,
-            Self::ExportNotReady => ErrorClass::State,
-            Self::ExportExpired => ErrorClass::NotFound,
-            Self::ExportRevoked => ErrorClass::NotFound,
-            Self::ExportCapacity => ErrorClass::Unavailable,
             Self::DownloadGrantExpired => ErrorClass::NotFound,
-            Self::TelemetryPayloadTooLarge => ErrorClass::Validation,
-            Self::InvalidTelemetry => ErrorClass::Validation,
-            Self::TelemetryQuotaExceeded => ErrorClass::Quota,
-            Self::TelemetryIncomplete => ErrorClass::State,
-            Self::UnsupportedExportSignal => ErrorClass::Validation,
             Self::InvalidQuery => ErrorClass::Validation,
-            Self::TelemetryQueryBudgetExhausted => ErrorClass::Quota,
-            Self::InvalidMetricAggregation => ErrorClass::Validation,
             Self::InvalidNetworkPolicy => ErrorClass::Validation,
             Self::UnsupportedPackageEcosystem => ErrorClass::Validation,
             Self::PackageResolutionFailed => ErrorClass::State,
@@ -580,7 +489,6 @@ impl ErrorCode {
             Self::AccountStateUnavailable => ErrorClass::Unavailable,
             Self::PreconditionFailed => ErrorClass::Precondition,
             Self::WrongWorkspaceRegion => ErrorClass::Conflict,
-            Self::ObservabilityUnavailable => ErrorClass::Unavailable,
             Self::UsageUnavailable => ErrorClass::Unavailable,
             Self::RateLimited => ErrorClass::Quota,
             Self::UpstreamError => ErrorClass::Unavailable,
@@ -633,20 +541,8 @@ impl ErrorCode {
             Self::ApprovalBindingChanged => PrecedenceStage::DomainState,
             Self::FileNotFound => PrecedenceStage::DomainState,
             Self::ContentMissing => PrecedenceStage::DomainState,
-            Self::ExportNotFound => PrecedenceStage::TombstoneAndParent,
-            Self::ExportNotReady => PrecedenceStage::DomainState,
-            Self::ExportExpired => PrecedenceStage::DomainState,
-            Self::ExportRevoked => PrecedenceStage::DomainState,
-            Self::ExportCapacity => PrecedenceStage::DomainState,
             Self::DownloadGrantExpired => PrecedenceStage::DomainState,
-            Self::TelemetryPayloadTooLarge => PrecedenceStage::TransportEnvelope,
-            Self::InvalidTelemetry => PrecedenceStage::BodyLimitAndParse,
-            Self::TelemetryQuotaExceeded => PrecedenceStage::DomainState,
-            Self::TelemetryIncomplete => PrecedenceStage::DomainState,
-            Self::UnsupportedExportSignal => PrecedenceStage::BodyLimitAndParse,
             Self::InvalidQuery => PrecedenceStage::BodyLimitAndParse,
-            Self::TelemetryQueryBudgetExhausted => PrecedenceStage::DomainState,
-            Self::InvalidMetricAggregation => PrecedenceStage::BodyLimitAndParse,
             Self::InvalidNetworkPolicy => PrecedenceStage::BodyLimitAndParse,
             Self::UnsupportedPackageEcosystem => PrecedenceStage::BodyLimitAndParse,
             Self::PackageResolutionFailed => PrecedenceStage::DomainState,
@@ -663,7 +559,6 @@ impl ErrorCode {
             Self::AccountStateUnavailable => PrecedenceStage::AccountState,
             Self::PreconditionFailed => PrecedenceStage::Precondition,
             Self::WrongWorkspaceRegion => PrecedenceStage::Placement,
-            Self::ObservabilityUnavailable => PrecedenceStage::DomainState,
             Self::UsageUnavailable => PrecedenceStage::DomainState,
             Self::RateLimited => PrecedenceStage::DomainState,
             Self::UpstreamError => PrecedenceStage::Commit,
@@ -736,28 +631,8 @@ impl ErrorCode {
             }
             Self::FileNotFound => "no such file entry",
             Self::ContentMissing => "the referenced content is not present",
-            Self::ExportNotFound => "no such export",
-            Self::ExportNotReady => "the export is still preparing",
-            Self::ExportExpired => "the export expired",
-            Self::ExportRevoked => "the export was revoked",
-            Self::ExportCapacity => "the export could not reserve its bounded worker capacity",
             Self::DownloadGrantExpired => "the download grant expired",
-            Self::TelemetryPayloadTooLarge => "the OTLP payload exceeded its effective limit",
-            Self::InvalidTelemetry => "the telemetry payload is not the pinned OTLP revision",
-            Self::TelemetryQuotaExceeded => "the telemetry admission quota was exceeded",
-            Self::TelemetryIncomplete => {
-                "the requested range has recorded gaps and completeness was required"
-            }
-            Self::UnsupportedExportSignal => {
-                "that signal cannot be exported in the requested format"
-            }
-            Self::InvalidQuery => "the observation query exceeded its structural bounds",
-            Self::TelemetryQueryBudgetExhausted => {
-                "the observation query exhausted its scan budget before it could make progress"
-            }
-            Self::InvalidMetricAggregation => {
-                "the metric aggregation is not computable over the selection"
-            }
+            Self::InvalidQuery => "the query exceeded its structural bounds",
             Self::InvalidNetworkPolicy => "the requested network policy is not permitted",
             Self::UnsupportedPackageEcosystem => "that package ecosystem is not supported",
             Self::PackageResolutionFailed => "a requested package could not be resolved",
@@ -774,7 +649,6 @@ impl ErrorCode {
             Self::AccountStateUnavailable => "the account state could not be established",
             Self::PreconditionFailed => "the `If-Match` or generation precondition did not hold",
             Self::WrongWorkspaceRegion => "the workspace is placed in a different region",
-            Self::ObservabilityUnavailable => "the observation authority could not be reached",
             Self::UsageUnavailable => "the usage projection could not be read",
             Self::RateLimited => "too many requests",
             Self::UpstreamError => "a dependency failed",
@@ -833,24 +707,8 @@ impl ErrorCode {
             }
             Self::FileNotFound => None,
             Self::ContentMissing => None,
-            Self::ExportNotFound => None,
-            Self::ExportNotReady => None,
-            Self::ExportExpired => None,
-            Self::ExportRevoked => None,
-            Self::ExportCapacity => {
-                Some("retry after capacity is available or select a smaller export")
-            }
             Self::DownloadGrantExpired => None,
-            Self::TelemetryPayloadTooLarge => None,
-            Self::InvalidTelemetry => None,
-            Self::TelemetryQuotaExceeded => None,
-            Self::TelemetryIncomplete => None,
-            Self::UnsupportedExportSignal => None,
             Self::InvalidQuery => None,
-            Self::TelemetryQueryBudgetExhausted => {
-                Some("narrow the time range, add an indexed predicate, or request an export")
-            }
-            Self::InvalidMetricAggregation => None,
             Self::InvalidNetworkPolicy => None,
             Self::UnsupportedPackageEcosystem => None,
             Self::PackageResolutionFailed => None,
@@ -869,7 +727,6 @@ impl ErrorCode {
             Self::WrongWorkspaceRegion => {
                 Some("reissue the request against the `apiUrl` in `details`")
             }
-            Self::ObservabilityUnavailable => None,
             Self::UsageUnavailable => Some("retry the identical query"),
             Self::RateLimited => None,
             Self::UpstreamError => None,

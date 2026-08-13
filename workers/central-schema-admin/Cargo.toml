@@ -52,8 +52,6 @@ name = "central-schema-admin"
 path = "src/main.rs"
 
 [dependencies]
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-wire = { path = "../../crates/aex-wire" }
 aws-config.workspace = true
 aws-sdk-secretsmanager.workspace = true

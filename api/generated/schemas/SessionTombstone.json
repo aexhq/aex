@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/SessionTombstone.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The minimal marker left after irreversible deletion. Compute and live files are terminated first; session, message, Brain user-content, observation, telemetry and export payloads are removed. Independent registered workspace files and aggregate billing/audit facts remain.",
+  "description": "The minimal marker left after irreversible deletion. Compute and live files are terminated first; session, message, and Brain user-content payloads are removed. Independent registered workspace files and aggregate billing/audit facts remain.",
   "properties": {
     "deletedAt": {
       "description": "When deletion committed.",

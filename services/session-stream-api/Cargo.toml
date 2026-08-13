@@ -1,7 +1,7 @@
 [package]
 name = "session-stream-api"
 version = "0.1.0"
-description = "Finite regional session API and long-lived NDJSON stream, composed into one deployable."
+description = "Finite regional session API."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -24,7 +24,6 @@ concerns = ["contract", "fault", "security", "performance"]
 seams = [
     "aws.dynamodb.transact_write",
     "aws.dynamodb.condition",
-    "aws.dynamodb.streams",
     "aws.lambda.async_delivery",
     "aws.s3.conditional_put",
     "aws.iam.denial",
@@ -38,7 +37,6 @@ scenarios = []
 admission = "unit"
 composition = "unit"
 served = "unit"
-streaming = "unit"
 performance_contract = "e2e"
 provider_credential_registration = "unit"
 
@@ -47,9 +45,9 @@ name = "session-stream-api"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
-aws-sdk-dynamodbstreams.workspace = true
 aws-sdk-lambdamicrovms.workspace = true
 aws-sdk-lambda.workspace = true
 aws-sdk-kms.workspace = true
@@ -61,7 +59,6 @@ aws-sdk-sqs.workspace = true
 aws-sdk-secretsmanager.workspace = true
 aws-sdk-ssm.workspace = true
 axum.workspace = true
-async-trait.workspace = true
 base64.workspace = true
 bytes.workspace = true
 futures.workspace = true
@@ -91,13 +88,11 @@ aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb
 aex-secret-aws = { path = "../../crates/aex-secret-aws" }
 aex-secret-keystore-dynamodb = { path = "../../crates/aex-secret-keystore-dynamodb" }
 aex-work-dynamodb = { path = "../../crates/aex-work-dynamodb" }
-aex-observation-domain = { path = "../../crates/aex-observation-domain" }
-aex-observation-query = { path = "../../crates/aex-observation-query" }
-aex-observation-store-dynamodb = { path = "../../crates/aex-observation-store-dynamodb" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-secret-domain = { path = "../../crates/aex-secret-domain" }
 aex-session-app = { path = "../../crates/aex-session-app" }
 aex-session-domain = { path = "../../crates/aex-session-domain" }
+aex-session-telemetry-aws = { path = "../../crates/aex-session-telemetry-aws" }
 # The read-only usage projection adapter. It publishes no method that accepts
 # a row, so composing it cannot give this deployable write authority over the
 # billing projection.
@@ -112,9 +107,8 @@ aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-fea
 aex-wire = { path = "../../crates/aex-wire" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
-regional-observation-api = { path = "../regional-observation-api" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
+tracing.workspace = true
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -143,10 +137,6 @@ path = "tests/composition.rs"
 [[test]]
 name = "served"
 path = "tests/served.rs"
-
-[[test]]
-name = "streaming"
-path = "tests/streaming.rs"
 
 [[test]]
 name = "performance_contract"

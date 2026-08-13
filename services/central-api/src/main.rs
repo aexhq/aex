@@ -3,7 +3,7 @@
 //! Exclusive responsibility: the twenty-six mounted central operations. One
 //! process, one listener, one drain flag, one Aurora login.
 //!
-//! The binary is a composition root only: it installs telemetry, validates
+//! The binary is a composition root only: it installs diagnostics, validates
 //! configuration, admits its capability manifest, builds the real adapters,
 //! proves the shared start-up dependencies answer **before** the listener binds, assembles the
 //! router from the generated route table, and serves it until the drain
@@ -44,30 +44,20 @@ const DEFAULT_RETURN_URL: &str = "https://aex.dev/dashboard/billing";
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    // Telemetry first: a configuration refusal must reach the wire, or a
-    // crash-looping deployment is visible only to whoever tails stderr. The
-    // long-lived profile replaces the Lambda default, which flushes on an
-    // invocation boundary this process does not have.
-    let telemetry = match aex_platform_telemetry::LongLivedTelemetry::install() {
-        Ok(telemetry) => telemetry,
-        Err(error) => {
-            eprintln!("{}: refusing to start: {error}", DEPLOYABLE.as_str());
-            return ExitCode::FAILURE;
-        }
-    };
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("{}: refusing to start: {error}", DEPLOYABLE.as_str());
+        return ExitCode::FAILURE;
+    }
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
-            telemetry.handle().emit(
-                aex_platform_telemetry::Record::event(
-                    aex_telemetry_schema::generated::EVENT_AEX_PROCESS_CONFIGURATION_REJECTED,
-                )
-                .with(
-                    aex_telemetry_schema::generated::AEX_DEPLOYABLE,
-                    DEPLOYABLE.as_str(),
-                ),
+            tracing::error!(
+                target: "aex::diagnostics",
+                event_name = "process.configuration_rejected",
+                deployable = DEPLOYABLE.as_str(),
+                error = %error,
+                "configuration rejected"
             );
-            let _ = telemetry.shutdown();
             eprintln!("{}: refusing to start: {error}", DEPLOYABLE.as_str());
             eprintln!(
                 "{}: required configuration: {}",
@@ -77,14 +67,7 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let outcome = Box::pin(run(&config, telemetry.handle())).await;
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } = telemetry.shutdown()
-    {
-        eprintln!(
-            "{}: telemetry flush left {pending} record(s) undelivered",
-            DEPLOYABLE.as_str()
-        );
-    }
+    let outcome = Box::pin(run(&config)).await;
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -100,25 +83,17 @@ async fn main() -> ExitCode {
     clippy::too_many_lines,
     reason = "the composition root deliberately keeps every login, start-up dependency, service and drain binding visible in one audit surface"
 )]
-async fn run(
-    config: &Config,
-    telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), CentralApiRunError> {
+async fn run(config: &Config) -> Result<(), CentralApiRunError> {
     // Before any client is opened: the declared capabilities and the configured
     // resources must agree.
     aex_central_http::capability::admit(&manifest(), &config.resolved())?;
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.http.plane.as_str().to_owned(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.http.region.as_str().to_owned(),
-        ),
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = DEPLOYABLE.as_str(),
+        plane = config.http.plane.as_str(),
+        region = config.http.region.as_str(),
+        "process started"
     );
 
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
@@ -148,6 +123,7 @@ async fn run(
         aex_central_aws::PepperStatements {
             active: aex_control_aurora::sql::ACTIVE_CONTROL_PEPPER,
             by_version: aex_control_aurora::sql::CONTROL_PEPPER_BY_VERSION,
+            verification_set: Some(aex_control_aurora::sql::LIVE_CONTROL_PEPPERS),
         },
     ));
     let api_peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
@@ -168,6 +144,7 @@ async fn run(
             aex_central_aws::PepperStatements {
                 active: aex_identity_aurora::sql::ACTIVE_IDENTITY_PEPPER,
                 by_version: aex_identity_aurora::sql::IDENTITY_PEPPER_BY_VERSION,
+                verification_set: None,
             },
         )),
     ));
@@ -185,11 +162,16 @@ async fn run(
         central_identity_api::oauth::load_oauth_client(&secrets, &config.google_oauth_secret_id)
             .await
             .map_err(|reason| CentralApiRunError::Dependency("google-oauth-client", reason))?;
+    let github =
+        central_identity_api::oauth::load_oauth_client(&secrets, &config.github_oauth_secret_id)
+            .await
+            .map_err(|reason| CentralApiRunError::Dependency("github-oauth-client", reason))?;
     // The handshake is bounded by the same deadline the request it serves is, so
     // a provider that stops answering can never outlive its own request.
     let handshake = Arc::new(
         central_identity_api::oauth::HttpProviderHandshake::new(
             google,
+            github,
             config.sign_in_redirect_uri.clone(),
             config.http.request_deadline,
         )
@@ -201,17 +183,23 @@ async fn run(
         config.cursor_secret_id.clone(),
         control_directory,
     ));
-    cursor_peppers
-        .probe(PepperPurpose::Cursor)
+    let cursor_keys = cursor_peppers
+        .verification_set(PepperPurpose::Cursor)
         .await
         .map_err(|error| CentralApiRunError::Dependency("cursor-secret", error.to_string()))?;
-    let (_, cursor_material) = cursor_peppers
-        .active(PepperPurpose::Cursor)
-        .await
-        .map_err(|error| CentralApiRunError::Dependency("cursor-secret", error.to_string()))?;
-    let cursor_secret = Arc::new(aex_control_domain::CursorSecret::new(
-        cursor_material.expose_copy(),
-    ));
+    let cursor_secret = Arc::new(
+        aex_control_domain::CursorSecret::with_id(
+            cursor_keys.current.0.get(),
+            cursor_keys.current.1.expose_copy(),
+        )
+        .with_overlap(
+            cursor_keys
+                .retiring
+                .into_iter()
+                .map(|(version, material)| (version.get(), material.expose_copy())),
+        )
+        .map_err(|error| CentralApiRunError::Dependency("cursor-secret", error.to_string()))?,
+    );
 
     // --- the three services ----------------------------------------------------
     let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);

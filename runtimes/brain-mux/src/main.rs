@@ -4,7 +4,7 @@
 //! Hands adapter and the warm fold cache.
 //!
 //! This binary is a composition root only. Configuration is validated before anything
-//! starts, telemetry is installed through `aex_platform_telemetry`, and the behaviour
+//! starts, diagnostics are installed through `aex_platform_diagnostics`, and the behaviour
 //! itself lives in the library crates this deployable composes.
 
 pub mod admission;
@@ -43,6 +43,10 @@ pub struct Config {
     pub region: String,
     /// The session-authority table holding Brain journals and effects.
     pub resource: String,
+    /// Existing immutable session-telemetry object bucket.
+    pub session_telemetry_bucket: String,
+    /// Exact KMS key encrypting immutable session-telemetry objects.
+    pub session_telemetry_kms_key_arn: String,
     /// The queue Brain wakes are delivered on.
     pub wake_queue_url: String,
     /// The `regional-work` table the due backstop reads.
@@ -125,6 +129,10 @@ pub const PLANE_VAR: &str = "AEX_PLANE";
 pub const REGION_VAR: &str = "AEX_REGION";
 /// Environment variable naming the session-authority table holding Brain journals and effects.
 pub const RESOURCE_VAR: &str = "AEX_BRAIN_JOURNAL_TABLE";
+/// Environment variable naming the immutable session-telemetry bucket.
+pub const SESSION_TELEMETRY_BUCKET_VAR: &str = "AEX_SESSION_TELEMETRY_BUCKET";
+/// Environment variable naming the KMS key for immutable session telemetry.
+pub const SESSION_TELEMETRY_KMS_KEY_ARN_VAR: &str = "AEX_SESSION_TELEMETRY_KMS_KEY_ARN";
 /// Environment variable naming the queue Brain wakes are delivered on.
 ///
 /// Required, like every other resource name here. A defaulted queue URL binds the process to
@@ -157,7 +165,7 @@ const PLANES: [&str; 2] = ["dev", "prd"];
 
 /// The name every record this process emits is attributed to.
 ///
-/// One declaration: the release registry, the task definition and every telemetry attribute
+/// One declaration: the release registry, the task definition and every diagnostic attribute
 /// have to agree, and a second literal is how they come to disagree.
 pub const DEPLOYABLE: &str = "brain-mux";
 
@@ -203,11 +211,24 @@ impl Config {
             });
         }
         let resource = required(&lookup, RESOURCE_VAR)?;
+        let session_telemetry_bucket = required(&lookup, SESSION_TELEMETRY_BUCKET_VAR)?;
+        let session_telemetry_kms_key_arn = required(&lookup, SESSION_TELEMETRY_KMS_KEY_ARN_VAR)?;
+        validate_kms_arn(
+            SESSION_TELEMETRY_KMS_KEY_ARN_VAR,
+            &session_telemetry_kms_key_arn,
+            &region,
+        )?;
         let wake_queue_url = required(&lookup, WAKE_QUEUE_VAR)?;
         let work_table = required(&lookup, WORK_TABLE_VAR)?;
         let secret_custody_table = required(&lookup, SECRET_CUSTODY_TABLE_VAR)?;
         let secret_kms_key_arn = required(&lookup, SECRET_KMS_KEY_ARN_VAR)?;
         validate_kms_arn(SECRET_KMS_KEY_ARN_VAR, &secret_kms_key_arn, &region)?;
+        if session_telemetry_kms_key_arn == secret_kms_key_arn {
+            return Err(BrainMuxConfigError::Invalid {
+                name: SESSION_TELEMETRY_KMS_KEY_ARN_VAR,
+                reason: "session telemetry must use its dedicated KMS key".to_owned(),
+            });
+        }
         let runtime_activity_table = required(&lookup, RUNTIME_ACTIVITY_TABLE_VAR)?;
         let usage_compute_queue_url = endpoint(&lookup, USAGE_COMPUTE_QUEUE_VAR, &region)?;
         let usage_storage_queue_url = endpoint(&lookup, USAGE_STORAGE_QUEUE_VAR, &region)?;
@@ -245,6 +266,8 @@ impl Config {
             plane,
             region,
             resource,
+            session_telemetry_bucket,
+            session_telemetry_kms_key_arn,
             wake_queue_url,
             work_table,
             secret_custody_table,
@@ -418,25 +441,16 @@ pub fn compose(config: &Config) -> Result<compose::Composition, BrainMuxRunError
 /// created, and [`BrainMuxRunError::PumpStopped`] when the pump terminates while
 /// the process was still meant to be serving — the process exits non-zero so the
 /// orchestrator replaces a task that would otherwise sit wake-deaf forever.
-pub fn run(
-    config: &Config,
-    telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), BrainMuxRunError> {
+pub fn run(config: &Config) -> Result<(), BrainMuxRunError> {
     // Readiness starts false and is never defaulted true: a process that reported ready
     // before validating its bindings would admit work it cannot serve.
     let composition = std::sync::Arc::new(compose(config)?);
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.clone(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.clone(),
-        ),
+    tracing::info!(
+        target: "aex::diagnostics",
+        event = "process_started",
+        deployable = DEPLOYABLE,
+        plane = %config.plane,
+        region = %config.region,
     );
 
     let main_runtime = tokio::runtime::Builder::new_multi_thread()
@@ -468,7 +482,6 @@ pub fn run(
             health: std::sync::Arc::clone(&composition.health),
             gate: std::sync::Arc::clone(composition.admission.pressure()),
             files: std::sync::Arc::new(pressure::HostMemoryFiles),
-            telemetry: telemetry.clone(),
             identity: pressure::ProcessIdentity {
                 plane: config.plane.clone(),
                 region: config.region.clone(),
@@ -492,7 +505,6 @@ pub fn run(
         let mut pump = tokio::spawn(pump(
             std::sync::Arc::clone(&composition),
             config.clone(),
-            telemetry.clone(),
             pump_ports,
         ));
         let outcome = match serve_until(wait_for_shutdown(), &mut pump).await {
@@ -539,6 +551,8 @@ fn resolve_production_ports(
         &config.wake_queue_url,
         &config.resource,
         &config.work_table,
+        &config.session_telemetry_bucket,
+        &config.session_telemetry_kms_key_arn,
     ));
     let credentials = wake::credential_bindings(
         &aws.sdk,
@@ -624,12 +638,7 @@ struct ProductionBindings {
 ///
 /// The loop asks admission before every receive. Startup constructs this value only from a
 /// complete production peer set; no partial port set can reach this function.
-async fn pump(
-    composition: std::sync::Arc<compose::Composition>,
-    config: Config,
-    telemetry: aex_platform_telemetry::Handle,
-    ports: PumpPorts,
-) {
+async fn pump(composition: std::sync::Arc<compose::Composition>, config: Config, ports: PumpPorts) {
     let mut policy = composition.policy.clone();
     let aggregate_cap = policy.max_concurrent_drives.max(1);
     // One receive scope owns one activation slot. The outer scheduler owns the aggregate
@@ -653,7 +662,7 @@ async fn pump(
         aggregate_cap,
         |result| match result {
             Ok(report) => {
-                emit_due_isolations(&telemetry, &config, report);
+                emit_due_isolations(&config, report);
             }
             Err(error) => {
                 eprintln!("brain-mux: the wake loop refused: {error}");
@@ -731,11 +740,7 @@ async fn poll_after(
     pump.poll_once().await
 }
 
-fn emit_due_isolations(
-    telemetry: &aex_platform_telemetry::Handle,
-    config: &Config,
-    report: &aex_brain_app::activation::PollReport,
-) {
+fn emit_due_isolations(config: &Config, report: &aex_brain_app::activation::PollReport) {
     let count = u32::try_from(report.malformed).unwrap_or(u32::MAX);
     for isolation in &report.isolations {
         let reason = match isolation.reason {
@@ -748,25 +753,15 @@ fn emit_due_isolations(
                 "due_position_mismatch"
             }
         };
-        telemetry.emit(
-            aex_platform_telemetry::Record::event(
-                aex_telemetry_schema::generated::EVENT_AEX_BRAIN_DUE_ROW_ISOLATED,
-            )
-            .with(
-                aex_telemetry_schema::generated::AEX_PLANE,
-                config.plane.clone(),
-            )
-            .with(
-                aex_telemetry_schema::generated::AEX_REGION,
-                config.region.clone(),
-            )
-            .with(aex_telemetry_schema::generated::AEX_DEPLOYABLE, DEPLOYABLE)
-            .with(aex_telemetry_schema::generated::AEX_ERROR_CLASS, reason)
-            .with(aex_telemetry_schema::generated::AEX_ISOLATION_COUNT, count)
-            .with(
-                aex_telemetry_schema::generated::AEX_ISOLATION_FINGERPRINT,
-                isolation.fingerprint.clone(),
-            ),
+        tracing::warn!(
+            target: "aex::diagnostics",
+            event = "brain_due_row_isolated",
+            deployable = DEPLOYABLE,
+            plane = %config.plane,
+            region = %config.region,
+            error_class = reason,
+            isolation_count = count,
+            isolation_fingerprint = %isolation.fingerprint,
         );
     }
 }
@@ -1001,6 +996,10 @@ async fn wait_for_shutdown() {
 }
 
 fn main() -> std::process::ExitCode {
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("brain-mux: could not install diagnostics: {error}");
+        return std::process::ExitCode::FAILURE;
+    }
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
@@ -1008,18 +1007,7 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    let telemetry = match aex_platform_telemetry::LongLivedTelemetry::install() {
-        Ok(telemetry) => telemetry,
-        Err(error) => {
-            eprintln!("brain-mux: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-    let outcome = run(&config, telemetry.handle());
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } = telemetry.shutdown()
-    {
-        eprintln!("brain-mux: telemetry flush left {pending} record(s) undelivered");
-    }
+    let outcome = run(&config);
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
@@ -1035,13 +1023,13 @@ mod tests {
         BUDGET_VAR, BrainMuxConfigError, Config, PLANE_VAR, PRICING_VERSION_VAR, REGION_VAR,
         RESOURCE_VAR, RUNTIME_ACTIVITY_TABLE_VAR, RUNTIME_DUE_PAGE_ITEMS_VAR,
         RUNTIME_DUE_PAGE_READS_VAR, RUNTIME_DUE_SHARDS_VAR, SECRET_CUSTODY_TABLE_VAR,
-        SECRET_KMS_KEY_ARN_VAR, USAGE_COMPUTE_QUEUE_VAR, USAGE_STORAGE_QUEUE_VAR, WAKE_QUEUE_VAR,
-        WORK_TABLE_VAR, compose, emit_due_isolations,
+        SECRET_KMS_KEY_ARN_VAR, SESSION_TELEMETRY_BUCKET_VAR, SESSION_TELEMETRY_KMS_KEY_ARN_VAR,
+        USAGE_COMPUTE_QUEUE_VAR, USAGE_STORAGE_QUEUE_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose,
+        emit_due_isolations,
     };
     use aex_brain_app::activation::PollReport;
     use aex_brain_app::kernel::PermitKind;
     use aex_brain_app::ports::{DueRowIsolation, DueRowIsolationReason};
-    use aex_platform_telemetry::{AttributeValue, InMemoryExporter};
     use std::collections::BTreeMap;
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -1049,6 +1037,14 @@ mod tests {
             (PLANE_VAR, "dev".to_owned()),
             (REGION_VAR, "eu-west-1".to_owned()),
             (RESOURCE_VAR, "aex-brain_mux-fixture".to_owned()),
+            (
+                SESSION_TELEMETRY_BUCKET_VAR,
+                "aex-session-telemetry".to_owned(),
+            ),
+            (
+                SESSION_TELEMETRY_KMS_KEY_ARN_VAR,
+                "arn:aws:kms:eu-west-1:123456789012:key/session-telemetry".to_owned(),
+            ),
             (
                 WAKE_QUEUE_VAR,
                 "https://sqs.eu-west-1.amazonaws.com/1/aex-brain-wake".to_owned(),
@@ -1287,12 +1283,7 @@ mod tests {
     }
 
     #[test]
-    fn due_isolation_samples_reach_structured_telemetry_without_raw_keys() {
-        let exporter = std::sync::Arc::new(InMemoryExporter::new());
-        let telemetry = aex_platform_telemetry::Handle::install(
-            &aex_platform_telemetry::Settings::default(),
-            Some(std::sync::Arc::clone(&exporter) as std::sync::Arc<_>),
-        );
+    fn due_isolation_samples_are_accepted_without_raw_keys() {
         let config = read(&complete()).expect("complete environment");
         let report = PollReport {
             malformed: 17,
@@ -1303,25 +1294,6 @@ mod tests {
             ..PollReport::default()
         };
 
-        emit_due_isolations(&telemetry, &config, &report);
-        let _ = telemetry.flush(core::time::Duration::from_secs(1));
-        let delivered = exporter.delivered();
-        assert_eq!(delivered.len(), 1);
-        assert_eq!(
-            delivered[0].name,
-            aex_telemetry_schema::generated::EVENT_AEX_BRAIN_DUE_ROW_ISOLATED
-        );
-        assert_eq!(
-            delivered[0].attribute(aex_telemetry_schema::generated::AEX_ERROR_CLASS),
-            Some(&AttributeValue::Text("shard_mismatch".to_owned()))
-        );
-        assert_eq!(
-            delivered[0].attribute(aex_telemetry_schema::generated::AEX_ISOLATION_COUNT),
-            Some(&AttributeValue::Integer(17))
-        );
-        assert_eq!(
-            delivered[0].attribute(aex_telemetry_schema::generated::AEX_ISOLATION_FINGERPRINT),
-            Some(&AttributeValue::Text("0123456789abcdef".to_owned()))
-        );
+        emit_due_isolations(&config, &report);
     }
 }

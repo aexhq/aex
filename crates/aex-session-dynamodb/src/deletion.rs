@@ -95,10 +95,6 @@ pub enum DeletionOwner {
     Messages,
     /// Brain journal, effect, mailbox and scheduler content is gone.
     BrainUserContent,
-    /// Session-scoped observation payload is gone.
-    Observations,
-    /// Export rows, checkpoints, grants and objects are gone.
-    ExportObjects,
     /// Aggregate billing evidence remains durably handed off.
     BillingAggregate,
     /// The content-free audit fact remains durably handed off.
@@ -107,13 +103,11 @@ pub enum DeletionOwner {
 
 impl DeletionOwner {
     /// Canonical owner order used by atomic snapshots and final guards.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 6] = [
         Self::GenerationTerminated,
         Self::SessionContent,
         Self::Messages,
         Self::BrainUserContent,
-        Self::Observations,
-        Self::ExportObjects,
         Self::BillingAggregate,
         Self::AuditFact,
     ];
@@ -126,8 +120,6 @@ impl DeletionOwner {
             Self::SessionContent => "session_content_removed",
             Self::Messages => "messages_removed",
             Self::BrainUserContent => "brain_user_content_removed",
-            Self::Observations => "observations_removed",
-            Self::ExportObjects => "export_objects_removed",
             Self::BillingAggregate => "billing_aggregate_retained",
             Self::AuditFact => "audit_fact_retained",
         }
@@ -211,8 +203,6 @@ impl SessionDeletionSnapshot {
             session_content_removed: present(DeletionOwner::SessionContent),
             messages_removed: present(DeletionOwner::Messages),
             brain_user_content_removed: present(DeletionOwner::BrainUserContent),
-            observations_removed: present(DeletionOwner::Observations),
-            export_objects_removed: present(DeletionOwner::ExportObjects),
             billing_aggregate_retained: present(DeletionOwner::BillingAggregate),
             audit_fact_retained: present(DeletionOwner::AuditFact),
         }
@@ -1372,7 +1362,7 @@ mod tests {
         let plan = compile_record_evidence(
             "dev-eu-west-1-session-authority",
             progress(),
-            evidence(DeletionOwner::Observations),
+            evidence(DeletionOwner::Messages),
         )
         .expect("conditional plan");
         assert_eq!(plan.len(), 2);

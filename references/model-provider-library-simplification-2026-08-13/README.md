@@ -12,7 +12,6 @@ status: accepted
 last_verified: 2026-08-13
 related:
   - references/model-provider-library-simplification-2026-08-12.md
-  - references/model-catalog-authority.md
   - references/rewrite/providers.md
 ---
 

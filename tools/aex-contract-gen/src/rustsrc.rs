@@ -3,7 +3,7 @@
 //! Generated Rust is committed and `cargo fmt --all` runs over it like any other
 //! source, so the renderer has to emit exactly what `rustfmt` would. The two
 //! width constants below mirror the only two `rustfmt` heuristics the shapes in
-//! this crate can trip, the same approach `aex-telemetry-schema` already uses.
+//! this crate can trip, keeping committed output a formatter-independent fixed point.
 
 /// `rustfmt`'s `max_width`, as pinned in `rustfmt.toml`.
 pub const MAX_WIDTH: usize = 100;

@@ -152,6 +152,48 @@ fn the_start_up_probe_names_the_version_it_loaded() {
     );
 }
 
+#[test]
+fn the_startup_verification_set_loads_current_and_retiring_material() {
+    let retiring = "aaaaaaaa-0000-0000-0000-000000000001";
+    let directory = FakeDirectory::with(vec![
+        aex_central_aws::pepper::PepperRecord {
+            version: PepperVersion::new(4),
+            purpose: PepperPurpose::Cursor,
+            state: PepperState::Active,
+            secret_ref: VERSION_ID.to_owned(),
+        },
+        aex_central_aws::pepper::PepperRecord {
+            version: PepperVersion::new(3),
+            purpose: PepperPurpose::Cursor,
+            state: PepperState::Retiring,
+            secret_ref: retiring.to_owned(),
+        },
+    ]);
+    let store = keystore(
+        directory,
+        vec![
+            (
+                200,
+                secret_response(VERSION_ID, &payload(4, "cursor", MATERIAL_B64)),
+            ),
+            (
+                200,
+                secret_response(retiring, &payload(3, "cursor", OTHER_MATERIAL_B64)),
+            ),
+        ],
+    );
+    let set = run(store.verification_set(PepperPurpose::Cursor)).expect("the startup set");
+    assert_eq!(set.current.0, PepperVersion::new(4));
+    assert_eq!(
+        set.retiring
+            .iter()
+            .map(|(version, _)| *version)
+            .collect::<Vec<_>>(),
+        vec![PepperVersion::new(3)]
+    );
+    assert_eq!(store.resolved(), 2);
+}
+
 fn regional(answers: Vec<support::LambdaAnswer>) -> LambdaRegionalControl {
     let (client, _replay) = lambda_client(answers);
     LambdaRegionalControl::new(

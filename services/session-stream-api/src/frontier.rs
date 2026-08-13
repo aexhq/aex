@@ -14,12 +14,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use aex_platform_telemetry::{Handle, Record};
 use aex_regional_http::frontier::FrontierLag;
 use aex_session_dynamodb::projection::AuthorizationProjection;
-use aex_telemetry_schema::generated::{
-    AEX_DEPLOYABLE, AEX_PLANE, AEX_REGION, METRIC_AEX_PROJECTION_FRONTIER_LAG,
-};
 use aex_wire::types::Timestamp;
 
 /// How often the frontier is measured.
@@ -48,16 +44,8 @@ pub struct FrontierResource {
 /// series is visibly a gap; a zero is a claim that the projection is perfectly
 /// current, which is the one thing a broken reader must not be able to say.
 #[must_use]
-pub fn measure_once(
-    now: Timestamp,
-    resource: &FrontierResource,
-    covered_through: Timestamp,
-) -> Record {
-    let lag = FrontierLag::measure(now, covered_through);
-    Record::metric(METRIC_AEX_PROJECTION_FRONTIER_LAG, lag.millis)
-        .with(AEX_PLANE, resource.plane.clone())
-        .with(AEX_REGION, resource.region.clone())
-        .with(AEX_DEPLOYABLE, resource.deployable)
+pub fn measure_once(now: Timestamp, covered_through: Timestamp) -> i64 {
+    FrontierLag::measure(now, covered_through).millis
 }
 
 /// The wall clock, as the wire timestamp.
@@ -76,7 +64,6 @@ fn wall_clock_now() -> Option<Timestamp> {
 /// Reads and publishes the frontier lag until the process drains.
 pub async fn publish(
     projection: Arc<dyn AuthorizationProjection>,
-    telemetry: Handle,
     resource: FrontierResource,
     interval: Duration,
     draining: Arc<AtomicBool>,
@@ -101,24 +88,21 @@ pub async fn publish(
         let Some(now) = wall_clock_now() else {
             continue;
         };
-        telemetry.emit(measure_once(now, &resource, frontier.covered_through));
+        tracing::info!(
+            target: "aex::diagnostics",
+            event = "projection_frontier_measured",
+            plane = %resource.plane,
+            region = %resource.region,
+            deployable = resource.deployable,
+            lag_ms = measure_once(now, frontier.covered_through),
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FrontierResource, measure_once};
-    use aex_platform_telemetry::AttributeValue;
-    use aex_telemetry_schema::generated::METRIC_AEX_PROJECTION_FRONTIER_LAG;
+    use super::measure_once;
     use aex_wire::types::Timestamp;
-
-    fn resource() -> FrontierResource {
-        FrontierResource {
-            plane: "prd".to_owned(),
-            region: "eu-west-1".to_owned(),
-            deployable: "session-stream-api",
-        }
-    }
 
     fn at(millis: i64) -> Timestamp {
         Timestamp::from_unix_millis(millis).expect("a representable instant")
@@ -127,26 +111,7 @@ mod tests {
     /// The published sample is the lag in milliseconds, attributed to the plane,
     /// region and deployable an alarm has to select on.
     #[test]
-    fn one_measurement_publishes_the_lag_attributed_to_its_deployment() {
-        let record = measure_once(at(1_000_100_000), &resource(), at(1_000_000_000));
-        assert_eq!(record.name, METRIC_AEX_PROJECTION_FRONTIER_LAG);
-        assert_eq!(record.value, Some(100_000));
-        let attributes: std::collections::BTreeMap<_, _> = record
-            .attributes
-            .iter()
-            .map(|attribute| (attribute.key, attribute.value.clone()))
-            .collect();
-        assert_eq!(
-            attributes.get("aex.plane"),
-            Some(&AttributeValue::from("prd".to_owned()))
-        );
-        assert_eq!(
-            attributes.get("aex.region"),
-            Some(&AttributeValue::from("eu-west-1".to_owned()))
-        );
-        assert_eq!(
-            attributes.get("aex.deployable"),
-            Some(&AttributeValue::from("session-stream-api"))
-        );
+    fn one_measurement_reports_the_lag_in_milliseconds() {
+        assert_eq!(measure_once(at(1_000_100_000), at(1_000_000_000)), 100_000);
     }
 }

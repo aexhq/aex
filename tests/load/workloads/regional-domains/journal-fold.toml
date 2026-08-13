@@ -13,8 +13,8 @@
 #
 # Arrival is closed at one because the shape under test is a single fold, not a
 # concurrency profile. Running it at one agent is what makes the number
-# comparable across releases; the concurrent behaviour of the same code is
-# covered by LOAD-STREAM-SOCKETS and LOAD-REGIONAL-ADMISSION.
+# comparable across releases; concurrent admission is covered by
+# LOAD-REGIONAL-ADMISSION.
 id = "journal-fold"
 owner = "regional-domains"
 target = "aex-live-session-stream-api"

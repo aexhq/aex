@@ -2,7 +2,6 @@ import { requireWorkspace } from "../../../../../../src/server/context";
 import {
   LiveFilesPanel,
   MessagesPanel,
-  SessionEventsPanel,
   SessionHeader,
 } from "../../../../../../src/ui/panels/session-detail";
 
@@ -10,11 +9,10 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Session — AEX" };
 
 /**
- * Four panels, four independent requests, four independent failures.
+ * Three panels, three independent requests, three independent failures.
  *
- * Nothing here waits on anything else: the events query may take the full analytics
- * deadline while the other panels remain usable. Messages are the durable
- * conversation surface; internal execution identities are deliberately absent.
+ * Nothing here waits on anything else. Messages are the durable conversation
+ * surface; internal execution identities are deliberately absent.
  */
 export default async function SessionPage({
   params,
@@ -34,7 +32,6 @@ export default async function SessionPage({
       </div>
       <SessionHeader {...scope} />
       <MessagesPanel {...scope} />
-      <SessionEventsPanel {...scope} />
       <LiveFilesPanel {...scope} />
     </div>
   );

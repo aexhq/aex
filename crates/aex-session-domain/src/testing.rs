@@ -292,8 +292,6 @@ pub fn running_session() -> (Session, Run, AgentControl, Message) {
         started_at: Some(moment(1)),
         terminal_at: None,
         outcome: None,
-        telemetry_complete: None,
-        telemetry_gaps: None,
     };
     let message = Message {
         id: id::<MessageId>(8),

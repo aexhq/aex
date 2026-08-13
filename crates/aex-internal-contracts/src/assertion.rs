@@ -55,12 +55,6 @@ pub const MAX_ASSERTION_TEXT_LEN: usize = 1_024;
 pub enum AssertionAudience {
     /// `regional-session-api`.
     RegionalSession,
-    /// `regional-observation-api`.
-    RegionalObservation,
-    /// `regional-otlp`.
-    RegionalOtlp,
-    /// `regional-stream`.
-    RegionalStream,
     /// `tool-executor`.
     ///
     /// The one audience no customer credential ever reaches. Every audience
@@ -70,22 +64,12 @@ pub enum AssertionAudience {
     /// for a service whose only caller is `brain-mux`, so there is no presented
     /// credential and no customer on the path at all.
     ///
-    /// Appended last on purpose: declaration order is wire order and this enum
-    /// is also a `u8` bitset, so adding an arm at the end leaves every existing
-    /// code and bit where it was. Inserting one anywhere else is a silent
-    /// re-labelling of every stored audience set in the plane.
     ToolExec,
 }
 
 impl AssertionAudience {
     /// Every audience, in wire order.
-    pub const ALL: [Self; 5] = [
-        Self::RegionalSession,
-        Self::RegionalObservation,
-        Self::RegionalOtlp,
-        Self::RegionalStream,
-        Self::ToolExec,
-    ];
+    pub const ALL: [Self; 2] = [Self::RegionalSession, Self::ToolExec];
 
     /// Every audience a **customer credential** may be presented to.
     ///
@@ -93,21 +77,13 @@ impl AssertionAudience {
     /// granting". It is the set of audiences whose envelopes are minted from
     /// something other than a presented credential, and a workspace key that
     /// claimed one would be claiming a principal kind it cannot be.
-    pub const CUSTOMER_PRESENTABLE: [Self; 4] = [
-        Self::RegionalSession,
-        Self::RegionalObservation,
-        Self::RegionalOtlp,
-        Self::RegionalStream,
-    ];
+    pub const CUSTOMER_PRESENTABLE: [Self; 1] = [Self::RegionalSession];
 
     /// Whether a credential a customer presents may name this audience.
     #[must_use]
     pub const fn is_customer_presentable(self) -> bool {
         match self {
-            Self::RegionalSession
-            | Self::RegionalObservation
-            | Self::RegionalOtlp
-            | Self::RegionalStream => true,
+            Self::RegionalSession => true,
             Self::ToolExec => false,
         }
     }
@@ -117,9 +93,6 @@ impl AssertionAudience {
     pub const fn deployable(self) -> &'static str {
         match self {
             Self::RegionalSession => "regional-session-api",
-            Self::RegionalObservation => "regional-observation-api",
-            Self::RegionalOtlp => "regional-otlp",
-            Self::RegionalStream => "regional-stream",
             Self::ToolExec => "tool-executor",
         }
     }
@@ -133,9 +106,6 @@ impl AssertionAudience {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::RegionalSession => "regional_session",
-            Self::RegionalObservation => "regional_observation",
-            Self::RegionalOtlp => "regional_otlp",
-            Self::RegionalStream => "regional_stream",
             Self::ToolExec => "tool_exec",
         }
     }

@@ -44,16 +44,9 @@ members = [
     "crates/aex-internal-contracts",
     "crates/aex-model-catalog",
     "crates/aex-model-vocabulary",
-    "crates/aex-observation-app",
-    "crates/aex-observation-domain",
-    "crates/aex-observation-export",
-    "crates/aex-observation-query",
-    "crates/aex-observation-store-dynamodb",
-    "crates/aex-observation-test-support",
     "crates/aex-operation-domain",
-    "crates/aex-otlp-admission",
     "crates/aex-payment-contracts",
-    "crates/aex-platform-telemetry",
+    "crates/aex-platform-diagnostics",
     "crates/aex-rds-data",
     "crates/aex-regional-http",
     "crates/aex-regional-test-support",
@@ -68,8 +61,9 @@ members = [
     "crates/aex-session-app",
     "crates/aex-session-domain",
     "crates/aex-session-dynamodb",
-    "crates/aex-telemetry-schema",
+    "crates/aex-session-telemetry-aws",
     "crates/aex-usage-app",
+    "crates/aex-usage-authority-dynamodb",
     "crates/aex-usage-compute-dynamodb",
     "crates/aex-usage-domain",
     "crates/aex-usage-query-dynamodb",
@@ -85,8 +79,6 @@ members = [
     "services/central-identity-api",
     "services/finance-api",
     "services/finance-ingest",
-    "services/regional-observation-api",
-    "services/regional-otlp",
     "services/session-stream-api",
     "services/tool-executor",
     "workers/central-control-worker",
@@ -94,9 +86,6 @@ members = [
     "workers/content-lifecycle-worker",
     "workers/finance-reconcile",
     "workers/finance-settlement-worker",
-    "workers/observation-export-launcher",
-    "workers/observation-export-task",
-    "workers/observation-reconciler",
     "workers/provider-cost-reconciler",
     "workers/regional-capacity-controller",
     "workers/regional-control",
@@ -129,14 +118,9 @@ members = [
     "tests/live/aex-live-finance-settlement-worker",
     "tests/live/aex-live-hands-agent",
     "tests/live/aex-live-hands-image",
-    "tests/live/aex-live-observation-export-launcher",
-    "tests/live/aex-live-observation-export-task",
-    "tests/live/aex-live-observation-reconciler",
     "tests/live/aex-live-provider-cost-reconciler",
     "tests/live/aex-live-regional-capacity-controller",
     "tests/live/aex-live-regional-control",
-    "tests/live/aex-live-regional-observation-api",
-    "tests/live/aex-live-regional-otlp",
     "tests/live/aex-live-regional-secret-key-admin",
     "tests/live/aex-live-session-stream-api",
     "tests/live/aex-live-runtime-control-worker",
@@ -188,7 +172,6 @@ debug = "line-tables-only"
 [workspace.dependencies]
 # --- async runtime and utilities -------------------------------------------
 tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
-tokio-util = { version = "0.7.19", features = ["codec", "io"] }
 futures = { version = "0.3.33", default-features = false, features = ["std", "async-await"] }
 async-trait = "0.1.91"
 bytes = { version = "1.12.1", features = ["serde"] }
@@ -198,16 +181,12 @@ pin-project-lite = "0.2.17"
 
 # --- HTTP server, client and TLS -------------------------------------------
 axum = { version = "0.8.9", features = ["macros"] }
-tower = { version = "0.5.3", features = ["util", "retry", "timeout", "limit"] }
-tower-http = { version = "0.7.0", features = ["trace", "limit", "timeout", "request-id", "catch-panic"] }
-hyper = { version = "1.11.0", features = ["http1", "http2", "server", "client"] }
-hyper-util = { version = "0.1.20", features = ["tokio"] }
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
 http = "1.5.0"
 http-body = "1.1.0"
 http-body-util = "0.1.4"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "query", "stream", "http2", "charset"] }
-rustls = { version = "0.23.43", default-features = false, features = ["aws-lc-rs", "logging", "tls12", "std"] }
-webpki-roots = "1.0.9"
+oauth2 = { version = "5.0.0", default-features = false }
 aws-lc-rs = "1.17.3"
 url = { version = "2.5.8", features = ["serde"] }
 
@@ -239,7 +218,6 @@ aws-sdk-sesv2 = { version = "1.128.0", default-features = false, features = ["be
 # The finance sweeps report and fence; they never auto-repair money (F-30). The
 # report leaves the process through the operations topic and nowhere else.
 aws-sdk-sns = { version = "1.107.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
-aws-sdk-cloudwatch = { version = "1.123.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 aws-smithy-types = "1.6.1"
 aws-smithy-runtime-api = "1.14.0"
 aws-types = "1.3.14"
@@ -251,13 +229,13 @@ aws-smithy-http-client = { version = "1.2.0", features = ["test-util"] }
 # --- serialization and schema ------------------------------------------------
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-serde_with = "3.21.0"
 serde_norway = "0.9.42"
 jsonschema = { version = "0.49.2", default-features = false, features = ["resolve-file"] }
 html5ever = "0.39.0"
 encoding_rs = "0.8.35"
 prost = "0.14.4"
 prost-types = "0.14.4"
+opentelemetry-proto = { version = "0.32.0", default-features = false, features = ["gen-tonic-messages", "logs"] }
 toml = "1.1.4"
 
 # --- PostgreSQL (schema admin only; runtime Lambdas use aex-rds-data) --------
@@ -267,13 +245,10 @@ sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "r
 thiserror = "2.0.19"
 anyhow = "1.0.104"
 
-# --- diagnostics (behind aex-platform-telemetry only) ------------------------
+# --- private process diagnostics ---------------------------------------------
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
-opentelemetry = "0.32.0"
-opentelemetry_sdk = "0.32.1"
-opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["http-proto", "trace", "metrics", "logs"] }
-opentelemetry-semantic-conventions = "0.32.1"
+
 
 # --- identifiers, time, exact arithmetic, hashing, secrets -------------------
 uuid = { version = "1.24.0", features = ["v4", "v7", "serde"] }
@@ -318,8 +293,6 @@ brotli = "8.0.4"
 
 # --- general utilities -------------------------------------------------------
 regex = "1.13.1"
-once_cell = "1.21.4"
-dashmap = { version = "6.2.1", features = ["serde"] }
 parking_lot = "0.12.5"
 clap = { version = "4.6.5", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.6.8"
@@ -327,13 +300,9 @@ cargo_metadata = "0.23.1"
 walkdir = "2.5.0"
 
 # --- test-only ---------------------------------------------------------------
-trybuild = "1.0.118"
 proptest = "1.11.0"
 insta = { version = "1.48.0", features = ["json", "yaml", "redactions"] }
 loom = "0.7.2"
-wiremock = "0.6.5"
 testcontainers = "0.27.3"
-mockall = "0.15.0"
 tempfile = "3.27.0"
-pretty_assertions = "1.4.1"
 similar-asserts = "2.0.0"

@@ -20,7 +20,6 @@ use aex_brain_domain::ids::{
     ContentHash as BrainContentHash, Fence as BrainFence, HandsOperationId as BrainOperationId,
     SessionId as BrainSessionId, Timestamp as BrainTimestamp,
 };
-use aex_hands_agent::wire::Verb;
 use aex_hands_control_aws::{
     AGENT_PORT, EndpointToken, MAX_DURATION_SECONDS, MicrovmControlApi, MicrovmDescription,
     RunHookBounds, RunHookPayload, RunRequest, TOKEN_TTL_SECONDS,
@@ -31,11 +30,10 @@ use aex_hands_protocol::operation::{
     DeliveryMode, OperationBounds, OperationExit, OperationRequest, TerminalMetadata, TerminalState,
 };
 use aex_hands_protocol::rpc::{
-    AttachResponse, CallHash, CancelReason, CancelRequest, CancelResponse, GenerationBinding,
-    HandsOperationId, ResultChunk, ResultRequest, ResultResponse, StartRequest, StartResponse,
-    StatusRequest, StatusResponse,
+    AttachResponse, CallHash, CancelReason, CancelRequest, CancelResponse, HandsOperationId,
+    ResultChunk, ResultRequest, ResultResponse, StartRequest, StartResponse, StatusRequest,
+    StatusResponse, Verb,
 };
-use aex_internal_contracts::SchemaVersion;
 use aex_runtime_control::generation::{
     AdmissionRefused, GenerationState, HandsGeneration, ImageCapability, next_fence,
 };
@@ -57,11 +55,11 @@ use aex_wire::ids::{ContentHash, GenerationId, PrefixedId as _, SessionId, Uuid7
 use aex_wire::types::Timestamp;
 use tokio::sync::Mutex;
 
-use crate::lease::{EndpointLeaseCache, GuestObservation, LeaseHandle, LeaseIdentity};
+use crate::lease::{EndpointLeaseCache, LeaseHandle, LeaseIdentity};
 use crate::live_file::{LiveFileBackend, LiveFileReply, LiveGenerationReady};
 use crate::{
-    AuthenticatedGuestEndpoint, GuestReply, HttpGuestTransport, MAX_FRAME_BYTES,
-    MAX_RESULT_BODY_BYTES, ResultAssembly, admit, admit_native_resume, launch_backoff_ms, settle,
+    AuthenticatedGuestEndpoint, HttpGuestTransport, MAX_FRAME_BYTES, MAX_RESULT_BODY_BYTES,
+    ResultAssembly, admit, admit_native_resume, launch_backoff_ms, settle,
 };
 
 mod attached;
@@ -76,7 +74,7 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 /// idle ceiling and bounds a guest call after its edge request disappears.
 const FILE_RPC_TIMEOUT: Duration = Duration::from_mins(10);
 const FILE_BATCH_MAX_REQUESTS: usize = 10;
-const RESULT_CHUNK_BYTES: u64 = 180_000;
+const RESULT_CHUNK_BYTES: u64 = aex_hands_protocol::rpc::MAX_RESULT_CHUNK_BYTES;
 const RESULT_PULL_ATTEMPTS: usize = 32;
 const ENDPOINT_LEASE_CACHE_CAPACITY: usize = 128;
 
@@ -714,8 +712,8 @@ impl ProductionHandsBackend {
     ///
     /// One fresh strong read anchors the lease identity: recording the launch
     /// intent advanced the fence, so a lease built from the pre-launch view
-    /// would disagree with every subsequent frame and grind through
-    /// `observe_guest` invalidations. `None` means the head moved again while
+    /// would disagree with every subsequent request and grind through
+    /// endpoint-lease invalidations. `None` means the head moved again while
     /// the launch settled; the materialize loop observes the new state.
     async fn lease_from_launch(
         &self,
@@ -755,43 +753,13 @@ impl ProductionHandsBackend {
         Ok(Some((view, lease)))
     }
 
-    async fn observe_guest<T>(
-        &self,
-        lease: &LeaseHandle<AuthenticatedGuestEndpoint>,
-        reply: &GuestReply<T>,
-    ) -> Result<(), HandsError> {
-        if reply.fence != lease.value.fence {
-            self.leases.lock().await.invalidate_lease(lease);
-            return Err(dispatched(
-                ProviderFailureKind::ProtocolViolation,
-                "the Hands response advanced beyond the cached lifecycle fence",
-            ));
-        }
-        match self
-            .leases
-            .lock()
-            .await
-            .observe_guest(lease, reply.guest_revision, reply.agent_build)
-        {
-            GuestObservation::Recorded | GuestObservation::Unchanged => Ok(()),
-            GuestObservation::StaleLease => Err(dispatched(
-                ProviderFailureKind::ProtocolViolation,
-                "the Hands response arrived on a superseded endpoint lease",
-            )),
-            GuestObservation::Invalidated => Err(dispatched(
-                ProviderFailureKind::ProtocolViolation,
-                "the Hands guest incarnation or build changed during a cached endpoint lease",
-            )),
-        }
-    }
-
     async fn call_guest<Request, Response>(
         &self,
         lease: &LeaseHandle<AuthenticatedGuestEndpoint>,
         verb: Verb,
         request: &Request,
         timeout: Duration,
-    ) -> Result<GuestReply<Response>, HandsError>
+    ) -> Result<Response, HandsError>
     where
         Request: serde::Serialize + ?Sized,
         Response: serde::de::DeserializeOwned,
@@ -809,11 +777,11 @@ impl ProductionHandsBackend {
 
     /// Executes one ordered bounded guest batch as one durable HTTP activity.
     ///
-    /// Live multipart transfer may require several guest frames, but its
+    /// Live multipart transfer may require several guest calls, but its
     /// public request still owns exactly one [`HandsOperationId`]. This method
     /// admits that identity once, reuses one exact-generation lease, observes
-    /// every authenticated reply, and settles runtime activity/accounting only
-    /// after the complete batch succeeds. A failure after any dispatched frame
+    /// every bounded reply, and settles runtime activity/accounting only
+    /// after the complete batch succeeds. A failure after any dispatched call
     /// deliberately leaves the activity open so an exact retry can reconcile
     /// the guest's idempotent transfer manifest under the same identity.
     pub(crate) async fn call_native_activity_batch<Request, Response>(
@@ -824,7 +792,7 @@ impl ProductionHandsBackend {
         verb: Verb,
         requests: &[Request],
         timeout: Duration,
-    ) -> Result<(Vec<GuestReply<Response>>, bool), HandsError>
+    ) -> Result<(Vec<Response>, bool), HandsError>
     where
         Request: serde::Serialize,
         Response: serde::de::DeserializeOwned,
@@ -832,7 +800,7 @@ impl ProductionHandsBackend {
         if requests.is_empty() {
             return Err(pre_dispatch(
                 ProviderFailureKind::InvalidRequest,
-                "a native guest activity batch must contain at least one frame",
+                "a native guest activity batch must contain at least one request",
             ));
         }
         let prepared = self.prepare_generation(session, generation).await?;
@@ -858,7 +826,6 @@ impl ProductionHandsBackend {
                 }
                 Err(error) => return Err(error),
             };
-            self.observe_guest(&admitted.endpoint, &reply).await?;
             replies.push(reply);
         }
         if admitted.native_resume {
@@ -1188,24 +1155,9 @@ impl LiveFileBackend for ProductionHandsBackend {
                     FILE_RPC_TIMEOUT,
                 )
                 .await?;
-            let lifecycle_fence = replies
-                .first()
-                .ok_or_else(|| {
-                    dispatched(
-                        ProviderFailureKind::ProtocolViolation,
-                        "a non-empty live-file batch returned no guest replies",
-                    )
-                })?
-                .fence
-                .0;
-            if replies.iter().any(|reply| reply.fence.0 != lifecycle_fence) {
-                return Err(dispatched(
-                    ProviderFailureKind::ProtocolViolation,
-                    "one live-file activity observed more than one lifecycle fence",
-                ));
-            }
             let view = self.load_view(generation, ReadConsistency::Strong).await?;
             Self::require_view(&view, session, generation)?;
+            let lifecycle_fence = view.head.fence.0;
             let expires_at = view
                 .lifetime
                 .ok_or_else(|| {
@@ -1216,7 +1168,7 @@ impl LiveFileBackend for ProductionHandsBackend {
                 })?
                 .expires_at();
             Ok(LiveFileReply {
-                responses: replies.into_iter().map(|reply| reply.payload).collect(),
+                responses: replies,
                 generation,
                 resumed,
                 lifecycle_fence,
@@ -1357,7 +1309,6 @@ impl crate::HandsBackend for ProductionHandsBackend {
             let view = &admitted.view;
             let delivery = delivery_for(start.bounds.timeout_ms);
             let call = StartRequest {
-                binding: binding(view),
                 operation,
                 call_hash: CallHash(ContentHash::from_bytes(start.call_hash.0)),
                 request,
@@ -1395,11 +1346,10 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 }
                 Err(error) => return Err(error),
             };
-            self.observe_guest(&admitted.endpoint, &reply).await?;
             if admitted.native_resume {
                 self.settle_native_activity(view).await?;
             }
-            match reply.payload {
+            match reply {
                 StartResponse::Accepted {
                     operation: found,
                     existing,
@@ -1462,19 +1412,15 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 .call_guest::<_, StatusResponse>(
                     &admitted.endpoint,
                     Verb::Status,
-                    &StatusRequest {
-                        binding: binding(view),
-                        operation: wire,
-                    },
+                    &StatusRequest { operation: wire },
                     STATUS_TIMEOUT,
                 )
                 .await?;
-            self.observe_guest(&admitted.endpoint, &reply).await?;
             if admitted.native_resume {
                 self.settle_native_activity(view).await?;
             }
-            let unknown = matches!(&reply.payload, StatusResponse::Unknown { .. });
-            let status = status(reply.payload, wire, now()?)?;
+            let unknown = matches!(&reply, StatusResponse::Unknown { .. });
+            let status = status(reply, wire, now()?)?;
             if unknown {
                 self.settle_operation(generation, wire).await?;
             }
@@ -1497,20 +1443,18 @@ impl crate::HandsBackend for ProductionHandsBackend {
                     &admitted.endpoint,
                     Verb::Cancel,
                     &CancelRequest {
-                        binding: binding(view),
                         operation: wire,
                         reason: CancelReason::CustomerStop,
                     },
                     STATUS_TIMEOUT,
                 )
                 .await?;
-            self.observe_guest(&admitted.endpoint, &reply).await?;
             if admitted.native_resume {
                 self.settle_native_activity(view).await?;
             }
-            let terminal = matches!(&reply.payload, CancelResponse::AlreadyTerminal { .. });
-            let unknown = matches!(&reply.payload, CancelResponse::Unknown { .. });
-            let outcome = match reply.payload {
+            let terminal = matches!(&reply, CancelResponse::AlreadyTerminal { .. });
+            let unknown = matches!(&reply, CancelResponse::Unknown { .. });
+            let outcome = match reply {
                 CancelResponse::Cancelling { operation: found }
                 | CancelResponse::AlreadyTerminal {
                     operation: found, ..
@@ -1553,7 +1497,6 @@ impl crate::HandsBackend for ProductionHandsBackend {
                         &admitted.endpoint,
                         Verb::Result,
                         &ResultRequest {
-                            binding: binding(view),
                             operation: wire,
                             from_offset: offset,
                             max_bytes: remaining.min(RESULT_CHUNK_BYTES),
@@ -1561,12 +1504,11 @@ impl crate::HandsBackend for ProductionHandsBackend {
                         Duration::from_millis(u64::from(bounds.timeout_ms)),
                     )
                     .await?;
-                self.observe_guest(&admitted.endpoint, &reply).await?;
                 if native_resume {
                     self.settle_native_activity(view).await?;
                     native_resume = false;
                 }
-                match reply.payload {
+                match reply {
                     ResultResponse::Terminal {
                         terminal: found_terminal,
                         chunk,
@@ -1742,14 +1684,6 @@ fn operation_bounds(view: &GenerationView, bounds: &ResultBounds) -> OperationBo
         max_wall_ms: u64::from(bounds.timeout_ms),
         max_concurrent_operations: u16::try_from(view.head.size.max_concurrent_operations())
             .unwrap_or(u16::MAX),
-    }
-}
-
-fn binding(view: &GenerationView) -> GenerationBinding {
-    GenerationBinding {
-        schema_version: SchemaVersion(view.definition.protocol_version.0),
-        generation: view.head.generation,
-        fence: view.head.fence,
     }
 }
 

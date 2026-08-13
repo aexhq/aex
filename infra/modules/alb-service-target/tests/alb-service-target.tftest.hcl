@@ -1,7 +1,7 @@
 mock_provider "aws" {}
 
 variables {
-  name         = "aex-dev-euw1-stream"
+  name         = "aex-dev-euw1-session"
   listener_arn = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:listener/app/aex-dev-euw1-public/50dc6c495c0c9188/f2f7dc8efc522ab2"
   vpc_id       = "vpc-0123456789abcdef0"
   target_port  = 8080
@@ -9,7 +9,7 @@ variables {
   rules = [
     {
       priority      = 10
-      path_patterns = ["/api/streams/*"]
+      path_patterns = ["/api/sessions/*"]
     },
   ]
 }
@@ -49,15 +49,15 @@ run "one_target_group_can_carry_several_rules" {
     rules = [
       {
         priority      = 10
-        path_patterns = ["/api/sessions/*", "/api/workspace/*", "/api/operations/*", "/api/billing/*", "/api/secrets/*"]
+        path_patterns = ["/api/example-a/*", "/api/example-b/*", "/api/example-c/*", "/api/example-d/*", "/api/example-e/*"]
       },
       {
         priority      = 11
-        path_patterns = ["/api/otlp/*"]
+        path_patterns = ["/api/example-f/*"]
       },
       {
         priority      = 12
-        path_patterns = ["/api/observations/*/events/*", "/api/observations/*/logs/*", "/api/observations/*/metrics/*"]
+        path_patterns = ["/api/examples/*/events/*", "/api/examples/*/logs/*", "/api/examples/*/metrics/*"]
       },
     ]
   }
@@ -76,7 +76,7 @@ run "one_target_group_can_carry_several_rules" {
   }
 
   assert {
-    condition     = aws_lb_target_group.this.name == "aex-dev-euw1-stream-tg"
+    condition     = aws_lb_target_group.this.name == "aex-dev-euw1-session-tg"
     error_message = "Several rules must still mean exactly one target group."
   }
 
@@ -270,12 +270,12 @@ run "rejects_a_rule_that_exceeds_five_condition_values" {
       {
         priority = 10
         path_patterns = [
-          "/api/sessions/*",
-          "/api/workspace/*",
-          "/api/operations/*",
-          "/api/billing/*",
-          "/api/secrets/*",
-          "/api/otlp/*",
+          "/api/example-a/*",
+          "/api/example-b/*",
+          "/api/example-c/*",
+          "/api/example-d/*",
+          "/api/example-e/*",
+          "/api/example-f/*",
         ]
       },
     ]
@@ -293,11 +293,11 @@ run "accepts_those_same_six_patterns_split_across_two_rules" {
     rules = [
       {
         priority      = 10
-        path_patterns = ["/api/sessions/*", "/api/workspace/*", "/api/operations/*", "/api/billing/*", "/api/secrets/*"]
+        path_patterns = ["/api/example-a/*", "/api/example-b/*", "/api/example-c/*", "/api/example-d/*", "/api/example-e/*"]
       },
       {
         priority      = 11
-        path_patterns = ["/api/otlp/*"]
+        path_patterns = ["/api/example-f/*"]
       },
     ]
   }
@@ -318,10 +318,10 @@ run "rejects_a_rule_that_exceeds_six_wildcards" {
       {
         priority = 10
         path_patterns = [
-          "/api/observations/*/events/*",
-          "/api/observations/*/logs/*",
-          "/api/observations/*/metrics/*",
-          "/api/observations/*/spans/*",
+          "/api/examples/*/events/*",
+          "/api/examples/*/logs/*",
+          "/api/examples/*/metrics/*",
+          "/api/examples/*/spans/*",
         ]
       },
     ]

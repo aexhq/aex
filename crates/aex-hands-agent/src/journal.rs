@@ -205,9 +205,9 @@ impl Journal {
 
     /// Increments and returns the incarnation counter.
     ///
-    /// Called on every `/run` and `/resume` and stamped into every response
-    /// preamble, so Brain can tell "the same live process" from "the supervisor
-    /// restarted under it" without trusting the guest's story about which.
+    /// Called on every `/run` and `/resume`, recorded on new operations, and
+    /// returned from the lifecycle hook so a replay can distinguish supervisor
+    /// incarnations without trusting customer-written process state.
     ///
     /// # Errors
     ///

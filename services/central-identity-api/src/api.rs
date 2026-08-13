@@ -349,6 +349,7 @@ fn uuid_of(id: Uuid7) -> Uuid {
 /// Narrows the wire provider vocabulary onto the domain's.
 const fn provider_of(provider: IdentityProvider) -> Provider {
     match provider {
+        IdentityProvider::Github => Provider::GitHub,
         IdentityProvider::Google => Provider::Google,
     }
 }

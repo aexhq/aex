@@ -3,7 +3,7 @@
 //! The authorization scope registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:308866d3e6ae0f8108ee3b81c1b852256a3bc1d80cb6d774f221d3d91fab4721`.
+//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -95,12 +95,6 @@ pub enum ScopeId {
     /// `provider_credentials:write` — Register and revoke dedicated BYOK provider credentials.
     #[serde(rename = "provider_credentials:write")]
     ProviderCredentialsWrite,
-    /// `telemetry:read` — Query observations, gaps and exports.
-    #[serde(rename = "telemetry:read")]
-    TelemetryRead,
-    /// `telemetry:write` — Admit customer OTLP batches.
-    #[serde(rename = "telemetry:write")]
-    TelemetryWrite,
 }
 
 impl ScopeId {
@@ -131,8 +125,6 @@ impl ScopeId {
         ScopeId::ResourcesWrite,
         ScopeId::ProviderCredentialsRead,
         ScopeId::ProviderCredentialsWrite,
-        ScopeId::TelemetryRead,
-        ScopeId::TelemetryWrite,
     ];
 
     /// The wire spelling.
@@ -164,8 +156,6 @@ impl ScopeId {
             Self::ResourcesWrite => "resources:write",
             Self::ProviderCredentialsRead => "provider_credentials:read",
             Self::ProviderCredentialsWrite => "provider_credentials:write",
-            Self::TelemetryRead => "telemetry:read",
-            Self::TelemetryWrite => "telemetry:write",
         }
     }
 

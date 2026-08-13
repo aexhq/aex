@@ -656,7 +656,7 @@ pub enum OperationRequest {
         /// The POSIX mode.
         mode: FileMode,
         /// Bounded inline bytes. The model-facing tool accepts UTF-8 text; base64
-        /// keeps the authenticated JSON frame binary-safe and below its one-MiB
+        /// keeps the bounded JSON request binary-safe and below its one-MiB
         /// ceiling.
         #[serde(with = "crate::files::base64_bytes")]
         content: Vec<u8>,

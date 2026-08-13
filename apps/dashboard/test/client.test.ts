@@ -35,18 +35,6 @@ describe("panel request identity", () => {
     expect(requestKey("sessions_list", base, 1)).not.toBe(key);
   });
 
-  test("a body is part of the identity, so two different queries are two requests", () => {
-    const range = { gte: "2026-01-01T00:00:00.000Z", lt: "2026-01-02T00:00:00.000Z" };
-    const events = requestKey("observations_events_query", {
-      region: "euw1",
-      body: { signal: "events", timeRange: range },
-    }, 0);
-    const traces = requestKey("observations_traces_query", {
-      region: "euw1",
-      body: { signal: "traces", timeRange: range },
-    }, 0);
-    expect(events).not.toBe(traces);
-  });
 });
 
 test("the request effect depends on the value key alone, never on an object literal", () => {

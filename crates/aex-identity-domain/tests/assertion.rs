@@ -394,7 +394,7 @@ fn every_audience_field_is_checked() {
             ..claims.audience
         },
         Audience {
-            service: AssertionAudience::RegionalOtlp,
+            service: AssertionAudience::ToolExec,
             ..claims.audience
         },
     ];

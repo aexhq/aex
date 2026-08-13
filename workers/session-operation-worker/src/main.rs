@@ -27,6 +27,7 @@ use session_operation_worker::{
 
 /// Bounded work rows read from each due shard in one scheduled invocation.
 const DUE_PAGE_ITEMS: u32 = 25;
+const DEPLOYABLE: &str = "session-operation-worker";
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct ShardOutcome {
     retired: u64,
@@ -52,53 +53,50 @@ enum SessionOperationWorkerRunError {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("{DEPLOYABLE}: diagnostics installation failed: {error}");
+        return ExitCode::FAILURE;
+    }
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("session-operation-worker: refusing to start: {error}");
+            tracing::error!(
+                target: "aex::diagnostics",
+                event_name = "process.configuration_rejected",
+                deployable = DEPLOYABLE,
+                error = %error,
+                "process configuration rejected"
+            );
+            eprintln!("{DEPLOYABLE}: refusing to start: {error}");
             return ExitCode::FAILURE;
         }
     };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(config, &telemetry).await;
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("session-operation-worker: telemetry flush left {pending} record(s) undelivered");
-    }
+    let outcome = run(config).await;
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("session-operation-worker: stopped: {error}");
+            eprintln!("{DEPLOYABLE}: stopped: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
 /// Builds the real adapters and serves both triggers.
-async fn run(
-    config: Config,
-    telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), SessionOperationWorkerRunError> {
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.as_str().to_owned(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.as_str().to_owned(),
-        ),
+async fn run(config: Config) -> Result<(), SessionOperationWorkerRunError> {
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = DEPLOYABLE,
+        plane = config.plane.as_str(),
+        region = config.region.as_str(),
+        "process started"
     );
 
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
     let sqs = aws_sdk_sqs::Client::new(&aws);
-    let worker = Worker::new(&config, &dynamodb, &sqs)
+    let s3 = aws_sdk_s3::Client::new(&aws);
+    let worker = Worker::new(&config, &dynamodb, &sqs, &s3)
         .map_err(|error| SessionOperationWorkerRunError::Composition(error.to_string()))?;
 
     lambda_runtime::run(service_fn(move |event: LambdaEvent<serde_json::Value>| {
@@ -125,6 +123,7 @@ impl Worker {
         config: &Config,
         dynamodb: &aws_sdk_dynamodb::Client,
         sqs: &aws_sdk_sqs::Client,
+        s3: &aws_sdk_s3::Client,
     ) -> Result<Self, LambdaError> {
         let work =
             aex_work_dynamodb::store::WorkStore::new(dynamodb.clone(), config.work_table.clone());
@@ -146,12 +145,11 @@ impl Worker {
         let lifecycle = DynamoLifecyclePort::new(
             dynamodb.clone(),
             sqs.clone(),
+            s3.clone(),
             tables,
             config.runtime_lifecycle_queue_url.clone(),
-            config.observation_table.clone(),
-            config.observation_duty_shards,
-        )
-        .map_err(|error| LambdaError::from(error.to_string()))?;
+            config.session_telemetry_bucket.clone(),
+        );
         let reconciler = OperationReconciler::new(
             work,
             operations,

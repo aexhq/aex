@@ -176,16 +176,6 @@ pub fn event_prefix() -> &'static str {
     "EVT#"
 }
 
-/// One run's outbox event.
-///
-/// Keyed by the run rather than by a sequence, because the terminal barrier
-/// emits exactly one event per run and that is what makes a replayed barrier
-/// lose the conditional put instead of writing a second notification.
-#[must_use]
-pub fn outbox(session: SessionId, run: RunId) -> Key {
-    Key::new(session_partition(session), format!("OUTBOX#{run}"))
-}
-
 /// One approval.
 #[must_use]
 pub fn approval(session: SessionId, approval: ApprovalId) -> Key {
@@ -455,7 +445,6 @@ pub const ITEM_TYPES: &[&str] = &[
     "budget_return",
     "operation",
     "idempotency_receipt",
-    "outbox_event",
     "regional_workspace_control",
     "active_session",
     "account_pause_progress",

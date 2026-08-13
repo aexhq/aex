@@ -58,8 +58,8 @@ workspace-relative `/` paths everywhere so a Windows run and a Linux run produce
 identical bytes. `tools/aex-contract-gen/tests/determinism.rs` asserts all of it, including that the
 committed output equals a fresh generation.
 
-The Rust renderer is a **rustfmt fixed point** by construction, following the
-`aex-telemetry-schema` pattern: it mirrors `max_width`, `array_width`,
+The Rust renderer is a **rustfmt fixed point** by construction: it mirrors
+`max_width`, `array_width`,
 `chain_width` and `struct_lit_width`, so `cargo fmt --all` over committed
 generated source is a no-op. No `rustfmt` subprocess is invoked, which also keeps
 the generator free of ambient input.
@@ -269,7 +269,7 @@ rule and the same rationale for `*.rs`.
 | # | Decision | Rationale |
 | --- | --- | --- |
 | C-32 | Schemas are **authored** in a compact YAML dialect under `api/schemas/**`; the **published** `api/generated/schemas/<SchemaId>.json` is real JSON Schema 2020-12. | Plan §2.1 authored raw JSON Schema. One source now produces both the schema and the Rust type, so the two cannot disagree, and the authored form is roughly a fifth of the volume. The published artifact is unchanged in kind. |
-| C-33 | The generated Rust renderer is a rustfmt fixed point rather than a `rustfmt` subprocess. | §3.3 forbids ambient input, and shelling out to a formatter is ambient input. `aex-telemetry-schema` had already established the pattern, and the drift test proves it holds. |
+| C-33 | The generated Rust renderer is a rustfmt fixed point rather than a `rustfmt` subprocess. | §3.3 forbids ambient input, and shelling out to a formatter is ambient input. The drift test proves the deterministic renderer holds. |
 | C-34 | `bundle.lock.json` records the pinned toolchain channel read from `rust-toolchain.toml` and a fixed formatter identity, not a resolved `rustc --version`. | Same reason: running the compiler to describe the build reintroduces exactly the ambient read §3.3 removes. The channel is a committed file. |
 | C-35 | Every generated Rust file carries three inner `allow` attributes with reasons: `clippy::large_enum_variant`, `clippy::match_same_arms`, `clippy::too_many_lines`. | A registry table has one arm and one variant per row by construction. Collapsing two arms that happen to share a value today would hide the row, which is the opposite of what an auditable table is for. |
 | C-36 | `LimitValue` is a **tagged** union on `shape` rather than the accepted contract's untagged `number \| Record<string, number>`. | The plan's own mapping table rejects an untagged union outright. A discriminated value is also the only form that survives a strict decoder. Flagged as a wire change from the accepted contract. |

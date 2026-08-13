@@ -42,7 +42,6 @@ sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tower.workspace = true
-tower-http.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 aex-control-app = { path = "../aex-control-app" }

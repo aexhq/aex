@@ -22,19 +22,9 @@ variables {
     dynamodb = "pl-0123456789abcdef1"
   }
 
-  # Every regional first segment resolves to exactly one serving artifact,
-  # workspace-scoped routes included: `/api/sessions/`, `/api/workspace/`,
-  # `/api/operations/`, `/api/billing/` and `/api/streams/`. No prefix needs
-  # priority precedence to route correctly.
-  #
-  # `regional-session-api` and `regional-stream` merged into `session-stream-api`,
-  # so the two rule bands are now one service's. The prefixes stay disjoint in the
-  # contract, which is what would let a future root split them back across two
-  # target groups without touching a route.
-  #
-  # `/api/observations/*`, `/api/secrets/*` and `/api/otlp/*` are the other three
-  # artifacts' prefixes and are absent here because this root deploys one service
-  # and none of those three is it. See the README.
+  # Every regional route belongs to `session-stream-api` and starts with one of
+  # four literal segments: sessions, workspace, operations or billing. No rule
+  # precedence is needed to establish ownership.
   session_stream_api = {
     name                              = "session-stream-api"
     image                             = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/session-stream-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
@@ -47,23 +37,13 @@ variables {
     log_group_name                    = "/aex/dev/session-stream-api"
     log_retention_days                = 30
     execution_role_arn                = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
-    # `/api/sessions` and `/api/sessions/*` are two condition values because an
-    # ALB pattern ending in `/*` does not match the bare collection: `POST
-    # /api/sessions` and `GET /api/sessions` carry no session id.
-    #
-    # All twenty-four NDJSON routes sit under `/api/streams/` — the
-    # session-scoped ones and the workspace-scoped ones alike — so the whole
-    # stream surface is one condition value in one rule. The 10 band was the
-    # stream's and the 20s the session API's; keeping them apart costs nothing
-    # and keeps the two halves legible in the listener.
+    # An ALB pattern ending in `/*` does not match the bare collection. Sessions,
+    # workspace and operations therefore carry both forms. The first rule uses
+    # the five-value quota; the session pair occupies the second.
     rules = [
       {
-        priority      = 10
-        path_patterns = ["/api/streams/*"]
-      },
-      {
         priority      = 20
-        path_patterns = ["/api/workspace/*", "/api/operations/*", "/api/billing/*"]
+        path_patterns = ["/api/workspace", "/api/workspace/*", "/api/operations", "/api/operations/*", "/api/billing/*"]
       },
       {
         priority      = 21
@@ -287,10 +267,7 @@ run "the_service_drain_window_matches_its_target_group" {
 run "the_one_request_path_service_attaches_to_the_one_public_listener" {
   command = plan
 
-  # These were cross-service checks while the unary API and the stream were two
-  # deployables. They are within-service checks now, and they still matter: the
-  # prefixes must stay disjoint so that splitting the halves back apart remains a
-  # deployment change rather than a contract change.
+  # Each current prefix is routed once to the sole regional request-path service.
   assert {
     condition     = length(flatten([for r in var.session_stream_api.rules : r.path_patterns])) == length(distinct(flatten([for r in var.session_stream_api.rules : r.path_patterns])))
     error_message = "No two rules may claim the same path pattern."
@@ -301,7 +278,7 @@ run "the_one_request_path_service_attaches_to_the_one_public_listener" {
       for p in flatten([for r in var.session_stream_api.rules : r.path_patterns]) :
       startswith(p, "/api/") && !startswith(p, "/internal")
     ])
-    error_message = "Every forwarded pattern must be a public /api/ path; /internal/* stays unreachable from the public listener, which is where both halves' health surfaces live."
+    error_message = "Every forwarded pattern must be a public /api/ path; /internal/* stays unreachable from the public listener."
   }
 
   assert {
@@ -309,37 +286,17 @@ run "the_one_request_path_service_attaches_to_the_one_public_listener" {
     error_message = "Each listener rule must occupy its own priority."
   }
 
-  # The stream half's whole surface is one prefix, so one rule carries it. The
-  # per-rule quota still bounds a rule rather than a service, which the unary
-  # half's two rules and the module's own tests exercise.
   assert {
-    condition     = length(module.session_stream_target.rule_priorities) == 3
-    error_message = "`/api/streams/*` is one condition value and therefore one rule; the unary half needs two more."
+    condition     = length(module.session_stream_target.rule_priorities) == 2
+    error_message = "The seven current path patterns must occupy two rules under the five-value ALB quota."
   }
 
-  # The property the API surface supplies and this root depends on: the stream
-  # half's first path segments and the unary half's are disjoint. A prefix match
-  # is therefore sufficient to route, correctness does not rest on rule
-  # precedence, and — the reason it still matters after the merge — splitting the
-  # two halves back into two services stays a deployment change rather than a
-  # contract change.
-  #
-  # This could not hold while `/api/sessions/{sessionId}/` was served by three
-  # artifacts at once, nor while `/api/logs/query` and `/api/logs/stream` went to
-  # different ones: in both cases only a segment after the shared prefix told
-  # them apart.
   assert {
-    condition = length(setintersection(
-      toset([
-        for p in flatten([for r in var.session_stream_api.rules : r.path_patterns]) :
-        split("/", p)[2] if startswith(p, "/api/streams")
-      ]),
-      toset([
-        for p in flatten([for r in var.session_stream_api.rules : r.path_patterns]) :
-        split("/", p)[2] if !startswith(p, "/api/streams")
-      ]),
-    )) == 0
-    error_message = "The NDJSON half and the unary half must not share a first path segment. If they do, no prefix separates them, routing falls back to rule precedence, and splitting them back apart would need a contract change rather than a second unit row."
+    condition = toset([
+      for p in flatten([for r in var.session_stream_api.rules : r.path_patterns]) :
+      split("/", p)[2]
+    ]) == toset(["billing", "operations", "sessions", "workspace"])
+    error_message = "The listener must claim exactly the four literal first segments in the current regional contract."
   }
 
   # No pattern may wildcard the first segment, or the anchoring above is vacuous.
@@ -352,7 +309,7 @@ run "the_one_request_path_service_attaches_to_the_one_public_listener" {
   }
 }
 
-run "the_merged_service_runs_as_one_fargate_task_group_not_two" {
+run "the_regional_service_runs_as_one_fargate_task_group" {
   command = plan
 
   assert {
@@ -360,8 +317,7 @@ run "the_merged_service_runs_as_one_fargate_task_group_not_two" {
     error_message = "The service image must be digest-pinned."
   }
 
-  # The whole point of the merge: one task pair carries both halves, so the
-  # regional floor is two tasks rather than the four two services cost.
+  # The reviewed regional floor is one pair of tasks.
   assert {
     condition = (
       var.session_stream_api.cpu == 1024

@@ -44,64 +44,10 @@
       "value": 65536
     },
     {
-      "id": "telemetry.batch",
-      "value": {
-        "encoded_bytes": 4194304,
-        "decoded_bytes": 16777216,
-        "records": 2000,
-        "observation_bytes": 65536,
-        "attributes": 128,
-        "attribute_key_bytes": 256,
-        "attribute_value_bytes": 16384,
-        "array_elements": 128
-      }
-    },
-    {
-      "id": "telemetry.ingest_rate",
-      "value": {
-        "sustained_bytes_per_second": 10485760,
-        "burst_bytes": 41943040,
-        "sustained_requests_per_second": 200,
-        "burst_requests": 400
-      }
-    },
-    {
-      "id": "telemetry.metric_series",
-      "value": 250000
-    },
-    {
-      "id": "query.filter",
-      "value": {
-        "depth": 8,
-        "leaves": 32,
-        "children_per_boolean": 16,
-        "in_values": 100,
-        "string_bytes": 1024
-      }
-    },
-    {
       "id": "query.page",
       "value": {
         "items": 1000,
         "serialized_bytes": 8388608
-      }
-    },
-    {
-      "id": "stream.frame",
-      "value": {
-        "records": 200,
-        "encoded_bytes": 1048576
-      }
-    },
-    {
-      "id": "metric.aggregate",
-      "value": {
-        "interval_min_seconds": 1,
-        "interval_max_seconds": 2592000,
-        "group_fields": 8,
-        "calculations": 10,
-        "buckets_per_series": 10000,
-        "rows": 10000
       }
     },
     {
@@ -111,13 +57,6 @@
     {
       "id": "registry.value_bytes",
       "value": 65536
-    },
-    {
-      "id": "telemetry.export",
-      "value": {
-        "active": 5,
-        "window_days": 90
-      }
     }
   ]
 }

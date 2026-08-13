@@ -1,17 +1,18 @@
-//! Guest-side attached serving: frame/fence decision, unlocked execution, and answer.
+//! Guest-side attached serving: bounded fence decision, unlocked execution, and answer.
 
 use super::{
-    Arc, AttachResponse, Bound, Bytes, DeliveryMode, Dispatch, FrameError, FrameExpectation, Guest,
-    HandsOperationId, IntoResponse, JournalError, OperationMeta, Response, ResponseStatus,
-    ResultResponse, StartDecision, StartInput, StartRequest, State, StatusCode, StatusResponse,
-    Verb, decode_request, frame_response, journal_error, now, protocol_error,
+    Arc, AttachResponse, Bound, Bytes, DeliveryMode, Dispatch, Guest, GuestError, HandsOperationId,
+    IntoResponse, JournalError, MAX_RESULT_CHUNK_BYTES, OperationMeta, Response, ResultResponse,
+    StartDecision, StartInput, StartRequest, State, StatusCode, StatusResponse,
+    decode_guest_request, encode_guest_response, journal_error, json_bytes_response, now,
+    protocol_error,
 };
 
 /// How many terminal bytes an attached answer carries on the connection itself.
 ///
-/// Base64 keeps this inside the shared 1 MiB frame ceiling. A larger body is not
+/// Base64 keeps this inside the shared 1 MiB JSON ceiling. A larger body is not
 /// truncated; it remains resumably pullable from the same journal and digest.
-pub const ATTACH_CHUNK_BYTES: u64 = 180_000;
+pub const ATTACH_CHUNK_BYTES: u64 = MAX_RESULT_CHUNK_BYTES;
 
 /// What the fenced decision phase settled before anything runs.
 enum AttachStep {
@@ -37,38 +38,16 @@ pub(super) async fn attach_handler(State(guest): State<Arc<Guest>>, body: Bytes)
             )
                 .into_response();
         };
-        let expectation = FrameExpectation {
-            generation: state.supervisor.generation(),
-            min_fence: state.supervisor.fence_floor(),
-            schema_version: aex_hands_agent::wire::PROTOCOL_V1,
-            max_frame_bytes: 1_048_576,
+        let request = match decode_guest_request::<StartRequest>(&body, state) {
+            Ok(request) => request,
+            Err(error) => return protocol_error(&error),
         };
-        let decoded = match decode_request(&body, &expectation) {
-            Ok(frame) => frame,
-            Err(error) => return protocol_error(guest.as_ref(), state, Verb::Attach, &error),
-        };
-        if decoded.preamble.verb != Verb::Attach {
-            return protocol_error(
-                guest.as_ref(),
-                state,
-                Verb::Attach,
-                &FrameError::Malformed {
-                    at: "verb",
-                    reason: format!(
-                        "the frame declares {:?} but was posted to {}",
-                        decoded.preamble.verb,
-                        Verb::Attach.path()
-                    ),
-                },
-            );
-        }
-        state.supervisor.adopt_fence(decoded.preamble.fence);
-        match decide_attach(guest.as_ref(), state, decoded.payload) {
+        match decide_attach(guest.as_ref(), state, &request) {
             Ok((AttachStep::Answered(response), _)) => {
-                return encode_attach(guest.as_ref(), state, &response);
+                return encode_attach(&response, state);
             }
             Ok(settled) => settled,
-            Err(error) => return protocol_error(guest.as_ref(), state, Verb::Attach, &error),
+            Err(error) => return protocol_error(&error),
         }
     };
 
@@ -78,7 +57,7 @@ pub(super) async fn attach_handler(State(guest): State<Arc<Guest>>, body: Bytes)
     {
         let bound = guest.bound.read().await;
         return match bound.as_ref() {
-            Some(state) => protocol_error(guest.as_ref(), state, Verb::Attach, &error),
+            Some(_) => protocol_error(&error),
             None => (StatusCode::SERVICE_UNAVAILABLE, "the binding was replaced").into_response(),
         };
     }
@@ -90,19 +69,12 @@ pub(super) async fn attach_handler(State(guest): State<Arc<Guest>>, body: Bytes)
 fn decide_attach(
     guest: &Guest,
     state: &mut Bound,
-    payload: &[u8],
-) -> Result<(AttachStep, HandsOperationId), FrameError> {
-    let request: StartRequest =
-        serde_json::from_slice(payload).map_err(|_| FrameError::Malformed {
-            at: "payload",
-            reason: "the payload is not the request this verb takes".to_owned(),
-        })?;
+    request: &StartRequest,
+) -> Result<(AttachStep, HandsOperationId), GuestError> {
     if request.delivery != DeliveryMode::Attached {
-        return Err(FrameError::Malformed {
-            at: "delivery",
-            reason: "attach is the attached delivery mode; a detached start is posted to /start"
-                .to_owned(),
-        });
+        return Err(GuestError::invalid(
+            "attach is the attached delivery mode; a detached start is posted to /start",
+        ));
     }
     let operation = request.operation;
     let input = StartInput {
@@ -146,7 +118,7 @@ fn decide_attach(
 }
 
 /// Runs one attached operation to its terminal record, holding no binding lock.
-async fn run_attached(guest: &Arc<Guest>, meta: Box<OperationMeta>) -> Result<(), FrameError> {
+async fn run_attached(guest: &Arc<Guest>, meta: Box<OperationMeta>) -> Result<(), GuestError> {
     let operation = meta.operation;
     let runner = Arc::clone(guest);
     let dispatched = tokio::task::spawn_blocking(move || {
@@ -155,10 +127,7 @@ async fn run_attached(guest: &Arc<Guest>, meta: Box<OperationMeta>) -> Result<()
             .dispatch(&runner.journal, &meta, DeliveryMode::Attached, now())
     })
     .await
-    .map_err(|error| FrameError::Malformed {
-        at: "attach",
-        reason: format!("the attached operation did not join: {error}"),
-    })?
+    .map_err(|error| GuestError::internal(format!("the attached operation did not join: {error}")))?
     .map_err(|error| journal_error(&error))?;
     if let Dispatch::Terminal(terminal) = dispatched {
         match guest.journal.record_terminal(operation, &terminal) {
@@ -169,7 +138,7 @@ async fn run_attached(guest: &Arc<Guest>, meta: Box<OperationMeta>) -> Result<()
     Ok(())
 }
 
-/// Reads the authoritative terminal record and frames it for the held connection.
+/// Reads the authoritative terminal record for the held connection.
 async fn answer_attached(
     guest: &Arc<Guest>,
     operation: HandsOperationId,
@@ -183,11 +152,9 @@ async fn answer_attached(
         )
             .into_response();
     };
-    let revision = state.supervisor.guest_revision();
     let response = match state.supervisor.result(operation, 0, ATTACH_CHUNK_BYTES) {
         Ok(ResultResponse::Terminal { terminal, chunk }) => AttachResponse::Terminal {
             operation,
-            guest_revision: revision,
             existing,
             terminal,
             chunk,
@@ -197,39 +164,23 @@ async fn answer_attached(
             state: observed,
         }) => AttachResponse::NotTerminal {
             operation: found,
-            guest_revision: revision,
             state: observed,
         },
         Ok(ResultResponse::Unknown { operation: found }) => AttachResponse::NotTerminal {
             operation: found,
-            guest_revision: revision,
             state: Box::new(StatusResponse::Unknown { operation: found }),
         },
         Err(error) => {
-            return protocol_error(guest.as_ref(), state, Verb::Attach, &journal_error(&error));
+            return protocol_error(&journal_error(&error));
         }
     };
-    encode_attach(guest.as_ref(), state, &response)
+    encode_attach(&response, state)
 }
 
-/// Frames one attach answer.
-fn encode_attach(guest: &Guest, state: &Bound, response: &AttachResponse) -> Response {
-    match serde_json::to_vec(response) {
-        Ok(payload) => frame_response(
-            guest,
-            state,
-            Verb::Attach,
-            ResponseStatus::Payload,
-            &payload,
-        ),
-        Err(_) => protocol_error(
-            guest,
-            state,
-            Verb::Attach,
-            &FrameError::Malformed {
-                at: "response",
-                reason: "the attach answer could not be encoded".to_owned(),
-            },
-        ),
+/// Encodes one attached answer as bounded typed JSON.
+fn encode_attach(response: &AttachResponse, state: &Bound) -> Response {
+    match encode_guest_response(response, state) {
+        Ok(payload) => json_bytes_response(payload),
+        Err(error) => protocol_error(&error),
     }
 }

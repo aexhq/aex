@@ -147,19 +147,14 @@ pub fn session_event_partition_hour(session: SessionId, hour: &str) -> String {
     format!("EVTS#{session}#{hour}")
 }
 
-/// The canonical observation merge tuple for one native event.
+/// The stable chronological sort key for one native event.
 #[must_use]
 pub fn workspace_event_sort(
     _session: SessionId,
     event: ObservationId,
     occurred_at: Timestamp,
 ) -> String {
-    aex_observation_domain::order::order_sort_key(aex_observation_domain::order::OrderTuple::new(
-        occurred_at,
-        aex_observation_domain::signal::Signal::Events,
-        event,
-        1,
-    ))
+    format!("{}#000#{event}#{:020}", occurred_at.to_wire(), 1)
 }
 
 #[cfg(test)]

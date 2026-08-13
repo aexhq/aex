@@ -35,7 +35,6 @@ schemas:
       - { value: retry, payload: ErrorDetailsRetry, doc: "How long to wait before retrying." }
       - { value: operation, payload: ErrorDetailsOperation, doc: "The original operation that already exists." }
       - { value: validation, payload: ErrorDetailsValidation, doc: "Exactly where the body failed validation." }
-      - { value: gap, payload: ErrorDetailsGap, doc: "The telemetry gaps that blocked completeness." }
 
   ErrorDetailsRequiredScope:
     doc: The scope the credential lacks.
@@ -84,12 +83,6 @@ schemas:
     fields:
       pointer: { type: json_pointer, doc: "RFC 6901 pointer to the offending position." }
       reason: { type: string, max: 512, doc: "Why that position was rejected." }
-
-  ErrorDetailsGap:
-    doc: The telemetry gaps that blocked a completeness requirement.
-    type: object
-    fields:
-      gapIds: { type: array, max: 100, items: { type: id, of: telemetry_gap }, doc: "The blocking gaps." }
 
   ByteRange:
     doc: An explicit inclusive byte range over an immutable object.
@@ -146,8 +139,7 @@ schemas:
       - { value: session_suspend, doc: "Suspend an idle session's exact retained generation." }
       - { value: session_resume, doc: "Resume the same retained generation to idle." }
       - { value: session_terminate, doc: "Destroy session compute and live files while retaining metadata and messages." }
-      - { value: session_delete, doc: "Irreversibly delete session-scoped user content and telemetry." }
-      - { value: telemetry_export, doc: "Produce a telemetry export artifact." }
+      - { value: session_delete, doc: "Irreversibly delete session-scoped user content." }
       - { value: workspace_delete, doc: "Delete the workspace across both planes." }
 
   OperationStatus:
@@ -212,5 +204,4 @@ schemas:
       - { value: session_resume, payload: SessionResumeResult, doc: "Manual resumption result." }
       - { value: session_terminate, payload: SessionTerminateResult, doc: "Permanent compute/live-file termination result." }
       - { value: session_delete, payload: SessionTombstone, doc: "Irreversible deletion tombstone." }
-      - { value: telemetry_export, payload: TelemetryExportResult, doc: "Export result." }
       - { value: workspace_delete, payload: WorkspaceTombstone, doc: "Workspace tombstone." }

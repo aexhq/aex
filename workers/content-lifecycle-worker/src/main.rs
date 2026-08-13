@@ -26,6 +26,8 @@ use content_lifecycle_worker::upload_expiry::{self, UploadObjects, UploadRows};
 use content_lifecycle_worker::{DeleteIntent, ObjectDeleteResult};
 use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
 
+const DEPLOYABLE: &str = "content-lifecycle-worker";
+
 /// Why `content-lifecycle-worker` stopped.
 #[derive(Debug, thiserror::Error)]
 enum ContentLifecycleWorkerRunError {
@@ -39,47 +41,43 @@ enum ContentLifecycleWorkerRunError {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("{DEPLOYABLE}: diagnostics installation failed: {error}");
+        return ExitCode::FAILURE;
+    }
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("content-lifecycle-worker: refusing to start: {error}");
+            tracing::error!(
+                target: "aex::diagnostics",
+                event_name = "process.configuration_rejected",
+                deployable = DEPLOYABLE,
+                error = %error,
+                "process configuration rejected"
+            );
+            eprintln!("{DEPLOYABLE}: refusing to start: {error}");
             return ExitCode::FAILURE;
         }
     };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(config, &telemetry).await;
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("content-lifecycle-worker: telemetry flush left {pending} record(s) undelivered");
-    }
+    let outcome = run(config).await;
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("content-lifecycle-worker: stopped: {error}");
+            eprintln!("{DEPLOYABLE}: stopped: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
 /// Builds the adapters this role is allowed to hold and serves its trigger.
-async fn run(
-    config: Config,
-    telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), ContentLifecycleWorkerRunError> {
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.as_str().to_owned(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.as_str().to_owned(),
-        ),
+async fn run(config: Config) -> Result<(), ContentLifecycleWorkerRunError> {
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = DEPLOYABLE,
+        plane = config.plane.as_str(),
+        region = config.region.as_str(),
+        "process started"
     );
 
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;

@@ -4,10 +4,8 @@ import {
   centsToUsd,
   classifyFailure,
   parseRetryAfter,
-  readCoverage,
   readFailure,
   usageThrough,
-  type ObservationCoverage,
 } from "../src/ui/panel";
 
 function envelope(code: string, retryable = false): unknown {
@@ -20,8 +18,8 @@ describe("failure classification", () => {
     expect(state.kind).toBe("paused");
   });
 
-  test("an unavailable observation store is retryable and separate from a failure", () => {
-    const state = classifyFailure(503, envelope("observability_unavailable", true), 30_000);
+  test("an unavailable upstream is retryable and separate from a failure", () => {
+    const state = classifyFailure(503, envelope("upstream_error", true), 30_000);
     expect(state).toEqual(expect.objectContaining({ kind: "unavailable", retryAfterMs: 30_000 }));
   });
 
@@ -45,45 +43,6 @@ describe("failure classification", () => {
     expect(parseRetryAfter("30")).toBe(30_000);
     expect(parseRetryAfter("Wed, 21 Oct 2026 07:28:00 GMT")).toBeNull();
     expect(parseRetryAfter(null)).toBeNull();
-  });
-});
-
-const WHOLE: ObservationCoverage = {
-  accepted: "1000",
-  indexed: "1000",
-  snapshot: "1000",
-  earliestReplay: "0",
-  caughtUp: true,
-  complete: true,
-  missingIntervals: [],
-  unboundedGaps: [],
-};
-
-describe("coverage", () => {
-  test("a whole, caught-up window is complete", () => {
-    expect(readCoverage(WHOLE)).toEqual({ kind: "complete", completeThrough: 1000 });
-  });
-
-  test("a whole window that trails admission reports the lag, not a hole", () => {
-    const verdict = readCoverage({ ...WHOLE, caughtUp: false, accepted: "9000" });
-    expect(verdict).toEqual({ kind: "behind", completeThrough: 1000, lagMs: 8000 });
-  });
-
-  test("a hole outranks catching up, and carries the gap identities", () => {
-    const hole = { gapId: "gap_1", range: { gte: "2026-01-01T00:00:00.000Z", lt: "2026-01-01T01:00:00.000Z" } };
-    const verdict = readCoverage({ ...WHOLE, complete: false, missingIntervals: [hole] });
-    expect(verdict).toEqual({
-      kind: "incomplete",
-      completeThrough: 1000,
-      lagMs: 0,
-      holes: [hole],
-      unboundedGaps: [],
-    });
-  });
-
-  test("an unbounded gap alone is enough to make a window incomplete", () => {
-    const verdict = readCoverage({ ...WHOLE, unboundedGaps: ["gap_2"] });
-    expect(verdict.kind).toBe("incomplete");
   });
 });
 

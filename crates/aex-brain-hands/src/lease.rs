@@ -45,19 +45,9 @@ impl<T> core::fmt::Debug for LeaseHandle<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GuestObservation {
-    Recorded,
-    Unchanged,
-    Invalidated,
-    StaleLease,
-}
-
 struct Entry<T> {
     handle: LeaseHandle<T>,
     expires_at: Timestamp,
-    guest_revision: Option<u32>,
-    agent_build: Option<[u8; 8]>,
     last_used: u64,
 }
 
@@ -123,44 +113,10 @@ impl<T> EndpointLeaseCache<T> {
             Entry {
                 handle: handle.clone(),
                 expires_at,
-                guest_revision: None,
-                agent_build: None,
                 last_used: self.use_serial,
             },
         );
         handle
-    }
-
-    pub(crate) fn observe_guest(
-        &mut self,
-        lease: &LeaseHandle<T>,
-        guest_revision: u32,
-        agent_build: [u8; 8],
-    ) -> GuestObservation {
-        let Some(entry) = self.entries.get_mut(&lease.identity.generation) else {
-            return GuestObservation::StaleLease;
-        };
-        if entry.handle.identity != lease.identity
-            || entry.handle.token_generation != lease.token_generation
-        {
-            return GuestObservation::StaleLease;
-        }
-        match (entry.guest_revision, entry.agent_build) {
-            (None, None) => {
-                entry.guest_revision = Some(guest_revision);
-                entry.agent_build = Some(agent_build);
-                GuestObservation::Recorded
-            }
-            (Some(known_revision), Some(known_build))
-                if known_revision == guest_revision && known_build == agent_build =>
-            {
-                GuestObservation::Unchanged
-            }
-            _ => {
-                self.entries.remove(&lease.identity.generation);
-                GuestObservation::Invalidated
-            }
-        }
     }
 
     pub(crate) fn invalidate(&mut self, generation: GenerationId) {
@@ -216,7 +172,7 @@ mod tests {
     use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
     use aex_wire::types::Timestamp;
 
-    use super::{EndpointLeaseCache, GuestObservation, LeaseIdentity, TOKEN_REUSE_MARGIN_MS};
+    use super::{EndpointLeaseCache, LeaseIdentity, TOKEN_REUSE_MARGIN_MS};
 
     fn generation(seed: u8) -> GenerationId {
         GenerationId::from_uuid7(Uuid7::compose(u64::from(seed), [seed; 10]))
@@ -259,53 +215,12 @@ mod tests {
     }
 
     #[test]
-    fn a_guest_incarnation_or_build_change_invalidates_the_lease() {
-        let mut cache = cache(2);
-        let exact = identity(1, 7, "vm-a");
-        let lease = cache.insert(exact.clone(), at(1_800_000), "lease");
-        assert_eq!(
-            cache.observe_guest(&lease, 3, [4; 8]),
-            GuestObservation::Recorded
-        );
-        assert_eq!(
-            cache.observe_guest(&lease, 3, [4; 8]),
-            GuestObservation::Unchanged
-        );
-        assert_eq!(
-            cache.observe_guest(&lease, 4, [4; 8]),
-            GuestObservation::Invalidated
-        );
-        assert!(cache.get(&exact, at(0)).is_none());
-    }
-
-    #[test]
-    fn a_late_reply_from_an_old_token_cannot_evict_its_refresh() {
-        let mut cache = cache(2);
-        let exact = identity(1, 7, "vm-a");
-        let old = cache.insert(exact.clone(), at(1_800_000), "old");
-        let fresh = cache.insert(exact.clone(), at(3_600_000), "fresh");
-
-        assert_eq!(
-            cache.observe_guest(&old, 99, [9; 8]),
-            GuestObservation::StaleLease
-        );
-        assert_eq!(
-            cache.get(&exact, at(0)).map(|lease| lease.value),
-            Some("fresh")
-        );
-        assert_eq!(
-            cache.observe_guest(&fresh, 1, [1; 8]),
-            GuestObservation::Recorded
-        );
-    }
-
-    #[test]
     fn a_lifecycle_fence_change_invalidates_the_old_lease_without_touching_the_successor() {
         let mut cache = cache(2);
         let old_identity = identity(1, 7, "vm-a");
         let old = cache.insert(old_identity.clone(), at(1_800_000), "old");
         let successor_identity = identity(1, 8, "vm-a");
-        let successor = cache.insert(successor_identity.clone(), at(3_600_000), "successor");
+        cache.insert(successor_identity.clone(), at(3_600_000), "successor");
 
         assert!(!cache.invalidate_lease(&old));
         assert_eq!(
@@ -320,10 +235,6 @@ mod tests {
                 .get(&successor_identity, at(0))
                 .map(|lease| lease.value),
             Some("successor")
-        );
-        assert_eq!(
-            cache.observe_guest(&successor, 1, [1; 8]),
-            GuestObservation::Recorded
         );
     }
 

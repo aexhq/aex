@@ -11,7 +11,7 @@
 //! Everything else here is a cold or diagnostic read.
 //!
 //! It lives behind the `authz-projection` feature so `session-stream-api` and
-//! `regional-otlp` can read a placement without linking the session row codec
+//! regional readers can read a placement without linking the session row codec
 //! (D-21).
 
 use aex_internal_contracts::assertion::{AssertionAudience, AudienceSet};

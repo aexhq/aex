@@ -52,13 +52,31 @@ pub const fn dispatch_order() -> &'static [aex_session_dynamodb::plan::Participa
 pub struct BrainStore {
     client: Client,
     tables: BrainTables,
+    session_telemetry: Option<aex_session_telemetry_aws::SessionTelemetryWriter>,
 }
 
 impl BrainStore {
     /// Binds the store to a client and a composition.
     #[must_use]
     pub const fn new(client: Client, tables: BrainTables) -> Self {
-        Self { client, tables }
+        Self {
+            client,
+            tables,
+            session_telemetry: None,
+        }
+    }
+
+    /// Adds the customer session-telemetry writer.
+    ///
+    /// This capability is optional at the adapter boundary so unit and local
+    /// stores remain pure `DynamoDB` compositions. Production always binds it.
+    #[must_use]
+    pub fn with_session_telemetry(
+        mut self,
+        session_telemetry: aex_session_telemetry_aws::SessionTelemetryWriter,
+    ) -> Self {
+        self.session_telemetry = Some(session_telemetry);
+        self
     }
 
     /// The physical tables this store was built with.
@@ -257,12 +275,15 @@ impl JournalStore for BrainStore {
                 .compile(&self.client)
                 .map_err(|error| commit_store_error(&error))?;
             match request.send().await {
-                Ok(_) => Ok(CommitReceipt {
-                    revision: commit.control.next_revision,
-                    tail: commit.control.next_tail,
-                    wakes: commit.wakes.iter().map(|wake| wake.id).collect(),
-                    committed_at: context.now,
-                }),
+                Ok(_) => {
+                    self.write_session_telemetry(commit).await;
+                    Ok(CommitReceipt {
+                        revision: commit.control.next_revision,
+                        tail: commit.control.next_tail,
+                        wakes: commit.wakes.iter().map(|wake| wake.id).collect(),
+                        committed_at: context.now,
+                    })
+                }
                 Err(error) => {
                     let mapped = match error.as_service_error() {
                         Some(service) => {
@@ -279,6 +300,42 @@ impl JournalStore for BrainStore {
                 }
             }
         })
+    }
+}
+
+impl BrainStore {
+    async fn write_session_telemetry(&self, commit: &DecisionCommit) {
+        let Some(writer) = self.session_telemetry.as_ref() else {
+            return;
+        };
+        let Ok(session) = translate::session(commit.guard.key.session) else {
+            return;
+        };
+        for event in &commit.session_events {
+            let outcome = match event.outcome.as_str() {
+                "succeeded" => aex_session_telemetry_aws::SessionOutcome::Succeeded,
+                "failed" => aex_session_telemetry_aws::SessionOutcome::Failed,
+                "timed_out" => aex_session_telemetry_aws::SessionOutcome::TimedOut,
+                "cancelled" => aex_session_telemetry_aws::SessionOutcome::Cancelled,
+                "interrupted" => aex_session_telemetry_aws::SessionOutcome::Interrupted,
+                _ => continue,
+            };
+            let Ok(at) = translate::at(event.at, "session telemetry timestamp") else {
+                continue;
+            };
+            // DynamoDB is authoritative. Telemetry is deliberately post-commit
+            // and fail-open: an S3/KMS refusal never changes the product result.
+            let _ = writer
+                .write(
+                    session,
+                    aex_session_telemetry_aws::SessionEvent::message_completed(
+                        event.event_seq,
+                        outcome,
+                        at,
+                    ),
+                )
+                .await;
+        }
     }
 }
 

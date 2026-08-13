@@ -3,7 +3,7 @@
 //! The identifier registry and its newtypes.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:308866d3e6ae0f8108ee3b81c1b852256a3bc1d80cb6d774f221d3d91fab4721`.
+//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -47,14 +47,8 @@ pub enum IdKind {
     FileUpload,
     /// One ephemeral exact-generation live-file download.
     FileDownload,
-    /// One admitted telemetry observation.
+    /// One native session event.
     Observation,
-    /// One admitted OTLP batch.
-    TelemetryBatch,
-    /// One recorded telemetry gap.
-    TelemetryGap,
-    /// One telemetry export artifact.
-    Export,
     /// One staged multipart upload.
     Upload,
     /// One metered download measurement.
@@ -83,9 +77,6 @@ impl IdKind {
         IdKind::FileUpload,
         IdKind::FileDownload,
         IdKind::Observation,
-        IdKind::TelemetryBatch,
-        IdKind::TelemetryGap,
-        IdKind::Export,
         IdKind::Upload,
         IdKind::Measurement,
         IdKind::Statement,
@@ -112,9 +103,6 @@ impl IdKind {
             Self::FileUpload => "ful",
             Self::FileDownload => "fdl",
             Self::Observation => "obs",
-            Self::TelemetryBatch => "bch",
-            Self::TelemetryGap => "gap",
-            Self::Export => "exp",
             Self::Upload => "upl",
             Self::Measurement => "msr",
             Self::Statement => "stm",
@@ -142,9 +130,6 @@ impl IdKind {
             Self::FileUpload => "^ful_[0-9a-hjkmnp-tv-z]{26}$",
             Self::FileDownload => "^fdl_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Observation => "^obs_[0-9a-hjkmnp-tv-z]{26}$",
-            Self::TelemetryBatch => "^bch_[0-9a-hjkmnp-tv-z]{26}$",
-            Self::TelemetryGap => "^gap_[0-9a-hjkmnp-tv-z]{26}$",
-            Self::Export => "^exp_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Upload => "^upl_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Measurement => "^msr_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Statement => "^stm_[0-9a-hjkmnp-tv-z]{26}$",
@@ -172,9 +157,6 @@ impl IdKind {
             Self::FileUpload => "file_upload",
             Self::FileDownload => "file_download",
             Self::Observation => "observation",
-            Self::TelemetryBatch => "telemetry_batch",
-            Self::TelemetryGap => "telemetry_gap",
-            Self::Export => "export",
             Self::Upload => "upload",
             Self::Measurement => "measurement",
             Self::Statement => "statement",
@@ -279,27 +261,9 @@ prefixed_id!(
 );
 
 prefixed_id!(
-    /// One admitted telemetry observation.
+    /// One native session event.
     ObservationId,
     Observation
-);
-
-prefixed_id!(
-    /// One admitted OTLP batch.
-    TelemetryBatchId,
-    TelemetryBatch
-);
-
-prefixed_id!(
-    /// One recorded telemetry gap.
-    TelemetryGapId,
-    TelemetryGap
-);
-
-prefixed_id!(
-    /// One telemetry export artifact.
-    ExportId,
-    Export
 );
 
 prefixed_id!(

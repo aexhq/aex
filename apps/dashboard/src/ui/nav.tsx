@@ -10,7 +10,6 @@ export function WorkspaceNav({ slug, organizationSlug }: { slug: string; organiz
   const pathname = usePathname();
   const items: readonly { readonly href: string; readonly label: string }[] = [
     { href: `/w/${slug}/sessions`, label: "Sessions" },
-    { href: `/w/${slug}/observability`, label: "Observability" },
     { href: `/w/${slug}/usage`, label: "Usage" },
     { href: `/w/${slug}/resources`, label: "Resources" },
     { href: `/w/${slug}/keys`, label: "API keys" },

@@ -20,10 +20,7 @@ use aex_central_http::router::EdgeStack;
 /// process. The alternative — serving with a false readiness flag — admits
 /// requests this deployable can only fail, and a device-flow route that answers
 /// without an identity store is one that mints nothing and says it did.
-async fn compose(
-    config: &Config,
-    telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), CentralIdentityApiRunError> {
+async fn compose(config: &Config) -> Result<(), CentralIdentityApiRunError> {
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let data_api = aex_rds_data::DataApiConfig::new(
         aex_rds_data::ResourceArn::parse(&config.aurora_cluster_arn)
@@ -60,6 +57,7 @@ async fn compose(
             aex_central_aws::PepperStatements {
                 active: aex_identity_aurora::sql::ACTIVE_IDENTITY_PEPPER,
                 by_version: aex_identity_aurora::sql::IDENTITY_PEPPER_BY_VERSION,
+                verification_set: None,
             },
         )),
     ));
@@ -74,7 +72,7 @@ async fn compose(
             CentralIdentityApiRunError::Dependency("identity-pepper", error.to_string())
         })?;
 
-    // Probe three: Google's sign-in OAuth client loads and parses. Without it
+    // Probe three: every sign-in OAuth client loads and parses. Without them
     // `dashboard_session_create` can complete no handshake, and a browser
     // session is the only thing that can approve a device authorization — so a
     // process that serves without them answers the whole credential ceremony's
@@ -83,11 +81,15 @@ async fn compose(
     let google = oauth::load_oauth_client(&secrets, &config.google_oauth_secret_id)
         .await
         .map_err(|reason| CentralIdentityApiRunError::Dependency("google-oauth-client", reason))?;
+    let github = oauth::load_oauth_client(&secrets, &config.github_oauth_secret_id)
+        .await
+        .map_err(|reason| CentralIdentityApiRunError::Dependency("github-oauth-client", reason))?;
     // The handshake is bounded by the same deadline the request it serves is,
     // so a provider that stops answering can never outlive its own request.
     let handshake = Arc::new(
         oauth::HttpProviderHandshake::new(
             google,
+            github,
             config.sign_in_redirect_uri.clone(),
             config.http.request_deadline,
         )
@@ -138,7 +140,7 @@ async fn compose(
         )),
     ));
 
-    run(config, api, account, edge, Probes::READY, telemetry).await
+    run(config, api, account, edge, Probes::READY).await
 }
 
 /// The one-column `SELECT 1` the readiness probe issues.
@@ -154,23 +156,20 @@ impl aex_rds_data::Row for Ok1 {
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    // Telemetry first: a configuration refusal must reach the wire, or a
-    // crash-looping deployment is visible only to whoever tails stderr.
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("central-identity-api: refusing to start: {error}");
+        return std::process::ExitCode::FAILURE;
+    }
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
-            telemetry.emit(
-                aex_platform_telemetry::Record::event(
-                    aex_telemetry_schema::generated::EVENT_AEX_PROCESS_CONFIGURATION_REJECTED,
-                )
-                .with(
-                    aex_telemetry_schema::generated::AEX_DEPLOYABLE,
-                    DEPLOYABLE.as_str(),
-                ),
+            tracing::error!(
+                target: "aex::diagnostics",
+                event_name = "process.configuration_rejected",
+                deployable = DEPLOYABLE.as_str(),
+                error = %error,
+                "configuration rejected"
             );
-            let _ = telemetry.flush(settings.flush_deadline);
             eprintln!("central-identity-api: refusing to start: {error}");
             eprintln!(
                 "central-identity-api: required configuration: {}",
@@ -179,12 +178,7 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    let outcome = compose(&config, &telemetry).await;
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("central-identity-api: telemetry flush left {pending} record(s) undelivered");
-    }
+    let outcome = compose(&config).await;
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {

@@ -57,12 +57,12 @@ aex-brain-managed-web = { path = "../../crates/aex-brain-managed-web", default-f
 aex-control-domain = { path = "../../crates/aex-control-domain" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
 aex-wire = { path = "../../crates/aex-wire" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 

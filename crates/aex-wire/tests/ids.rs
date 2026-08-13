@@ -36,10 +36,9 @@ struct InvalidCase {
 /// leave a type untested.
 fn parse_as(kind: IdKind, text: &str) -> bool {
     use aex_wire::ids::{
-        AgentId, ApiKeyId, ApprovalId, ExportId, FileDownloadId, FileUploadId, GenerationId,
-        InvitationId, MeasurementId, MembershipId, MessageId, ObservationId, OperationId,
-        OrganizationId, ProviderCredentialId, SessionId, StatementId, TelemetryBatchId,
-        TelemetryGapId, ToolCallId, UploadId, UserId, WorkspaceId,
+        AgentId, ApiKeyId, ApprovalId, FileDownloadId, FileUploadId, GenerationId, InvitationId,
+        MeasurementId, MembershipId, MessageId, ObservationId, OperationId, OrganizationId,
+        ProviderCredentialId, SessionId, StatementId, ToolCallId, UploadId, UserId, WorkspaceId,
     };
     match kind {
         IdKind::User => UserId::parse(text).is_ok(),
@@ -59,9 +58,6 @@ fn parse_as(kind: IdKind, text: &str) -> bool {
         IdKind::FileUpload => FileUploadId::parse(text).is_ok(),
         IdKind::FileDownload => FileDownloadId::parse(text).is_ok(),
         IdKind::Observation => ObservationId::parse(text).is_ok(),
-        IdKind::TelemetryBatch => TelemetryBatchId::parse(text).is_ok(),
-        IdKind::TelemetryGap => TelemetryGapId::parse(text).is_ok(),
-        IdKind::Export => ExportId::parse(text).is_ok(),
         IdKind::Upload => UploadId::parse(text).is_ok(),
         IdKind::Measurement => MeasurementId::parse(text).is_ok(),
         IdKind::Statement => StatementId::parse(text).is_ok(),

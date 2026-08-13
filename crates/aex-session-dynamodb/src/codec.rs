@@ -56,7 +56,6 @@ pub const OPERATION: &str = "operation";
 /// The `itemType` of an idempotency receipt.
 pub const IDEMPOTENCY_RECEIPT: &str = "idempotency_receipt";
 /// The `itemType` of a run's outbox event.
-pub const OUTBOX_EVENT: &str = "outbox_event";
 /// The `itemType` of an agent registry entry.
 pub const AGENT_INDEX: &str = "agent_index";
 /// The `itemType` of a fanout page.
@@ -658,36 +657,6 @@ pub fn decode_operation(item: &Item, asserted: WorkspaceId) -> Result<StoredOper
     })
 }
 
-/// Encodes one run's outbox event.
-///
-/// The envelope's own fields are the row: a relay reads them without parsing a
-/// blob, and `outboxState` is the only attribute the relay writes back. The row
-/// is immutable in every other respect, which is why the terminal barrier writes
-/// it under `attribute_not_exists` rather than replacing it.
-#[must_use]
-pub fn encode_outbox_event(
-    workspace: WorkspaceId,
-    event: &aex_session_domain::OutboxEvent,
-) -> Item {
-    let key = keys::outbox(event.session, event.run);
-    ItemBuilder::new(OUTBOX_EVENT)
-        .set(crate::attr::PK, s(key.pk))
-        .set(crate::attr::SK, s(key.sk))
-        .set("workspaceId", s(workspace.to_string()))
-        .set("sessionId", s(event.session.to_string()))
-        .set("runId", s(event.run.to_string()))
-        .set("schemaVersion", n(u64::from(event.schema_version.0)))
-        .set(
-            "runStatus",
-            s(crate::authority_codec::run_status(event.status)),
-        )
-        .set("sessionRevision", n(event.session_revision.0))
-        .set("usageClosureId", s(event.usage_closure.0.to_string()))
-        .set("committedAt", stamp(event.at))
-        .set("outboxState", s(crate::keys::OUTBOX_STATES[0]))
-        .build()
-}
-
 /// Encodes one idempotency receipt.
 ///
 /// The receipt row shape is shared by every regional table that holds one, so
@@ -885,7 +854,7 @@ mod tests {
         let decoded = decode_operation(&item, original.record.workspace).expect("decodes");
         assert_eq!(decoded, original);
 
-        let mut failed = stored_operation(OperationKind::TelemetryExport);
+        let mut failed = stored_operation(OperationKind::ContentGc);
         failed.record.status = OperationStatus::Failed;
         failed.record.result = None;
         failed.record.error = Some(OperationFailure {
@@ -1073,14 +1042,8 @@ mod tests {
                 .expect("workspace event partition")
                 .starts_with(&format!("EVTW#{}#", event.workspace))
         );
-        let canonical = aex_observation_domain::order::order_sort_key(
-            aex_observation_domain::order::OrderTuple::new(
-                event.occurred_at,
-                aex_observation_domain::signal::Signal::Events,
-                event.event_id,
-                1,
-            ),
-        );
+        let canonical =
+            crate::stream_keys::workspace_event_sort(session, event.event_id, event.occurred_at);
         assert_eq!(
             encoded[crate::stream_keys::WORKSPACE_EVENT_SK]
                 .as_s()

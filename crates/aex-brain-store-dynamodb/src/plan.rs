@@ -871,18 +871,6 @@ pub fn compile(
                 .expression_attribute_values(":active", s("active")),
         )
         .map_err(PlanError::Store)?;
-
-        plan.put(
-            Participant::SESSION_TERMINAL_EVENT,
-            aws_sdk_dynamodb::types::Put::builder()
-                .table_name(table)
-                .set_item(Some(aex_session_dynamodb::codec::encode_outbox_event(
-                    context.authority.workspace,
-                    &terminal.outbox,
-                )))
-                .condition_expression(IMMUTABLE),
-        )
-        .map_err(PlanError::Store)?;
     }
 
     // The domain validator includes the head guard (or its boundary replacement); this

@@ -304,6 +304,7 @@ schemas:
     doc: An external sign-in provider AEX links a person to.
     type: enum
     values:
+      - { value: github, doc: "GitHub." }
       - { value: google, doc: "Google." }
 
   DashboardSessionRequest:

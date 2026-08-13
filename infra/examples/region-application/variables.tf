@@ -85,7 +85,7 @@ variable "session_stream_api" {
       scale_in_cooldown  = optional(number, 300)
     }))
   })
-  description = "The merged regional request-path service. `regional-session-api` and `regional-stream` were two Fargate services of identical shape, each with a production floor of two tasks; they are one deployable now, which makes that floor two tasks rather than four."
+  description = "The regional request-path service that owns the current unary regional API."
 
   validation {
     condition     = length(var.session_stream_api.rules) > 0

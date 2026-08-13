@@ -45,7 +45,7 @@ fn regional_operations() -> BTreeSet<String> {
 #[test]
 fn the_regional_surface_is_session_centric_and_has_one_file_registry() {
     let operations = regional_operations();
-    assert_eq!(operations.len(), 95, "regional route ledger drifted");
+    assert_eq!(operations.len(), 43, "regional route ledger drifted");
 
     for required in [
         "session_cancel",
@@ -64,6 +64,8 @@ fn the_regional_surface_is_session_centric_and_has_one_file_registry() {
         "session_files_live_upload_part_put",
         "session_files_live_upload_complete",
         "session_files_live_upload_delete",
+        "session_telemetry_segments_list",
+        "session_telemetry_segment_download_create",
         "registry_files_list",
         "registry_files_get",
         "registry_files_put",
@@ -188,7 +190,6 @@ fn no_public_schema_or_identifier_exposes_a_run_or_turn_identity() {
         "api/generated/bundle.json",
         "api/generated/registries/ids.json",
         "api/generated/schemas/Message.json",
-        "api/generated/schemas/Observation.json",
         "api/generated/schemas/UsageAttribution.json",
     ] {
         let text = std::str::from_utf8(
@@ -216,7 +217,7 @@ fn credentials_and_identity_have_one_explicit_authority_each() {
     assert!(!scopes.iter().any(|scope| scope.starts_with("secrets:")));
 
     let providers = generated_json("api/generated/schemas/IdentityProvider.json");
-    assert_eq!(providers["enum"], serde_json::json!(["google"]));
+    assert_eq!(providers["enum"], serde_json::json!(["github", "google"]));
 }
 
 #[test]

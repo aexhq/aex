@@ -36,6 +36,7 @@ pub use capacity::{CapacityBootstrapError, LambdaRegionalCapacity};
 pub use directory::{DataApiPepperDirectory, PepperStatements};
 pub use mail::{ControlStoreOutbox, OutboxMailer, OutboxWriter, PendingNotification};
 pub use pepper::{
-    PepperDirectory, PepperRecord, PepperState, SecretsManagerPepperKeystore, pepper_cache_bound,
+    PepperDirectory, PepperRecord, PepperState, PepperVerificationSet,
+    SecretsManagerPepperKeystore, pepper_cache_bound,
 };
 pub use regional::LambdaRegionalControl;

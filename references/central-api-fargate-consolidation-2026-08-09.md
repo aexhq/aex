@@ -294,9 +294,9 @@ Adding `central-api` and retiring four units touches more than
 `services/central-api`, following `services/session-stream-api/src/main.rs` as
 the long-lived Fargate root:
 
-* telemetry installed **first**, via `LongLivedTelemetry::install` — not the
-  Lambda profile, which flushes on an invocation boundary this process does not
-  have;
+* process diagnostics installed **first**, via
+  `aex_platform_diagnostics::install_json`; the standard subscriber has no
+  exporter queue or invocation-bound flush profile;
 * configuration from the environment with an explicit `keys::ALL` required list,
   every value refused rather than defaulted, and the list printed on refusal;
 * every start-up probe — Aurora, the pepper keystore, the cursor secret, the

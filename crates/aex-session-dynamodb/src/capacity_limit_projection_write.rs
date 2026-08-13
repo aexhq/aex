@@ -196,7 +196,10 @@ pub fn edge_limits_put(
         workspace: write.workspace,
         revision: write.revision,
         json_body_bytes: scalar(write, LimitId::ApiJsonBody)?,
-        otlp_body_bytes: dimension(write, LimitId::TelemetryBatch, "encoded_bytes")?,
+        // No route currently admits OTLP. The shared edge projection still
+        // carries this transport ceiling, so keep it positive from the generic
+        // body limit until the transport field is removed from that projection.
+        otlp_body_bytes: scalar(write, LimitId::ApiJsonBody)?,
         query_page_items: dimension(write, LimitId::QueryPage, "items")?,
         query_page_bytes: dimension(write, LimitId::QueryPage, "serialized_bytes")?,
         changed_at: write.changed_at,

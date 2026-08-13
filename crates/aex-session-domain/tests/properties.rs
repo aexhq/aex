@@ -176,7 +176,6 @@ proptest! {
                     );
                     prop_assert_eq!(commit.session.active_run, None);
                     prop_assert_eq!(commit.session.revision, session.revision.next());
-                    prop_assert_eq!(commit.outbox.run, run.id);
                     prop_assert_eq!(commit.usage_closure, attempt.usage_closure);
                     winning_outcome = commit.run.outcome.clone();
                     current = commit.run;
@@ -900,21 +899,17 @@ fn delete_completion_requires_the_whole_predicate() {
         session_content_removed: true,
         messages_removed: true,
         brain_user_content_removed: true,
-        observations_removed: true,
-        export_objects_removed: true,
         billing_aggregate_retained: true,
         audit_fact_retained: true,
     };
     assert!(complete_delete(&deleting, id::<WorkspaceId>(22), &complete, moment(1)).is_ok());
 
     // Each individual omission blocks completion, so nothing is optional.
-    let omissions: [fn(&mut DeleteEvidence); 8] = [
+    let omissions: [fn(&mut DeleteEvidence); 6] = [
         |value| value.generation_terminated = false,
         |value| value.session_content_removed = false,
         |value| value.messages_removed = false,
         |value| value.brain_user_content_removed = false,
-        |value| value.observations_removed = false,
-        |value| value.export_objects_removed = false,
         |value| value.billing_aggregate_retained = false,
         |value| value.audit_fact_retained = false,
     ];

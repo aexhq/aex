@@ -1,5 +1,5 @@
 //! `aex-brain-hands` owns the Brain-side exact-generation Hands adapter: operation
-//! dispatch, frame handling, fence checks, cancellation and result incorporation.
+//! dispatch, bounded JSON transport, fence checks, cancellation and result incorporation.
 //!
 //! # Invariants
 //!
@@ -9,8 +9,7 @@
 //!
 //! # Not this crate's job
 //!
-//! - the wire protocol definition (`aex-hands-protocol`) and its frame codec
-//!   (`aex_hands_agent::wire`, consumed here so there is one codec and not two)
+//! - the wire protocol definition (`aex-hands-protocol`)
 //! - guest-side execution (`aex-hands-agent`, `aex-hands-tools`)
 //! - runtime lifecycle (`aex-runtime-control`, `aex-hands-control-aws`)
 
@@ -32,7 +31,7 @@ pub use encode::{
 pub use executor::HandsToolExecutor;
 pub use port::{HandsAdapter, HandsBackend};
 
-pub use guest::{AuthenticatedGuestEndpoint, GuestReply, HttpGuestTransport};
+pub use guest::{AuthenticatedGuestEndpoint, HttpGuestTransport};
 pub use live_file::{LiveFileBackend, LiveFileReply, LiveGenerationReady};
 
 pub use adapter::{
@@ -46,9 +45,3 @@ pub use operation::{
     DETACHED_WALL_MS, EXEC_WALL_MS, IncorporateError, MAX_CODE_BYTES, MAX_PACKAGES, PackageManager,
     ResultAssembly, TOOLCHAIN_WALL_MS, code_run, git, package_install,
 };
-
-/// The frame codec both sides of the Hands wire share.
-///
-/// Re-exported rather than reimplemented: two codecs that can disagree is exactly
-/// the failure this stream is meant to remove.
-pub use aex_hands_agent::wire;

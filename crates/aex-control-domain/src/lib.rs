@@ -48,7 +48,10 @@ pub use authz::{
     admit, decide, requirement,
 };
 pub use codec::{base64url, unbase64url};
-pub use cursor::{CursorClaims, CursorError, CursorSecret, decode_cursor, encode_cursor};
+pub use cursor::{
+    CURSOR_MAX_ENCODED_BYTES, CursorClaims, CursorError, CursorKeyRingError, CursorSecret,
+    decode_cursor, encode_cursor,
+};
 pub use epoch::{Epoch, EpochSubjectKind};
 pub use intent::{
     IdempotencyIdentity, IdempotencyKeyKind, IntentError, IntentHash, ScopeKind,

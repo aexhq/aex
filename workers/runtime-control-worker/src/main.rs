@@ -10,7 +10,7 @@
 //! raises an alarm, and it can never pause an authority-open background job.
 //!
 //! This binary is a composition root only. Configuration is validated before
-//! anything starts, telemetry is installed through `aex_platform_telemetry`, and
+//! anything starts, diagnostics are installed through `aex_platform_diagnostics`, and
 //! every decision lives in `aex-runtime-control` and `aex-runtime-control-aws`.
 
 mod config;
@@ -37,6 +37,7 @@ use health::{Bindings, Dependency};
 /// Drawn per invocation and clamped by the model. It applies to the *schedule*,
 /// never to the 180000 ms decision (HR-21).
 const SCHEDULE_JITTER_MS: u64 = 0;
+const DEPLOYABLE: &str = "runtime-control-worker";
 
 /// Maximum concurrent provider reads during the eight-image startup probe.
 const IMAGE_PROBE_CONCURRENCY: usize = 4;
@@ -310,26 +311,14 @@ fn settle_image_probe(
 /// Returns [`RuntimeControlWorkerRunError::Startup`] when a production dependency probe fails,
 /// [`RuntimeControlWorkerRunError::Unbound`] when a declared port has no adapter, and
 /// [`RuntimeControlWorkerRunError::Runtime`] when the Lambda runtime stops.
-pub async fn run(
-    config: &Config,
-    telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), RuntimeControlWorkerRunError> {
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_DEPLOYABLE,
-            "runtime-control-worker",
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.clone(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.as_str(),
-        ),
+pub async fn run(config: &Config) -> Result<(), RuntimeControlWorkerRunError> {
+    tracing::info!(
+        target: "aex::diagnostics",
+        event_name = "process.started",
+        deployable = DEPLOYABLE,
+        plane = %config.plane,
+        region = config.region.as_str(),
+        "process started"
     );
     let adapters = resolve(config).await?;
     let bindings = Arc::new(adapters.bindings());
@@ -395,29 +384,33 @@ fn now() -> Result<Timestamp, ClockError> {
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    if let Err(error) = aex_platform_diagnostics::install_json() {
+        eprintln!("{DEPLOYABLE}: diagnostics installation failed: {error}");
+        return std::process::ExitCode::FAILURE;
+    }
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("runtime-control-worker: refusing to start: {error}");
+            tracing::error!(
+                target: "aex::diagnostics",
+                event_name = "process.configuration_rejected",
+                deployable = DEPLOYABLE,
+                error = %error,
+                "process configuration rejected"
+            );
+            eprintln!("{DEPLOYABLE}: refusing to start: {error}");
             eprintln!(
-                "runtime-control-worker: required variables are {}",
+                "{DEPLOYABLE}: required variables are {}",
                 config::REQUIRED_VARS.join(", ")
             );
             return std::process::ExitCode::FAILURE;
         }
     };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
-    let outcome = run(&config, &telemetry).await;
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
-        telemetry.flush(settings.flush_deadline)
-    {
-        eprintln!("runtime-control-worker: telemetry flush left {pending} record(s) undelivered");
-    }
+    let outcome = run(&config).await;
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("runtime-control-worker: stopped: {error}");
+            eprintln!("{DEPLOYABLE}: stopped: {error}");
             std::process::ExitCode::FAILURE
         }
     }

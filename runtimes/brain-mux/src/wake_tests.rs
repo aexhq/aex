@@ -644,6 +644,9 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
             plane: "dev".to_owned(),
             region: "eu-west-1".to_owned(),
             resource: "table".to_owned(),
+            session_telemetry_bucket: "telemetry".to_owned(),
+            session_telemetry_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/telemetry"
+                .to_owned(),
             wake_queue_url: "https://sqs.invalid/queue".to_owned(),
             work_table: "work".to_owned(),
             secret_custody_table: "secret-custody".to_owned(),

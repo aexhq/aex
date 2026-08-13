@@ -5,19 +5,8 @@
 //! to: a resource in another region passes every type check, deploys cleanly and
 //! then silently writes a tenant's data outside its declared residency.
 //!
-//! # What merging cost, and what replaced it
-//!
-//! `regional-stream` used to forbid `AEX_WORK_TABLE` outright, on the ground
-//! that "the stream admits no durable work". One process cannot both require and
-//! forbid a variable, so that guard is gone. It is replaced by a stronger claim
-//! made at the type level rather than at the environment: the write handle lives
-//! behind [`crate::capability::Composition`]'s `Grant<WorkClaim>`, the stream's
-//! `AppState` has no field that can produce one, and no amount of environment
-//! binding gives a stream handler a path to a write. See [`crate::capability`].
-//!
-//! The remaining refusals were forbidden by both original halves and are
-//! unchanged. Provider-credential registration now lives here too, so the
-//! secret key and branch-key store are explicit required bindings.
+//! Provider-credential registration lives here too, so the secret key and
+//! branch-key store are explicit required bindings.
 
 use aex_regional_http::config::{
     Arn, Lookup, RegionalHttpConfigError, arn_in_region, bounded_u64, bounded_usize, forbidden,
@@ -39,21 +28,16 @@ pub const REGION: &str = "AEX_REGION";
 pub const RELEASE_DIGEST: &str = "AEX_RELEASE_DIGEST";
 /// The port the container listens on.
 ///
-/// One listener serves both halves, so there is one port. This replaces
-/// `AEX_SESSION_PORT` and `AEX_STREAM_PORT`, which named the same container port
-/// twice and could disagree.
+/// The listener port.
 pub const PORT: &str = "AEX_PORT";
 /// Drain deadline in milliseconds.
 ///
 /// Bound below the task definition's stop timeout by
 /// [`aex_regional_http::drain::MAX_DRAIN_DEADLINE_MS`] rather than by a comment:
 /// the deadline exists to end a drain before the runtime sends `SIGKILL`, and
-/// one set above that timeout is a deadline that never fires. This replaces
-/// `AEX_SESSION_DRAIN_DEADLINE_MS` and `AEX_STREAM_DRAIN_DEADLINE_MS`, which
-/// drained one process each and now drain one.
+/// one set above that timeout is a deadline that never fires.
 pub const DRAIN_DEADLINE_MS: &str = "AEX_DRAIN_DEADLINE_MS";
-/// The Secrets Manager id holding the credential pepper ring both edges verify
-/// against.
+/// The Secrets Manager id holding the credential pepper ring the edge verifies.
 ///
 /// It names the id the issuing authority also reads —
 /// `aex/<plane>/central/token-pepper` — and not a regional copy of it. One
@@ -74,6 +58,10 @@ pub const AUTHZ_PROJECTION_TABLE: &str = "AEX_AUTHZ_PROJECTION_TABLE";
 pub const SESSION_TABLE: &str = "AEX_SESSION_TABLE";
 /// The regional content bucket.
 pub const CONTENT_BUCKET: &str = "AEX_CONTENT_BUCKET";
+/// Existing immutable AEX-generated session telemetry bucket.
+pub const SESSION_TELEMETRY_BUCKET: &str = "AEX_SESSION_TELEMETRY_BUCKET";
+/// Exact KMS key encrypting immutable session telemetry.
+pub const SESSION_TELEMETRY_KMS_KEY_ARN: &str = "AEX_SESSION_TELEMETRY_KMS_KEY_ARN";
 /// The storage reference of the cursor signing key.
 pub const CURSOR_SIGNING_KEY_REF: &str = "AEX_CURSOR_SIGNING_KEY_REF";
 
@@ -133,43 +121,8 @@ pub const MAX_PAGE_ITEMS: &str = "AEX_MAX_PAGE_ITEMS";
 /// The effective serialized page byte bound.
 pub const MAX_PAGE_BYTES: &str = "AEX_MAX_PAGE_BYTES";
 
-// --- stream half -------------------------------------------------------------
-
-/// The `observation-authority` table.
-pub const OBSERVATION_TABLE: &str = "AEX_OBSERVATION_TABLE";
-/// The `session-authority` stream this task tails in `ddb_streams` mode.
-pub const SESSION_TABLE_STREAM_ARN: &str = "AEX_SESSION_TABLE_STREAM_ARN";
-/// The `observation-authority` stream this task tails in `ddb_streams` mode.
-pub const OBSERVATION_TABLE_STREAM_ARN: &str = "AEX_OBSERVATION_TABLE_STREAM_ARN";
-/// The endpoint-specific HTTPS origin of the `DynamoDB` Streams interface endpoint.
-pub const DYNAMODB_STREAMS_ENDPOINT_URL: &str = "AEX_DYNAMODB_STREAMS_ENDPOINT_URL";
-/// Secondary-index settle window used to pin an honest observation snapshot.
-pub const OBS_INDEX_SETTLE_MS: &str = "AEX_OBS_INDEX_SETTLE_MS";
-/// Maximum authority items scanned for one emitted page.
-pub const OBS_QUERY_SCANNED_ITEMS: &str = "AEX_OBS_QUERY_SCANNED_ITEMS";
-/// Maximum authority segments visited for one emitted page.
-pub const OBS_QUERY_SEGMENTS: &str = "AEX_OBS_QUERY_SEGMENTS";
-/// Maximum authority bytes read for one emitted page.
-pub const OBS_QUERY_READ_BYTES: &str = "AEX_OBS_QUERY_READ_BYTES";
-/// How the tail phase is woken: `ddb_streams` or `poll`.
-pub const STREAM_WAKE_MODE: &str = "AEX_STREAM_WAKE_MODE";
-/// How many tasks this service runs, which bounds shard readers.
-pub const STREAM_MAX_TASKS: &str = "AEX_STREAM_MAX_TASKS";
-/// Total socket ceiling per task.
-pub const STREAM_MAX_CONNECTIONS: &str = "AEX_STREAM_MAX_CONNECTIONS";
-/// Session-class socket ceiling per task.
-pub const STREAM_MAX_CONNECTIONS_SESSION: &str = "AEX_STREAM_MAX_CONNECTIONS_SESSION";
-/// Observation-class socket ceiling per task.
-pub const STREAM_MAX_CONNECTIONS_OBSERVATION: &str = "AEX_STREAM_MAX_CONNECTIONS_OBSERVATION";
-/// Per-workspace socket ceiling.
-pub const STREAM_MAX_CONNECTIONS_PER_WORKSPACE: &str = "AEX_STREAM_MAX_CONNECTIONS_PER_WORKSPACE";
-/// Per-connection outbound buffer budget in bytes.
-pub const STREAM_CONNECTION_BUFFER_BYTES: &str = "AEX_STREAM_CONNECTION_BUFFER_BYTES";
-/// Write stall deadline in milliseconds.
-pub const STREAM_WRITE_STALL_MS: &str = "AEX_STREAM_WRITE_STALL_MS";
-
-/// Every variable a healthy `session-stream-api` requires in `poll` mode.
-pub const REQUIRED: [&str; 48] = [
+/// Every variable a healthy `session-stream-api` requires.
+pub const REQUIRED: [&str; 37] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
@@ -179,6 +132,8 @@ pub const REQUIRED: [&str; 48] = [
     AUTHZ_PROJECTION_TABLE,
     SESSION_TABLE,
     CONTENT_BUCKET,
+    SESSION_TELEMETRY_BUCKET,
+    SESSION_TELEMETRY_KMS_KEY_ARN,
     CURSOR_SIGNING_KEY_REF,
     REGIONAL_API_URL,
     WORK_TABLE,
@@ -205,19 +160,6 @@ pub const REQUIRED: [&str; 48] = [
     MAX_JSON_BODY_BYTES,
     MAX_PAGE_ITEMS,
     MAX_PAGE_BYTES,
-    OBSERVATION_TABLE,
-    OBS_INDEX_SETTLE_MS,
-    OBS_QUERY_SCANNED_ITEMS,
-    OBS_QUERY_SEGMENTS,
-    OBS_QUERY_READ_BYTES,
-    STREAM_WAKE_MODE,
-    STREAM_MAX_TASKS,
-    STREAM_MAX_CONNECTIONS,
-    STREAM_MAX_CONNECTIONS_SESSION,
-    STREAM_MAX_CONNECTIONS_OBSERVATION,
-    STREAM_MAX_CONNECTIONS_PER_WORKSPACE,
-    STREAM_CONNECTION_BUFFER_BYTES,
-    STREAM_WRITE_STALL_MS,
 ];
 
 /// Variables this binary must never be bound to, with the reason.
@@ -227,9 +169,6 @@ pub const REQUIRED: [&str; 48] = [
 /// owns its queue, retries and deletion fan-out; binding that queue here would
 /// give the public edge a second dispatch path.
 ///
-/// `AEX_WORK_TABLE` is deliberately absent: the session half requires it. The
-/// guarantee it used to carry for the stream half is now [`crate::capability`]'s
-/// job, where the compiler enforces it instead of the environment.
 pub const FORBIDDEN: [(&str, &str); 2] = [
     (
         "AEX_OPERATION_QUEUE_URL",
@@ -241,41 +180,8 @@ pub const FORBIDDEN: [(&str, &str); 2] = [
     ),
 ];
 
-/// How the tail phase is woken.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WakeMode {
-    /// One shared reader per task over the two authority table streams.
-    DdbStreams,
-    /// Adaptive polling of the authority.
-    Poll,
-}
-
-impl WakeMode {
-    /// The closed wake vocabulary.
-    pub const ALL: [&'static str; 2] = ["ddb_streams", "poll"];
-
-    /// The stable spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::DdbStreams => "ddb_streams",
-            Self::Poll => "poll",
-        }
-    }
-}
-
-/// The AWS guidance this service respects: at most two readers per shard.
-pub const MAX_STREAM_READER_TASKS: u64 = 2;
-
 /// The number of edges this process builds.
-///
-/// One per audience:
-/// [`aex_internal_contracts::assertion::AssertionAudience::RegionalSession`] and
-/// [`aex_internal_contracts::assertion::AssertionAudience::RegionalStream`].
-/// They no longer cost memory to hold — there is nothing cached between requests
-/// — but they remain two distinct trust boundaries sharing one process, which is
-/// why each is bound to exactly one audience the key row must name.
-pub const EDGE_COUNT: usize = 2;
+pub const EDGE_COUNT: usize = 1;
 
 /// Resolved configuration. Nothing here has a default.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -330,16 +236,12 @@ pub struct Config {
     pub pricing_version: String,
     /// `usage-query-projection` table.
     pub usage_query_table: String,
-    /// `observation-authority` table.
-    pub observation_table: String,
-    /// `session-authority` stream, in `ddb_streams` mode.
-    pub session_stream: Option<Arn>,
-    /// `observation-authority` stream, in `ddb_streams` mode.
-    pub observation_stream: Option<Arn>,
-    /// Endpoint-specific `DynamoDB` Streams origin, in `ddb_streams` mode.
-    pub dynamodb_streams_endpoint_url: Option<String>,
     /// Regional content bucket.
     pub content_bucket: String,
+    /// Immutable AEX-generated session telemetry bucket.
+    pub session_telemetry_bucket: String,
+    /// Exact KMS key encrypting session telemetry.
+    pub session_telemetry_kms_key: Arn,
     /// Expected content-bucket owner account.
     pub content_bucket_owner: String,
     /// Verified immutable image and deployment capability facts.
@@ -348,26 +250,6 @@ pub struct Config {
     pub content_kms_key: Arn,
     /// Cursor signing key reference.
     pub cursor_signing_key_ref: String,
-    /// Conservative GSI settle window used by snapshot pinning.
-    pub observation_index_settle_ms: i64,
-    /// Per-page authority read budget.
-    pub observation_budget: aex_observation_query::plan::Budget,
-    /// How the tail phase is woken.
-    pub wake_mode: WakeMode,
-    /// How many tasks this service runs.
-    pub max_tasks: u64,
-    /// Total socket ceiling per task.
-    pub max_connections: u64,
-    /// Session-class socket ceiling.
-    pub max_connections_session: u64,
-    /// Observation-class socket ceiling.
-    pub max_connections_observation: u64,
-    /// Per-workspace socket ceiling.
-    pub max_connections_per_workspace: u64,
-    /// Per-connection outbound buffer budget.
-    pub connection_buffer_bytes: usize,
-    /// Write stall deadline in milliseconds.
-    pub write_stall_ms: u64,
     /// Effective encoded JSON body bound.
     pub max_json_body_bytes: usize,
     /// Effective page item bound.
@@ -406,6 +288,8 @@ impl Config {
                 }
             })?;
         let content_kms_key = arn_in_region(lookup, CONTENT_KMS_KEY_ARN, region, "kms")?;
+        let session_telemetry_kms_key =
+            arn_in_region(lookup, SESSION_TELEMETRY_KMS_KEY_ARN, region, "kms")?;
         let secret_kms_key = arn_in_region(lookup, SECRET_KMS_KEY_ARN, region, "kms")?;
         let session_operation_worker = arn_in_region(
             lookup,
@@ -440,6 +324,21 @@ impl Config {
             return Err(RegionalHttpConfigError::Invalid {
                 name: SESSION_OPERATION_WORKER_FUNCTION_ARN,
                 reason: "worker alias and regional resources must share one account".to_owned(),
+            });
+        }
+        if session_telemetry_kms_key.account != content_bucket_owner {
+            return Err(RegionalHttpConfigError::Invalid {
+                name: SESSION_TELEMETRY_KMS_KEY_ARN,
+                reason: "session telemetry and regional resources must share one account"
+                    .to_owned(),
+            });
+        }
+        if session_telemetry_kms_key.value == content_kms_key.value
+            || session_telemetry_kms_key.value == secret_kms_key.value
+        {
+            return Err(RegionalHttpConfigError::Invalid {
+                name: SESSION_TELEMETRY_KMS_KEY_ARN,
+                reason: "session telemetry must use its dedicated KMS key".to_owned(),
             });
         }
         let image_catalog_raw = required(lookup, HANDS_IMAGE_CATALOG)?;
@@ -493,89 +392,11 @@ impl Config {
         let runtime_due_page_reads = bounded_u64(lookup, RUNTIME_DUE_PAGE_READS, 1, 10_000)?;
         let pricing_version = required(lookup, PRICING_VERSION)?;
 
-        let raw_wake = one_of(lookup, STREAM_WAKE_MODE, &WakeMode::ALL)?;
-        let wake_mode = if raw_wake == "ddb_streams" {
-            WakeMode::DdbStreams
-        } else {
-            WakeMode::Poll
-        };
-        let max_tasks = bounded_u64(lookup, STREAM_MAX_TASKS, 1, 1_000)?;
-        // A DynamoDB shard tolerates two readers before it starts throttling the
-        // ones that were already there, so a third task is refused rather than
-        // discovered as intermittent stream lag.
-        if wake_mode == WakeMode::DdbStreams && max_tasks > MAX_STREAM_READER_TASKS {
-            return Err(RegionalHttpConfigError::Invalid {
-                name: STREAM_MAX_TASKS,
-                reason: format!(
-                    "`ddb_streams` admits at most {MAX_STREAM_READER_TASKS} tasks per shard, got `{max_tasks}`"
-                ),
-            });
-        }
-        let (session_stream, observation_stream, dynamodb_streams_endpoint_url) =
-            if wake_mode == WakeMode::DdbStreams {
-                let endpoint = required(lookup, DYNAMODB_STREAMS_ENDPOINT_URL)?;
-                let Some(host) = endpoint.strip_prefix("https://") else {
-                    return Err(RegionalHttpConfigError::Invalid {
-                        name: DYNAMODB_STREAMS_ENDPOINT_URL,
-                        reason: "must be the HTTPS origin of the private DynamoDB Streams endpoint"
-                            .to_owned(),
-                    });
-                };
-                if host.is_empty()
-                    || host.contains('/')
-                    || !host.contains(".dynamodb")
-                    || !host.ends_with(".vpce.amazonaws.com")
-                {
-                    return Err(RegionalHttpConfigError::Invalid {
-                        name: DYNAMODB_STREAMS_ENDPOINT_URL,
-                        reason:
-                            "must be a bare DynamoDB endpoint-specific `.vpce.amazonaws.com` origin"
-                                .to_owned(),
-                    });
-                }
-                (
-                    Some(arn_in_region(
-                        lookup,
-                        SESSION_TABLE_STREAM_ARN,
-                        region,
-                        "dynamodb",
-                    )?),
-                    Some(arn_in_region(
-                        lookup,
-                        OBSERVATION_TABLE_STREAM_ARN,
-                        region,
-                        "dynamodb",
-                    )?),
-                    Some(endpoint),
-                )
-            } else {
-                (None, None, None)
-            };
-
         let raw_port = bounded_u64(lookup, PORT, 1, 65_535)?;
         let port = u16::try_from(raw_port).map_err(|_| RegionalHttpConfigError::Invalid {
             name: PORT,
             reason: format!("`{raw_port}` is not a TCP port"),
         })?;
-
-        let max_connections = bounded_u64(lookup, STREAM_MAX_CONNECTIONS, 1, 100_000)?;
-        let max_connections_session =
-            bounded_u64(lookup, STREAM_MAX_CONNECTIONS_SESSION, 1, 100_000)?;
-        let max_connections_observation =
-            bounded_u64(lookup, STREAM_MAX_CONNECTIONS_OBSERVATION, 1, 100_000)?;
-        // The unified `telemetry` signal is charged against both class budgets,
-        // so a total below either class would make one budget unreachable.
-        if max_connections < max_connections_session
-            || max_connections < max_connections_observation
-        {
-            return Err(RegionalHttpConfigError::Invalid {
-                name: STREAM_MAX_CONNECTIONS,
-                reason: format!(
-                    "total `{max_connections}` is below a class budget \
-                     (session `{max_connections_session}`, observation `{max_connections_observation}`)"
-                ),
-            });
-        }
 
         let drain_deadline_ms = bounded_u64(
             lookup,
@@ -583,45 +404,6 @@ impl Config {
             MIN_DRAIN_DEADLINE_MS,
             MAX_DRAIN_DEADLINE_MS,
         )?;
-        let write_stall_ms = bounded_u64(lookup, STREAM_WRITE_STALL_MS, 100, 600_000)?;
-        drain_fits(drain_deadline_ms, write_stall_ms)?;
-
-        let observation_index_settle_ms = bounded_u64(
-            lookup,
-            OBS_INDEX_SETTLE_MS,
-            u64::try_from(aex_observation_domain::limits::OBS_CLOCK_SKEW_MAX_MS + 1).unwrap_or(1),
-            60_000,
-        )?;
-        let observation_budget = aex_observation_query::plan::Budget {
-            max_returned: aex_observation_domain::limits::QUERY_MAX_LIMIT,
-            max_items_scanned: u32::try_from(bounded_u64(
-                lookup,
-                OBS_QUERY_SCANNED_ITEMS,
-                1,
-                u64::from(aex_observation_domain::limits::QUERY_MAX_ITEMS_SCANNED),
-            )?)
-            .map_err(|_| RegionalHttpConfigError::Invalid {
-                name: OBS_QUERY_SCANNED_ITEMS,
-                reason: "the admitted scan budget does not fit `u32`".to_owned(),
-            })?,
-            max_segments: u16::try_from(bounded_u64(
-                lookup,
-                OBS_QUERY_SEGMENTS,
-                1,
-                u64::from(aex_observation_domain::limits::QUERY_MAX_SEGMENTS),
-            )?)
-            .map_err(|_| RegionalHttpConfigError::Invalid {
-                name: OBS_QUERY_SEGMENTS,
-                reason: "the admitted segment budget does not fit `u16`".to_owned(),
-            })?,
-            max_bytes_read: bounded_u64(
-                lookup,
-                OBS_QUERY_READ_BYTES,
-                1,
-                aex_observation_domain::limits::QUERY_MAX_BYTES_READ,
-            )?,
-        };
-
         Ok(Self {
             plane,
             region,
@@ -661,40 +443,13 @@ impl Config {
             },
             pricing_version,
             usage_query_table: required(lookup, USAGE_QUERY_TABLE)?,
-            observation_table: required(lookup, OBSERVATION_TABLE)?,
-            session_stream,
-            observation_stream,
-            dynamodb_streams_endpoint_url,
             content_bucket: required(lookup, CONTENT_BUCKET)?,
+            session_telemetry_bucket: required(lookup, SESSION_TELEMETRY_BUCKET)?,
+            session_telemetry_kms_key,
             content_bucket_owner,
             deployment,
             content_kms_key,
             cursor_signing_key_ref: required(lookup, CURSOR_SIGNING_KEY_REF)?,
-            observation_index_settle_ms: i64::try_from(observation_index_settle_ms).map_err(
-                |_| RegionalHttpConfigError::Invalid {
-                    name: OBS_INDEX_SETTLE_MS,
-                    reason: "the settle window does not fit `i64`".to_owned(),
-                },
-            )?,
-            observation_budget,
-            wake_mode,
-            max_tasks,
-            max_connections,
-            max_connections_session,
-            max_connections_observation,
-            max_connections_per_workspace: bounded_u64(
-                lookup,
-                STREAM_MAX_CONNECTIONS_PER_WORKSPACE,
-                1,
-                100_000,
-            )?,
-            connection_buffer_bytes: bounded_usize(
-                lookup,
-                STREAM_CONNECTION_BUFFER_BYTES,
-                4_096,
-                64 * 1_024 * 1_024,
-            )?,
-            write_stall_ms,
             max_json_body_bytes: bounded_usize(
                 lookup,
                 MAX_JSON_BODY_BYTES,
@@ -722,38 +477,4 @@ impl Config {
     pub fn crypto_partition(&self) -> String {
         format!("{}:{}", self.plane.as_str(), self.region.as_str())
     }
-}
-
-/// Refuses a drain deadline a stream producer provably cannot meet.
-///
-/// The drain flag is only observed at the top of a producer loop whose wait runs
-/// up to [`regional_observation_api::api::LISTEN_POLL_MAX`], after which the
-/// producer may still block up to `AEX_STREAM_WRITE_STALL_MS` writing to a
-/// wedged reader. A deadline no larger than the sum of those two is a deadline
-/// the last socket cannot reach, and the merged process turns that overrun into
-/// a failed exit that takes in-flight *session* requests with it.
-///
-/// Before the merge this was nobody's check: the stream sized its own deadline
-/// and the session API asserted `< 30_000` once in a test fixture.
-///
-/// # Errors
-///
-/// Returns [`RegionalHttpConfigError::Invalid`] naming `AEX_STREAM_WRITE_STALL_MS`,
-/// because the deadline is pinned by the stop timeout and the stall is the term
-/// an operator can actually lower.
-fn drain_fits(drain_deadline_ms: u64, write_stall_ms: u64) -> Result<(), RegionalHttpConfigError> {
-    let poll_max_ms = u64::try_from(regional_observation_api::api::LISTEN_POLL_MAX.as_millis())
-        .unwrap_or(u64::MAX);
-    let worst_case_ms = poll_max_ms.saturating_add(write_stall_ms);
-    if worst_case_ms >= drain_deadline_ms {
-        return Err(RegionalHttpConfigError::Invalid {
-            name: STREAM_WRITE_STALL_MS,
-            reason: format!(
-                "a producer needs up to {poll_max_ms} ms to observe the drain flag plus \
-                 {write_stall_ms} ms to give up on a wedged reader, which does not fit \
-                 inside the {drain_deadline_ms} ms drain deadline"
-            ),
-        });
-    }
-    Ok(())
 }

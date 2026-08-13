@@ -25,24 +25,14 @@ use aex_regional_http::error::{EdgeError, IntoWireError};
 use aex_regional_http::idempotency::{IdentityContext, identity, operation_id};
 use aex_regional_http::limits::{BodyLimits, LimitError};
 use aex_regional_http::page::{PageError, Paginator};
-use aex_regional_http::stream::{
-    Frame, FrameSink, FrameSplitError, FrameWriter, RotateReason, split_records,
-};
-use aex_wire::canonical::CanonicalJson;
-use aex_wire::cursor::Cursor as WireCursor;
 use aex_wire::error::{ErrorCode, PrecedenceStage};
 use aex_wire::idempotency::PrincipalScope;
 use aex_wire::ids::{
-    ObservationId, OperationId, OrganizationId, PrefixedId, SessionId, UserId, Uuid7, WorkspaceId,
-};
-use aex_wire::models::{
-    Observation, ObservationCoverage, ObservationFrameCursor, ObservationFrameRecords,
-    ObservationFrameRotate, ObservationSignal,
+    OperationId, OrganizationId, PrefixedId, SessionId, UserId, Uuid7, WorkspaceId,
 };
 use aex_wire::routes::{BodyClass, Plane, RouteId, route};
 use aex_wire::scopes::ScopeSet;
-use aex_wire::types::{DecimalU128, HttpMethod, Region, RequestId, Timestamp};
-use async_trait::async_trait;
+use aex_wire::types::{HttpMethod, Region, RequestId, Timestamp};
 use http::{HeaderMap, HeaderValue};
 use http_body_util::BodyExt as _;
 use proptest::prelude::*;
@@ -580,14 +570,6 @@ fn every_generated_regional_route_has_exactly_one_planned_owner() {
         route_owner(RouteId::ProviderCredentialRegister),
         Some(RouteOwner::SessionApi)
     );
-    assert_eq!(
-        route_owner(RouteId::SessionObservationsEventsListen),
-        Some(RouteOwner::Stream)
-    );
-    assert_eq!(
-        route_owner(RouteId::SessionObservationsEventsQuery),
-        Some(RouteOwner::ObservationApi)
-    );
     for id in [RouteId::WorkspaceLimitGet, RouteId::WorkspaceLimitsList] {
         assert_eq!(route_owner(id), Some(RouteOwner::SessionApi), "`{id}`");
     }
@@ -787,130 +769,6 @@ fn paginator_splits_before_the_byte_bound_and_keeps_continuity() {
             found: 1_001,
             maximum: 1_000
         })
-    );
-}
-
-#[derive(Default)]
-struct ScriptedSink {
-    writes: Vec<Vec<u8>>,
-    fail_flush: bool,
-}
-
-#[async_trait]
-impl FrameSink for ScriptedSink {
-    type Error = &'static str;
-
-    async fn write_all(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.writes.push(bytes.to_vec());
-        Ok(())
-    }
-
-    async fn flush(&mut self) -> Result<(), Self::Error> {
-        if self.fail_flush {
-            Err("flush")
-        } else {
-            Ok(())
-        }
-    }
-}
-
-#[tokio::test]
-async fn sent_cursor_advances_only_after_a_whole_flushed_frame() {
-    let mut writer = FrameWriter::new(ScriptedSink::default());
-    writer
-        .send(Frame::Cursor(ObservationFrameCursor {
-            coverage: coverage(1),
-            cursor: WireCursor::parse("cur_first").expect("cursor"),
-        }))
-        .await
-        .expect("sent");
-    assert_eq!(writer.sent().as_deref(), Some("cur_first"));
-    writer
-        .send(Frame::Records(ObservationFrameRecords {
-            items: vec![observation(1, &json!({"value": 1}))],
-        }))
-        .await
-        .expect("records sent");
-    assert_eq!(writer.sent().as_deref(), Some("cur_first"));
-    writer.sink_mut().fail_flush = true;
-    assert!(
-        writer
-            .send(Frame::Rotate(ObservationFrameRotate {
-                cursor: Some(WireCursor::parse("cur_second").expect("cursor")),
-                reason: RotateReason::ServerRotating,
-                retryable: true,
-                error: None
-            }))
-            .await
-            .is_err()
-    );
-    assert_eq!(writer.sent().as_deref(), Some("cur_first"));
-    assert!(
-        writer
-            .sink()
-            .writes
-            .iter()
-            .all(|write| write.ends_with(b"\n"))
-    );
-}
-
-fn coverage(value: u128) -> ObservationCoverage {
-    ObservationCoverage {
-        accepted: DecimalU128::new(value),
-        caught_up: true,
-        complete: true,
-        earliest_replay: DecimalU128::ZERO,
-        indexed: DecimalU128::new(value),
-        missing_intervals: Vec::new(),
-        snapshot: DecimalU128::new(value),
-        unbounded_gaps: Vec::new(),
-    }
-}
-
-fn observation(value: u64, body: &serde_json::Value) -> Observation {
-    Observation {
-        accepted_at: stamp(i64::try_from(value).expect("fixture millis")),
-        body: CanonicalJson::from_value(body).expect("canonical fixture"),
-        id: ObservationId::from_uuid7(Uuid7::compose(value, [1; 10])),
-        observed_at: stamp(i64::try_from(value).expect("fixture millis")),
-        sequence: DecimalU128::new(u128::from(value)),
-        session_id: None,
-        signal: ObservationSignal::Logs,
-        span_id: None,
-        trace_id: None,
-        workspace_id: workspace(1),
-    }
-}
-
-#[test]
-fn record_frames_split_at_two_hundred_without_dropping() {
-    let records = (0..201)
-        .map(|value| observation(value, &json!({"value": value})))
-        .collect::<Vec<_>>();
-    let frames = split_records(records.clone()).expect("split");
-    let flattened = frames
-        .iter()
-        .flat_map(|frame| match frame {
-            Frame::Records(ObservationFrameRecords { items }) => items.clone(),
-            _ => Vec::new(),
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(frames.len(), 2);
-    assert_eq!(flattened, records);
-    for frame in &frames {
-        let encoded = serde_json::to_vec(frame).expect("generated frame encodes");
-        let decoded: Frame = serde_json::from_slice(&encoded).expect("generated frame decodes");
-        assert_eq!(&decoded, frame);
-        let value = serde_json::to_value(frame).expect("frame value");
-        assert!(value.get("cursor").is_none());
-        assert!(value.get("items").is_some());
-    }
-    assert_eq!(
-        split_records(vec![observation(
-            1,
-            &json!({"body": "x".repeat(1024 * 1024)})
-        )]),
-        Err(FrameSplitError::RecordTooLarge)
     );
 }
 

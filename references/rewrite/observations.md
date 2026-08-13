@@ -1,6 +1,6 @@
 ---
-title: Observations stream handoff — admission, authority, bounded query, export and composition
-description: What the observations stream implemented on rw/observations, what it deliberately left as a typed gap, every cross-stream interface it publishes with its exact path, every change it needs from a peer, and every decision it took beyond the orchestrator conventions and plan 11.
+title: Historical observations stream handoff — admission, authority, bounded query, export and composition
+description: Historical record of what the retired observations stream implemented before the 2026-08-13 prelaunch clean cut.
 keywords:
   - observations
   - otlp
@@ -8,7 +8,7 @@ keywords:
   - export
   - query
 audience: implementation agents and maintainers
-status: accepted
+status: superseded historical record — observation engine removed 2026-08-13
 last_verified: 2026-08-02
 related:
   - references/rewrite/contracts.md

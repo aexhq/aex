@@ -143,6 +143,27 @@ pub trait PepperDirectory: Send + Sync + fmt::Debug {
         purpose: PepperPurpose,
         version: PepperVersion,
     ) -> Result<PepperRecord, StoreError>;
+
+    /// The active row and every verification-only retiring row for `purpose`.
+    ///
+    /// Implementations must return a fourth row when one exists so the
+    /// keystore can refuse an over-wide startup set rather than silently hide
+    /// key material that an operator still considers live.
+    async fn verification_set(
+        &self,
+        purpose: PepperPurpose,
+    ) -> Result<Vec<PepperRecord>, StoreError>;
+}
+
+/// Material loaded before a signer can serve.
+///
+/// `current` is the only key used for writes. `retiring` exists solely so
+/// bounded, still-live cursors survive a rolling rotation.
+pub struct PepperVerificationSet {
+    /// The active version and material used for new signatures.
+    pub current: (PepperVersion, Pepper),
+    /// At most two verification-only versions.
+    pub retiring: Vec<(PepperVersion, Pepper)>,
 }
 
 /// What one secret version's payload says.
@@ -269,6 +290,33 @@ impl SecretsManagerPepperKeystore {
         Ok(record.version)
     }
 
+    /// Loads the one current key and at most two verification-only keys.
+    ///
+    /// This is the cursor start-up boundary. It refuses missing or duplicate
+    /// current versions, duplicate IDs, retired rows, purpose mismatches, and
+    /// more than two retiring keys before the process begins serving.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fail-closed [`StoreError`] for an invalid lifecycle set or for
+    /// material that cannot be fetched and validated.
+    pub async fn verification_set(
+        &self,
+        purpose: PepperPurpose,
+    ) -> Result<PepperVerificationSet, StoreError> {
+        let records = self.directory.verification_set(purpose).await?;
+        let (current, retiring) = validate_verification_set(purpose, records)?;
+        let current_material = self.material(&current).await?;
+        let mut retiring_material = Vec::with_capacity(retiring.len());
+        for record in retiring {
+            retiring_material.push((record.version, self.material(&record).await?));
+        }
+        Ok(PepperVerificationSet {
+            current: (current.version, current_material),
+            retiring: retiring_material,
+        })
+    }
+
     /// The material for one lifecycle row.
     async fn material(&self, record: &PepperRecord) -> Result<Pepper, StoreError> {
         if let Ok(cache) = self.cache.lock()
@@ -305,6 +353,54 @@ impl SecretsManagerPepperKeystore {
         payload.secret.zeroize();
         checked
     }
+}
+
+fn validate_verification_set(
+    purpose: PepperPurpose,
+    records: Vec<PepperRecord>,
+) -> Result<(PepperRecord, Vec<PepperRecord>), StoreError> {
+    if records.len() > 3 {
+        return Err(StoreError::Fatal(
+            "a pepper verification set exceeds one active and two retiring versions".to_owned(),
+        ));
+    }
+    let mut current = None;
+    let mut retiring = Vec::new();
+    let mut versions = Vec::new();
+    for record in records {
+        if record.purpose != purpose {
+            return Err(StoreError::Decode(
+                "a pepper verification row names another purpose".to_owned(),
+            ));
+        }
+        if versions.contains(&record.version) {
+            return Err(StoreError::Fatal(
+                "a pepper verification set contains a duplicate version".to_owned(),
+            ));
+        }
+        versions.push(record.version);
+        match record.state {
+            PepperState::Active if current.is_none() => current = Some(record),
+            PepperState::Active => {
+                return Err(StoreError::Fatal(
+                    "a pepper verification set contains more than one active version".to_owned(),
+                ));
+            }
+            PepperState::Retiring => retiring.push(record),
+            PepperState::Retired => {
+                return Err(StoreError::Fatal(
+                    "a pepper verification set contains a retired version".to_owned(),
+                ));
+            }
+        }
+    }
+    let current = current.ok_or(StoreError::NotFound)?;
+    if retiring.len() > 2 {
+        return Err(StoreError::Fatal(
+            "a pepper verification set exceeds two retiring versions".to_owned(),
+        ));
+    }
+    Ok((current, retiring))
 }
 
 /// Validates one payload against the row that named it, then decodes it.

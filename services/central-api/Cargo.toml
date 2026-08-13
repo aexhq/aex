@@ -52,7 +52,7 @@ aex-control-domain = { path = "../../crates/aex-control-domain" }
 aex-identity-app = { path = "../../crates/aex-identity-app" }
 aex-identity-aurora = { path = "../../crates/aex-identity-aurora" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
-aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
 aex-rds-data = { path = "../../crates/aex-rds-data" }
 # The drain deadline's relationship to the ECS stop timeout is a compile-time
 # fact that already exists, in `aex_regional_http::drain`. Restating those
@@ -60,7 +60,6 @@ aex-rds-data = { path = "../../crates/aex-rds-data" }
 # arrive?", and the whole point of that module is that there is one. It is
 # depended on for three constants and nothing else.
 aex-regional-http = { path = "../../crates/aex-regional-http" }
-aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-wire = { path = "../../crates/aex-wire" }
 # The three deployables this one merges, composed as libraries. Nothing is
 # re-implemented here: the handlers, the ports and the adapters are theirs.
@@ -76,6 +75,7 @@ axum.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["net", "signal"] }
+tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

@@ -1,14 +1,15 @@
-//! The five verbs and their frames.
+//! The six bounded JSON verbs between Brain and one Hands guest.
 //!
-//! Every request and response carries a [`GenerationBinding`], and the binding is
-//! checked *before* the payload is decoded. A frame for a stale generation is
-//! therefore never parsed at all, which is the difference between rejecting a
-//! stale write and rejecting it after having already allocated for it.
+//! Every request carries a [`GenerationBinding`] in one [`GuestRequest`] envelope.
+//! The HTTP adapter bounds the complete body before decoding this envelope, then
+//! checks the binding before dispatching its typed payload. Every successful
+//! response carries the generation and fence observed after dispatch in a
+//! [`GuestResponse`]; HTTP already owns message framing.
 
 use aex_internal_contracts::SchemaVersion;
 use aex_wire::Uuid7;
 use aex_wire::ids::{ContentHash, GenerationId};
-use aex_wire::types::{JsonPointer, Timestamp};
+use aex_wire::types::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::operation::{
@@ -39,13 +40,59 @@ pub struct CallHash(pub ContentHash);
 #[serde(transparent)]
 pub struct Fence(pub u64);
 
-/// The guest incarnation counter; it increments on guest agent restart.
+/// The exact maximum encoded request or response body.
+pub const MAX_GUEST_BODY_BYTES: usize = 1_048_576;
+
+/// The largest raw terminal-body chunk carried by one JSON response.
 ///
-/// Brain uses it to tell a restarted supervisor from a live process. What Brain
-/// does on a bump is policy, and policy is not this crate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct GuestRevision(pub u32);
+/// Base64 and the typed response metadata keep this comfortably below
+/// [`MAX_GUEST_BODY_BYTES`].
+pub const MAX_RESULT_CHUNK_BYTES: u64 = 180_000;
+
+/// The launch protocol version.
+pub const PROTOCOL_V1: SchemaVersion = SchemaVersion::V1;
+
+/// The six guest HTTP verbs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Verb {
+    /// Start one operation.
+    Start,
+    /// Ask about one operation.
+    Status,
+    /// Cancel one operation.
+    Cancel,
+    /// Pull terminal bytes resumably.
+    Result,
+    /// Hold one request until a short operation answers.
+    Attach,
+    /// Transfer binary live-workspace files.
+    File,
+}
+
+impl Verb {
+    /// Every verb, in route order.
+    pub const ALL: [Self; 6] = [
+        Self::Start,
+        Self::Status,
+        Self::Cancel,
+        Self::Result,
+        Self::Attach,
+        Self::File,
+    ];
+
+    /// The fixed versioned path this verb is posted to.
+    #[must_use]
+    pub const fn path(self) -> &'static str {
+        match self {
+            Self::Start => "/aex/hands/v1/start",
+            Self::Status => "/aex/hands/v1/status",
+            Self::Cancel => "/aex/hands/v1/cancel",
+            Self::Result => "/aex/hands/v1/result",
+            Self::Attach => "/aex/hands/v1/attach",
+            Self::File => "/aex/hands/v1/file",
+        }
+    }
+}
 
 /// Which stream a diagnostic chunk came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -73,37 +120,42 @@ pub enum CancelReason {
     SessionDeleting,
 }
 
-/// The generation and fence every frame carries.
+/// The generation and fence every request envelope carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct GenerationBinding {
     /// Which envelope version this is.
     pub schema_version: SchemaVersion,
-    /// Which exact generation the frame belongs to.
+    /// Which exact generation the request belongs to.
     pub generation: GenerationId,
-    /// The fence at the time the frame was written.
+    /// The fence at the time the request was written.
     pub fence: Fence,
 }
 
-/// What a receiver requires of an incoming frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GenerationExpectation {
-    /// The generation the receiver is bound to.
-    pub generation: GenerationId,
-    /// The lowest fence the receiver will still accept.
-    pub min_fence: Fence,
-    /// The largest frame the receiver will allocate for.
-    pub max_frame_bytes: u32,
-    /// The envelope version the receiver understands.
-    pub schema_version: SchemaVersion,
+/// One bounded request to a guest HTTP verb.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct GuestRequest<T> {
+    /// Exact generation, version and monotonic lifecycle fence.
+    pub binding: GenerationBinding,
+    /// The request specific to the route.
+    pub request: T,
+}
+
+/// One bounded successful response from a guest HTTP verb.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct GuestResponse<T> {
+    /// Exact generation, version and monotonic lifecycle fence observed by the guest.
+    pub binding: GenerationBinding,
+    /// The response specific to the route.
+    pub response: T,
 }
 
 /// Start one operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct StartRequest {
-    /// The generation binding.
-    pub binding: GenerationBinding,
     /// Which operation.
     pub operation: HandsOperationId,
     /// The hash of the request Brain persisted before dispatch.
@@ -130,8 +182,6 @@ pub enum StartResponse {
     Accepted {
         /// Which operation.
         operation: HandsOperationId,
-        /// The guest incarnation that accepted it.
-        guest_revision: GuestRevision,
         /// Whether this operation was already running under the same call hash.
         existing: bool,
     },
@@ -162,8 +212,6 @@ pub enum StartResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct StatusRequest {
-    /// The generation binding.
-    pub binding: GenerationBinding,
     /// Which operation.
     pub operation: HandsOperationId,
 }
@@ -185,15 +233,11 @@ pub enum StatusResponse {
     Accepted {
         /// Which operation.
         operation: HandsOperationId,
-        /// The guest incarnation.
-        guest_revision: GuestRevision,
     },
     /// Running.
     Running {
         /// Which operation.
         operation: HandsOperationId,
-        /// The guest incarnation.
-        guest_revision: GuestRevision,
         /// When it started.
         started_at: Timestamp,
         /// A coarse phase name, when the operation reports one.
@@ -205,8 +249,6 @@ pub enum StatusResponse {
     Terminal {
         /// Which operation.
         operation: HandsOperationId,
-        /// The guest incarnation.
-        guest_revision: GuestRevision,
         /// How it ended.
         terminal: TerminalMetadata,
     },
@@ -216,8 +258,6 @@ pub enum StatusResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct CancelRequest {
-    /// The generation binding.
-    pub binding: GenerationBinding,
     /// Which operation.
     pub operation: HandsOperationId,
     /// Why.
@@ -255,8 +295,6 @@ pub enum CancelResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ResultRequest {
-    /// The generation binding.
-    pub binding: GenerationBinding,
     /// Which operation.
     pub operation: HandsOperationId,
     /// The first byte Brain has not incorporated.
@@ -276,7 +314,7 @@ pub struct ResultChunk {
     /// The bytes, base64-encoded on the wire.
     ///
     /// Base64 here, not serde's default integer array: a 180 KB pull chunk
-    /// serialized as integers is ~650 KB — brushing the 1 MiB frame bound —
+    /// serialized as integers is ~650 KB — brushing the 1 MiB body bound —
     /// where base64 is ~240 KB.
     #[serde(with = "base64_bytes")]
     pub bytes: Vec<u8>,
@@ -352,94 +390,6 @@ pub enum AttachedEvent {
     },
 }
 
-/// The sealed set of frames a guest may send.
-///
-/// Sealing it here is what lets either framing — length-prefixed or otherwise —
-/// be expressed without changing a single byte of the payload.
-pub trait HandsMessage: serde::de::DeserializeOwned + Sized {
-    /// The verb this frame belongs to.
-    const VERB: &'static str;
-}
-
-impl HandsMessage for StartResponse {
-    const VERB: &'static str = "start";
-}
-
-impl HandsMessage for StatusResponse {
-    const VERB: &'static str = "status";
-}
-
-impl HandsMessage for CancelResponse {
-    const VERB: &'static str = "cancel";
-}
-
-impl HandsMessage for ResultResponse {
-    const VERB: &'static str = "result";
-}
-
-impl HandsMessage for AttachedEvent {
-    const VERB: &'static str = "attached";
-}
-
-/// Why a frame from the guest was refused.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum MessageDecodeError {
-    /// The frame exceeded `max_frame_bytes`. Checked before any allocation.
-    #[error("frame is {actual} bytes, limit is {limit}")]
-    Oversize {
-        /// The receiver bound.
-        limit: u32,
-        /// What arrived.
-        actual: usize,
-    },
-    /// The frame belongs to a different generation.
-    #[error("frame is for generation {found}, expected {expected}")]
-    WrongGeneration {
-        /// The generation the receiver is bound to.
-        expected: GenerationId,
-        /// The generation on the frame.
-        found: GenerationId,
-    },
-    /// The frame is older than the receiver will accept.
-    #[error("frame fence {found} is older than {expected}")]
-    StaleFence {
-        /// The lowest accepted fence.
-        expected: u64,
-        /// The fence on the frame.
-        found: u64,
-    },
-    /// The frame declares an envelope version the receiver does not understand.
-    #[error("unsupported schema version {found}")]
-    UnsupportedVersion {
-        /// The version on the frame.
-        found: u32,
-    },
-    /// Assembled bytes did not match the declared digest.
-    #[error("digest mismatch: declared {declared}, computed {computed}")]
-    DigestMismatch {
-        /// What the guest declared.
-        declared: ContentHash,
-        /// What Brain computed.
-        computed: ContentHash,
-    },
-    /// Assembled bytes did not match the declared length.
-    #[error("length mismatch: declared {declared}, received {received}")]
-    LengthMismatch {
-        /// What the guest declared.
-        declared: u64,
-        /// What Brain received.
-        received: u64,
-    },
-    /// The frame was not decodable at all.
-    #[error("malformed frame at `{pointer}`: {reason}")]
-    Malformed {
-        /// Where it failed.
-        pointer: JsonPointer,
-        /// Why.
-        reason: String,
-    },
-}
-
 /// Body bytes as a padded standard-alphabet base64 string on the wire.
 ///
 /// The same convention as `aex-model-catalog`'s signature payloads, restated
@@ -471,69 +421,76 @@ mod base64_bytes {
     }
 }
 
-/// The generation binding a frame declares, read without decoding the payload.
-#[derive(Debug, Deserialize)]
-struct BindingPreamble {
-    /// The binding.
-    binding: GenerationBinding,
-}
-
-/// Decodes one frame from the guest.
-///
-/// The order is the point. Length is checked before allocation, the envelope
-/// version and generation binding are checked before the payload is decoded, and
-/// only then is the message parsed. A hostile guest therefore cannot make Brain
-/// allocate for, or interpret, a frame it was never going to accept.
-///
-/// # Errors
-///
-/// Returns [`MessageDecodeError`] for an oversize frame, an unsupported envelope
-/// version, a wrong generation, a stale fence, or a malformed payload.
-pub fn decode_agent_message<T: HandsMessage>(
-    bytes: &[u8],
-    expected: &GenerationExpectation,
-) -> Result<T, MessageDecodeError> {
-    if bytes.len() > expected.max_frame_bytes as usize {
-        return Err(MessageDecodeError::Oversize {
-            limit: expected.max_frame_bytes,
-            actual: bytes.len(),
-        });
-    }
-    let preamble: BindingPreamble =
-        serde_json::from_slice(bytes).map_err(|error| MessageDecodeError::Malformed {
-            pointer: JsonPointer::root().child("binding"),
-            reason: error.to_string(),
-        })?;
-    if preamble.binding.schema_version != expected.schema_version {
-        return Err(MessageDecodeError::UnsupportedVersion {
-            found: preamble.binding.schema_version.0,
-        });
-    }
-    if preamble.binding.generation != expected.generation {
-        return Err(MessageDecodeError::WrongGeneration {
-            expected: expected.generation,
-            found: preamble.binding.generation,
-        });
-    }
-    if preamble.binding.fence < expected.min_fence {
-        return Err(MessageDecodeError::StaleFence {
-            expected: expected.min_fence.0,
-            found: preamble.binding.fence.0,
-        });
-    }
-    serde_json::from_slice(bytes).map_err(|error| MessageDecodeError::Malformed {
-        pointer: JsonPointer::root(),
-        reason: error.to_string(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{AttachedEvent, HandsOperationId, OutputStream, ResultChunk};
+    use super::{
+        AttachedEvent, Fence, GenerationBinding, GuestRequest, GuestResponse, HandsOperationId,
+        OutputStream, PROTOCOL_V1, ResultChunk, StatusRequest, StatusResponse, Verb,
+    };
     use aex_wire::Uuid7;
+    use aex_wire::ids::{GenerationId, PrefixedId as _};
 
     fn operation() -> HandsOperationId {
         HandsOperationId(Uuid7::compose(3, [3; 10]))
+    }
+
+    #[test]
+    fn the_protocol_owns_one_stable_route_for_every_verb() {
+        assert_eq!(
+            Verb::ALL.map(Verb::path),
+            [
+                "/aex/hands/v1/start",
+                "/aex/hands/v1/status",
+                "/aex/hands/v1/cancel",
+                "/aex/hands/v1/result",
+                "/aex/hands/v1/attach",
+                "/aex/hands/v1/file",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_typed_request_round_trips_with_its_generation_fence() {
+        let request = GuestRequest {
+            binding: GenerationBinding {
+                schema_version: PROTOCOL_V1,
+                generation: GenerationId::from_uuid7(Uuid7::compose(4, [5; 10])),
+                fence: Fence(7),
+            },
+            request: StatusRequest {
+                operation: operation(),
+            },
+        };
+        let encoded = serde_json::to_vec(&request).expect("it serializes");
+        let decoded: GuestRequest<StatusRequest> =
+            serde_json::from_slice(&encoded).expect("it deserializes");
+        assert_eq!(decoded, request);
+
+        let mut with_unknown: serde_json::Value =
+            serde_json::from_slice(&encoded).expect("it is JSON");
+        with_unknown["unexpected"] = serde_json::Value::Bool(true);
+        assert!(
+            serde_json::from_value::<GuestRequest<StatusRequest>>(with_unknown).is_err(),
+            "the bounded envelope rejects fields outside its public contract"
+        );
+    }
+
+    #[test]
+    fn a_typed_response_round_trips_with_its_generation_fence() {
+        let response = GuestResponse {
+            binding: GenerationBinding {
+                schema_version: PROTOCOL_V1,
+                generation: GenerationId::from_uuid7(Uuid7::compose(4, [6; 10])),
+                fence: Fence(8),
+            },
+            response: StatusResponse::Unknown {
+                operation: operation(),
+            },
+        };
+        let encoded = serde_json::to_vec(&response).expect("it serializes");
+        let decoded: GuestResponse<StatusResponse> =
+            serde_json::from_slice(&encoded).expect("it deserializes");
+        assert_eq!(decoded, response);
     }
 
     #[test]
@@ -580,9 +537,9 @@ mod tests {
     }
 
     #[test]
-    fn a_result_pull_chunk_stays_well_inside_the_frame_bound() {
+    fn a_result_pull_chunk_stays_well_inside_the_body_bound() {
         // 180 KB of body as an integer array is ~650 KB — brushing the 1 MiB
-        // frame bound before the rest of the response is even counted. Base64
+        // body bound before the rest of the response is even counted. Base64
         // keeps it at 4/3 plus padding.
         let chunk = ResultChunk {
             operation: operation(),

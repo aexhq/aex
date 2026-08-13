@@ -1,4 +1,4 @@
-//! Provider response decoding and identity validation.
+//! Provider response decoding and identity normalization.
 
 use std::time::Duration;
 
@@ -9,23 +9,13 @@ use serde::Deserialize;
 use time::OffsetDateTime;
 
 use super::HandshakeError;
-use super::http::redact;
 
 /// The two `iss` values Google signs an ID token with.
 const GOOGLE_ISSUERS: [&str; 2] = ["https://accounts.google.com", "accounts.google.com"];
-
 /// How far ahead of this process's clock a provider's `iat` may be.
 const CLOCK_SKEW: Duration = Duration::from_mins(1);
-
 /// The longest display name `identity.user` accepts.
 const MAX_NAME_CHARS: usize = 128;
-
-#[derive(Debug, Deserialize)]
-struct GoogleTokenResponse {
-    id_token: Option<String>,
-    error: Option<String>,
-    error_description: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 struct GoogleClaims {
@@ -34,77 +24,37 @@ struct GoogleClaims {
     sub: String,
     exp: i64,
     iat: i64,
+    nonce: Option<String>,
     email: Option<String>,
     email_verified: Option<bool>,
     name: Option<String>,
     picture: Option<String>,
 }
 
-/// Reads Google's token response, returning the ID token.
-pub(super) fn parse_google_token(
-    status: reqwest::StatusCode,
-    body: &[u8],
-    secret: &str,
-) -> Result<String, HandshakeError> {
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(HandshakeError::RateLimited);
-    }
-    if status.is_client_error() {
-        let detail = serde_json::from_slice::<GoogleTokenResponse>(body)
-            .ok()
-            .and_then(|response| {
-                response
-                    .error
-                    .map(|error| describe(&error, response.error_description.as_deref()))
-            })
-            .unwrap_or_else(|| format!("Google refused the token request with {status}"));
-        return Err(HandshakeError::Refused(redact(&detail, secret)));
-    }
-    if !status.is_success() {
-        return Err(HandshakeError::Unreachable(format!(
-            "Google's token endpoint answered {status}"
-        )));
-    }
-    let parsed: GoogleTokenResponse = serde_json::from_slice(body).map_err(|_| {
-        HandshakeError::Unreachable(format!(
-            "Google answered {status} with a body that is not a token response"
-        ))
-    })?;
-    if let Some(error) = parsed.error {
-        return Err(HandshakeError::Refused(redact(
-            &describe(&error, parsed.error_description.as_deref()),
-            secret,
-        )));
-    }
-    parsed.id_token.filter(|it| !it.is_empty()).ok_or_else(|| {
-        HandshakeError::Unusable(
-            "Google answered without an ID token; the request did not ask for `openid`".to_owned(),
-        )
-    })
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubUser {
+    id: u64,
+    login: String,
+    name: Option<String>,
+    avatar_url: Option<String>,
 }
 
-fn describe(error: &str, description: Option<&str>) -> String {
-    description.map_or_else(|| error.to_owned(), |detail| format!("{error}: {detail}"))
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubEmail {
+    email: String,
+    primary: bool,
+    verified: bool,
 }
 
-/// Builds a person from a Google ID token.
-///
-/// Every claim this platform acts on is checked: the issuer is Google, the
-/// audience is our client, the token is inside its own validity window, and the
-/// address is one Google asserts it has verified.
-///
-/// The signature is deliberately not checked. `OpenID` Connect Core §3.1.3.7
-/// validation step 6 permits TLS server authentication when the ID token is
-/// received by direct communication between the client and token endpoint.
-/// Here that is a TLS-authenticated POST to the compiled, pinned
-/// `oauth2.googleapis.com` endpoint; redirects and proxies are disabled. This
-/// decision expires if an ID token can arrive from a browser or another
-/// service, or if those transport constraints change; that change must add
-/// local JWS validation before release. The durable rationale is also recorded
-/// in `references/rewrite/clients.md`.
+/// Builds a person from the ID token received directly from Google's pinned
+/// TLS token endpoint. Google documents direct, intermediary-free HTTPS plus
+/// client authentication as sufficient provenance for this server flow. The
+/// claims AEX acts on are still validated locally: issuer, audience, lifetime,
+/// subject and verified email.
 pub(super) fn google_profile(
     id_token: &str,
     client_id: &str,
+    expected_nonce: &str,
     now: OffsetDateTime,
 ) -> Result<OauthProfile, HandshakeError> {
     let claims = google_claims(id_token)?;
@@ -116,6 +66,11 @@ pub(super) fn google_profile(
     if claims.aud != client_id {
         return Err(HandshakeError::Unusable(
             "the ID token was issued to another OAuth client".to_owned(),
+        ));
+    }
+    if claims.nonce.as_deref() != Some(expected_nonce) {
+        return Err(HandshakeError::Unusable(
+            "the ID token was not bound to this sign-in attempt".to_owned(),
         ));
     }
     let now_seconds = now.unix_timestamp();
@@ -169,7 +124,29 @@ fn google_claims(id_token: &str) -> Result<GoogleClaims, HandshakeError> {
     })
 }
 
-/// Narrows a provider's answer onto the domain's own types.
+/// Builds an identity from GitHub's authenticated user and verified-email
+/// responses. The public user-profile email is deliberately ignored because
+/// that endpoint does not mark it verified.
+pub(super) fn github_profile(
+    user: GitHubUser,
+    emails: Vec<GitHubEmail>,
+) -> Result<OauthProfile, HandshakeError> {
+    let email = emails
+        .into_iter()
+        .find(|candidate| candidate.primary && candidate.verified)
+        .ok_or_else(|| {
+            HandshakeError::Unusable("GitHub returned no verified primary email address".to_owned())
+        })?;
+    let name = user.name.or(Some(user.login));
+    profile(
+        Provider::GitHub,
+        &user.id.to_string(),
+        &email.email,
+        name,
+        user.avatar_url,
+    )
+}
+
 fn profile(
     provider: Provider,
     account_id: &str,

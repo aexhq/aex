@@ -34,20 +34,11 @@ export const DASHBOARD_ROUTES = [
   "billing_auto_topup_policy_put",
   "billing_top_up_checkout_create",
   "billing_portal_session_create",
-  // Session conversation and observation.
+  // Session conversation and live files.
   "sessions_list",
   "session_get",
   "session_messages_list",
   "session_files_live_list",
-  // Observability.
-  "observations_events_query",
-  "observations_traces_query",
-  // `observations_metrics_aggregate` is deliberately absent: the contract has no
-  // metric-name discovery operation, so no metric picker can be offered and a
-  // free-text metric box is a worse answer than no panel. Recorded, not mocked.
-  "session_observations_events_query",
-  "session_observations_trace_get",
-  "telemetry_gaps_query",
   // Workspace resources.
   "provider_credentials_list",
   "provider_credential_register",

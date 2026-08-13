@@ -97,28 +97,10 @@
       "rust": "FileDownloadId"
     },
     {
-      "description": "One admitted telemetry observation.",
+      "description": "One native session event.",
       "kind": "observation",
       "prefix": "obs",
       "rust": "ObservationId"
-    },
-    {
-      "description": "One admitted OTLP batch.",
-      "kind": "telemetry_batch",
-      "prefix": "bch",
-      "rust": "TelemetryBatchId"
-    },
-    {
-      "description": "One recorded telemetry gap.",
-      "kind": "telemetry_gap",
-      "prefix": "gap",
-      "rust": "TelemetryGapId"
-    },
-    {
-      "description": "One telemetry export artifact.",
-      "kind": "export",
-      "prefix": "exp",
-      "rust": "ExportId"
     },
     {
       "description": "One staged multipart upload.",

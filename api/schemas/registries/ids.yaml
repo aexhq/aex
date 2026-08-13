@@ -20,10 +20,7 @@ ids:
   - { key: generation, prefix: gen, rust: GenerationId, doc: "One exact `MicroVM` generation." }
   - { key: file_upload, prefix: ful, rust: FileUploadId, doc: "One ephemeral exact-generation live-file upload." }
   - { key: file_download, prefix: fdl, rust: FileDownloadId, doc: "One ephemeral exact-generation live-file download." }
-  - { key: observation, prefix: obs, rust: ObservationId, doc: "One admitted telemetry observation." }
-  - { key: telemetry_batch, prefix: bch, rust: TelemetryBatchId, doc: "One admitted OTLP batch." }
-  - { key: telemetry_gap, prefix: gap, rust: TelemetryGapId, doc: "One recorded telemetry gap." }
-  - { key: export, prefix: exp, rust: ExportId, doc: "One telemetry export artifact." }
+  - { key: observation, prefix: obs, rust: ObservationId, doc: "One native session event." }
   - { key: upload, prefix: upl, rust: UploadId, doc: "One staged multipart upload." }
   - { key: measurement, prefix: msr, rust: MeasurementId, doc: "One metered download measurement." }
   - { key: statement, prefix: stm, rust: StatementId, doc: "One immutable issued billing statement." }

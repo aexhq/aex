@@ -36,38 +36,8 @@
       "shape": "scalar"
     },
     {
-      "description": "Encoded, decoded, record and normalized-observation admission bounds.",
-      "id": "telemetry.batch",
-      "shape": "map"
-    },
-    {
-      "description": "Sustained and burst byte and request rates per workspace.",
-      "id": "telemetry.ingest_rate",
-      "shape": "map"
-    },
-    {
-      "description": "Exact active metric-series ceiling per workspace.",
-      "id": "telemetry.metric_series",
-      "shape": "scalar"
-    },
-    {
-      "description": "Structural bounds of an observation query filter.",
-      "id": "query.filter",
-      "shape": "map"
-    },
-    {
       "description": "Largest accepted collection page in items and serialized bytes.",
       "id": "query.page",
-      "shape": "map"
-    },
-    {
-      "description": "Largest NDJSON records frame in observations and encoded bytes.",
-      "id": "stream.frame",
-      "shape": "map"
-    },
-    {
-      "description": "Interval, grouping, calculation, bucket and row aggregation bounds.",
-      "id": "metric.aggregate",
       "shape": "map"
     },
     {
@@ -79,11 +49,6 @@
       "description": "Largest canonical value document a registered name may carry.",
       "id": "registry.value_bytes",
       "shape": "scalar"
-    },
-    {
-      "description": "Concurrent non-terminal telemetry exports per workspace, and the widest observation-time window one export may cover. A cost guard rather than a correctness guard: the active count is read eventually consistently, so a race may admit one or two over the cap, which is a better failure than the transactional counter that leaks and blocks a workspace permanently.",
-      "id": "telemetry.export",
-      "shape": "map"
     }
   ]
 }

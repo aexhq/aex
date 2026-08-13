@@ -1,6 +1,6 @@
 output "session_stream_service_arn" {
   value       = module.session_stream_service.service_arn
-  description = "The merged regional request-path service, serving both the finite session API and the NDJSON stream behind the public load balancer."
+  description = "The regional request-path service behind the public load balancer."
 }
 
 output "operation_queue_arn" {
