@@ -193,6 +193,12 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
                     "bun".to_owned(),
                     "build".to_owned(),
                     "--target=node".to_owned(),
+                    // Node 22 loads a bare `handler.js` in a zip with no
+                    // `package.json` as CommonJS; `bun build --target=node`
+                    // emits ESM, which would raise UserCodeSyntaxError on
+                    // every invoke. Pin the bundle format to CommonJS so the
+                    // archive recipe and the runtime loading rule agree.
+                    "--format=cjs".to_owned(),
                     "--outdir".to_owned(),
                     format!("services/{}/dist", unit.id),
                     format!("services/{}/src/handler.ts", unit.id),
