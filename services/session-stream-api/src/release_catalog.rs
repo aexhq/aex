@@ -4,8 +4,9 @@
 //! There is no runtime JSON catalog and no empty fallback: an ordinary build is
 //! useful for tests, but it cannot become a serving process.
 
-use aex_model_catalog::signature::TrustedKeys;
-use aex_model_catalog::{CatalogError, VerifiedCatalogCollection};
+use aex_brain_provider_gateway::VerifiedCatalogCollection;
+use aex_brain_provider_gateway::signature::TrustedKeys;
+use aex_model_catalog::CatalogError;
 use aex_session_app::{ModelQualifier, QualificationRefusal, QualifiedModel};
 use aex_wire::provider::ModelSelection;
 
@@ -19,7 +20,7 @@ pub enum SessionStreamReleaseCatalogError {
     MissingReleaseInputs(&'static str),
     /// The compiled collection failed complete signature/content verification.
     #[error(transparent)]
-    InvalidCollection(#[from] aex_model_catalog::CatalogCollectionError),
+    InvalidCollection(#[from] aex_brain_provider_gateway::CatalogCollectionError),
     /// The collection verified but its admission head can serve no model.
     #[error("model catalog collection verifies but contains no Active serviceable model")]
     NoActiveModels,

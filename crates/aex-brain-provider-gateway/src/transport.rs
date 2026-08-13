@@ -43,13 +43,6 @@ impl Accept {
     }
 }
 
-/// How the shared core authenticates a request.
-///
-/// A **tag**, not a value: defined and owned by
-/// `aex-brain-provider-custody::credential`. There is no variant carrying key
-/// material and no constructor taking any, which is what makes credential
-/// leakage from a provider module a type error rather than a review item.
-
 /// A fully built provider request, minus the credential.
 ///
 /// Every field is bounded, and the only field that can hold caller text is the

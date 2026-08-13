@@ -1,7 +1,7 @@
 [package]
-name = "aex-model-catalog"
+name = "aex-model-vocabulary"
 version = "0.1.0"
-description = "`aex-model-catalog` owns the immutable model catalog: the generated admit table, model, dialect, capability and routing policy, and the pre-dispatch qualification that admits a `(provider, model)` pair."
+description = "`aex-model-vocabulary` owns the provider-neutral canonical vocabulary: bounded primitives, the provider-failure kinds, the dialect classes, the catalog revision identity, and the canonical result/request/receipt vocabulary (D-CANON)."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,10 +16,10 @@ workspace = true
 owner = "providers"
 role = "domain"
 artifact = "none"
-live_suite = "aex-live-model-catalog"
+live_suite = "aex-live-brain-mux"
 layers = ["unit"]
 concerns = ["property"]
-seams = ["provider.openai.stream", "provider.anthropic.stream", "provider.deepseek.stream", "provider.zai.stream", "provider.moonshotai.stream", "provider.google.stream"]
+seams = []
 security_tier = "internal"
 risk = ["untrusted_input"]
 scenarios = []
@@ -28,19 +28,14 @@ scenarios = []
 properties = "unit"
 
 [dependencies]
-aex-model-vocabulary = { path = "../aex-model-vocabulary" }
 aex-wire = { path = "../aex-wire" }
 base64.workspace = true
 blake3.workspace = true
 bytes.workspace = true
+hex.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-time.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 serde_json.workspace = true
-
-[[test]]
-name = "properties"
-path = "tests/properties.rs"

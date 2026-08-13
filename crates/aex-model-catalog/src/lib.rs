@@ -1,22 +1,17 @@
-//! `aex-model-catalog` owns the signed immutable model catalog: model, dialect, capability
-//! and routing policy plus its content signature.
+//! `aex-model-catalog` owns the immutable model catalog: the generated admit
+//! table, model, dialect, capability and routing policy, and the
+//! pre-dispatch qualification that admits a `(provider, model)` pair.
 //!
-//! It also owns the **provider-neutral canonical result vocabulary**
-//! (`canonical`, D-CANON), because that vocabulary must be visible to both the
-//! pure Brain domain and the provider adapter, and this crate already sits
-//! below both.
+//! The **provider-neutral canonical result vocabulary** lives in
+//! `aex-model-vocabulary` and is re-exported through the modules below, so
+//! existing `aex_model_catalog::canonical::*` paths resolve unchanged.
 //!
 //! # Invariants
 //!
-//! - the catalog is immutable and content-addressed; a change is a new signed digest
-//! - an unsigned or mis-signed catalog is rejected at load, never partially trusted
+//! - the catalog is immutable and content-addressed; a change is a new digest
 //! - a model absent from the catalog is not routable, whatever a request asks for
 //! - an unknown field or unknown enum member anywhere in the document is a load
 //!   failure, never an ignored value
-//! - signed `Active` compatibility metadata is admission authority; provider
-//!   availability and live qualification evidence cannot expire a catalog
-//! - conformance receipts remain external assurance evidence bound to an exact
-//!   canonical entry digest, not embedded runtime authority
 //!
 //! # Purity
 //!
@@ -32,22 +27,14 @@
 //! - credential storage or resolution (`aex-secret-domain` and its adapters)
 
 pub mod canonical;
-pub mod catalog;
-pub mod collection;
 pub mod document;
 pub mod failure;
 pub mod fixture;
 pub mod primitives;
 pub mod qualified;
 pub mod receipt;
-pub mod signature;
 pub mod wire_pending;
 
-pub use catalog::{Catalog, CatalogHead, CatalogLoadError};
-pub use collection::{
-    CATALOG_COLLECTION_SCHEMA, CatalogArtifact, CatalogCollection, CatalogCollectionError,
-    VerifiedCatalogCollection,
-};
 pub use failure::{ProviderFailureClass, ProviderFailureKind, RedactedDetail};
 pub use primitives::{
     Blake3Digest, BoundError, BoundedString, ModelSlug, ProviderRequestId, ToolCallId, ToolName,

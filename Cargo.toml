@@ -43,6 +43,7 @@ members = [
     "crates/aex-identity-domain",
     "crates/aex-internal-contracts",
     "crates/aex-model-catalog",
+    "crates/aex-model-vocabulary",
     "crates/aex-observation-app",
     "crates/aex-observation-domain",
     "crates/aex-observation-export",

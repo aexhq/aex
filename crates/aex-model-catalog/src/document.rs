@@ -174,6 +174,27 @@ impl Dialect {
     pub const fn revision(self) -> DialectRevision {
         DialectRevision(1)
     }
+
+    /// The compiled dialect class a canonical receipt records.
+    ///
+    /// The nine-variant document dialect collapses onto the eight launch
+    /// classes; `GeminiInteractions` is reserved and never routable, and maps
+    /// onto the Gemini class for identity purposes.
+    #[must_use]
+    pub const fn class(self) -> aex_model_vocabulary::DialectClass {
+        match self {
+            Self::OpenAiResponses => aex_model_vocabulary::DialectClass::OpenAiResponses,
+            Self::AnthropicMessages => aex_model_vocabulary::DialectClass::AnthropicMessages,
+            Self::DeepSeekChat => aex_model_vocabulary::DialectClass::DeepSeekChat,
+            Self::ZaiChat => aex_model_vocabulary::DialectClass::ZaiChat,
+            Self::MoonshotChat => aex_model_vocabulary::DialectClass::MoonshotChat,
+            Self::GeminiGenerateContent | Self::GeminiInteractions => {
+                aex_model_vocabulary::DialectClass::GeminiGenerateContent
+            }
+            Self::OpenRouterChat => aex_model_vocabulary::DialectClass::OpenRouterChat,
+            Self::VercelAiGatewayChat => aex_model_vocabulary::DialectClass::VercelAiGatewayChat,
+        }
+    }
 }
 
 /// The closed origin set. There is no free-form base URL anywhere in the crate.

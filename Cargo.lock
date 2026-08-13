@@ -834,8 +834,23 @@ dependencies = [
 name = "aex-model-catalog"
 version = "0.1.0"
 dependencies = [
+ "aex-model-vocabulary",
  "aex-wire",
- "aws-lc-rs",
+ "base64 0.23.0",
+ "blake3",
+ "bytes",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+]
+
+[[package]]
+name = "aex-model-vocabulary"
+version = "0.1.0"
+dependencies = [
+ "aex-wire",
  "base64 0.23.0",
  "blake3",
  "bytes",
@@ -843,9 +858,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "thiserror",
- "time",
 ]
 
 [[package]]
@@ -7284,6 +7297,7 @@ dependencies = [
  "aex-brain-app",
  "aex-brain-domain",
  "aex-brain-hands",
+ "aex-brain-provider-gateway",
  "aex-capacity-dynamodb",
  "aex-content-aws",
  "aex-content-domain",

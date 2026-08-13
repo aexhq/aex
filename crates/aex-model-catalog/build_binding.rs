@@ -128,7 +128,7 @@ fn generate_release_source(
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "static RELEASE_TRUSTED_KEYS: &[aex_model_catalog::signature::TrustedKey] = \
+                "static RELEASE_TRUSTED_KEYS: &[aex_brain_provider_gateway::signature::TrustedKey] = \
                  &[{entries}];\n\
                  static RELEASE_CATALOG_COLLECTION: &[u8] = \
                  include_bytes!(\"model-catalog-collection.json\");\n\
@@ -136,7 +136,7 @@ fn generate_release_source(
             )
         }
         (None, None, None, None) => String::from(
-            "static RELEASE_TRUSTED_KEYS: &[aex_model_catalog::signature::TrustedKey] = &[];\n\
+            "static RELEASE_TRUSTED_KEYS: &[aex_brain_provider_gateway::signature::TrustedKey] = &[];\n\
              static RELEASE_CATALOG_COLLECTION: &[u8] = &[];\n\
              const RELEASE_INPUT_BLOCKER: Option<&str> = Some(\
              \"this build has no real publisher P-256 trust-root set or signed model-catalog \

@@ -68,6 +68,7 @@ futures.workspace = true
 tokio = { workspace = true, features = ["net"] }
 aex-content-domain = { path = "../../crates/aex-content-domain" }
 aex-model-catalog = { path = "../../crates/aex-model-catalog" }
+aex-brain-provider-gateway = { path = "../../crates/aex-brain-provider-gateway" }
 aex-brain-hands = { path = "../../crates/aex-brain-hands" }
 aex-brain-app = { path = "../../crates/aex-brain-app" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }

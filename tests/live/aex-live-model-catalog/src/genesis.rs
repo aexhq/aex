@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 use aex_brain_provider_gateway::build_identity::{
     AdapterBuildIdentityError, adapter_source_digest,
 };
+use aex_brain_provider_gateway::catalog::{CatalogLoadError, catalog_entry_digest};
 use aex_model_catalog::canonical::{NormalizedUsage, UsageFieldSet};
-use aex_model_catalog::catalog::{CatalogLoadError, catalog_entry_digest};
 use aex_model_catalog::document::{
     CacheMode, CachePolicy, CacheReadSemantics, Capability, CapabilitySet, Dialect,
     DialectRevision, DurableOperationSupport, EndpointPin, EntryState, ErrorClassMap, ModelEntry,

@@ -390,8 +390,7 @@ impl ProviderRouter {
             provider: request.selection.provider(),
             model: request.selection.model().clone(),
             catalog: request.selection.catalog(),
-            dialect: request.selection.dialect(),
-            dialect_revision: request.selection.dialect_revision(),
+            dialect: request.selection.dialect().class(),
             credential: CredentialBindingRef {
                 id: binding.id,
                 revision: binding.revision.0,

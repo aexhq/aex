@@ -7,7 +7,7 @@
 //! authority, or a task that idles alive but unready.
 
 use aex_brain_provider_gateway::catalog_port::{CatalogArtifactError, VerifiedCatalogPort};
-use aex_model_catalog::signature::TrustedKeys;
+use aex_brain_provider_gateway::signature::TrustedKeys;
 
 include!(concat!(env!("OUT_DIR"), "/model_catalog_release.rs"));
 

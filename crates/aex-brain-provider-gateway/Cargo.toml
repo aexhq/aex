@@ -36,6 +36,7 @@ aex-model-catalog = { path = "../aex-model-catalog" }
 aex-secret-domain = { path = "../aex-secret-domain" }
 aex-wire = { path = "../aex-wire" }
 async-trait.workspace = true
+aws-lc-rs.workspace = true
 bytes.workspace = true
 futures.workspace = true
 reqwest.workspace = true
@@ -49,7 +50,6 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-aws-lc-rs.workspace = true
 proptest.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
 uuid.workspace = true

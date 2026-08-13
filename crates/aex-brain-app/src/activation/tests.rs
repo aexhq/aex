@@ -279,8 +279,7 @@ fn produced() -> ProviderOutcome {
         provider: message.provider,
         model: message.model.clone(),
         catalog: message.catalog,
-        dialect: selected.dialect(),
-        dialect_revision: selected.dialect_revision(),
+        dialect: selected.dialect().class(),
         credential: CredentialBindingRef {
             id: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [4; 10])),
             revision: 1,

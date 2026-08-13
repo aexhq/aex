@@ -5,8 +5,8 @@
 //! qualification evidence. Publication signs only the canonical
 //! [`CatalogDocument`] rendered from this closed, canonical source.
 
-use aex_model_catalog::Catalog;
-use aex_model_catalog::catalog::{CatalogHead, CatalogLoadError};
+use aex_brain_provider_gateway::Catalog;
+use aex_brain_provider_gateway::catalog::{CatalogHead, CatalogLoadError};
 use aex_model_catalog::document::{CatalogDocument, CatalogSequence};
 use aex_wire::canonical::CanonicalError;
 use aex_wire::to_jcs_bytes;

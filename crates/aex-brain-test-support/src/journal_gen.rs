@@ -226,8 +226,7 @@ pub fn assistant(
         provider: message.provider,
         model: message.model.clone(),
         catalog: message.catalog,
-        dialect: model().dialect(),
-        dialect_revision: model().dialect_revision(),
+        dialect: model().dialect().class(),
         credential: CredentialBindingRef {
             id: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [4; 10])),
             revision: 1,

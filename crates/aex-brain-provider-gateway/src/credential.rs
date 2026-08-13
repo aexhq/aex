@@ -383,7 +383,9 @@ mod tests {
         DenyAllCredentialDirectory, ProviderApiKey, ProviderCredentialBinding,
         ProviderCredentialDecryptor, ProviderCredentialDirectory, SessionCredentialPin, resolve,
     };
-    use crate::wire_pending::{BoxFuture, CiphertextRef, EncryptionContext, RevocationEpoch, SourceGeneration};
+    use crate::wire_pending::{
+        BoxFuture, CiphertextRef, EncryptionContext, RevocationEpoch, SourceGeneration,
+    };
 
     fn workspace() -> WorkspaceId {
         WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [1; 10]))
@@ -776,7 +778,9 @@ mod tests {
             .collect();
         let first = shared[0];
         assert!(
-            shared.iter().all(|candidate| Arc::ptr_eq(*candidate, first)),
+            shared
+                .iter()
+                .all(|candidate| Arc::ptr_eq(*candidate, first)),
             "a burst must share one zeroizing allocation, not copy plaintext per caller"
         );
         assert_eq!(

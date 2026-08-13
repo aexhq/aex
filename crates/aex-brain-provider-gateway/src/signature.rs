@@ -21,7 +21,7 @@
 use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1, UnparsedPublicKey};
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::BoundedString;
+use aex_model_catalog::primitives::BoundedString;
 
 /// The domain-separation prefix the signature covers.
 ///
@@ -69,7 +69,7 @@ pub struct CatalogSignature {
     /// Which algorithm produced the signature.
     pub algorithm: SigAlg,
     /// The DER signature, base64 on the wire.
-    #[serde(with = "crate::primitives::base64_bytes")]
+    #[serde(with = "aex_model_catalog::primitives::base64_bytes")]
     pub bytes: bytes::Bytes,
 }
 
@@ -82,7 +82,7 @@ pub struct CatalogSignature {
 #[serde(deny_unknown_fields)]
 pub struct CatalogEnvelope {
     /// The canonical (JCS) document bytes, base64 on the wire.
-    #[serde(with = "crate::primitives::base64_bytes")]
+    #[serde(with = "aex_model_catalog::primitives::base64_bytes")]
     pub document: bytes::Bytes,
     /// One or more detached signatures.
     pub signatures: Vec<CatalogSignature>,
@@ -230,7 +230,7 @@ mod tests {
         CatalogEnvelope, CatalogSignature, MAX_SIGNATURES, P256_PUBLIC_KEY_BYTES, SIGNING_PREFIX,
         SigAlg, SignatureError, SigningKeyId, TrustedKey, TrustedKeys, verify,
     };
-    use crate::primitives::BoundedString;
+    use aex_model_catalog::primitives::BoundedString;
 
     fn key_id(name: &str) -> SigningKeyId {
         SigningKeyId(BoundedString::new(name).expect("short name"))

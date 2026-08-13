@@ -65,6 +65,7 @@ pub const CRATES: &[&str] = &[
     "aex-identity-domain",
     "aex-internal-contracts",
     "aex-model-catalog",
+    "aex-model-vocabulary",
     "aex-observation-app",
     "aex-observation-domain",
     "aex-observation-export",

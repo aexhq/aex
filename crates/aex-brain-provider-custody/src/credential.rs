@@ -356,14 +356,14 @@ impl ProviderApiKey {
 
 #[cfg(test)]
 mod tests {
-    use aex_secret_domain::context::Plane;
     use aex_secret_domain::SecretName;
+    use aex_secret_domain::context::Plane;
     use aex_wire::ids::{PrefixedId as _, ProviderCredentialId};
     use aex_wire::provider::ProviderId;
     use aex_wire::types::Region;
 
     use super::{
-        AuthScheme, BindingState, CredentialRevision, CredentialResolveError,
+        AuthScheme, BindingState, CredentialResolveError, CredentialRevision,
         DenyAllCredentialDecryptor, ProviderApiKey, ProviderCredentialBinding,
         ProviderCredentialDecryptor,
     };

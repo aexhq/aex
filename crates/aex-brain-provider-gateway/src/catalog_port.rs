@@ -4,16 +4,19 @@
 //! authority. The hot path is a synchronous `BTreeMap` lookup and cannot reach
 //! a network, filesystem or mutable tenant/process authority.
 
-use aex_brain_app::ports::{CatalogError, CatalogPort};
-use aex_brain_domain::ids::{CatalogPin, ModelSlug};
-pub use aex_model_catalog::collection::{
+pub use crate::collection::{
     CATALOG_COLLECTION_SCHEMA, CatalogArtifact, CatalogCollection, CatalogCollectionError,
     MAX_CATALOG_COLLECTION_BYTES, MAX_CATALOG_REVISIONS,
 };
+use aex_brain_app::ports::{CatalogError, CatalogPort};
+use aex_brain_domain::ids::{CatalogPin, ModelSlug};
+use aex_model_catalog::QualifiedModel;
 use aex_model_catalog::document::{CatalogDigest, DurableOperationSupport, EntryState};
-use aex_model_catalog::signature::TrustedKeys;
-use aex_model_catalog::{Catalog, QualifiedModel, VerifiedCatalogCollection};
 use aex_wire::provider::{ModelSelection, ProviderId};
+
+use crate::catalog::Catalog;
+use crate::collection::VerifiedCatalogCollection;
+use crate::signature::TrustedKeys;
 
 /// Why a catalog release collection could not become lookup authority.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -161,15 +164,16 @@ mod tests {
     };
     use aex_brain_app::ports::CatalogPort;
     use aex_brain_domain::ids::CatalogPin;
-    use aex_model_catalog::CatalogCollectionError;
     use aex_model_catalog::document::{CapabilitySet, CatalogDigest};
     use aex_model_catalog::fixture;
     use aex_model_catalog::primitives::Blake3Digest;
-    use aex_model_catalog::signature::{
+    use aex_wire::provider::ProviderId;
+
+    use crate::collection::CatalogCollectionError;
+    use crate::signature::{
         CatalogEnvelope, CatalogSignature, P256_PUBLIC_KEY_BYTES, SIGNING_PREFIX, SigAlg,
         SigningKeyId, TrustedKey, TrustedKeys,
     };
-    use aex_wire::provider::ProviderId;
 
     const PUBLISHER: &str = "aex-catalog-test";
     const NOW_MS: i64 = 1_800_000_000_000;
@@ -366,7 +370,7 @@ mod tests {
             load(&publisher, &collection),
             Err(CatalogArtifactError::Collection(
                 CatalogCollectionError::Verification {
-                    source: aex_model_catalog::CatalogLoadError::BrokenChain { .. },
+                    source: crate::catalog::CatalogLoadError::BrokenChain { .. },
                     ..
                 }
             ))

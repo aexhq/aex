@@ -39,9 +39,11 @@ impl PartialEq for QualifiedModel {
 impl Eq for QualifiedModel {}
 
 impl QualifiedModel {
-    /// Builds a qualified pair. Crate-private: only a loaded [`crate::Catalog`]
-    /// can mint one.
-    pub(crate) fn new(entry: Arc<ModelEntry>, catalog: CatalogRevision) -> Self {
+    /// Builds a qualified pair. Only a loaded catalog revision or the fixture
+    /// surface may mint one.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new(entry: Arc<ModelEntry>, catalog: CatalogRevision) -> Self {
         Self { entry, catalog }
     }
 

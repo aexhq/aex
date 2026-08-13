@@ -23,7 +23,9 @@ pub mod adapter;
 pub mod anthropic;
 pub mod budget;
 pub mod build_identity;
+pub mod catalog;
 pub mod catalog_port;
+pub mod collection;
 pub mod credential;
 pub(crate) mod credential_flight;
 pub mod deepseek;
@@ -35,6 +37,7 @@ pub mod openrouter;
 pub mod pool;
 pub mod redact;
 pub mod router;
+pub mod signature;
 pub mod sse;
 pub mod stream;
 pub mod transport;
@@ -44,6 +47,11 @@ pub mod zai;
 
 pub use adapter::{ProviderAdapter, RequestBuildError};
 pub use budget::{BudgetOverrun, StreamBudget};
+pub use catalog::{Catalog, CatalogHead, CatalogLoadError};
+pub use collection::{
+    CATALOG_COLLECTION_SCHEMA, CatalogArtifact, CatalogCollection, CatalogCollectionError,
+    VerifiedCatalogCollection,
+};
 pub use credential::{
     CredentialResolveError, DenyAllCredentialDecryptor, DenyAllCredentialDirectory, ProviderApiKey,
     ProviderCredentialDecryptor, ProviderCredentialDirectory,

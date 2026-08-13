@@ -12,9 +12,9 @@ use aex_wire::to_jcs_bytes;
 use aex_wire::types::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::CatalogRevision;
 use crate::catalog::{Catalog, CatalogHead, CatalogLoadError};
 use crate::signature::{CatalogEnvelope, TrustedKeys};
+use aex_model_catalog::{CatalogRevision, primitives::Blake3Digest};
 
 /// Closed schema discriminator for the release/session-retention contract.
 pub const CATALOG_COLLECTION_SCHEMA: &str = "aex.model-catalog-collection.v1";
@@ -42,7 +42,7 @@ impl CatalogArtifact {
     /// Binds an envelope to the digest of the exact document bytes it carries.
     #[must_use]
     pub fn from_envelope(envelope: CatalogEnvelope) -> Self {
-        let pin = CatalogRevision(crate::Blake3Digest::of(&envelope.document));
+        let pin = CatalogRevision(Blake3Digest::of(&envelope.document));
         Self { pin, envelope }
     }
 }

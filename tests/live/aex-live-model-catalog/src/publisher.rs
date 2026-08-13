@@ -10,15 +10,16 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use aex_model_catalog::collection::{
+use aex_brain_provider_gateway::Catalog;
+use aex_brain_provider_gateway::collection::{
     CatalogArtifact, CatalogCollection, MAX_CATALOG_REVISIONS, VerifiedCatalogCollection,
 };
-use aex_model_catalog::document::{CatalogDocument, CatalogSequence, EntryState};
-use aex_model_catalog::signature::{
+use aex_brain_provider_gateway::signature::{
     CatalogEnvelope, CatalogSignature, MAX_SIGNATURE_BYTES, P256_PUBLIC_KEY_BYTES, SIGNING_PREFIX,
     SigAlg, SigningKeyId, TrustedKey, TrustedKeys,
 };
-use aex_model_catalog::{BoundedString, Catalog, CatalogRevision};
+use aex_model_catalog::document::{CatalogDocument, CatalogSequence, EntryState};
+use aex_model_catalog::{BoundedString, CatalogRevision};
 use aex_wire::to_jcs_bytes;
 use aex_wire::types::Timestamp;
 
@@ -169,7 +170,7 @@ pub enum PublisherError {
     },
     /// The document is structurally invalid.
     #[error("catalog document preflight failed: {0}")]
-    Catalog(#[from] aex_model_catalog::CatalogLoadError),
+    Catalog(#[from] aex_brain_provider_gateway::CatalogLoadError),
     /// The document has no model that can serve new admission.
     #[error("catalog document contains no Active model available for new admission")]
     NoActiveModel,
@@ -187,7 +188,7 @@ pub enum PublisherError {
     KmsPublicKey(&'static str),
     /// Full runtime-equivalent collection verification failed.
     #[error("signed catalog collection failed verification: {0}")]
-    Collection(#[from] aex_model_catalog::CatalogCollectionError),
+    Collection(#[from] aex_brain_provider_gateway::CatalogCollectionError),
     /// Genesis is exactly the first item in one publisher chain.
     #[error("catalog genesis must have sequence 1 and no predecessor")]
     InvalidGenesis,
@@ -763,7 +764,7 @@ mod tests {
         )
         .expect("verified publication");
 
-        let parsed: aex_model_catalog::CatalogCollection =
+        let parsed: aex_brain_provider_gateway::CatalogCollection =
             serde_json::from_slice(&publication.collection).expect("collection");
         assert_eq!(
             publication.collection,

@@ -1,13 +1,13 @@
 //! Production genesis candidate and output-builder regression tests.
 
 use aex_brain_provider_gateway::build_identity::adapter_source_digest;
+use aex_brain_provider_gateway::catalog::catalog_entry_digest;
 use aex_live_model_catalog::ProbeRun;
 use aex_live_model_catalog::genesis::{
     DEEPSEEK_FLASH_MODEL, DEEPSEEK_GENESIS_CAPABILITIES, GenesisError, GenesisMetadata,
     build_deepseek_genesis, deepseek_v4_flash_candidate,
 };
 use aex_model_catalog::canonical::{NormalizedUsage, UsageFieldSet};
-use aex_model_catalog::catalog::catalog_entry_digest;
 use aex_model_catalog::document::{
     CacheMode, CacheReadSemantics, Capability, CapabilitySet, Dialect, DurableOperationSupport,
     EndpointPin, EntryState, NamePattern, ReasoningEncoding, ReasoningMode, ReasoningReplay,

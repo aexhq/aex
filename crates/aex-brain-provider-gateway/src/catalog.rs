@@ -11,15 +11,16 @@ use aex_wire::provider::{ModelSelection, ProviderId};
 use aex_wire::to_jcs_bytes;
 use aex_wire::types::{JsonPointer, Timestamp};
 
-use crate::document::{
+use aex_model_catalog::CatalogRevision;
+use aex_model_catalog::document::{
     CatalogDigest, CatalogDocument, CatalogSequence, Dialect, DialectRevision, DisableReason,
     DurableOperationSupport, EndpointPin, EntryState, ModelEntry, PreDispatchRetryPolicy,
     PublisherId, SCHEMA_VERSION,
 };
-use crate::primitives::{Blake3Digest, BoundedString, ModelSlug};
-use crate::qualified::{CatalogError, QualifiedModel};
+use aex_model_catalog::primitives::{Blake3Digest, BoundedString, ModelSlug};
+use aex_model_catalog::qualified::{CatalogError, QualifiedModel};
+
 use crate::signature::{CatalogEnvelope, SignatureError, SigningKeyId, TrustedKeys, verify};
-use crate::wire_pending::CatalogRevision;
 
 /// Which revision is currently serving, for the downgrade and chain rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
