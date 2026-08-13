@@ -188,8 +188,14 @@ observes = ["artifact:session-stream-api"]
 [[scenario]]
 id = "SC-SESSION-LIVE-FILES"
 owner = "regional-services"
-package = "cargo:aex-live-session-stream-api"
-target = "live-files"
+# The `live-files` target drives the real session lifecycle, which requires a
+# provider, model and provider credential registered in the evidence workspace
+# (`AEX_LIVE_PROVIDER`, `AEX_LIVE_MODEL`, `AEX_LIVE_PROVIDER_CREDENTIAL_ID`).
+# No workflow or plane supplies those today, and the provider-credential
+# register itself has no live surface yet (see SC-BYOK-CUSTODY), so a release
+# run cannot provision the session this journey needs. Re-enable when the
+# provider wiring lands with the live-evidence expansion.
+deferred = "The live-files journey needs a registered provider credential in the evidence workspace (AEX_LIVE_PROVIDER/AEX_LIVE_MODEL/AEX_LIVE_PROVIDER_CREDENTIAL_ID) and a live provider-credential register; neither exists yet, and no release-evidence environment supplies the three variables."
 observes = ["artifact:session-stream-api", "artifact:session-operation-worker"]
 
 [[scenario]]
