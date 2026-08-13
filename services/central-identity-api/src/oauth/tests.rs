@@ -1,4 +1,4 @@
-use super::{
+﻿use super::{
     Endpoints, HandshakeError, OauthClient, OauthClientError, challenge_of, github_profile,
     google_profile, redact, state_matches,
 };
@@ -186,12 +186,12 @@ fn github_refuses_an_unverified_or_non_primary_address() {
 #[test]
 fn a_diagnostic_never_carries_a_client_secret_or_credential_shaped_run() {
     let rendered = redact(
-        "error client_secret=github-secret token=gho_0123456789abcdefghijklmnop",
+        "error client_secret=github-secret token=cred_0123456789abcdefghijklmnop",
         "github-secret",
     );
     assert!(!rendered.contains("github-secret"), "{rendered}");
     assert!(
-        !rendered.contains("gho_0123456789abcdefghijklmnop"),
+        !rendered.contains("cred_0123456789abcdefghijklmnop"),
         "{rendered}"
     );
 }
