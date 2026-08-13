@@ -173,43 +173,43 @@ requires_live = true
 local = ""
 live_only = "CloudWatch and OTel export behaviour under drop and backpressure"
 
-# --- Model providers (direct BYOK, six modules, OD/A11-3) -------------------
+# --- Model providers (rig adapter over the compiled models.dev table) ------
 
 [seam."provider.openai.stream"]
 proves_locally = "partial"
 requires_live = true
-local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
-live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+local = "local mock server: SSE framing, 429/503, mid-stream reset, frame-to-canonical mapping"
+live_only = "real streaming, usage accounting, forced drop at each dispatch-proof point, provider-echoed error redaction"
 
 [seam."provider.anthropic.stream"]
 proves_locally = "partial"
 requires_live = true
-local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
-live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+local = "local mock server: SSE framing, 429/503, mid-stream reset, frame-to-canonical mapping"
+live_only = "real streaming, usage accounting, forced drop at each dispatch-proof point, provider-echoed error redaction"
 
 [seam."provider.deepseek.stream"]
 proves_locally = "partial"
 requires_live = true
-local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
-live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+local = "local mock server: SSE framing, 429/503, mid-stream reset, frame-to-canonical mapping"
+live_only = "real streaming, usage accounting, forced drop at each dispatch-proof point, provider-echoed error redaction"
 
 [seam."provider.zai.stream"]
 proves_locally = "partial"
 requires_live = true
-local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
-live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+local = "local mock server: SSE framing, 429/503, mid-stream reset, frame-to-canonical mapping"
+live_only = "real streaming, usage accounting, forced drop at each dispatch-proof point, provider-echoed error redaction"
 
 [seam."provider.moonshotai.stream"]
 proves_locally = "partial"
 requires_live = true
-local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
-live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+local = "local mock server: SSE framing, 429/503, mid-stream reset, frame-to-canonical mapping"
+live_only = "real streaming, usage accounting, forced drop at each dispatch-proof point, provider-echoed error redaction"
 
 [seam."provider.google.stream"]
 proves_locally = "partial"
 requires_live = true
-local = "wiremock frame scripts: SSE framing, 429/5xx, slow body, early EOF, oversize frame"
-live_only = "real streaming, token accounting, forced drop at each DispatchProof point, context-window rejection"
+local = "local mock server: SSE framing, 429/503, mid-stream reset, frame-to-canonical mapping"
+live_only = "real streaming, usage accounting, forced drop at each dispatch-proof point, provider-echoed error redaction"
 
 # --- Payments, MCP, egress, registries, guest, hosting ----------------------
 

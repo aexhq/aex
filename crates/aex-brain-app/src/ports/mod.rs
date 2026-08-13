@@ -34,14 +34,13 @@ pub mod tool;
 /// A boxed, `Send` future — the return shape of every asynchronous port method.
 pub type BoxFuture<'a, T> = core::pin::Pin<Box<dyn core::future::Future<Output = T> + Send + 'a>>;
 
-pub use catalog::{CatalogDigest, CatalogError, CatalogPort, ClockPort, IdPort, SteadyInstant};
+pub use catalog::{CatalogError, CatalogPort, ClockPort, IdPort, SteadyInstant};
 pub use hands::{
     HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart, HandsOperationStatus, HandsPort,
     HandsResult, ResultBounds,
 };
 pub use proof::{
-    CancelToken, DispatchTicket, FenceGuard, NullPreviewSink, PreviewSink, StreamBudget,
-    TicketMismatch,
+    CancelToken, DispatchTicket, FenceGuard, NullPreviewSink, PreviewSink, TicketMismatch,
 };
 pub use provider::{
     ProviderDispatchError, ProviderFailureClass, ProviderFailureKind, ProviderOutcome,

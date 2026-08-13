@@ -122,8 +122,9 @@ bindings.
 
 ### provider and model
 
-The explicit direct BYOK provider and exact provider-native model id qualified
-by the signed model catalog. Arbitrary provider base URLs are not accepted.
+The explicit direct BYOK provider and exact provider-native model id admitted
+by the compiled models.dev catalog. Arbitrary provider base URLs are not
+accepted.
 
 ### compute size
 

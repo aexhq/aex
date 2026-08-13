@@ -18,8 +18,34 @@ pub use aex_model_catalog::canonical::{
     CanonicalBlock, CanonicalMessage, CanonicalModelRequest, CompleteAssistantMessage,
     CompleteProof, NormalizedUsage, PreviewFrame, Role, StopReason, ToolResultPart,
 };
-pub use aex_model_catalog::document::DurableOperationSupport;
 pub use aex_wire::provider::ProviderId;
+
+/// Whether the provider offers a durable result lookup for a completed
+/// streaming generation.
+///
+/// Owned here rather than in `aex-model-catalog`: the catalog's generated
+/// admit table carries no per-model operation policy, and this is Brain
+/// durable-effect vocabulary (model-provider simplification 2026-08-13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DurableOperationSupport {
+    /// None. This is the launch answer for all eight authorities: Anthropic is
+    /// stateless, `OpenAI`'s `GET /v1/responses/{id}` requires `store: true`
+    /// which AEX deliberately disables, and Gemini Interactions is not the
+    /// launch dialect (D-19).
+    #[default]
+    None,
+    /// A completed result can be fetched by id within a window.
+    ResultLookup {
+        /// How long the provider retains the result.
+        ttl_ms: u64,
+    },
+    /// A stream can be resumed from an event id within a window.
+    ResumableStream {
+        /// How long the provider retains the stream.
+        ttl_ms: u64,
+    },
+}
 
 /// A Brain journal envelope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

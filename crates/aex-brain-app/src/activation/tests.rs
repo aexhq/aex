@@ -27,8 +27,8 @@ use crate::ports::{
     DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, JournalCursor, JournalPage,
     LeaseStore as _, PreviewSink, ProviderDispatchError, ProviderFailureKind, ProviderOutcome,
     ProviderPort, RedactedDetail, ReleaseDisposition, RunBoundaryAuthority, SessionAuthority,
-    StoreError, StreamBudget, ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolResultBody,
-    ToolRoute, UnknownResolution, WakeQueue as _,
+    StoreError, ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolResultBody, ToolRoute,
+    UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::child::QueuedReason;
@@ -49,7 +49,7 @@ use aex_brain_domain::wire_pending::{
     ProviderId, ResolvedAgentConfig, Role, StopReason,
 };
 use aex_model_catalog::canonical::{
-    CanonicalToolDef, CredentialBindingRef, ProviderReceipt, ReceiptBounds, ToolChoice, seal,
+    CanonicalToolDef, CredentialBindingRef, ProviderReceipt, ToolChoice, seal,
 };
 use aex_model_catalog::document::{Capability, CapabilitySet};
 use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
@@ -131,15 +131,13 @@ fn config() -> ResolvedAgentConfig {
 }
 
 fn capability() -> QualifiedModel {
-    let mut entry = fixture::entry(
+    fixture::qualified_entry_sized(
         ProviderId::Deepseek,
         "deepseek-chat",
         CapabilitySet::from_slice(&[Capability::Tools]),
-    );
-    entry.limits.context_window_tokens = 64_000;
-    entry.limits.max_output_tokens = 4_096;
-    entry.limits.min_cacheable_prefix_tokens = 0;
-    fixture::qualified(entry)
+        64_000,
+        4_096,
+    )
 }
 
 /// An agent that has been started and given one user message, so a model call is owed.
@@ -280,7 +278,6 @@ fn produced() -> ProviderOutcome {
         model: message.model.clone(),
         catalog: message.catalog,
         dialect: selected.dialect(),
-        dialect_revision: selected.dialect_revision(),
         credential: CredentialBindingRef {
             id: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [4; 10])),
             revision: 1,
@@ -293,17 +290,8 @@ fn produced() -> ProviderOutcome {
         started_at: at,
         first_frame_at: Some(at),
         completed_at: at,
-        request_bytes: 1,
-        response_bytes: 1,
-        frames: 1,
         rate_limit: None,
         response_receipt: Some(message.proof.0),
-        bounds: ReceiptBounds {
-            max_frame_bytes: 1_024,
-            max_response_bytes: 1_024,
-            idle_frame_timeout_ms: 1_000,
-            total_deadline_ms: 10_000,
-        },
     };
     ProviderOutcome {
         message,
@@ -716,17 +704,15 @@ fn model_tool_fields_refuse_truncation_and_follow_the_model_on_parallel_emission
     // because four of the six dialects cannot encode "one tool at a time" and
     // refuse the whole request rather than send something else.
     let advertised = ToolAdvertisement {
-        definitions: vec![definition],
+        definitions: vec![definition.clone()],
         parallel_safe: false,
     };
 
-    let mut capable_entry = fixture::entry(
+    let capable = fixture::qualified_entry(
         ProviderId::Deepseek,
         "deepseek-chat",
         CapabilitySet::from_slice(&[Capability::Tools, Capability::ParallelTools]),
     );
-    capable_entry.limits.max_tools = 1;
-    let capable = fixture::qualified(capable_entry);
     let fields = super::run::model_tool_fields(&capable, advertised.clone())
         .expect("one declared tool is within the model limit");
     assert_eq!(fields.tools.len(), 1);
@@ -734,29 +720,33 @@ fn model_tool_fields_refuse_truncation_and_follow_the_model_on_parallel_emission
     assert!(fields.parallel);
 
     // The model's own declaration is the only thing that withholds it.
-    let mut without_parallel_entry = fixture::entry(
+    let without_parallel = fixture::qualified_entry(
         ProviderId::Deepseek,
         "deepseek-chat",
         CapabilitySet::from_slice(&[Capability::Tools]),
     );
-    without_parallel_entry.limits.max_tools = 1;
-    let without_parallel = fixture::qualified(without_parallel_entry);
     let fields = super::run::model_tool_fields(&without_parallel, advertised.clone())
         .expect("one declared tool is within the model limit");
     assert!(!fields.parallel);
 
-    let mut bounded_entry = fixture::entry(
+    // The compiled dialect ceiling refuses an over-wide advertisement.
+    let bounded = fixture::qualified_entry(
         ProviderId::Deepseek,
         "deepseek-chat",
         CapabilitySet::from_slice(&[Capability::Tools]),
     );
-    bounded_entry.limits.max_tools = 0;
-    let bounded = fixture::qualified(bounded_entry);
+    let mut over_wide = advertised.clone();
+    over_wide.definitions = (0..129)
+        .map(|index| CanonicalToolDef {
+            name: ToolName::parse(&format!("tool_{index}")).expect("name"),
+            ..definition.clone()
+        })
+        .collect();
     assert!(matches!(
-        super::run::model_tool_fields(&bounded, advertised),
+        super::run::model_tool_fields(&bounded, over_wide),
         Err(ActivationError::ToolLimitExceeded {
-            advertised: 1,
-            max: 0
+            advertised: 129,
+            max: 128
         })
     ));
 }
@@ -1920,7 +1910,6 @@ impl ProviderPort for GatedProvider {
         _ticket: &'a DispatchTicket,
         _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
@@ -1970,7 +1959,6 @@ impl ProviderPort for CancelAwareProvider {
         _ticket: &'a DispatchTicket,
         _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
@@ -2008,7 +1996,6 @@ impl ProviderPort for DrainOnFirstNotSent {
         _ticket: &'a DispatchTicket,
         _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         _cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {

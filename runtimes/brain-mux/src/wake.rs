@@ -50,10 +50,10 @@ use std::sync::Arc;
 // they speak is too: none of these names may appear in the deployed build.
 #[cfg(test)]
 use aex_brain_app::ports::{
-    AgentHead, CancelToken, CatalogDigest, CatalogError, Claim, ClaimError, CommitError,
-    CommitReceipt, DecisionContext, DispatchTicket, EffectStore, FenceGuard, JournalPage,
-    JournalStore, LeaseStore, PreviewSink, ProviderDispatchError, ProviderOutcome, ReadBudget,
-    RedactedDetail, ReleaseDisposition, SessionAuthority, StreamBudget, UnknownResolution,
+    AgentHead, CancelToken, CatalogError, Claim, ClaimError, CommitError, CommitReceipt,
+    DecisionContext, DispatchTicket, EffectStore, FenceGuard, JournalPage, JournalStore,
+    LeaseStore, PreviewSink, ProviderDispatchError, ProviderOutcome, ReadBudget, RedactedDetail,
+    ReleaseDisposition, SessionAuthority, UnknownResolution,
 };
 #[cfg(test)]
 use aex_brain_domain::commit::DecisionCommit;
@@ -62,7 +62,7 @@ use aex_brain_domain::effect::{DispatchEvidence, DispatchProof, DispatchStage, D
 #[cfg(test)]
 use aex_brain_domain::ids::{AgentKey, ModelSlug};
 #[cfg(test)]
-use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
+use aex_brain_domain::wire_pending::{CanonicalModelRequest, ProviderId};
 #[cfg(test)]
 use aex_model_catalog::{ProviderFailureKind, QualifiedModel};
 
@@ -87,17 +87,7 @@ pub const STORE_UNBOUND: &str = "aex-brain-store-dynamodb is not bound into this
 /// Why the provider would be refused, were it ever unbound.
 #[cfg(test)]
 pub const PROVIDER_ABSENT: &str =
-    "the provider gateway could not bind its build-stamped adapter source identity";
-
-/// Why the catalog would be refused, were it ever unbound.
-#[cfg(test)]
-pub const CATALOG_ABSENT: &str = "no content-addressed signed model catalog and compiled trust \
-                                  root were bound at startup";
-
-/// Why a verified collection still cannot serve wakes.
-#[cfg(test)]
-pub const CATALOG_NO_ACTIVE_MODELS: &str =
-    "the signed model catalog collection contains no Active serviceable model";
+    "the provider adapter could not bind its build-stamped adapter source identity";
 
 /// Why tool execution would be refused, were it ever unbound.
 #[cfg(test)]
@@ -430,7 +420,6 @@ impl ProviderPort for AbsentProvider {
         _ticket: &'a DispatchTicket,
         _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         _cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
@@ -460,22 +449,16 @@ impl ProviderPort for AbsentProvider {
     }
 }
 
-/// A catalog binding with no startup artifact or trust root.
+/// A catalog binding with no compiled table.
 ///
-/// `durable_operation_support` answers [`DurableOperationSupport::None`], which is not a stub:
-/// it is the correct launch answer for every admitted model, and the safe answer to "can this
-/// be resumed?" is always "no". Deployed composition always binds the release-verified
-/// catalog, so this fixture is compiled into tests only.
+/// Deployed composition always binds the compiled admit table, so this
+/// fixture is compiled into tests only.
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AbsentCatalog;
 
 #[cfg(test)]
 impl CatalogPort for AbsentCatalog {
-    fn digest(&self, pin: &CatalogPin) -> Result<CatalogDigest, CatalogError> {
-        Err(CatalogError::UnknownPin { pin: *pin })
-    }
-
     fn model(
         &self,
         pin: &CatalogPin,
@@ -483,15 +466,6 @@ impl CatalogPort for AbsentCatalog {
         _model: &ModelSlug,
     ) -> Result<QualifiedModel, CatalogError> {
         Err(CatalogError::UnknownPin { pin: *pin })
-    }
-
-    fn durable_operation_support(
-        &self,
-        _pin: &CatalogPin,
-        _provider: ProviderId,
-        _model: &ModelSlug,
-    ) -> DurableOperationSupport {
-        DurableOperationSupport::None
     }
 }
 
@@ -523,8 +497,6 @@ pub struct Bindings {
     pub store: BindingState,
     /// Whether the provider port reaches a real adapter.
     pub provider: BindingState,
-    /// Whether the catalog port reaches a verified artifact.
-    pub catalog: BindingState,
     /// Whether every installed tool route has its concrete executor.
     pub tools: BindingState,
     /// Whether the Hands adapter has a concrete runtime backend.
@@ -543,7 +515,6 @@ impl Bindings {
         Self {
             store: BindingState::Ready,
             provider: BindingState::Unavailable(PROVIDER_ABSENT),
-            catalog: BindingState::Unavailable(CATALOG_ABSENT),
             tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
             hands: BindingState::Unavailable(HANDS_ABSENT),
         }
@@ -556,26 +527,9 @@ impl Bindings {
         Self {
             store: BindingState::Ready,
             provider: BindingState::Ready,
-            catalog: BindingState::Unavailable(CATALOG_ABSENT),
             tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
             hands: BindingState::Unavailable(HANDS_ABSENT),
         }
-    }
-
-    /// Applies the catalog's verified service capability to this binding set.
-    ///
-    /// Signature validity alone is not readiness: a zero-Active collection
-    /// would make every model wake fail after receipt. Admission remains closed
-    /// instead, so Brain never consumes work it cannot route.
-    #[cfg(test)]
-    #[must_use]
-    pub const fn with_catalog_capability(mut self, service_capable: bool) -> Self {
-        self.catalog = if service_capable {
-            BindingState::Ready
-        } else {
-            BindingState::Unavailable(CATALOG_NO_ACTIVE_MODELS)
-        };
-        self
     }
 
     /// Fully injected production ports.
@@ -584,7 +538,6 @@ impl Bindings {
         Self {
             store: BindingState::Ready,
             provider: BindingState::Ready,
-            catalog: BindingState::Ready,
             tools: BindingState::Ready,
             hands: BindingState::Ready,
         }
@@ -595,7 +548,6 @@ impl Bindings {
     pub const fn complete(&self) -> bool {
         self.store.is_ready()
             && self.provider.is_ready()
-            && self.catalog.is_ready()
             && self.tools.is_ready()
             && self.hands.is_ready()
     }
@@ -605,13 +557,7 @@ impl Bindings {
     #[must_use]
     pub fn unsatisfied(&self) -> Vec<&'static str> {
         let mut missing = Vec::new();
-        for state in [
-            self.store,
-            self.provider,
-            self.catalog,
-            self.tools,
-            self.hands,
-        ] {
+        for state in [self.store, self.provider, self.tools, self.hands] {
             if let BindingState::Unavailable(reason) = state {
                 missing.push(reason);
             }
@@ -1025,10 +971,11 @@ pub fn credential_bindings(
         plane,
         region,
     ));
-    let router = aex_brain_provider_gateway::router::ProviderRouter::from_build(
+    let router = aex_brain_provider::RigProviderRouter::from_build(
         Arc::clone(&provider_authority) as Arc<_>,
         provider_authority,
         store,
+        reqwest::Client::new(),
     );
     let managed_web: Arc<dyn ToolExecutor> =
         Arc::new(aex_brain_managed_web::executor::ManagedWebExecutor::production_fetch_only());
@@ -1101,9 +1048,8 @@ pub fn wake_loop(
 #[cfg(test)]
 mod tests {
     use super::{
-        AbsentCatalog, AbsentProvider, Bindings, CATALOG_ABSENT, CATALOG_NO_ACTIVE_MODELS,
-        MuxAdmission, MuxDispatch, PROVIDER_ABSENT, ProcessIds, ProductionToolExecutors,
-        STORE_UNBOUND, SystemClock, UnboundStore,
+        AbsentCatalog, AbsentProvider, Bindings, MuxAdmission, MuxDispatch, PROVIDER_ABSENT,
+        ProcessIds, ProductionToolExecutors, STORE_UNBOUND, SystemClock, UnboundStore,
     };
     use crate::admission::{ActivationResources, Admission, AdmissionBounds};
     use aex_brain_app::activation::{
@@ -1111,15 +1057,16 @@ mod tests {
     };
     use aex_brain_app::kernel::{DrainGate, PermitKind, PermitSet};
     use aex_brain_app::ports::{
-        BoxFuture, CancelToken, CatalogPort, ClockPort, DetachedStatus, DispatchTicket, IdPort,
-        JournalStore, LeaseStore, PreparedToolCall, StoreError, ToolDispatchError, ToolOutcome,
+        BoxFuture, CancelToken, CatalogError, CatalogPort, ClockPort, DetachedStatus,
+        DispatchTicket, IdPort, JournalStore, LeaseStore, PreparedToolCall, StoreError,
+        ToolDispatchError, ToolOutcome,
     };
     use aex_brain_domain::effect::EffectKind;
     use aex_brain_domain::ids::{
         AgentId, AgentKey, CatalogPin, DetachedOperationId, Fence, JournalSeq, OwnerToken,
         SessionId, Timestamp, ToolName,
     };
-    use aex_brain_domain::wire_pending::{DurableOperationSupport, ProviderId};
+    use aex_brain_domain::wire_pending::ProviderId;
     use aex_model_catalog::document::{Capability, CapabilitySet};
     use aex_model_catalog::fixture;
     use std::collections::BTreeMap;
@@ -1162,7 +1109,6 @@ mod tests {
     fn activation_resources(context_bytes: u64) -> ActivationResources {
         ActivationResources {
             context_bytes,
-            stream_buffer_bytes: 1,
             provider_streams: 1,
             network_lane: 1,
             hands_rpcs: 1,
@@ -1277,15 +1223,13 @@ mod tests {
     /// The safe answer to "can this be resumed?" is "no", so an unknown pin still answers
     /// the one infallible question rather than tempting the caller to guess.
     #[test]
-    fn the_absent_catalog_answers_no_durable_operation_and_refuses_everything_else() {
+    fn the_absent_catalog_refuses_everything() {
         let model = fixture::qualified_entry(ProviderId::Deepseek, "m", CapabilitySet::default());
         let pin = model.catalog();
-        assert_eq!(
-            AbsentCatalog.durable_operation_support(&pin, ProviderId::Deepseek, model.model()),
-            DurableOperationSupport::None
-        );
-        assert!(AbsentCatalog.digest(&pin).is_err());
-        assert!(CATALOG_ABSENT.contains("signed model catalog"));
+        assert!(matches!(
+            AbsentCatalog.model(&pin, ProviderId::Deepseek, model.model()),
+            Err(CatalogError::UnknownPin { .. })
+        ));
     }
 
     /// Each partial composition names only the peers it truly lacks.
@@ -1295,10 +1239,9 @@ mod tests {
         assert!(!bindings.complete());
         assert!(bindings.store.is_ready());
         let missing = bindings.unsatisfied();
-        assert_eq!(missing.len(), 4);
+        assert_eq!(missing.len(), 3);
         assert!(!missing.contains(&STORE_UNBOUND));
         assert!(missing.contains(&PROVIDER_ABSENT));
-        assert!(missing.contains(&CATALOG_ABSENT));
         assert!(missing.contains(&super::TOOL_EXECUTORS_ABSENT));
         assert!(missing.contains(&super::HANDS_ABSENT));
 
@@ -1306,7 +1249,7 @@ mod tests {
         assert!(!with_provider.complete());
         assert!(with_provider.provider.is_ready());
         let missing = with_provider.unsatisfied();
-        assert_eq!(missing.len(), 3);
+        assert_eq!(missing.len(), 2);
         assert!(!missing.contains(&PROVIDER_ABSENT));
         assert!(Bindings::production().complete());
     }
@@ -1389,14 +1332,10 @@ mod tests {
     }
 
     #[test]
-    fn a_verified_zero_active_collection_keeps_admission_and_readiness_closed() {
-        let bindings = Bindings::provider_ready().with_catalog_capability(false);
+    fn a_partial_provider_composition_keeps_admission_and_readiness_closed() {
+        let bindings = Bindings::provider_ready();
         assert!(!bindings.complete());
-        assert_eq!(
-            bindings.catalog,
-            super::BindingState::Unavailable(CATALOG_NO_ACTIVE_MODELS)
-        );
-        assert!(bindings.unsatisfied().contains(&CATALOG_NO_ACTIVE_MODELS));
+        assert!(bindings.unsatisfied().contains(&super::HANDS_ABSENT));
 
         let permits = Arc::new(PermitSet::new(BTreeMap::from([(
             PermitKind::Activation,
@@ -1457,7 +1396,6 @@ mod tests {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 4_u64),
             (PermitKind::ContextBytes, 2_u64),
-            (PermitKind::StreamBufferBytes, 2_u64),
             (PermitKind::ProviderStream, 2_u64),
             (PermitKind::HandsRpc, 2_u64),
         ])));
@@ -1477,7 +1415,6 @@ mod tests {
             Bindings {
                 store: super::BindingState::Ready,
                 provider: super::BindingState::Ready,
-                catalog: super::BindingState::Ready,
                 tools: super::BindingState::Ready,
                 hands: super::BindingState::Ready,
             },
@@ -1500,7 +1437,6 @@ mod tests {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 4_u64),
             (PermitKind::ContextBytes, 4_u64),
-            (PermitKind::StreamBufferBytes, 4_u64),
             (PermitKind::ProviderStream, 4_u64),
             (PermitKind::HandsRpc, 4_u64),
         ])));
@@ -1545,7 +1481,6 @@ mod tests {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 1_u64),
             (PermitKind::ContextBytes, 512_u64),
-            (PermitKind::StreamBufferBytes, 1_u64),
             (PermitKind::ProviderStream, 1_u64),
             (PermitKind::HandsRpc, 1_u64),
         ])));
@@ -1564,7 +1499,6 @@ mod tests {
             Bindings {
                 store: super::BindingState::Ready,
                 provider: super::BindingState::Ready,
-                catalog: super::BindingState::Ready,
                 tools: super::BindingState::Ready,
                 hands: super::BindingState::Ready,
             },
@@ -1574,13 +1508,11 @@ mod tests {
             panic!("the exact context boundary is admitted");
         };
         assert_eq!(permits.held(PermitKind::ContextBytes), 512);
-        assert_eq!(permits.held(PermitKind::StreamBufferBytes), 1);
         assert_eq!(permits.held(PermitKind::ProviderStream), 0);
         assert_eq!(permits.held(PermitKind::HandsRpc), 0);
         drop(held);
         assert_eq!(permits.held(PermitKind::ContextBytes), 0);
         assert_eq!(permits.held(PermitKind::Activation), 0);
-        assert_eq!(permits.held(PermitKind::StreamBufferBytes), 0);
         assert_eq!(permits.held(PermitKind::ProviderStream), 0);
         assert_eq!(permits.held(PermitKind::HandsRpc), 0);
     }

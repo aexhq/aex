@@ -1,76 +1,92 @@
-//! Release-bound signed model-catalog authority.
+//! Release-bound compiled model catalog: the checked-in models.dev admit
+//! table is the whole authority.
 //!
-//! The bounded publisher trust-root set and collection bytes are build inputs
-//! copied into the binary by `build.rs`. Runtime environment variables are never consulted.
-//! Missing real release inputs are a start-up refusal: `main` maps the error
-//! into a non-zero process exit, rather than an invented key, an empty
-//! authority, or a task that idles alive but unready.
+//! There is no signed collection, no trust roots, no runtime JSON and no
+//! readiness gate: the table is compiled into the binary, `admit()` is the
+//! only lookup, and a non-empty table is a compile-time assertion
+//! (`aex-model-catalog` proves it with `const _: () = assert!(!MODELS.is_empty())`).
 
-use aex_brain_provider_gateway::catalog_port::{CatalogArtifactError, VerifiedCatalogPort};
-use aex_model_catalog::signature::TrustedKeys;
+use aex_brain_app::ports::{CatalogError, CatalogPort};
+use aex_brain_domain::ids::{CatalogPin, ModelSlug};
+use aex_model_catalog::{QualifiedModel, admit};
+use aex_wire::provider::ProviderId;
 
-include!(concat!(env!("OUT_DIR"), "/model_catalog_release.rs"));
-
-/// Build-time variable carrying the canonical bounded publisher trust-root set.
-pub const TRUST_ROOTS_JSON_BUILD_VAR: &str = "AEX_MODEL_CATALOG_TRUST_ROOTS_JSON";
-/// Build-time variable binding the exact trust-root-set bytes.
-pub const TRUST_ROOTS_SHA256_BUILD_VAR: &str = "AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256";
-/// Build-time variable naming the exact release collection copied into the binary.
-pub const COLLECTION_FILE_BUILD_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_FILE";
-/// Build-time variable binding the exact collection bytes recorded by the release plan.
-pub const COLLECTION_SHA256_BUILD_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_SHA256";
-
-/// Why this binary cannot install model-catalog authority.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum BrainMuxReleaseCatalogError {
-    /// The build did not carry the real paired release inputs.
-    #[error("model catalog release binding unavailable: {0}")]
-    MissingReleaseInputs(&'static str),
-    /// The compiled collection did not verify completely.
-    #[error(transparent)]
-    InvalidCollection(#[from] CatalogArtifactError),
-    /// Signatures and coverage verified, but no wake could route to an Active model.
-    #[error("model catalog collection verifies but contains no Active serviceable model")]
-    NoActiveModels,
+/// The compiled models.dev snapshot revision, as the single catalog pin.
+#[must_use]
+pub const fn admission_pin() -> CatalogPin {
+    CatalogPin(aex_model_catalog::SNAPSHOT_REVISION.0)
 }
 
-/// Loads the immutable authority compiled into this exact binary.
+/// The immutable compiled catalog authority.
 ///
-/// # Errors
-///
-/// Missing real release inputs, any collection verification failure, or a
-/// cryptographically valid but service-incapable zero-Active collection
-/// refuses start-up: the caller exits non-zero instead of serving without
-/// catalog authority.
-pub fn load(
-    now: aex_wire::types::Timestamp,
-) -> Result<VerifiedCatalogPort, BrainMuxReleaseCatalogError> {
-    if let Some(reason) = RELEASE_INPUT_BLOCKER {
-        return Err(BrainMuxReleaseCatalogError::MissingReleaseInputs(reason));
+/// There is deliberately no insertion or replacement method. A change is a
+/// new snapshot riding the normal release train.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompiledCatalogPort;
+
+impl CatalogPort for CompiledCatalogPort {
+    fn model(
+        &self,
+        pin: &CatalogPin,
+        provider: ProviderId,
+        model: &ModelSlug,
+    ) -> Result<QualifiedModel, CatalogError> {
+        if *pin != admission_pin() {
+            return Err(CatalogError::UnknownPin { pin: *pin });
+        }
+        admit(provider, model.as_str()).map_err(CatalogError::Lookup)
     }
-    let keys = TrustedKeys::new(RELEASE_TRUSTED_KEYS);
-    let catalog = VerifiedCatalogPort::load_collection(RELEASE_CATALOG_COLLECTION, &keys, now)?;
-    if !catalog.is_service_capable() {
-        return Err(BrainMuxReleaseCatalogError::NoActiveModels);
-    }
-    Ok(catalog)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BrainMuxReleaseCatalogError, RELEASE_INPUT_BLOCKER, load};
+    use super::*;
 
     #[test]
-    fn an_ordinary_build_names_the_real_release_inputs_it_lacks() {
-        if let Some(reason) = RELEASE_INPUT_BLOCKER {
-            let error = load(aex_model_catalog::fixture::at(1_800_000_000_000))
-                .expect_err("no production release inputs are present");
-            assert_eq!(
-                error,
-                BrainMuxReleaseCatalogError::MissingReleaseInputs(reason)
-            );
-            assert!(reason.contains("real publisher P-256 trust-root set"));
-            assert!(reason.contains("signed model-catalog collection"));
+    fn the_compiled_pin_admits_every_launch_model() {
+        let catalog = CompiledCatalogPort;
+        for (provider, model) in [
+            (ProviderId::Openai, "gpt-5.2"),
+            (ProviderId::Anthropic, "claude-opus-4-5"),
+            (ProviderId::Google, "gemini-2.5-flash"),
+            (ProviderId::Deepseek, "deepseek-v4-pro"),
+            (ProviderId::Zai, "glm-4.6"),
+            (ProviderId::Moonshotai, "kimi-k2.5"),
+            (ProviderId::Openrouter, "deepseek/deepseek-v4-pro"),
+            (ProviderId::VercelAiGateway, "anthropic/claude-opus-4.5"),
+        ] {
+            catalog
+                .model(
+                    &admission_pin(),
+                    provider,
+                    &ModelSlug::new(model).expect("slug"),
+                )
+                .expect("the compiled table admits the launch model");
         }
+    }
+
+    #[test]
+    fn a_foreign_pin_never_admits() {
+        let foreign = CatalogPin(aex_model_catalog::Blake3Digest::of(b"other"));
+        assert!(matches!(
+            CompiledCatalogPort.model(
+                &foreign,
+                ProviderId::Openai,
+                &ModelSlug::new("gpt-5.2").expect("slug"),
+            ),
+            Err(CatalogError::UnknownPin { .. })
+        ));
+    }
+
+    #[test]
+    fn an_absent_model_is_typed_unknown() {
+        assert!(matches!(
+            CompiledCatalogPort.model(
+                &admission_pin(),
+                ProviderId::Openai,
+                &ModelSlug::new("gpt-archive-9999").expect("slug"),
+            ),
+            Err(CatalogError::Lookup(_))
+        ));
     }
 }

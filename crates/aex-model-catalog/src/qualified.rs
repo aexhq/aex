@@ -1,132 +1,134 @@
 //! Pre-dispatch qualification: the proof that a `(provider, model)` pair exists
-//! in a loaded catalog, and the typed reasons it does not.
+//! in the compiled admit table, and the typed reasons it does not.
 //!
-//! A [`QualifiedModel`] is the only way to reach a [`ModelEntry`] from outside
-//! this crate, so an adapter cannot be handed a pair the catalog never resolved.
-
-use std::sync::Arc;
+//! A [`QualifiedModel`] is the only way to reach an [`AdmittedModel`] from
+//! outside this crate, so an adapter cannot be handed a pair the compiled
+//! table never resolved.
 
 use aex_wire::ErrorCode;
 use aex_wire::provider::ProviderId;
 
-use crate::document::{
-    CapabilitySet, Dialect, DialectRevision, DisableReason, DurableOperationSupport, EndpointPin,
-    EntryState, ModelEntry, ModelLimits, ReasoningReplay,
-};
-use crate::primitives::ModelSlug;
+use crate::document::{CapabilitySet, ModelLimits};
+use crate::generated::{self, AdmittedModel, MODELS};
+use crate::primitives::{Blake3Digest, ModelSlug};
 use crate::wire_pending::CatalogRevision;
 
-/// A `(provider, model)` pair resolved against a loaded catalog revision.
+/// A `(provider, model)` pair resolved against the compiled admit table.
 ///
-/// Cheap to clone: one reference-count bump, no allocation. The entry it points
-/// at is immutable for the life of the revision.
-///
-/// Equality is by *value* — the same pair resolved from two loads of the same
-/// revision compares equal — not by pointer, so a test cannot pass merely
-/// because two handles happen to share an allocation.
+/// Cheap to clone: the entry is a `'static` reference and the slug is shared.
+/// Equality is by *value* — the same pair resolved twice compares equal.
 #[derive(Debug, Clone)]
 pub struct QualifiedModel {
-    entry: Arc<ModelEntry>,
+    entry: &'static AdmittedModel,
+    model: ModelSlug,
     catalog: CatalogRevision,
 }
 
 impl PartialEq for QualifiedModel {
     fn eq(&self, other: &Self) -> bool {
-        self.catalog == other.catalog && self.entry == other.entry
+        self.catalog == other.catalog && self.model == other.model
     }
 }
 
 impl Eq for QualifiedModel {}
 
 impl QualifiedModel {
-    /// Builds a qualified pair. Crate-private: only a loaded [`crate::Catalog`]
-    /// can mint one.
-    pub(crate) fn new(entry: Arc<ModelEntry>, catalog: CatalogRevision) -> Self {
-        Self { entry, catalog }
+    /// Builds a qualified pair from an admitted row. Only [`admit`] and the
+    /// fixture surface may mint one.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(
+        entry: &'static AdmittedModel,
+        model: ModelSlug,
+        catalog: CatalogRevision,
+    ) -> Self {
+        Self {
+            entry,
+            model,
+            catalog,
+        }
     }
 
     /// The provider half of the pair.
     #[must_use]
-    pub fn provider(&self) -> ProviderId {
+    pub const fn provider(&self) -> ProviderId {
         self.entry.provider
     }
 
     /// The exact provider-native model id.
     #[must_use]
-    pub fn model(&self) -> &ModelSlug {
-        &self.entry.model
+    pub const fn model(&self) -> &ModelSlug {
+        &self.model
     }
 
     /// The catalog revision that resolved the pair.
     #[must_use]
-    pub fn catalog(&self) -> CatalogRevision {
+    pub const fn catalog(&self) -> CatalogRevision {
         self.catalog
     }
 
-    /// The full catalog entry.
+    /// The compiled admit-table row.
     #[must_use]
-    pub fn entry(&self) -> &ModelEntry {
-        &self.entry
+    pub const fn entry(&self) -> &'static AdmittedModel {
+        self.entry
     }
 
-    /// Which wire dialect the adapter must speak.
+    /// Which dialect class the provider adapter must speak.
     #[must_use]
-    pub fn dialect(&self) -> Dialect {
+    pub const fn dialect(&self) -> aex_model_vocabulary::DialectClass {
         self.entry.dialect
-    }
-
-    /// The exact dialect revision implemented by the running binary.
-    #[must_use]
-    pub fn dialect_revision(&self) -> DialectRevision {
-        self.entry.dialect_revision
-    }
-
-    /// The compiled origin.
-    #[must_use]
-    pub fn endpoint(&self) -> EndpointPin {
-        self.entry.endpoint
     }
 
     /// What the pair can do.
     #[must_use]
     pub fn capabilities(&self) -> CapabilitySet {
-        self.entry.capabilities
+        let mut set = CapabilitySet::EMPTY;
+        if self.entry.tools {
+            set = set.with(crate::document::Capability::Tools);
+        }
+        if self.entry.parallel_tools {
+            set = set.with(crate::document::Capability::ParallelTools);
+        }
+        set
     }
 
     /// The numeric bounds.
     #[must_use]
-    pub fn limits(&self) -> &ModelLimits {
-        &self.entry.limits
-    }
-
-    /// Whether the pair is admissible in principle.
-    #[must_use]
-    pub fn state(&self) -> EntryState {
-        self.entry.state
-    }
-
-    /// Whether the provider offers a durable result lookup. `None` for all eight
-    /// at launch.
-    #[must_use]
-    pub fn durable_operation(&self) -> DurableOperationSupport {
-        self.entry.durable_operation
+    pub const fn limits(&self) -> ModelLimits {
+        ModelLimits {
+            context_window_tokens: self.entry.context_window_tokens,
+            max_output_tokens: self.entry.max_output_tokens,
+        }
     }
 
     /// Whether a sealed assistant turn must carry reasoning round-trip material.
     #[must_use]
-    pub fn requires_reasoning_token(&self, has_tool_use: bool) -> bool {
-        match self.entry.reasoning.replay {
-            ReasoningReplay::NotRequired | ReasoningReplay::RecommendedEcho => false,
-            ReasoningReplay::RequiredWithToolCalls => has_tool_use,
-            ReasoningReplay::RequiredAlways => true,
-        }
+    pub const fn requires_reasoning_token(&self, has_tool_use: bool) -> bool {
+        self.entry.dialect.requires_reasoning_token(has_tool_use)
+    }
+
+    /// The compiled origin for this provider family.
+    ///
+    /// # Panics
+    ///
+    /// Never: every admitted row names a provider in the compiled
+    /// `PROVIDERS` table, and the generator proves the two agree.
+    #[must_use]
+    pub fn base_url(&self) -> &'static str {
+        generated::PROVIDERS
+            .iter()
+            .find(|meta| meta.provider == self.entry.provider)
+            .expect("every admitted row names a compiled provider")
+            .base_url
     }
 }
 
 /// Why a `(provider, model)` pair did not qualify.
 ///
-/// Every arm fails **before** dispatch, before any reservation, and carries the
-/// public wire code it renders as.
+/// Every arm fails **before** dispatch, and carries the public wire code it
+/// renders as. With a compiled table there is no staged or emergency-disabled
+/// state: every row is admissible and everything else is unknown
+/// (model-provider simplification 2026-08-13).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CatalogError {
     /// The catalog carries no entry for this provider at all.
@@ -143,18 +145,6 @@ pub enum CatalogError {
         /// The model half of the pair.
         model: ModelSlug,
     },
-    /// The pair exists but is not admissible.
-    #[error("the pair is `{state:?}`, not `Active`")]
-    UnqualifiedPair {
-        /// The state it is actually in.
-        state: EntryState,
-    },
-    /// The pair is emergency-disabled in this revision.
-    #[error("the pair is emergency-disabled: {reason:?}")]
-    EmergencyDisabled {
-        /// Why it was disabled.
-        reason: DisableReason,
-    },
 }
 
 impl CatalogError {
@@ -164,9 +154,96 @@ impl CatalogError {
         match self {
             Self::UnknownProvider { .. } => ErrorCode::UnknownProvider,
             Self::UnknownModel { .. } => ErrorCode::UnknownModel,
-            Self::UnqualifiedPair { .. } | Self::EmergencyDisabled { .. } => {
-                ErrorCode::UnqualifiedProviderModel
-            }
         }
+    }
+}
+
+/// The compiled revision identity: the vendored snapshot digest.
+pub const SNAPSHOT_REVISION: CatalogRevision =
+    CatalogRevision(Blake3Digest::from_bytes(generated::SNAPSHOT_DIGEST));
+
+// The compiled table is never empty; a generator regression fails the build.
+const _: () = assert!(!MODELS.is_empty());
+
+/// Admits a `(provider, model)` pair against the compiled table.
+///
+/// # Errors
+///
+/// Returns [`CatalogError::UnknownProvider`] or [`CatalogError::UnknownModel`]
+/// when the compiled table does not carry the pair.
+pub fn admit(provider: ProviderId, model: &str) -> Result<QualifiedModel, CatalogError> {
+    let slug = ModelSlug::new(model).map_err(|_| CatalogError::UnknownModel {
+        provider,
+        model: ModelSlug::truncating(model),
+    })?;
+    let start = MODELS.partition_point(|row| row.provider < provider);
+    let end = MODELS.partition_point(|row| row.provider <= provider);
+    let entry = MODELS[start..end]
+        .binary_search_by(|row| row.model.cmp(model))
+        .ok()
+        .map(|index| &MODELS[start + index])
+        .ok_or(CatalogError::UnknownModel {
+            provider,
+            model: slug.clone(),
+        })?;
+    Ok(QualifiedModel::new(entry, slug, SNAPSHOT_REVISION))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_compiled_provider_has_at_least_one_row() {
+        for meta in generated::PROVIDERS {
+            assert!(
+                MODELS.iter().any(|row| row.provider == meta.provider),
+                "{} has no rows",
+                meta.base_url
+            );
+        }
+    }
+
+    #[test]
+    fn the_known_launch_models_admit() {
+        for (provider, model) in [
+            (ProviderId::Deepseek, "deepseek-v4-flash"),
+            (ProviderId::Deepseek, "deepseek-v4-pro"),
+            (ProviderId::Anthropic, "claude-opus-4-5"),
+            (ProviderId::Google, "gemini-2.5-flash"),
+            (ProviderId::Zai, "glm-4.6"),
+            (ProviderId::Moonshotai, "kimi-k2.5"),
+        ] {
+            let qualified = admit(provider, model).expect("admitted");
+            assert_eq!(qualified.provider(), provider);
+            assert_eq!(qualified.model().as_str(), model);
+            assert!(
+                qualified
+                    .capabilities()
+                    .has(crate::document::Capability::Tools)
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_provider_and_model_fail_typed() {
+        assert!(matches!(
+            admit(ProviderId::Openai, "deepseek-v4-pro"),
+            Err(CatalogError::UnknownModel { .. })
+        ));
+        assert!(matches!(
+            admit(ProviderId::Openai, "no-such-model-anywhere"),
+            Err(CatalogError::UnknownModel { .. })
+        ));
+    }
+
+    #[test]
+    fn a_slash_containing_gateway_id_admits_as_a_body_field() {
+        let qualified = admit(ProviderId::Openrouter, "deepseek/deepseek-v4-pro")
+            .expect("a gateway row admits");
+        assert_eq!(
+            qualified.dialect(),
+            aex_model_vocabulary::DialectClass::OpenRouterChat
+        );
     }
 }

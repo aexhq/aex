@@ -1,0 +1,41 @@
+[package]
+name = "aex-model-vocabulary"
+version = "0.1.0"
+description = "`aex-model-vocabulary` owns the provider-neutral canonical vocabulary: bounded primitives, the provider-failure kinds, the dialect classes, the catalog revision identity, and the canonical result/request/receipt vocabulary (D-CANON)."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "providers"
+role = "domain"
+artifact = "none"
+live_suite = "aex-live-brain-mux"
+layers = ["unit"]
+concerns = ["property"]
+seams = []
+security_tier = "internal"
+risk = ["untrusted_input"]
+scenarios = []
+
+[package.metadata.aex.targets]
+properties = "unit"
+
+[dependencies]
+aex-wire = { path = "../aex-wire" }
+base64.workspace = true
+blake3.workspace = true
+bytes.workspace = true
+hex.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true

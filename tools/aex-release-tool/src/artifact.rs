@@ -69,51 +69,15 @@ pub struct BuildPlan {
     pub digest: String,
 }
 
-/// Build-time inputs that turn `brain-mux` catalog verification into release authority.
+/// Build-time inputs that bind the release tool catalogue into Brain.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelCatalogBuildInputs {
-    /// Canonical JSON containing the bounded release trust-root set.
-    pub trust_roots_json: String,
-    /// SHA-256 of the exact canonical trust-root JSON.
-    pub trust_roots_sha256: String,
-    /// Stable workspace-relative path of the collection copied into the binary.
-    pub collection_file: String,
-    /// SHA-256 of the exact collection bytes.
-    pub collection_sha256: String,
+pub struct CatalogBuildInputs {
     /// SHA-256 of the immutable built-in tool catalogue compiled into Brain.
     pub tool_catalog_sha256: String,
 }
 
-/// Build-time canonical publisher trust-root-set variable.
-pub const MODEL_CATALOG_TRUST_ROOTS_JSON_VAR: &str = "AEX_MODEL_CATALOG_TRUST_ROOTS_JSON";
-/// Build-time exact trust-root-set digest variable.
-pub const MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR: &str = "AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256";
-/// Build-time exact collection-file variable.
-pub const MODEL_CATALOG_COLLECTION_FILE_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_FILE";
-/// Build-time exact collection digest variable.
-pub const MODEL_CATALOG_COLLECTION_SHA256_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_SHA256";
 /// Build-time exact built-in tool catalogue digest variable.
 pub const TOOL_CATALOG_SHA256_VAR: &str = "AEX_TOOL_CATALOG_SHA256";
-
-const MODEL_CATALOG_TRUST_ROOTS_SCHEMA: &str = "aex.model-catalog-trust-roots.v1";
-const MAX_MODEL_CATALOG_TRUST_ROOTS: usize = 8;
-const MAX_MODEL_CATALOG_TRUST_ROOTS_BYTES: usize = 8 * 1024;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ModelCatalogTrustRoots {
-    // Field order is JCS order for the restricted ASCII document below.
-    keys: Vec<ModelCatalogTrustRoot>,
-    schema: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ModelCatalogTrustRoot {
-    // Field order is JCS order.
-    key_id: String,
-    sec1: String,
-}
 
 fn microvm_plan(unit: &Unit) -> Result<(Vec<String>, &'static str, String)> {
     let shape = unit.microvm.as_ref().ok_or_else(|| {
@@ -342,39 +306,19 @@ pub fn kind_requires_signature(kind: &str) -> bool {
     matches!(kind, "rust-binary" | "npm-package")
 }
 
-/// Derives a plan whose recorded environment exactly binds every model-catalog
-/// consumer to one publisher trust-root set and collection. Other units ignore
-/// these inputs.
+/// Derives a plan whose recorded environment exactly binds the release tool
+/// catalogue into the Brain binaries. Other units ignore these inputs.
 ///
 /// # Errors
 ///
 /// Propagates recipe canonicalization failure.
-pub fn plan_with_model_catalog(
-    unit: &Unit,
-    catalog: Option<&ModelCatalogBuildInputs>,
-) -> Result<BuildPlan> {
+pub fn plan_with_catalog(unit: &Unit, catalog: Option<&CatalogBuildInputs>) -> Result<BuildPlan> {
     let mut build = plan(unit)?;
-    if !requires_model_catalog(unit) {
+    if !requires_catalog_binding(unit) {
         return Ok(build);
     }
     if let Some(catalog) = catalog {
-        validate_model_catalog_build_inputs(catalog)?;
-        build.env.insert(
-            MODEL_CATALOG_TRUST_ROOTS_JSON_VAR.to_owned(),
-            catalog.trust_roots_json.clone(),
-        );
-        build.env.insert(
-            MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR.to_owned(),
-            catalog.trust_roots_sha256.clone(),
-        );
-        build.env.insert(
-            MODEL_CATALOG_COLLECTION_FILE_VAR.to_owned(),
-            catalog.collection_file.clone(),
-        );
-        build.env.insert(
-            MODEL_CATALOG_COLLECTION_SHA256_VAR.to_owned(),
-            catalog.collection_sha256.clone(),
-        );
+        validate_sha256(TOOL_CATALOG_SHA256_VAR, &catalog.tool_catalog_sha256)?;
         build.env.insert(
             TOOL_CATALOG_SHA256_VAR.to_owned(),
             catalog.tool_catalog_sha256.clone(),
@@ -384,85 +328,24 @@ pub fn plan_with_model_catalog(
     Ok(build)
 }
 
-/// Reads the all-or-none build-time catalog inputs and verifies the collection
-/// digest before a compiler sees them.
+/// Reads the build-time tool-catalogue input and verifies its digest before a
+/// compiler sees it.
 ///
 /// # Errors
 ///
-/// Returns a usage error for partial/invalid bindings or an I/O error when the
-/// exact collection cannot be read.
-pub fn model_catalog_inputs_from_environment(
+/// Returns a usage error for a partial or mismatched binding, or an I/O error
+/// when the catalogue source cannot be read.
+pub fn catalog_inputs_from_environment(
     workspace_root: &Path,
-) -> Result<Option<ModelCatalogBuildInputs>> {
-    model_catalog_inputs(
-        workspace_root,
-        [
-            nonempty_environment(MODEL_CATALOG_TRUST_ROOTS_JSON_VAR),
-            nonempty_environment(MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR),
-            nonempty_environment(MODEL_CATALOG_COLLECTION_FILE_VAR),
-            nonempty_environment(MODEL_CATALOG_COLLECTION_SHA256_VAR),
-            nonempty_environment(TOOL_CATALOG_SHA256_VAR),
-        ],
-    )
-}
-
-fn model_catalog_inputs(
-    workspace_root: &Path,
-    bindings: [Option<String>; 5],
-) -> Result<Option<ModelCatalogBuildInputs>> {
-    let [
-        trust_roots_json,
-        trust_roots_sha256,
-        collection_file,
-        collection_sha256,
-        tool_catalog_sha256,
-    ] = bindings;
-    let catalog_present = [
-        trust_roots_json.is_some(),
-        trust_roots_sha256.is_some(),
-        collection_file.is_some(),
-        collection_sha256.is_some(),
-    ];
-    if !catalog_present.iter().any(|value| *value) {
-        return Ok(None);
-    }
-    if !catalog_present.iter().all(|value| *value) || tool_catalog_sha256.is_none() {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "model-catalog-build-binding-partial",
-            format!(
-                "{MODEL_CATALOG_TRUST_ROOTS_JSON_VAR}, \
-                 {MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR}, \
-                 {MODEL_CATALOG_COLLECTION_FILE_VAR}, \
-                 {MODEL_CATALOG_COLLECTION_SHA256_VAR} and \
-                 {TOOL_CATALOG_SHA256_VAR} must be supplied together"
-            ),
-        ));
-    }
-    let (
-        Some(trust_roots_json),
-        Some(trust_roots_sha256),
-        Some(collection_file),
-        Some(collection_sha256),
-        Some(tool_catalog_sha256),
-    ) = (
-        trust_roots_json,
-        trust_roots_sha256,
-        collection_file,
-        collection_sha256,
-        tool_catalog_sha256,
-    )
-    else {
+) -> Result<Option<CatalogBuildInputs>> {
+    let tool_catalog_sha256 = nonempty_environment(TOOL_CATALOG_SHA256_VAR);
+    let Some(tool_catalog_sha256) = tool_catalog_sha256 else {
         return Ok(None);
     };
-    let inputs = ModelCatalogBuildInputs {
-        trust_roots_json,
-        trust_roots_sha256,
-        collection_file,
-        collection_sha256,
+    let inputs = CatalogBuildInputs {
         tool_catalog_sha256,
     };
-    validate_model_catalog_build_inputs(&inputs)?;
+    validate_sha256(TOOL_CATALOG_SHA256_VAR, &inputs.tool_catalog_sha256)?;
     let actual_tool_catalog = tool_catalog_digest(workspace_root)?;
     if inputs.tool_catalog_sha256 != actual_tool_catalog {
         return Err(ToolError::single(
@@ -471,41 +354,6 @@ fn model_catalog_inputs(
             format!(
                 "the release-bound tool catalogue is {actual_tool_catalog}, not {}",
                 inputs.tool_catalog_sha256
-            ),
-        ));
-    }
-    let canonical_root = std::fs::canonicalize(workspace_root)
-        .map_err(|error| io(&workspace_root.display().to_string(), &error))?;
-    let logical_collection = workspace_root.join(&inputs.collection_file);
-    let resolved_collection = std::fs::canonicalize(&logical_collection)
-        .map_err(|error| io(&logical_collection.display().to_string(), &error))?;
-    if !resolved_collection.starts_with(&canonical_root) {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "model-catalog-collection-path-escape",
-            format!(
-                "the release-bound collection `{}` resolves outside the workspace root",
-                inputs.collection_file
-            ),
-        ));
-    }
-    let bytes = std::fs::read(&resolved_collection)
-        .map_err(|error| io(&resolved_collection.display().to_string(), &error))?;
-    if bytes.is_empty() {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "model-catalog-collection-empty",
-            "the release-bound model catalog collection is empty",
-        ));
-    }
-    let actual = canon::digest_bytes(&bytes);
-    if actual != inputs.collection_sha256 {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "model-catalog-collection-digest-mismatch",
-            format!(
-                "the release-bound collection at `{}` is {actual}, not {}",
-                inputs.collection_file, inputs.collection_sha256
             ),
         ));
     }
@@ -518,12 +366,12 @@ fn model_catalog_inputs(
 ///
 /// Propagates release-input and recipe failures.
 pub fn release_plan(unit: &Unit, workspace_root: &Path) -> Result<BuildPlan> {
-    let catalog = if requires_model_catalog(unit) {
-        model_catalog_inputs_from_environment(workspace_root)?
+    let catalog = if requires_catalog_binding(unit) {
+        catalog_inputs_from_environment(workspace_root)?
     } else {
         None
     };
-    plan_with_model_catalog(unit, catalog.as_ref())
+    plan_with_catalog(unit, catalog.as_ref())
 }
 
 /// Produces a publication plan and refuses an unbound catalog consumer before build.
@@ -531,35 +379,34 @@ pub fn release_plan(unit: &Unit, workspace_root: &Path) -> Result<BuildPlan> {
 /// # Errors
 ///
 /// Propagates release-input and recipe failures. Catalog consumers also fail
-/// when the real release trust roots and signed collection are absent.
+/// when the real release tool-catalogue digest is absent.
 pub fn publication_plan(unit: &Unit, workspace_root: &Path) -> Result<BuildPlan> {
-    let catalog = if requires_model_catalog(unit) {
-        model_catalog_inputs_from_environment(workspace_root)?
+    let catalog = if requires_catalog_binding(unit) {
+        catalog_inputs_from_environment(workspace_root)?
     } else {
         None
     };
-    publication_plan_with_model_catalog(unit, catalog.as_ref())
+    publication_plan_with_catalog(unit, catalog.as_ref())
 }
 
-fn publication_plan_with_model_catalog(
+fn publication_plan_with_catalog(
     unit: &Unit,
-    catalog: Option<&ModelCatalogBuildInputs>,
+    catalog: Option<&CatalogBuildInputs>,
 ) -> Result<BuildPlan> {
-    if requires_model_catalog(unit) && catalog.is_none() {
+    if requires_catalog_binding(unit) && catalog.is_none() {
         return Err(ToolError::single(
             Exit::Usage,
-            "model-catalog-build-binding-missing",
+            "tool-catalog-build-binding-missing",
             format!(
-                "{} publication requires the real build-bound publisher trust-root set and \
-                 signed catalog collection",
+                "{} publication requires the real build-bound tool-catalogue digest",
                 unit.id
             ),
         ));
     }
-    plan_with_model_catalog(unit, catalog)
+    plan_with_catalog(unit, catalog)
 }
 
-pub(crate) fn requires_model_catalog(unit: &Unit) -> bool {
+pub(crate) fn requires_catalog_binding(unit: &Unit) -> bool {
     matches!(unit.id.as_str(), "brain-mux" | "session-stream-api")
 }
 
@@ -567,84 +414,6 @@ fn nonempty_environment(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()
         .filter(|value| !value.trim().is_empty())
-}
-
-fn validate_model_catalog_build_inputs(inputs: &ModelCatalogBuildInputs) -> Result<()> {
-    validate_workspace_relative_path(&inputs.collection_file)?;
-    validate_sha256(
-        MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR,
-        &inputs.trust_roots_sha256,
-    )?;
-    validate_sha256(
-        MODEL_CATALOG_COLLECTION_SHA256_VAR,
-        &inputs.collection_sha256,
-    )?;
-    validate_sha256(TOOL_CATALOG_SHA256_VAR, &inputs.tool_catalog_sha256)?;
-    if inputs.trust_roots_json.len() > MAX_MODEL_CATALOG_TRUST_ROOTS_BYTES {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "model-catalog-trust-roots-too-large",
-            format!(
-                "the trust-root document is {} bytes, over the {}-byte bound",
-                inputs.trust_roots_json.len(),
-                MAX_MODEL_CATALOG_TRUST_ROOTS_BYTES
-            ),
-        ));
-    }
-    let roots: ModelCatalogTrustRoots =
-        serde_json::from_str(&inputs.trust_roots_json).map_err(|error| {
-            ToolError::single(
-                Exit::Usage,
-                "model-catalog-trust-roots-malformed",
-                error.to_string(),
-            )
-        })?;
-    if roots.schema != MODEL_CATALOG_TRUST_ROOTS_SCHEMA
-        || roots.keys.is_empty()
-        || roots.keys.len() > MAX_MODEL_CATALOG_TRUST_ROOTS
-    {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "model-catalog-trust-roots-invalid",
-            format!(
-                "trust roots require schema `{MODEL_CATALOG_TRUST_ROOTS_SCHEMA}` and 1..={MAX_MODEL_CATALOG_TRUST_ROOTS} keys"
-            ),
-        ));
-    }
-    for root in &roots.keys {
-        validate_trust_root(root)?;
-    }
-    if roots
-        .keys
-        .windows(2)
-        .any(|pair| pair[0].key_id >= pair[1].key_id)
-    {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "model-catalog-trust-roots-unsorted",
-            "publisher trust-root key ids must be strictly sorted and unique",
-        ));
-    }
-    let canonical = canon::to_string(&roots)?;
-    if canonical != inputs.trust_roots_json {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "model-catalog-trust-roots-not-canonical",
-            "publisher trust roots must be exact canonical JSON with no trailing bytes",
-        ));
-    }
-    let actual = canon::digest_bytes(inputs.trust_roots_json.as_bytes());
-    if actual != inputs.trust_roots_sha256 {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "model-catalog-trust-roots-digest-mismatch",
-            format!(
-                "the release-bound trust-root document is {actual}, not {}",
-                inputs.trust_roots_sha256
-            ),
-        ));
-    }
-    Ok(())
 }
 
 /// Read the snapshot-bound immutable tool-catalogue digest from Brain source.
@@ -682,27 +451,6 @@ pub fn tool_catalog_digest(workspace_root: &Path) -> Result<String> {
     Ok(digests[0].clone())
 }
 
-fn validate_workspace_relative_path(path: &str) -> Result<()> {
-    let valid = !path.is_empty()
-        && !path.contains('\\')
-        && path.split('/').all(|component| {
-            !component.is_empty()
-                && !matches!(component, "." | "..")
-                && component
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-        });
-    if !valid {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "model-catalog-collection-path-unstable",
-            "the collection path must be a normalized workspace-relative forward-slash path \
-             with no empty, current, parent, absolute, drive, or runner-specific component",
-        ));
-    }
-    Ok(())
-}
-
 fn validate_sha256(name: &str, digest: &str) -> Result<()> {
     if digest.len() != 71
         || !digest.starts_with("sha256:")
@@ -714,37 +462,6 @@ fn validate_sha256(name: &str, digest: &str) -> Result<()> {
             Exit::Usage,
             "model-catalog-build-digest-invalid",
             format!("{name} must be a sha256: prefix and 64 lowercase hexadecimal digits"),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_trust_root(root: &ModelCatalogTrustRoot) -> Result<()> {
-    let key_id_valid = !root.key_id.is_empty()
-        && root.key_id.len() <= 64
-        && root
-            .key_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
-    let sec1_valid = root.sec1.len() == 130
-        && root.sec1.starts_with("04")
-        && root
-            .sec1
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
-    let decoded = sec1_valid.then(|| hex::decode(&root.sec1).ok()).flatten();
-    if !key_id_valid
-        || decoded
-            .as_deref()
-            .is_none_or(|bytes| p256::ecdsa::VerifyingKey::from_sec1_bytes(bytes).is_err())
-    {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "model-catalog-trust-root-invalid",
-            format!(
-                "publisher key `{}` is not a valid id and uncompressed lowercase P-256 SEC1 key",
-                root.key_id
-            ),
         ));
     }
     Ok(())
@@ -1453,9 +1170,6 @@ pub struct MigrationIdentity {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Catalogs {
-    /// Model catalogue digest.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
     /// Tool catalogue digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
@@ -2258,11 +1972,8 @@ pub fn publish_destination(envelope: &ArtifactEnvelope, unit: &Unit) -> Result<P
 #[cfg(test)]
 mod tests {
     use super::{
-        Form, MODEL_CATALOG_TRUST_ROOTS_SCHEMA, ModelCatalogBuildInputs, model_catalog_inputs,
-        package, plan, plan_with_model_catalog, publication_plan_with_model_catalog,
-        validate_workspace_relative_path,
+        CatalogBuildInputs, Form, package, plan, plan_with_catalog, publication_plan_with_catalog,
     };
-    use crate::canon;
     use crate::graph::inputs::Unit;
 
     fn unit(kind: &str) -> Unit {
@@ -2301,44 +2012,14 @@ alarm_spec = "regional-session-api"
         session
     }
 
-    fn trust_roots() -> String {
-        let signing = p256::ecdsa::SigningKey::from_slice(&[7; 32]).expect("fixture key");
-        canon::to_string(&serde_json::json!({
-            "keys": [{
-                "keyId": "aex-catalog-fixture",
-                "sec1": hex::encode(
-                    signing.verifying_key().to_sec1_point(false).as_bytes()
-                ),
-            }],
-            "schema": MODEL_CATALOG_TRUST_ROOTS_SCHEMA,
-        }))
-        .expect("canonical trust roots")
+    fn tool_catalog_digest_fixture() -> String {
+        "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned()
     }
 
-    fn bindings(root: &std::path::Path) -> [Option<String>; 5] {
-        let relative = "release-inputs/catalog.json";
-        let collection = root.join(relative);
-        std::fs::create_dir_all(collection.parent().expect("collection parent")).unwrap();
-        std::fs::write(&collection, b"signed collection").unwrap();
-        let catalog_source = root.join("crates/aex-brain-tool-catalog/src/catalog.rs");
-        std::fs::create_dir_all(catalog_source.parent().expect("catalog parent")).unwrap();
-        std::fs::write(
-            catalog_source,
-            "pub const BUILTIN_CATALOG_DIGEST: &str = \
-             \"sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb\";",
-        )
-        .unwrap();
-        let roots = trust_roots();
-        [
-            Some(roots.clone()),
-            Some(canon::digest_bytes(roots.as_bytes())),
-            Some(relative.to_owned()),
-            Some(canon::digest_bytes(b"signed collection")),
-            Some(
-                "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb"
-                    .to_owned(),
-            ),
-        ]
+    fn catalog_bindings() -> CatalogBuildInputs {
+        CatalogBuildInputs {
+            tool_catalog_sha256: tool_catalog_digest_fixture(),
+        }
     }
 
     #[test]
@@ -2399,11 +2080,11 @@ alarm_spec = "regional-session-api"
     #[test]
     fn publication_refuses_every_unbound_catalog_consumer_before_build_planning() {
         for unit in [brain_unit(), session_stream_unit()] {
-            let error = publication_plan_with_model_catalog(&unit, None)
+            let error = publication_plan_with_catalog(&unit, None)
                 .expect_err("publication must fail closed");
             assert_eq!(
                 error.rules(),
-                vec!["model-catalog-build-binding-missing"],
+                vec!["tool-catalog-build-binding-missing"],
                 "{}",
                 unit.id
             );
@@ -2411,118 +2092,26 @@ alarm_spec = "regional-session-api"
     }
 
     #[test]
-    fn partial_and_digest_mismatched_release_inputs_fail_closed() {
-        let temp = tempfile::tempdir().unwrap();
-        let roots = trust_roots();
-        let error = model_catalog_inputs(temp.path(), [Some(roots), None, None, None, None])
-            .expect_err("partial inputs must fail");
-        assert_eq!(error.rules(), vec!["model-catalog-build-binding-partial"]);
-
-        let mut mismatched_roots = bindings(temp.path());
-        mismatched_roots[1] = Some(format!("sha256:{}", "0".repeat(64)));
-        let error = model_catalog_inputs(temp.path(), mismatched_roots)
-            .expect_err("trust-root digest mismatch must fail");
-        assert_eq!(
-            error.rules(),
-            vec!["model-catalog-trust-roots-digest-mismatch"]
-        );
-
-        let mut mismatched_collection = bindings(temp.path());
-        mismatched_collection[3] = Some(format!("sha256:{}", "0".repeat(64)));
-        let error = model_catalog_inputs(temp.path(), mismatched_collection)
-            .expect_err("collection digest mismatch must fail");
-        assert_eq!(
-            error.rules(),
-            vec!["model-catalog-collection-digest-mismatch"]
-        );
-    }
-
-    #[test]
-    fn a_tool_catalog_digest_alone_does_not_misreport_a_partial_model_catalog() {
-        let temp = tempfile::tempdir().unwrap();
-        let inputs = model_catalog_inputs(
-            temp.path(),
-            [
-                None,
-                None,
-                None,
-                None,
-                Some(
-                    "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb"
-                        .to_owned(),
-                ),
-            ],
-        )
-        .expect("the independently derived tool catalog is not a partial model catalog");
-        assert!(inputs.is_none());
-
-        let error = publication_plan_with_model_catalog(&brain_unit(), inputs.as_ref())
-            .expect_err("publication must still fail closed without a signed model catalog");
-        assert_eq!(error.rules(), vec!["model-catalog-build-binding-missing"]);
-    }
-
-    #[test]
-    fn collection_paths_are_stable_and_plans_ignore_checkout_roots() {
-        for unstable in [
-            "/release-inputs/catalog.json",
-            "C:/release-inputs/catalog.json",
-            "release-inputs/../catalog.json",
-            "release-inputs\\catalog.json",
-        ] {
-            assert!(validate_workspace_relative_path(unstable).is_err());
-        }
-
-        let first_root = tempfile::tempdir().unwrap();
-        let second_root = tempfile::tempdir().unwrap();
-        let first = model_catalog_inputs(first_root.path(), bindings(first_root.path()))
-            .expect("first binding")
-            .expect("configured");
-        let second = model_catalog_inputs(second_root.path(), bindings(second_root.path()))
-            .expect("second binding")
-            .expect("configured");
-        assert_eq!(first, second);
-        let first_plan = plan_with_model_catalog(&brain_unit(), Some(&first)).expect("first plan");
-        let second_plan =
-            plan_with_model_catalog(&brain_unit(), Some(&second)).expect("second plan");
-        assert_eq!(first_plan.digest, second_plan.digest);
-        assert_eq!(first_plan.env, second_plan.env);
-    }
-
-    #[test]
-    fn trust_roots_require_canonical_sorted_unique_json() {
-        let roots = trust_roots();
-        let signing = p256::ecdsa::SigningKey::from_slice(&[8; 32]).expect("fixture key");
-        let second = hex::encode(signing.verifying_key().to_sec1_point(false).as_bytes());
-        let unsorted = format!(
-            "{{\"keys\":[{{\"keyId\":\"z\",\"sec1\":\"{second}\"}},{}],\"schema\":\"{MODEL_CATALOG_TRUST_ROOTS_SCHEMA}\"}}",
-            &roots[9..roots.find("],\"schema\"").expect("keys close")]
-        );
-        let inputs = ModelCatalogBuildInputs {
-            trust_roots_sha256: canon::digest_bytes(unsorted.as_bytes()),
-            trust_roots_json: unsorted,
-            collection_file: "release-inputs/catalog.json".to_owned(),
-            collection_sha256: canon::digest_bytes(b"signed collection"),
-            tool_catalog_sha256:
-                "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
+    fn a_mismatched_tool_catalog_digest_fails_closed() {
+        let inputs = CatalogBuildInputs {
+            tool_catalog_sha256: "not-a-digest".to_owned(),
         };
-        let error = plan_with_model_catalog(&brain_unit(), Some(&inputs))
-            .expect_err("unsorted roots must fail");
-        assert_eq!(error.rules(), vec!["model-catalog-trust-roots-unsorted"]);
+        let error = plan_with_catalog(&brain_unit(), Some(&inputs))
+            .expect_err("a malformed digest must fail");
+        assert_eq!(error.rules(), vec!["model-catalog-build-digest-invalid"]);
+    }
 
-        let noncanonical = ModelCatalogBuildInputs {
-            trust_roots_sha256: canon::digest_bytes(format!("{roots}\n").as_bytes()),
-            trust_roots_json: format!("{roots}\n"),
-            collection_file: "release-inputs/catalog.json".to_owned(),
-            collection_sha256: canon::digest_bytes(b"signed collection"),
-            tool_catalog_sha256:
-                "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
-        };
-        let error = plan_with_model_catalog(&brain_unit(), Some(&noncanonical))
-            .expect_err("trailing bytes must fail");
+    #[test]
+    fn a_bound_plan_records_exactly_the_tool_catalog_digest() {
+        let inputs = catalog_bindings();
+        let planned = plan_with_catalog(&brain_unit(), Some(&inputs)).expect("plan");
         assert_eq!(
-            error.rules(),
-            vec!["model-catalog-trust-roots-not-canonical"]
+            planned.env.get(super::TOOL_CATALOG_SHA256_VAR),
+            Some(&inputs.tool_catalog_sha256)
         );
+        assert_eq!(planned.env.len(), 4, "{:?}", planned.env);
+        let bare = plan_with_catalog(&unit("rust-oci-service"), None).expect("plan");
+        assert!(!bare.env.contains_key(super::TOOL_CATALOG_SHA256_VAR));
     }
 
     #[test]

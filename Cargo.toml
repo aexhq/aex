@@ -18,7 +18,7 @@ members = [
     "crates/aex-brain-managed-web",
     "crates/aex-brain-mcp",
     "crates/aex-brain-provider-custody",
-    "crates/aex-brain-provider-gateway",
+    "crates/aex-brain-provider",
     "crates/aex-brain-store-dynamodb",
     "crates/aex-brain-test-support",
     "crates/aex-brain-tool-catalog",
@@ -43,6 +43,7 @@ members = [
     "crates/aex-identity-domain",
     "crates/aex-internal-contracts",
     "crates/aex-model-catalog",
+    "crates/aex-model-vocabulary",
     "crates/aex-observation-app",
     "crates/aex-observation-domain",
     "crates/aex-observation-export",
@@ -128,7 +129,6 @@ members = [
     "tests/live/aex-live-finance-settlement-worker",
     "tests/live/aex-live-hands-agent",
     "tests/live/aex-live-hands-image",
-    "tests/live/aex-live-model-catalog",
     "tests/live/aex-live-observation-export-launcher",
     "tests/live/aex-live-observation-export-task",
     "tests/live/aex-live-observation-reconciler",
@@ -253,7 +253,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_with = "3.21.0"
 serde_norway = "0.9.42"
-tokenizers = { version = "0.23.1", default-features = false, features = ["onig"] }
 jsonschema = { version = "0.49.2", default-features = false, features = ["resolve-file"] }
 html5ever = "0.39.0"
 encoding_rs = "0.8.35"

@@ -405,10 +405,6 @@ async fn each_catalog_refusal_keeps_its_own_code() {
             ErrorCode::UnknownProvider,
         ),
         (QualificationRefusal::UnknownModel, ErrorCode::UnknownModel),
-        (
-            QualificationRefusal::Unqualified,
-            ErrorCode::UnqualifiedProviderModel,
-        ),
     ] {
         let ports = ScriptedPorts::idle().with_qualification_refusal(refusal);
         assert_eq!(

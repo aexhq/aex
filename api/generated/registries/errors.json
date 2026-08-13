@@ -532,15 +532,6 @@
       "status": 400
     },
     {
-      "class": "state",
-      "code": "unqualified_provider_model",
-      "message": "the provider and model pair has no live conformance receipt",
-      "precedenceStage": "domain_state",
-      "remedy": null,
-      "retryable": false,
-      "status": 409
-    },
-    {
       "class": "not_found",
       "code": "provider_credential_not_found",
       "message": "no such provider credential binding",

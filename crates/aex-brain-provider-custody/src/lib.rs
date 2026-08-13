@@ -8,5 +8,6 @@
 #![forbid(unsafe_code)]
 
 mod authority;
+pub mod credential;
 
 pub use authority::{CredentialAuthority, CredentialCustody};

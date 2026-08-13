@@ -299,19 +299,6 @@ impl PreviewSink for NullPreviewSink {
     }
 }
 
-/// The bounds one provider stream runs under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StreamBudget {
-    /// The most bytes the adapter may buffer for this stream.
-    pub buffer_bytes: usize,
-    /// The most bytes the whole response may carry.
-    pub response_bytes: usize,
-    /// When this attempt must have settled by.
-    pub deadline: Timestamp,
-    /// The longest gap between two frames before the stream is considered stalled.
-    pub idle_timeout_ms: u32,
-}
-
 #[cfg(test)]
 mod tests {
     use super::{CancelToken, DispatchTicket, FenceGuard, NullPreviewSink, PreviewSink};

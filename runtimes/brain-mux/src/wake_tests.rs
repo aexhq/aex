@@ -18,7 +18,7 @@ use aex_brain_app::activation::{Activation, ActivationPolicy, Outcome, Ports, St
 use aex_brain_app::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
 use aex_brain_app::ports::{
     BoxFuture, CancelToken, ClockPort, DispatchTicket, PreviewSink, ProviderDispatchError,
-    ProviderOutcome, ProviderPort, SteadyInstant, StreamBudget, UnknownResolution, WakeQueue as _,
+    ProviderOutcome, ProviderPort, SteadyInstant, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect};
@@ -30,7 +30,7 @@ use aex_brain_domain::wire_pending::{
     AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
     ProviderId, ResolvedAgentConfig, StopReason,
 };
-use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, ReceiptBounds, seal};
+use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, seal};
 use aex_model_catalog::document::CapabilitySet;
 use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
 use aex_usage_app::probe::{
@@ -89,15 +89,11 @@ fn config() -> ResolvedAgentConfig {
 }
 
 fn capability() -> QualifiedModel {
-    let mut entry = fixture::entry(
+    fixture::qualified_entry(
         ProviderId::Deepseek,
         "deepseek-chat",
         CapabilitySet::default(),
-    );
-    entry.limits.context_window_tokens = 64_000;
-    entry.limits.max_output_tokens = 4_096;
-    entry.limits.min_cacheable_prefix_tokens = 0;
-    fixture::qualified(entry)
+    )
 }
 
 fn history() -> Vec<JournalEntry> {
@@ -150,7 +146,6 @@ fn produced() -> ProviderOutcome {
         model: message.model.clone(),
         catalog: message.catalog,
         dialect: selected.dialect(),
-        dialect_revision: selected.dialect_revision(),
         credential: CredentialBindingRef {
             id: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [4; 10])),
             revision: 1,
@@ -163,17 +158,8 @@ fn produced() -> ProviderOutcome {
         started_at: at,
         first_frame_at: Some(at),
         completed_at: at,
-        request_bytes: 1,
-        response_bytes: 1,
-        frames: 1,
         rate_limit: None,
         response_receipt: Some(message.proof.0),
-        bounds: ReceiptBounds {
-            max_frame_bytes: 1_024,
-            max_response_bytes: 1_024,
-            idle_frame_timeout_ms: 1_000,
-            total_deadline_ms: 10_000,
-        },
     };
     ProviderOutcome {
         message,
@@ -186,7 +172,6 @@ fn bound() -> Bindings {
     Bindings {
         store: BindingState::Ready,
         provider: BindingState::Ready,
-        catalog: BindingState::Ready,
         tools: BindingState::Ready,
         hands: BindingState::Ready,
     }
@@ -195,7 +180,6 @@ fn bound() -> Bindings {
 fn activation_resources(policy: &ActivationPolicy) -> ActivationResources {
     ActivationResources {
         context_bytes: policy.restore_resident_bytes,
-        stream_buffer_bytes: u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
         provider_streams: 1,
         network_lane: 1,
         hands_rpcs: 1,
@@ -213,10 +197,6 @@ fn admission(drain: &Arc<DrainGate>) -> Arc<Admission> {
         Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 8_u64),
             (PermitKind::ContextBytes, policy.restore_resident_bytes),
-            (
-                PermitKind::StreamBufferBytes,
-                u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
-            ),
             (PermitKind::ProviderStream, 1_u64),
             (PermitKind::HandsRpc, 1_u64),
         ]))),
@@ -312,7 +292,6 @@ impl ProviderPort for ConcurrentProvider {
         _ticket: &'a DispatchTicket,
         _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         _cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
@@ -387,13 +366,9 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
         ..ActivationPolicy::default()
     };
     let context_bytes = policy.restore_resident_bytes.saturating_mul(COUNT_U64);
-    let stream_buffer_bytes = u64::try_from(policy.stream_buffer_bytes)
-        .unwrap_or(u64::MAX)
-        .saturating_mul(COUNT_U64);
     let permits = Arc::new(PermitSet::new(BTreeMap::from([
         (PermitKind::Activation, COUNT_U64),
         (PermitKind::ContextBytes, context_bytes),
-        (PermitKind::StreamBufferBytes, stream_buffer_bytes),
         (PermitKind::ProviderStream, COUNT_U64),
         (PermitKind::HandsRpc, COUNT_U64),
     ])));
@@ -471,7 +446,6 @@ impl ProviderPort for RefillProvider {
         ticket: &'a DispatchTicket,
         _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
@@ -569,9 +543,6 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
     let context_bytes = policy
         .restore_resident_bytes
         .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
-    let stream_buffer_bytes = u64::try_from(policy.stream_buffer_bytes)
-        .unwrap_or(u64::MAX)
-        .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
     let admission = Arc::new(Admission::new(
         AdmissionBounds {
             target: u32::try_from(CAP).expect("the test cap fits u32"),
@@ -584,7 +555,6 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
                 u64::try_from(CAP).expect("the test cap fits u64"),
             ),
             (PermitKind::ContextBytes, context_bytes),
-            (PermitKind::StreamBufferBytes, stream_buffer_bytes),
             (
                 PermitKind::ProviderStream,
                 u64::try_from(CAP).expect("the test cap fits u64"),
@@ -809,7 +779,6 @@ impl ProviderPort for PendingProvider {
         _ticket: &'a DispatchTicket,
         _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         _cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {

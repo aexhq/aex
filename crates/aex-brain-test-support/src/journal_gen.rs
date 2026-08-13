@@ -28,7 +28,7 @@ use aex_brain_domain::wire_pending::{
     AgentLimits, CanonicalBlock, ContentBlockRef, JoinMode, NormalizedUsage, ProviderId,
     ResolvedAgentConfig, StopReason, ToolResultPart,
 };
-use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, ReceiptBounds, seal};
+use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, seal};
 use aex_model_catalog::document::CapabilitySet;
 use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
 use aex_wire::CanonicalJson;
@@ -227,7 +227,6 @@ pub fn assistant(
         model: message.model.clone(),
         catalog: message.catalog,
         dialect: model().dialect(),
-        dialect_revision: model().dialect_revision(),
         credential: CredentialBindingRef {
             id: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [4; 10])),
             revision: 1,
@@ -240,17 +239,8 @@ pub fn assistant(
         started_at: at,
         first_frame_at: Some(at),
         completed_at: at,
-        request_bytes: 1,
-        response_bytes: 1,
-        frames: 1,
         rate_limit: None,
         response_receipt: Some(message.proof.0),
-        bounds: ReceiptBounds {
-            max_frame_bytes: 1_024,
-            max_response_bytes: 1_024,
-            idle_frame_timeout_ms: 1_000,
-            total_deadline_ms: 10_000,
-        },
     };
     JournalRecord::AssistantMessage {
         public_message: None,

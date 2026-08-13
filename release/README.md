@@ -55,7 +55,7 @@ publication identity, and binds the required build/test/package receipts to
 the artifact subject. `artifact certify --defer-supply-chain` records the
 startup-phase scanner deferral explicitly; it does not mint a synthetic SBOM,
 licence, vulnerability, or deny receipt. Missing build/test receipts,
-publication bytes, provenance, signatures, or model-catalog bindings still
+publication bytes, provenance, signatures, or tool-catalog bindings still
 stop publication.
 
 Dependency audits, licence inventory, SBOM generation, and vulnerability

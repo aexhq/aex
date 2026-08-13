@@ -96,8 +96,6 @@ pub struct LivenessInputs {
 pub struct ReadinessInputs {
     /// Whether configuration and every secret binding validated at start-up.
     pub bindings: Dependency,
-    /// Whether the pinned catalog loaded and its signature verified.
-    pub catalog: Dependency,
     /// Whether the store answered its last probe.
     pub store: Dependency,
     /// Whether the generated schema hashes match this build's expectations.
@@ -138,8 +136,6 @@ pub enum Unhealthy {
     },
     /// Configuration or a secret binding did not validate.
     BindingsUnvalidated,
-    /// The catalog is absent or its signature did not verify.
-    CatalogUnverified,
     /// The store is unreachable.
     StoreUnreachable,
     /// The generated schema hashes do not match this build.
@@ -181,7 +177,6 @@ impl fmt::Display for Unhealthy {
             Self::BindingsUnvalidated => {
                 formatter.write_str("configuration bindings not validated")
             }
-            Self::CatalogUnverified => formatter.write_str("catalog absent or unverified"),
             Self::StoreUnreachable => formatter.write_str("store unreachable"),
             Self::SchemaMismatch => formatter.write_str("schema hashes do not match this build"),
             Self::Draining => formatter.write_str("draining"),
@@ -270,9 +265,6 @@ pub fn readiness(inputs: &ReadinessInputs) -> Probe {
     if !inputs.bindings.is_satisfied() {
         reasons.push(Unhealthy::BindingsUnvalidated);
     }
-    if !inputs.catalog.is_satisfied() {
-        reasons.push(Unhealthy::CatalogUnverified);
-    }
     if !inputs.store.is_satisfied() {
         reasons.push(Unhealthy::StoreUnreachable);
     }
@@ -338,7 +330,6 @@ mod tests {
     fn ready() -> ReadinessInputs {
         ReadinessInputs {
             bindings: Dependency::Satisfied,
-            catalog: Dependency::Satisfied,
             store: Dependency::Satisfied,
             schema_hashes: Dependency::Satisfied,
             draining: false,
@@ -475,16 +466,6 @@ mod tests {
 
     /// Readiness never lies to keep a task in service: an unverified catalog fails it even
     /// though the process is otherwise perfectly healthy.
-    #[test]
-    fn an_unverified_catalog_fails_readiness() {
-        let mut inputs = ready();
-        inputs.catalog = Dependency::Unsatisfied;
-        let probe = readiness(&inputs);
-        assert!(!probe.is_healthy());
-        assert!(probe.reasons.contains(&Unhealthy::CatalogUnverified));
-        assert!(liveness(&healthy_liveness()).is_healthy());
-    }
-
     /// Measured memory pressure is a readiness concern and never a liveness one. Failing
     /// liveness here would have the orchestrator kill a task precisely because it is holding
     /// memory for effects it is trying to settle.
@@ -529,7 +510,6 @@ mod tests {
     fn every_readiness_dependency_is_reported_not_just_the_first() {
         let inputs = ReadinessInputs {
             bindings: Dependency::Unsatisfied,
-            catalog: Dependency::Unsatisfied,
             store: Dependency::Unsatisfied,
             schema_hashes: Dependency::Unsatisfied,
             draining: true,
@@ -538,7 +518,7 @@ mod tests {
             pressure: PressureState::Critical,
         };
         let probe = readiness(&inputs);
-        assert_eq!(probe.reasons.len(), 7, "{:?}", probe.reasons);
-        assert_eq!(probe.body().lines().count(), 7);
+        assert_eq!(probe.reasons.len(), 6, "{:?}", probe.reasons);
+        assert_eq!(probe.body().lines().count(), 6);
     }
 }

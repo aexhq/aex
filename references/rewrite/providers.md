@@ -1,5 +1,5 @@
 ---
-title: Providers and model catalog â€” what landed
+title: Providers and model catalog — what landed (superseded)
 description: The implemented state of aex-model-catalog, aex-brain-provider-gateway, aex-brain-provider-custody, and tests/live/aex-live-model-catalog. Records the canonical vocabulary Brain re-exports, the reconciliations taken against plan 08, what is deliberately deferred, and what each peer stream must change.
 keywords:
   - byok
@@ -9,14 +9,24 @@ keywords:
   - conformance
   - credentials
 audience: implementation agents and maintainers
-status: accepted
+status: superseded
 last_verified: 2026-08-04
 related:
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
+  - references/model-provider-library-simplification-2026-08-13/design-2026-08-13.md
 ---
 
-# Providers and model catalog â€” what landed
+# Providers and model catalog — what landed
+
+> **Superseded (2026-08-13).** The signed model-catalog authority, the
+> hand-rolled provider gateway, the conformance harness, and the tokenizer
+> oracle described below are deleted. `aex-brain-provider` routes over rig
+> against the compiled models.dev admit table; `aex-model-vocabulary` owns the
+> canonical vocabulary; `aex-model-catalog` is the generated table plus
+> admission. See
+> [`model-provider-library-simplification-2026-08-13/`](../model-provider-library-simplification-2026-08-13/README.md).
+> The historical record below stays for provenance.
 
 Plans of record: `references/rust-native-rewrite-2026-07-31/plans/08-providers-byok.md` and `references/rust-native-rewrite-2026-07-31/plans/07-brain-core.md`, in the parent workspace.
 
@@ -462,4 +472,4 @@ objects shipped in the crate. CI on Linux is unaffected; this is recorded so a
 reviewer does not read a local failure as a workspace defect. As plan 08 Â§12
 already notes, `cargo +stable` is also the working local invocation, because the
 `rust-toolchain.toml` pin resolves to a rustup toolchain without a `cargo`
-component.
+status: superseded

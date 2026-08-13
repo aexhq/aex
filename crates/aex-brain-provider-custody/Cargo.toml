@@ -32,12 +32,17 @@ integration = "port-composition adapter with no datastore or transport engine of
 
 [dependencies]
 aex-brain-app = { path = "../aex-brain-app" }
-aex-brain-provider-gateway = { path = "../aex-brain-provider-gateway" }
+aex-brain-domain = { path = "../aex-brain-domain" }
+aex-model-catalog = { path = "../aex-model-catalog" }
 aex-secret-aws = { path = "../aex-secret-aws" }
 aex-secret-custody-dynamodb = { path = "../aex-secret-custody-dynamodb" }
 aex-secret-domain = { path = "../aex-secret-domain" }
 aex-wire = { path = "../aex-wire" }
 futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

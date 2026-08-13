@@ -228,7 +228,8 @@ requires x86 is unsupported until a future architecture decision reopens it.
 - `session_create`/`message_send` serving must be verified before UX claims.
 - ARM execution qualification and readiness checks are not currently enforced.
 - Hands/MicroVM live evidence is unearned.
-- The signed model-catalog authority/evidence gate remains open.
+- The compiled models.dev admission gate replaces the signed catalog authority
+  (2026-08-13); its live seams still await their first production evidence.
 - The last public CI candidate failed while `regional-stream` was still private;
   it must not be reused. A fresh substantive public main push is required now
   that package visibility is public.

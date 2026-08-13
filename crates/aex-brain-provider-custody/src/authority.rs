@@ -3,10 +3,6 @@
 use std::sync::Arc;
 
 use aex_brain_app::ports::BoxFuture;
-use aex_brain_provider_gateway::credential::{
-    BindingState, CredentialResolveError, CredentialRevision, ProviderApiKey,
-    ProviderCredentialBinding, ProviderCredentialDecryptor, ProviderCredentialDirectory,
-};
 use aex_secret_aws::{SealedSecret, SecretCrypto, SecretCryptoError};
 use aex_secret_custody_dynamodb::{
     CredentialState, CustodyStore, ProviderCredential, SecretCustodyStore, SecretMetadata,
@@ -17,6 +13,11 @@ use aex_secret_domain::{RevocationEpoch, SecretName, SecretState, SourceGenerati
 use aex_wire::ids::{OrganizationId, ProviderCredentialId, WorkspaceId};
 use aex_wire::provider::ProviderId;
 use aex_wire::types::{Region, Timestamp};
+
+use crate::credential::{
+    BindingState, CredentialResolveError, CredentialRevision, ProviderApiKey,
+    ProviderCredentialBinding, ProviderCredentialDecryptor, ProviderCredentialDirectory,
+};
 
 /// The three exact authority reads provider dispatch needs.
 ///

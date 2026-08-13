@@ -3,7 +3,7 @@
 //! The closed v1 public error vocabulary.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:dddf87f6715de38e24d77e348f34f1d066254b797719a09a995d660373335a66`.
+//! `sha256:308866d3e6ae0f8108ee3b81c1b852256a3bc1d80cb6d774f221d3d91fab4721`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -142,8 +142,6 @@ pub enum ErrorCode {
     UnknownProvider,
     /// `unknown_model` — no such model for that provider
     UnknownModel,
-    /// `unqualified_provider_model` — the provider and model pair has no live conformance receipt
-    UnqualifiedProviderModel,
     /// `provider_credential_not_found` — no such provider credential binding
     ProviderCredentialNotFound,
     /// `provider_credential_revoked` — the provider credential binding was revoked
@@ -242,7 +240,6 @@ impl ErrorCode {
         ErrorCode::PackageIntegrityMismatch,
         ErrorCode::UnknownProvider,
         ErrorCode::UnknownModel,
-        ErrorCode::UnqualifiedProviderModel,
         ErrorCode::ProviderCredentialNotFound,
         ErrorCode::ProviderCredentialRevoked,
         ErrorCode::InvalidAutoTopupPolicy,
@@ -325,7 +322,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => "package_integrity_mismatch",
             Self::UnknownProvider => "unknown_provider",
             Self::UnknownModel => "unknown_model",
-            Self::UnqualifiedProviderModel => "unqualified_provider_model",
             Self::ProviderCredentialNotFound => "provider_credential_not_found",
             Self::ProviderCredentialRevoked => "provider_credential_revoked",
             Self::InvalidAutoTopupPolicy => "invalid_auto_topup_policy",
@@ -409,7 +405,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => 409,
             Self::UnknownProvider => 400,
             Self::UnknownModel => 400,
-            Self::UnqualifiedProviderModel => 409,
             Self::ProviderCredentialNotFound => 404,
             Self::ProviderCredentialRevoked => 409,
             Self::InvalidAutoTopupPolicy => 400,
@@ -493,7 +488,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => false,
             Self::UnknownProvider => false,
             Self::UnknownModel => false,
-            Self::UnqualifiedProviderModel => false,
             Self::ProviderCredentialNotFound => false,
             Self::ProviderCredentialRevoked => false,
             Self::InvalidAutoTopupPolicy => false,
@@ -577,7 +571,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => ErrorClass::State,
             Self::UnknownProvider => ErrorClass::Validation,
             Self::UnknownModel => ErrorClass::Validation,
-            Self::UnqualifiedProviderModel => ErrorClass::State,
             Self::ProviderCredentialNotFound => ErrorClass::NotFound,
             Self::ProviderCredentialRevoked => ErrorClass::State,
             Self::InvalidAutoTopupPolicy => ErrorClass::Validation,
@@ -661,7 +654,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => PrecedenceStage::DomainState,
             Self::UnknownProvider => PrecedenceStage::BodyLimitAndParse,
             Self::UnknownModel => PrecedenceStage::BodyLimitAndParse,
-            Self::UnqualifiedProviderModel => PrecedenceStage::DomainState,
             Self::ProviderCredentialNotFound => PrecedenceStage::TombstoneAndParent,
             Self::ProviderCredentialRevoked => PrecedenceStage::DomainState,
             Self::InvalidAutoTopupPolicy => PrecedenceStage::BodyLimitAndParse,
@@ -773,9 +765,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => "a package artifact failed its integrity check",
             Self::UnknownProvider => "no such provider",
             Self::UnknownModel => "no such model for that provider",
-            Self::UnqualifiedProviderModel => {
-                "the provider and model pair has no live conformance receipt"
-            }
             Self::ProviderCredentialNotFound => "no such provider credential binding",
             Self::ProviderCredentialRevoked => "the provider credential binding was revoked",
             Self::InvalidAutoTopupPolicy => "the auto top-up policy is not internally consistent",
@@ -869,7 +858,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => None,
             Self::UnknownProvider => None,
             Self::UnknownModel => None,
-            Self::UnqualifiedProviderModel => None,
             Self::ProviderCredentialNotFound => None,
             Self::ProviderCredentialRevoked => None,
             Self::InvalidAutoTopupPolicy => None,

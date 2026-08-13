@@ -42,7 +42,7 @@ aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-brain-provider-custody = { path = "../../crates/aex-brain-provider-custody" }
-aex-brain-provider-gateway = { path = "../../crates/aex-brain-provider-gateway" }
+aex-brain-provider = { path = "../../crates/aex-brain-provider" }
 aex-brain-store-dynamodb = { path = "../../crates/aex-brain-store-dynamodb" }
 aex-model-catalog = { path = "../../crates/aex-model-catalog" }
 aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
@@ -93,9 +93,5 @@ tokio = { workspace = true, features = ["test-util"] }
 toml.workspace = true
 
 [build-dependencies]
-hex.workspace = true
-p256.workspace = true
 serde.workspace = true
-serde_json.workspace = true
-sha2.workspace = true
 toml.workspace = true

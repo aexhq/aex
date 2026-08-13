@@ -947,7 +947,7 @@ pub fn new_handoff_manifest(
             }
         }
         if let Some(catalogs) = &envelope.identities.catalogs {
-            for (name, digest) in [("model", &catalogs.model), ("tool", &catalogs.tool)] {
+            for (name, digest) in [("tool", &catalogs.tool)] {
                 if let Some(digest) = digest
                     && inputs.catalogs.get(name) != Some(digest)
                 {

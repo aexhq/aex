@@ -6,50 +6,30 @@ use aex_brain_domain::ids::{
     AgentId, CatalogPin, DetachedOperationId, EffectId, JournalSeq, ModelSlug, OwnerToken,
     Timestamp, WakeId,
 };
-pub use aex_model_catalog::document::CatalogDigest;
-use aex_model_catalog::document::DurableOperationSupport;
 use aex_model_catalog::{CatalogError as ModelCatalogError, QualifiedModel};
 use aex_wire::provider::ProviderId;
 
-/// The signed immutable catalog an agent is pinned to for its whole life.
+/// The compiled immutable model catalog an agent is pinned to for its whole
+/// life.
 ///
-/// Every method is synchronous. The catalog is a signed artifact already resolved and
-/// verified in memory, so a capability lookup cannot reach the network — if it could, a
-/// capability lookup would become a failure mode and an agent's pinned configuration would
-/// stop being pinned.
+/// Every method is synchronous. The catalog is the compiled models.dev admit
+/// table, so a capability lookup cannot reach the network — if it could, a
+/// capability lookup would become a failure mode and an agent's pinned
+/// configuration would stop being pinned.
 pub trait CatalogPort: Send + Sync + 'static {
-    /// The digest of the artifact `pin` names.
+    /// What the compiled catalog says about one model.
     ///
     /// # Errors
     ///
-    /// Returns [`CatalogError::UnknownPin`] when this process does not hold it.
-    fn digest(&self, pin: &CatalogPin) -> Result<CatalogDigest, CatalogError>;
-
-    /// What the catalog says about one model.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CatalogError`] when the pin is unknown, the model is absent, or the entry
-    /// is staged rather than admitted. There is no guessed capability, context window or
-    /// price: an unknown model is not routable, whatever a request asks for.
+    /// Returns [`CatalogError`] when the pin is unknown or the model is absent.
+    /// There is no guessed capability, context window or price: an unknown
+    /// model is not routable, whatever a request asks for.
     fn model(
         &self,
         pin: &CatalogPin,
         provider: ProviderId,
         model: &ModelSlug,
     ) -> Result<QualifiedModel, CatalogError>;
-
-    /// Whether a dispatched call to this model can be resumed or looked up.
-    ///
-    /// Infallible and defaulting to [`DurableOperationSupport::None`] for an unknown entry:
-    /// the safe answer to "can this be resumed?" is "no", and making the caller handle an
-    /// error here would tempt it to guess.
-    fn durable_operation_support(
-        &self,
-        pin: &CatalogPin,
-        provider: ProviderId,
-        model: &ModelSlug,
-    ) -> DurableOperationSupport;
 }
 
 /// Why a catalog lookup failed.

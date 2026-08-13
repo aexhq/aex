@@ -30,8 +30,6 @@ pub struct Envelope {
     pub task_memory_bytes: u64,
     /// Bytes reserved for hydrated context.
     pub context_bytes: u64,
-    /// Bytes reserved for stream buffers.
-    pub stream_buffer_bytes: u64,
     /// Bytes reserved for the warm cache, budgeted separately from accepted work.
     pub warm_cache_bytes: u64,
     /// Bytes left as emergency headroom, reserved to nobody.
@@ -48,9 +46,9 @@ pub struct Envelope {
 impl Envelope {
     /// The build-bound launch shape, split into independently bounded pools.
     ///
-    /// The 3 GiB context pool proves 48 simultaneous 64 MiB worst-case restores. Stream
-    /// buffers retain their independent 128 MiB pool; cache cannot borrow admitted memory;
-    /// 384 MiB remains unavailable to all permits as process/allocator failure headroom.
+    /// The 3 GiB context pool proves 48 simultaneous 64 MiB worst-case restores; cache
+    /// cannot borrow admitted memory; 384 MiB remains unavailable to all permits as
+    /// process/allocator failure headroom.
     ///
     /// The network lane is 128 units, derived rather than chosen: the safety cap admits 32
     /// activations and the heaviest declared tool weight is 4, so 128 admits one outstanding
@@ -64,7 +62,6 @@ impl Envelope {
         Self {
             task_memory_bytes: crate::task_shape::task_memory_bytes(),
             context_bytes: 3_072 * MIB,
-            stream_buffer_bytes: 128 * MIB,
             warm_cache_bytes: 512 * MIB,
             headroom_bytes: 384 * MIB,
             provider_streams: 48,
@@ -84,7 +81,6 @@ impl Envelope {
     pub const fn validate(&self) -> Result<(), &'static str> {
         let committed = self
             .context_bytes
-            .saturating_add(self.stream_buffer_bytes)
             .saturating_add(self.warm_cache_bytes)
             .saturating_add(self.headroom_bytes);
         if committed > self.task_memory_bytes {
@@ -102,7 +98,7 @@ impl Envelope {
     /// borrow memory that admitted work has already been promised.
     #[must_use]
     pub const fn accepted_work_bytes(&self) -> u64 {
-        self.context_bytes.saturating_add(self.stream_buffer_bytes)
+        self.context_bytes
     }
 }
 
@@ -168,7 +164,6 @@ impl Composition {
 
         let resources = ActivationResources {
             context_bytes: policy.restore_resident_bytes,
-            stream_buffer_bytes: u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
             provider_streams: 1,
             network_lane: 1,
             hands_rpcs: 1,
@@ -190,7 +185,6 @@ impl Composition {
             (PermitKind::HandsRpc, envelope.hands_rpcs),
             (PermitKind::ComputeLane, shape.compute_permits),
             (PermitKind::ContextBytes, envelope.context_bytes),
-            (PermitKind::StreamBufferBytes, envelope.stream_buffer_bytes),
             (PermitKind::WarmCacheBytes, envelope.warm_cache_bytes),
         ])));
         let drain = Arc::new(DrainGate::new());
@@ -245,11 +239,6 @@ fn validate_target_capacity(
     if resources.context_bytes.saturating_mul(target) > envelope.context_bytes {
         return Err(CompositionError {
             reason: "the admission target exceeds reserved context capacity",
-        });
-    }
-    if resources.stream_buffer_bytes.saturating_mul(target) > envelope.stream_buffer_bytes {
-        return Err(CompositionError {
-            reason: "the admission target exceeds reserved stream-buffer capacity",
         });
     }
     if resources.provider_streams.saturating_mul(target) > envelope.provider_streams {
@@ -324,7 +313,6 @@ mod tests {
         let envelope = Envelope::candidate_launch();
         assert_eq!(envelope.task_memory_bytes, 4_096 * MIB);
         assert_eq!(envelope.context_bytes, 3_072 * MIB);
-        assert_eq!(envelope.stream_buffer_bytes, 128 * MIB);
         assert_eq!(envelope.warm_cache_bytes, 512 * MIB);
         assert_eq!(envelope.headroom_bytes, 384 * MIB);
         assert_eq!(envelope.provider_streams, 48);
@@ -384,23 +372,18 @@ mod tests {
     }
 
     /// The scheduler may run only the target proven simultaneously by every resource pool.
-    /// Raising a single number cannot silently overrun context, stream, provider or Hands.
+    /// Raising a single number cannot silently overrun context, provider or Hands.
     #[test]
     fn launch_target_is_the_minimum_composite_capacity() {
         const MIB: u64 = 1_024 * 1_024;
         let envelope = Envelope::candidate_launch();
         let resources = ActivationResources {
             context_bytes: 64 * MIB,
-            stream_buffer_bytes: MIB,
             provider_streams: 1,
             network_lane: 1,
             hands_rpcs: 1,
         };
         assert_eq!(envelope.context_bytes / resources.context_bytes, 48);
-        assert_eq!(
-            envelope.stream_buffer_bytes / resources.stream_buffer_bytes,
-            128
-        );
         assert_eq!(envelope.provider_streams / resources.provider_streams, 48);
         assert_eq!(envelope.network_lane / resources.network_lane, 128);
         assert_eq!(envelope.hands_rpcs / resources.hands_rpcs, 48);
@@ -421,17 +404,6 @@ mod tests {
             (
                 ActivationResources {
                     context_bytes: 1,
-                    stream_buffer_bytes: 3 * MIB,
-                    provider_streams: 1,
-                    network_lane: 1,
-                    hands_rpcs: 1,
-                },
-                "the admission target exceeds reserved stream-buffer capacity",
-            ),
-            (
-                ActivationResources {
-                    context_bytes: 1,
-                    stream_buffer_bytes: 1,
                     provider_streams: 2,
                     network_lane: 1,
                     hands_rpcs: 1,
@@ -441,7 +413,6 @@ mod tests {
             (
                 ActivationResources {
                     context_bytes: 1,
-                    stream_buffer_bytes: 1,
                     provider_streams: 1,
                     network_lane: 3,
                     hands_rpcs: 1,
@@ -451,7 +422,6 @@ mod tests {
             (
                 ActivationResources {
                     context_bytes: 1,
-                    stream_buffer_bytes: 1,
                     provider_streams: 1,
                     network_lane: 1,
                     hands_rpcs: 2,
@@ -487,8 +457,7 @@ mod tests {
             envelope.warm_cache_bytes
         );
         assert_eq!(
-            composition.permits.limit(PermitKind::ContextBytes)
-                + composition.permits.limit(PermitKind::StreamBufferBytes),
+            composition.permits.limit(PermitKind::ContextBytes),
             envelope.accepted_work_bytes()
         );
     }
@@ -503,7 +472,6 @@ mod tests {
             PermitKind::HandsRpc,
             PermitKind::ComputeLane,
             PermitKind::ContextBytes,
-            PermitKind::StreamBufferBytes,
             PermitKind::WarmCacheBytes,
         ] {
             assert!(
@@ -519,7 +487,6 @@ mod tests {
     fn drain_fails_readiness_first_and_never_touches_liveness() {
         let composition = composition();
         composition.health.bindings_validated();
-        composition.health.catalog_verified();
         composition.health.store_reachable(true);
         composition.health.schema_matched();
         assert_eq!(composition.health.respond("GET", READY_PATH).status, 200);

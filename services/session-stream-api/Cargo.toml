@@ -132,13 +132,6 @@ time.workspace = true
 tower.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
 
-[build-dependencies]
-hex.workspace = true
-p256.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-sha2.workspace = true
-
 [[test]]
 name = "admission"
 path = "tests/admission.rs"

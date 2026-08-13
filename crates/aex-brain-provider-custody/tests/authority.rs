@@ -4,11 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use aex_brain_app::ports::BoxFuture;
-use aex_brain_provider_custody::{CredentialAuthority, CredentialCustody};
-use aex_brain_provider_gateway::credential::{
-    CredentialResolveError, ProviderCredentialDecryptor, ProviderCredentialDirectory,
+use aex_brain_provider_custody::credential::{
+    AuthScheme, CredentialResolveError, ProviderCredentialDecryptor, ProviderCredentialDirectory,
 };
-use aex_brain_provider_gateway::transport::AuthScheme;
+use aex_brain_provider_custody::{CredentialAuthority, CredentialCustody};
 use aex_secret_aws::{SealedSecret, SecretCrypto, SecretCryptoError};
 use aex_secret_custody_dynamodb::{
     CredentialState, ProviderCredential, SecretMetadata, StoredGeneration,

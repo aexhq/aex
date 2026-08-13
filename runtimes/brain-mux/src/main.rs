@@ -453,7 +453,6 @@ pub fn run(
         resolve_production_ports(config, &main_runtime)?;
 
     composition.health.schema_matched();
-    composition.health.catalog_verified();
     composition.health.bindings_validated();
     // Reachability is deliberately not asserted here. Binding a client proves nothing about
     // the table behind it, so readiness stays false until the probe loop below has had a
@@ -550,7 +549,7 @@ fn resolve_production_ports(
         config.placement_region(),
         &config.credential_cache_partition(),
     );
-    let catalog = bind_release_catalog()?;
+    let catalog = bind_release_catalog();
     let hands = wake::hands_binding(
         &aws.sdk,
         wake::HandsBinding {
@@ -579,7 +578,7 @@ fn resolve_production_ports(
         mcp: None,
         hands: Some(std::sync::Arc::clone(&hands.executor)),
     }
-    .compose(catalog.retained_pins())?;
+    .compose([release_catalog::admission_pin()])?;
     let peers = wake::ProductionPeers::new(
         credentials.provider,
         tools,
@@ -602,22 +601,11 @@ fn resolve_production_ports(
     })
 }
 
-fn bind_release_catalog() -> Result<
-    std::sync::Arc<aex_brain_provider_gateway::catalog_port::VerifiedCatalogPort>,
-    BrainMuxRunError,
-> {
-    // Catalog authority is build/release scoped, never tenant or runtime-env
-    // scoped. The exact collection and bounded publisher trust-root set are
-    // compiled together and the entire retained chain verifies before lookup.
-    let now = aex_wire::types::Timestamp::from_datetime_trunc_ms(time::OffsetDateTime::now_utc())
-        .map_err(|error| BrainMuxRunError::Runtime {
-        reason: format!("the startup clock is outside the catalog timestamp range: {error}"),
-    })?;
-    release_catalog::load(now)
-        .map(std::sync::Arc::new)
-        .map_err(|error| BrainMuxRunError::Runtime {
-            reason: format!("production model-catalog binding failed: {error}"),
-        })
+fn bind_release_catalog() -> std::sync::Arc<release_catalog::CompiledCatalogPort> {
+    // Catalog authority is compile-time: the checked-in models.dev admit
+    // table is the whole catalog, and `aex-model-catalog` proves the table
+    // non-empty with a compile-time assertion.
+    std::sync::Arc::new(release_catalog::CompiledCatalogPort)
 }
 
 struct PumpPorts {
