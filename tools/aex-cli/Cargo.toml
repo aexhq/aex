@@ -1,6 +1,6 @@
 [package]
 name = "aex-cli"
-version = "0.50.0"
+version = "0.51.0"
 description = "Native `aex` command-line client."
 edition.workspace = true
 rust-version.workspace = true
@@ -43,12 +43,15 @@ clap.workspace = true
 clap_complete.workspace = true
 futures.workspace = true
 reqwest.workspace = true
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["fs", "io-std", "io-util", "macros", "rt-multi-thread", "signal"] }
+tokio = { workspace = true, features = ["fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }
+url.workspace = true
 uuid.workspace = true
+webbrowser.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

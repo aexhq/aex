@@ -1,0 +1,33 @@
+{
+  "$id": "https://schemas.aex.dev/v1/CliAuthConfig.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Public, non-secret Google authorization configuration for the native CLI.",
+  "properties": {
+    "authorizationUrl": {
+      "description": "Google's pinned authorization endpoint.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    },
+    "clientId": {
+      "description": "The public Google OAuth client identifier.",
+      "maxLength": 512,
+      "minLength": 1,
+      "type": "string"
+    },
+    "redirectUri": {
+      "description": "The exact fixed CLI loopback callback URI registered with Google.",
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "authorizationUrl",
+    "clientId",
+    "redirectUri"
+  ],
+  "title": "CliAuthConfig",
+  "type": "object"
+}

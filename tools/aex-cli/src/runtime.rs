@@ -13,19 +13,20 @@ use aex_wire::cursor::Cursor;
 use aex_wire::error::ErrorClass;
 use aex_wire::idempotency::IdempotencyKey;
 use aex_wire::ids::{
-    ContentHash, FilePath, OperationId, PaymentMethodId, PrefixedId as _, ResourceName, SessionId,
-    Uuid7,
+    ApiKeyId, ContentHash, FilePath, OperationId, PaymentMethodId, PrefixedId as _, ResourceName,
+    SessionId, Uuid7,
 };
 use aex_wire::models::{
-    BillingTransactionsListQuery, BillingUsageCategory, BillingUsageGetQuery, BlobEncoding,
-    BlobInline, BlobInput, BlobUrl, EmptyRequest, McpServer, MessageSendRequest,
-    PaymentMethodSessionRequest, ProviderId, RegisteredFileMode, RegisteredFileValue,
-    RegistryDownloadRequest, ResponseFormat, ResponseFormatKind, SessionCreateRequest,
-    SessionMessagesListQuery, SessionMessagesStreamQuery, SessionRegisteredSelection,
-    SessionSandboxRequest, SessionStatus, SessionTelemetryReplayQuery, SessionTelemetryStreamQuery,
-    SessionsListQuery, TelemetryDownloadRequest, TopUpCheckoutRequest, UploadCompleteRequest,
-    UploadCreateRequest, UploadPart, UploadPartRequest, WorkspaceFileMount,
+    ApiKeyCreateRequest, ApiKeysListQuery, BillingTransactionsListQuery, BillingUsageCategory,
+    BillingUsageGetQuery, BlobEncoding, BlobInline, BlobInput, BlobUrl, EmptyRequest, McpServer,
+    MessageSendRequest, NewApiKey, PaymentMethodSessionRequest, ProviderId, RegisteredFileMode,
+    RegisteredFileValue, RegistryDownloadRequest, ResponseFormat, ResponseFormatKind,
+    SessionCreateRequest, SessionMessagesListQuery, SessionMessagesStreamQuery,
+    SessionRegisteredSelection, SessionSandboxRequest, SessionStatus, SessionTelemetryReplayQuery,
+    SessionTelemetryStreamQuery, SessionsListQuery, TelemetryDownloadRequest, TopUpCheckoutRequest,
+    UploadCompleteRequest, UploadCreateRequest, UploadPart, UploadPartRequest, WorkspaceFileMount,
 };
+use aex_wire::scopes::ScopeId;
 use aex_wire::types::{Cents, DecimalU128, ETag, HttpsUrl, Timestamp};
 use base64::Engine as _;
 use futures::StreamExt as _;
@@ -36,8 +37,8 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use zeroize::{Zeroize as _, Zeroizing};
 
 use crate::cli::{
-    BillingCommand, BillingUsageArgs, Cli, Command, FileCommand, MessageCommand, SessionCommand,
-    SessionCreateArgs, TelemetryCommand,
+    AccountCommand, ApiKeyCommand, BillingCommand, BillingUsageArgs, Cli, Command, FileCommand,
+    MessageCommand, SessionCommand, SessionCreateArgs, TelemetryCommand,
 };
 use crate::config::{
     ConfigInputs, Profile, config_path, get_value, load_profile, resolve_api_key, resolve_config,
@@ -49,6 +50,7 @@ use crate::output::OutputFormat;
 
 const INLINE_ENCODED_MAX: usize = 32_768;
 const UPLOAD_PART_BYTES: usize = 8 * 1024 * 1024;
+const CONTRACT_SHORT_ID: &str = "ec8637e94425";
 
 /// A customer-safe process error with its stable exit status.
 #[derive(Debug, thiserror::Error)]
@@ -72,17 +74,31 @@ impl RuntimeError {
         }
     }
 
-    fn configuration(message: impl Into<String>) -> Self {
+    pub(crate) fn configuration(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             exit: CliErrorClass::Configuration.exit_code(),
         }
     }
 
-    fn local_io(message: impl Into<String>) -> Self {
+    pub(crate) fn local_io(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             exit: CliErrorClass::LocalIo.exit_code(),
+        }
+    }
+
+    pub(crate) fn authentication(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            exit: exit_code_for_error_class(ErrorClass::Auth),
+        }
+    }
+
+    pub(crate) fn unavailable(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            exit: exit_code_for_error_class(ErrorClass::Unavailable),
         }
     }
 
@@ -151,7 +167,7 @@ impl From<ClientError> for RuntimeError {
 pub struct HttpTransport {
     client: reqwest::Client,
     base: BaseUrl,
-    api_key: Arc<Zeroizing<String>>,
+    api_key: Option<Arc<Zeroizing<String>>>,
 }
 
 impl core::fmt::Debug for HttpTransport {
@@ -159,13 +175,16 @@ impl core::fmt::Debug for HttpTransport {
         formatter
             .debug_struct("HttpTransport")
             .field("base", &self.base)
-            .field("api_key", &"<redacted>")
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .finish_non_exhaustive()
     }
 }
 
 impl HttpTransport {
-    fn new(base: BaseUrl, api_key: Arc<Zeroizing<String>>) -> Result<Self, RuntimeError> {
+    pub(crate) fn new(
+        base: BaseUrl,
+        api_key: Arc<Zeroizing<String>>,
+    ) -> Result<Self, RuntimeError> {
         let client = reqwest::Client::builder()
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
@@ -176,17 +195,32 @@ impl HttpTransport {
         Ok(Self {
             client,
             base,
-            api_key,
+            api_key: Some(api_key),
+        })
+    }
+
+    pub(crate) fn anonymous(base: BaseUrl) -> Result<Self, RuntimeError> {
+        let client = reqwest::Client::builder()
+            .https_only(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| {
+                RuntimeError::configuration("the HTTPS client could not be initialized")
+            })?;
+        Ok(Self {
+            client,
+            base,
+            api_key: None,
         })
     }
 
     fn request(&self, request: &WireRequest) -> Result<reqwest::RequestBuilder, TransportError> {
         let method = reqwest::Method::from_bytes(request.method.as_str().as_bytes())
             .map_err(|_| TransportError::new("invalid generated method"))?;
-        let mut builder = self
-            .client
-            .request(method, request.url(&self.base))
-            .header(AUTHORIZATION, format!("Bearer {}", self.api_key.as_str()));
+        let mut builder = self.client.request(method, request.url(&self.base));
+        if let Some(api_key) = &self.api_key {
+            builder = builder.header(AUTHORIZATION, format!("Bearer {}", api_key.as_str()));
+        }
         for (name, value) in &request.headers {
             builder = builder.header(*name, value);
         }
@@ -254,7 +288,7 @@ struct Clients {
 pub async fn execute(cli: Cli) -> Result<(), RuntimeError> {
     if matches!(cli.command, Some(Command::Version)) {
         println!(
-            "aex {} target={} contract=d43caa52c2b1",
+            "aex {} target={} contract={CONTRACT_SHORT_ID}",
             env!("CARGO_PKG_VERSION"),
             std::env::consts::ARCH
         );
@@ -281,14 +315,21 @@ pub async fn execute(cli: Cli) -> Result<(), RuntimeError> {
         .command
         .as_ref()
         .ok_or_else(|| RuntimeError::usage("a command is required"))?;
+    let central_base = BaseUrl::parse(&resolved.central_url)
+        .map_err(|error| RuntimeError::configuration(error.to_string()))?;
+    let key = replay_key(cli.idempotency_key.as_deref())?;
+    if let Command::Account {
+        command: AccountCommand::Create { name },
+    } = command
+    {
+        return crate::account::create(name, central_base, &key, resolved.output, cli.quiet).await;
+    }
     let plane = credential_plane(command);
     let secret_env = credential_environment(&profile, plane);
     let credential = Arc::new(
         resolve_plane_credential(&profile, &secret_env, plane)
             .map_err(|error| RuntimeError::configuration(error.to_string()))?,
     );
-    let central_base = BaseUrl::parse(&resolved.central_url)
-        .map_err(|error| RuntimeError::configuration(error.to_string()))?;
     let regional_base = BaseUrl::parse(&resolved.regional_url)
         .map_err(|error| RuntimeError::configuration(error.to_string()))?;
     let central_transport = HttpTransport::new(central_base.clone(), Arc::clone(&credential))?;
@@ -298,8 +339,11 @@ pub async fn execute(cli: Cli) -> Result<(), RuntimeError> {
         regional: WireClient::new(regional_transport.clone(), regional_base),
         regional_transport,
     };
-    let key = replay_key(cli.idempotency_key.as_deref())?;
     match command {
+        Command::Account { command } => execute_account(command, &clients, resolved.output).await,
+        Command::ApiKey { command } => {
+            execute_api_key(command, &clients, &key, resolved.output).await
+        }
         Command::Session { command } => {
             execute_session(command, &clients, &key, resolved.output).await
         }
@@ -314,6 +358,74 @@ pub async fn execute(cli: Cli) -> Result<(), RuntimeError> {
             execute_billing(command, &clients, &key, resolved.output).await
         }
         Command::Config { .. } | Command::Version => Ok(()),
+    }
+}
+
+async fn execute_account(
+    command: &AccountCommand,
+    clients: &Clients,
+    output: OutputFormat,
+) -> Result<(), RuntimeError> {
+    match command {
+        AccountCommand::Create { .. } => Err(RuntimeError::configuration(
+            "account creation did not enter its anonymous sign-in flow",
+        )),
+        AccountCommand::Bootstrap => {
+            emit(&clients.central.dashboard_bootstrap_get().await?, output)
+        }
+    }
+}
+
+async fn execute_api_key(
+    command: &ApiKeyCommand,
+    clients: &Clients,
+    key: &IdempotencyKey,
+    output: OutputFormat,
+) -> Result<(), RuntimeError> {
+    match command {
+        ApiKeyCommand::Create { name, scope } => {
+            let bootstrap = clients.central.dashboard_bootstrap_get().await?;
+            let mut created = clients
+                .central
+                .api_key_create(
+                    &ApiKeyCreateRequest {
+                        name: name.clone(),
+                        scopes: workspace_key_scopes(scope)?,
+                        workspace_id: bootstrap.workspace.id,
+                    },
+                    key,
+                )
+                .await?;
+            let emitted = emit_new_api_key(&created, output);
+            created.value.zeroize();
+            emitted
+        }
+        ApiKeyCommand::List(page) => {
+            let bootstrap = clients.central.dashboard_bootstrap_get().await?;
+            let keys = clients
+                .central
+                .api_keys_list(&ApiKeysListQuery {
+                    cursor: cursor(page.cursor.as_deref())?,
+                    limit: page.limit,
+                    workspace_id: bootstrap.workspace.id,
+                })
+                .await?;
+            emit(&keys, output)
+        }
+        ApiKeyCommand::Revoke { api_key } => {
+            clients
+                .central
+                .api_key_revoke(
+                    ApiKeyId::parse(api_key)
+                        .map_err(|error| RuntimeError::usage(error.to_string()))?,
+                    None,
+                )
+                .await?;
+            emit(
+                &serde_json::json!({"apiKey": api_key, "revoked": true}),
+                output,
+            )
+        }
     }
 }
 
@@ -1038,7 +1150,7 @@ async fn download_grant(
         .map_err(|_| RuntimeError::local_io("the verified download could not be committed"))
 }
 
-fn emit(value: &impl Serialize, output: OutputFormat) -> Result<(), RuntimeError> {
+pub(crate) fn emit(value: &impl Serialize, output: OutputFormat) -> Result<(), RuntimeError> {
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
     match output {
@@ -1047,6 +1159,15 @@ fn emit(value: &impl Serialize, output: OutputFormat) -> Result<(), RuntimeError
     }
     .map_err(|_| RuntimeError::local_io("output serialization failed"))?;
     writeln!(lock).map_err(|_| RuntimeError::local_io("output failed"))
+}
+
+fn emit_new_api_key(created: &NewApiKey, output: OutputFormat) -> Result<(), RuntimeError> {
+    if output == OutputFormat::Text {
+        println!("{}", created.value);
+        Ok(())
+    } else {
+        emit(created, output)
+    }
 }
 
 fn emit_hosted(
@@ -1079,7 +1200,10 @@ enum CredentialPlane {
 }
 
 const fn credential_plane(command: &Command) -> CredentialPlane {
-    if matches!(command, Command::Billing { .. }) {
+    if matches!(
+        command,
+        Command::Account { .. } | Command::ApiKey { .. } | Command::Billing { .. }
+    ) {
         CredentialPlane::Central
     } else {
         CredentialPlane::Regional
@@ -1120,6 +1244,29 @@ fn credential_environment(profile: &Profile, plane: CredentialPlane) -> BTreeMap
 fn replay_key(value: Option<&str>) -> Result<IdempotencyKey, RuntimeError> {
     let value = value.map_or_else(|| format!("cli-{}", uuid::Uuid::now_v7()), str::to_owned);
     IdempotencyKey::parse(&value).map_err(|error| RuntimeError::usage(error.to_string()))
+}
+
+pub(crate) fn workspace_key_scopes(values: &[String]) -> Result<Vec<ScopeId>, RuntimeError> {
+    const DEFAULTS: &[ScopeId] = &[
+        ScopeId::SessionsRead,
+        ScopeId::SessionsWrite,
+        ScopeId::SessionsDelete,
+        ScopeId::ResourcesRead,
+        ScopeId::ResourcesWrite,
+    ];
+    if values.is_empty() {
+        return Ok(DEFAULTS.to_vec());
+    }
+    values
+        .iter()
+        .map(|value| {
+            ScopeId::parse(value)
+                .filter(|scope| DEFAULTS.contains(scope))
+                .ok_or_else(|| {
+                    RuntimeError::usage(format!("invalid workspace API-key scope {value}"))
+                })
+        })
+        .collect()
 }
 
 fn new_operation_id() -> OperationId {
@@ -1256,6 +1403,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn version_contract_identity_matches_the_generated_bundle() {
+        let lock = include_str!("../../../api/generated/bundle.lock.json");
+        assert!(lock.contains(&format!("sha256:{CONTRACT_SHORT_ID}")));
+    }
+
+    #[test]
     fn command_plane_selects_the_exact_credential_and_missing_central_fails_before_http() {
         let profile = Profile {
             api_key_ref: Some("env:WORKSPACE_KEY".to_owned()),
@@ -1276,6 +1429,17 @@ mod tests {
                 .as_str(),
             "aex_ds_central"
         );
+        let account = Command::Account {
+            command: AccountCommand::Bootstrap,
+        };
+        let api_key = Command::ApiKey {
+            command: ApiKeyCommand::List(crate::cli::PageArgs {
+                cursor: None,
+                limit: None,
+            }),
+        };
+        assert_eq!(credential_plane(&account), CredentialPlane::Central);
+        assert_eq!(credential_plane(&api_key), CredentialPlane::Central);
         let regional = Command::Session {
             command: SessionCommand::Get {
                 session: "ses_0000000000e0081040g2081040".to_owned(),
@@ -1293,6 +1457,26 @@ mod tests {
             resolve_plane_credential(&profile, &missing, CredentialPlane::Central).is_err(),
             "billing must fail before building or sending an HTTP request"
         );
+    }
+
+    #[test]
+    fn workspace_key_scopes_default_to_the_five_regional_scopes() {
+        assert_eq!(
+            workspace_key_scopes(&[]).expect("defaults"),
+            vec![
+                ScopeId::SessionsRead,
+                ScopeId::SessionsWrite,
+                ScopeId::SessionsDelete,
+                ScopeId::ResourcesRead,
+                ScopeId::ResourcesWrite,
+            ]
+        );
+        assert_eq!(
+            workspace_key_scopes(&["sessions:read".to_owned(), "resources:write".to_owned(),])
+                .expect("explicit scopes"),
+            vec![ScopeId::SessionsRead, ScopeId::ResourcesWrite]
+        );
+        assert!(workspace_key_scopes(&["billing:read".to_owned()]).is_err());
     }
 
     #[test]
@@ -1324,5 +1508,15 @@ mod tests {
         let debug = format!("{central:?} {regional:?}");
         assert!(!debug.contains("central_secret"));
         assert!(!debug.contains("regional_secret"));
+
+        let base = BaseUrl::parse("https://api.example").expect("base");
+        let anonymous = HttpTransport::anonymous(base).expect("anonymous");
+        let request = aex_wire::client::auth_config_get_request().expect("request");
+        let anonymous_request = anonymous
+            .request(&request)
+            .expect("builder")
+            .build()
+            .expect("HTTP request");
+        assert!(!anonymous_request.headers().contains_key(AUTHORIZATION));
     }
 }

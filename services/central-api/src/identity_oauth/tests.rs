@@ -1,8 +1,9 @@
 use super::{
-    Endpoints, HandshakeError, OauthClient, OauthClientError, challenge_of, google_profile, redact,
-    state_matches,
+    CLI_REDIRECT_URI, Endpoints, HandshakeError, HttpProviderHandshake, OauthClient,
+    OauthClientError, ProviderHandshake, challenge_of, google_profile, redact, state_matches,
 };
 use aex_identity_domain::Provider;
+use aex_wire::models::AuthClient;
 use base64::Engine as _;
 use time::OffsetDateTime;
 
@@ -84,6 +85,25 @@ fn oauth_clients_refuse_blank_halves_and_never_debug_the_secret() {
     let debug = format!("{client:?}");
     assert!(debug.contains("google-client"));
     assert!(!debug.contains("google-secret"));
+}
+
+#[test]
+fn the_client_discriminator_selects_only_compiled_callbacks() {
+    let handshake = HttpProviderHandshake::new(
+        OauthClient::new("google-client", "google-secret").expect("client"),
+        "https://dev.aex.dev/api/auth/callback".to_owned(),
+        std::time::Duration::from_secs(10),
+    )
+    .expect("handshake");
+    assert_eq!(handshake.public_client_id(), "google-client");
+    assert_eq!(
+        handshake.redirect_uri(AuthClient::Dashboard).as_str(),
+        "https://dev.aex.dev/api/auth/callback"
+    );
+    assert_eq!(
+        handshake.redirect_uri(AuthClient::Cli).as_str(),
+        CLI_REDIRECT_URI
+    );
 }
 
 #[test]

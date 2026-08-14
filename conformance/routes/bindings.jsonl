@@ -1,6 +1,7 @@
 {"bindings":{},"method":"POST","operationId":"api_key_create","path":"/api/api-keys","plane":"central"}
 {"bindings":{"apiKeyId":"key_01kyw2qa4ne00r40r40m30e209"},"method":"DELETE","operationId":"api_key_revoke","path":"/api/api-keys/key_01kyw2qa4ne00r40r40m30e209","plane":"central"}
 {"bindings":{},"method":"GET","operationId":"api_keys_list","path":"/api/api-keys","plane":"central"}
+{"bindings":{},"method":"GET","operationId":"auth_config_get","path":"/api/auth/config","plane":"central"}
 {"bindings":{},"method":"GET","operationId":"billing_balance_get","path":"/api/billing/balance","plane":"central"}
 {"bindings":{"paymentMethodId":"pmt_01kyw2qa4ne00r40r40m30e209"},"method":"DELETE","operationId":"billing_payment_method_delete","path":"/api/billing/payment-methods/pmt_01kyw2qa4ne00r40r40m30e209","plane":"central"}
 {"bindings":{},"method":"POST","operationId":"billing_payment_method_session_create","path":"/api/billing/payment-method-sessions","plane":"central"}

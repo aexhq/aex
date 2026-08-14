@@ -47,6 +47,16 @@ pub struct Cli {
 /// The complete launch command surface.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Provision or inspect the signed-in personal account and workspace.
+    Account {
+        #[command(subcommand)]
+        command: AccountCommand,
+    },
+    /// Mint, list, and revoke fixed-workspace API keys.
+    ApiKey {
+        #[command(subcommand)]
+        command: ApiKeyCommand,
+    },
     /// Create and manage durable sessions.
     Session {
         #[command(subcommand)]
@@ -79,6 +89,35 @@ pub enum Command {
     },
     /// Print CLI and contract identity.
     Version,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AccountCommand {
+    /// Sign in with Google, provision the personal account, and mint its first workspace key.
+    Create {
+        /// Display name for the first workspace key.
+        #[arg(long)]
+        name: String,
+    },
+    /// Read the signed-in personal account and fixed workspace.
+    Bootstrap,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ApiKeyCommand {
+    /// Mint a workspace API key. Its secret value is returned only by this command.
+    Create {
+        /// Display name for the key.
+        #[arg(long)]
+        name: String,
+        /// Workspace scope to grant. Repeat to grant several; defaults to all workspace scopes.
+        #[arg(long, value_parser = ["sessions:read", "sessions:write", "sessions:delete", "resources:read", "resources:write"])]
+        scope: Vec<String>,
+    },
+    /// List API-key metadata for the fixed workspace.
+    List(#[command(flatten)] PageArgs),
+    /// Revoke an API key by ID.
+    Revoke { api_key: String },
 }
 
 #[derive(Debug, Subcommand)]

@@ -1,6 +1,6 @@
 ---
 title: AEX documentation
-description: Build a file-aware, tool-using agent session with the public TypeScript SDK.
+description: Create a personal account, then build a file-aware, tool-using agent session with the public SDK.
 ---
 
 # AEX documentation
@@ -12,6 +12,54 @@ the session and point the model to mounted files by path. There is no public run
 resource, file revision API, or attachment field.
 
 ## Quickstart
+
+### Create the account and first workspace key
+
+The minimal onboarding path is the native CLI:
+
+```sh
+aex account create --name first-workspace-key --output json
+```
+
+This command needs no existing AEX credential. It opens Google sign-in in your
+system browser, completes an S256 PKCE exchange through the fixed local
+callback, provisions your personal account and its one fixed workspace if
+needed, and mints a workspace key with all five workspace scopes. The browser
+must be available on the same machine, and `127.0.0.1:53682` must be free for
+the callback.
+
+The output contains `accountId`, `accountState`, `email`, `userId`, `workspace`,
+and `apiKey`. Store `apiKey.value` immediately in your secret manager: it is
+returned once and cannot be recovered. Use it as `AEX_WORKSPACE_API_KEY` with
+the SDK or `AEX_API_KEY` with the CLI. Do not save the whole command output in
+source control; if the value is lost, mint a replacement.
+
+`account create` closes its temporary dashboard session and never saves or
+prints that session credential. When an automation environment already has a
+dashboard session from the supported Google sign-in, expose it through
+`AEX_DASHBOARD_SESSION` or store only a non-secret reference to it:
+
+```sh
+aex config set dashboard-session-ref env:AEX_DASHBOARD_SESSION
+aex account bootstrap
+aex api-key create --name automation
+aex api-key list
+aex api-key revoke "$API_KEY_ID"
+```
+
+`account bootstrap` prints the current personal account and fixed workspace.
+`api-key create` prints only the new one-time key value in text mode; JSON and
+NDJSON include its metadata. Omit `--scope` for all workspace scopes, or repeat
+it to select from `sessions:read`, `sessions:write`, `sessions:delete`,
+`resources:read`, and `resources:write`. Listing returns metadata only, and
+revocation takes the key ID, never the secret value.
+
+The launch surface deliberately has no organization or multi-workspace CRUD,
+device authorization, account-token flow, or admin fabrication command. Fresh
+account creation therefore requires the Google browser-and-PKCE ceremony; the
+CLI does not bypass identity verification for unattended provisioning.
+
+### Start a session
 
 Install `@aexhq/sdk`, then provide one workspace API key and the provider key
 that this session will encrypt and own.

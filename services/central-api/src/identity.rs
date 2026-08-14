@@ -12,13 +12,15 @@ use aex_identity_app::{IdentityError, RequestId};
 use aex_identity_domain::SecretRng;
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::ids::{PrefixedId as _, UserId, Uuid7};
-use aex_wire::models::{DashboardSessionCredential, DashboardSessionRequest};
+use aex_wire::models::{CliAuthConfig, DashboardSessionCredential, DashboardSessionRequest};
 use aex_wire::server::{AuthApi, Created, NoContent};
 use aex_wire::types::Timestamp;
 
-use crate::identity_oauth::{HandshakeError, ProviderHandshake};
+use crate::identity_oauth::{
+    CLI_REDIRECT_URI, GOOGLE_AUTHORIZATION_ENDPOINT, HandshakeError, ProviderHandshake,
+};
 
-/// The two-route Google session service.
+/// The public Google configuration and two session operations.
 pub struct AuthService {
     store: Arc<dyn IdentityStore>,
     provisioner: Arc<dyn PersonalAccountProvisioner>,
@@ -87,7 +89,25 @@ impl AuthService {
     }
 }
 
+fn cli_auth_config(client_id: &str) -> WireResult<CliAuthConfig> {
+    Ok(CliAuthConfig {
+        client_id: client_id.to_owned(),
+        authorization_url: aex_wire::types::HttpsUrl::parse(GOOGLE_AUTHORIZATION_ENDPOINT)
+            .map_err(|error| {
+                WireError::new(ErrorCode::InternalError).with_message(error.to_string())
+            })?,
+        redirect_uri: CLI_REDIRECT_URI.to_owned(),
+    })
+}
+
 impl AuthApi for AuthService {
+    async fn auth_config_get(
+        &self,
+        _cx: &aex_wire::server::RequestContext,
+    ) -> WireResult<CliAuthConfig> {
+        cli_auth_config(self.handshake.public_client_id())
+    }
+
     async fn dashboard_session_create(
         &self,
         cx: &aex_wire::server::RequestContext,
@@ -99,7 +119,7 @@ impl AuthApi for AuthService {
         }
         let profile = self
             .handshake
-            .identify(&body.code, &body.code_verifier)
+            .identify(body.client, &body.code, &body.code_verifier)
             .await
             .map_err(handshake_failure)?;
         let context = self.context(cx);
@@ -174,7 +194,7 @@ mod tests {
     use aex_wire::error::ErrorCode;
     use aex_wire::routes::{RouteId, route};
 
-    use super::personal_account_failure;
+    use super::{cli_auth_config, personal_account_failure};
 
     #[test]
     fn provisioning_failure_uses_a_code_declared_by_google_sign_in() {
@@ -184,6 +204,24 @@ mod tests {
             route(RouteId::DashboardSessionCreate)
                 .errors
                 .contains(&produced)
+        );
+    }
+
+    #[test]
+    fn cli_discovery_returns_only_public_fixed_google_configuration() {
+        let config = cli_auth_config("google-client.apps.googleusercontent.com")
+            .expect("compiled configuration is valid");
+        assert_eq!(config.client_id, "google-client.apps.googleusercontent.com");
+        assert_eq!(
+            config.authorization_url.as_str(),
+            crate::identity_oauth::GOOGLE_AUTHORIZATION_ENDPOINT
+        );
+        assert_eq!(config.redirect_uri, crate::identity_oauth::CLI_REDIRECT_URI);
+        let rendered = serde_json::to_value(config).expect("configuration serializes");
+        assert_eq!(
+            rendered.as_object().expect("object").keys().count(),
+            3,
+            "the public response must not grow secret or mutable callback fields"
         );
     }
 }

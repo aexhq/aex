@@ -29,6 +29,11 @@ pub struct CommandRegistryEntry {
 #[must_use]
 pub fn command_registry() -> Vec<CommandRegistryEntry> {
     const ENTRIES: &[(&str, &str)] = &[
+        ("account create", "auth_config_get"),
+        ("account bootstrap", "dashboard_bootstrap_get"),
+        ("api-key create", "api_key_create"),
+        ("api-key list", "api_keys_list"),
+        ("api-key revoke", "api_key_revoke"),
         ("session create", "session_create"),
         ("session list", "sessions_list"),
         ("session get", "session_get"),

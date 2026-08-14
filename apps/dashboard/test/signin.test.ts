@@ -58,6 +58,7 @@ describe("provider configuration", () => {
     expect(configuredProviders(environment)).toEqual(["google"]);
     expect(isProviderId("github")).toBe(false);
     expect(DashboardSessionRequestSchema.safeParse({
+      client: "dashboard",
       code: "one-use-code",
       state: STATE,
       codeVerifier: VERIFIER,
@@ -151,7 +152,7 @@ describe("the dedicated identity transport", () => {
       },
     });
     const credential = await openDashboardSession(
-      { code: "one-use-code", state: STATE, codeVerifier: VERIFIER },
+      { client: "dashboard", code: "one-use-code", state: STATE, codeVerifier: VERIFIER },
       transport,
     );
     expect(credential.session).toBe("aex_ds_fixture_1234");
@@ -163,6 +164,7 @@ describe("the dedicated identity transport", () => {
     });
     expect(requests[0]!.headers.get("authorization")).toBeNull();
     expect(JSON.parse(new TextDecoder().decode(requests[0]!.body))).toEqual({
+      client: "dashboard",
       code: "one-use-code",
       codeVerifier: VERIFIER,
       state: STATE,

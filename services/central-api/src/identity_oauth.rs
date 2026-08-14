@@ -32,12 +32,19 @@
 use aex_identity_app::use_cases::OauthProfile;
 use subtle::ConstantTimeEq as _;
 
+use aex_wire::models::AuthClient;
+
 mod client;
 mod http;
 mod profile;
 
 pub use client::{OauthClient, OauthClientError, load_oauth_client};
 pub use http::{ClientBuildError, HttpProviderHandshake};
+
+/// Google's authorization endpoint used by both first-party clients.
+pub const GOOGLE_AUTHORIZATION_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+/// The only callback URI an authorization code issued to the native CLI may use.
+pub const CLI_REDIRECT_URI: &str = "http://127.0.0.1:53682/callback";
 
 #[cfg(test)]
 use http::{Endpoints, redact};
@@ -111,12 +118,20 @@ pub fn state_matches(verifier: &str, state: &str) -> bool {
 /// composition tests can drive the ceremony without a network.
 #[async_trait::async_trait]
 pub trait ProviderHandshake: Send + Sync + std::fmt::Debug {
+    /// The public Google OAuth client identifier used to start authorization.
+    fn public_client_id(&self) -> &str;
+
     /// Redeems a single-use authorization code and reads who authorized it.
     ///
     /// # Errors
     ///
     /// Returns [`HandshakeError`] naming what the provider did.
-    async fn identify(&self, code: &str, verifier: &str) -> Result<OauthProfile, HandshakeError>;
+    async fn identify(
+        &self,
+        client: AuthClient,
+        code: &str,
+        verifier: &str,
+    ) -> Result<OauthProfile, HandshakeError>;
 }
 
 #[cfg(test)]

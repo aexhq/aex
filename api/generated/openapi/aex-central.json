@@ -241,6 +241,13 @@
         ],
         "type": "object"
       },
+      "AuthClient": {
+        "enum": [
+          "dashboard",
+          "cli"
+        ],
+        "type": "string"
+      },
       "BillingBalance": {
         "additionalProperties": false,
         "properties": {
@@ -547,6 +554,35 @@
         ],
         "type": "string"
       },
+      "CliAuthConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "authorizationUrl": {
+            "description": "Google's pinned authorization endpoint.",
+            "format": "uri",
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "clientId": {
+            "description": "The public Google OAuth client identifier.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "redirectUri": {
+            "description": "The exact fixed CLI loopback callback URI registered with Google.",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorizationUrl",
+          "clientId",
+          "redirectUri"
+        ],
+        "type": "object"
+      },
       "Currency": {
         "enum": [
           "USD"
@@ -609,7 +645,7 @@
             "x-aex-time": "rfc3339-ms"
           },
           "session": {
-            "description": "Bearer credential for an `HttpOnly` cookie.",
+            "description": "Bearer credential held only in a dashboard `HttpOnly` cookie or transient CLI memory.",
             "maxLength": 4096,
             "minLength": 16,
             "type": "string"
@@ -631,6 +667,10 @@
       "DashboardSessionRequest": {
         "additionalProperties": false,
         "properties": {
+          "client": {
+            "$ref": "aex:schema:AuthClient",
+            "description": "Which registered first-party callback received the authorization code."
+          },
           "code": {
             "description": "Single-use Google authorization code.",
             "maxLength": 2048,
@@ -651,6 +691,7 @@
           }
         },
         "required": [
+          "client",
           "code",
           "codeVerifier",
           "state"
@@ -1269,7 +1310,7 @@
         "tags": [
           "api-keys"
         ],
-        "x-aex-alt-principal": null,
+        "x-aex-alt-principal": "user_session",
         "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",
@@ -1397,7 +1438,7 @@
         "tags": [
           "api-keys"
         ],
-        "x-aex-alt-principal": null,
+        "x-aex-alt-principal": "user_session",
         "x-aex-body-class": "aex_json",
         "x-aex-errors": [
           "unauthenticated",
@@ -1509,7 +1550,7 @@
         "tags": [
           "api-keys"
         ],
-        "x-aex-alt-principal": null,
+        "x-aex-alt-principal": "user_session",
         "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",
@@ -1525,6 +1566,50 @@
         "x-aex-pause-exempt": true,
         "x-aex-safe-retry": false,
         "x-aex-scope": "api_keys:write",
+        "x-aex-transport": "unary"
+      }
+    },
+    "/api/auth/config": {
+      "get": {
+        "operationId": "auth_config_get",
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:CliAuthConfig"
+                }
+              }
+            },
+            "description": "Success."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          }
+        },
+        "summary": "Read the public Google OAuth configuration required by the native CLI.",
+        "tags": [
+          "auth"
+        ],
+        "x-aex-alt-principal": "anonymous",
+        "x-aex-body-class": "none",
+        "x-aex-errors": [
+          "internal_error"
+        ],
+        "x-aex-etag": "none",
+        "x-aex-idempotency": "none",
+        "x-aex-pause-exempt": false,
+        "x-aex-safe-retry": true,
+        "x-aex-scope": null,
         "x-aex-transport": "unary"
       }
     },
@@ -1604,7 +1689,7 @@
             "description": "Error."
           }
         },
-        "summary": "Exchange a provider authorization code for a browser session.",
+        "summary": "Exchange a provider authorization code for a first-party user session.",
         "tags": [
           "auth"
         ],
@@ -1675,7 +1760,7 @@
             "description": "Error."
           }
         },
-        "summary": "Close the browser session the caller presented.",
+        "summary": "Close the first-party user session the caller presented.",
         "tags": [
           "auth"
         ],
@@ -1747,7 +1832,7 @@
         "tags": [
           "billing"
         ],
-        "x-aex-alt-principal": null,
+        "x-aex-alt-principal": "user_session",
         "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",
@@ -1853,7 +1938,7 @@
         "tags": [
           "billing"
         ],
-        "x-aex-alt-principal": null,
+        "x-aex-alt-principal": "user_session",
         "x-aex-body-class": "aex_json",
         "x-aex-errors": [
           "unauthenticated",
@@ -1933,7 +2018,7 @@
         "tags": [
           "billing"
         ],
-        "x-aex-alt-principal": null,
+        "x-aex-alt-principal": "user_session",
         "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",
@@ -2026,7 +2111,7 @@
         "tags": [
           "billing"
         ],
-        "x-aex-alt-principal": null,
+        "x-aex-alt-principal": "user_session",
         "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",
@@ -2135,7 +2220,7 @@
         "tags": [
           "billing"
         ],
-        "x-aex-alt-principal": null,
+        "x-aex-alt-principal": "user_session",
         "x-aex-body-class": "aex_json",
         "x-aex-errors": [
           "unauthenticated",
@@ -2228,7 +2313,7 @@
         "tags": [
           "billing"
         ],
-        "x-aex-alt-principal": null,
+        "x-aex-alt-principal": "user_session",
         "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",
@@ -2370,7 +2455,7 @@
         "tags": [
           "billing"
         ],
-        "x-aex-alt-principal": null,
+        "x-aex-alt-principal": "user_session",
         "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",

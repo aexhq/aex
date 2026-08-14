@@ -23,7 +23,7 @@ describe("the documentation content model", () => {
       "streaming-and-telemetry",
       "credentials-and-billing",
     ]);
-    expect(page.blocks.filter((block) => block.kind === "code")).toHaveLength(4);
+    expect(page.blocks.filter((block) => block.kind === "code")).toHaveLength(6);
   });
 
   test("documents the exact session-centered SDK instead of removed resources", () => {
@@ -36,6 +36,10 @@ describe("the documentation content model", () => {
       "responseFormat",
       "dashboardSession",
       "storage.persist",
+      "aex account create",
+      "aex account bootstrap",
+      "aex api-key create",
+      "Google browser-and-PKCE",
     ]) {
       expect(source).toContain(current);
     }

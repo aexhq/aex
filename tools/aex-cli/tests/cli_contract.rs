@@ -13,6 +13,8 @@ fn clap_tree_is_the_exact_session_centered_surface() {
     assert_eq!(
         names(&command),
         set([
+            "account",
+            "api-key",
             "session",
             "message",
             "file",
@@ -21,6 +23,14 @@ fn clap_tree_is_the_exact_session_centered_surface() {
             "config",
             "version"
         ])
+    );
+    assert_eq!(
+        subcommands(&command, "account"),
+        set(["bootstrap", "create"])
+    );
+    assert_eq!(
+        subcommands(&command, "api-key"),
+        set(["create", "list", "revoke"])
     );
     assert_eq!(
         subcommands(&command, "session"),
@@ -59,7 +69,6 @@ fn removed_product_nouns_and_secret_arguments_are_absent_from_help() {
     let help = String::from_utf8(help).expect("UTF-8 help");
     for removed in [
         "auth",
-        "account",
         "org",
         "approval",
         "operation",
@@ -79,7 +88,51 @@ fn removed_product_nouns_and_secret_arguments_are_absent_from_help() {
             "removed surface returned in help: {removed}\n{help}"
         );
     }
-    assert!(help.contains("AEX_API_KEY") || !help.contains("API key"));
+}
+
+#[test]
+fn account_and_api_key_arguments_are_minimal_and_scope_is_repeatable() {
+    assert!(Cli::try_parse_from(["aex", "account", "bootstrap"]).is_ok());
+    assert!(
+        Cli::try_parse_from(["aex", "account", "create", "--name", "first-workspace-key",]).is_ok()
+    );
+    assert!(Cli::try_parse_from(["aex", "account", "create"]).is_err());
+    assert!(
+        Cli::try_parse_from([
+            "aex",
+            "api-key",
+            "create",
+            "--name",
+            "automation",
+            "--scope",
+            "sessions:read",
+            "--scope",
+            "resources:write",
+        ])
+        .is_ok()
+    );
+    assert!(
+        Cli::try_parse_from(["aex", "api-key", "create", "--name", "automation"]).is_ok(),
+        "omitting --scope selects the workspace-key defaults at execution"
+    );
+    assert!(
+        Cli::try_parse_from([
+            "aex",
+            "api-key",
+            "create",
+            "--name",
+            "automation",
+            "--scope",
+            "billing:write",
+        ])
+        .is_err(),
+        "dashboard-session scopes are not workspace-key scopes"
+    );
+    assert!(Cli::try_parse_from(["aex", "api-key", "list"]).is_ok());
+    assert!(
+        Cli::try_parse_from(["aex", "api-key", "revoke", "key_0000000000e0081040g2081040",])
+            .is_ok()
+    );
 }
 
 #[test]
@@ -148,7 +201,7 @@ fn command_registry_is_exact_deterministic_route_backed_and_live() {
     assert_eq!(first, second);
 
     let registry = command_registry();
-    assert_eq!(registry.len(), 24);
+    assert_eq!(registry.len(), 29);
     let mut routes = BTreeSet::new();
     for entry in registry {
         assert_eq!(

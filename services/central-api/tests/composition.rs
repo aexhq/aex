@@ -6,14 +6,21 @@ use aex_wire::server::{API_KEYS_ROUTES, AUTH_ROUTES, BILLING_ROUTES, BOOTSTRAP_R
 use central_api::{PERMISSIONS, manifest};
 
 #[test]
-fn the_public_control_surface_is_exactly_thirteen_routes() {
+fn the_public_control_surface_is_exactly_fourteen_routes() {
     assert_eq!(API_KEYS_ROUTES.len(), 3);
-    assert_eq!(AUTH_ROUTES.len(), 2);
+    assert_eq!(
+        AUTH_ROUTES,
+        &[
+            RouteId::AuthConfigGet,
+            RouteId::DashboardSessionCreate,
+            RouteId::DashboardSessionDelete,
+        ]
+    );
     assert_eq!(BILLING_ROUTES.len(), 7);
     assert_eq!(BOOTSTRAP_ROUTES, &[RouteId::DashboardBootstrapGet]);
     assert_eq!(
         API_KEYS_ROUTES.len() + AUTH_ROUTES.len() + BILLING_ROUTES.len() + BOOTSTRAP_ROUTES.len(),
-        13
+        14
     );
 }
 

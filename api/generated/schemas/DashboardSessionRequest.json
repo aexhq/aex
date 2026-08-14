@@ -2,8 +2,12 @@
   "$id": "https://schemas.aex.dev/v1/DashboardSessionRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Complete a Google OAuth browser sign-in using PKCE-bound state.",
+  "description": "Complete a Google OAuth sign-in using PKCE-bound state and one registered first-party callback.",
   "properties": {
+    "client": {
+      "$ref": "aex:schema:AuthClient",
+      "description": "Which registered first-party callback received the authorization code."
+    },
     "code": {
       "description": "Single-use Google authorization code.",
       "maxLength": 2048,
@@ -24,6 +28,7 @@
     }
   },
   "required": [
+    "client",
     "code",
     "codeVerifier",
     "state"
