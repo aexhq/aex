@@ -248,7 +248,7 @@ secrecy = { version = "0.10.3", features = ["serde"] }
 rustix = { version = "1.1.4", default-features = false, features = ["std", "time", "process", "thread"] }
 
 # --- protocol adapters -------------------------------------------------------
-rmcp = { version = "=3.1.0", default-features = false, features = ["client"] }
+rmcp = { version = "=3.1.2", default-features = false, features = ["client"] }
 
 # --- deterministic archive packaging (aex-release-tool only) -----------------
 # The release tool writes ZIP and tar.gz archives itself rather than delegating
