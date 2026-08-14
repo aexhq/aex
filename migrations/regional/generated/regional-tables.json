@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:2d42d5ec8a562ac11a636bca866f54962f09cfcc1a038ce8fbcb067796712de8",
+  "digest": "blake3:64c4b6dd322313aada4bc75aaef1d3221381b66bfb9de0e3e2b060712ac5b7db",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -805,6 +805,7 @@
           "actions": [
             "dynamodb:GetItem",
             "dynamodb:Query",
+            "dynamodb:DescribeTable",
             "dynamodb:TransactWriteItems",
             "dynamodb:UpdateItem",
             "dynamodb:PutItem"

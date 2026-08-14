@@ -147,6 +147,37 @@ fn every_manifest_uses_real_dynamodb_iam_actions() {
 }
 
 #[test]
+fn every_startup_table_metadata_probe_is_declared_on_its_exact_authority() {
+    let bundle = tables::rebuild().expect("the definitions load");
+    for (role, table_name) in [
+        ("session-api", "session-authority"),
+        ("runtime-control-worker", "runtime-activity"),
+        ("runtime-control-worker", "session-authority"),
+    ] {
+        let table = bundle
+            .tables
+            .iter()
+            .find(|table| table.table == table_name)
+            .unwrap_or_else(|| panic!("startup authority `{table_name}` is declared"));
+        let grants = table
+            .iam
+            .iter()
+            .filter(|grant| grant.role == role)
+            .collect::<Vec<_>>();
+        assert!(
+            grants.iter().any(|grant| {
+                grant.resources.iter().any(|resource| resource == "table")
+                    && grant
+                        .actions
+                        .iter()
+                        .any(|action| action == "dynamodb:DescribeTable")
+            }),
+            "startup probe `{role}` -> `{table_name}` lacks exact table metadata-read authority: {grants:?}"
+        );
+    }
+}
+
+#[test]
 fn the_session_maintenance_worker_can_read_only_exact_runtime_generations() {
     let tables = tables::rebuild().expect("the definitions load");
     let runtime = tables

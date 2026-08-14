@@ -125,6 +125,7 @@
       "actions": [
         "dynamodb:GetItem",
         "dynamodb:Query",
+        "dynamodb:DescribeTable",
         "dynamodb:TransactWriteItems",
         "dynamodb:UpdateItem",
         "dynamodb:PutItem"
