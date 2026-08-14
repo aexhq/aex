@@ -260,7 +260,7 @@ fn every_cursor_binding_field_is_authenticated() {
     let ring = CursorKeyRing::new(key, vec![]).expect("ring");
     let mut variants = Vec::new();
     let mut changed = binding();
-    changed.route = RouteId::RegionalOperationsList;
+    changed.route = RouteId::SessionGet;
     variants.push(changed);
     let mut changed = binding();
     changed.principal_scope = [8; 32];
@@ -368,7 +368,7 @@ fn the_intent_is_salted_by_the_scope_rather_than_a_bare_body_digest() {
         principal: "key_1",
         organization: "org_1",
         workspace: workspace(1),
-        route: RouteId::ProviderCredentialRegister,
+        route: RouteId::SessionCreate,
         method: HttpMethod::Post,
     };
     let second = IdentityContext {
@@ -552,7 +552,7 @@ fn edge_precedence_is_the_complete_wire_table() {
 
 #[test]
 fn every_generated_regional_route_has_exactly_one_planned_owner() {
-    use aex_regional_http::router::{RouteOwner, route_owner};
+    use aex_regional_http::router::route_owner;
 
     for id in RouteId::ALL {
         if route(*id).plane == Plane::Regional {
@@ -565,13 +565,6 @@ fn every_generated_regional_route_has_exactly_one_planned_owner() {
         } else {
             assert_eq!(route_owner(*id), None, "{id}");
         }
-    }
-    assert_eq!(
-        route_owner(RouteId::ProviderCredentialRegister),
-        Some(RouteOwner::SessionApi)
-    );
-    for id in [RouteId::WorkspaceLimitGet, RouteId::WorkspaceLimitsList] {
-        assert_eq!(route_owner(id), Some(RouteOwner::SessionApi), "`{id}`");
     }
 }
 

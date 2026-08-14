@@ -15,7 +15,7 @@ use aex_wire::ids::{ContentHash, PrefixedId as _, ResourceName, Uuid7, Workspace
 use aex_wire::models;
 use aex_wire::types::{ETag, Timestamp};
 use aex_workspace_domain::registry::{
-    RegistryPointer, RegistryRow as StoredRegistryRow, ValueDocument,
+    RegistryPointer, RegistryRow as StoredRegistryRow, RegistryState, ValueDocument,
 };
 
 fn workspace() -> WorkspaceId {
@@ -135,6 +135,8 @@ fn registry_row(kind: RegistryKind, name: &str) -> StoredRegistryRow {
         etag: ETag::parse("\"registry-7\"").expect("a strong validator"),
         sha256: ContentHash::of(b"body"),
         size_bytes: 4_096,
+        state: RegistryState::Ready,
+        failure_code: None,
         created_at: moment("2026-08-01T12:34:56.789Z"),
         updated_at: moment("2026-08-01T13:00:00.000Z"),
     }
