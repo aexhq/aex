@@ -401,7 +401,7 @@ fn validate_credential_file(path: &Path) -> Result<(), CliConfigError> {
         .map_err(|_| CliConfigError::ApiKeyUnavailable)?
         .permissions()
         .mode();
-    if mode & 0o077 == 0 {
+    if credentials_mode_is_private(mode) {
         Ok(())
     } else {
         Err(CliConfigError::InsecureCredentialFile)
