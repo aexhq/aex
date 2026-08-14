@@ -17,7 +17,6 @@ async fn an_attached_start_completes_in_place_and_polls_nothing() {
         generation: generation(),
         exit_code: 0,
         inline: Some(body.to_owned()),
-        placed: None,
         sandbox_file: None,
         truncated: false,
         duration_ms: 4,

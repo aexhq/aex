@@ -78,8 +78,6 @@ pub struct Shared {
     pub deployment: aex_session_app::DeploymentFacts,
     /// Exact-generation authenticated guest transport for ephemeral live files.
     pub live_files: Arc<dyn aex_brain_hands::LiveFileBackend>,
-    /// Bounded remote and exact-generation sandbox MCP qualification.
-    pub mcp_qualifier: Arc<dyn super::mcp_readiness::SessionMcpQualifier>,
     /// Write-only session provider-key encryption and custody.
     pub provider_keys: Arc<dyn aex_session_app::ProviderCredentialReader>,
     /// The named-registry authority.

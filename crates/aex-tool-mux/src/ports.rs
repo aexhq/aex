@@ -1,38 +1,44 @@
 use core::future::Future;
 use core::pin::Pin;
-use std::collections::BTreeMap;
 
 use aex_hands_protocol::operation::GuestPath;
 use aex_hands_protocol::rpc::HandsOperationId;
 use aex_runtime_control::HandId;
-use aex_wire::ids::{ContentHash, GenerationId, ResourceName, SessionId};
+use aex_wire::ids::{GenerationId, SessionId};
 
-use crate::contract::{
-    ExecutorOutput, ReadyHand, RetainedResult, SandboxConfig, ToolCallIdentity, ToolHandle,
-    ToolTarget,
-};
-use crate::telemetry::PreparationProgress;
+use crate::contract::{ExecutorOutput, ReadyHand, ToolCallIdentity, ToolTarget};
 
 /// Sendable boxed future used by every Tool Mux port.
 pub type ToolMuxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Runtime Control boundary. It owns provider lifecycle and durable waiters.
 pub trait RuntimePort: Send + Sync + 'static {
-    /// Starts the eager prepare/materialize/qualify/suspend path once.
-    fn eager_prepare<'a>(
-        &'a self,
-        session: SessionId,
-        sandbox: SandboxConfig,
-    ) -> ToolMuxFuture<'a, Result<Vec<PreparationProgress>, String>>;
-
-    /// Adds a durable waiter and resolves only after the exact generation is ready.
-    fn wait_ready<'a>(
+    /// Starts exact-generation preparation behind a durable waiter and returns promptly.
+    fn start_waiter<'a>(
         &'a self,
         session: SessionId,
         hand: HandId,
         generation: GenerationId,
         call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<ReadyHand, String>>;
+    ) -> ToolMuxFuture<'a, Result<(), String>>;
+
+    /// Polls preparation/readiness without starting another waiter.
+    fn poll_waiter<'a>(
+        &'a self,
+        session: SessionId,
+        hand: HandId,
+        generation: GenerationId,
+        call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<Option<ReadyHand>, String>>;
+
+    /// Cancels an original pre-dispatch waiter, or recovers exact-generation
+    /// readiness after a process restart so the deterministic guest operation
+    /// can be cancelled directly.
+    fn cancel_waiter<'a>(
+        &'a self,
+        generation: GenerationId,
+        call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<Option<ReadyHand>, String>>;
 
     /// Settles the waiter after terminal execution; Runtime Control may suspend.
     fn settle_waiter<'a>(
@@ -54,7 +60,10 @@ pub trait GuestPort: Send + Sync + 'static {
         target: &'a ToolTarget,
         arguments: &'a serde_json::Value,
         call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<Result<ExecutorOutput, HandsOperationId>, String>>;
+        deadline_ms: i64,
+        max_result_bytes: usize,
+        timeout_ms: u32,
+    ) -> ToolMuxFuture<'a, Result<HandsOperationId, String>>;
 
     /// Reads an already accepted guest operation without starting another.
     fn read<'a>(
@@ -69,60 +78,33 @@ pub trait GuestPort: Send + Sync + 'static {
     fn cancel<'a>(
         &'a self,
         ready: ReadyHand,
-        operation: HandsOperationId,
-    ) -> ToolMuxFuture<'a, Result<(), String>>;
-}
-
-/// Qualified Streamable HTTP MCP boundary.
-pub trait McpPort: Send + Sync + 'static {
-    /// Calls one frozen remote tool. This path never asks Runtime Control for a Hand.
-    fn call_remote<'a>(
-        &'a self,
-        endpoint: &'a str,
-        headers: &'a BTreeMap<String, ResourceName>,
-        server: &'a ResourceName,
-        tool: &'a str,
-        arguments: &'a serde_json::Value,
         call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<ExecutorOutput, String>>;
+    ) -> ToolMuxFuture<'a, Result<(), String>>;
 }
 
 /// Narrow latest-only workspace persistence port implemented by file authority.
 pub trait StoragePersistPort: Send + Sync + 'static {
-    /// Streams one exact sandbox file under a single-purpose grant, verifies it,
-    /// and replaces the logical workspace name idempotently.
-    fn persist<'a>(
+    /// Starts a latest-only persistence operation behind a detached handle.
+    fn start_persist<'a>(
         &'a self,
         ready: ReadyHand,
         source: &'a GuestPath,
         logical_name: &'a str,
         media_type: Option<&'a str>,
         call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<ExecutorOutput, String>>;
-}
+    ) -> ToolMuxFuture<'a, Result<(), String>>;
 
-/// Trusted full-result retention boundary.
-pub trait ResultRetentionPort: Send + Sync + 'static {
-    /// Retains a complete small result.
-    fn retain_inline<'a>(
+    /// Reads an already-started persistence operation.
+    fn read_persist<'a>(
         &'a self,
-        call: &'a ToolCallIdentity,
-        body: &'a [u8],
-    ) -> ToolMuxFuture<'a, Result<RetainedResult, String>>;
-
-    /// Streams a full sandbox result to session S3 without guest credentials.
-    fn retain_sandbox_file<'a>(
-        &'a self,
-        call: &'a ToolCallIdentity,
         ready: ReadyHand,
-        path: &'a GuestPath,
-        bytes: u64,
-        hash: ContentHash,
-    ) -> ToolMuxFuture<'a, Result<RetainedResult, String>>;
-
-    /// Reads or cancels a detached result already represented by a durable handle.
-    fn read_handle<'a>(
-        &'a self,
-        handle: &'a ToolHandle,
+        call: &'a ToolCallIdentity,
     ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>>;
+
+    /// Best-effort cancellation of one persistence operation.
+    fn cancel_persist<'a>(
+        &'a self,
+        ready: ReadyHand,
+        call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<(), String>>;
 }

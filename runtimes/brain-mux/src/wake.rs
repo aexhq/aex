@@ -774,30 +774,19 @@ pub async fn aws_bindings(
     queue_url: &str,
     session_table: &str,
     work_table: &str,
-    content_bucket: &str,
-    content_bucket_owner: &str,
-    content_kms_key_arn: &str,
 ) -> AwsBindings {
     let aws = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .region(aws_sdk_dynamodb::config::Region::new(region.to_owned()))
         .load()
         .await;
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
-    let store = Arc::new(
-        aex_brain_store_dynamodb::BrainStore::new(
-            dynamodb.clone(),
-            aex_brain_store_dynamodb::BrainTables {
-                session_authority: session_table.to_owned(),
-                regional_work: work_table.to_owned(),
-            },
-        )
-        .with_checkpoints(aex_brain_store_dynamodb::CheckpointBinding {
-            client: aws_sdk_s3::Client::new(&aws),
-            bucket: content_bucket.to_owned(),
-            expected_owner: content_bucket_owner.to_owned(),
-            kms_key_id: content_kms_key_arn.to_owned(),
-        }),
-    );
+    let store = Arc::new(aex_brain_store_dynamodb::BrainStore::new(
+        dynamodb.clone(),
+        aex_brain_store_dynamodb::BrainTables {
+            session_authority: session_table.to_owned(),
+            regional_work: work_table.to_owned(),
+        },
+    ));
     let queue = Arc::new(aex_brain_store_dynamodb::SqsWakeQueue::new(
         aws_sdk_sqs::Client::new(&aws),
         queue_url.to_owned(),
@@ -874,7 +863,7 @@ pub fn production_ports(
 ) -> Ports {
     Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        checkpoints: Arc::clone(&store) as Arc<_>,
+        checkpoints: Arc::new(aex_brain_app::ports::DisabledContextCheckpointStore),
         effects: Arc::clone(&store) as Arc<_>,
         leases: store,
         wakes,

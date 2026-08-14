@@ -16,7 +16,6 @@ members = [
     "crates/aex-brain-domain",
     "crates/aex-brain-hands",
     "crates/aex-brain-managed-web",
-    "crates/aex-brain-mcp",
     "crates/aex-brain-provider-custody",
     "crates/aex-brain-provider",
     "crates/aex-brain-store-dynamodb",

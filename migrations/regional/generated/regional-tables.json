@@ -93,7 +93,7 @@
       "schema": "aex.regional-table.v1",
       "table": "regional-file-authority",
       "owner": "regional-stores",
-      "purpose": "Latest-only logical workspace files, overwrite intents, upload staging and receipts, immutable content descriptors and session pins. One table makes pointer publication and file lifecycle one authority; prior objects remain private retention details rather than public versions.",
+      "purpose": "Latest-only logical workspace pointers, upload staging and receipts, immutable content descriptors, bodies, pins, grants and lifecycle rows. One table makes pointer publication and file lifecycle one authority; prior objects remain private retention details rather than public versions.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -142,14 +142,17 @@
           "sort": "gcScanSk",
           "sparse": true,
           "projectsRecordBody": false,
-          "rationale": "Only unreferenced immutable objects enter the bounded cleanup index; current pointers and session pins never do.",
+          "rationale": "One sparse index serves bounded mark and sweep over content descriptors and candidates; registry pointers and pins never enter it.",
           "projection": {
             "type": "INCLUDE",
             "attributes": [
               "workspaceId",
               "digestSha256",
-              "objectKey",
+              "placement",
               "sizeBytes",
+              "objectKey",
+              "objectEtag",
+              "gcEpoch",
               "notBefore",
               "state"
             ]
@@ -161,12 +164,11 @@
           "sort": "expiryShardSk",
           "sparse": true,
           "projectsRecordBody": false,
-          "rationale": "Expired grants and abandoned uploads are reclaimed in bounded due pages; TTL is not the cleanup authority.",
+          "rationale": "Download grants are spread over bounded due partitions; cleanup re-reads authority state and never trusts TTL timing.",
           "projection": {
             "type": "INCLUDE",
             "attributes": [
               "workspaceId",
-              "uploadId",
               "contentDigest",
               "expiresAt"
             ]
@@ -175,31 +177,35 @@
       ],
       "stream": {
         "enabled": true,
-        "viewType": "NEW_IMAGE",
+        "viewType": "KEYS_ONLY",
         "consumers": [
           "file-ingest-worker"
         ],
-        "rationale": "The worker needs the current fenced URL/upload intent. Payload bytes stay in S3; stream images contain bounded metadata only."
+        "rationale": "The worker receives pointer keys and performs an authoritative point read before network effects. KEYS_ONLY prevents inline content bodies or value documents from being duplicated into stream storage."
       },
       "timeToLive": {
         "enabled": true,
         "attribute": "expiresAtEpochSeconds",
         "appliesTo": [
-          "idempotency_receipt",
-          "download_grant"
+          "content_pin",
+          "download_grant",
+          "idempotency_receipt"
         ],
-        "rationale": "Receipts and expired grants only. Pending imports, uploads, pointers, descriptors and session pins require explicit fenced cleanup."
+        "rationale": "Grant pins, expired grants and replay receipts only. Uploads, pointers, descriptors and durable pins require explicit fenced cleanup."
       },
       "itemTypes": [
-        "file_pointer",
-        "file_intent",
-        "content_descriptor",
-        "content_pin",
-        "upload",
-        "upload_parts",
-        "download_grant",
+        "registry_pointer",
+        "registry_upload",
+        "registry_upload_parts",
+        "registry_count",
         "idempotency_receipt",
-        "gc_candidate"
+        "content_descriptor",
+        "content_body",
+        "content_pin",
+        "download_grant",
+        "gc_epoch",
+        "gc_candidate",
+        "grant_expiry_cursor"
       ],
       "iam": [
         {

@@ -13,8 +13,8 @@ use aex_session_domain::{
     ActiveMessage, CancellationEpoch, DomainError, EffectId, InterruptReason, LifecycleRevision,
     Lineage, Message, MessagePart, MessageRole, MessageState, MutationGuard, Origin,
     ProviderCredentialPin, ResolvedConfigAuthority, ResolvedConfigDigest, ResolvedMessageBounds,
-    Run, RunOutcome, Session, SessionDeletionHead, SessionLifecycle, SessionRevision,
-    SessionStatus, TerminationReason, WorkAdmission,
+    Run, RunOutcome, SandboxPreparationStatus, Session, SessionDeletionHead, SessionLifecycle,
+    SessionRevision, SessionStatus, TerminationReason, WorkAdmission,
 };
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{
@@ -135,6 +135,8 @@ struct SessionLifecycleV1 {
     revision: u64,
     status: String,
     active: Option<ActiveMessageV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sandbox: Option<String>,
     launched_at: Timestamp,
     expires_at: Timestamp,
     idle_since: Option<Timestamp>,
@@ -182,6 +184,7 @@ impl From<&SessionLifecycle> for SessionLifecycleV1 {
             revision: lifecycle.revision.0,
             status: session_status(lifecycle.status).to_owned(),
             active: lifecycle.active.map(Into::into),
+            sandbox: Some(sandbox_status(lifecycle.sandbox).to_owned()),
             launched_at: lifecycle.launched_at,
             expires_at: lifecycle.expires_at,
             idle_since: lifecycle.idle_since,
@@ -203,6 +206,11 @@ impl SessionLifecycleV1 {
             revision: LifecycleRevision(self.revision),
             status: parse_session_status(&self.status)?,
             active: self.active.map(ActiveMessageV1::decode).transpose()?,
+            sandbox: self
+                .sandbox
+                .map(|status| parse_sandbox_status(&status))
+                .transpose()?
+                .unwrap_or_else(|| legacy_sandbox_status(self.generation, &self.status)),
             launched_at: self.launched_at,
             expires_at: self.expires_at,
             idle_since: self.idle_since,
@@ -1310,6 +1318,44 @@ fn parse_session_status(text: &str) -> Result<SessionStatus, CodecError> {
         "terminated" => Ok(SessionStatus::Terminated),
         "deleting" => Ok(SessionStatus::Deleting),
         _ => Err(malformed(AUTHORITY_DOCUMENT, "unknown session status")),
+    }
+}
+
+const fn sandbox_status(status: SandboxPreparationStatus) -> &'static str {
+    match status {
+        SandboxPreparationStatus::Disabled => "disabled",
+        SandboxPreparationStatus::Requested => "requested",
+        SandboxPreparationStatus::Ready => "ready",
+        SandboxPreparationStatus::Suspended => "suspended",
+        SandboxPreparationStatus::Lost => "lost",
+    }
+}
+
+fn parse_sandbox_status(text: &str) -> Result<SandboxPreparationStatus, CodecError> {
+    match text {
+        "disabled" => Ok(SandboxPreparationStatus::Disabled),
+        "requested" => Ok(SandboxPreparationStatus::Requested),
+        "ready" => Ok(SandboxPreparationStatus::Ready),
+        "suspended" => Ok(SandboxPreparationStatus::Suspended),
+        "lost" => Ok(SandboxPreparationStatus::Lost),
+        _ => Err(malformed(
+            AUTHORITY_DOCUMENT,
+            "unknown sandbox preparation status",
+        )),
+    }
+}
+
+fn legacy_sandbox_status(
+    generation: Option<GenerationId>,
+    status: &str,
+) -> SandboxPreparationStatus {
+    if generation.is_none() {
+        return SandboxPreparationStatus::Disabled;
+    }
+    match status {
+        "suspended" => SandboxPreparationStatus::Suspended,
+        "terminating" | "terminated" | "deleting" => SandboxPreparationStatus::Lost,
+        _ => SandboxPreparationStatus::Ready,
     }
 }
 

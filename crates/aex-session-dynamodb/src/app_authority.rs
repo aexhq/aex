@@ -1326,18 +1326,31 @@ impl SessionCommandReads {
             })?;
         Ok(output.item)
     }
-}
 
-#[async_trait::async_trait]
-impl SessionReader for SessionCommandReads {
-    async fn load_session(
+    /// Strongly loads one session head for a recovery/settlement decision.
+    ///
+    /// Command admission deliberately uses the eventually consistent
+    /// [`SessionReader`] implementation and reasserts every observed fact in
+    /// its transaction. Background completion is different: after an
+    /// ambiguous or raced write it must observe its own latest checkpoint
+    /// before deciding whether another write is necessary.
+    pub async fn load_session_strong(
         &self,
         workspace: WorkspaceId,
         session: SessionId,
     ) -> Result<Session, PortError> {
+        self.load_session_with(workspace, session, true).await
+    }
+
+    async fn load_session_with(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        consistent: bool,
+    ) -> Result<Session, PortError> {
         let physical = crate::keys::head(session);
         let item = self
-            .get(&physical.pk, &physical.sk)
+            .get_with(&physical.pk, &physical.sk, consistent)
             .await?
             .ok_or(PortError::NotFound { kind: "session" })?;
         if crate::authority_codec::is_session_tombstone(&item, workspace, session).map_err(
@@ -1374,6 +1387,17 @@ impl SessionReader for SessionCommandReads {
             kind: "session",
             reason: "the stored session head does not decode into the domain vocabulary",
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionReader for SessionCommandReads {
+    async fn load_session(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+    ) -> Result<Session, PortError> {
+        self.load_session_with(workspace, session, false).await
     }
 
     async fn load_message_snapshot(

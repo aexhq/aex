@@ -1,4 +1,5 @@
-//! The `regional-content` key templates and closed vocabularies.
+//! Content row-family key templates and closed vocabularies for the unified
+//! `regional-file-authority` table.
 //!
 //! Every customer-content partition is **workspace scoped**. The system this
 //! replaces addressed a body as `bodies/{contentId}/{xx}/{digest}` with no
@@ -32,8 +33,8 @@ impl Key {
     }
 }
 
-/// Every `itemType` this table may hold, as declared in
-/// `migrations/regional/tables/regional-content.json`.
+/// Every content-row `itemType` this adapter may write, as declared in
+/// `migrations/regional/tables/regional-file-authority.json`.
 pub const ITEM_TYPES: &[&str] = &[
     "content_descriptor",
     "content_body",

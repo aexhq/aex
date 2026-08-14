@@ -283,41 +283,6 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-brain-mcp": {
-      "name": "aex-brain-mcp",
-      "kind": "cargo",
-      "meta": {
-        "owner": "tools-mcp",
-        "role": "adapter",
-        "artifact": "none",
-        "live_suite": "aex-live-brain-mux",
-        "layers": [
-          "unit",
-          "integration"
-        ],
-        "concerns": [
-          "contract",
-          "property",
-          "fault",
-          "security"
-        ],
-        "seams": [
-          "mcp.streamable_http"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "untrusted_input"
-        ],
-        "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "integration": "integration"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
     "crates/aex-brain-provider": {
       "name": "aex-brain-provider",
       "kind": "cargo",

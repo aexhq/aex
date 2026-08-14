@@ -22,7 +22,7 @@ policy denial rather than a convention.
 | `purpose` | `string` | What the store holds; the last component of the name. |
 | `partition` | `string` | AWS partition used to build ARNs. |
 | `kms_key_arn` | `string` | Customer-managed key; every other key is denied. |
-| `lifecycle_role_arn` | `string` | The only principal permitted to delete an object. |
+| `lifecycle_role_arn` | `string?` | Optional sole principal permitted to delete an object; `null` denies deletion to everyone. |
 | `signature_age_ms` | `number` | Signature-age ceiling in milliseconds, at most 300000. |
 | `abort_incomplete_multipart_days` | `number` | Must be 1, i.e. 24 hours. |
 | `tags` | `map(string)` | Tags applied to the bucket. |
@@ -51,7 +51,8 @@ plane-qualified prefix every other resource in a plane carries.
     key but the content key;
   - any request whose `s3:signatureAge` exceeds the configured ceiling;
   - `s3:DeleteObject` and `s3:DeleteObjectVersion` by every principal except the
-    lifecycle role, expressed with `NotPrincipal`.
+    configured lifecycle role, expressed with `NotPrincipal`; when no role is
+    configured, deletion is denied to every principal.
 - Incomplete multipart uploads are aborted after 24 hours.
 - Browser access is disabled by default. A composition may opt one store into
   exact-origin presigned `GET`/`HEAD` access with `Range` and multipart-part

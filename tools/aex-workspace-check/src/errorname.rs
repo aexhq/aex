@@ -197,7 +197,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "crates/aex-session-app/src/plan.rs",
         ],
     ),
-    ("PoolError", &["crates/aex-brain-mcp/src/pool.rs"]),
     (
         "PortError",
         &[
@@ -219,10 +218,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "crates/aex-regional-http/src/edge.rs",
             "crates/aex-regional-http/src/projection.rs",
         ],
-    ),
-    (
-        "QualificationError",
-        &["crates/aex-brain-mcp/src/client.rs"],
     ),
     (
         "QueryError",

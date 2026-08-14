@@ -52,12 +52,6 @@ pub struct Config {
     pub session_telemetry_bucket: String,
     /// Exact KMS key encrypting immutable session-telemetry objects.
     pub session_telemetry_kms_key_arn: String,
-    /// Immutable content object bucket.
-    pub content_bucket: String,
-    /// Expected content bucket owner.
-    pub content_bucket_owner: String,
-    /// Content object KMS key.
-    pub content_kms_key_arn: String,
     /// The queue Brain wakes are delivered on.
     pub wake_queue_url: String,
     /// The `regional-work` table the due backstop reads.
@@ -147,12 +141,6 @@ pub const RESOURCE_VAR: &str = "AEX_SESSION_AUTHORITY_TABLE";
 pub const SESSION_TELEMETRY_BUCKET_VAR: &str = "AEX_SESSION_TELEMETRY_BUCKET";
 /// Environment variable naming the KMS key for immutable session telemetry.
 pub const SESSION_TELEMETRY_KMS_KEY_ARN_VAR: &str = "AEX_SESSION_TELEMETRY_KMS_KEY_ARN";
-/// Environment variable naming the immutable content object bucket.
-pub const CONTENT_BUCKET_VAR: &str = "AEX_CONTENT_BUCKET";
-/// Environment variable naming the expected content bucket owner.
-pub const CONTENT_BUCKET_OWNER_VAR: &str = "AEX_CONTENT_BUCKET_OWNER";
-/// Environment variable naming the content object KMS key.
-pub const CONTENT_KMS_KEY_ARN_VAR: &str = "AEX_CONTENT_KMS_KEY_ARN";
 /// Environment variable naming the queue Brain wakes are delivered on.
 ///
 /// Required, like every other resource name here. A defaulted queue URL binds the process to
@@ -240,20 +228,6 @@ impl Config {
             &session_telemetry_kms_key_arn,
             &region,
         )?;
-        let content_bucket = required(&lookup, CONTENT_BUCKET_VAR)?;
-        let content_bucket_owner = required(&lookup, CONTENT_BUCKET_OWNER_VAR)?;
-        if content_bucket_owner.len() != 12
-            || !content_bucket_owner
-                .bytes()
-                .all(|byte| byte.is_ascii_digit())
-        {
-            return Err(BrainMuxConfigError::Invalid {
-                name: CONTENT_BUCKET_OWNER_VAR,
-                reason: "expected a 12-digit AWS account id".to_owned(),
-            });
-        }
-        let content_kms_key_arn = required(&lookup, CONTENT_KMS_KEY_ARN_VAR)?;
-        validate_kms_arn(CONTENT_KMS_KEY_ARN_VAR, &content_kms_key_arn, &region)?;
         let wake_queue_url = required(&lookup, WAKE_QUEUE_VAR)?;
         let work_table = required(&lookup, WORK_TABLE_VAR)?;
         let secret_kms_key_arn = required(&lookup, SECRET_KMS_KEY_ARN_VAR)?;
@@ -273,12 +247,7 @@ impl Config {
             });
         }
         let tool_mux_url = required(&lookup, TOOL_MUX_URL_VAR)?;
-        if !tool_mux_url.starts_with("https://") {
-            return Err(BrainMuxConfigError::Invalid {
-                name: TOOL_MUX_URL_VAR,
-                reason: "expected a private https endpoint".to_owned(),
-            });
-        }
+        validate_tool_mux_url(&tool_mux_url)?;
         let tool_mux_assertion_trust_anchors = aex_tool_mux::parse_assertion_trust_anchors(
             &required(&lookup, ASSERTION_TRUST_ANCHORS_VAR)?,
         )
@@ -318,9 +287,6 @@ impl Config {
             resource,
             session_telemetry_bucket,
             session_telemetry_kms_key_arn,
-            content_bucket,
-            content_bucket_owner,
-            content_kms_key_arn,
             wake_queue_url,
             work_table,
             secret_kms_key_arn,
@@ -414,6 +380,29 @@ where
     Ok(value)
 }
 
+fn validate_tool_mux_url(value: &str) -> Result<(), BrainMuxConfigError> {
+    let parsed = reqwest::Url::parse(value).map_err(|_| BrainMuxConfigError::Invalid {
+        name: TOOL_MUX_URL_VAR,
+        reason: "expected a private HTTP service-discovery or HTTPS endpoint".to_owned(),
+    })?;
+    let host = parsed.host_str().unwrap_or_default();
+    let private_http = parsed.scheme() == "http" && host.ends_with(".internal");
+    let encrypted = parsed.scheme() == "https";
+    if (!private_http && !encrypted)
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || parsed.path() != "/"
+    {
+        return Err(BrainMuxConfigError::Invalid {
+            name: TOOL_MUX_URL_VAR,
+            reason: "expected a private HTTP service-discovery or HTTPS endpoint".to_owned(),
+        });
+    }
+    Ok(())
+}
+
 fn positive<F, T>(lookup: &F, name: &'static str) -> Result<T, BrainMuxConfigError>
 where
     F: Fn(&str) -> Option<String>,
@@ -462,6 +451,9 @@ pub fn compose(config: &Config) -> Result<compose::Composition, BrainMuxRunError
     let policy = aex_brain_app::activation::ActivationPolicy {
         receive_batch: 1,
         max_concurrent_drives: usize::try_from(config.budget).unwrap_or(usize::MAX),
+        // Session S3 is telemetry plus explicit storage.persist only at launch.
+        // Journal replay remains the durable context authority.
+        persistent_context_checkpoints: false,
         ..aex_brain_app::activation::ActivationPolicy::default()
     };
     compose::Composition::build(
@@ -620,9 +612,6 @@ fn resolve_production_ports(
         &config.wake_queue_url,
         &config.resource,
         &config.work_table,
-        &config.content_bucket,
-        &config.content_bucket_owner,
-        &config.content_kms_key_arn,
     ));
     let credentials = wake::credential_bindings(
         &aws.sdk,
@@ -1170,11 +1159,10 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        ASSERTION_TRUST_ANCHORS_VAR, BUDGET_VAR, BrainMuxConfigError, CONTENT_BUCKET_OWNER_VAR,
-        CONTENT_BUCKET_VAR, CONTENT_KMS_KEY_ARN_VAR, Config, PLANE_VAR, PRICING_VERSION_VAR,
-        REGION_VAR, RESOURCE_VAR, RUNTIME_ACTIVITY_TABLE_VAR, RUNTIME_DUE_PAGE_ITEMS_VAR,
-        RUNTIME_DUE_PAGE_READS_VAR, RUNTIME_DUE_SHARDS_VAR, SECRET_KMS_KEY_ARN_VAR,
-        SESSION_TELEMETRY_BUCKET_VAR, SESSION_TELEMETRY_KMS_KEY_ARN_VAR,
+        ASSERTION_TRUST_ANCHORS_VAR, BUDGET_VAR, BrainMuxConfigError, Config, PLANE_VAR,
+        PRICING_VERSION_VAR, REGION_VAR, RESOURCE_VAR, RUNTIME_ACTIVITY_TABLE_VAR,
+        RUNTIME_DUE_PAGE_ITEMS_VAR, RUNTIME_DUE_PAGE_READS_VAR, RUNTIME_DUE_SHARDS_VAR,
+        SECRET_KMS_KEY_ARN_VAR, SESSION_TELEMETRY_BUCKET_VAR, SESSION_TELEMETRY_KMS_KEY_ARN_VAR,
         TOOL_MUX_ASSERTION_SIGNING_KEY_REF_VAR, TOOL_MUX_URL_VAR, USAGE_RATING_QUEUE_VAR,
         WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose, emit_due_isolations, tool_mux_assertion_signer,
     };
@@ -1196,12 +1184,6 @@ mod tests {
                 SESSION_TELEMETRY_KMS_KEY_ARN_VAR,
                 "arn:aws:kms:eu-west-1:123456789012:key/session-telemetry".to_owned(),
             ),
-            (CONTENT_BUCKET_VAR, "content-bucket".to_owned()),
-            (CONTENT_BUCKET_OWNER_VAR, "123456789012".to_owned()),
-            (
-                CONTENT_KMS_KEY_ARN_VAR,
-                "arn:aws:kms:eu-west-1:123456789012:key/content".to_owned(),
-            ),
             (
                 WAKE_QUEUE_VAR,
                 "https://sqs.eu-west-1.amazonaws.com/1/aex-brain-wake".to_owned(),
@@ -1219,7 +1201,10 @@ mod tests {
                 USAGE_RATING_QUEUE_VAR,
                 "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-usage-rating.fifo".to_owned(),
             ),
-            (TOOL_MUX_URL_VAR, "https://tool-mux.internal".to_owned()),
+            (
+                TOOL_MUX_URL_VAR,
+                "http://tool-mux.aex-dev.internal:8080".to_owned(),
+            ),
             (
                 ASSERTION_TRUST_ANCHORS_VAR,
                 "018f47a2-65ee-7c61-a1d2-65097d0d8b11:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
@@ -1379,6 +1364,31 @@ mod tests {
             read(&vars),
             Err(BrainMuxConfigError::Missing { name: RESOURCE_VAR })
         );
+    }
+
+    #[test]
+    fn tool_mux_endpoint_is_private_or_encrypted() {
+        let mut vars = complete();
+        let config = read(&vars).expect("private service discovery HTTP is accepted");
+        assert_eq!(
+            config.tool_mux_url,
+            "http://tool-mux.aex-dev.internal:8080"
+        );
+
+        vars.insert(TOOL_MUX_URL_VAR, "http://tool-mux.example:8080".to_owned());
+        assert!(matches!(
+            read(&vars),
+            Err(BrainMuxConfigError::Invalid {
+                name: TOOL_MUX_URL_VAR,
+                ..
+            })
+        ));
+
+        vars.insert(
+            TOOL_MUX_URL_VAR,
+            "https://tool-mux.example".to_owned(),
+        );
+        assert!(read(&vars).is_ok(), "HTTPS remains valid outside Cloud Map");
     }
 
     #[test]

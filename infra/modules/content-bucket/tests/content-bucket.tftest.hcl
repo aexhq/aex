@@ -216,6 +216,26 @@ run "policy_denies_delete_by_every_principal_but_the_lifecycle_role" {
   }
 }
 
+run "policy_denies_delete_to_every_principal_without_a_lifecycle_role" {
+  command = plan
+
+  variables {
+    lifecycle_role_arn = null
+  }
+
+  assert {
+    condition = length([
+      for s in jsondecode(aws_s3_bucket_policy.this.policy).Statement : s
+      if s.Sid == "DenyDeleteAll"
+      && s.Effect == "Deny"
+      && try(s.Principal, null) == "*"
+      && !can(s.NotPrincipal)
+      && contains(s.Action, "s3:DeleteObject")
+    ]) == 1
+    error_message = "Without a lifecycle role, the bucket policy must deny object deletion to every principal."
+  }
+}
+
 run "rejects_a_signature_age_ceiling_above_five_minutes" {
   command = plan
 

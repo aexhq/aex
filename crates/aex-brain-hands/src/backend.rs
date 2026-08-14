@@ -28,8 +28,7 @@ use aex_hands_control_aws::{
 use aex_hands_protocol::files::{FileRequest, FileResponse};
 use aex_hands_protocol::lifecycle::ProviderRequestId;
 use aex_hands_protocol::operation::{
-    DeliveryMode, EnvName, EnvValue, OperationBounds, OperationExit, OperationRequest,
-    SANDBOX_MCP_QUALIFY_VAR, SandboxMcpQualification, TerminalMetadata, TerminalState,
+    DeliveryMode, OperationBounds, OperationExit, OperationRequest, TerminalMetadata, TerminalState,
 };
 use aex_hands_protocol::rpc::{
     AttachResponse, CallHash, CancelReason, CancelRequest, CancelResponse, HandsOperationId,
@@ -66,7 +65,7 @@ use crate::{
 
 mod attached;
 
-pub use attached::{ATTACH_MAX_WALL_MS, delivery_for};
+pub use attached::delivery_for;
 
 const MATERIALIZE_ATTEMPTS: u32 = 64;
 const STORE_ATTEMPTS: usize = 16;
@@ -76,8 +75,6 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 /// idle ceiling and bounds a guest call after its edge request disappears.
 const FILE_RPC_TIMEOUT: Duration = Duration::from_mins(10);
 const FILE_BATCH_MAX_REQUESTS: usize = 10;
-const MCP_QUALIFY_TIMEOUT: Duration = Duration::from_secs(30);
-const MCP_QUALIFY_RESULT_BYTES: usize = 65_536;
 const LIVE_RESULT_PREVIEW_BYTES: usize = 65_536;
 const RESULT_CHUNK_BYTES: u64 = aex_hands_protocol::rpc::MAX_RESULT_CHUNK_BYTES;
 const RESULT_PULL_ATTEMPTS: usize = 32;
@@ -1156,7 +1153,7 @@ impl LiveFileBackend for ProductionHandsBackend {
                 )
                 .await?;
             if hello.protocol_version != aex_hands_protocol::rpc::PROTOCOL_V1
-                || hello.max_body_bytes < u64::from(MAX_FRAME_BYTES)
+                || hello.max_body_bytes < MAX_FRAME_BYTES as u64
             {
                 return Err(dispatched(
                     ProviderFailureKind::ProtocolViolation,
@@ -1220,128 +1217,6 @@ impl LiveFileBackend for ProductionHandsBackend {
                 ProviderFailureKind::Overloaded,
                 "eager sandbox suspension lost its bounded reconciliation budget",
             ))
-        })
-    }
-
-    #[allow(
-        clippy::too_many_lines,
-        reason = "request encoding, the fenced admission, the attached start and the terminal tool-list validation are one ordered qualification boundary"
-    )]
-    fn qualify_sandbox_mcp<'a>(
-        &'a self,
-        session: SessionId,
-        generation: GenerationId,
-        activity: HandsOperationId,
-        request: &'a SandboxMcpQualification,
-    ) -> BoxFuture<'a, Result<Vec<String>, HandsError>> {
-        Box::pin(async move {
-            let encoded = serde_json::to_string(request).map_err(|_| {
-                pre_dispatch(
-                    ProviderFailureKind::InvalidRequest,
-                    "sandbox MCP qualification is not encodable",
-                )
-            })?;
-            let cwd = request.working_directory.clone();
-            let operation_request = OperationRequest::Exec {
-                argv: vec!["/proc/self/exe".to_owned(), "mcp-qualify".to_owned()],
-                cwd,
-                env: vec![(
-                    EnvName(SANDBOX_MCP_QUALIFY_VAR.to_owned()),
-                    EnvValue::new(encoded),
-                )],
-                stdin: None,
-            };
-            let request_value = serde_json::to_value(&operation_request).map_err(|_| {
-                pre_dispatch(
-                    ProviderFailureKind::InvalidRequest,
-                    "sandbox MCP qualification operation is not encodable",
-                )
-            })?;
-            let request_bytes = serde_json::to_vec(&operation_request).map_err(|_| {
-                pre_dispatch(
-                    ProviderFailureKind::InvalidRequest,
-                    "sandbox MCP qualification operation is not encodable",
-                )
-            })?;
-            let hash = ContentHash::of(&request_bytes);
-            let brain_operation = BrainOperationId(activity.0.to_string());
-            let bounds = ResultBounds {
-                max_bytes: MCP_QUALIFY_RESULT_BYTES,
-                max_stream_bytes: MCP_QUALIFY_RESULT_BYTES,
-                timeout_ms: u32::try_from(MCP_QUALIFY_TIMEOUT.as_millis()).unwrap_or(u32::MAX),
-            };
-            let observed = now()?;
-            let deadline = Timestamp::from_unix_millis(
-                observed
-                    .unix_millis()
-                    .saturating_add(i64::from(bounds.timeout_ms)),
-            )
-            .map_err(|_| {
-                pre_dispatch(
-                    ProviderFailureKind::InvalidRequest,
-                    "sandbox MCP qualification deadline is invalid",
-                )
-            })?;
-            let start = HandsOperationStart {
-                operation: brain_operation,
-                call_hash: BrainContentHash(*hash.as_bytes()),
-                request: request_value,
-                bounds,
-                deadline: BrainTimestamp::from_millis(deadline.unix_millis()),
-            };
-            let prepared = self.prepare_generation(session, generation).await?;
-            let admitted = self.admit_operation(generation, activity, prepared).await?;
-            let call = StartRequest {
-                operation: activity,
-                call_hash: CallHash(hash),
-                request: operation_request,
-                bounds: operation_bounds(&admitted.view, &bounds),
-                deadline,
-                delivery: DeliveryMode::Attached,
-            };
-            let accepted = self
-                .start_attached(
-                    &admitted.endpoint,
-                    admitted.native_resume.then_some(&admitted.view),
-                    generation,
-                    activity,
-                    &start,
-                    &call,
-                    MCP_QUALIFY_TIMEOUT,
-                )
-                .await?;
-            let result = accepted.result.ok_or_else(|| {
-                dispatched(
-                    ProviderFailureKind::ProtocolViolation,
-                    "sandbox MCP qualification did not return an attached result",
-                )
-            })?;
-            if result.exit_code != 0 || result.truncated || result.placed.is_some() {
-                return Err(dispatched(
-                    ProviderFailureKind::ProtocolViolation,
-                    "sandbox MCP qualification returned an invalid terminal result",
-                ));
-            }
-            let names: Vec<String> =
-                serde_json::from_str(result.inline.as_deref().ok_or_else(|| {
-                    dispatched(
-                        ProviderFailureKind::ProtocolViolation,
-                        "sandbox MCP qualification returned no inline tool list",
-                    )
-                })?)
-                .map_err(|_| {
-                    dispatched(
-                        ProviderFailureKind::ProtocolViolation,
-                        "sandbox MCP qualification returned an invalid tool list",
-                    )
-                })?;
-            if names.len() > 128 || names.iter().any(|name| name.is_empty() || name.len() > 128) {
-                return Err(dispatched(
-                    ProviderFailureKind::ProtocolViolation,
-                    "sandbox MCP qualification exceeded its tool bounds",
-                ));
-            }
-            Ok(names)
         })
     }
 
@@ -1838,7 +1713,6 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 generation,
                 exit_code: exit_code(&terminal.exit),
                 inline,
-                placed: None,
                 sandbox_file,
                 truncated: terminal.truncated,
                 duration_ms: u32::try_from(duration_ms.max(0)).unwrap_or(u32::MAX),

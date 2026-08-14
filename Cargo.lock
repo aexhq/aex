@@ -90,27 +90,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-brain-mcp"
-version = "0.1.0"
-dependencies = [
- "aex-brain-domain",
- "aex-brain-managed-web",
- "aex-brain-tool-catalog",
- "aex-wire",
- "async-trait",
- "base64 0.23.0",
- "http 1.5.0",
- "proptest",
- "reqwest",
- "rmcp",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "url",
-]
-
-[[package]]
 name = "aex-brain-provider"
 version = "0.1.0"
 dependencies = [
@@ -2582,7 +2561,6 @@ dependencies = [
  "aex-brain-provider-custody",
  "aex-brain-store-dynamodb",
  "aex-brain-tool-catalog",
- "aex-content-aws",
  "aex-control-domain",
  "aex-hands-protocol",
  "aex-identity-domain",
@@ -3998,6 +3976,8 @@ dependencies = [
  "aex-wire",
  "axum",
  "blake3",
+ "http 1.5.0",
+ "reqwest",
  "rmcp",
  "rustix",
  "serde",
@@ -6404,8 +6384,6 @@ dependencies = [
  "aex-brain-app",
  "aex-brain-domain",
  "aex-brain-hands",
- "aex-brain-managed-web",
- "aex-brain-mcp",
  "aex-capacity-dynamodb",
  "aex-content-aws",
  "aex-content-domain",
@@ -7365,8 +7343,6 @@ dependencies = [
  "aex-brain-app",
  "aex-brain-domain",
  "aex-brain-hands",
- "aex-brain-managed-web",
- "aex-brain-mcp",
  "aex-content-aws",
  "aex-content-domain",
  "aex-content-dynamodb",
@@ -7383,6 +7359,7 @@ dependencies = [
  "aex-secret-aws",
  "aex-secret-custody-dynamodb",
  "aex-secret-domain",
+ "aex-session-domain",
  "aex-session-dynamodb",
  "aex-session-telemetry-aws",
  "aex-tool-mux",

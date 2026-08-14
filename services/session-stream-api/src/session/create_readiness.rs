@@ -1,4 +1,4 @@
-//! Exact selected-content transfer performed between create election and 201.
+//! Exact selected-content transfer performed by sandbox preparation.
 //!
 //! The create route resolves and elects registry metadata before provider
 //! launch. This module then reads only the elected content digest and streams
@@ -25,7 +25,7 @@ pub struct StartupBody {
     pub bytes: Vec<u8>,
 }
 
-/// Minimal content port used by synchronous create.
+/// Minimal content port used by asynchronous sandbox preparation.
 #[async_trait::async_trait]
 pub trait StartupContent: Send + Sync {
     /// Reads exactly one elected body, bounded by its persisted size.
@@ -68,7 +68,7 @@ impl StartupContent for ContentObjects<'_> {
     }
 }
 
-/// Minimal exact-generation guest port used by synchronous create.
+/// Minimal exact-generation guest port used by asynchronous sandbox preparation.
 pub trait StartupGuest: Send + Sync {
     /// Sends one bounded request batch under one deterministic activity id.
     fn call(
@@ -89,7 +89,7 @@ pub struct MaterializedFile {
     pub revision: u64,
 }
 
-/// Closed guest failure vocabulary for create-time transfer.
+/// Closed guest failure vocabulary for elected sandbox transfer.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StartupGuestError {
     /// Guest or provider transport was unavailable.
@@ -103,7 +103,7 @@ pub enum StartupGuestError {
     Mismatched,
 }
 
-/// Why elected startup bytes cannot become synchronous create readiness.
+/// Why elected startup bytes cannot become sandbox preparation readiness.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StartupFileError {
     /// The existing content adapter refused the exact bounded read.
@@ -128,8 +128,9 @@ pub enum StartupFileError {
 /// # Errors
 ///
 /// Returns [`StartupFileError`] on the first content or exact-generation guest
-/// mismatch. Callers must terminate the elected generation and never publish a
-/// session head/201 after an error.
+/// mismatch. Eager callers leave the durable checkpoint requested after an
+/// error; detached first-tool recovery reloads the same elected manifest and
+/// idempotently resumes it.
 pub async fn materialize_selected<C: StartupContent, G: StartupGuest>(
     content: &C,
     guest: &G,
@@ -144,24 +145,53 @@ pub async fn materialize_selected<C: StartupContent, G: StartupGuest>(
         let upload = upload_id(generation, file);
         let batches = upload_batches(upload, file, &body.bytes)?;
         let expected = expected_state(upload, file, &body.bytes)?;
-        for (ordinal, batch) in batches.into_iter().enumerate() {
-            let request_count = batch.len();
-            let responses = guest
-                .call(
-                    prepared.session,
-                    generation,
-                    activity_id(upload, ordinal),
-                    batch,
-                )
-                .await?;
-            verify_batch(&expected, ordinal, request_count, &responses)?;
-        }
+        execute_upload(
+            guest,
+            prepared.session,
+            generation,
+            upload,
+            file_mode(file.mode),
+            batches,
+            &expected,
+        )
+        .await?;
         materialized.push(MaterializedFile {
             name: file.name.clone(),
             revision: file.revision,
         });
     }
     Ok(materialized)
+}
+
+async fn execute_upload<G: StartupGuest>(
+    guest: &G,
+    session: SessionId,
+    generation: GenerationId,
+    upload: FileUploadId,
+    mode: FileMode,
+    batches: Vec<Vec<FileRequest>>,
+    expected: &FileUploadState,
+) -> Result<(), StartupFileError> {
+    for (ordinal, batch) in batches.into_iter().enumerate() {
+        if ordinal == 0 {
+            verify_open_request(expected, mode, &batch)?;
+        }
+        let request_count = batch.len();
+        let responses = guest
+            .call(
+                session,
+                generation,
+                activity_id(upload, ordinal),
+                batch,
+            )
+            .await?;
+        if verify_batch(expected, ordinal, request_count, &responses)?
+            == UploadBatchProgress::Complete
+        {
+            break;
+        }
+    }
+    Ok(())
 }
 
 fn upload_batches(
@@ -247,12 +277,42 @@ fn expected_state(
     })
 }
 
+fn verify_open_request(
+    expected: &FileUploadState,
+    mode: FileMode,
+    requests: &[FileRequest],
+) -> Result<(), StartupFileError> {
+    match requests {
+        [FileRequest::UploadOpen {
+            upload,
+            path,
+            size_bytes,
+            sha256,
+            mode: requested_mode,
+        }] if *upload == expected.upload
+            && *path == expected.path
+            && *size_bytes == expected.size_bytes
+            && *sha256 == expected.sha256
+            && *requested_mode == mode =>
+        {
+            Ok(())
+        }
+        _ => Err(StartupGuestError::Mismatched.into()),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UploadBatchProgress {
+    Pending,
+    Complete,
+}
+
 fn verify_batch(
     expected: &FileUploadState,
     ordinal: usize,
     request_count: usize,
     responses: &[FileResponse],
-) -> Result<(), StartupFileError> {
+) -> Result<UploadBatchProgress, StartupFileError> {
     if responses.len() != request_count {
         return Err(StartupGuestError::Mismatched.into());
     }
@@ -267,6 +327,23 @@ fn verify_batch(
         Some(FileResponse::UploadComplete { state }) if final_batch => state,
         _ => return Err(StartupGuestError::Mismatched.into()),
     };
+
+    // A successful UploadOpen is also the guest's evidence that its persisted
+    // mode matches the exact mode in the request: the protocol requires a
+    // conflicting reopen to be rejected. A completed reopen is therefore safe
+    // to short-circuit only when every response-visible immutable field and the
+    // full ordered part manifest also match.
+    if ordinal == 0 && state.complete {
+        if state.upload != expected.upload
+            || state.path != expected.path
+            || state.size_bytes != expected.size_bytes
+            || state.sha256 != expected.sha256
+            || state.parts != expected.parts
+        {
+            return Err(StartupGuestError::Mismatched.into());
+        }
+        return Ok(UploadBatchProgress::Complete);
+    }
     if state.upload != expected.upload
         || state.path != expected.path
         || state.size_bytes != expected.size_bytes
@@ -282,7 +359,11 @@ fn verify_batch(
     {
         return Err(StartupGuestError::Mismatched.into());
     }
-    Ok(())
+    Ok(if final_batch {
+        UploadBatchProgress::Complete
+    } else {
+        UploadBatchProgress::Pending
+    })
 }
 
 fn part_count(size: u64) -> usize {
@@ -333,9 +414,35 @@ fn activity_id(upload: FileUploadId, ordinal: usize) -> HandsOperationId {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use aex_wire::ids::ResourceName;
     use aex_wire::types::ETag;
+
+    struct CompleteOnOpenGuest {
+        state: FileUploadState,
+        calls: AtomicUsize,
+    }
+
+    impl StartupGuest for CompleteOnOpenGuest {
+        fn call(
+            &self,
+            _session: SessionId,
+            _generation: GenerationId,
+            _activity: HandsOperationId,
+            _requests: Vec<FileRequest>,
+        ) -> impl Future<Output = Result<Vec<FileResponse>, StartupGuestError>> + Send {
+            let result = if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(vec![FileResponse::Upload {
+                    state: self.state.clone(),
+                }])
+            } else {
+                Err(StartupGuestError::Mismatched)
+            };
+            std::future::ready(result)
+        }
+    }
 
     fn file(bytes: &[u8]) -> PreparedFile {
         PreparedFile {
@@ -388,5 +495,102 @@ mod tests {
         let mut replacement = original;
         replacement.revision += 1;
         assert_ne!(upload_id(generation, &replacement), first);
+    }
+
+    #[tokio::test]
+    async fn completed_open_skips_every_remaining_upload_batch() {
+        let bytes = b"already materialized";
+        let selected = file(bytes);
+        let generation = GenerationId::from_uuid7(Uuid7::compose(1, [3; 10]));
+        let session = SessionId::from_uuid7(Uuid7::compose(1, [4; 10]));
+        let upload = upload_id(generation, &selected);
+        let batches = upload_batches(upload, &selected, bytes).expect("plan");
+        let mut completed = expected_state(upload, &selected, bytes).expect("state");
+        completed.complete = true;
+        let guest = CompleteOnOpenGuest {
+            state: completed,
+            calls: AtomicUsize::new(0),
+        };
+
+        execute_upload(
+            &guest,
+            session,
+            generation,
+            upload,
+            FileMode::ReadWrite,
+            batches,
+            &expected_state(upload, &selected, bytes).expect("expected"),
+        )
+        .await
+        .expect("completed replay");
+
+        assert_eq!(guest.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn completed_open_requires_exact_metadata_and_ordered_part_manifest() {
+        let bytes = vec![9; FILE_TRANSFER_PART_BYTES as usize + 1];
+        let selected = file(&bytes);
+        let upload = FileUploadId(Uuid7::compose(1, [5; 10]));
+        let expected = expected_state(upload, &selected, &bytes).expect("state");
+        let mut completed = expected.clone();
+        completed.complete = true;
+
+        let accepted = verify_batch(
+            &expected,
+            0,
+            1,
+            &[FileResponse::Upload {
+                state: completed.clone(),
+            }],
+        );
+        assert_eq!(accepted, Ok(UploadBatchProgress::Complete));
+
+        let assert_mismatched = |state| {
+            assert!(matches!(
+                verify_batch(
+                    &expected,
+                    0,
+                    1,
+                    &[FileResponse::Upload { state }],
+                ),
+                Err(StartupFileError::Guest(StartupGuestError::Mismatched))
+            ));
+        };
+
+        let mut wrong_path = completed.clone();
+        wrong_path.path = GuestPath::parse(&GuestRoot::workspace(), "/workspace/other")
+            .expect("guest path");
+        assert_mismatched(wrong_path);
+
+        let mut wrong_size = completed.clone();
+        wrong_size.size_bytes += 1;
+        assert_mismatched(wrong_size);
+
+        let mut wrong_hash = completed.clone();
+        wrong_hash.sha256 = ContentHash::of(b"other");
+        assert_mismatched(wrong_hash);
+
+        let mut wrong_order = completed;
+        wrong_order.parts.swap(0, 1);
+        assert_mismatched(wrong_order);
+    }
+
+    #[test]
+    fn completed_open_requires_the_elected_mode_in_the_accepted_request() {
+        let bytes = b"body";
+        let selected = file(bytes);
+        let upload = FileUploadId(Uuid7::compose(1, [6; 10]));
+        let expected = expected_state(upload, &selected, bytes).expect("state");
+        let mut batches = upload_batches(upload, &selected, bytes).expect("plan");
+        let FileRequest::UploadOpen { mode, .. } = &mut batches[0][0] else {
+            panic!("open request");
+        };
+        *mode = FileMode::Executable;
+
+        assert!(matches!(
+            verify_open_request(&expected, FileMode::ReadWrite, &batches[0]),
+            Err(StartupFileError::Guest(StartupGuestError::Mismatched))
+        ));
     }
 }

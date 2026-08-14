@@ -11,14 +11,16 @@ use aex_identity_domain::assertion::{
 };
 use aex_runtime_control::store::{OpenEffectCounter, PageBudget, RuntimeActivityStore};
 use aex_runtime_control_aws::{Pace, RuntimeControl, RuntimePorts, RuntimeSettings};
-use aex_tool_mux::{GuestPort, McpPort, ResultRetentionPort, RuntimePort, StoragePersistPort};
+use aex_tool_mux::{GuestPort, RuntimePort, StoragePersistPort};
 use tool_mux::auth::AssertionAuthorizer;
-use tool_mux::mcp::{McpSecretReader, RemoteMcpAdapter};
+use tool_mux::mcp::McpSecretReader;
+use tool_mux::preparation::ProductionSandboxPreparation;
 use tool_mux::production_hands::{ProductionGuestAdapter, ProductionRuntimeAdapter};
-use tool_mux::production_mcp::{ProductionMcpSecrets, ProductionQualifiedMcpClients};
+use tool_mux::production_mcp::ProductionMcpSecrets;
 use tool_mux::production_storage::{ProductionGuestFileStream, ProductionLatestFileAuthority};
-use tool_mux::retention::ProductionResultRetention;
-use tool_mux::storage::{GuestFileStreamPort, StorageAdapter};
+use tool_mux::storage::{
+    DetachedStorageAdapter, GuestFileStreamPort, StorageAdapter, StorageOperationPort,
+};
 
 const DEPLOYABLE: &str = "tool-mux";
 
@@ -38,7 +40,6 @@ struct Config {
     content_kms_key_arn: String,
     secret_kms_key_arn: String,
     telemetry_bucket: String,
-    telemetry_bucket_owner: String,
     telemetry_kms_key_arn: String,
     assertion_keys: VerificationKeySet,
     listen: SocketAddr,
@@ -104,7 +105,6 @@ impl Config {
             content_kms_key_arn: required("AEX_CONTENT_KMS_KEY_ARN")?,
             secret_kms_key_arn: required("AEX_SECRET_KMS_KEY_ARN")?,
             telemetry_bucket: required("AEX_SESSION_TELEMETRY_BUCKET")?,
-            telemetry_bucket_owner: required("AEX_SESSION_TELEMETRY_BUCKET_OWNER")?,
             telemetry_kms_key_arn: required("AEX_SESSION_TELEMETRY_KMS_KEY_ARN")?,
             assertion_keys,
             listen,
@@ -245,7 +245,16 @@ async fn run(config: Config) -> Result<(), String> {
         Arc::clone(&live),
         staging.clone(),
     ));
-    let storage: Arc<dyn StoragePersistPort> = Arc::new(StorageAdapter::new(
+    let s3 = aws_sdk_s3::Client::new(&sdk);
+    let content_binding = aex_content_aws::BucketBinding {
+        bucket: config.content_bucket.clone(),
+        expected_owner: config.content_bucket_owner.clone(),
+        kms_key_id: config.content_kms_key_arn.clone(),
+    };
+    let preparation_content: Arc<dyn aex_content_aws::ContentObjectStore> = Arc::new(
+        aex_content_aws::S3ContentObjects::new(s3.clone(), content_binding.clone()),
+    );
+    let storage_operation: Arc<dyn StorageOperationPort> = Arc::new(StorageAdapter::new(
         Arc::clone(&guest_stream),
         ProductionLatestFileAuthority::new(
             aex_registry_dynamodb::store::RegistryDynamoStore::new(
@@ -256,34 +265,33 @@ async fn run(config: Config) -> Result<(), String> {
                 dynamo.clone(),
                 config.file_authority_table.clone(),
             ),
-            aex_content_aws::S3ContentObjects::new(
-                aws_sdk_s3::Client::new(&sdk),
-                aex_content_aws::BucketBinding {
-                    bucket: config.content_bucket.clone(),
-                    expected_owner: config.content_bucket_owner.clone(),
-                    kms_key_id: config.content_kms_key_arn.clone(),
-                },
-            ),
+            aex_content_aws::S3ContentObjects::new(s3.clone(), content_binding),
             config.content_kms_key_arn.clone(),
             staging,
         ),
     ));
-    let results: Arc<dyn ResultRetentionPort> = Arc::new(ProductionResultRetention::new(
-        aws_sdk_s3::Client::new(&sdk),
-        config.telemetry_bucket.clone(),
-        config.telemetry_bucket_owner.clone(),
-        config.telemetry_kms_key_arn.clone(),
-        guest_stream,
-    ));
+    let storage: Arc<dyn StoragePersistPort> =
+        Arc::new(DetachedStorageAdapter::new(storage_operation));
+    let (telemetry, telemetry_receiver) = tool_mux::telemetry::BoundedTelemetryIngress::new(1_024);
+    let telemetry_producer = aex_tool_mux::TelemetryProducer::new(Arc::new(telemetry));
+    let preparation: Arc<dyn tool_mux::preparation::SandboxPreparationPort> =
+        Arc::new(ProductionSandboxPreparation::new(
+            aex_session_dynamodb::create_preparation::CreatePreparationStore::new(
+                dynamo.clone(),
+                config.session_table.clone(),
+            ),
+            aex_session_dynamodb::sandbox_preparation::SandboxPreparationAuthority::new(
+                dynamo.clone(),
+                config.session_table.clone(),
+            ),
+            preparation_content,
+            Arc::clone(&live),
+            telemetry_producer.clone(),
+        ));
     let runtime_adapter: Arc<dyn RuntimePort> =
-        Arc::new(ProductionRuntimeAdapter::new(Arc::clone(&live)));
+        Arc::new(ProductionRuntimeAdapter::new(preparation));
     let guest: Arc<dyn GuestPort> =
         Arc::new(ProductionGuestAdapter::new(hands, Arc::clone(&secrets)));
-    let mcp: Arc<dyn McpPort> = Arc::new(RemoteMcpAdapter::new(
-        Arc::new(ProductionQualifiedMcpClients::new()),
-        secrets,
-    ));
-    let (telemetry, telemetry_receiver) = tool_mux::telemetry::BoundedTelemetryIngress::new(1_024);
     let exporter = tokio::spawn(tool_mux::telemetry::export(
         telemetry_receiver,
         dynamo,
@@ -294,13 +302,11 @@ async fn run(config: Config) -> Result<(), String> {
             config.telemetry_kms_key_arn.clone(),
         ),
     ));
-    let mux = Arc::new(aex_tool_mux::ToolMux::new(
+    let mux = Arc::new(aex_tool_mux::ToolMux::with_telemetry_producer(
         runtime_adapter,
         guest,
-        mcp,
         storage,
-        results,
-        Arc::new(telemetry),
+        telemetry_producer,
     ));
     let app = tool_mux::App::new(
         mux,

@@ -343,9 +343,9 @@ pub struct Session {
     pub generation: Option<GenerationId>,
     /// The immutable generation definition the create decided.
     ///
-    /// Written once with the ready head and never rewritten. Session creation
-    /// has already launched this exact generation and materialized its selected
-    /// workspace files before the public session becomes visible.
+    /// Written once with the requested head and never rewritten. Background
+    /// preparation and a recovering first tool call both converge on this
+    /// exact generation and its frozen workspace selection.
     pub pinned_runtime: Option<PinnedRuntime>,
     /// The dedicated BYOK provider credential version selected at creation.
     pub provider_credential: ProviderCredentialPin,

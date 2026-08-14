@@ -314,8 +314,8 @@ fn incorporate_result(
             "Hands result was truncated and cannot be journalled as complete",
         ));
     }
-    let (part, bytes) = match (result.inline, result.placed, result.sandbox_file) {
-        (Some(inline), None, None) => {
+    let (part, bytes) = match (result.inline, result.sandbox_file) {
+        (Some(inline), None) => {
             if ContentHash::of(inline.as_bytes()) != result.checksum {
                 return Err(dispatch_error(
                     DispatchStage::Terminal,
@@ -334,18 +334,7 @@ fn incorporate_result(
                 Err(_) => text_part(inline)?,
             }
         }
-        (None, Some(placed), None) => {
-            let value = serde_json::to_value(placed).map_err(|_| {
-                dispatch_error(
-                    DispatchStage::Terminal,
-                    DispatchProof::ResponseStarted,
-                    ProviderFailureKind::ProtocolViolation,
-                    "Hands placed result reference could not be encoded",
-                )
-            })?;
-            json_part(&value)?
-        }
-        (None, None, Some(file)) => {
+        (None, Some(file)) => {
             let value = serde_json::json!({
                 "preview": file.preview,
                 "previewTruncated": true,
@@ -360,7 +349,7 @@ fn incorporate_result(
                 DispatchStage::Terminal,
                 DispatchProof::ResponseStarted,
                 ProviderFailureKind::ProtocolViolation,
-                "Hands result must carry exactly one inline, placed or sandbox-file body",
+                "Hands result must carry exactly one inline or sandbox-file body",
             ));
         }
     };
@@ -652,7 +641,6 @@ mod tests {
                     generation,
                     exit_code: 0,
                     inline: Some(inline.clone()),
-                    placed: None,
                     sandbox_file: None,
                     truncated: *self.result_truncated.lock().expect("truncated"),
                     duration_ms: 17,
@@ -692,7 +680,6 @@ mod tests {
                 generation: generation(),
                 exit_code: 0,
                 inline: None,
-                placed: None,
                 sandbox_file: Some(HandsSandboxFile {
                     path: "/workspace/.aex/tool-results/op.out".to_owned(),
                     byte_len: 65_537,

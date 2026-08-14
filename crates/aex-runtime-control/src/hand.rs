@@ -41,8 +41,6 @@ pub enum HandState {
     Booting,
     /// The frozen workspace manifest is being materialized.
     MaterializingWorkspace,
-    /// Sandbox-process MCP servers are being discovered and qualified.
-    QualifyingSandboxMcp,
     /// Exact generation is ready and may admit calls.
     Ready,
     /// The no-waiter suspend decision won and is in flight.
@@ -92,8 +90,6 @@ pub enum HandAction {
     Boot,
     /// Materialize the frozen session workspace.
     MaterializeWorkspace,
-    /// Discover and qualify sandbox-process MCP tools.
-    QualifySandboxMcp,
     /// Suspend this exact generation.
     Suspend,
     /// Resume this exact generation.
@@ -162,11 +158,7 @@ impl HandRecord {
                 HandState::MaterializingWorkspace,
                 HandAction::MaterializeWorkspace,
             ),
-            HandState::MaterializingWorkspace => (
-                HandState::QualifyingSandboxMcp,
-                HandAction::QualifySandboxMcp,
-            ),
-            HandState::QualifyingSandboxMcp | HandState::Resuming => {
+            HandState::MaterializingWorkspace => {
                 if self.waiters == 0 {
                     (HandState::Suspending, HandAction::Suspend)
                 } else {
@@ -178,6 +170,13 @@ impl HandRecord {
                     (HandState::Suspended, HandAction::Wait)
                 } else {
                     (HandState::Resuming, HandAction::Resume)
+                }
+            }
+            HandState::Resuming => {
+                if self.waiters == 0 {
+                    (HandState::Suspending, HandAction::Suspend)
+                } else {
+                    (HandState::Ready, HandAction::Execute)
                 }
             }
             state => return Err(HandDecisionError::InvalidState { state }),
@@ -220,7 +219,6 @@ impl HandRecord {
             | HandState::Provisioning
             | HandState::Booting
             | HandState::MaterializingWorkspace
-            | HandState::QualifyingSandboxMcp
             | HandState::Suspending
             | HandState::Resuming => Ok(HandAction::Wait),
             HandState::Disabled | HandState::Lost | HandState::Terminated => {
@@ -260,17 +258,16 @@ mod tests {
         GenerationId::from_uuid7(Uuid7::compose(u64::from(seed), [seed; 10]))
     }
 
-    fn advance_to_qualifying(hand: &mut HandRecord) {
+    fn advance_to_materializing(hand: &mut HandRecord) {
         assert_eq!(hand.eager_action(), HandAction::Provision);
         assert_eq!(hand.phase_succeeded(), Ok(HandAction::Boot));
         assert_eq!(hand.phase_succeeded(), Ok(HandAction::MaterializeWorkspace));
-        assert_eq!(hand.phase_succeeded(), Ok(HandAction::QualifySandboxMcp));
     }
 
     #[test]
     fn default_on_prepares_eagerly_then_suspends_without_a_waiter() {
         let mut hand = HandRecord::new(session(), generation(1), true);
-        advance_to_qualifying(&mut hand);
+        advance_to_materializing(&mut hand);
         assert_eq!(hand.phase_succeeded(), Ok(HandAction::Suspend));
         assert_eq!(hand.state, HandState::Suspending);
         assert_eq!(hand.phase_succeeded(), Ok(HandAction::Wait));
@@ -281,7 +278,7 @@ mod tests {
     fn a_waiter_during_setup_prevents_the_initial_suspend() {
         let exact = generation(1);
         let mut hand = HandRecord::new(session(), exact, true);
-        advance_to_qualifying(&mut hand);
+        advance_to_materializing(&mut hand);
         assert_eq!(hand.add_waiter(exact), Ok(HandAction::Wait));
         assert_eq!(hand.phase_succeeded(), Ok(HandAction::Execute));
         assert_eq!(hand.state, HandState::Ready);
@@ -291,7 +288,7 @@ mod tests {
     fn a_waiter_that_loses_the_suspend_race_resumes_before_execution() {
         let exact = generation(1);
         let mut hand = HandRecord::new(session(), exact, true);
-        advance_to_qualifying(&mut hand);
+        advance_to_materializing(&mut hand);
         assert_eq!(hand.phase_succeeded(), Ok(HandAction::Suspend));
         assert_eq!(hand.add_waiter(exact), Ok(HandAction::Wait));
         assert_eq!(hand.phase_succeeded(), Ok(HandAction::Resume));
@@ -320,7 +317,7 @@ mod tests {
     fn a_cancelled_resume_suspends_again_without_exposing_readiness() {
         let exact = generation(1);
         let mut hand = HandRecord::new(session(), exact, true);
-        advance_to_qualifying(&mut hand);
+        advance_to_materializing(&mut hand);
         assert_eq!(hand.phase_succeeded(), Ok(HandAction::Suspend));
         assert_eq!(hand.phase_succeeded(), Ok(HandAction::Wait));
         assert_eq!(hand.add_waiter(exact), Ok(HandAction::Resume));
@@ -334,7 +331,7 @@ mod tests {
         fn arbitrary_waiter_churn_never_changes_the_exact_generation(events in prop::collection::vec(any::<bool>(), 0..512)) {
             let exact = generation(1);
             let mut hand = HandRecord::new(session(), exact, true);
-            advance_to_qualifying(&mut hand);
+            advance_to_materializing(&mut hand);
             let _ = hand.add_waiter(exact);
             let _ = hand.phase_succeeded();
             for add in events {

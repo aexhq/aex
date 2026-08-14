@@ -1,7 +1,7 @@
 [package]
 name = "aex-tool-mux"
 version = "0.1.0"
-description = "Trusted Tool Mux application: one-Hand readiness, official tools, MCP, storage and bounded live/retained results."
+description = "Trusted Tool Mux application: one-Hand readiness, official tools, MCP, storage and bounded live/local results."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,7 +19,7 @@ artifact = "none"
 live_suite = "aex-live-tool-mux"
 layers = ["unit", "integration"]
 concerns = ["contract", "property", "fault", "security"]
-seams = ["hands.guest.lifecycle", "mcp.streamable_http"]
+seams = ["hands.guest.lifecycle"]
 security_tier = "internal"
 risk = ["concurrency", "untrusted_input"]
 scenarios = ["SC-TOOL-MUX"]

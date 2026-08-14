@@ -41,8 +41,6 @@ fn complete() -> BTreeMap<&'static str, String> {
             config::SESSION_TELEMETRY_BUCKET,
             "aex-dev-session-telemetry".to_owned(),
         ),
-        (config::CONTENT_BUCKET, "aex-dev-content".to_owned()),
-        (config::CONTENT_BUCKET_OWNER, "000000000000".to_owned()),
         (config::DUE_SCAN_SHARDS, "64".to_owned()),
         (config::LEASE_MS, "60000".to_owned()),
         (config::STEP_DEADLINE_MS, "30000".to_owned()),
@@ -75,17 +73,6 @@ fn every_required_variable_is_required() {
             "removing {name} reported {error:?}"
         );
     }
-}
-
-#[test]
-fn a_non_account_content_bucket_owner_refuses_startup() {
-    let mut vars = complete();
-    vars.insert(config::CONTENT_BUCKET_OWNER, "not-an-account".to_owned());
-    assert!(matches!(
-        read(&vars),
-        Err(RegionalHttpConfigError::Invalid { name, .. })
-            if name == config::CONTENT_BUCKET_OWNER
-    ));
 }
 
 #[test]

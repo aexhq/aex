@@ -259,7 +259,7 @@ test.serial("live.native-subagent-create-and-event-driven-wait", async () => {
   expect(await waitForAssistantText(session.id)).toContain("SUBAGENT_DONE");
 }, 300_000);
 
-test.serial("live.remote-mcp-is-qualified-and-invoked-through-tool-mux", async () => {
+test.serial("live.remote-mcp-is-invoked-through-the-sandbox-builtin", async () => {
   if (inventory()) return;
   const fixture = mcpFixture("REMOTE");
   const session = await createSession(undefined, {
@@ -278,7 +278,7 @@ test.serial("live.remote-mcp-is-qualified-and-invoked-through-tool-mux", async (
   await invokeMcpFixture(session.id, fixture);
 }, 300_000);
 
-test.serial("live.sandbox-mcp-is-qualified-and-invoked-through-the-hand", async () => {
+test.serial("live.sandbox-mcp-is-invoked-through-the-sandbox-builtin", async () => {
   if (inventory()) return;
   const fixture = mcpFixture("SANDBOX");
   const transport = requiredJson<Record<string, unknown>>("AEX_LIVE_SANDBOX_MCP_TRANSPORT");

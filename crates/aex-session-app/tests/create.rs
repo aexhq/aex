@@ -18,9 +18,9 @@ use aex_session_app::testing::{
     CountingIds, FixedClock, PortCall, ScriptedPorts, create_identity_under, deployment_facts,
 };
 use aex_session_app::{
-    AppError, CreateSession, PrepareSessionCreateOutcome, QualificationRefusal, ReadySessionLaunch,
-    RootStartedEvidence, SessionTransaction, initial_root_record, prepare_session_create,
-    publish_ready_session,
+    AppError, CreateSession, PrepareSessionCreateOutcome, QualificationRefusal,
+    RequestedSessionLaunch, RootStartedEvidence, SessionTransaction, initial_root_record,
+    prepare_session_create, publish_requested_session,
 };
 use aex_session_domain::testing::{moment, session_fixture};
 use aex_wire::error::ErrorCode;
@@ -113,10 +113,10 @@ async fn plan_of(
     ports: &ScriptedPorts,
     command: &CreateSession,
 ) -> Result<SessionTransaction, AppError> {
-    Ok(ready_create(ports, command).await?.plan)
+    Ok(requested_create(ports, command).await?.plan)
 }
 
-async fn ready_create(
+async fn requested_create(
     ports: &ScriptedPorts,
     command: &CreateSession,
 ) -> Result<aex_session_app::Planned<aex_session_domain::Session>, AppError> {
@@ -126,14 +126,7 @@ async fn ready_create(
     let PrepareSessionCreateOutcome::Prepared(prepared) = outcome else {
         panic!("a fresh fixture identity cannot replay");
     };
-    let readiness = ReadySessionLaunch {
-        generation: prepared.generation,
-        launched_at: moment(1_001),
-        materialized_files: prepared
-            .initial_files
-            .iter()
-            .map(|file| (file.name.clone(), file.revision))
-            .collect(),
+    let launch = RequestedSessionLaunch {
         root_started: RootStartedEvidence {
             agent: prepared.root_agent,
             session: prepared.session,
@@ -144,7 +137,7 @@ async fn ready_create(
             journal_tail_hash: [7; 32],
         },
     };
-    publish_ready_session(&prepared, &readiness)
+    publish_requested_session(&prepared, &launch)
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +145,7 @@ async fn ready_create(
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn ready_create_publication_is_four_constant_actions() {
+async fn requested_create_publication_is_five_constant_actions() {
     let ports = ScriptedPorts::idle();
     let plan = plan_of(&ports, &command(minimal_request()))
         .await
@@ -162,7 +155,7 @@ async fn ready_create_publication_is_four_constant_actions() {
     assert_eq!(
         plan.validate().expect("a create plan validates").actions,
         SessionTransaction::CREATE_MAX_ACTIONS,
-        "head, receipt, started-root fence and active-account fence, and nothing else"
+        "head, receipt, receipt directory, started-root fence and active-account fence"
     );
     assert!(
         plan.writes.iter().all(|write| write.family()
@@ -173,7 +166,7 @@ async fn ready_create_publication_is_four_constant_actions() {
 }
 
 #[tokio::test]
-async fn a_create_carries_exactly_the_two_read_only_readiness_checks() {
+async fn a_create_carries_exactly_the_two_read_only_admission_checks() {
     // The started-root and active-account facts already exist, so publication
     // must condition-check them rather than rewrite either authority.
     let ports = ScriptedPorts::idle();
@@ -216,12 +209,12 @@ async fn a_selection_is_validated_without_copying_or_pinning_session_content() {
 }
 
 #[tokio::test]
-async fn the_ready_head_publishes_the_exact_elected_generation() {
-    // Create does not publish a head until this generation is reachable; the
-    // runtime rows are derived before publication, not smuggled into this
-    // authority transaction.
+async fn the_requested_head_publishes_the_exact_elected_generation() {
+    // Create publishes the requested generation without waiting for provider
+    // readiness; runtime rows are derived before publication, not smuggled
+    // into this authority transaction.
     let ports = ScriptedPorts::idle();
-    let planned = ready_create(&ports, &command(minimal_request()))
+    let planned = requested_create(&ports, &command(minimal_request()))
         .await
         .expect("admissible");
 
@@ -236,6 +229,16 @@ async fn the_ready_head_publishes_the_exact_elected_generation() {
                 .definition()
                 .generation,
         )
+    );
+    assert_eq!(
+        planned.projected.lifecycle.sandbox,
+        aex_session_domain::SandboxPreparationStatus::Requested,
+    );
+    assert_eq!(
+        aex_session_app::public_session(&planned.projected)
+            .expect("public session")
+            .sandbox_status,
+        models::SandboxStatus::Requested,
     );
     let pinned = planned
         .projected
@@ -288,10 +291,7 @@ async fn explicit_sandbox_opt_out_allocates_no_generation_or_runtime_pin() {
     };
     assert_eq!(config.hands_generation, None);
 
-    let readiness = ReadySessionLaunch {
-        generation: None,
-        launched_at: moment(1_001),
-        materialized_files: Vec::new(),
+    let launch = RequestedSessionLaunch {
         root_started: RootStartedEvidence {
             agent: prepared.root_agent,
             session: prepared.session,
@@ -302,7 +302,7 @@ async fn explicit_sandbox_opt_out_allocates_no_generation_or_runtime_pin() {
             journal_tail_hash: [7; 32],
         },
     };
-    let planned = publish_ready_session(&prepared, &readiness).expect("publishes");
+    let planned = publish_requested_session(&prepared, &launch).expect("publishes");
     assert_eq!(planned.projected.lifecycle.generation, None);
     assert!(planned.projected.pinned_runtime.is_none());
 }
@@ -310,7 +310,7 @@ async fn explicit_sandbox_opt_out_allocates_no_generation_or_runtime_pin() {
 #[tokio::test]
 async fn the_pinned_limits_revision_is_the_one_the_create_read() {
     let ports = ScriptedPorts::idle();
-    let planned = ready_create(&ports, &command(minimal_request()))
+    let planned = requested_create(&ports, &command(minimal_request()))
         .await
         .expect("admissible");
     assert_eq!(
@@ -330,7 +330,7 @@ async fn the_pinned_limits_revision_is_the_one_the_create_read() {
 async fn the_receipt_carries_the_exact_bytes_the_caller_is_sent() {
     // A D-6: a replay reproduces bytes, never a second rendering.
     let ports = ScriptedPorts::idle();
-    let planned = ready_create(&ports, &command(minimal_request()))
+    let planned = requested_create(&ports, &command(minimal_request()))
         .await
         .expect("admissible");
 
@@ -391,7 +391,7 @@ async fn two_callers_under_different_keys_address_different_receipts() {
 #[tokio::test]
 async fn an_accepted_retry_reads_only_the_receipt_after_dependencies_change() {
     let command = command(minimal_request());
-    let first = ready_create(&ScriptedPorts::idle(), &command)
+    let first = requested_create(&ScriptedPorts::idle(), &command)
         .await
         .expect("fresh create");
     let receipt = first

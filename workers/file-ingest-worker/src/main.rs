@@ -222,7 +222,7 @@ struct BatchResponse {
 async fn handle(processor: &Processor, event: Event) -> BatchResponse {
     let mut failures = Vec::new();
     for record in event.records {
-        let Some(locator) = stream_candidate(record.change.new_image) else {
+        let Some(locator) = stream_candidate(record.change.keys) else {
             continue;
         };
         if let Err(error) = processor.process(locator).await {

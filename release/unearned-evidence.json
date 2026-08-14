@@ -39,7 +39,7 @@
     "subject": "crates/aex-content-dynamodb",
     "owner": "regional-stores",
     "blocking_rule": "aex-empty-unit",
-    "detail": "regional-stores: the retired regional-content table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
+    "detail": "regional-stores: this active regional-file-authority row-family adapter keeps unit evidence in inline modules; unified-table composition is exercised by session-stream-api, file-ingest-worker, tool-mux, and aex-live-session-api"
   },
   {
     "reason_class": "inline_unit_evidence",
@@ -60,7 +60,7 @@
     "subject": "crates/aex-registry-dynamodb",
     "owner": "regional-stores",
     "blocking_rule": "aex-empty-unit",
-    "detail": "regional-stores: the retired regional-registry table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
+    "detail": "regional-stores: this active regional-file-authority row-family adapter keeps unit evidence in inline modules; unified-table composition is exercised by session-stream-api, file-ingest-worker, tool-mux, and aex-live-session-api"
   },
   {
     "reason_class": "inline_unit_evidence",
@@ -642,13 +642,6 @@
     "owner": "tools-mcp",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `net.public_egress` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-brain-mcp",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `mcp.streamable_http` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

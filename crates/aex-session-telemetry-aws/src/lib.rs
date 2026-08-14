@@ -1076,7 +1076,10 @@ impl SessionTelemetryDeleter {
     ///
     /// # Errors
     ///
-    /// Rejects invalid limits, malformed owned keys, and any S3 refusal.
+    /// Rejects invalid limits, keys outside the exact session-owned prefix, and
+    /// any S3 refusal. Deletion intentionally does not apply the reader's
+    /// segment/export grammar: an obsolete or partially written owned object
+    /// must not strand irreversible session cleanup.
     pub async fn delete_page(
         &self,
         session: SessionId,
@@ -1104,17 +1107,7 @@ impl SessionTelemetryDeleter {
             let key = object
                 .key()
                 .ok_or(SessionTelemetryError::InvalidStoredKey)?;
-            let tail = key
-                .strip_prefix(&owned_prefix)
-                .ok_or(SessionTelemetryError::InvalidStoredKey)?;
-            if let Some(id) = tail
-                .strip_prefix("segments/")
-                .and_then(|tail| tail.strip_suffix(".otlp.pb.zst"))
-            {
-                parse_segment_id(id).map_err(|_| SessionTelemetryError::InvalidStoredKey)?;
-            } else if !valid_export_tail(tail) {
-                return Err(SessionTelemetryError::InvalidStoredKey);
-            }
+            deletion_tail(&owned_prefix, key)?;
             self.client
                 .delete_object()
                 .bucket(&self.bucket)
@@ -1122,42 +1115,39 @@ impl SessionTelemetryDeleter {
                 .send()
                 .await
                 .map_err(|_| SessionTelemetryError::Store {
-                    operation: "delete_segment",
+                    operation: "delete_session_object",
                 })?;
         }
         Ok(true)
     }
 }
 
-fn valid_export_tail(tail: &str) -> bool {
-    let Some(stem) = tail
-        .strip_prefix("exports/")
-        .and_then(|tail| tail.strip_suffix(".ndjson.zst"))
-    else {
-        return false;
-    };
-    let mut parts = stem.split('-');
-    let Some(first) = parts.next() else {
-        return false;
-    };
-    let Some(last) = parts.next() else {
-        return false;
-    };
-    let Some(hash) = parts.next() else {
-        return false;
-    };
-    let ordered = match (first.parse::<u128>(), last.parse::<u128>()) {
-        (Ok(first), Ok(last)) => first <= last,
-        _ => false,
-    };
-    parts.next().is_none()
-        && first.len() == 20
-        && last.len() == 20
-        && first.bytes().all(|byte| byte.is_ascii_digit())
-        && last.bytes().all(|byte| byte.is_ascii_digit())
-        && ordered
-        && hash.len() == 64
-        && hash
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+fn deletion_tail<'a>(
+    owned_prefix: &str,
+    key: &'a str,
+) -> Result<&'a str, SessionTelemetryError> {
+    key.strip_prefix(owned_prefix)
+        .ok_or(SessionTelemetryError::InvalidStoredKey)
+}
+
+#[cfg(test)]
+mod deletion_tests {
+    use super::deletion_tail;
+
+    #[test]
+    fn exact_session_cleanup_accepts_unknown_historical_children() {
+        let prefix = "sessions/ses_01kyw2qa4ne00r40r40m30e209/";
+        assert_eq!(
+            deletion_tail(prefix, &format!("{prefix}tool-results/legacy.out"))
+                .expect("the exact session prefix owns every child"),
+            "tool-results/legacy.out"
+        );
+        assert!(
+            deletion_tail(
+                prefix,
+                "sessions/ses_01kyw2qa4ne00r40r40m30e20a/segments/foreign.otlp.pb.zst"
+            )
+            .is_err()
+        );
+    }
 }

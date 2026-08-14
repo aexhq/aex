@@ -17,8 +17,6 @@ variables {
   cluster_name                         = "aex-dev-eu-west-1"
   service_discovery_namespace          = "aex-dev.internal"
   artifact_bucket                      = "aex-infra-artifacts-dev-0a1b2c3d"
-  content_bucket                       = "aex-dev-eu-west-1-workspace-files"
-  content_bucket_owner                 = "000000000000"
   alb = {
     name               = "aex-dev-euw1-session"
     certificate_arn    = "arn:aws:acm:eu-west-1:000000000000:certificate/00000000-0000-4000-8000-000000000000"
@@ -139,9 +137,9 @@ run "exact_regional_session_mvp_topology" {
     condition = (
       !module.session_api.public_https_egress_enabled
       && module.brain_mux.public_https_egress_enabled
-      && module.tool_mux.public_https_egress_enabled
+      && !module.tool_mux.public_https_egress_enabled
     )
-    error_message = "Only Brain and Tool Mux may reach validated public provider/MCP endpoints; session-api must have no public egress."
+    error_message = "Only Brain may reach public provider endpoints; session-api and Tool Mux must have no public egress because MCP runs inside Hands."
   }
 }
 
@@ -159,16 +157,14 @@ run "mux_network_and_iam_boundaries" {
   }
 }
 
-run "session_maintenance_owns_bounded_checkpoint_cleanup" {
+run "session_maintenance_has_no_automatic_content_storage" {
   command = plan
 
   assert {
     condition = (
-      strcontains(module.role["session-maintenance-worker"].inline_policy_json, "s3:ListBucket")
-      && strcontains(module.role["session-maintenance-worker"].inline_policy_json, "s3:DeleteObject")
-      && strcontains(module.role["session-maintenance-worker"].inline_policy_json, "session-content/v1/*")
+      !strcontains(module.role["session-maintenance-worker"].inline_policy_json, "session-content/v1/*")
       && !strcontains(module.role["file-ingest-worker"].inline_policy_json, "s3:DeleteObject")
     )
-    error_message = "Session maintenance alone must list and delete immutable checkpoint objects."
+    error_message = "Session maintenance must not acquire automatic customer-content authority."
   }
 }

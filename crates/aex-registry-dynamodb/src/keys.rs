@@ -1,8 +1,9 @@
-//! The `regional-registry` key templates and closed vocabularies.
+//! Registry row-family key templates and closed vocabularies for the unified
+//! `regional-file-authority` table.
 //!
-//! This table has **no index and no stream** (D-22). List-by-kind is a native
-//! `Query` over one partition, and upload expiry rides the sharded
-//! `regional-work` due index rather than the literal single
+//! Registry rows do not populate the unified table's content-lifecycle indexes.
+//! List-by-kind is a native `Query` over one partition, and upload expiry rides
+//! the sharded `regional-work` due index rather than the literal single
 //! `"registry-upload-expiry"` partition the previous implementation swept.
 
 use aex_content_domain::identity::RegistryKind;
@@ -18,8 +19,8 @@ pub struct Key {
     pub sk: String,
 }
 
-/// Every `itemType` this table may hold, as declared in
-/// `migrations/regional/tables/regional-registry.json`.
+/// Every registry-row `itemType` this adapter may write, as declared in
+/// `migrations/regional/tables/regional-file-authority.json`.
 pub const ITEM_TYPES: &[&str] = &[
     "registry_pointer",
     "registry_upload",

@@ -3,11 +3,9 @@
 use std::sync::Arc;
 
 use aex_tool_mux::{
-    ExecutorOutput, GuestPort, McpPort, ReadyHand, ResultRetentionPort, RuntimePort, SandboxConfig,
-    StoragePersistPort, TelemetryEnvelope, TelemetryPort, TelemetryPressure, ToolCallIdentity,
-    ToolHandle, ToolMux, ToolMuxFuture, ToolTarget,
+    ExecutorOutput, GuestPort, ReadyHand, RuntimePort, StoragePersistPort, TelemetryEnvelope,
+    TelemetryPort, TelemetryPressure, ToolCallIdentity, ToolMux, ToolMuxFuture, ToolTarget,
 };
-use aex_wire::ids::PrefixedId as _;
 use http_body_util::BodyExt as _;
 use tower::ServiceExt as _;
 
@@ -45,21 +43,31 @@ impl tool_mux::InternalAuthorizer for Denied {
 }
 
 impl RuntimePort for Unused {
-    fn eager_prepare<'a>(
-        &'a self,
-        _session: aex_wire::ids::SessionId,
-        _sandbox: SandboxConfig,
-    ) -> ToolMuxFuture<'a, Result<Vec<aex_tool_mux::PreparationProgress>, String>> {
-        Box::pin(async { Err("unused".to_owned()) })
-    }
-
-    fn wait_ready<'a>(
+    fn start_waiter<'a>(
         &'a self,
         _session: aex_wire::ids::SessionId,
         _hand: aex_runtime_control::HandId,
         _generation: aex_wire::ids::GenerationId,
         _call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<ReadyHand, String>> {
+    ) -> ToolMuxFuture<'a, Result<(), String>> {
+        Box::pin(async { Err("unused".to_owned()) })
+    }
+
+    fn poll_waiter<'a>(
+        &'a self,
+        _session: aex_wire::ids::SessionId,
+        _hand: aex_runtime_control::HandId,
+        _generation: aex_wire::ids::GenerationId,
+        _call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<Option<ReadyHand>, String>> {
+        Box::pin(async { Err("unused".to_owned()) })
+    }
+
+    fn cancel_waiter<'a>(
+        &'a self,
+        _generation: aex_wire::ids::GenerationId,
+        _call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<Option<ReadyHand>, String>> {
         Box::pin(async { Err("unused".to_owned()) })
     }
 
@@ -83,10 +91,10 @@ impl GuestPort for Unused {
         _target: &'a ToolTarget,
         _arguments: &'a serde_json::Value,
         _call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<
-        'a,
-        Result<Result<ExecutorOutput, aex_hands_protocol::rpc::HandsOperationId>, String>,
-    > {
+        _deadline_ms: i64,
+        _max_result_bytes: usize,
+        _timeout_ms: u32,
+    ) -> ToolMuxFuture<'a, Result<aex_hands_protocol::rpc::HandsOperationId, String>> {
         Box::pin(async { Err("unused".to_owned()) })
     }
 
@@ -103,63 +111,37 @@ impl GuestPort for Unused {
     fn cancel<'a>(
         &'a self,
         _ready: ReadyHand,
-        _operation: aex_hands_protocol::rpc::HandsOperationId,
+        _call: &'a ToolCallIdentity,
     ) -> ToolMuxFuture<'a, Result<(), String>> {
         Box::pin(async { Err("unused".to_owned()) })
     }
 }
 
-impl McpPort for Unused {
-    fn call_remote<'a>(
-        &'a self,
-        _endpoint: &'a str,
-        _headers: &'a std::collections::BTreeMap<String, aex_wire::ids::ResourceName>,
-        _server: &'a aex_wire::ids::ResourceName,
-        _tool: &'a str,
-        _arguments: &'a serde_json::Value,
-        _call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<ExecutorOutput, String>> {
-        Box::pin(async { Err("unused".to_owned()) })
-    }
-}
-
 impl StoragePersistPort for Unused {
-    fn persist<'a>(
+    fn start_persist<'a>(
         &'a self,
         _ready: ReadyHand,
         _source: &'a aex_hands_protocol::operation::GuestPath,
         _logical_name: &'a str,
         _media_type: Option<&'a str>,
         _call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<ExecutorOutput, String>> {
-        Box::pin(async { Err("unused".to_owned()) })
-    }
-}
-
-impl ResultRetentionPort for Unused {
-    fn retain_inline<'a>(
-        &'a self,
-        _call: &'a ToolCallIdentity,
-        _body: &'a [u8],
-    ) -> ToolMuxFuture<'a, Result<aex_tool_mux::RetainedResult, String>> {
+    ) -> ToolMuxFuture<'a, Result<(), String>> {
         Box::pin(async { Err("unused".to_owned()) })
     }
 
-    fn retain_sandbox_file<'a>(
+    fn read_persist<'a>(
         &'a self,
-        _call: &'a ToolCallIdentity,
         _ready: ReadyHand,
-        _path: &'a aex_hands_protocol::operation::GuestPath,
-        _bytes: u64,
-        _hash: aex_wire::ids::ContentHash,
-    ) -> ToolMuxFuture<'a, Result<aex_tool_mux::RetainedResult, String>> {
+        _call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
         Box::pin(async { Err("unused".to_owned()) })
     }
 
-    fn read_handle<'a>(
+    fn cancel_persist<'a>(
         &'a self,
-        _handle: &'a ToolHandle,
-    ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
+        _ready: ReadyHand,
+        _call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<(), String>> {
         Box::pin(async { Err("unused".to_owned()) })
     }
 }
@@ -174,8 +156,6 @@ impl TelemetryPort for Unused {
 async fn health_and_readiness_are_the_only_get_routes() {
     let unused = Arc::new(Unused);
     let mux = Arc::new(ToolMux::new(
-        unused.clone(),
-        unused.clone(),
         unused.clone(),
         unused.clone(),
         unused.clone(),
@@ -199,45 +179,9 @@ async fn health_and_readiness_are_the_only_get_routes() {
 }
 
 #[tokio::test]
-async fn disabled_prepare_is_an_accepted_no_op() {
+async fn readiness_fails_closed_when_private_assertions_are_unavailable() {
     let unused = Arc::new(Unused);
     let mux = Arc::new(ToolMux::new(
-        unused.clone(),
-        unused.clone(),
-        unused.clone(),
-        unused.clone(),
-        unused.clone(),
-        unused,
-    ));
-    let session = aex_wire::ids::SessionId::from_uuid7(aex_wire::ids::Uuid7::compose(1, [1; 10]));
-    let body = serde_json::to_vec(&aex_tool_mux::EagerPrepareRequest {
-        session,
-        sandbox: SandboxConfig {
-            enabled: false,
-            generation: None,
-        },
-    })
-    .expect("request encodes");
-    let response = tool_mux::router(tool_mux::App::new(mux, Arc::new(Unused)))
-        .oneshot(
-            axum::http::Request::builder()
-                .method("POST")
-                .uri("/internal/hands/prepare")
-                .header("content-type", "application/json")
-                .body(axum::body::Body::from(body))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(response.status(), axum::http::StatusCode::ACCEPTED);
-}
-
-#[tokio::test]
-async fn an_unbound_or_invalid_private_assertion_fails_closed() {
-    let unused = Arc::new(Unused);
-    let mux = Arc::new(ToolMux::new(
-        unused.clone(),
-        unused.clone(),
         unused.clone(),
         unused.clone(),
         unused.clone(),
@@ -258,26 +202,4 @@ async fn an_unbound_or_invalid_private_assertion_fails_closed() {
         readiness.status(),
         axum::http::StatusCode::SERVICE_UNAVAILABLE
     );
-
-    let session = aex_wire::ids::SessionId::from_uuid7(aex_wire::ids::Uuid7::compose(1, [1; 10]));
-    let body = serde_json::to_vec(&aex_tool_mux::EagerPrepareRequest {
-        session,
-        sandbox: SandboxConfig {
-            enabled: false,
-            generation: None,
-        },
-    })
-    .expect("request encodes");
-    let unauthorized = app
-        .oneshot(
-            axum::http::Request::builder()
-                .method("POST")
-                .uri("/internal/hands/prepare")
-                .header("content-type", "application/json")
-                .body(axum::body::Body::from(body))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(unauthorized.status(), axum::http::StatusCode::UNAUTHORIZED);
 }

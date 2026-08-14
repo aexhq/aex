@@ -1,6 +1,5 @@
 //! Fenced, bounded continuation kernel for regional session operations.
 
-mod checkpoint_objects;
 pub mod config;
 mod deletion;
 
@@ -296,19 +295,6 @@ pub trait OperationPort: Send + Sync + 'static {
 }
 
 /// Real cross-table operation-step authority.
-/// The named regional stores one lifecycle port binds.
-#[derive(Debug, Clone)]
-pub struct RegionalStoreNames {
-    /// The runtime-control hint queue URL.
-    pub runtime_queue_url: String,
-    /// The session telemetry bucket.
-    pub session_telemetry_bucket: String,
-    /// The workspace content bucket.
-    pub content_bucket: String,
-    /// The account that owns the content bucket.
-    pub content_bucket_owner: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct DynamoOperationPort {
     operations: aex_session_dynamodb::store::OperationStore,
@@ -470,19 +456,17 @@ impl DynamoLifecyclePort {
         sqs: aws_sdk_sqs::Client,
         s3: aws_sdk_s3::Client,
         tables: aex_session_dynamodb::plan::RegionalTables,
-        stores: RegionalStoreNames,
+        runtime_queue_url: impl Into<String>,
+        session_telemetry_bucket: impl Into<String>,
     ) -> Self {
+        let runtime_queue_url = runtime_queue_url.into();
         let deletion = deletion::DynamoDeletionCoordinator::new(
             dynamodb.clone(),
             sqs.clone(),
             s3,
             tables.clone(),
-            RegionalStoreNames {
-                runtime_queue_url: stores.runtime_queue_url.clone(),
-                session_telemetry_bucket: stores.session_telemetry_bucket,
-                content_bucket: stores.content_bucket,
-                content_bucket_owner: stores.content_bucket_owner,
-            },
+            runtime_queue_url.clone(),
+            session_telemetry_bucket,
         );
         Self {
             sessions: aex_session_dynamodb::store::SessionReads::new(
@@ -499,7 +483,7 @@ impl DynamoLifecyclePort {
             ),
             dynamodb,
             sqs,
-            runtime_queue_url: stores.runtime_queue_url,
+            runtime_queue_url,
             tables,
             deletion,
         }

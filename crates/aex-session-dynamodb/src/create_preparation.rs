@@ -1,4 +1,4 @@
-//! Private authority for synchronous session-create preparation.
+//! Private authority for durable session-create preparation.
 //!
 //! Selected file bodies remain in the content object store. This module keeps
 //! only their exact registry revision, entity tag, content digest, byte size,
@@ -30,9 +30,9 @@ use crate::error::{
 };
 use crate::plan::{IMMUTABLE, Participant, TransactionPlan};
 
-/// The declared synchronous startup-file aggregate ceiling: exactly 512 MiB.
+/// The declared background startup-file aggregate ceiling: exactly 512 MiB.
 pub const STARTUP_FILE_MAX_BYTES: u64 = 536_870_912;
-/// The declared synchronous startup-file count ceiling.
+/// The declared background startup-file count ceiling.
 pub const STARTUP_FILE_MAX_COUNT: usize = 256;
 
 const PREPARATION: &str = "session_create_preparation";
@@ -46,7 +46,7 @@ const PREPARATION_EDGE_PARTICIPANT: Participant =
     Participant::new("session.create_preparation_edge");
 const PREPARATION_RECLAIM_AFTER_MS: i64 = 86_400_000;
 
-/// One exact registry revision selected for synchronous materialization.
+/// One exact registry revision selected for background materialization.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PreparedFile {
@@ -124,14 +124,14 @@ pub struct PreparationSummary {
     pub authority_digest: ContentHash,
 }
 
-/// Provider-authoritative time at which readiness was established.
+/// Admission-authoritative time at which the root start became durable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RootStarted {
     /// When the exact sequence-zero fact became durable.
     pub occurred_at: Timestamp,
 }
 
-/// Strongly verified physical sequence-zero readiness.
+/// Strongly verified physical sequence-zero admission evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DurableRootStarted {
     /// Control revision after the initial append.
@@ -632,7 +632,7 @@ pub fn elect_plan(
     Ok(plan)
 }
 
-/// Commits physical sequence-zero `AgentStarted` readiness after launch/upload.
+/// Commits physical sequence-zero `AgentStarted` before public admission.
 ///
 /// # Errors
 ///
@@ -827,6 +827,53 @@ impl CreatePreparationStore {
             }
         }
         decode_elected_preparation(&header, &files, workspace, receipt_key_sha256).map(Some)
+    }
+
+    /// Strongly loads the elected preparation addressed by its public session.
+    ///
+    /// The election transaction writes a session-partition edge beside the
+    /// receipt-keyed preparation. Runtime/Tool Mux recovery uses this method so
+    /// a first tool call can finish eager preparation without knowing the
+    /// customer's idempotency key or re-reading mutable registry pointers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CreatePreparationError`] when the edge is malformed, crosses
+    /// the asserted tenant, or resolves to another session/generation.
+    pub async fn load_for_session(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        expected_generation: Option<GenerationId>,
+    ) -> Result<Option<CreatePreparation>, CreatePreparationError> {
+        let key = crate::keys::create_preparation_edge(session);
+        let edge = self.get(&key.pk, &key.sk).await?;
+        let Some(edge) = edge else {
+            return Ok(None);
+        };
+        let edge = Row::bind(&edge, PREPARATION_EDGE).map_err(StoreError::from)?;
+        if edge.string("workspaceId").map_err(StoreError::from)? != workspace.to_string()
+            || edge.string("sessionId").map_err(StoreError::from)? != session.to_string()
+        {
+            return Err(corrupt(
+                "the preparation edge crosses its asserted session tenant",
+            ));
+        }
+        let partition = edge.string("preparationPk").map_err(StoreError::from)?;
+        let prefix = format!("CREATE#{workspace}#");
+        let receipt_key_sha256 = partition
+            .strip_prefix(&prefix)
+            .ok_or_else(|| corrupt("the preparation edge names a foreign partition"))?;
+        let prepared = self
+            .load(workspace, receipt_key_sha256)
+            .await?
+            .ok_or_else(|| corrupt("the preparation edge names an absent election"))?;
+        if prepared.session != session || prepared.generation != expected_generation {
+            return Err(corrupt(
+                "the preparation edge resolves to another session or generation",
+            ));
+        }
+        Ok(Some(prepared))
     }
 
     /// Commits and strongly verifies the elected root `AgentStarted` record.

@@ -319,10 +319,10 @@ fn completion(result: ToolCompletion) -> Result<ToolResultBody, ToolDispatchErro
         let value = CanonicalJson::from_value(&serde_json::json!({
             "preview": result.preview,
             "previewTruncated": true,
-            "retained": result.retained,
+            "outputFile": result.output_file,
             "error": result.error,
         }))
-        .map_err(|_| dispatched("ToolMux retained reference is invalid"))?;
+        .map_err(|_| dispatched("ToolMux local output reference is invalid"))?;
         let bytes = value.as_bytes().to_vec();
         (ToolResultPart::Json { value }, bytes)
     } else if let Ok(value) = CanonicalJson::parse(&result.preview) {
@@ -513,9 +513,8 @@ mod tests {
         AssertionSigner as _, KeyId, VerificationKey, VerificationKeySet,
     };
     use aex_tool_mux::{
-        ExecutorOutput, FullOutput, GuestPort, McpPort, ReadyHand, ResultRetentionPort,
-        RuntimePort, StoragePersistPort, TelemetryEnvelope, TelemetryPort, TelemetryPressure,
-        ToolMux, ToolMuxFuture,
+        ExecutorOutput, FullOutput, GuestPort, ReadyHand, RuntimePort, StoragePersistPort,
+        TelemetryEnvelope, TelemetryPort, TelemetryPressure, ToolMux, ToolMuxFuture,
     };
     use aex_wire::ids::{GenerationId, OrganizationId, WorkspaceId};
     use zeroize::Zeroizing;
@@ -523,22 +522,39 @@ mod tests {
     struct ContractPorts;
 
     impl RuntimePort for ContractPorts {
-        fn eager_prepare<'a>(
-            &'a self,
-            _session: SessionId,
-            _sandbox: SandboxConfig,
-        ) -> ToolMuxFuture<'a, Result<Vec<aex_tool_mux::PreparationProgress>, String>> {
-            Box::pin(async { Err("not used".to_owned()) })
-        }
-
-        fn wait_ready<'a>(
+        fn start_waiter<'a>(
             &'a self,
             _session: SessionId,
             _hand: aex_runtime_control::HandId,
             _generation: GenerationId,
             _call: &'a ToolCallIdentity,
-        ) -> ToolMuxFuture<'a, Result<ReadyHand, String>> {
-            Box::pin(async { Err("not used".to_owned()) })
+        ) -> ToolMuxFuture<'a, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn poll_waiter<'a>(
+            &'a self,
+            session: SessionId,
+            hand: aex_runtime_control::HandId,
+            generation: GenerationId,
+            _call: &'a ToolCallIdentity,
+        ) -> ToolMuxFuture<'a, Result<Option<ReadyHand>, String>> {
+            Box::pin(async move {
+                assert_eq!(hand, aex_runtime_control::HandId::for_session(session));
+                Ok(Some(ReadyHand {
+                    hand,
+                    generation,
+                    fence: aex_hands_protocol::rpc::Fence(9),
+                }))
+            })
+        }
+
+        fn cancel_waiter<'a>(
+            &'a self,
+            _generation: GenerationId,
+            _call: &'a ToolCallIdentity,
+        ) -> ToolMuxFuture<'a, Result<Option<ReadyHand>, String>> {
+            Box::pin(async { Ok(None) })
         }
 
         fn settle_waiter<'a>(
@@ -546,26 +562,44 @@ mod tests {
             _ready: ReadyHand,
             _call: &'a ToolCallIdentity,
         ) -> ToolMuxFuture<'a, Result<(), String>> {
-            Box::pin(async { Err("not used".to_owned()) })
+            Box::pin(async { Ok(()) })
         }
     }
 
     impl GuestPort for ContractPorts {
         fn hello<'a>(&'a self, _ready: ReadyHand) -> ToolMuxFuture<'a, Result<(), String>> {
-            Box::pin(async { Err("not used".to_owned()) })
+            Box::pin(async { Ok(()) })
         }
 
         fn start<'a>(
             &'a self,
             _ready: ReadyHand,
-            _target: &'a ToolTarget,
-            _arguments: &'a serde_json::Value,
+            target: &'a ToolTarget,
+            arguments: &'a serde_json::Value,
             _call: &'a ToolCallIdentity,
-        ) -> ToolMuxFuture<
-            'a,
-            Result<Result<ExecutorOutput, aex_hands_protocol::rpc::HandsOperationId>, String>,
-        > {
-            Box::pin(async { Err("not used".to_owned()) })
+            _deadline_ms: i64,
+            _max_result_bytes: usize,
+            _timeout_ms: u32,
+        ) -> ToolMuxFuture<'a, Result<aex_hands_protocol::rpc::HandsOperationId, String>> {
+            Box::pin(async move {
+                let ToolTarget::RemoteMcp {
+                    endpoint,
+                    headers,
+                    server,
+                    tool,
+                } = target
+                else {
+                    return Err("unexpected target".to_owned());
+                };
+                assert_eq!(endpoint, "https://mcp.internal");
+                assert!(headers.is_empty());
+                assert_eq!(server.as_str(), "fixture");
+                assert_eq!(tool, "echo");
+                assert_eq!(arguments, &serde_json::json!({"value": 7}));
+                Ok(aex_hands_protocol::rpc::HandsOperationId(Uuid7::compose(
+                    8, [8; 10],
+                )))
+            })
         }
 
         fn read<'a>(
@@ -575,88 +609,50 @@ mod tests {
             _max_result_bytes: usize,
             _timeout_ms: u32,
         ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
-            Box::pin(async { Err("not used".to_owned()) })
+            Box::pin(async {
+                let body = br#"{"echo":7}"#.to_vec();
+                Ok(Some(ExecutorOutput {
+                    preview: body.clone(),
+                    full: FullOutput::Inline(body),
+                    is_error: false,
+                }))
+            })
         }
 
         fn cancel<'a>(
             &'a self,
             _ready: ReadyHand,
-            _operation: aex_hands_protocol::rpc::HandsOperationId,
-        ) -> ToolMuxFuture<'a, Result<(), String>> {
-            Box::pin(async { Err("not used".to_owned()) })
-        }
-    }
-
-    impl McpPort for ContractPorts {
-        fn call_remote<'a>(
-            &'a self,
-            endpoint: &'a str,
-            headers: &'a BTreeMap<String, aex_wire::ids::ResourceName>,
-            server: &'a aex_wire::ids::ResourceName,
-            tool: &'a str,
-            arguments: &'a serde_json::Value,
             _call: &'a ToolCallIdentity,
-        ) -> ToolMuxFuture<'a, Result<ExecutorOutput, String>> {
-            Box::pin(async move {
-                assert_eq!(endpoint, "https://mcp.internal");
-                assert!(headers.is_empty());
-                assert_eq!(server.as_str(), "fixture");
-                assert_eq!(tool, "echo");
-                assert_eq!(arguments, &serde_json::json!({"value": 7}));
-                let body = br#"{"echo":7}"#.to_vec();
-                Ok(ExecutorOutput {
-                    preview: body.clone(),
-                    full: FullOutput::Inline(body),
-                    is_error: false,
-                })
-            })
+        ) -> ToolMuxFuture<'a, Result<(), String>> {
+            Box::pin(async { Ok(()) })
         }
     }
 
     impl StoragePersistPort for ContractPorts {
-        fn persist<'a>(
+        fn start_persist<'a>(
             &'a self,
             _ready: ReadyHand,
             _source: &'a GuestPath,
             _logical_name: &'a str,
             _media_type: Option<&'a str>,
             _call: &'a ToolCallIdentity,
-        ) -> ToolMuxFuture<'a, Result<ExecutorOutput, String>> {
+        ) -> ToolMuxFuture<'a, Result<(), String>> {
             Box::pin(async { Err("not used".to_owned()) })
         }
-    }
 
-    impl ResultRetentionPort for ContractPorts {
-        fn retain_inline<'a>(
+        fn read_persist<'a>(
             &'a self,
-            _call: &'a ToolCallIdentity,
-            body: &'a [u8],
-        ) -> ToolMuxFuture<'a, Result<aex_tool_mux::RetainedResult, String>> {
-            Box::pin(async move {
-                Ok(aex_tool_mux::RetainedResult {
-                    object_ref: "session/tool-result".to_owned(),
-                    bytes: body.len() as u64,
-                    hash: aex_wire::ids::ContentHash::of(body),
-                    sandbox_path: None,
-                })
-            })
-        }
-
-        fn retain_sandbox_file<'a>(
-            &'a self,
-            _call: &'a ToolCallIdentity,
             _ready: ReadyHand,
-            _path: &'a GuestPath,
-            _bytes: u64,
-            _hash: aex_wire::ids::ContentHash,
-        ) -> ToolMuxFuture<'a, Result<aex_tool_mux::RetainedResult, String>> {
+            _call: &'a ToolCallIdentity,
+        ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
             Box::pin(async { Err("not used".to_owned()) })
         }
 
-        fn read_handle<'a>(
+        fn cancel_persist<'a>(
             &'a self,
-            _handle: &'a ToolHandle,
-        ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
+            _ready: ReadyHand,
+            _call: &'a ToolCallIdentity,
+        ) -> ToolMuxFuture<'a, Result<(), String>> {
             Box::pin(async { Err("not used".to_owned()) })
         }
     }
@@ -686,8 +682,11 @@ mod tests {
         let handle = ToolHandle::Sandbox {
             hand: aex_runtime_control::HandId::for_session(identity.session),
             generation: GenerationId::from_uuid7(Uuid7::compose(6, [6; 10])),
-            fence: aex_hands_protocol::rpc::Fence(9),
-            operation: aex_hands_protocol::rpc::HandsOperationId(Uuid7::compose(7, [7; 10])),
+            target: Box::new(ToolTarget::OfficialSandbox {
+                tool: aex_tool_mux::OfficialSandboxTool::Read,
+            }),
+            arguments: serde_json::json!({"path": "/workspace/input.txt"}),
+            deadline_ms: 60_000,
             max_result_bytes: 1_048_576,
             timeout_ms: 60_000,
         };
@@ -724,8 +723,6 @@ mod tests {
             ports.clone(),
             ports.clone(),
             ports.clone(),
-            ports.clone(),
-            ports.clone(),
             ports,
         ));
         let app = tool_mux::router(tool_mux::App::new(
@@ -756,8 +753,8 @@ mod tests {
         let request = ToolStartRequest {
             identity,
             sandbox: SandboxConfig {
-                enabled: false,
-                generation: None,
+                enabled: true,
+                generation: Some(GenerationId::from_uuid7(Uuid7::compose(6, [6; 10]))),
             },
             target: ToolTarget::RemoteMcp {
                 server: aex_wire::ids::ResourceName::parse("fixture").expect("server"),
@@ -775,14 +772,24 @@ mod tests {
             .post("/internal/tools/start", &assertion, &request)
             .await
             .expect("placed contract round trip");
-        let ToolStart::Completed { result } = response else {
-            panic!("remote MCP is immediate")
+        let ToolStart::Accepted { handle } = response else {
+            panic!("remote MCP starts detached")
+        };
+        let read = ToolHandleRequest {
+            identity: request.identity.clone(),
+            handle,
+        };
+        let ticket = detached_ticket(&read.identity).expect("detached ticket");
+        let assertion = client.assertion(&ticket, &read).expect("read assertion");
+        let ToolRead::Completed { result } = client
+            .post::<_, ToolRead>("/internal/tools/read", &assertion, &read)
+            .await
+            .expect("detached result round trip")
+        else {
+            panic!("fixture result is ready")
         };
         assert_eq!(result.preview, r#"{"echo":7}"#);
-        assert_eq!(
-            result.retained.expect("retained").object_ref,
-            "session/tool-result"
-        );
+        assert!(result.output_file.is_none());
         server.abort();
         let _ = server.await;
     }

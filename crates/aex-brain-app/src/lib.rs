@@ -10,8 +10,8 @@
 //!
 //! # Not this crate's job
 //!
-//! - concrete vendor clients (`aex-brain-provider-gateway`, `aex-brain-mcp`,
-//!   `aex-brain-hands`)
+//! - concrete vendor clients (`aex-brain-provider-gateway`, placed Tool Mux,
+//!   and `aex-brain-hands`)
 //! - the fold invariants themselves (`aex-brain-domain`)
 //! - process lifecycle and configuration (`brain-mux`)
 

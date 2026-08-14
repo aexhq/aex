@@ -1601,6 +1601,9 @@ impl Session<'_> {
         &mut self,
         capability: &QualifiedModel,
     ) -> Result<(), ActivationError> {
+        if !self.policy.persistent_context_checkpoints {
+            return Ok(());
+        }
         let decision = context::decide(
             &self.state,
             capability,

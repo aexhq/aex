@@ -1,6 +1,7 @@
-//! `aex-registry-dynamodb` owns the `regional-registry` table adapter: the
-//! current `(workspace, kind, name)` pointer with its revision and `ETag`,
-//! multipart upload staging, and idempotency receipts.
+//! `aex-registry-dynamodb` owns the registry row family within the unified
+//! `regional-file-authority` table: the current `(workspace, kind, name)`
+//! pointer with its revision and `ETag`, multipart upload staging, and
+//! idempotency receipts.
 //!
 //! # Invariants
 //!
@@ -13,7 +14,8 @@
 //!   cannot both complete
 //! - an upload row carries **no TTL**: reclaiming it on a timer would orphan the
 //!   live multipart upload it names
-//! - there is no index and no stream on this table (D-22)
+//! - registry rows do not enter an index; the table's `KEYS_ONLY` stream exists
+//!   solely so file-ingest can point-read a current pending file pointer
 //!
 //! # Not this crate's job
 //!
