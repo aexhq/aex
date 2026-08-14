@@ -1,5 +1,6 @@
 # AUTHORED. One accepted identifier per registry kind.
 {"kind":"user","text":"usr_01kyw2qa4ne00r40r40m30e209"}
+{"kind":"account","text":"acc_01kyw2qa4ne00r40r40m30e209"}
 {"kind":"organization","text":"org_01kyw2qa4pew48j2gb1g6gw3rg"}
 {"kind":"membership","text":"mem_01kyw2qa4qfr7s048j2ca1a5gq"}
 {"kind":"invitation","text":"inv_01kyw2qa4remb9e60s38dhr78y"}
@@ -19,3 +20,5 @@
 {"kind":"upload","text":"upl_01kyw2qa58ep38f249ha5rs3ce"}
 {"kind":"measurement","text":"msr_01kyw2qa59fj6rx3wgj699754n"}
 {"kind":"statement","text":"stm_01kyw2qa5aeea9b5mqk2csn6ww"}
+{"kind":"payment_method","text":"pmt_01kyw2qa4ne00r40r40m30e209"}
+{"kind":"billing_transaction","text":"txn_01kyw2qa4ne00r40r40m30e209"}
