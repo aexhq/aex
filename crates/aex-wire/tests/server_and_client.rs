@@ -37,8 +37,8 @@ use aex_wire::provider::ProviderId;
 use aex_wire::routes::{Plane, RouteId, match_route, route};
 use aex_wire::scopes::ScopeSet;
 use aex_wire::server::{
-    ApiKeysApi, Created, NdjsonStream, NoContent, RequestContext, RouteGroup, SessionsApi, WithETag,
-    dispatch_api_keys, dispatch_sessions,
+    ApiKeysApi, Created, NdjsonStream, NoContent, RequestContext, RouteGroup, SessionsApi,
+    WithETag, dispatch_api_keys, dispatch_sessions,
 };
 use aex_wire::types::{ETag, HttpMethod, RequestId, Timestamp};
 
@@ -845,8 +845,7 @@ fn a_built_request_encodes_only_the_query_parameters_that_were_supplied() {
     })
     .expect("request");
     assert_eq!(
-        filtered.query,
-        "limit=25&status=idle",
+        filtered.query, "limit=25&status=idle",
         "the query is not in the registry's parameter order"
     );
 }
