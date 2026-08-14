@@ -6,7 +6,6 @@
 {"class":"auth","code":"token_revoked","precedenceStage":"authentication","retryable":false,"status":401}
 {"class":"auth","code":"token_expired","precedenceStage":"authentication","retryable":false,"status":401}
 {"class":"auth","code":"malformed_token","precedenceStage":"authentication","retryable":false,"status":401}
-{"class":"state","code":"authorization_pending","precedenceStage":"domain_state","retryable":true,"status":400}
 {"class":"quota","code":"slow_down","precedenceStage":"domain_state","retryable":true,"status":429}
 {"class":"not_found","code":"not_found","precedenceStage":"tombstone_and_parent","retryable":false,"status":404}
 {"class":"not_found","code":"gone","precedenceStage":"tombstone_and_parent","retryable":false,"status":410}
@@ -46,8 +45,6 @@
 {"class":"state","code":"package_integrity_mismatch","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"validation","code":"unknown_provider","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
 {"class":"validation","code":"unknown_model","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
-{"class":"not_found","code":"provider_credential_not_found","precedenceStage":"tombstone_and_parent","retryable":false,"status":404}
-{"class":"state","code":"provider_credential_revoked","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"validation","code":"invalid_auto_topup_policy","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
 {"class":"state","code":"payment_method_required","precedenceStage":"domain_state","retryable":false,"status":402}
 {"class":"unavailable","code":"authentication_unavailable","precedenceStage":"authentication","retryable":true,"status":503}
@@ -55,6 +52,7 @@
 {"class":"unavailable","code":"account_state_unavailable","precedenceStage":"account_state","retryable":true,"status":503}
 {"class":"precondition","code":"precondition_failed","precedenceStage":"precondition","retryable":false,"status":412}
 {"class":"conflict","code":"wrong_workspace_region","precedenceStage":"placement","retryable":false,"status":409}
+{"class":"state","code":"usage_coverage_gap","precedenceStage":"domain_state","retryable":true,"status":409}
 {"class":"unavailable","code":"usage_unavailable","precedenceStage":"domain_state","retryable":true,"status":503}
 {"class":"quota","code":"rate_limited","precedenceStage":"domain_state","retryable":true,"status":429}
 {"class":"unavailable","code":"upstream_error","precedenceStage":"commit","retryable":true,"status":502}

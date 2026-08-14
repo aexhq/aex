@@ -24,17 +24,23 @@ const downloadArtifact =
 
 describe("workflow evidence producers", () => {
   test("artifact transfers use the current pinned action generations", () => {
+    const transfers = workflowPaths.flatMap((path) =>
+      Object.values(readWorkflow(path).jobs ?? {})
+        .flatMap((job) => workflowSteps(job))
+        .flatMap((step) => step.uses?.startsWith("actions/upload-artifact@") ||
+          step.uses?.startsWith("actions/download-artifact@")
+          ? [{ path, uses: step.uses }]
+          : [])
+    );
+    const uploads = transfers.filter(({ uses }) => uses.startsWith("actions/upload-artifact@"));
+    const downloads = transfers.filter(({ uses }) => uses.startsWith("actions/download-artifact@"));
+
+    expect(uploads.length).toBeGreaterThan(0);
+    expect(downloads.length).toBeGreaterThan(0);
+    expect(uploads.filter(({ uses }) => uses !== uploadArtifact)).toEqual([]);
+    expect(downloads.filter(({ uses }) => uses !== downloadArtifact)).toEqual([]);
+
     for (const path of workflowPaths) {
-      for (const step of Object.values(readWorkflow(path).jobs ?? {}).flatMap((job) =>
-        workflowSteps(job)
-      )) {
-        if (step.uses?.startsWith("actions/upload-artifact@")) {
-          expect(step.uses, path).toBe(uploadArtifact);
-        }
-        if (step.uses?.startsWith("actions/download-artifact@")) {
-          expect(step.uses, path).toBe(downloadArtifact);
-        }
-      }
       expect(readRepoFile(path), path).not.toContain("assurance");
     }
   });

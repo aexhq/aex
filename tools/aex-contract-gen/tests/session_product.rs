@@ -166,21 +166,25 @@ fn sandbox_mcp_streaming_telemetry_and_subagent_limits_are_explicit() {
         lifecycle["properties"]["maximumSubagentDepth"]["minimum"],
         3
     );
-    let status = json("api/generated/schemas/SandboxStatus.json");
-    for state in [
-        "materializing_workspace",
-        "qualifying_mcp",
-        "suspending",
-        "suspended",
-        "resuming",
-    ] {
-        assert!(
-            status["enum"]
-                .as_array()
-                .expect("enum")
-                .contains(&serde_json::json!(state))
-        );
-    }
+    let sandbox_status = json("api/generated/schemas/SandboxStatus.json");
+    let lifecycle_states = sandbox_status["enum"]
+        .as_array()
+        .expect("enum")
+        .iter()
+        .map(|state| state.as_str().expect("sandbox state"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        lifecycle_states,
+        BTreeSet::from([
+            "disabled",
+            "requested",
+            "ready",
+            "suspending",
+            "suspended",
+            "resuming",
+            "lost",
+        ])
+    );
     let regional = operations("regional");
     for route in [
         "session_messages_stream",

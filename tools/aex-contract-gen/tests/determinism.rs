@@ -36,6 +36,17 @@ fn copy_authored_contract(root: &std::path::Path) {
     .expect("copy toolchain pin");
 }
 
+fn replace_exactly_once(authored: &str, from: &str, to: &str, mutation: &str) -> String {
+    assert_eq!(
+        authored.matches(from).count(),
+        1,
+        "the {mutation} fixture requires exactly one `{from}` anchor"
+    );
+    let changed = authored.replacen(from, to, 1);
+    assert_ne!(changed, authored, "the {mutation} fixture rewrote nothing");
+    changed
+}
+
 #[test]
 fn regenerate_produces_byte_identical_output() {
     let root = repo_root();
@@ -334,12 +345,13 @@ fn malformed_serving_artifacts_are_rejected_at_the_authored_boundary() {
     let temp = tempfile::tempdir().expect("temporary contract root");
     copy_authored_contract(temp.path());
     let path = temp.path().join("api/schemas/registries/routes-meta.yaml");
-    let text = std::fs::read_to_string(&path)
-        .expect("routes metadata")
-        .replace(
-            "central-control-api: central",
-            "central--control-api: central",
-        );
+    let authored = std::fs::read_to_string(&path).expect("routes metadata");
+    let text = replace_exactly_once(
+        &authored,
+        "control-api: central",
+        "central--control-api: central",
+        "malformed serving artifact",
+    );
     std::fs::write(path, text).expect("mutate fixture metadata");
     let error = load::load(temp.path()).expect_err("malformed artifact must fail");
     assert!(error.to_string().contains("malformed serving artifact"));
@@ -350,12 +362,13 @@ fn cross_plane_planned_owners_are_rejected() {
     let temp = tempfile::tempdir().expect("temporary contract root");
     copy_authored_contract(temp.path());
     let path = temp.path().join("api/schemas/registries/routes-meta.yaml");
-    let text = std::fs::read_to_string(&path)
-        .expect("routes metadata")
-        .replace(
-            "central-control-api: central",
-            "central-control-api: regional",
-        );
+    let authored = std::fs::read_to_string(&path).expect("routes metadata");
+    let text = replace_exactly_once(
+        &authored,
+        "control-api: central",
+        "control-api: regional",
+        "cross-plane planned owner",
+    );
     std::fs::write(path, text).expect("mutate fixture metadata");
     let error = load::load(temp.path()).expect_err("cross-plane owner must fail");
     assert!(error.to_string().contains("is on `central`"));
@@ -368,20 +381,18 @@ fn cross_plane_actual_owners_are_rejected() {
     copy_authored_contract(temp.path());
     let path = temp.path().join("api/schemas/registries/routes-meta.yaml");
     let authored = std::fs::read_to_string(&path).expect("routes metadata");
-    // Re-pinned from `regional-session-api`, which the registry retired when the
-    // two regional edges merged. A mutation fixture whose anchor no longer
-    // occurs rewrites nothing and asserts against an unmutated document, so the
-    // rewrite is proved before the load is asked to refuse it.
-    let text = authored
-        .replace(
-            "  central-control-api:\n    - api_key_create\n",
-            "  central-control-api:\n",
-        )
-        .replace(
-            "  session-stream-api:\n",
-            "  session-stream-api:\n    - api_key_create\n",
-        );
-    assert_ne!(text, authored, "the cross-plane mutation rewrote nothing");
+    let without_central_owner = replace_exactly_once(
+        &authored,
+        "  control-api:\n    - api_key_create\n",
+        "  control-api:\n",
+        "remove the central actual owner",
+    );
+    let text = replace_exactly_once(
+        &without_central_owner,
+        "  session-api:\n",
+        "  session-api:\n    - api_key_create\n",
+        "add the regional actual owner",
+    );
     std::fs::write(path, text).expect("mutate fixture metadata");
     let error = load::load(temp.path()).expect_err("cross-plane actual owner must fail");
     assert!(error.to_string().contains("operation is on `central`"));
@@ -501,7 +512,14 @@ fn the_classifier_reports_each_row_of_the_evolution_table() {
 
     // A narrowed `safeRetry` is breaking; a widened one is not.
     let mut head = base.clone();
-    head["planes"]["central"]["operations"][0]["safeRetry"] = serde_json::Value::Bool(false);
+    let operation = head["planes"]["central"]["operations"]
+        .as_array_mut()
+        .expect("central operations")
+        .iter_mut()
+        .find(|operation| operation["operationId"] == "api_keys_list")
+        .expect("a safe-retry central operation");
+    assert_eq!(operation["safeRetry"], serde_json::Value::Bool(true));
+    operation["safeRetry"] = serde_json::Value::Bool(false);
     let changes = classify(&base, &head);
     assert!(
         changes

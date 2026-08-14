@@ -24,7 +24,7 @@ pub const HANDS_PACKAGE_ECOSYSTEMS: [aex_wire::models::PackageEcosystem; 3] = [
 
 /// The published release variant keys, in deterministic selection order.
 ///
-/// This must equal the `hands-image` unit's MicroVM variant in
+/// This must equal the `hands-image` unit's `MicroVM` variant in
 /// `release/units.toml`.
 pub const HANDS_IMAGE_VARIANTS: [&str; 1] = ["2gb"];
 

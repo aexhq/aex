@@ -141,17 +141,34 @@ fn text(name: &str, value: &str) -> SqlParameter {
 #[test]
 fn the_corpus_is_not_empty_and_covers_both_statement_modules() {
     // A source scan that silently matched nothing would make every property
-    // below vacuous, which is the one failure mode a corpus test has.
-    assert!(
-        statements(CONTROL_SQL).len() >= 50,
-        "the control statement scan found {} statements",
-        statements(CONTROL_SQL).len()
-    );
-    assert!(
-        statements(IDENTITY_SQL).len() >= 25,
-        "the identity statement scan found {} statements",
-        statements(IDENTITY_SQL).len()
-    );
+    // below vacuous. Representative names also prove that each scan reaches
+    // the distinct authority families housed in the module without making the
+    // test depend on how many statements those families currently need.
+    let control = statements(CONTROL_SQL);
+    assert!(!control.is_empty(), "the control statement scan is empty");
+    for required in [
+        "RESOLVE_WORKSPACE_KEY",
+        "INSERT_ORGANIZATION",
+        "CLAIM_DUE_OPERATIONS",
+    ] {
+        assert!(
+            control.iter().any(|(name, _)| name == required),
+            "the control statement scan missed `{required}`"
+        );
+    }
+
+    let identity = statements(IDENTITY_SQL);
+    assert!(!identity.is_empty(), "the identity statement scan is empty");
+    for required in [
+        "FIND_USER_BY_EXTERNAL_IDENTITY",
+        "INSERT_EMAIL_CHALLENGE",
+        "INSERT_DASHBOARD_SESSION",
+    ] {
+        assert!(
+            identity.iter().any(|(name, _)| name == required),
+            "the identity statement scan missed `{required}`"
+        );
+    }
 }
 
 #[test]

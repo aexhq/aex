@@ -11,8 +11,8 @@ override_resource {
 }
 
 variables {
-  name = "session-stream-api"
-  task_definition_family = "aex-dev-eu-west-1-session-api"
+  name                   = "session-stream-api"
+  task_definition_family = "aex-dev-eu-west-1-session-stream-api"
   cluster_arn            = "arn:aws:ecs:eu-west-1:000000000000:cluster/aex-dev-euw1"
   cluster_name           = "aex-dev-euw1"
   image                  = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/session-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
