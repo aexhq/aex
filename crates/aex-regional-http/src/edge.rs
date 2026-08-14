@@ -288,10 +288,11 @@ where
             ));
         }
 
-        // 3: one reconciled read of the key row, the placement and the hot limit
-        // ceilings. It runs before the credential is checked, so a revoked key
-        // costs no MAC at all, and the answers cannot disagree about an identity
-        // the way separate point reads could.
+        // 3: one reconciled read of the key row and placement. It runs before
+        // the credential is checked, so a revoked key costs no MAC at all, and
+        // the answers cannot disagree about an identity the way separate point
+        // reads could. Request ceilings are the validated static binding held
+        // by the projection adapter, not another identity row.
         //
         // The workspace here is the credential's *claim*. It only selects which
         // rows are read; `read_admission_snapshot` refuses any set whose

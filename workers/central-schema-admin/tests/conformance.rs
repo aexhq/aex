@@ -52,7 +52,7 @@ fn a_stale_image_is_refused_by_the_expected_bundle_head_before_anything_else() {
         "--expect-head",
         "20260801000400",
         "--outbox-wake-lambda-arn",
-        "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-central-control-worker:live",
+        "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-control-projection-worker:live",
     ]);
     assert_eq!(
         output.status.code(),
@@ -81,7 +81,7 @@ fn the_exit_contract_is_observable_from_outside_the_process() {
             "--expect-head",
             "1",
             "--outbox-wake-lambda-arn",
-            "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-central-control-worker:live",
+            "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-control-projection-worker:live",
         ])
         .status
         .code(),
@@ -122,7 +122,7 @@ fn the_committed_destructive_bundle_requires_recorded_backup_evidence() {
         "--expect-head",
         "20260814000300",
         "--outbox-wake-lambda-arn",
-        "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-central-control-worker:live",
+        "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-control-projection-worker:live",
     ]);
     assert_eq!(
         output.status.code(),

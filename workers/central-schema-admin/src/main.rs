@@ -95,7 +95,7 @@ enum Command {
         /// PITR/backup evidence identity.
         #[arg(long, requires = "allow_destructive")]
         backup_evidence: Option<String>,
-        /// Exact central-control-worker alias Aurora invokes asynchronously.
+        /// Exact control-projection-worker alias Aurora invokes asynchronously.
         #[arg(long)]
         outbox_wake_lambda_arn: String,
     },

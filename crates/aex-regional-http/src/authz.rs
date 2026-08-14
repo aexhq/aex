@@ -15,9 +15,9 @@
 //! | cursor signing ring ([`ParameterStore::cursor_key_ring`]) | Parameter Store | cold start | once |
 //! | the admission snapshot ([`RegionalProjection`]) | `DynamoDB` | per request | always |
 //!
-//! The snapshot is the only per-request read — three concurrent point reads over
-//! the key authorization row, the placement and the hot limit ceilings,
-//! reconciled after decode — and it is deliberately never cached. It is now the
+//! The snapshot is the only per-request read — two concurrent point reads over
+//! the key authorization row and placement, reconciled after decode — and it is
+//! deliberately never cached. It is now the
 //! *whole* authorization answer rather than a check on a cached one: there is no
 //! central assertion, no 30-second lifetime and nothing held between requests,
 //! so a revoked key or a paused account takes effect on the next request rather
@@ -60,7 +60,7 @@ use aex_identity_domain::credential::Pepper;
 use aex_internal_contracts::SchemaVersion;
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::projection::AuthorizationProjection;
-use aex_session_dynamodb::wire_pending::{EdgeLimits, KeyAuthorizationState};
+use aex_session_dynamodb::wire_pending::KeyAuthorizationState;
 use aex_wire::ids::{ApiKeyId, WorkspaceId};
 use aex_wire::types::Region;
 use async_trait::async_trait;
@@ -498,20 +498,26 @@ impl SecretStore {
 /// The regional authorization projection, over the read-only `DynamoDB` reader.
 ///
 /// Key authorization, placement and profile rows are written only by
-/// `central-control-worker` and limit rows only by the regional capacity
-/// authority; every serving regional role holds read actions on the table and
-/// nothing else.
+/// `central-control-worker`; every serving regional role holds read actions on
+/// the table and nothing else. The session MVP's request ceilings are validated
+/// deployable configuration supplied by the composition root, not a projected
+/// workspace row.
 #[derive(Debug, Clone)]
 pub struct RegionalProjection<P> {
     projection: P,
     region: Region,
+    limits: EffectiveLimits,
 }
 
 impl<P> RegionalProjection<P> {
     /// Binds the projection to the region this process is pinned to.
     #[must_use]
-    pub const fn new(projection: P, region: Region) -> Self {
-        Self { projection, region }
+    pub const fn new(projection: P, region: Region, limits: EffectiveLimits) -> Self {
+        Self {
+            projection,
+            region,
+            limits,
+        }
     }
 }
 
@@ -554,7 +560,7 @@ impl<P: AuthorizationProjection> ProjectionReader for RegionalProjection<P> {
             scopes: snapshot.key.scopes,
             account_state: account_state(&placement.status)?,
             region,
-            limits: effective(&snapshot.limits)?,
+            limits: self.limits,
         })
     }
 }
@@ -573,21 +579,6 @@ fn snapshot_failure(error: &StoreError) -> ProjectionError {
         StoreError::Misconfigured { .. } | StoreError::Corrupt(_) => ProjectionError::Unknown,
         _ => ProjectionError::Unavailable,
     }
-}
-
-/// Narrows the projected ceilings onto the machine-word type the edge applies.
-///
-/// A ceiling that does not fit a `usize` cannot be enforced on this host, and an
-/// unenforceable ceiling is refused rather than saturated: saturating it would
-/// silently admit a body the authority never permitted.
-fn effective(limits: &EdgeLimits) -> Result<EffectiveLimits, ProjectionError> {
-    let width = |value: u64| usize::try_from(value).map_err(|_| ProjectionError::Unavailable);
-    Ok(EffectiveLimits {
-        json_body_bytes: width(limits.json_body_bytes)?,
-        otlp_body_bytes: width(limits.otlp_body_bytes)?,
-        query_page_items: width(limits.query_page_items)?,
-        query_page_bytes: width(limits.query_page_bytes)?,
-    })
 }
 
 /// Projects the stored placement status onto the account policy the edge gates

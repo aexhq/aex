@@ -1,4 +1,4 @@
-//! `central-control-worker` composition (Rust Lambda ZIP).
+//! `control-projection-worker` composition (Rust Lambda ZIP).
 //!
 //! Transaction-wake-driven reconciliation for the central control plane. It
 //! projects the personal workspace, billing state, and API-key authorization
@@ -77,7 +77,7 @@ const MAX_BATCH: u64 = 100;
 /// The longest a claim lease may last.
 const MAX_LEASE_MS: u64 = 900_000;
 
-/// Why `central-control-worker` refused to start.
+/// Why `control-projection-worker` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CentralControlWorkerConfigError {
     /// A required variable was absent or blank.
@@ -253,7 +253,7 @@ fn lambda_alias_arn(
     account_id: &str,
 ) -> Result<String, CentralControlWorkerConfigError> {
     let fields = raw.split(':').collect::<Vec<_>>();
-    let expected_function = format!("aex-{}-central-control-worker", plane.as_str());
+    let expected_function = format!("aex-{}-control-projection-worker", plane.as_str());
     if fields.len() == 8
         && fields[0] == "arn"
         && matches!(
@@ -271,7 +271,7 @@ fn lambda_alias_arn(
     } else {
         Err(CentralControlWorkerConfigError::Invalid {
             name,
-            reason: "expected this plane's exact central-control-worker `live` alias ARN"
+            reason: "expected this plane's exact control-projection-worker `live` alias ARN"
                 .to_owned(),
         })
     }
@@ -431,7 +431,7 @@ pub fn readiness(probes: Probes) -> Readiness {
     )
 }
 
-/// Why `central-control-worker` stopped.
+/// Why `control-projection-worker` stopped.
 #[derive(Debug, thiserror::Error)]
 pub enum CentralControlWorkerRunError {
     /// Start-up configuration was rejected.
@@ -456,7 +456,7 @@ pub fn app(readiness: Readiness) -> axum::Router {
     aex_central_http::health::router(readiness)
 }
 
-/// Runs `central-control-worker` until it stops.
+/// Runs `control-projection-worker` until it stops.
 ///
 /// # Errors
 ///
@@ -620,7 +620,7 @@ mod tests {
             ),
             (
                 keys::FUNCTION_ARN,
-                "arn:aws:lambda:eu-west-1:000000000000:function:aex-prd-central-control-worker:live"
+                "arn:aws:lambda:eu-west-1:000000000000:function:aex-prd-control-projection-worker:live"
                     .to_owned(),
             ),
             (
@@ -648,14 +648,20 @@ mod tests {
             config.authz_projection_table,
             "aex-prd-eu-west-1-regional-authz-projection"
         );
+        assert_eq!(
+            config.function_arn,
+            "arn:aws:lambda:eu-west-1:000000000000:function:aex-prd-control-projection-worker:live",
+            "the Aurora continuation target is the deployed alias"
+        );
     }
 
     #[test]
     fn the_wake_target_is_this_planes_exact_live_alias() {
         for arn in [
-            "arn:aws:lambda:eu-west-1:111111111111:function:aex-prd-central-control-worker:live",
+            "arn:aws:lambda:eu-west-1:111111111111:function:aex-prd-control-projection-worker:live",
             "arn:aws:lambda:eu-west-1:000000000000:function:aex-prd-some-other-worker:live",
-            "arn:aws:lambda:eu-west-1:000000000000:function:aex-prd-central-control-worker:canary",
+            "arn:aws:lambda:eu-west-1:000000000000:function:aex-prd-control-projection-worker:canary",
+            "arn:aws:lambda:eu-west-1:000000000000:function:aex-prd-central-control-worker:live",
         ] {
             let mut vars = complete();
             vars.insert(keys::FUNCTION_ARN, arn.to_owned());

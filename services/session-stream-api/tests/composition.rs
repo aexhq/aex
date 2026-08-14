@@ -129,7 +129,16 @@ fn a_complete_environment_is_accepted() {
     let admitted = read(&complete()).expect("complete environment");
     assert_eq!(admitted.port, 8_080);
     assert_eq!(admitted.work_table, "aex-dev-regional-work");
-    assert_eq!(admitted.limits().json_body_bytes, 65_536);
+    assert_eq!(
+        admitted.limits(),
+        aex_regional_http::context::EffectiveLimits {
+            json_body_bytes: 65_536,
+            otlp_body_bytes: 4 * 1_024 * 1_024,
+            query_page_items: 100,
+            query_page_bytes: 1_048_576,
+        },
+        "the same validated static binding is injected into request admission"
+    );
     assert_eq!(EDGE_COUNT, 1);
 }
 

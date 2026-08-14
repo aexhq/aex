@@ -23,12 +23,13 @@
 //! - **The regional half is a recording double.** `CreateWorkspace` performs one
 //!   effect against `RegionalControlPort`, and this body asserts exactly what
 //!   the central plane asks the region for. The production
-//!   `central-control-worker` now invokes `regional-capacity-controller` before
-//!   it publishes the placement, and refuses to publish when bootstrap fails.
+//!   `central-control-worker` publishes the regional identity rows. Request
+//!   ceilings are validated session-service configuration in the MVP, so there
+//!   is no capacity bootstrap effect or projected limit row in this ceremony.
 //!   This body still cannot assert that the deployed aliases, permissions and
 //!   regional write all work together. The last case below pins the central
-//!   request shape; only a real-plane E2E target can earn the cross-plane
-//!   evidence for all five observed artifacts.
+//!   request shape; only a real-plane E2E target can earn that cross-plane
+//!   evidence.
 
 mod support;
 
@@ -525,11 +526,9 @@ async fn the_same_idempotency_key_never_creates_a_second_organization() {
 async fn the_central_plane_asks_the_region_to_provision_exactly_once_and_asks_for_nothing_else() {
     // The shape of this request is the whole of the central plane's contract
     // with the region. It carries an id, an organization, a region and a fence —
-    // and no capacity or limits intent of any kind. A workspace with no
-    // `workspace_edge_limits` row answers `401 unauthenticated` on every
-    // regional request, and this assertion is where that becomes visible from
-    // the central side: when the capacity bootstrap acquires a production
-    // caller, this case is the one that has to change.
+    // and no capacity or limits intent of any kind. That is complete for the
+    // session MVP: the serving deployable applies its validated plane limits,
+    // while this effect owns only durable workspace identity.
     let now = OffsetDateTime::from_unix_timestamp(1_767_225_600).expect("a representable instant");
     let plane = support::CentralPlane::start().await;
     let region = RecordingRegion::default();
