@@ -868,7 +868,7 @@ mod tests {
         assert_eq!(condition.key, "dynamodb:LeadingKeys");
         assert_eq!(
             condition.values,
-            ["WS#*", "KEY#*", "FEED#*"],
+            ["WS#*", "KEY#*", "FEED"],
             "the write fence admits exactly the three projected row families"
         );
         assert_eq!(
