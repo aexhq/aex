@@ -97,3 +97,5 @@ d9f25a1b1ccc7dd36f3e1bcea81124db110e8c8f:conformance/credentials/workspace-keys.
 # Canonical Secrets Manager reference in a schema-admin CLI conformance fixture; this is a resource name, never credential material.
 d1dfaa9ad8619ca40ae85e973a7b7079106a6c3b:workers/central-schema-admin/tests/conformance.rs:generic-api-key:210
 
+# Test fixture for the OAuth diagnostic redaction: a credential-shaped run that is not a real token, fixed forward in 022a97fd to use a non-token prefix.
+2e565f993015f833c00d90161c489e43abafa87a:services/central-identity-api/src/oauth/tests.rs:generic-api-key:189
