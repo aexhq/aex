@@ -53,7 +53,7 @@
       "description": "Ledger coverage."
     },
     "unit": {
-      "description": "Stable unit such as input_tokens or byte_minutes.",
+      "description": "Stable unit such as `input_tokens` or `byte_minutes`.",
       "maxLength": 64,
       "minLength": 1,
       "type": "string"

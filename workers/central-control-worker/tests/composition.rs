@@ -30,6 +30,7 @@ use aex_session_dynamodb::projection_write::{KeyAuthorizationWrite, PlacementWri
 use aex_wire::types::{Region, Timestamp};
 use async_trait::async_trait;
 use central_control_worker::runtime::{
+    DrainSettings,
     OutboxWake, RegionalProjection, WakeDelay, WakeInvoker, Worker,
 };
 use time::{Duration, OffsetDateTime};
@@ -660,11 +661,13 @@ impl Harness {
             Arc::new(FakeWakeInvoker(Arc::clone(&journal))),
             Arc::new(FakeWakeDelay(Arc::clone(&journal))),
             projection,
-            REGION,
+            DrainSettings {
+                region: REGION,
+                owner: "central-control-worker:eu-west-1".to_owned(),
+                batch: 10,
+                lease: Duration::seconds(60),
+            },
             Arc::new(FixedClock),
-            "central-control-worker:eu-west-1".to_owned(),
-            10,
-            Duration::seconds(60),
         );
         Self { worker, journal }
     }

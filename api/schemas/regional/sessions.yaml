@@ -16,7 +16,7 @@ schemas:
     doc: Observable preparation state of the session's single default-on sandbox.
     type: enum
     values:
-      - { value: disabled, doc: "The caller explicitly opted out; sandbox tools return sandbox_disabled." }
+      - { value: disabled, doc: "The caller explicitly opted out; sandbox tools return `sandbox_disabled`." }
       - { value: requested, doc: "Preparation was durably requested." }
       - { value: provisioning, doc: "Runtime infrastructure is being provisioned." }
       - { value: booting, doc: "The exact generation is booting." }
@@ -315,7 +315,7 @@ schemas:
     type: object
     fields:
       kind: { type: ref, to: ResponseFormatKind, doc: "Format." }
-      schema: { type: canonical_json, optional: true, doc: "Required only for json_schema." }
+      schema: { type: canonical_json, optional: true, doc: "Required only for `json_schema`." }
 
   MessageSendRequest:
     doc: Text-only user message; arbitrary files are referenced by mounted paths in this text.

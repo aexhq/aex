@@ -2574,7 +2574,7 @@ impl Session<'_> {
         let mut budget = self.state.budget.limit;
         budget.set(
             Dimension::TotalChildrenCreated,
-            u64::from(aex_brain_domain::budget::MAX_SUBAGENTS_PER_SESSION),
+            aex_brain_domain::budget::MAX_SUBAGENTS_PER_SESSION,
         );
         let grant = DimensionVector::ZERO;
         let input = vec![ContentBlockRef::Inline {

@@ -229,11 +229,11 @@ impl BrainStore {
             .previous
             .map(|_| ", checkpointPreviousId = :previousValue")
             .unwrap_or_default();
-        let checkpoint_previous_removal = metadata
-            .previous
-            .is_none()
-            .then_some(" REMOVE checkpointPreviousId")
-            .unwrap_or_default();
+        let checkpoint_previous_removal = if metadata.previous.is_none() {
+            " REMOVE checkpointPreviousId"
+        } else {
+            ""
+        };
         let mut update = Update::builder()
             .table_name(self.table())
             .set_key(Some(key(&control_key.pk, &control_key.sk)))

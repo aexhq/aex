@@ -559,16 +559,10 @@ impl RegistryReader for ScriptedPorts {
 impl ProviderCredentialReader for ScriptedPorts {
     async fn bind_session_api_key(
         &self,
-        _workspace: WorkspaceId,
-        _organization: aex_wire::ids::OrganizationId,
-        _credential: aex_wire::ids::ProviderCredentialId,
-        provider: aex_wire::provider::ProviderId,
-        api_key: &str,
-        _identity: &aex_session_domain::IdempotencyIdentity,
-        _now: Timestamp,
+        request: crate::ports::BindSessionApiKey<'_>,
     ) -> Result<crate::ports::ProviderCredentialBinding, PortError> {
         self.log.record(PortCall::Read("bind_session_api_key"));
-        if api_key.is_empty() {
+        if request.api_key.is_empty() {
             return Err(PortError::NotFound {
                 kind: "provider api key",
             });
@@ -576,7 +570,7 @@ impl ProviderCredentialReader for ScriptedPorts {
         let mut binding = self.credential.clone().ok_or(PortError::NotFound {
             kind: "provider api key",
         })?;
-        binding.provider = provider;
+        binding.provider = request.provider;
         Ok(binding)
     }
 

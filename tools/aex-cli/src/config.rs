@@ -317,19 +317,18 @@ fn reject_secret_key(key: &str) -> Result<(), CliConfigError> {
 }
 
 fn validate_credential_ref(value: &str) -> Result<(), CliConfigError> {
-    if let Some(name) = value.strip_prefix("env:") {
-        if !name.is_empty()
-            && name
-                .bytes()
-                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
-        {
-            return Ok(());
-        }
+    if let Some(name) = value.strip_prefix("env:")
+        && !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return Ok(());
     }
-    if let Some(path) = value.strip_prefix("file:") {
-        if Path::new(path).is_absolute() {
-            return Ok(());
-        }
+    if let Some(path) = value.strip_prefix("file:")
+        && Path::new(path).is_absolute()
+    {
+        return Ok(());
     }
     Err(CliConfigError::InvalidApiKeyReference)
 }

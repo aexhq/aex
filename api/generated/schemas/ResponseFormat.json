@@ -9,7 +9,7 @@
       "description": "Format."
     },
     "schema": {
-      "description": "Required only for json_schema.",
+      "description": "Required only for `json_schema`.",
       "x-aex-canonical-json": true
     }
   },

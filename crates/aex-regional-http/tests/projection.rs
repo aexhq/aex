@@ -70,6 +70,7 @@ fn sealed_messages_project_only_the_launch_part_variants() {
     ));
 }
 
+#[test]
 fn page_positions_round_trip_through_cursor_tuples() {
     let base = PagePosition {
         pk: format!("SEC#{}", workspace()),

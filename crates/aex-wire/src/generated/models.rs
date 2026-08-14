@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:2714e625c3ed159b08bf3f97a27b9d088369acc429073957508115af3b1f7238`.
+//! `sha256:08520468115cc260f4be164db5586e89934667e7a775ccaaa13ba8fa85a4f908`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -110,7 +110,7 @@ impl AccountPauseReason {
 pub struct AccountPausedState {
     /// When the state last changed.
     pub changed_at: Timestamp,
-    /// Smallest restoring top-up, only for top_up_required.
+    /// Smallest restoring top-up, only for `top_up_required`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum_restore_cents: Option<Cents>,
     /// Why it is paused.
@@ -360,7 +360,7 @@ pub struct BillingUsageItem {
     pub session_id: Option<SessionId>,
     /// Ledger coverage.
     pub settlement: BillingUsageSettlement,
-    /// Stable unit such as input_tokens or byte_minutes.
+    /// Stable unit such as `input_tokens` or `byte_minutes`.
     pub unit: String,
 }
 
@@ -420,7 +420,7 @@ pub enum CardBrand {
     Diners,
     /// JCB.
     Jcb,
-    /// UnionPay.
+    /// `UnionPay`.
     Unionpay,
     /// A network Stripe did not map to this display vocabulary.
     Unknown,
@@ -501,7 +501,7 @@ pub struct DashboardBootstrap {
 pub struct DashboardSessionCredential {
     /// When it stops verifying.
     pub expires_at: Timestamp,
-    /// Bearer credential for an HttpOnly cookie.
+    /// Bearer credential for an `HttpOnly` cookie.
     pub session: String,
     /// The GitHub-linked person.
     pub user_id: UserId,
@@ -1544,7 +1544,7 @@ pub struct ResolvedNetwork {
 pub struct ResponseFormat {
     /// Format.
     pub kind: ResponseFormatKind,
-    /// Required only for json_schema.
+    /// Required only for `json_schema`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<CanonicalJson>,
 }
@@ -1595,7 +1595,7 @@ pub struct SandboxMcpServer {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxStatus {
-    /// The caller explicitly opted out; sandbox tools return sandbox_disabled.
+    /// The caller explicitly opted out; sandbox tools return `sandbox_disabled`.
     Disabled,
     /// Preparation was durably requested.
     Requested,

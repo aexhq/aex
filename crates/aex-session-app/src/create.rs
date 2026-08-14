@@ -40,7 +40,7 @@ use crate::error::AppError;
 use crate::plan::{
     Condition, ItemKey, Planned, SessionTransaction, TableFamily, TransactionIntent, Write,
 };
-use crate::ports::AppContext;
+use crate::ports::{AppContext, BindSessionApiKey};
 
 /// The idempotency scope every create receipt is filed under.
 ///
@@ -636,15 +636,15 @@ async fn prepare_create<'a>(
     }
     let credential = context
         .credentials
-        .bind_session_api_key(
-            command.workspace,
-            command.organization,
-            candidate_credential,
-            command.request.provider,
-            &command.request.provider_api_key,
-            &command.identity,
-            context.clock.now(),
-        )
+        .bind_session_api_key(BindSessionApiKey {
+            workspace: command.workspace,
+            organization: command.organization,
+            credential: candidate_credential,
+            provider: command.request.provider,
+            api_key: &command.request.provider_api_key,
+            identity: &command.identity,
+            now: context.clock.now(),
+        })
         .await?;
 
     let selectors = selectors_of(command);

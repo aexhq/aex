@@ -566,11 +566,10 @@ mod tests {
         router
             .register_executor(ExecutorRoute::ToolMux, Arc::new(MissingReadFile))
             .expect("Tool Mux executor");
-        for route in [ExecutorRoute::BrainInline] {
-            router
-                .register_executor(route, Arc::new(RecordingExecutor::new(route)))
-                .expect("one executor per route");
-        }
+        let route = ExecutorRoute::BrainInline;
+        router
+            .register_executor(route, Arc::new(RecordingExecutor::new(route)))
+            .expect("one executor per route");
         let entries = builtin_entries().expect("built-in fixture");
         let advertised = advertise_all(&entries);
         assert!(matches!(

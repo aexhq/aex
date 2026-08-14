@@ -55,7 +55,7 @@
             "x-aex-time": "rfc3339-ms"
           },
           "minimumRestoreCents": {
-            "description": "Smallest restoring top-up, only for top_up_required.",
+            "description": "Smallest restoring top-up, only for `top_up_required`.",
             "pattern": "^(0|[1-9]\\d*)$",
             "type": "string",
             "x-aex-money": "cents"
@@ -481,7 +481,7 @@
             "description": "Ledger coverage."
           },
           "unit": {
-            "description": "Stable unit such as input_tokens or byte_minutes.",
+            "description": "Stable unit such as `input_tokens` or `byte_minutes`.",
             "maxLength": 64,
             "minLength": 1,
             "type": "string"
@@ -609,7 +609,7 @@
             "x-aex-time": "rfc3339-ms"
           },
           "session": {
-            "description": "Bearer credential for an HttpOnly cookie.",
+            "description": "Bearer credential for an `HttpOnly` cookie.",
             "maxLength": 4096,
             "minLength": 16,
             "type": "string"

@@ -379,7 +379,7 @@ mod tests {
             single.intent, None,
             "one page needs no intent to resume from"
         );
-        assert!(12 <= SPAWN_PAGE_CHILDREN);
+        const { assert!(12 <= SPAWN_PAGE_CHILDREN) };
     }
 
     /// Capacity is consumed as the page is planned, so a page of 32 into one free slot

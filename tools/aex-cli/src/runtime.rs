@@ -1102,10 +1102,10 @@ fn credential_environment(profile: &Profile, plane: CredentialPlane) -> BTreeMap
     if let Ok(value) = std::env::var(ambient) {
         values.insert(ambient.to_owned(), value);
     }
-    if let Some(name) = reference.and_then(|value| value.strip_prefix("env:")) {
-        if let Ok(value) = std::env::var(name) {
-            values.insert(name.to_owned(), value);
-        }
+    if let Some(name) = reference.and_then(|value| value.strip_prefix("env:"))
+        && let Ok(value) = std::env::var(name)
+    {
+        values.insert(name.to_owned(), value);
     }
     values
 }

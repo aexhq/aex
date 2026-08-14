@@ -6,7 +6,7 @@
 
 pub mod aurora;
 pub mod authority;
-pub mod billing;
+pub mod service;
 pub mod gateway;
 
 /// Purpose-specific database role used by the billing authority.

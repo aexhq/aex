@@ -374,21 +374,22 @@ async fn eager_setup_is_visible_and_disabled_sessions_make_no_runtime_call() {
         .await
         .expect("eager setup");
     assert_eq!(*fixture.runtime.eager.lock().expect("eager mutex"), 1);
-    let events = fixture.telemetry.events.lock().expect("telemetry mutex");
-    assert_eq!(events[0].kind, TelemetryKind::SandboxRequested);
-    assert!(events.iter().any(|event| {
-        event.kind
-            == TelemetryKind::SandboxProgress {
-                progress: PreparationProgress::MaterializingWorkspace,
-            }
-    }));
-    assert!(events.iter().any(|event| {
-        event.kind
-            == TelemetryKind::SandboxProgress {
-                progress: PreparationProgress::Suspended,
-            }
-    }));
-    drop(events);
+    {
+        let events = fixture.telemetry.events.lock().expect("telemetry mutex");
+        assert_eq!(events[0].kind, TelemetryKind::SandboxRequested);
+        assert!(events.iter().any(|event| {
+            event.kind
+                == TelemetryKind::SandboxProgress {
+                    progress: PreparationProgress::MaterializingWorkspace,
+                }
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind
+                == TelemetryKind::SandboxProgress {
+                    progress: PreparationProgress::Suspended,
+                }
+        }));
+    }
     fixture
         .mux
         .eager_prepare(identity().session, sandbox(false))

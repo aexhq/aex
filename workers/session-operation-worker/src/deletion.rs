@@ -46,13 +46,14 @@ impl DynamoDeletionCoordinator {
         sqs: aws_sdk_sqs::Client,
         s3: aws_sdk_s3::Client,
         tables: RegionalTables,
-        runtime_queue_url: impl Into<String>,
-        session_telemetry_bucket: impl Into<String>,
-        content_bucket: impl Into<String>,
-        content_bucket_owner: impl Into<String>,
+        stores: crate::RegionalStoreNames,
     ) -> Self {
-        let content_bucket = content_bucket.into();
-        let content_bucket_owner = content_bucket_owner.into();
+        let crate::RegionalStoreNames {
+            runtime_queue_url,
+            session_telemetry_bucket,
+            content_bucket,
+            content_bucket_owner,
+        } = stores;
         Self {
             sessions: SessionDeletionStore::new(dynamodb.clone(), tables.session_authority.clone()),
             operations: aex_session_dynamodb::store::OperationStore::new(
@@ -74,7 +75,7 @@ impl DynamoDeletionCoordinator {
             ),
             dynamodb,
             sqs,
-            runtime_queue_url: runtime_queue_url.into(),
+            runtime_queue_url,
             tables,
         }
     }

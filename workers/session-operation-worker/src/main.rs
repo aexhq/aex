@@ -21,8 +21,8 @@ use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
 use session_operation_worker::config::Config;
 use session_operation_worker::{
     BatchItem, DUE_SHARD_CONCURRENCY, DynamoLifecyclePort, DynamoOperationPort,
-    OperationReconciler, ReconcileDisposition, Trigger, WorkHint, WorkPort, batch_response,
-    decode_work_hint, due_shards, next_due_cursor,
+    OperationReconciler, ReconcileDisposition, RegionalStoreNames, Trigger, WorkHint, WorkPort,
+    batch_response, decode_work_hint, due_shards, next_due_cursor,
 };
 
 /// Bounded work rows read from each due shard in one scheduled invocation.
@@ -149,10 +149,12 @@ impl Worker {
             sqs.clone(),
             s3.clone(),
             tables,
-            config.runtime_lifecycle_queue_url.clone(),
-            config.session_telemetry_bucket.clone(),
-            config.content_bucket.clone(),
-            config.content_bucket_owner.clone(),
+            RegionalStoreNames {
+                runtime_queue_url: config.runtime_lifecycle_queue_url.clone(),
+                session_telemetry_bucket: config.session_telemetry_bucket.clone(),
+                content_bucket: config.content_bucket.clone(),
+                content_bucket_owner: config.content_bucket_owner.clone(),
+            },
         );
         let reconciler = OperationReconciler::new(
             work,

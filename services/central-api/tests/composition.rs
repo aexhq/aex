@@ -62,7 +62,7 @@ fn every_declared_capability_is_bound_and_no_retired_queue_right_survives() {
 #[test]
 fn retired_control_and_billing_features_are_absent_from_the_handlers() {
     let control = include_str!("../src/control.rs");
-    let billing = include_str!("../src/billing/billing.rs");
+    let billing = include_str!("../src/billing/service.rs");
     for retired in ["invitation", "workspace_delete", "organization_create"] {
         assert!(
             !control.contains(retired),

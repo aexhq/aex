@@ -29,7 +29,7 @@ schemas:
       - { value: discover, doc: "Discover." }
       - { value: diners, doc: "Diners Club." }
       - { value: jcb, doc: "JCB." }
-      - { value: unionpay, doc: "UnionPay." }
+      - { value: unionpay, doc: "`UnionPay`." }
       - { value: unknown, doc: "A network Stripe did not map to this display vocabulary." }
 
   PaymentMethod:
@@ -131,7 +131,7 @@ schemas:
       model: { type: string, min: 1, max: 256, optional: true, doc: "Provider model identifier for model usage." }
       quantity: { type: decimal, doc: "Measured quantity before rating." }
       chargedQuantity: { type: decimal, doc: "Quantity actually charged after policy." }
-      unit: { type: string, min: 1, max: 64, doc: "Stable unit such as input_tokens or byte_minutes." }
+      unit: { type: string, min: 1, max: 64, doc: "Stable unit such as `input_tokens` or `byte_minutes`." }
       amountCents: { type: cents, doc: "Exact rated amount in whole cents." }
       currency: { type: ref, to: Currency, doc: "Always USD at launch." }
       settlement: { type: ref, to: BillingUsageSettlement, doc: "Ledger coverage." }

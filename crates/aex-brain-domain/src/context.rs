@@ -165,8 +165,7 @@ pub fn build_checkpoint(
     let prefix = serde_json::to_vec(&state.model_history[..protected_from]).ok()?;
     let target_bytes = usize::try_from(target_tokens.saturating_mul(4))
         .unwrap_or(usize::MAX)
-        .max(1_024)
-        .min(aex_model_catalog::canonical::TEXT_MAX);
+        .clamp(1_024, aex_model_catalog::canonical::TEXT_MAX);
     let mut summary = String::from("[checkpoint summary; source journal remains authoritative]\n");
     let available = target_bytes.saturating_sub(summary.len());
     summary.push_str(&String::from_utf8_lossy(

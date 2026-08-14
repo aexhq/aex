@@ -72,7 +72,6 @@ pub trait InternalAuthorizer: Send + Sync + 'static {
 }
 
 /// Exact private route set.
-#[must_use]
 pub fn router(app: App) -> Router {
     Router::new()
         .route("/internal/healthz", get(|| async { StatusCode::OK }))

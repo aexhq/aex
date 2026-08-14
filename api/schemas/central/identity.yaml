@@ -26,7 +26,7 @@ schemas:
       reason: { type: ref, to: AccountPauseReason, doc: "Why it is paused." }
       revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic state revision." }
       changedAt: { type: timestamp, doc: "When the state last changed." }
-      minimumRestoreCents: { type: cents, optional: true, doc: "Smallest restoring top-up, only for top_up_required." }
+      minimumRestoreCents: { type: cents, optional: true, doc: "Smallest restoring top-up, only for `top_up_required`." }
 
   AccountOperationalState:
     doc: Whether the account may consume paid capacity.
@@ -103,7 +103,7 @@ schemas:
     doc: A rotated browser session returned exactly once.
     type: object
     fields:
-      session: { type: string, min: 16, max: 4096, doc: "Bearer credential for an HttpOnly cookie." }
+      session: { type: string, min: 16, max: 4096, doc: "Bearer credential for an `HttpOnly` cookie." }
       userId: { type: id, of: user, doc: "The GitHub-linked person." }
       expiresAt: { type: timestamp, doc: "When it stops verifying." }
 

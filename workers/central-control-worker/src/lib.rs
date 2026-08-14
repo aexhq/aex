@@ -516,11 +516,13 @@ pub async fn run(config: &Config) -> Result<(), CentralControlWorkerRunError> {
         )),
         std::sync::Arc::new(runtime::TokioWakeDelay),
         projection,
-        config.region,
+        runtime::DrainSettings {
+            region: config.region,
+            owner: format!("{}:{}", DEPLOYABLE.as_str(), config.region.as_str()),
+            batch: config.batch_size,
+            lease: time::Duration::milliseconds(i64::try_from(config.lease_ms).unwrap_or(i64::MAX)),
+        },
         std::sync::Arc::new(aex_central_aws::SystemClock),
-        format!("{}:{}", DEPLOYABLE.as_str(), config.region.as_str()),
-        config.batch_size,
-        time::Duration::milliseconds(i64::try_from(config.lease_ms).unwrap_or(i64::MAX)),
     ));
 
     run_lambda(worker).await

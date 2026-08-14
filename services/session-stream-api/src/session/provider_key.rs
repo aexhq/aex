@@ -410,14 +410,17 @@ impl Backoff for YieldBackoff {
 impl ProviderCredentialReader for SessionProviderKeys {
     async fn bind_session_api_key(
         &self,
-        workspace: WorkspaceId,
-        organization: OrganizationId,
-        credential: ProviderCredentialId,
-        provider: ProviderId,
-        api_key: &str,
-        identity: &IdempotencyIdentity,
-        now: Timestamp,
+        request: aex_session_app::ports::BindSessionApiKey<'_>,
     ) -> Result<ProviderCredentialBinding, PortError> {
+        let aex_session_app::ports::BindSessionApiKey {
+            workspace,
+            organization,
+            credential,
+            provider,
+            api_key,
+            identity,
+            now,
+        } = request;
         let key = identity.key().ok_or(PortError::Corrupt {
             kind: "session provider key",
             reason: "session create requires an idempotency key",
@@ -671,6 +674,7 @@ mod tests {
     use aex_wire::idempotency::{IdempotencyKey, IntentDigest, PrincipalScope, ReplayIdentity};
     use aex_wire::ids::{ApiKeyId, Uuid7};
     use aex_wire::models::{RemoteMcpServer, SandboxMcpServer};
+    use aex_session_app::ports::BindSessionApiKey;
     use aex_wire::routes::RouteId;
     use aex_wire::types::HttpsUrl;
 
@@ -692,6 +696,33 @@ mod tests {
 
     fn credential(tag: u8) -> ProviderCredentialId {
         sample(tag)
+    }
+
+    fn test_binding(
+        credential: ProviderCredentialId,
+        identity: &'static IdempotencyIdentity,
+    ) -> BindSessionApiKey<'static> {
+        test_binding_with_key(credential, identity, PLAINTEXT)
+    }
+
+    fn test_binding_with_key(
+        credential: ProviderCredentialId,
+        identity: &'static IdempotencyIdentity,
+        api_key: &'static str,
+    ) -> BindSessionApiKey<'static> {
+        BindSessionApiKey {
+            workspace: workspace(),
+            organization: organization(),
+            credential,
+            provider: ProviderId::Openai,
+            api_key,
+            identity,
+            now: now(),
+        }
+    }
+
+    fn identity_binding(intent: u8) -> &'static IdempotencyIdentity {
+        Box::leak(Box::new(identity(intent)))
     }
 
     fn session() -> SessionId {
@@ -1017,27 +1048,11 @@ mod tests {
         let custody = Arc::new(MemoryCustody::default());
         let (writer, crypto) = writer(Arc::clone(&custody));
         let first = writer
-            .bind_session_api_key(
-                workspace(),
-                organization(),
-                credential(3),
-                ProviderId::Openai,
-                PLAINTEXT,
-                &identity(1),
-                now(),
-            )
+            .bind_session_api_key(test_binding(credential(3), identity_binding(1)))
             .await
             .expect("first binding");
         let replay = writer
-            .bind_session_api_key(
-                workspace(),
-                organization(),
-                credential(4),
-                ProviderId::Openai,
-                PLAINTEXT,
-                &identity(1),
-                now(),
-            )
+            .bind_session_api_key(test_binding(credential(4), identity_binding(1)))
             .await
             .expect("receipt replay");
         assert_eq!(first, replay);
@@ -1078,28 +1093,16 @@ mod tests {
         let custody = Arc::new(MemoryCustody::default());
         let (writer, crypto) = writer(Arc::clone(&custody));
         let first = writer
-            .bind_session_api_key(
-                workspace(),
-                organization(),
-                credential(3),
-                ProviderId::Openai,
-                PLAINTEXT,
-                &identity(1),
-                now(),
-            )
+            .bind_session_api_key(test_binding(credential(3), identity_binding(1)))
             .await
             .expect("first binding");
         assert_eq!(
             writer
-                .bind_session_api_key(
-                    workspace(),
-                    organization(),
+                .bind_session_api_key(test_binding_with_key(
                     credential(4),
-                    ProviderId::Openai,
-                    "sk-another-value",
-                    &identity(2),
-                    now(),
-                )
+                    identity_binding(2),
+                    "sk-another-value"
+                ))
                 .await,
             Err(PortError::IdempotencyConflict)
         );

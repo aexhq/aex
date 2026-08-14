@@ -3,8 +3,8 @@
 //! One mechanism over five kinds. The complete non-payload value of a registered
 //! resource is a canonical JSON document stored **on the pointer row**, so a
 //! point read is one `GetItem` and zero content reads, and no registry response
-//! ever publishes payload bytes (D-2, D-3). The payload — file bytes, a skill or
-//! tool bundle — is admitted as an SSE-KMS object and referenced by digest.
+//! ever publishes payload bytes (D-2, D-3). The payload â€” file bytes, a skill or
+//! tool bundle â€” is admitted as an SSE-KMS object and referenced by digest.
 //!
 //! `sha256` and `sizeBytes` on a registered resource are the value **document**'s
 //! own, for all five kinds (D-4). That is what makes the domain's `Unchanged`
@@ -55,10 +55,19 @@ pub struct AdmittedPayload {
 /// the content descriptor.
 const PAYLOAD_MEDIA_TYPE: &str = "application/octet-stream";
 
+/// The write-side facts for one registered-resource put.
+pub(crate) struct RegistryWriteState<'a> {
+    /// The payload reference, when this put publishes uploaded bytes.
+    pub payload: Option<RegisteredValueRef>,
+    /// The lifecycle state the row commits with.
+    pub state: RegistryState,
+    /// The failure code recorded for a failed import row.
+    pub failure_code: Option<String>,
+    /// The exact ETag this put replaces, when guarded.
+    pub exact_current: Option<&'a aex_wire::types::ETag>,
+}
 impl Routes {
     /// Reads one registered resource, value and all.
-    ///
-    /// One eventually consistent `GetItem` and no content read at all (D-12).
     pub(crate) async fn registry_get<T>(
         &self,
         kind: RegistryKind,
@@ -89,15 +98,18 @@ impl Routes {
         kind: RegistryKind,
         name: &ResourceName,
         read: &V,
-        payload: Option<RegisteredValueRef>,
-        state: RegistryState,
-        failure_code: Option<String>,
-        exact_current: Option<&aex_wire::types::ETag>,
+        write: RegistryWriteState<'_>,
         project: fn(&RegistryPointer) -> Result<T, ProjectionError>,
     ) -> WireResult<WithETag<T>>
     where
         V: Serialize,
     {
+        let RegistryWriteState {
+            payload,
+            state,
+            failure_code,
+            exact_current,
+        } = write;
         let workspace = self.cx.auth.workspace_id;
         let now = self.cx.now().map_err(|error| {
             WireError::new(ErrorCode::InternalError).with_message(error.to_string())
@@ -205,7 +217,7 @@ impl Routes {
     /// Removes one registered resource.
     ///
     /// `204` always, including for a name that was never there: the route
-    /// declares no `not_found`, and delete is idempotent (D-9). The bytes stay —
+    /// declares no `not_found`, and delete is idempotent (D-9). The bytes stay â€”
     /// a running session holds its own root pin, so removing the registry pin is
     /// left to `content-lifecycle-worker` (D-10) and never happens here.
     pub(crate) async fn registry_delete(

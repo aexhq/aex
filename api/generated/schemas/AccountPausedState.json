@@ -11,7 +11,7 @@
       "x-aex-time": "rfc3339-ms"
     },
     "minimumRestoreCents": {
-      "description": "Smallest restoring top-up, only for top_up_required.",
+      "description": "Smallest restoring top-up, only for `top_up_required`.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string",
       "x-aex-money": "cents"

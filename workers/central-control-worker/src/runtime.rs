@@ -231,6 +231,18 @@ where
     }
 }
 
+/// The bounded drain shape: one unit of work per invoke, leased and owned.
+pub struct DrainSettings {
+    /// The AWS region this worker drains.
+    pub region: Region,
+    /// The stable owner spelling recorded against each lease.
+    pub owner: String,
+    /// The maximum rows one drain admits.
+    pub batch: u32,
+    /// How long one admitted batch holds its lease.
+    pub lease: Duration,
+}
+
 impl Worker {
     /// Composes the drain over its authorities.
     #[must_use]
@@ -239,22 +251,19 @@ impl Worker {
         wake_invoker: Arc<dyn WakeInvoker>,
         wake_delay: Arc<dyn WakeDelay>,
         projection: Arc<dyn RegionalProjection>,
-        region: Region,
+        settings: DrainSettings,
         clock: Arc<dyn Clock>,
-        owner: String,
-        batch: u32,
-        lease: Duration,
     ) -> Self {
         Self {
             store,
             wake_invoker,
             wake_delay,
             projection,
-            region,
+            region: settings.region,
             clock,
-            owner,
-            batch,
-            lease,
+            owner: settings.owner,
+            batch: settings.batch,
+            lease: settings.lease,
         }
     }
 

@@ -311,6 +311,25 @@ pub struct ProviderCredentialBinding {
     pub state: CredentialState,
 }
 
+/// The exact write-only binding request for one session provider API key.
+#[derive(Debug)]
+pub struct BindSessionApiKey<'a> {
+    /// The owning workspace.
+    pub workspace: WorkspaceId,
+    /// The owning organization.
+    pub organization: OrganizationId,
+    /// The provider credential this session binds.
+    pub credential: aex_wire::ids::ProviderCredentialId,
+    /// Which provider it is for.
+    pub provider: aex_wire::provider::ProviderId,
+    /// The write-only API key.
+    pub api_key: &'a str,
+    /// The admission idempotency identity.
+    pub identity: &'a IdempotencyIdentity,
+    /// The admission instant.
+    pub now: Timestamp,
+}
+
 /// Reads dedicated BYOK provider credentials.
 #[async_trait::async_trait]
 pub trait ProviderCredentialReader: Send + Sync {
@@ -318,13 +337,7 @@ pub trait ProviderCredentialReader: Send + Sync {
     /// only the non-secret binding facts the durable session may retain.
     async fn bind_session_api_key(
         &self,
-        workspace: WorkspaceId,
-        organization: OrganizationId,
-        credential: aex_wire::ids::ProviderCredentialId,
-        provider: aex_wire::provider::ProviderId,
-        api_key: &str,
-        identity: &IdempotencyIdentity,
-        now: Timestamp,
+        request: BindSessionApiKey<'_>,
     ) -> Result<ProviderCredentialBinding, PortError>;
 
     /// Seals the complete write-only MCP definitions under a distinct

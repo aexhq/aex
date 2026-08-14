@@ -1,5 +1,5 @@
 {
-  "contractDigest": "sha256:2714e625c3ed159b08bf3f97a27b9d088369acc429073957508115af3b1f7238",
+  "contractDigest": "sha256:08520468115cc260f4be164db5586e89934667e7a775ccaaa13ba8fa85a4f908",
   "generator": {
     "formatter": "aex-contract-gen internal renderer (rustfmt fixed point)",
     "name": "aex-contract-gen",
@@ -16,12 +16,12 @@
     "api/openapi/regional/registry.yaml": "sha256:5639546d4b299566d045c0296cc91c4ac84d1d1eb0546fe87884dfc6ee5c8168",
     "api/openapi/regional/sessions.yaml": "sha256:4bddbe64690bede82f48d9dee4a474fdf5fd7f3f4548d9d404412d901529673f",
     "api/openapi/regional/uploads.yaml": "sha256:6d4195cb28929f3b872a2f36b18d2117b6105e91edf64097c36691d64a486134",
-    "api/schemas/central/billing.yaml": "sha256:d85741e861c6abb039e08fec244567e68468e9e55d830617866773a44c724f4e",
-    "api/schemas/central/identity.yaml": "sha256:6de2a09e398e0411d5d06d72fd414f10fe83c2d18d2aacf3159e991a4bf2da1f",
+    "api/schemas/central/billing.yaml": "sha256:676e4364d7ead6bd92099231c5c72411158a83b9fc6675c0433dab8b72e2b6a6",
+    "api/schemas/central/identity.yaml": "sha256:71254e63ea274f84ebcf0ef0d3d8a954dc9a850a8e961e6c9a104bd22df4ece7",
     "api/schemas/common/core.yaml": "sha256:c0abdbce203a70a029ee256de00fe33907d4bc46ea030552c817563bddf80553",
     "api/schemas/provider/provider.yaml": "sha256:92f7f8a333aa2556e54dd0494257024de75e519258abdf910156cf0e8722e1ec",
     "api/schemas/regional/content.yaml": "sha256:c541e1aaaa53dced3e0d94ba6701c3b1f0b874e0dc1a55ad0d0d03d29932f4dc",
-    "api/schemas/regional/sessions.yaml": "sha256:ddaaff5da4bd050afe242d692b7baa3a9e11dfdadf87ad080113e8809c386c02",
+    "api/schemas/regional/sessions.yaml": "sha256:b57782f417655a6f10f4886e5b379ffd28a8ffc557ce0bcb25357650be140d20",
     "api/schemas/registries/errors.yaml": "sha256:52ea117e7b7c3aa3685cc8a6134f7247de844fa1b8198567b75440898604f14f",
     "api/schemas/registries/evolution.yaml": "sha256:85c18e15d1dfbc687a2d7357594dc30ca3f1a08714e3d84bb7b1b85f107aaf97",
     "api/schemas/registries/ids.yaml": "sha256:dc164649a75af2ad50f1dfa45f7e3ab6adf11a46cc4069e1464fa1f0be152844",

@@ -235,7 +235,7 @@ async fn run(config: &Config) -> Result<(), CentralApiRunError> {
     // standalone role-scoped login, but requiring it here contradicts that
     // topology and makes the first shared-login task unable to start. The
     // common Aurora login has already answered its real connection probe above.
-    let billing = Arc::new(central_api::billing::billing::BillingService::new(
+    let billing = Arc::new(central_api::billing::service::BillingService::new(
         Arc::clone(&billing_authority),
         Arc::new(central_api::billing::gateway::CommandEdgeGateway::new(
             aws_sdk_lambda::Client::new(&aws),

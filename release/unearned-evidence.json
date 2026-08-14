@@ -36,6 +36,13 @@
   },
   {
     "reason_class": "inline_unit_evidence",
+    "subject": "crates/aex-content-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "regional-stores: the retired regional-content table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
     "subject": "crates/aex-hands-control-aws",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
@@ -47,6 +54,13 @@
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
     "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
+    "subject": "crates/aex-registry-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "regional-stores: the retired regional-registry table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
   },
   {
     "reason_class": "inline_unit_evidence",

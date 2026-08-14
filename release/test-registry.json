@@ -727,14 +727,10 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "faults": "unit",
-          "integration": "integration",
-          "properties": "unit",
-          "security": "unit"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "inline_targets": "regional-stores: the retired regional-content table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
+        }
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -1441,14 +1437,10 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "faults": "unit",
-          "integration": "integration",
-          "properties": "unit",
-          "security": "unit"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "inline_targets": "regional-stores: the retired regional-registry table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
+        }
       },
       "unmapped_targets": [],
       "awaiting_owner": false

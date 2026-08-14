@@ -1579,10 +1579,12 @@ impl RegistryApi for Routes {
                     RegistryKind::File,
                     &name,
                     &pending,
-                    None,
-                    aex_workspace_domain::registry::RegistryState::Pending,
-                    None,
-                    None,
+                    RegistryWriteState {
+                        payload: None,
+                        state: aex_workspace_domain::registry::RegistryState::Pending,
+                        failure_code: None,
+                        exact_current: None,
+                    },
                     projection::registered_file,
                 )
                 .await;
@@ -1599,10 +1601,12 @@ impl RegistryApi for Routes {
             RegistryKind::File,
             &name,
             &read,
-            Some(payload.source),
-            aex_workspace_domain::registry::RegistryState::Ready,
-            None,
-            None,
+            RegistryWriteState {
+                payload: Some(payload.source),
+                state: aex_workspace_domain::registry::RegistryState::Ready,
+                failure_code: None,
+                exact_current: None,
+            },
             projection::registered_file,
         )
         .await
