@@ -1,6 +1,6 @@
 # @aexhq/sdk
 
-The zero-dependency TypeScript SDK for the session-centered AEX public API.
+The TypeScript SDK for Aex, with no dependencies of its own.
 
 ```bash
 npm install @aexhq/sdk
@@ -46,16 +46,16 @@ await aex.sessions.sessionTerminate({
 });
 ```
 
-Session creation takes an exact provider/model pair and a write-only
-`providerApiKey`. The key is encrypted for that session, never returned, and
-never reused by another session. Supported provider families are OpenAI,
+Creating a session takes the exact provider and model you want plus your own
+`providerApiKey`, which is write only. That key is encrypted for the session,
+never returned, and never shared with another one. You can use OpenAI,
 Anthropic, DeepSeek, xAI, Meta, Moonshot AI, and Alibaba.
 
-## Client surface
+## The client
 
-Regional session and file calls use a workspace `apiKey`. Central bootstrap,
-API-key, and billing calls use a GitHub `dashboardSession`. A client may hold
-both; the SDK sends each credential only to its owning API plane.
+Session and file calls use a workspace `apiKey`. Account, API key, and billing
+calls use a `dashboardSession` from signing in with GitHub. One client can hold
+both, and it only ever sends each one to the service it belongs to.
 
 ```ts
 const aex = new Aex({
@@ -64,67 +64,67 @@ const aex = new Aex({
 });
 ```
 
-Generated namespaces are `apiKeys`, `auth`, `billing`, `bootstrap`, `registry`,
-`sessions`, and `uploads`. `aex.workspaceFiles` adds verified convenience
-helpers for the latest-only file API. `ROUTES` and `aex.execute(...)` expose the
-same generated contract without a second handwritten route table.
+The namespaces are `apiKeys`, `auth`, `billing`, `bootstrap`, `registry`,
+`sessions`, and `uploads`. `aex.workspaceFiles` adds friendlier helpers for
+working with files. `ROUTES` and `aex.execute(...)` give you the same generated
+contract directly, so there is no second route table to keep in step.
 
-## Sessions and sandboxes
+## Sessions and machines
 
-A session is the only public execution resource. It owns committed messages,
-one active root message, durable tool effects, native subagents, frozen file
-mounts, sandbox state, and telemetry. There is no public run resource.
+A session is the only thing you create. It holds the conversation, the work in
+flight, the tools it has used, its helper agents, its mounted files, its
+machine, and its telemetry.
 
-The default sandbox starts preparing in the background when session creation
-commits, then suspends when no tool call is waiting. A sandbox tool call waits
-for the exact generation to become ready and resumes it when required. Set
-`sandbox.enabled` to `false` to allocate no sandbox; sandbox-only tools then
-return a structured error the model can handle.
+Every session gets a Linux machine unless you turn it off. It starts warming up
+as soon as the session is created and goes to sleep when nothing is running.
+The next tool call waits for it and wakes it if needed. Set `sandbox.enabled`
+to `false` to get no machine at all; tools that need one then return a clear
+error the model can handle.
 
-Cancel stops active work and returns the session to idle. Terminate destroys
-sandbox compute while retaining messages and telemetry. Delete irreversibly
-removes session-owned content; independent workspace files remain.
+Cancel ends the current work and leaves the session idle. Terminate destroys
+the machine but keeps the messages and telemetry. Delete removes everything the
+session owns; files you uploaded to the workspace survive.
 
 ## Files, tools, and MCP
 
-`aex.workspaceFiles` provides `put`, `upload`, `get`, `list`, `download`, and
-`delete`. Each logical name has only one current value. Inputs may be inline
-text or bytes, an HTTPS URL, or a direct multipart upload. Session creation
-freezes selected names and mount paths, so later overwrites do not change an
-existing session.
+`aex.workspaceFiles` gives you `put`, `upload`, `get`, `list`, `download`, and
+`delete`. Each name has one current value, which you can set from text or
+bytes, an HTTPS link, or a direct upload. Creating a session pins the names and
+paths it uses, so replacing a file later cannot change a session already
+running.
 
-Messages are text-only. Upload arbitrary images, PDFs, video, archives, or
-source and tell the model which path under `/workspace` to inspect.
+Messages are text only. Upload images, PDFs, video, archives, or source, then
+tell the model which path under `/workspace` to look at.
 
-The built-in tool surface is Bash, file read/edit/write, MCP,
-`storage.persist`, and native create/wait/stop subagent tools. Configure remote
-Streamable HTTP or sandbox-process MCP per session. Large tool results keep a
-bounded preview and the full bytes at a sandbox path; `storage.persist`
-publishes a chosen sandbox file as the latest workspace value. Native
-subagents are bounded to 12 child identities per session lifetime and depth 3.
+Out of the box the model gets Bash, file read, edit, and write, MCP,
+`storage.persist`, and tools to start, wait for, and stop helper agents. Attach
+MCP servers per session, either over HTTP or as a process on the machine. A
+large tool result leaves a short preview in the transcript and keeps the full
+bytes on the machine, and `storage.persist` saves a chosen file back to your
+workspace. A session can start at most 12 helper agents, nested no more than
+three deep.
 
-`sessionMessageSend` accepts optional native JSON Schema output through
-`responseFormat`. Strict structured output is admitted only for a qualified
-provider/model capability; AEX does not present prompt emulation as strict.
+`sessionMessageSend` takes an optional `responseFormat` for JSON Schema output.
+Aex allows it only when the provider and model support it natively, and will
+not pass prompting off as the real thing.
 
 ## Streaming, telemetry, and billing
 
-`sessionMessagesStream` emits bounded preview, gap, committed, reconcile, and
-heartbeat frames. Committed messages preserve provider-neutral text, tool-call,
-and tool-result parts.
+`sessionMessagesStream` sends preview, gap, committed, reconcile, and heartbeat
+frames. Committed messages keep text, tool calls, and tool results in the same
+shape whichever provider you use.
 
-Session telemetry is available as a live stream, retained replay, and verified
-compressed download. Billing resources expose prepaid balance, saved-card
-display metadata, hosted card setup and top-up, immutable transactions, and
-usage. Billing methods require `dashboardSession`; session and file methods
-require `apiKey`.
+Telemetry comes as a live stream, a replay, and a verified compressed download.
+The billing methods cover your prepaid balance, saved card details, hosted card
+setup and top up, a permanent record of transactions, and usage. Billing needs
+`dashboardSession`; sessions and files need `apiKey`.
 
-See the [AEX documentation](https://aex.dev/docs) for complete examples.
+See the [Aex documentation](https://aex.dev/docs) for fuller examples.
 
 ## Status
 
-AEX is in active prelaunch development. Expect breaking changes and do not rely
-on the hosted service for production workloads yet.
+Aex is in active prelaunch development. Expect breaking changes, and do not
+rely on the hosted service for production workloads yet.
 
 ## License
 

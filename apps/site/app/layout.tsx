@@ -4,15 +4,25 @@ import "../design/index.css";
 import "./site.css";
 import { PublicShell } from "./_components/public-shell";
 
+const description =
+  "Aex is the agent cloud platform. Give your agent a session it remembers, a machine to work on, and tools that touch real files.";
+
 export const metadata = {
   metadataBase: new URL("https://aex.dev"),
-  title: "AEX",
-  description: "AEX is a session-centered agent runtime with files, tools, MCP, subagents, telemetry, and prepaid controls.",
+  title: "Aex",
+  description,
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/icon-dark.png", media: "(prefers-color-scheme: dark)" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
   openGraph: {
-    title: "AEX",
-    description: "AEX is a session-centered agent runtime with files, tools, MCP, subagents, telemetry, and prepaid controls.",
+    title: "Aex",
+    description,
     type: "website",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "AEX" }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Aex" }],
   },
   twitter: {
     card: "summary_large_image",

@@ -13,10 +13,6 @@ body {
   background: color-mix(in srgb, var(--aex-color-canvas) 92%, transparent);
 }
 
-body:has(.site-overview) .site-header {
-  display: none;
-}
-
 .site-header__inner,
 .site-nav,
 .site-footer__inner {
@@ -31,12 +27,46 @@ body:has(.site-overview) .site-header {
 }
 
 .site-wordmark {
+  display: flex;
+  align-items: center;
+  gap: var(--aex-space-2);
   color: var(--aex-color-text);
   font-family: var(--aex-font-mono);
   font-size: var(--aex-text-lg);
   font-weight: var(--aex-weight-semibold);
   letter-spacing: -0.04em;
   text-decoration: none;
+}
+
+/* One mark per theme. `data-theme` outranks the media query, as with tokens. */
+.site-mark {
+  display: block;
+  width: 1.375rem;
+  height: 1.375rem;
+}
+
+.site-mark--dark {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .site-mark--light {
+    display: none;
+  }
+
+  .site-mark--dark {
+    display: block;
+  }
+}
+
+:root[data-theme="light"] .site-mark--light,
+:root[data-theme="dark"] .site-mark--dark {
+  display: block;
+}
+
+:root[data-theme="light"] .site-mark--dark,
+:root[data-theme="dark"] .site-mark--light {
+  display: none;
 }
 
 .site-nav {

@@ -1,20 +1,19 @@
 ---
-title: AEX documentation
+title: Aex documentation
 description: Build a file-aware, tool-using agent session with the public TypeScript SDK.
 ---
 
-# AEX documentation
+# Aex documentation
 
-An AEX session is a durable multi-message conversation. It owns committed
-message history, an exact model, native subagents, frozen file mounts, tool
-effects, sandbox lifecycle, usage facts, and telemetry. Send text directly to
-the session and point the model to mounted files by path. There is no public run
-resource, file revision API, or attachment field.
+A session is one long conversation with a model that can do things. It keeps
+the whole history, runs on its own Linux machine, reads the files you mount for
+it, calls tools, and can start helpers of its own. You send text and point the
+model at files by path.
 
 ## Quickstart
 
-Install `@aexhq/sdk`, then provide one workspace API key and the provider key
-that this session will encrypt and own.
+Install `@aexhq/sdk`. You need two keys: your Aex workspace key, and the
+provider key this session will use to talk to the model.
 
 ```ts
 import { Aex, newId } from "@aexhq/sdk";
@@ -54,35 +53,37 @@ await aex.sessions.sessionTerminate({
 });
 ```
 
-The provider key is admitted only for that session, encrypted before durable
-storage, and never returned. Supported provider families are OpenAI, Anthropic,
-DeepSeek, xAI, Meta, Moonshot AI, and Alibaba. Choose an exact provider-native
-model that supports the tools or structured output your session needs.
+Your provider key is accepted for that one session, encrypted before it is
+stored, and never returned to you. You can use OpenAI, Anthropic, DeepSeek,
+xAI, Meta, Moonshot AI, or Alibaba. Name the exact model you want, and check
+that it supports the tools or structured output your session needs.
 
 ## Sessions
 
-Session creation durably starts eager sandbox preparation in the background and
-returns without waiting for provisioning, file materialization, or suspension.
-Preparation progress appears in telemetry. A sandbox tool call waits for the
-exact generation to become ready and resumes it when necessary.
+Creating a session starts the machine warming up in the background and returns
+straight away, without waiting for it to be ready. You can watch that progress
+in telemetry. The first tool call that needs the machine waits for it, and
+wakes it if it has gone to sleep.
 
-The sandbox is enabled by default. With `sandbox.enabled: false`, AEX allocates
-no sandbox and sandbox-only tools return a structured error the model can
-handle. Remote HTTP MCP can still run without a sandbox; mounted files,
-sandbox-process MCP, and pinned sandbox packages require one.
+Every session gets a machine unless you turn it off. With
+`sandbox.enabled: false` no machine is allocated, and tools that need one
+return a clear error the model can handle instead of hanging. Remote MCP
+servers still work without a machine; mounted files, MCP servers you run as a
+process, and pinned packages all need one.
 
-Cancel stops the active message and returns the session to idle. Terminate
-destroys sandbox compute while retaining committed messages and telemetry.
-Delete irreversibly removes session-owned content through an idempotent
-maintenance flow; independent workspace files remain. A launch session lasts
-at most eight hours and admits at most 12 child identities with maximum depth 3.
+There are three ways to stop. Cancel ends the current message and leaves the
+session idle. Terminate destroys the machine but keeps the transcript and
+telemetry. Delete removes everything the session owns, and is safe to call
+again if it is interrupted; files you uploaded to the workspace survive. A
+session lasts up to eight hours and can start at most 12 helper agents, nested
+no more than three deep.
 
 ## Files and mounts
 
-Workspace files expose one current value per logical name. Replace that value
-with inline text or bytes, an HTTPS URL, or a direct multipart upload. Session
-creation resolves selected names once and freezes their sandbox paths, so a
-later workspace overwrite cannot mutate an existing session.
+A workspace file has one current value per name. Replace that value with text
+or bytes, a link for Aex to fetch, or a direct upload. When a session is
+created it looks up the names you asked for and pins their paths, so replacing
+a file later cannot change a session that is already running.
 
 ```ts
 await aex.workspaceFiles.put(
@@ -105,24 +106,24 @@ const fileSession = await aex.sessions.sessionCreate({
 ```
 
 Use `aex.workspaceFiles.upload(name, bytes)` for images, PDFs, video, archives,
-and other arbitrary bytes. User messages remain text-only: tell the model which
-file or directory under `/workspace` to inspect. Downloads verify the exact
-length and SHA-256 digest returned by AEX.
+and anything else. Messages themselves are text only: tell the model which file
+or folder under `/workspace` to look at. Downloads are checked against the
+exact size and SHA-256 digest Aex reports.
 
 ## Tools, MCP, and structured output
 
-The built-in surface is `bash`, `read_file`, `edit_file`, `write_file`,
-`mcp_call`, `storage_persist`, `create_subagent`, `wait_subagents`, and
-`stop_subagent`. Large tool results keep a bounded preview in the message and
-the full result at a sandbox path. `storage_persist` is the provider-safe wire
-name for the product tool `storage.persist`, which publishes a sandbox file as
-the latest workspace value.
+Out of the box the model can use `bash`, `read_file`, `edit_file`,
+`write_file`, `mcp_call`, `storage_persist`, `create_subagent`,
+`wait_subagents`, and `stop_subagent`. A large tool result leaves a short
+preview in the transcript and keeps the full text in a file on the machine.
+`storage_persist` is the wire name for `storage.persist`, which saves a file
+from the machine back to your workspace.
 
-Configure remote Streamable HTTP or sandbox-process MCP when creating the
-session. MCP headers and process environment values are session-encrypted and
-never returned. Native JSON Schema output is available only when the selected
-provider and model support it; AEX does not present prompt emulation as strict
-structured output.
+You can attach MCP servers when you create the session, either over HTTP or as
+a process on the machine. Their headers and environment values are encrypted
+for that session and never returned. Strict JSON output works when the model
+you chose supports it natively; Aex will not fake it with prompting and call it
+strict.
 
 ```ts
 const toolSession = await aex.sessions.sessionCreate({
@@ -156,28 +157,27 @@ await aex.sessions.sessionMessageSend({
 });
 ```
 
-Committed messages preserve provider-neutral text, tool-call, and tool-result
-parts. Independent tool effects may run concurrently, but their results commit
-in the original model call order.
+The transcript keeps text, tool calls, and tool results in the same shape
+whichever provider you use. Independent tool calls can run at the same time,
+but their results are recorded in the order the model asked for them.
 
 ## Streaming and telemetry
 
-The message stream uses bounded NDJSON frames. Preview frames are best effort
-and never delay model work; `gap` reports pressure or loss, `committed` exposes
-durable authority, and `reconcile` replaces speculative preview state.
+The message stream sends small NDJSON frames. Preview frames are a best effort
+and never hold the model up. A `gap` frame tells you the stream fell behind or
+lost something, `committed` is the durable truth, and `reconcile` replaces a
+preview that turned out to be wrong.
 
-The telemetry stream carries trusted assistant, tool, runtime, log, span,
-usage, gap, and heartbeat frames. AEX retains compressed immutable segments for
-replay and verified download after the live connection ends. Provider/model
-token usage follows a separate trusted billing path and is never inferred from
-guest telemetry.
+The telemetry stream carries assistant output, tool activity, runtime events,
+logs, spans, usage, gaps, and heartbeats. Once the live connection ends, Aex
+keeps compressed copies you can replay or download. Token usage comes from a
+separate trusted path and is never guessed from what the machine reported.
 
 ## Credentials and billing
 
-Central bootstrap, API-key, and billing routes require a Google dashboard
-session. Regional session and file routes require a workspace API key. One
-`Aex` client may hold both credentials, but it sends each only to its owning
-plane.
+Account, API key, and billing calls need a dashboard session from signing in
+with GitHub. Session and file calls need a workspace API key. One `Aex` client
+can hold both, and it only ever sends each one to the service it belongs to.
 
 ```ts
 const account = new Aex({
@@ -198,9 +198,9 @@ const topUp = await account.billing.billingTopUpCheckoutCreate({
 console.log(balance, cards, usage, topUp.url);
 ```
 
-Card entry and top-up happen on hosted pages. AEX exposes only saved-card
-display metadata, prepaid balance, immutable transactions, and usage filtered
-by session, provider, model, or category. Raw card details never enter the AEX
-API.
+Adding a card and topping up happen on hosted pages. Aex only ever shows you
+the display details of a saved card, your balance, a permanent record of every
+transaction, and usage you can filter by session, provider, model, or kind of
+work. Raw card details never reach the Aex API.
 
-For help, email support@aex.dev.
+Stuck on something? Email support@aex.dev.

@@ -4,7 +4,17 @@ import { NextRequest } from "next/server";
 import proxy from "../proxy";
 
 describe("public web routes", () => {
-  test.each(["/", "/docs", "/docs/", "/og.png"])("serves %s without a dashboard session", (path) => {
+  test.each([
+    "/",
+    "/docs",
+    "/docs/",
+    "/og.png",
+    "/favicon.ico",
+    "/icon-dark.png",
+    "/apple-touch-icon.png",
+    "/brand/aex-icon-black.png",
+    "/brand/aex-icon-white.png",
+  ])("serves %s without a dashboard session", (path) => {
     const response = proxy(new NextRequest(`https://aex.dev${path}`));
 
     expect(response.status).toBe(200);

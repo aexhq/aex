@@ -45,13 +45,25 @@ generated from the contract rather than hand-maintaining a second behavioral
 truth.
 
 `apps/site/content/marketing/index.mdx` is the single source for every claim on
-the landing page. Components under `apps/site/app/` own layout and carry no
+the landing page, for both `apps/site` and the public route of
+`apps/dashboard`. Components under `apps/site/app/` own layout and carry no
 copy, so changing a claim is a one-file edit. Every claim there must be
-traceable to an accepted design record; the page deliberately names the four
-usage meters without publishing a rate, because
+traceable to an accepted design record, and the page publishes no rate, because
 [rules.md](rules.md) keeps billing/rate policy out of public docs and the
 accepted Area 5 `U-COGS` decision keeps every real rate-book revision out of
 this repository.
+
+`apps/site/test/marketing.test.ts` gates the shape of that page and the
+no-rate rule, not its wording. Pinning sentences there made every rewrite a red
+build and dragged the copy towards internal vocabulary; read the copy to review
+it instead.
+
+`apps/site/public/` and `apps/dashboard/public/` carry the same brand files,
+because the shared shell in `apps/site/app/_components/public-shell.tsx` loads
+them by absolute path and each app serves its own `public/`. The masters they
+are derived from live outside this repository. `apps/dashboard/proxy.ts` has to
+list those paths as public, or a signed-out visitor is redirected to sign-in
+instead of getting the logo.
 
 `apps/site/design/` is the shared design system: `tokens.css` (colour, type
 scale, spacing, radius, elevation, motion), `base.css` (bare-element styling),

@@ -1,63 +1,67 @@
 ---
-title: AEX
-description: AEX is a session-centered agent runtime with files, tools, MCP, subagents, telemetry, and prepaid controls.
+title: Aex
+description: Aex is the agent cloud platform. Give your agent a session it remembers, a machine to work on, and tools that touch real files.
 ---
 
-AEX gives your app one durable execution unit: a session. It owns committed
-message history, an exact model, a file-aware Linux workspace, tools, subagents,
-and telemetry. Control it through the TypeScript SDK or HTTP API.
+Aex gives your agent a session. It remembers the whole conversation, works on
+its own Linux machine, reads the files you hand it, and uses tools that touch
+real things. You bring the model key. Aex runs the rest.
 
 - [Read the docs](/docs)
 - [Log in](https://aex.dev/signin?next=/app)
 
-## Official models
+## Your key, your model
 
-Bring one session-scoped provider key and choose a qualified model from OpenAI,
-Anthropic, DeepSeek, xAI, Meta, Moonshot AI, or Alibaba. The key is encrypted,
-never returned, and never reused by another session.
+Pick a model from OpenAI, Anthropic, DeepSeek, xAI, Meta, Moonshot AI, or
+Alibaba, and give the session your own provider key. It is encrypted the moment
+it arrives, never handed back, and never shared with another session.
 
-## Durable sessions
+## A session that remembers
 
-Keep a multi-message conversation for up to eight hours. Cancel current work,
-terminate compute while retaining committed messages, or irreversibly delete
-session content. There is no separate public run resource to coordinate.
+One session holds the whole conversation. Stop the current work, shut the
+machine down and keep the transcript, or delete everything for good. There is
+nothing else to keep track of.
 
-## Latest-only files
+## A machine of its own
 
-Messages are text-only. Register arbitrary latest-only files from inline bytes,
-an HTTPS URL, or a direct upload, freeze their sandbox paths at session creation,
-then point the model to images, PDFs, video, source trees, or instructions there.
+Every session gets its own Linux machine. It starts warming up as soon as the
+session is created, sleeps when nothing is running, and wakes up where it left
+off. Sessions that need no machine can say so and get none.
 
-## One sandbox
+## Files it can read
 
-The default sandbox starts preparing in the background at session creation and
-suspends when no tool is waiting. The first sandbox call waits for the exact
-generation to resume. Disable it explicitly to allocate no sandbox and return a
-structured error for sandbox-only tools.
+Give the session images, PDFs, video, source trees, or notes, as text, a link,
+or a direct upload. They show up at fixed paths on the machine, and a later
+upload cannot change a session that is already running.
 
-## Tools and MCP
+## Tools that do real work
 
-Use Bash, `read_file`, `edit_file`, `write_file`, and `mcp_call`. Configure
-remote HTTP or sandbox-process MCP per session. Large results stay in sandbox
-files until the model calls `storage.persist` to publish one as a workspace file.
+The model can run shell commands, read and write files, and call your own MCP
+servers. Big results stay on the machine until the model decides one is worth
+keeping.
 
-## Parallel subagents
+## Helpers when it needs them
 
-Independent tool calls can run together while their results commit in model
-call order. Native subagents have their own durable identities, with at most 12
-child identities over a session lifetime and maximum depth 3.
+The model can start child agents and run independent work at the same time.
+Results come back in the order they were asked for, so the transcript still
+reads straight through.
 
-## Live and retained telemetry
+## Watch it work
 
-Stream bounded assistant previews, tool activity, runtime events, logs, spans,
-and usage without delaying model work. Gaps are explicit, every assistant answer
-gets committed reconciliation, and retained telemetry supports replay and
-compressed download.
+Follow the answer as it is written, along with tool activity, logs, and usage.
+Watching never slows the model down, and everything is kept so you can replay
+or download it later.
 
-## Prepaid billing
+## Pay for what you run
 
-Use hosted card and top-up flows, inspect balance and immutable transactions,
-and filter usage by session, provider, model, or category. Model spend remains
-with the provider behind your own key; AEX never stores raw card details.
+Top up a balance and see where it went by session, model, or kind of work.
+Cards are handled on hosted pages, and your model tokens are billed by your
+provider rather than by us.
 
-> AEX is in active prelaunch development. Expect breaking changes and occasional interruptions.
+## Not here yet
+
+There are no hosted web search or browser tools, no shared store for secrets
+or skills, and no way to send your telemetry somewhere else. Those are on the
+list, and this page will say so when they arrive.
+
+> Aex is in active prelaunch development. Expect breaking changes and occasional interruptions.
