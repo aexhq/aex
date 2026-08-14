@@ -349,7 +349,11 @@ fn route_obligations_are_internally_consistent() {
             );
         }
         if descriptor.success_status == 202 {
-            assert_eq!(descriptor.response_schema, Some("SessionCommandReceipt"), "{operation}");
+            assert_eq!(
+                descriptor.response_schema,
+                Some("SessionCommandReceipt"),
+                "{operation}"
+            );
             assert_eq!(
                 descriptor.idempotency,
                 IdempotencyKind::OperationId,
