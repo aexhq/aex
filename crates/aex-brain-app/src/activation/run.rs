@@ -743,7 +743,7 @@ impl WakeLoop {
         let concurrency = self.activation.policy().max_concurrent_drives.max(1);
         let mut outcomes = stream::iter(scheduled)
             .map(|scheduled| async move {
-                let outcome = self.drive(scheduled.delivery).await;
+                let outcome = Box::pin(self.drive(scheduled.delivery)).await;
                 (scheduled.due_pages, outcome)
             })
             .buffer_unordered(concurrency);
@@ -1049,6 +1049,10 @@ impl Session<'_> {
     /// Runs **before** the planner, because the planner has no dispatch evidence. A
     /// dispatched non-replayable effect settles `OutcomeUnknown` here; nothing downstream
     /// ever gets the chance to treat it as retryable.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "cancellation settlement and per-effect recovery classification are one ordered sequence over the same open batch; splitting it would put the order in two places and let them drift"
+    )]
     async fn recover_open(
         &mut self,
         mut open: Vec<DurableEffect>,
@@ -1924,6 +1928,10 @@ impl Session<'_> {
     /// assistant's original call order. The fold withholds the model-visible
     /// tool-result turn until all pending calls (including later slices and
     /// native children) are terminal.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the pre-send write, the concurrent dispatch and the ordered settlement are one crash-ordered sequence; splitting it would put the order in two places and let them drift"
+    )]
     async fn tool_batch(&mut self, calls: Vec<PendingCall>) -> Result<Step, ActivationError> {
         let config = self.config()?;
         let mut jobs = Vec::new();
@@ -2634,14 +2642,14 @@ impl Session<'_> {
         self.append_native_result(
             &mut draft,
             &call,
-            serde_json::json!({
+            &serde_json::json!({
                 "agentId": public.to_string(),
                 "state": "starting",
                 "depth": depth,
                 "ordinal": ordinal,
             }),
             false,
-        )?;
+        );
         self.commit(draft).await?;
         Ok(Step::Continue)
     }
@@ -2681,9 +2689,9 @@ impl Session<'_> {
         self.append_native_result(
             &mut draft,
             &call,
-            serde_json::json!({"requested": true, "state": "stopping"}),
+            &serde_json::json!({"requested": true, "state": "stopping"}),
             false,
-        )?;
+        );
         self.commit(draft).await?;
         Ok(Step::Continue)
     }
@@ -2733,7 +2741,7 @@ impl Session<'_> {
         let mut draft = self.draft("awaiting_tools");
         let terminal = self.observe_terminal_children(&members, &mut draft).await?;
         if join_satisfied(mode, terminal.len(), members.len()) {
-            self.append_wait_result(&mut draft, &call, mode, &members, &terminal, false)?;
+            self.append_wait_result(&mut draft, &call, mode, &members, &terminal, false);
             self.commit(draft).await?;
             return Ok(Step::Continue);
         }
@@ -2832,7 +2840,7 @@ impl Session<'_> {
                 &group.members,
                 &terminal,
                 timed_out,
-            )?;
+            );
             self.commit(draft).await?;
             return Ok(Step::Continue);
         }
@@ -2905,7 +2913,7 @@ impl Session<'_> {
         members: &[AgentId],
         terminal: &[(AgentId, ChildOutcome)],
         timed_out: bool,
-    ) -> Result<(), ActivationError> {
+    ) {
         let terminal_ids = terminal
             .iter()
             .map(|(child, outcome)| {
@@ -2927,7 +2935,7 @@ impl Session<'_> {
         self.append_native_result(
             draft,
             call,
-            serde_json::json!({
+            &serde_json::json!({
                 "mode": match mode { JoinMode::Any => "any", JoinMode::All => "all" },
                 "satisfied": join_satisfied(mode, terminal.len(), members.len()),
                 "terminal": terminal_ids,
@@ -2935,7 +2943,7 @@ impl Session<'_> {
                 "timedOut": timed_out,
             }),
             false,
-        )
+        );
     }
 
     async fn native_refusal(
@@ -2947,9 +2955,9 @@ impl Session<'_> {
         self.append_native_result(
             &mut draft,
             &call,
-            serde_json::json!({"error": message}),
+            &serde_json::json!({"error": message}),
             true,
-        )?;
+        );
         self.commit(draft).await?;
         Ok(Step::Continue)
     }
@@ -2958,12 +2966,12 @@ impl Session<'_> {
         &self,
         draft: &mut Draft,
         call: &PendingCall,
-        value: serde_json::Value,
+        value: &serde_json::Value,
         is_error: bool,
-    ) -> Result<(), ActivationError> {
+    ) {
         let effect = EffectId::derive(self.agent(), draft.next_seq(), 0x7f);
         let content = vec![ToolResultPart::Json {
-            value: aex_wire::CanonicalJson::from_value(&value)
+            value: aex_wire::CanonicalJson::from_value(value)
                 .expect("the closed native subagent result is canonical JSON"),
         }];
         if let Some(run) = self.state.active_run {
@@ -2988,7 +2996,6 @@ impl Session<'_> {
                 effect,
             });
         }
-        Ok(())
     }
 
     /// Asks about a detached operation and settles whatever it says.

@@ -81,6 +81,12 @@ pub async fn restore(
 /// The checkpoint's fold carries all execution projections. Its retained hash
 /// window begins after `covers_through`, so applying the tail is bounded and no
 /// original journal row is changed or deleted.
+///
+/// # Errors
+///
+/// Returns [`ActivationError`] when the claim is already behind the checkpoint
+/// boundary, or when the bounded tail cannot be decoded, folded, or does not
+/// reach the exact claimed tail.
 pub async fn restore_from_checkpoint(
     journal: &dyn JournalStore,
     checkpoint: ContextCheckpoint,
