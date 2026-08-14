@@ -1,4 +1,4 @@
-# Contributing to aex
+# Contributing to Aex
 
 Thanks for wanting to help. This page is the whole contributor flow; GitHub
 surfaces it in the pull-request UI, so nothing load-bearing lives behind a link.
@@ -60,10 +60,11 @@ Commit subjects are imperative mood, short, and conventionally prefixed
 
 ## What is in this repository, and what is not
 
-aex is open core. This repository holds the public product surface — contracts,
-SDK, CLI, and docs — and, as the engine is extracted, the agent execution
-runtime. The hosted control plane (accounts, billing, scheduling, storage, and
-the infrastructure that runs them) is a separate private repository.
+Aex is open source under the Apache License 2.0. This repository holds the
+public product surface — contracts, SDK, CLI, and docs — and, as the engine is
+extracted, the agent execution runtime. The hosted control plane (accounts,
+billing, scheduling, storage, and the infrastructure that runs them) is a
+separate private repository.
 
 Read [`references/architecture.md`](references/architecture.md) before proposing
 a change that crosses that line. A pull request that assumes the control plane
