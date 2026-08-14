@@ -3308,15 +3308,13 @@
         "layers": [
           "unit",
           "integration",
-          "smoke",
-          "e2e"
+          "smoke"
         ],
         "concerns": [
           "contract",
           "property",
           "fault",
-          "security",
-          "performance"
+          "security"
         ],
         "seams": [
           "aws.aurora.serverless_v2",

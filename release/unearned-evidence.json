@@ -550,13 +550,6 @@
     "subject": "workers/central-schema-admin",
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "workers/central-schema-admin",
-    "owner": "central-finance",
-    "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
   {
