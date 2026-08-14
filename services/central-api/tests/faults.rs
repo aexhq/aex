@@ -9,7 +9,10 @@
 use std::collections::BTreeMap;
 use std::process::Command;
 
-use central_api::config::{self, CentralApiConfigError, Config};
+use central_api::{
+    config::{self, CentralApiConfigError, Config},
+    manifest,
+};
 
 #[test]
 fn the_artifact_refuses_to_start_without_its_exact_configuration() {
@@ -35,6 +38,15 @@ fn a_complete_environment_is_accepted() {
     assert_eq!(config.http.service, config::DEPLOYABLE);
     assert_eq!(config.port, 8080);
     assert_eq!(config.api_urls.len(), 1);
+}
+
+#[test]
+fn a_complete_environment_is_admitted_by_the_capability_manifest() {
+    let config = read(&complete()).expect("a complete environment");
+    assert_eq!(
+        aex_central_http::capability::admit(&manifest(), &config.resolved()),
+        Ok(())
+    );
 }
 
 #[test]

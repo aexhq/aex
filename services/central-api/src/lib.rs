@@ -116,10 +116,11 @@ pub fn manifest() -> CompositionManifest {
             CapabilityBinding::arn(config::AURORA_SECRET_ARN, FinanceRead::ID),
             CapabilityBinding::resource(config::API_KEY_PEPPER_SECRET_ID, ControlWrite::ID),
             CapabilityBinding::resource(config::IDENTITY_PEPPER_SECRET_ID, IdentityWrite::ID),
-            // Google's registered OAuth client. Bound to
+            // The two sign-in providers' registered OAuth clients. Bound to
             // `SignInHandshake` rather than to `IdentityWrite`, because holding a
             // credential that speaks as AEX at somebody else's authority is a
             // different right from writing this platform's own identity rows.
+            CapabilityBinding::resource(config::GOOGLE_OAUTH_SECRET_ID, SignInHandshake::ID),
             CapabilityBinding::resource(config::GITHUB_OAUTH_SECRET_ID, SignInHandshake::ID),
             CapabilityBinding::arn(config::STRIPE_COMMAND_EDGE_ARN, PaymentCommandInvoke::ID),
         ],
