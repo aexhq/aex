@@ -412,10 +412,24 @@ jobs:
           for envelope in "${envelope_files[@]}"; do
             envelope_args+=(--envelope "$envelope")
           done
+          mapfile -d '' publication_files < <(
+            find handoff/npm-publications -type f -name npm-publication.json -print0 | sort -z
+          )
+          test "${#publication_files[@]}" -gt 0
+          for envelope in "${envelope_files[@]}"; do
+            jq -r 'select(.unit.kind == "npm-package") | .unit.id' "$envelope"
+          done | sort > public-inputs/declared-npm-unit-ids.txt
+          : > public-inputs/downloaded-npm-unit-ids.txt
           publication_args=()
-          for publication in handoff/npm-publications/*/npm-publication.json; do
+          for publication in "${publication_files[@]}"; do
+            jq -er '.unit | select(type == "string" and length > 0)' "$publication" \
+              >> public-inputs/downloaded-npm-unit-ids.txt
             publication_args+=(--npm-publication "$publication")
           done
+          sort -o public-inputs/downloaded-npm-unit-ids.txt public-inputs/downloaded-npm-unit-ids.txt
+          test -s public-inputs/declared-npm-unit-ids.txt
+          test -z "$(uniq -d public-inputs/downloaded-npm-unit-ids.txt)"
+          diff -u public-inputs/declared-npm-unit-ids.txt public-inputs/downloaded-npm-unit-ids.txt
           public-inputs/aex-release-tool --root "$GITHUB_WORKSPACE" --json \
             manifest inputs "${envelope_args[@]}" "${publication_args[@]}" \
             --release-tool public-inputs/aex-release-tool \

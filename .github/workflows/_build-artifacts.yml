@@ -158,19 +158,19 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           pattern: artifact-${{ matrix.name }}
-          path: ${{ runner.temp }}/compiled
+          path: ${{ runner.temp }}/compiled/artifact-${{ matrix.name }}
 
       - name: Download the compiled OCI unit identity
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           pattern: oci-artifact-${{ matrix.name }}
-          path: ${{ runner.temp }}/compiled
+          path: ${{ runner.temp }}/compiled/oci-artifact-${{ matrix.name }}
 
       - name: Download the compiled OCI publish context
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           pattern: oci-context-${{ matrix.name }}
-          path: ${{ runner.temp }}/compiled
+          path: ${{ runner.temp }}/compiled/oci-context-${{ matrix.name }}
 
       - name: Admit exactly one compiled unit and read its kind
         id: compiled
@@ -181,13 +181,14 @@ jobs:
           oci="$src/oci-artifact-${{ matrix.name }}"
           context="$src/oci-context-${{ matrix.name }}"
           present=0
-          [ -d "$blob" ] && present=$((present + 1))
-          [ -d "$oci" ]  && present=$((present + 1))
+          [ -f "$blob/artifact.bin" ]   && present=$((present + 1))
+          [ -f "$oci/identity-1.json" ] && present=$((present + 1))
           [ "$present" -eq 1 ]
           mkdir -p "$RELEASE_DIR"
-          if [ -d "$oci" ]; then
+          if [ -f "$oci/identity-1.json" ]; then
             cp -R "$oci"/. "$RELEASE_DIR"/
-            test -d "$context"
+            test -f "$context/Dockerfile"
+            test -f "$context/artifact"
             mkdir "$RELEASE_DIR/context-1"
             cp -R "$context"/. "$RELEASE_DIR/context-1"/
             # `oci-prepare` writes both context files 0644 and the RDS bundle is
@@ -204,7 +205,11 @@ jobs:
           fi
           kind=$(jq -er .unit.kind "$RELEASE_DIR/draft-envelope.json")
           [[ "$kind" == "$(jq -er .kind "$RELEASE_DIR/recipe.json")" ]]
-          if [[ "$kind" == rust-oci-* ]]; then test -d "$oci"; else test -d "$blob"; fi
+          if [[ "$kind" == rust-oci-* ]]; then
+            test -f "$oci/identity-1.json"
+          else
+            test -f "$blob/artifact.bin"
+          fi
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
 
       - name: Set up pinned Buildx and BuildKit
@@ -626,6 +631,13 @@ jobs:
             '{predicateType:"https://slsa.dev/provenance/v1",uri:$uri,builderId:$builderId,attested:true}' \
             > "$RELEASE_DIR/provenance-claims.json"
 
+      - name: Bind publication evidence to its release unit
+        if: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          jq -n --arg unit "${{ matrix.name }}" '{unit:$unit}' \
+            > "$RELEASE_DIR/publication-unit.json"
+
       - name: Upload blob publication evidence
         if: ${{ inputs.publish && !startsWith(steps.compiled.outputs.kind, 'rust-oci-') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -634,6 +646,7 @@ jobs:
           path: |
             ${{ env.RELEASE_DIR }}/provenance.sigstore.json
             ${{ env.RELEASE_DIR }}/provenance-claims.json
+            ${{ env.RELEASE_DIR }}/publication-unit.json
           if-no-files-found: error
 
       - name: Upload hands-agent signature evidence
@@ -659,6 +672,7 @@ jobs:
             ${{ env.RELEASE_DIR }}/verified-provenance.json
             ${{ env.RELEASE_DIR }}/provenance.sigstore.json
             ${{ env.RELEASE_DIR }}/provenance-claims.json
+            ${{ env.RELEASE_DIR }}/publication-unit.json
           if-no-files-found: error
 
   public_release_inputs:
@@ -792,10 +806,6 @@ jobs:
           mapfile -d '' receipts < <(
             find validation-receipts -type f -name '*.json' -print0 | sort -z
           )
-          drafts=(
-            packaged-units/artifact-*/draft-envelope.json
-            oci-units/oci-artifact-*/draft-envelope.json
-          )
           tag="main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
           release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
           builder="https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main"
@@ -846,6 +856,71 @@ jobs:
             await Bun.write("dist/declared-npm-unit-ids.txt", npm.length === 0 ? "" : npm.join("\n") + "\n");
             await Bun.write("dist/declared-signature-unit-ids.txt", signed.length === 0 ? "" : signed.join("\n") + "\n");
           '
+          normalize_compiled_family() {
+            local source_root=$1 normalized_root=$2 expected_shape=$3
+            local draft unit kind target
+            mapfile -d '' family_drafts < <(
+              find "$source_root" -type f -name draft-envelope.json -print0 | sort -z
+            )
+            mkdir -p "$normalized_root"
+            for draft in "${family_drafts[@]}"; do
+              unit=$(jq -er '.unit.id | select(type == "string" and length > 0)' "$draft")
+              kind=$(jq -er '.unit.kind | select(type == "string" and length > 0)' "$draft")
+              if [ "$expected_shape" = oci ]; then
+                [[ "$kind" == rust-oci-* ]]
+              else
+                [[ "$kind" != rust-oci-* ]]
+              fi
+              target="$normalized_root/$unit"
+              test ! -e "$target"
+              mkdir "$target"
+              cp -R "${draft%/draft-envelope.json}"/. "$target"/
+            done
+          }
+          normalize_compiled_family packaged-units dist/packaged-units blob
+          normalize_compiled_family oci-units dist/oci-units oci
+
+          mapfile -d '' publication_markers < <(
+            find publication-units -type f -name publication-unit.json -print0 | sort -z
+          )
+          test "${#publication_markers[@]}" -gt 0
+          mkdir -p dist/publication-units
+          : > dist/downloaded-publication-unit-ids.txt
+          for marker in "${publication_markers[@]}"; do
+            unit=$(jq -er '.unit | select(type == "string" and length > 0)' "$marker")
+            grep -Fxq "$unit" dist/declared-unit-ids.txt
+            normalized="dist/publication-units/$unit"
+            test ! -e "$normalized"
+            mkdir "$normalized"
+            cp -R "${marker%/publication-unit.json}"/. "$normalized"/
+            printf '%s\n' "$unit" >> dist/downloaded-publication-unit-ids.txt
+          done
+          sort -o dist/downloaded-publication-unit-ids.txt dist/downloaded-publication-unit-ids.txt
+          test -z "$(uniq -d dist/downloaded-publication-unit-ids.txt)"
+          diff -u dist/declared-unit-ids.txt dist/downloaded-publication-unit-ids.txt
+
+          mapfile -d '' npm_publications < <(
+            find npm-publications -type f -name npm-publication.json -print0 | sort -z
+          )
+          test -s dist/declared-npm-unit-ids.txt
+          test "${#npm_publications[@]}" -gt 0
+          mkdir -p dist/npm-publications
+          : > dist/downloaded-npm-unit-ids.txt
+          for publication in "${npm_publications[@]}"; do
+            unit=$(jq -er '.unit | select(type == "string" and length > 0)' "$publication")
+            grep -Fxq "$unit" dist/declared-npm-unit-ids.txt
+            normalized="dist/npm-publications/$unit.json"
+            test ! -e "$normalized"
+            cp "$publication" "$normalized"
+            printf '%s\n' "$unit" >> dist/downloaded-npm-unit-ids.txt
+          done
+          sort -o dist/downloaded-npm-unit-ids.txt dist/downloaded-npm-unit-ids.txt
+          test -z "$(uniq -d dist/downloaded-npm-unit-ids.txt)"
+          diff -u dist/declared-npm-unit-ids.txt dist/downloaded-npm-unit-ids.txt
+          drafts=(
+            dist/packaged-units/*/draft-envelope.json
+            dist/oci-units/*/draft-envelope.json
+          )
           for draft in "${drafts[@]}"; do
             jq -er '.unit.id | select(type == "string" and length > 0)' "$draft"
           done | sort > dist/draft-unit-ids.txt
@@ -889,7 +964,7 @@ jobs:
             unit=$(jq -er .unit.id "$draft")
             kind=$(jq -er .unit.kind "$draft")
             directory=${draft%/draft-envelope.json}
-            publication="publication-units/publication-$unit"
+            publication="dist/publication-units/$unit"
             bound_directory="dist/bound-receipts/$unit"
             certified_directory="dist/certified/$unit"
             evidence_directory="$certified_directory/evidence"
@@ -922,7 +997,7 @@ jobs:
               # exact set of GitHub Release blobs.
               artifact="$directory/artifact.bin"
               artifact_args=(--file "$artifact")
-              location=$(jq -c .location "npm-publications/npm-publication-$unit/npm-publication.json")
+              location=$(jq -c .location "dist/npm-publications/$unit.json")
             else
               artifact="$directory/artifact.bin"
               asset_metadata=$(dist/aex-release-tool artifact asset-name --unit "$unit" --file "$artifact")
@@ -1038,8 +1113,8 @@ jobs:
           : > dist/produced-oci-unit-ids.txt
           : > dist/produced-npm-unit-ids.txt
           shopt -s nullglob
-          for directory in packaged-units/artifact-*; do
-            unit=${directory##*/artifact-}
+          for directory in dist/packaged-units/*; do
+            unit=${directory##*/}
             file="$directory/artifact.bin"
             test -f "$file"
             # A published package is packaged like a blob and published like a
@@ -1047,7 +1122,7 @@ jobs:
             # from the release-asset inventory below.
             if grep -Fxq "$unit" dist/declared-npm-unit-ids.txt; then
               printf '%s\n' "$unit" >> dist/produced-npm-unit-ids.txt
-              publication="npm-publications/npm-publication-$unit/npm-publication.json"
+              publication="dist/npm-publications/$unit.json"
               jq -e --arg digest "sha256:$(sha256sum "$file" | cut -d' ' -f1)" \
                 '.schema == "aex.npm-publication.v1" and .tarballDigest == $digest and
                  .provenance == true and .location.kind == "npm" and .location.immutable == true' \
@@ -1061,14 +1136,14 @@ jobs:
             blob_count=$((blob_count + 1))
           done
           oci_count=0
-          for identity in oci-units/oci-artifact-*/identity-1.json; do
+          for identity in dist/oci-units/*/identity-1.json; do
             jq -e '.schema == "aex.oci-image-identity.v1" and (.unit | length > 0) and (.outputDigest | test("^sha256:[0-9a-f]{64}$"))' \
               "$identity" >/dev/null
             unit=$(jq -er .unit "$identity")
             printf '%s\n' "$unit" >> dist/produced-oci-unit-ids.txt
             jq -e --arg digest "$(jq -er .outputDigest "$identity")" \
               '.schema == "aex.oci-publication.v1" and .image.outputDigest == $digest and .location.immutable == true and (.provenance.bundleDigest | test("^sha256:[0-9a-f]{64}$")) and (.provenance.verificationResultDigest | test("^sha256:[0-9a-f]{64}$"))' \
-              "publication-units/publication-$unit/oci-publication.json" >/dev/null
+              "dist/publication-units/$unit/oci-publication.json" >/dev/null
             oci_count=$((oci_count + 1))
           done
           sort -o dist/produced-blob-unit-ids.txt dist/produced-blob-unit-ids.txt

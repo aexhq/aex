@@ -213,13 +213,33 @@ describe("public main-push publication", () => {
     const source = read(".github/workflows/_build-artifacts.yml");
     const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
     const build = workflow.jobs.build;
+    const blobDownload = build.steps.find(
+      (step: { readonly name?: string }) => step.name === "Download the compiled blob unit"
+    );
+    const ociDownload = build.steps.find(
+      (step: { readonly name?: string }) => step.name === "Download the compiled OCI unit identity"
+    );
+    const contextDownload = build.steps.find(
+      (step: { readonly name?: string }) => step.name === "Download the compiled OCI publish context"
+    );
     const admit = build.steps.find(
       (step: { readonly name?: string }) => step.name === "Admit exactly one compiled unit and read its kind"
     );
 
+    // download-artifact v8 extracts one exact pattern match directly into
+    // `path`; give each shape the directory admission subsequently names.
+    expect(blobDownload?.with.path).toBe("${{ runner.temp }}/compiled/artifact-${{ matrix.name }}");
+    expect(ociDownload?.with.path).toBe("${{ runner.temp }}/compiled/oci-artifact-${{ matrix.name }}");
+    expect(contextDownload?.with.path).toBe("${{ runner.temp }}/compiled/oci-context-${{ matrix.name }}");
     expect(admit?.id).toBe("compiled");
     // Two shapes present, or none, is a transport defect and must not publish.
     expect(admit?.run).toContain('[ "$present" -eq 1 ]');
+    expect(admit?.run).toContain('[ -f "$blob/artifact.bin" ]');
+    expect(admit?.run).toContain('[ -f "$oci/identity-1.json" ]');
+    expect(admit?.run).toContain('test -f "$context/Dockerfile"');
+    expect(admit?.run).toContain('test -f "$context/artifact"');
+    expect(admit?.run).not.toContain('[ -d "$blob" ]');
+    expect(admit?.run).not.toContain('[ -d "$oci" ]');
     expect(admit?.run).toContain('kind=$(jq -er .unit.kind "$RELEASE_DIR/draft-envelope.json")');
     expect(admit?.run).toContain('[[ "$kind" == "$(jq -er .kind "$RELEASE_DIR/recipe.json")" ]]');
     expect(admit?.run).toContain('find "$RELEASE_DIR/context-1" -type f -exec chmod 0644 {} +');
@@ -294,9 +314,17 @@ describe("public main-push publication", () => {
     const certifiedUpload = job.steps.find(
       (step: { readonly name?: string }) => step.name === "Upload the exact certified artifact inventory"
     );
+    const publicationBinding = buildJob.steps.find(
+      (step: { readonly name?: string }) =>
+        step.name === "Bind publication evidence to its release unit"
+    );
     const blobReadback = job.steps.find(
       (step: { readonly name?: string }) =>
         step.name === "Read back and verify every published unit and auxiliary asset"
+    );
+    const assetVerification = job.steps.find(
+      (step: { readonly name?: string }) =>
+        step.name === "Verify every content-addressed unit and auxiliary asset"
     );
     // The compiler, the packagers, the cross-linker, the OCI producer
     // toolchain, the `Package` step and the RDS bundle binding now belong to
@@ -355,6 +383,16 @@ describe("public main-push publication", () => {
     expect(source).toContain("dist/regional-tables.json");
     expect(source).toContain("Download every same-run validation receipt");
     expect(source).toContain("find validation-receipts -type f -name '*.json' -print0");
+    expect(publicationBinding?.run).toContain("publication-unit.json");
+    expect(certification?.run).toContain(
+      'find "$source_root" -type f -name draft-envelope.json -print0 | sort -z'
+    );
+    expect(certification?.run).toContain(
+      "find publication-units -type f -name publication-unit.json -print0 | sort -z"
+    );
+    expect(certification?.run).toContain(
+      "diff -u dist/declared-unit-ids.txt dist/downloaded-publication-unit-ids.txt"
+    );
     expect(source).not.toContain("merge-multiple: true");
     expect(source).not.toContain("cargo deny");
     expect(source).not.toContain("cargo audit");
@@ -367,6 +405,23 @@ describe("public main-push publication", () => {
     expect(certification?.run).toContain("evidence bind-artifact");
     expect(certification?.run).toContain("artifact certify");
     expect(certification?.run).not.toContain("artifact defer-certification");
+    expect(certification?.run).toContain(
+      "find npm-publications -type f -name npm-publication.json -print0 | sort -z"
+    );
+    expect(certification?.run).toContain('test "${#npm_publications[@]}" -gt 0');
+    expect(certification?.run).toContain(
+      "diff -u dist/declared-npm-unit-ids.txt dist/downloaded-npm-unit-ids.txt"
+    );
+    expect(certification?.run).toContain('location=$(jq -c .location "dist/npm-publications/$unit.json")');
+    expect(assetVerification?.run).toContain('publication="dist/npm-publications/$unit.json"');
+    expect(assetVerification?.run).toContain("for directory in dist/packaged-units/*; do");
+    expect(assetVerification?.run).toContain("for identity in dist/oci-units/*/identity-1.json; do");
+    expect(source).not.toContain(
+      "npm-publications/npm-publication-$unit/npm-publication.json"
+    );
+    expect(source).not.toContain("packaged-units/artifact-*/draft-envelope.json");
+    expect(source).not.toContain("oci-units/oci-artifact-*/draft-envelope.json");
+    expect(source).not.toContain("publication-units/publication-$unit");
     expect(certifiedUpload?.with.name).toBe("certified-envelopes");
     expect(certifiedUpload?.with["if-no-files-found"]).toBe("error");
     expect(blobReadback?.run).toContain("gh release download");
@@ -453,6 +508,16 @@ describe("public main-push publication", () => {
       source.indexOf("manifest inputs")
     );
     expect(produce?.run).toContain("manifest inputs");
+    expect(produce?.run).toContain(
+      "find handoff/npm-publications -type f -name npm-publication.json -print0 | sort -z"
+    );
+    expect(produce?.run).toContain('test "${#publication_files[@]}" -gt 0');
+    expect(produce?.run).toContain(
+      "diff -u public-inputs/declared-npm-unit-ids.txt public-inputs/downloaded-npm-unit-ids.txt"
+    );
+    expect(produce?.run).not.toContain(
+      "handoff/npm-publications/*/npm-publication.json"
+    );
     expect(produce?.run).toContain("--repository \"$GITHUB_REPOSITORY\"");
     expect(produce?.run).toContain("--commit-sha \"$GITHUB_SHA\"");
     expect(produce?.run).toContain("--out public-inputs/composition-inputs.json");
