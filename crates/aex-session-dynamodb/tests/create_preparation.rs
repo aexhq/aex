@@ -44,10 +44,10 @@ fn preparation(files: Vec<PreparedFile>) -> CreatePreparation {
         coordinator: uuid(4),
         session: SessionId::from_uuid7(uuid(5)),
         root_agent: AgentId::from_uuid7(uuid(6)),
-        generation: GenerationId::from_uuid7(uuid(7)),
+        generation: Some(GenerationId::from_uuid7(uuid(7))),
         files,
         root_record: root_record(GenerationId::from_uuid7(uuid(7))),
-        runtime_definition: br#"{"generation":"fixture"}"#.to_vec(),
+        runtime_definition: Some(br#"{"generation":"fixture"}"#.to_vec()),
         resolved_config: br#"{"model":"deepseek-chat"}"#.to_vec(),
         metadata: Some(br#"{"label":"fixture"}"#.to_vec()),
         materialized_agents: 8,
@@ -73,7 +73,7 @@ fn root_record(generation: GenerationId) -> JournalRecord {
             system: None,
             tool_manifest_digests: Vec::new(),
             mcp_servers: Vec::new(),
-            hands_generation: generation,
+            hands_generation: Some(generation),
             limits_revision: 1,
             limits: AgentLimits {
                 turn_deadline_ms: 600_000,
@@ -149,7 +149,10 @@ fn every_non_file_winner_fact_changes_the_elected_authority_identity() {
     let original = preparation(vec![file(0, 8)]);
     let digest = original.validate().expect("valid").authority_digest;
     let mut changed = original.clone();
-    changed.runtime_definition.push(b' ');
+    changed.runtime_definition = original.runtime_definition.clone().map(|mut raw| {
+        raw.push(b' ');
+        raw
+    });
     assert_ne!(changed.validate().expect("valid").authority_digest, digest);
     changed = original.clone();
     changed.resolved_config.push(b' ');

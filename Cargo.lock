@@ -770,7 +770,6 @@ dependencies = [
  "aex-wire",
  "blake3",
  "proptest",
- "serde_json",
  "thiserror 2.0.19",
  "time",
 ]
