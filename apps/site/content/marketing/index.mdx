@@ -1,51 +1,63 @@
 ---
 title: AEX
-description: AEX is a distributed agent runtime in the cloud for developers to build and run agent sessions for their apps.
+description: AEX is a session-centered agent runtime with files, tools, MCP, subagents, telemetry, and prepaid controls.
 ---
 
-AEX is a distributed agent runtime in the cloud for developers to build and run
-agent sessions for their apps. Each session has a model, an isolated Linux
-workspace, files, and tools. Control it through the TypeScript SDK or HTTP API.
+AEX gives your app one durable execution unit: a session. It owns committed
+message history, an exact model, a file-aware Linux workspace, tools, subagents,
+and telemetry. Control it through the TypeScript SDK or HTTP API.
 
 - [Read the docs](/docs)
 - [Log in](https://aex.dev/signin?next=/app)
 
-## 800+ models
+## Official models
 
-Use 800+ models across OpenAI, Anthropic, Google, DeepSeek, Z.ai, Moonshot AI,
-OpenRouter, and Vercel AI Gateway. Bring your own provider key and choose the
-model for each session.
+Bring one session-scoped provider key and choose a qualified model from OpenAI,
+Anthropic, DeepSeek, xAI, Meta, Moonshot AI, or Alibaba. The key is encrypted,
+never returned, and never reused by another session.
 
-## Sessions
+## Durable sessions
 
-Run multi-message sessions for up to eight hours. Idle sessions suspend after
-three minutes and resume with the same workspace on the next message. Start,
-inspect, suspend, resume, or stop sessions through the API.
+Keep a multi-message conversation for up to eight hours. Cancel current work,
+terminate compute while retaining committed messages, or irreversibly delete
+session content. There is no separate public run resource to coordinate.
 
-## Files, skills, and tools
+## Latest-only files
 
-Upload project files, `AGENTS.md`, custom instructions, skills, tool bundles,
-MCP configuration, and other assets. Mount the files each session needs.
+Messages are text-only. Register arbitrary latest-only files from inline bytes,
+an HTTPS URL, or a direct upload, freeze their sandbox paths at session creation,
+then point the model to images, PDFs, video, source trees, or instructions there.
 
-## Built-in tools
+## One sandbox
 
-Every session includes Bash, `read_file`, `edit_file`, and `write_file`.
-Preinstall pinned apt, pip, and npm packages, then allow or block public network
-access.
+The default sandbox starts preparing in the background at session creation and
+suspends when no tool is waiting. The first sandbox call waits for the exact
+generation to resume. Disable it explicitly to allocate no sandbox and return a
+structured error for sandbox-only tools.
 
-## Compute and subagents
+## Tools and MCP
 
-Choose from 512 MB, 1 GB, 2 GB, 4 GB, or 8 GB of memory. Agents can create
-recursive subagents in the same session and workspace.
+Use Bash, `read_file`, `edit_file`, `write_file`, and `mcp_call`. Configure
+remote HTTP or sandbox-process MCP per session. Large results stay in sandbox
+files until the model calls `storage.persist` to publish one as a workspace file.
 
-## Observability
+## Parallel subagents
 
-Stream messages as AG-UI events. Query, stream, or export OpenTelemetry logs,
-spans, metrics, and traces, including after a session suspends or stops.
+Independent tool calls can run together while their results commit in model
+call order. Native subagents have their own durable identities, with at most 12
+child identities over a session lifetime and maximum depth 3.
 
-## Pricing
+## Live and retained telemetry
 
-AEX runtime usage is free during alpha. Model usage is billed by the provider
-through your own key.
+Stream bounded assistant previews, tool activity, runtime events, logs, spans,
+and usage without delaying model work. Gaps are explicit, every assistant answer
+gets committed reconciliation, and retained telemetry supports replay and
+compressed download.
 
-> AEX is currently in alpha. Expect breaking changes and occasional interruptions.
+## Prepaid billing
+
+Use hosted card and top-up flows, inspect balance and immutable transactions,
+and filter usage by session, provider, model, or category. Model spend remains
+with the provider behind your own key; AEX never stores raw card details.
+
+> AEX is in active prelaunch development. Expect breaking changes and occasional interruptions.

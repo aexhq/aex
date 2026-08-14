@@ -7,6 +7,7 @@ import { loadMarketingPage, parseInline, parseMarketingPage, slugify } from "../
 const CONTENT_PATH = resolve(import.meta.dir, "../content/marketing/index.mdx");
 const README_PATH = resolve(import.meta.dir, "../../../README.md");
 const PUBLIC_SHELL_PATH = resolve(import.meta.dir, "../app/_components/public-shell.tsx");
+const LAYOUT_PATH = resolve(import.meta.dir, "../app/layout.tsx");
 const page = loadMarketingPage(CONTENT_PATH);
 
 describe("the landing page content model", () => {
@@ -15,18 +16,19 @@ describe("the landing page content model", () => {
     expect(page.description.length).toBeGreaterThan(0);
     expect(page.intro).toHaveLength(1);
     expect(page.features.map((feature) => feature.title)).toEqual([
-      "800+ models",
-      "Sessions",
-      "Files, skills, and tools",
-      "Built-in tools",
-      "Compute and subagents",
-      "Observability",
-      "Pricing",
+      "Official models",
+      "Durable sessions",
+      "Latest-only files",
+      "One sandbox",
+      "Tools and MCP",
+      "Parallel subagents",
+      "Live and retained telemetry",
+      "Prepaid billing",
     ]);
     expect(page.links.map((link) => link.href)).toEqual(["/docs", "https://aex.dev/signin?next=/app"]);
     const status = page.note.map((span) => span.value).join("");
 
-    expect(status).toContain("currently in alpha");
+    expect(status).toContain("active prelaunch development");
     expect(status).toContain("Expect breaking changes");
   });
 
@@ -60,16 +62,33 @@ describe("the landing page content model", () => {
   test("states the implemented developer-facing capabilities", () => {
     const source = readFileSync(CONTENT_PATH, "utf8");
 
-    expect(source).toContain("800+ models");
-    expect(source).toContain("Bring your own provider");
-    expect(source).toContain("`AGENTS.md`");
-    expect(source).toContain("skills, tool bundles");
-    expect(source).toContain("MCP configuration");
-    expect(source).toContain("Bash, `read_file`, `edit_file`, and `write_file`");
-    expect(source).toContain("apt, pip, and npm");
-    expect(source).toContain("recursive subagents");
-    expect(source).toContain("AG-UI events");
-    expect(source).toContain("free during alpha");
+    for (const provider of ["OpenAI", "Anthropic", "DeepSeek", "xAI", "Meta", "Moonshot AI", "Alibaba"]) {
+      expect(source).toContain(provider);
+    }
+    expect(source).toContain("session-scoped provider key");
+    expect(source).toContain("text-only");
+    expect(source).toContain("latest-only");
+    expect(source).toContain("`storage.persist`");
+    expect(source).toContain("`mcp_call`");
+    expect(source).toMatch(/12\s+child identities/);
+    expect(source).toContain("depth 3");
+    expect(source).toContain("committed reconciliation");
+    expect(source).toContain("compressed download");
+    expect(source).toContain("Prepaid billing");
+
+    expect(source).not.toContain("800+ models");
+    expect(source).not.toContain("Google");
+    expect(source).not.toContain("OpenRouter");
+    expect(source).not.toContain("Vercel AI Gateway");
+    expect(source).not.toContain("AG-UI");
+    expect(source).not.toContain("free during alpha");
+  });
+
+  test("keeps shared search and social metadata on the session-centered positioning", () => {
+    const layout = readFileSync(LAYOUT_PATH, "utf8");
+
+    expect(layout).toContain("AEX is a session-centered agent runtime");
+    expect(layout).not.toContain("distributed agent runtime in the cloud");
   });
 
   test("links the open source repository and partnership contact", () => {

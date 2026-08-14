@@ -1,72 +1,130 @@
 # @aexhq/sdk
 
-The zero-dependency TypeScript SDK for AEX sessions.
+The zero-dependency TypeScript SDK for the session-centered AEX public API.
 
 ```bash
-npm i @aexhq/sdk
+npm install @aexhq/sdk
 ```
 
+## Quickstart
+
 ```ts
-import { Aex, assertId, newId } from "@aexhq/sdk";
+import { Aex, newId } from "@aexhq/sdk";
 
-const aex = new Aex(process.env.AEX_WORKSPACE_API_KEY!);
-
+const aex = new Aex({ apiKey: process.env.AEX_WORKSPACE_API_KEY! });
 const session = await aex.sessions.sessionCreate({
   body: {
     provider: "openai",
     model: process.env.AEX_MODEL!,
-    providerCredentialId: assertId(
-      "provider_credential",
-      process.env.AEX_PROVIDER_CREDENTIAL_ID,
-    ),
+    providerApiKey: process.env.AEX_PROVIDER_API_KEY!,
   },
   idempotencyKey: crypto.randomUUID(),
 });
+
+const committed = (async () => {
+  for await (const frame of aex.sessions.sessionMessagesStream({
+    sessionId: session.id,
+  })) {
+    if (frame.kind === "committed" && frame.message?.role === "assistant") {
+      return frame.message;
+    }
+  }
+  throw new Error("message stream ended before the assistant committed");
+})();
 
 await aex.sessions.sessionMessageSend({
   sessionId: session.id,
   body: { text: "Inspect the tests and summarize the failures." },
   idempotencyKey: crypto.randomUUID(),
 });
+console.log(await committed);
 
-await aex.sessions.sessionSuspend({
+await aex.sessions.sessionTerminate({
   sessionId: session.id,
   body: {},
   operationId: newId("operation"),
 });
 ```
 
-The session is the customer-facing execution unit. It accepts one text message
-at a time and can accept another after the current activity finishes or is
-cancelled. There is no public run resource. One exact provider generation lasts
-at most eight hours from launch, suspends automatically after 180 idle seconds,
-and resumes for the next message or live-file request. Suspension never extends
-the lifetime, and runtime loss terminates the session instead of restoring an
-ambiguous partial activity.
+Session creation takes an exact provider/model pair and a write-only
+`providerApiKey`. The key is encrypted for that session, never returned, and
+never reused by another session. Supported provider families are OpenAI,
+Anthropic, DeepSeek, xAI, Meta, Moonshot AI, and Alibaba.
 
-The SDK exposes generated resource clients for bootstrap, organizations,
-workspaces, API keys, billing, dedicated BYOK provider credentials, registered
-workspace files, sessions and messages, live files, observations, telemetry
-exports, operations, and usage. Every resource method is generated from the
-published contract. `ROUTES` and `aex.execute(...)` expose that same current
-route set without maintaining a second handwritten table.
+## Client surface
 
-Registered workspace files are durable opaque inputs. A session pins selected
-file revisions at creation and materializes them into its MicroVM. Files created
-inside the session are generation-local: termination or runtime loss destroys
-them. The `@aexhq/sdk/node/session-files` entry provides bounded, resumable,
-digest-verified upload and download helpers for those live files.
+Regional session and file calls use a workspace `apiKey`. Central bootstrap,
+API-key, and billing calls use a GitHub `dashboardSession`. A client may hold
+both; the SDK sends each credential only to its owning API plane.
 
-Launch has no generic secret vault, typed skill/tool/instruction/MCP registries,
-interactive tool approvals, session snapshots, persistence, clone/fork, trash,
-or restore surface. Provider keys use the dedicated write-only BYOK authority.
-The built-in model tools are exactly `read_file`, `edit_file`, `write_file`, and
-Bash; guidance and configuration can be supplied as opaque workspace files.
+```ts
+const aex = new Aex({
+  apiKey: process.env.AEX_WORKSPACE_API_KEY!,
+  dashboardSession: process.env.AEX_DASHBOARD_SESSION!,
+});
+```
 
-Telemetry and telemetry exports are durable even though live session files and
-execution state are not.
+Generated namespaces are `apiKeys`, `auth`, `billing`, `bootstrap`, `registry`,
+`sessions`, and `uploads`. `aex.workspaceFiles` adds verified convenience
+helpers for the latest-only file API. `ROUTES` and `aex.execute(...)` expose the
+same generated contract without a second handwritten route table.
 
-The native `aex` command is distributed as a signed platform archive.
+## Sessions and sandboxes
+
+A session is the only public execution resource. It owns committed messages,
+one active root message, durable tool effects, native subagents, frozen file
+mounts, sandbox state, and telemetry. There is no public run resource.
+
+The default sandbox starts preparing in the background when session creation
+commits, then suspends when no tool call is waiting. A sandbox tool call waits
+for the exact generation to become ready and resumes it when required. Set
+`sandbox.enabled` to `false` to allocate no sandbox; sandbox-only tools then
+return a structured error the model can handle.
+
+Cancel stops active work and returns the session to idle. Terminate destroys
+sandbox compute while retaining messages and telemetry. Delete irreversibly
+removes session-owned content; independent workspace files remain.
+
+## Files, tools, and MCP
+
+`aex.workspaceFiles` provides `put`, `upload`, `get`, `list`, `download`, and
+`delete`. Each logical name has only one current value. Inputs may be inline
+text or bytes, an HTTPS URL, or a direct multipart upload. Session creation
+freezes selected names and mount paths, so later overwrites do not change an
+existing session.
+
+Messages are text-only. Upload arbitrary images, PDFs, video, archives, or
+source and tell the model which path under `/workspace` to inspect.
+
+The built-in tool surface is Bash, file read/edit/write, MCP,
+`storage.persist`, and native create/wait/stop subagent tools. Configure remote
+Streamable HTTP or sandbox-process MCP per session. Large tool results keep a
+bounded preview and the full bytes at a sandbox path; `storage.persist`
+publishes a chosen sandbox file as the latest workspace value. Native
+subagents are bounded to 12 child identities per session lifetime and depth 3.
+
+`sessionMessageSend` accepts optional native JSON Schema output through
+`responseFormat`. Strict structured output is admitted only for a qualified
+provider/model capability; AEX does not present prompt emulation as strict.
+
+## Streaming, telemetry, and billing
+
+`sessionMessagesStream` emits bounded preview, gap, committed, reconcile, and
+heartbeat frames. Committed messages preserve provider-neutral text, tool-call,
+and tool-result parts.
+
+Session telemetry is available as a live stream, retained replay, and verified
+compressed download. Billing resources expose prepaid balance, saved-card
+display metadata, hosted card setup and top-up, immutable transactions, and
+usage. Billing methods require `dashboardSession`; session and file methods
+require `apiKey`.
+
+See the [AEX documentation](https://aex.dev/docs) for complete examples.
+
+## Status
+
+AEX is in active prelaunch development. Expect breaking changes and do not rely
+on the hosted service for production workloads yet.
 
 ## License
 

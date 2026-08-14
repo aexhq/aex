@@ -1924,11 +1924,10 @@
           "concurrency"
         ],
         "scenarios": [],
-        "targets": {
-          "integration": "integration",
-          "write_incapability": "unit"
-        },
-        "not_applicable": {}
+        "targets": {},
+        "not_applicable": {
+          "inline_targets": "observations-usage: the retired usage-query-projection table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
+        }
       },
       "unmapped_targets": [],
       "awaiting_owner": false

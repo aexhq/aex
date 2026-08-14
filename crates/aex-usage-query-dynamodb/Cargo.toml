@@ -27,10 +27,9 @@ security_tier = "authority"
 risk = ["concurrency"]
 scenarios = []
 
+[package.metadata.aex.not_applicable]
+inline_targets = "observations-usage: the retired usage-query-projection table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
 
-[package.metadata.aex.targets]
-write_incapability = "unit"
-integration = "integration"
 
 [features]
 # Engine-backed targets. The unit lane neither builds nor links any of it, so
@@ -53,12 +52,3 @@ aex-usage-domain = { path = "../aex-usage-domain" }
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 aex-test-harness = { path = "../../tests/support/aex-test-harness" }
-
-[[test]]
-name = "write_incapability"
-path = "tests/write_incapability.rs"
-
-[[test]]
-name = "integration"
-path = "tests/integration.rs"
-required-features = ["integration-engines"]

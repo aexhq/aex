@@ -92,6 +92,13 @@
   },
   {
     "reason_class": "inline_unit_evidence",
+    "subject": "crates/aex-usage-query-dynamodb",
+    "owner": "observations-usage",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "observations-usage: the retired usage-query-projection table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
+  },
+  {
+    "reason_class": "inline_unit_evidence",
     "subject": "runtimes/brain-mux",
     "owner": "brain-core",
     "blocking_rule": "aex-empty-unit",

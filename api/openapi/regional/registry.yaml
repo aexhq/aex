@@ -1,8 +1,8 @@
 # Overwrite-only registered opaque workspace files.
 #
-# Conventional filenames may carry guidance, skills, tool bundles, MCP
-# configuration, custom instructions or arbitrary assets. They remain files;
-# Bash is the only built-in callable model tool.
+# Conventional filenames may carry guidance, custom instructions, source, or
+# arbitrary assets. They remain latest-only files, separate from the built-in
+# sandbox, MCP, storage-persistence, and native-subagent tool surfaces.
 plane: regional
 fragment: registry
 operations:

@@ -26,6 +26,11 @@ follows semantic versioning.
   multipart upload, verified download, and delete.
 - Session configuration for a default-on eager sandbox, frozen file mounts,
   structured response formats, and qualified remote or sandbox-process MCP.
+- Native durable subagents with fixed launch bounds of 12 child identities per
+  session lifetime and depth 3, plus ordered parallel tool-result delivery.
+- Explicit `storage.persist` support for publishing a chosen sandbox file as a
+  latest-only workspace file; large tool results otherwise remain at their
+  reported sandbox path with a bounded message preview.
 - Live assistant preview/gap/reconciliation frames and live/retained telemetry
   stream, replay, and compressed download resources.
 - Essential billing resources for balance, saved-card display metadata,

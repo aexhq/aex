@@ -7,10 +7,10 @@ import { PublicShell } from "./_components/public-shell";
 export const metadata = {
   metadataBase: new URL("https://aex.dev"),
   title: "AEX",
-  description: "AEX is a distributed agent runtime in the cloud for developers to build and run agent sessions for their apps.",
+  description: "AEX is a session-centered agent runtime with files, tools, MCP, subagents, telemetry, and prepaid controls.",
   openGraph: {
     title: "AEX",
-    description: "AEX is a distributed agent runtime in the cloud for developers to build and run agent sessions for their apps.",
+    description: "AEX is a session-centered agent runtime with files, tools, MCP, subagents, telemetry, and prepaid controls.",
     type: "website",
     images: [{ url: "/og.png", width: 1200, height: 630, alt: "AEX" }],
   },

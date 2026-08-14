@@ -1,14 +1,15 @@
 ---
 title: AEX documentation
-description: Create a durable agent session with the public TypeScript SDK.
+description: Build a file-aware, tool-using agent session with the public TypeScript SDK.
 ---
 
 # AEX documentation
 
-An AEX session is a durable multi-message conversation. It owns its model
-history, native subagents, frozen file mounts, tool effects, sandbox lifecycle,
-usage facts, and telemetry. Send text messages directly to the session; there
-is no public run resource and no message-attachment API.
+An AEX session is a durable multi-message conversation. It owns committed
+message history, an exact model, native subagents, frozen file mounts, tool
+effects, sandbox lifecycle, usage facts, and telemetry. Send text directly to
+the session and point the model to mounted files by path. There is no public run
+resource, file revision API, or attachment field.
 
 ## Quickstart
 
@@ -24,7 +25,6 @@ const session = await aex.sessions.sessionCreate({
     provider: "openai",
     model: process.env.AEX_MODEL!,
     providerApiKey: process.env.AEX_PROVIDER_API_KEY!,
-    sandbox: { enabled: true },
   },
   idempotencyKey: crypto.randomUUID(),
 });
@@ -55,49 +55,152 @@ await aex.sessions.sessionTerminate({
 ```
 
 The provider key is admitted only for that session, encrypted before durable
-storage, and never returned. The launch provider candidates are OpenAI,
-Anthropic, DeepSeek, xAI, Meta, Moonshot AI, and Alibaba; a family ships only
-when its official endpoint passes the launch qualification suite.
+storage, and never returned. Supported provider families are OpenAI, Anthropic,
+DeepSeek, xAI, Meta, Moonshot AI, and Alibaba. Choose an exact provider-native
+model that supports the tools or structured output your session needs.
 
 ## Sessions
 
-The default sandbox is provisioned and materialized during session admission,
-then suspended when no tool call is waiting. Each sandbox call waits for the
-exact generation to become ready. With `sandbox.enabled: false`, no sandbox is
-allocated and sandbox-only tools return a structured error the model can
-handle.
+Session creation durably starts eager sandbox preparation in the background and
+returns without waiting for provisioning, file materialization, or suspension.
+Preparation progress appears in telemetry. A sandbox tool call waits for the
+exact generation to become ready and resumes it when necessary.
 
-Termination stops new work while retaining committed history, usage, and
-telemetry. Irreversible session deletion separately removes session-owned
-agents, work, sandbox state, encrypted session configuration, and telemetry
-through an idempotent maintenance flow.
+The sandbox is enabled by default. With `sandbox.enabled: false`, AEX allocates
+no sandbox and sandbox-only tools return a structured error the model can
+handle. Remote HTTP MCP can still run without a sandbox; mounted files,
+sandbox-process MCP, and pinned sandbox packages require one.
 
-## Files and tools
+Cancel stops the active message and returns the session to idle. Terminate
+destroys sandbox compute while retaining committed messages and telemetry.
+Delete irreversibly removes session-owned content through an idempotent
+maintenance flow; independent workspace files remain. A launch session lasts
+at most eight hours and admits at most 12 child identities with maximum depth 3.
 
-Workspace files expose only their latest value. Replace a logical name from
-inline text/bytes, an HTTPS URL, or a direct multipart upload. Session creation
-freezes selected names and mount paths; later overwrites do not change that
-session's inputs. Large tool results are written into the sandbox and are not
-uploaded automatically. A model can call
-`storage_persist` (product name `storage.persist`) to publish a sandbox file as
+## Files and mounts
+
+Workspace files expose one current value per logical name. Replace that value
+with inline text or bytes, an HTTPS URL, or a direct multipart upload. Session
+creation resolves selected names once and freezes their sandbox paths, so a
+later workspace overwrite cannot mutate an existing session.
+
+```ts
+await aex.workspaceFiles.put(
+  "agent-guide",
+  { type: "text", text: "Run the focused tests before changing source." },
+  { mediaType: "text/markdown" },
+);
+
+const fileSession = await aex.sessions.sessionCreate({
+  body: {
+    provider: "openai",
+    model: process.env.AEX_MODEL!,
+    providerApiKey: process.env.AEX_PROVIDER_API_KEY!,
+    registered: {
+      mounts: [{ name: "agent-guide", path: "/workspace/AGENTS.md" }],
+    },
+  },
+  idempotencyKey: crypto.randomUUID(),
+});
+```
+
+Use `aex.workspaceFiles.upload(name, bytes)` for images, PDFs, video, archives,
+and other arbitrary bytes. User messages remain text-only: tell the model which
+file or directory under `/workspace` to inspect. Downloads verify the exact
+length and SHA-256 digest returned by AEX.
+
+## Tools, MCP, and structured output
+
+The built-in surface is `bash`, `read_file`, `edit_file`, `write_file`,
+`mcp_call`, `storage_persist`, `create_subagent`, `wait_subagents`, and
+`stop_subagent`. Large tool results keep a bounded preview in the message and
+the full result at a sandbox path. `storage_persist` is the provider-safe wire
+name for the product tool `storage.persist`, which publishes a sandbox file as
 the latest workspace value.
 
-The built-in sandbox surface is `read_file`, `edit_file`, `write_file`, Bash,
-MCP, and `storage_persist`. Sessions may configure remote HTTP or
-sandbox-process MCP servers; both are invoked through the built-in MCP tool.
-Native `create_subagent`, `wait_subagents`, and
-`stop_subagent` tools use independent agent authorities, with at most 12 child
-identities over a session lifetime and maximum depth 3.
+Configure remote Streamable HTTP or sandbox-process MCP when creating the
+session. MCP headers and process environment values are session-encrypted and
+never returned. Native JSON Schema output is available only when the selected
+provider and model support it; AEX does not present prompt emulation as strict
+structured output.
 
-Assistant previews are best effort and never delay model work. Every committed
-assistant message produces a reconciliation frame. Tool and runtime telemetry
-is delivered live, retained as compressed immutable segments, and available
-for replay and verified download. Provider/model token usage follows a separate
-trusted billing path and cannot be derived from guest telemetry.
+```ts
+const toolSession = await aex.sessions.sessionCreate({
+  body: {
+    provider: "openai",
+    model: process.env.AEX_MODEL!,
+    providerApiKey: process.env.AEX_PROVIDER_API_KEY!,
+    mcpServers: [{
+      name: "docs",
+      transport: { kind: "remote_http", url: "https://mcp.example.com" },
+    }],
+  },
+  idempotencyKey: crypto.randomUUID(),
+});
 
-The central API uses a GitHub dashboard session for bootstrap, API-key, and
-billing operations. Regional session and file operations use a workspace API
-key. Card entry and top-up happen only on Stripe-hosted pages; AEX exposes only
-display metadata, balance, transactions, and usage.
+await aex.sessions.sessionMessageSend({
+  sessionId: toolSession.id,
+  body: {
+    text: "Inspect the docs tool and return the affected files.",
+    responseFormat: {
+      kind: "json_schema",
+      schema: {
+        type: "object",
+        properties: { files: { type: "array", items: { type: "string" } } },
+        required: ["files"],
+        additionalProperties: false,
+      },
+    },
+  },
+  idempotencyKey: crypto.randomUUID(),
+});
+```
+
+Committed messages preserve provider-neutral text, tool-call, and tool-result
+parts. Independent tool effects may run concurrently, but their results commit
+in the original model call order.
+
+## Streaming and telemetry
+
+The message stream uses bounded NDJSON frames. Preview frames are best effort
+and never delay model work; `gap` reports pressure or loss, `committed` exposes
+durable authority, and `reconcile` replaces speculative preview state.
+
+The telemetry stream carries trusted assistant, tool, runtime, log, span,
+usage, gap, and heartbeat frames. AEX retains compressed immutable segments for
+replay and verified download after the live connection ends. Provider/model
+token usage follows a separate trusted billing path and is never inferred from
+guest telemetry.
+
+## Credentials and billing
+
+Central bootstrap, API-key, and billing routes require a GitHub dashboard
+session. Regional session and file routes require a workspace API key. One
+`Aex` client may hold both credentials, but it sends each only to its owning
+plane.
+
+```ts
+const account = new Aex({
+  dashboardSession: process.env.AEX_DASHBOARD_SESSION!,
+  apiKey: process.env.AEX_WORKSPACE_API_KEY!,
+});
+
+const [balance, cards, usage] = await Promise.all([
+  account.billing.billingBalanceGet(),
+  account.billing.billingPaymentMethodsList(),
+  account.billing.billingUsageGet({ query: { category: "runtime", limit: "20" } }),
+]);
+
+const topUp = await account.billing.billingTopUpCheckoutCreate({
+  body: { amountCents: "2000" },
+  idempotencyKey: crypto.randomUUID(),
+});
+console.log(balance, cards, usage, topUp.url);
+```
+
+Card entry and top-up happen on hosted pages. AEX exposes only saved-card
+display metadata, prepaid balance, immutable transactions, and usage filtered
+by session, provider, model, or category. Raw card details never enter the AEX
+API.
 
 For help, email support@aex.dev.

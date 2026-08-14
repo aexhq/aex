@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { loadDocsPage, parseDocsPage, type DocsHeading } from "../app/_lib/docs.js";
+
+const CONTENT_PATH = resolve(import.meta.dir, "../content/docs/index.mdx");
 
 describe("the documentation content model", () => {
   test("loads the concise public guide", () => {
@@ -11,8 +15,33 @@ describe("the documentation content model", () => {
 
     expect(page.title).toBe("AEX documentation");
     expect(page.blocks[0]).toMatchObject({ kind: "heading", level: 1, text: "AEX documentation" });
-    expect(sections.map((block) => block.slug)).toEqual(["quickstart", "sessions", "files-and-tools"]);
-    expect(page.blocks.filter((block) => block.kind === "code")).toHaveLength(1);
+    expect(sections.map((block) => block.slug)).toEqual([
+      "quickstart",
+      "sessions",
+      "files-and-mounts",
+      "tools-mcp-and-structured-output",
+      "streaming-and-telemetry",
+      "credentials-and-billing",
+    ]);
+    expect(page.blocks.filter((block) => block.kind === "code")).toHaveLength(4);
+  });
+
+  test("documents the exact session-centered SDK instead of removed resources", () => {
+    const source = readFileSync(CONTENT_PATH, "utf8");
+
+    for (const current of [
+      "providerApiKey",
+      "workspaceFiles",
+      "mcpServers",
+      "responseFormat",
+      "dashboardSession",
+      "storage.persist",
+    ]) {
+      expect(source).toContain(current);
+    }
+    for (const removed of ["providerCredentialId", "sessionSuspend", "session-files", "message attachment"]) {
+      expect(source).not.toContain(removed);
+    }
   });
 
   test("rejects prose before the first heading", () => {

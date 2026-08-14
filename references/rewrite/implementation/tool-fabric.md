@@ -53,7 +53,8 @@ HTTP/2 coalescing.
 
 Likely ownership:
 
-- `crates/aex-brain-mcp`
+- `crates/aex-tool-mux`
+- `services/tool-mux`
 - `crates/aex-brain-tool-catalog`
 - `runtimes/brain-mux/src/` production composition
 

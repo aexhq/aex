@@ -28,7 +28,7 @@ DynamoDB journal, lease/fence, effect, and receipt records remain decisive.
 | `crates/aex-brain-app/` | Wake-to-settlement orchestration, concurrent restore reads, fold-cache use, phase-specific permits, park/resume, cancellation, and drain cleanup. |
 | `crates/aex-brain-store-dynamodb/` | Pending-state reads; fenced claim/release; strong session, journal/snapshot, and open-effect loads; durable continuation/effect transitions. |
 | `crates/aex-brain-provider/`, `crates/aex-brain-provider-custody/` | Pre-send permit and credential-generation fence, connection reuse, ambiguous provider outcomes, and credential/pool invalidation. |
-| `crates/aex-brain-mcp/`, `crates/aex-brain-managed-web/` | Revision-keyed pools, per-effect network checks, bounded concurrency, deterministic result commit ordering, and unknown non-task mutations. |
+| `crates/aex-tool-mux/`, `services/tool-mux/`, `crates/aex-brain-managed-web/` | Session-scoped MCP and tool execution, reusable bounded egress checks, deterministic result commit ordering, and unknown non-task mutations. |
 | `crates/aex-brain-hands/` | Durable materialization park/resume and generation/fence/revision/token-keyed guest lease cache; no shell fast path outside Hands. |
 | `runtimes/brain-mux/` | Wake intake, affinity routing, task drain, health, metrics, and composition of the owners above. It contains no durable transition policy. |
 | `services/session-stream-api/` | Direct wake hints and bounded asynchronous preview consumption; neither becomes Brain authority. The session and stream services were one task from 2026-08-09. |
