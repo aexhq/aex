@@ -567,7 +567,7 @@
             "description": "Current paid-capacity state."
           },
           "email": {
-            "description": "Their verified GitHub email.",
+            "description": "Their verified Google email.",
             "maxLength": 320,
             "minLength": 3,
             "type": "string"
@@ -615,7 +615,7 @@
             "type": "string"
           },
           "userId": {
-            "description": "The GitHub-linked person.",
+            "description": "The Google-linked person.",
             "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
             "x-aex-id": "user"
@@ -632,7 +632,7 @@
         "additionalProperties": false,
         "properties": {
           "code": {
-            "description": "Single-use GitHub authorization code.",
+            "description": "Single-use Google authorization code.",
             "maxLength": 2048,
             "minLength": 1,
             "type": "string"

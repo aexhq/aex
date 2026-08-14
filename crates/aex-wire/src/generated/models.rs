@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:e7f95cd7fc830a0871b1276cde9ae11e4245d0b843cd3dba567e133e551e051f`.
+//! `sha256:52ff41955fd9af6425583de5952856c0d3f942926d45ebe4e96c14c1d55a18c4`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -485,7 +485,7 @@ pub struct DashboardBootstrap {
     pub account_id: AccountId,
     /// Current paid-capacity state.
     pub account_state: AccountOperationalState,
-    /// Their verified GitHub email.
+    /// Their verified Google email.
     pub email: String,
     /// When this snapshot was assembled.
     pub generated_at: Timestamp,
@@ -503,15 +503,15 @@ pub struct DashboardSessionCredential {
     pub expires_at: Timestamp,
     /// Bearer credential for an `HttpOnly` cookie.
     pub session: String,
-    /// The GitHub-linked person.
+    /// The Google-linked person.
     pub user_id: UserId,
 }
 
-/// Complete a GitHub OAuth browser sign-in using PKCE-bound state.
+/// Complete a Google OAuth browser sign-in using PKCE-bound state.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DashboardSessionRequest {
-    /// Single-use GitHub authorization code.
+    /// Single-use Google authorization code.
     pub code: String,
     /// The browser-held PKCE verifier.
     pub code_verifier: String,

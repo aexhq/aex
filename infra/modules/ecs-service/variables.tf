@@ -186,6 +186,21 @@ variable "circuit_breaker" {
   }
 }
 
+variable "deployment_trigger" {
+  type        = string
+  nullable    = true
+  default     = null
+  description = "Optional identity for an explicit deployment attempt. Changing it forces ECS to start a fresh deployment even when the task definition bytes are unchanged, so a retry can recover from a transient startup dependency failure."
+
+  validation {
+    condition = (
+      var.deployment_trigger == null
+      || can(regex("^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$", var.deployment_trigger))
+    )
+    error_message = "The deployment trigger must be null or a non-empty, bounded workflow identity."
+  }
+}
+
 variable "autoscaling_metrics" {
   type = list(object({
     name         = string

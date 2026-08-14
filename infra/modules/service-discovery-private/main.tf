@@ -42,13 +42,5 @@ resource "aws_service_discovery_service" "this" {
     routing_policy = "MULTIVALUE"
   }
 
-  # ECS is the only writer of instance health here: it registers a task when the
-  # task starts and deregisters it when it stops. The block is declared with no
-  # arguments because `failure_threshold` is deprecated -- AWS pins it to 1 and
-  # the provider warns on any value -- and its absence would make this a
-  # Route 53-health-checked service, which is not what an ECS-managed
-  # registration is.
-  health_check_custom_config {}
-
   tags = var.tags
 }

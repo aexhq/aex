@@ -1,4 +1,4 @@
-//! GitHub browser-session authentication for the central control service.
+//! Google browser-session authentication for the central control service.
 
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use aex_identity_app::use_cases::{
     CloseDashboardSession, IdentityDeps, OpenDashboardSession, ResolveOauthSignIn,
 };
 use aex_identity_app::{IdentityError, RequestId};
-use aex_identity_domain::{Provider, SecretRng};
+use aex_identity_domain::SecretRng;
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::ids::{PrefixedId as _, UserId, Uuid7};
 use aex_wire::models::{DashboardSessionCredential, DashboardSessionRequest};
@@ -18,7 +18,7 @@ use aex_wire::types::Timestamp;
 
 use crate::identity_oauth::{HandshakeError, ProviderHandshake};
 
-/// The two-route GitHub session service.
+/// The two-route Google session service.
 pub struct AuthService {
     store: Arc<dyn IdentityStore>,
     provisioner: Arc<dyn PersonalAccountProvisioner>,
@@ -38,7 +38,7 @@ impl std::fmt::Debug for AuthService {
 }
 
 impl AuthService {
-    /// Builds the service over the identity authority and GitHub handshake.
+    /// Builds the service over the identity authority and Google handshake.
     #[must_use]
     pub fn new(
         store: Arc<dyn IdentityStore>,
@@ -99,7 +99,7 @@ impl AuthApi for AuthService {
         }
         let profile = self
             .handshake
-            .identify(Provider::GitHub, &body.code, &body.code_verifier)
+            .identify(&body.code, &body.code_verifier)
             .await
             .map_err(handshake_failure)?;
         let context = self.context(cx);
@@ -177,7 +177,7 @@ mod tests {
     use super::personal_account_failure;
 
     #[test]
-    fn provisioning_failure_uses_a_code_declared_by_github_sign_in() {
+    fn provisioning_failure_uses_a_code_declared_by_google_sign_in() {
         let produced = personal_account_failure(&ControlError::Unavailable).code;
         assert_eq!(produced, ErrorCode::InternalError);
         assert!(

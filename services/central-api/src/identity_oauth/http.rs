@@ -5,7 +5,6 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use aex_identity_app::use_cases::OauthProfile;
-use aex_identity_domain::Provider;
 use oauth2::basic::{
     BasicErrorResponse, BasicRevocationErrorResponse, BasicTokenIntrospectionResponse,
     BasicTokenType,
@@ -13,19 +12,16 @@ use oauth2::basic::{
 use oauth2::{
     AuthType, AuthorizationCode, Client, ClientId, ClientSecret, EndpointNotSet, EndpointSet,
     ErrorResponse, ExtraTokenFields, HttpRequest, HttpResponse, PkceCodeVerifier, RedirectUrl,
-    RequestTokenError, StandardRevocableToken, StandardTokenResponse, TokenResponse as _, TokenUrl,
+    RequestTokenError, StandardRevocableToken, StandardTokenResponse, TokenUrl,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use super::client::OauthClient;
-use super::profile::{GitHubEmail, GitHubUser, github_profile, google_profile};
+use super::profile::google_profile;
 use super::{HandshakeError, ProviderHandshake, challenge_of};
 
 const GOOGLE_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
-const GITHUB_TOKEN_ENDPOINT: &str = "https://github.com/login/oauth/access_token";
-const GITHUB_USER_ENDPOINT: &str = "https://api.github.com/user";
-const GITHUB_EMAILS_ENDPOINT: &str = "https://api.github.com/user/emails";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
@@ -34,18 +30,12 @@ const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Endpoints {
     pub(super) google_token: String,
-    pub(super) github_token: String,
-    pub(super) github_user: String,
-    pub(super) github_emails: String,
 }
 
 impl Default for Endpoints {
     fn default() -> Self {
         Self {
             google_token: GOOGLE_TOKEN_ENDPOINT.to_owned(),
-            github_token: GITHUB_TOKEN_ENDPOINT.to_owned(),
-            github_user: GITHUB_USER_ENDPOINT.to_owned(),
-            github_emails: GITHUB_EMAILS_ENDPOINT.to_owned(),
         }
     }
 }
@@ -132,7 +122,6 @@ type ProviderClient<TR> = Client<
 pub struct HttpProviderHandshake {
     http: HardenedHttp,
     google: OauthClient,
-    github: OauthClient,
     redirect_uri: RedirectUrl,
     endpoints: Endpoints,
     deadline: Duration,
@@ -152,7 +141,6 @@ impl HttpProviderHandshake {
     /// URI is invalid.
     pub fn new(
         google: OauthClient,
-        github: OauthClient,
         redirect_uri: String,
         deadline: Duration,
     ) -> Result<Self, ClientBuildError> {
@@ -171,17 +159,11 @@ impl HttpProviderHandshake {
         let redirect_uri = RedirectUrl::new(redirect_uri)
             .map_err(|_| ClientBuildError("the sign-in redirect URI is invalid".to_owned()))?;
         let endpoints = Endpoints::default();
-        for (name, endpoint) in [
-            ("Google", &endpoints.google_token),
-            ("GitHub", &endpoints.github_token),
-        ] {
-            TokenUrl::new(endpoint.clone())
-                .map_err(|_| ClientBuildError(format!("{name}'s compiled token URI is invalid")))?;
-        }
+        TokenUrl::new(endpoints.google_token.clone())
+            .map_err(|_| ClientBuildError("Google's compiled token URI is invalid".to_owned()))?;
         Ok(Self {
             http: HardenedHttp { client: http },
             google,
-            github,
             redirect_uri,
             endpoints,
             deadline,
@@ -228,78 +210,12 @@ impl HttpProviderHandshake {
             OffsetDateTime::now_utc(),
         )
     }
-
-    async fn github(&self, code: &str, verifier: &str) -> Result<OauthProfile, HandshakeError> {
-        let response = self
-            .client::<oauth2::basic::BasicTokenResponse>(
-                &self.github,
-                &self.endpoints.github_token,
-            )?
-            .exchange_code(AuthorizationCode::new(code.to_owned()))
-            .set_pkce_verifier(PkceCodeVerifier::new(verifier.to_owned()))
-            .request_async(&self.http)
-            .await
-            .map_err(|error| token_error("GitHub", error, &self.github.secret))?;
-        let token = response.access_token().secret();
-        let user = self
-            .github_get::<GitHubUser>(&self.endpoints.github_user, token)
-            .await?;
-        let emails = self
-            .github_get::<Vec<GitHubEmail>>(&self.endpoints.github_emails, token)
-            .await?;
-        github_profile(user, emails)
-    }
-
-    async fn github_get<T: serde::de::DeserializeOwned>(
-        &self,
-        endpoint: &str,
-        token: &str,
-    ) -> Result<T, HandshakeError> {
-        let response = self
-            .http
-            .client
-            .get(endpoint)
-            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-            .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .send()
-            .await
-            .map_err(|error| HandshakeError::Unreachable(redact(&error.to_string(), token)))?;
-        let status = response.status();
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(HandshakeError::RateLimited);
-        }
-        let body = bounded_body(response, token).await.map_err(http_error)?;
-        if status.is_client_error() {
-            return Err(HandshakeError::Refused(format!(
-                "GitHub refused the authenticated identity request with {status}"
-            )));
-        }
-        if !status.is_success() {
-            return Err(HandshakeError::Unreachable(format!(
-                "GitHub's identity endpoint answered {status}"
-            )));
-        }
-        serde_json::from_slice(&body).map_err(|_| {
-            HandshakeError::Unusable("GitHub returned an undocumented identity response".to_owned())
-        })
-    }
 }
 
 #[async_trait::async_trait]
 impl ProviderHandshake for HttpProviderHandshake {
-    async fn identify(
-        &self,
-        provider: Provider,
-        code: &str,
-        verifier: &str,
-    ) -> Result<OauthProfile, HandshakeError> {
-        let exchange = async {
-            match provider {
-                Provider::GitHub => self.github(code, verifier).await,
-                Provider::Google => self.google(code, verifier).await,
-            }
-        };
+    async fn identify(&self, code: &str, verifier: &str) -> Result<OauthProfile, HandshakeError> {
+        let exchange = self.google(code, verifier);
         tokio::time::timeout(self.deadline, exchange)
             .await
             .map_err(|_| {
@@ -328,16 +244,6 @@ where
             HandshakeError::Unreachable(format!("{provider} returned an invalid token response"))
         }
         RequestTokenError::Other(detail) => HandshakeError::Unusable(redact(&detail, secret)),
-    }
-}
-
-fn http_error(error: ProviderHttpError) -> HandshakeError {
-    match error {
-        ProviderHttpError::RateLimited => HandshakeError::RateLimited,
-        ProviderHttpError::TooLarge => HandshakeError::Unusable(format!(
-            "the provider answered with more than {MAX_RESPONSE_BYTES} bytes"
-        )),
-        other => HandshakeError::Unreachable(other.to_string()),
     }
 }
 

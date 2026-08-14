@@ -8,7 +8,7 @@ schema = "aex.scenario-ownership.v1"
 [[scenario]]
 id = "SC-IDENTITY-ACCOUNT"
 owner = "clients"
-deferred = "The dashboard companion does not yet drive GitHub sign-in, idempotent personal provisioning, and bootstrap through one deployed journey."
+deferred = "The dashboard companion does not yet drive Google sign-in, idempotent personal provisioning, and bootstrap through one deployed journey."
 observes = ["artifact:dashboard", "artifact:control-api", "artifact:control-projection-worker"]
 
 [[scenario]]

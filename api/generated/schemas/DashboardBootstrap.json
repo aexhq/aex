@@ -15,7 +15,7 @@
       "description": "Current paid-capacity state."
     },
     "email": {
-      "description": "Their verified GitHub email.",
+      "description": "Their verified Google email.",
       "maxLength": 320,
       "minLength": 3,
       "type": "string"

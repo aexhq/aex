@@ -27,6 +27,11 @@ run "every_service_resolves_to_the_addresses_of_its_own_tasks" {
     condition     = aws_service_discovery_service.this["private-service"].dns_config[0].routing_policy == "MULTIVALUE"
     error_message = "A weighted policy hands out one task at a time and pins a long-lived connection pool to whichever answered first."
   }
+
+  assert {
+    condition     = length(aws_service_discovery_service.this["private-service"].health_check_custom_config) == 0
+    error_message = "ECS owns task registration and deregistration. Adding custom-health configuration replaces a live Cloud Map service, which AWS cannot delete while ECS instances remain registered."
+  }
 }
 
 run "rejects_a_namespace_that_is_not_a_dotted_dns_name" {

@@ -1,6 +1,6 @@
 use super::{
-    Endpoints, HandshakeError, OauthClient, OauthClientError, challenge_of, github_profile,
-    google_profile, redact, state_matches,
+    Endpoints, HandshakeError, OauthClient, OauthClientError, challenge_of, google_profile, redact,
+    state_matches,
 };
 use aex_identity_domain::Provider;
 use base64::Engine as _;
@@ -60,24 +60,14 @@ fn a_state_matches_only_the_verifier_it_was_derived_from() {
 #[test]
 fn compiled_provider_endpoints_pin_their_exact_https_authorities_and_paths() {
     let endpoints = Endpoints::default();
-    for (endpoint, host, path) in [
-        (endpoints.google_token, "oauth2.googleapis.com", "/token"),
-        (
-            endpoints.github_token,
-            "github.com",
-            "/login/oauth/access_token",
-        ),
-        (endpoints.github_user, "api.github.com", "/user"),
-        (endpoints.github_emails, "api.github.com", "/user/emails"),
-    ] {
-        let parsed = oauth2::url::Url::parse(&endpoint).expect("the compiled endpoint parses");
-        assert_eq!(parsed.scheme(), "https");
-        assert_eq!(parsed.host_str(), Some(host));
-        assert_eq!(parsed.port(), None);
-        assert_eq!(parsed.path(), path);
-        assert!(parsed.query().is_none());
-        assert!(parsed.fragment().is_none());
-    }
+    let parsed = oauth2::url::Url::parse(&endpoints.google_token)
+        .expect("the compiled Google token endpoint parses");
+    assert_eq!(parsed.scheme(), "https");
+    assert_eq!(parsed.host_str(), Some("oauth2.googleapis.com"));
+    assert_eq!(parsed.port(), None);
+    assert_eq!(parsed.path(), "/token");
+    assert!(parsed.query().is_none());
+    assert!(parsed.fragment().is_none());
 }
 
 #[test]
@@ -90,10 +80,10 @@ fn oauth_clients_refuse_blank_halves_and_never_debug_the_secret() {
         OauthClient::new("id", " "),
         Err(OauthClientError::BlankSecret)
     );
-    let client = OauthClient::new("github-client", "github-secret").expect("a client");
+    let client = OauthClient::new("google-client", "google-secret").expect("a client");
     let debug = format!("{client:?}");
-    assert!(debug.contains("github-client"));
-    assert!(!debug.contains("github-secret"));
+    assert!(debug.contains("google-client"));
+    assert!(!debug.contains("google-secret"));
 }
 
 #[test]
@@ -141,55 +131,12 @@ fn google_normalizes_a_verified_identity() {
 }
 
 #[test]
-fn github_uses_only_a_verified_primary_email_and_normalizes_it() {
-    let user = serde_json::from_value(serde_json::json!({
-        "id": 42,
-        "login": "octocat",
-        "name": "The Octocat",
-        "avatar_url": "https://avatars.githubusercontent.com/u/42"
-    }))
-    .expect("documented GitHub user");
-    let emails = serde_json::from_value(serde_json::json!([
-        {"email": "unverified@example.com", "primary": false, "verified": false},
-        {"email": "Person@Example.COM", "primary": true, "verified": true}
-    ]))
-    .expect("documented GitHub emails");
-    let profile = github_profile(user, emails).expect("a verified identity");
-    assert_eq!(profile.provider, Provider::GitHub);
-    assert_eq!(profile.provider_account_id.as_str(), "42");
-    assert_eq!(profile.email.as_str(), "person@example.com");
-    assert_eq!(profile.name.as_deref(), Some("The Octocat"));
-}
-
-#[test]
-fn github_refuses_an_unverified_or_non_primary_address() {
-    for emails in [
-        serde_json::json!([{"email": "x@example.com", "primary": true, "verified": false}]),
-        serde_json::json!([{"email": "x@example.com", "primary": false, "verified": true}]),
-        serde_json::json!([]),
-    ] {
-        let user = serde_json::from_value(serde_json::json!({
-            "id": 42,
-            "login": "octocat",
-            "name": null,
-            "avatar_url": null
-        }))
-        .expect("documented GitHub user");
-        let emails = serde_json::from_value(emails).expect("documented GitHub emails");
-        assert!(matches!(
-            github_profile(user, emails),
-            Err(HandshakeError::Unusable(_))
-        ));
-    }
-}
-
-#[test]
 fn a_diagnostic_never_carries_a_client_secret_or_credential_shaped_run() {
     let rendered = redact(
-        "error client_secret=github-secret token=cred_0123456789abcdefghijklmnop",
-        "github-secret",
+        "error client_secret=google-secret token=cred_0123456789abcdefghijklmnop",
+        "google-secret",
     );
-    assert!(!rendered.contains("github-secret"), "{rendered}");
+    assert!(!rendered.contains("google-secret"), "{rendered}");
     assert!(
         !rendered.contains("cred_0123456789abcdefghijklmnop"),
         "{rendered}"

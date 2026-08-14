@@ -182,6 +182,11 @@ resource "aws_ecs_service" "autoscaled" {
   propagate_tags  = "SERVICE"
   tags            = var.tags
 
+  force_new_deployment = var.deployment_trigger != null
+  triggers = var.deployment_trigger == null ? {} : {
+    deployment_attempt = var.deployment_trigger
+  }
+
   health_check_grace_period_seconds = var.health_check_grace_period_seconds
 
   # A first deployment whose tasks crash otherwise exits terraform 0 with the
@@ -239,6 +244,11 @@ resource "aws_ecs_service" "static" {
   launch_type     = "FARGATE"
   propagate_tags  = "SERVICE"
   tags            = var.tags
+
+  force_new_deployment = var.deployment_trigger != null
+  triggers = var.deployment_trigger == null ? {} : {
+    deployment_attempt = var.deployment_trigger
+  }
 
   health_check_grace_period_seconds = var.health_check_grace_period_seconds
 

@@ -65,7 +65,7 @@ export default async function SignIn({
         {providers.length === 0 ? (
           <Notice status="serious" title="No sign-in provider is configured">
             <p className="small">
-              This deployment cannot begin a browser sign-in until GitHub OAuth is configured.
+              This deployment cannot begin a browser sign-in until Google OAuth is configured.
             </p>
           </Notice>
         ) : (

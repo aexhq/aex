@@ -15,11 +15,10 @@ import { safeReturnPath } from "./return-to";
 import { MAX_SESSION_SECONDS } from "./session";
 import { CENTRAL_URL_KEY, CLIENT_HEADER, centralBaseUrl, transportFor } from "./upstream";
 
-export const PROVIDERS = ["github", "google"] as const;
+export const PROVIDERS = ["google"] as const;
 export type ProviderId = (typeof PROVIDERS)[number];
 
 export const PROVIDER_LABEL: Readonly<Record<ProviderId, string>> = {
-  github: "GitHub",
   google: "Google",
 };
 
@@ -52,7 +51,6 @@ export class SignInError extends Error {
 export const CONFIG_KEYS = {
   origin: "AEX_DASHBOARD_ORIGIN",
   central: CENTRAL_URL_KEY,
-  githubClientId: "AEX_OAUTH_GITHUB_CLIENT_ID",
   googleClientId: "AEX_OAUTH_GOOGLE_CLIENT_ID",
 } as const;
 
@@ -99,16 +97,12 @@ function originOf(environment: Environment): string {
 export function signInConfig(environment: Environment = process.env): SignInConfig {
   const origin = present(environment, CONFIG_KEYS.origin);
   const central = present(environment, CONFIG_KEYS.central);
-  const githubClientId = present(environment, CONFIG_KEYS.githubClientId);
   const googleClientId = present(environment, CONFIG_KEYS.googleClientId);
-  if (origin === null && central === null && githubClientId === null && googleClientId === null) {
+  if (origin === null && central === null && googleClientId === null) {
     return { kind: "unconfigured" };
   }
   if (central === null) {
     throw new Error(`${CONFIG_KEYS.central} is required once sign-in is configured`);
-  }
-  if (githubClientId === null) {
-    throw new Error(`${CONFIG_KEYS.githubClientId} is required once sign-in is configured`);
   }
   if (googleClientId === null) {
     throw new Error(`${CONFIG_KEYS.googleClientId} is required once sign-in is configured`);
@@ -117,7 +111,7 @@ export function signInConfig(environment: Environment = process.env): SignInConf
     kind: "ready",
     origin: originOf(environment),
     central: centralBaseUrl(environment),
-    clientIds: { github: githubClientId, google: googleClientId },
+    clientIds: { google: googleClientId },
   };
 }
 
@@ -136,17 +130,15 @@ export function authorizationUrl(
   redirectUri: string,
   challenge: string,
 ): string {
-  const url = new URL(provider === "google"
-    ? "https://accounts.google.com/o/oauth2/v2/auth"
-    : "https://github.com/login/oauth/authorize");
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", provider === "google" ? "openid email profile" : "user:email");
+  url.searchParams.set("scope", "openid email profile");
   url.searchParams.set("state", challenge);
   url.searchParams.set("code_challenge", challenge);
   url.searchParams.set("code_challenge_method", "S256");
-  if (provider === "google") url.searchParams.set("nonce", challenge);
+  url.searchParams.set("nonce", challenge);
   return url.toString();
 }
 

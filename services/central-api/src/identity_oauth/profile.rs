@@ -31,21 +31,6 @@ struct GoogleClaims {
     picture: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct GitHubUser {
-    id: u64,
-    login: String,
-    name: Option<String>,
-    avatar_url: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct GitHubEmail {
-    email: String,
-    primary: bool,
-    verified: bool,
-}
-
 /// Builds a person from the ID token received directly from Google's pinned
 /// TLS token endpoint. Google documents direct, intermediary-free HTTPS plus
 /// client authentication as sufficient provenance for this server flow. The
@@ -122,29 +107,6 @@ fn google_claims(id_token: &str) -> Result<GoogleClaims, HandshakeError> {
     serde_json::from_slice(&decoded).map_err(|_| {
         HandshakeError::Unusable("the ID token's claims are not the documented shape".to_owned())
     })
-}
-
-/// Builds an identity from GitHub's authenticated user and verified-email
-/// responses. The public user-profile email is deliberately ignored because
-/// that endpoint does not mark it verified.
-pub(super) fn github_profile(
-    user: GitHubUser,
-    emails: Vec<GitHubEmail>,
-) -> Result<OauthProfile, HandshakeError> {
-    let email = emails
-        .into_iter()
-        .find(|candidate| candidate.primary && candidate.verified)
-        .ok_or_else(|| {
-            HandshakeError::Unusable("GitHub returned no verified primary email address".to_owned())
-        })?;
-    let name = user.name.or(Some(user.login));
-    profile(
-        Provider::GitHub,
-        &user.id.to_string(),
-        &email.email,
-        name,
-        user.avatar_url,
-    )
 }
 
 fn profile(

@@ -153,22 +153,17 @@ async fn run(config: &Config) -> Result<(), CentralApiRunError> {
         .await
         .map_err(|error| CentralApiRunError::Dependency("identity-pepper", error.to_string()))?;
 
-    // The registered OAuth clients are startup dependencies: serving without
-    // either would make the browser sign-in exchange fail for this process.
+    // The registered Google OAuth client is a startup dependency: serving
+    // without it would make the browser sign-in exchange fail for this process.
     let google =
         central_api::identity_oauth::load_oauth_client(&secrets, &config.google_oauth_secret_id)
             .await
             .map_err(|reason| CentralApiRunError::Dependency("google-oauth-client", reason))?;
-    let github =
-        central_api::identity_oauth::load_oauth_client(&secrets, &config.github_oauth_secret_id)
-            .await
-            .map_err(|reason| CentralApiRunError::Dependency("github-oauth-client", reason))?;
     // The handshake is bounded by the same deadline the request it serves is, so
     // a provider that stops answering can never outlive its own request.
     let handshake = Arc::new(
         central_api::identity_oauth::HttpProviderHandshake::new(
             google,
-            github,
             config.sign_in_redirect_uri.clone(),
             config.http.request_deadline,
         )

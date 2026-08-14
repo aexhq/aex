@@ -2,10 +2,10 @@
   "$id": "https://schemas.aex.dev/v1/DashboardSessionRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Complete a GitHub OAuth browser sign-in using PKCE-bound state.",
+  "description": "Complete a Google OAuth browser sign-in using PKCE-bound state.",
   "properties": {
     "code": {
-      "description": "Single-use GitHub authorization code.",
+      "description": "Single-use Google authorization code.",
       "maxLength": 2048,
       "minLength": 1,
       "type": "string"

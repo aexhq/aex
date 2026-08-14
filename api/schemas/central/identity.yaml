@@ -1,4 +1,4 @@
-# One personal account, one fixed workspace, GitHub browser sessions and API
+# One personal account, one fixed workspace, Google browser sessions and API
 # keys. Organization and membership product types intentionally do not
 # exist in the launch contract.
 module: central
@@ -92,10 +92,10 @@ schemas:
       value: { type: string, min: 60, max: 128, doc: "The one-time secret value." }
 
   DashboardSessionRequest:
-    doc: Complete a GitHub OAuth browser sign-in using PKCE-bound state.
+    doc: Complete a Google OAuth browser sign-in using PKCE-bound state.
     type: object
     fields:
-      code: { type: string, min: 1, max: 2048, doc: "Single-use GitHub authorization code." }
+      code: { type: string, min: 1, max: 2048, doc: "Single-use Google authorization code." }
       state: { type: string, min: 43, max: 128, doc: "The echoed S256 challenge." }
       codeVerifier: { type: string, min: 43, max: 128, doc: "The browser-held PKCE verifier." }
 
@@ -104,7 +104,7 @@ schemas:
     type: object
     fields:
       session: { type: string, min: 16, max: 4096, doc: "Bearer credential for an `HttpOnly` cookie." }
-      userId: { type: id, of: user, doc: "The GitHub-linked person." }
+      userId: { type: id, of: user, doc: "The Google-linked person." }
       expiresAt: { type: timestamp, doc: "When it stops verifying." }
 
   DashboardBootstrap:
@@ -112,7 +112,7 @@ schemas:
     type: object
     fields:
       userId: { type: id, of: user, doc: "The signed-in person." }
-      email: { type: string, min: 3, max: 320, doc: "Their verified GitHub email." }
+      email: { type: string, min: 3, max: 320, doc: "Their verified Google email." }
       accountId: { type: id, of: account, doc: "Their personal prepaid account." }
       accountState: { type: ref, to: AccountOperationalState, doc: "Current paid-capacity state." }
       workspace: { type: ref, to: Workspace, doc: "The fixed eu-west-1 workspace." }

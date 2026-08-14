@@ -30,7 +30,6 @@
 //! A failure is reported rather than re-sent.
 
 use aex_identity_app::use_cases::OauthProfile;
-use aex_identity_domain::Provider;
 use subtle::ConstantTimeEq as _;
 
 mod client;
@@ -43,7 +42,7 @@ pub use http::{ClientBuildError, HttpProviderHandshake};
 #[cfg(test)]
 use http::{Endpoints, redact};
 #[cfg(test)]
-use profile::{github_profile, google_profile};
+use profile::google_profile;
 
 /// Why the handshake did not produce a person.
 ///
@@ -117,12 +116,7 @@ pub trait ProviderHandshake: Send + Sync + std::fmt::Debug {
     /// # Errors
     ///
     /// Returns [`HandshakeError`] naming what the provider did.
-    async fn identify(
-        &self,
-        provider: Provider,
-        code: &str,
-        verifier: &str,
-    ) -> Result<OauthProfile, HandshakeError>;
+    async fn identify(&self, code: &str, verifier: &str) -> Result<OauthProfile, HandshakeError>;
 }
 
 #[cfg(test)]

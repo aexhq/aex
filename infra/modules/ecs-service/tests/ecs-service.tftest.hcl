@@ -124,6 +124,33 @@ run "the_apply_waits_for_steady_state" {
   }
 }
 
+run "an_explicit_attempt_redeploys_identical_task_bytes" {
+  command = plan
+
+  variables {
+    deployment_trigger = "run-31825957827-attempt-2"
+  }
+
+  assert {
+    condition     = aws_ecs_service.autoscaled[0].force_new_deployment == true
+    error_message = "An explicit retry must ask ECS for a fresh deployment even when the immutable task definition is unchanged."
+  }
+
+  assert {
+    condition     = aws_ecs_service.autoscaled[0].triggers["deployment_attempt"] == "run-31825957827-attempt-2"
+    error_message = "The workflow attempt must be stateful Terraform input so every new deploy invocation produces exactly one retryable ECS update."
+  }
+}
+
+run "ordinary_module_use_does_not_redeploy_without_a_trigger" {
+  command = plan
+
+  assert {
+    condition     = aws_ecs_service.autoscaled[0].force_new_deployment == false
+    error_message = "The shared module must remain drift-free for callers that did not request a deployment attempt."
+  }
+}
+
 run "tasks_never_get_a_public_address" {
   command = plan
 
