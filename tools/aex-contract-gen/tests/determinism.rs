@@ -383,8 +383,8 @@ fn cross_plane_actual_owners_are_rejected() {
     let authored = std::fs::read_to_string(&path).expect("routes metadata");
     let without_central_owner = replace_exactly_once(
         &authored,
-        "  control-api:\n    - api_key_create\n",
-        "  control-api:\n",
+        "    - auth_config_get\n    - api_key_create\n",
+        "    - auth_config_get\n",
         "remove the central actual owner",
     );
     let text = replace_exactly_once(
