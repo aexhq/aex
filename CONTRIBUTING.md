@@ -53,7 +53,6 @@ surprises.
   Edit the source and rerun the generator; a hand edit is reported by
   `cargo run -p aex-contract-gen -- check`.
 - **No credentials, `.env` values, or unredacted diagnostics** in a diff.
-- **No AI-attribution or AI co-author trailers** in commit messages.
 
 Commit subjects are imperative mood, short, and conventionally prefixed
 (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`, `ci:`).
