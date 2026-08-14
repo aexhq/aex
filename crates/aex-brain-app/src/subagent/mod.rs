@@ -29,7 +29,7 @@ pub use claim::{
 };
 pub use fanout::{
     PlannedChild, SessionCapacity, SpawnError, SpawnPage, SpawnPlan, SpawnRequest,
-    grant_only_reduces, launch_structural, plan_spawn, queued_reason,
+    grant_only_reduces, plan_spawn, queued_reason,
 };
 pub use join::{WaitOutcome, plan_wait, resolve_wait, should_wake, wake_key};
 pub use mailbox::{MailboxEntry, drain, entry_digest};

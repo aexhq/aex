@@ -153,6 +153,10 @@ pub enum SpawnError {
 /// has already finished, and [`SpawnError::Budget`] when any of the nine dimensions or
 /// either structural limit would break. A budget refusal reserves nothing: the returned
 /// parent node is only produced on success.
+///
+/// # Panics
+///
+/// Never: the twelve-identity launch ceiling always fits `u32`.
 pub fn plan_spawn(
     parent_id: AgentId,
     state: &FoldState,
@@ -170,7 +174,8 @@ pub fn plan_spawn(
         max_fanout: state
             .structural
             .max_fanout
-            .min(MAX_SUBAGENTS_PER_SESSION as u32),
+            .min(u32::try_from(MAX_SUBAGENTS_PER_SESSION)
+                .expect("the launch subagent ceiling fits u32")),
     };
     BudgetNode::check_fanout(request.count, structural)?;
     let session_allocated = capacity
@@ -293,15 +298,6 @@ pub fn grant_only_reduces(parent: &BudgetNode, grant: BudgetGrant) -> bool {
     DIMENSIONS
         .iter()
         .all(|dimension| grant.get(*dimension) <= parent.limit.get(*dimension))
-}
-
-/// The structural limits a fresh session starts from.
-#[must_use]
-pub const fn launch_structural() -> StructuralLimits {
-    StructuralLimits {
-        max_depth: MAX_SUBAGENT_DEPTH,
-        max_fanout: MAX_SUBAGENTS_PER_SESSION as u32,
-    }
 }
 
 #[cfg(test)]

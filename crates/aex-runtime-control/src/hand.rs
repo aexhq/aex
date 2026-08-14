@@ -166,7 +166,7 @@ impl HandRecord {
                 HandState::QualifyingSandboxMcp,
                 HandAction::QualifySandboxMcp,
             ),
-            HandState::QualifyingSandboxMcp => {
+            HandState::QualifyingSandboxMcp | HandState::Resuming => {
                 if self.waiters == 0 {
                     (HandState::Suspending, HandAction::Suspend)
                 } else {
@@ -178,13 +178,6 @@ impl HandRecord {
                     (HandState::Suspended, HandAction::Wait)
                 } else {
                     (HandState::Resuming, HandAction::Resume)
-                }
-            }
-            HandState::Resuming => {
-                if self.waiters == 0 {
-                    (HandState::Suspending, HandAction::Suspend)
-                } else {
-                    (HandState::Ready, HandAction::Execute)
                 }
             }
             state => return Err(HandDecisionError::InvalidState { state }),

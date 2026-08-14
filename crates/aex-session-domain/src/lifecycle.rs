@@ -177,6 +177,11 @@ impl SessionLifecycle {
     /// Starts the same bounded session lifecycle without allocating a runtime.
     /// Message admission remains available, but sandbox lifecycle commands have
     /// no generation to target.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LifecycleError::TimestampOverflow`] near the end of the wire
+    /// timestamp range.
     pub fn sandbox_disabled(created_at: Timestamp) -> Result<Self, LifecycleError> {
         let expires_at = add_millis(created_at, MAXIMUM_LIFETIME_MILLIS)?;
         Ok(Self {

@@ -32,38 +32,25 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                 action == "dynamodb:DeleteItem" || action == "dynamodb:BatchWriteItem"
             }) {
                 let allowed = match table.table.as_str() {
-                    // Session deletion owns terminal cleanup. Regional control
-                    // removes only stale active-session locators; a focused
-                    // table test proves its item and leading-key restriction.
-                    "session-authority" => matches!(
+                    // Session deletion owns terminal cleanup: the maintenance
+                    // worker removes session heads and their locators.
+                    "session-authority" => grant.role == "session-maintenance-worker",
+                    "regional-work" => grant.role == "session-maintenance-worker",
+                    // The file authority deletes stale pointers, abandoned
+                    // uploads and expired grants; all three deleters are the
+                    // session/file lifecycle owners.
+                    "regional-file-authority" => matches!(
                         grant.role.as_str(),
-                        "session-operation-worker" | "regional-control"
+                        "session-api" | "file-ingest-worker" | "session-maintenance-worker"
                     ),
-                    "regional-work" => grant.role == "session-operation-worker",
-                    "regional-content" => grant.role == "content-lifecycle-worker",
-                    // The registry API deletes registered names outright. The
-                    // upload-expiry collector is the second, far narrower
-                    // deleter: it reclaims abandoned multipart uploads and is
-                    // confined by a leading-key condition to `UPLOAD#*` and to
-                    // the two upload row shapes, so it cannot reach a
-                    // registered name.
-                    "regional-registry" => matches!(
-                        grant.role.as_str(),
-                        "regional-session-api" | "content-lifecycle-worker-uploadexpiry"
-                    ),
-                    // Each usage worker deletes exactly one row shape: its own
-                    // OUTBOX# marker, once SendMessage is confirmed.
-                    "usage-storage-authority" => grant.role == "usage-storage-worker",
-                    "usage-compute-authority" => grant.role == "usage-compute-worker",
-                    "usage-transfer-authority" => grant.role == "usage-transfer-worker",
                     // Runtime activity has three narrow deleters: the control
                     // worker removes usage outbox rows, Brain settles its own
-                    // Hands admission marker, and session deletion removes
+                    // Hands admission marker, and session maintenance removes
                     // only an already-terminal exact generation.
                     "runtime-activity" => {
                         matches!(
                             grant.role.as_str(),
-                            "runtime-control-worker" | "brain-mux" | "session-operation-worker"
+                            "runtime-control-worker" | "brain-mux" | "session-maintenance-worker"
                         )
                     }
                     _ => false,
@@ -79,7 +66,7 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
 }
 
 #[test]
-fn session_delete_worker_can_remove_only_one_sessions_terminal_runtime_rows() {
+fn session_maintenance_worker_can_remove_only_one_sessions_terminal_runtime_rows() {
     let bundle = tables::rebuild().expect("the definitions load");
     let runtime = bundle
         .tables
@@ -89,7 +76,7 @@ fn session_delete_worker_can_remove_only_one_sessions_terminal_runtime_rows() {
     let grants = runtime
         .iam
         .iter()
-        .filter(|grant| grant.role == "session-operation-worker")
+        .filter(|grant| grant.role == "session-maintenance-worker")
         .collect::<Vec<_>>();
     assert_eq!(grants.len(), 2, "read and deletion grants stay disjoint");
     let grant = grants
@@ -159,7 +146,7 @@ fn every_manifest_uses_real_dynamodb_iam_actions() {
 }
 
 #[test]
-fn the_session_operation_worker_can_read_only_exact_runtime_generations() {
+fn the_session_maintenance_worker_can_read_only_exact_runtime_generations() {
     let tables = tables::rebuild().expect("the definitions load");
     let runtime = tables
         .tables
@@ -169,7 +156,7 @@ fn the_session_operation_worker_can_read_only_exact_runtime_generations() {
     let grants = runtime
         .iam
         .iter()
-        .filter(|grant| grant.role == "session-operation-worker")
+        .filter(|grant| grant.role == "session-maintenance-worker")
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -197,13 +184,8 @@ fn the_session_operation_worker_can_read_only_exact_runtime_generations() {
 }
 
 #[test]
-fn only_the_keystore_departs_from_the_pk_sk_convention() {
+fn every_table_uses_the_pk_sk_key_convention() {
     for table in tables::rebuild().expect("the definitions load").tables {
-        if table.table == "regional-secret-keystore" {
-            assert_eq!(table.key_schema.partition, "branch-key-id");
-            assert_eq!(table.key_schema.sort, "type");
-            continue;
-        }
         assert_eq!(table.key_schema.partition, "pk", "{}", table.table);
         assert_eq!(table.key_schema.sort, "sk", "{}", table.table);
     }

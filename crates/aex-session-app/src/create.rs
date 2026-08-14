@@ -772,7 +772,8 @@ pub fn initial_root_record(
                 max_fanout: prepared
                     .agent_execution
                     .max_fanout
-                    .min(aex_wire::limits::MAX_SUBAGENTS_PER_SESSION as u32),
+                    .min(u32::try_from(aex_wire::limits::MAX_SUBAGENTS_PER_SESSION)
+                        .expect("the launch subagent ceiling fits u32")),
             },
         }),
         parent: None,

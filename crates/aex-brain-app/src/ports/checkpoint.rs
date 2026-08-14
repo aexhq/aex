@@ -24,7 +24,7 @@ pub enum CheckpointError {
     Unavailable,
 }
 
-/// Immutable S3 object plus fenced DynamoDB head pointer.
+/// Immutable `S3` object plus fenced `DynamoDB` head pointer.
 pub trait ContextCheckpointStore: Send + Sync + 'static {
     /// Loads and verifies the exact object named by committed metadata.
     fn load<'a>(

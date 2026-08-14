@@ -1,11 +1,13 @@
-//! Live scenario bodies. They run only when the private Tool Mux URL is supplied.
+//! Live scenario bodies. The private Tool Mux URL and every typed fixture are
+//! read through `aex_test_harness::required_env!`: an absent prerequisite is a
+//! failure, never a skip.
 
 use aex_tool_mux::{ToolStart, ToolStartRequest, ToolTarget};
 
-fn base() -> Option<String> {
-    std::env::var(aex_live_tool_mux::URL_ENV)
-        .ok()
-        .map(|value| value.trim_end_matches('/').to_owned())
+fn base() -> String {
+    aex_test_harness::required_env!(aex_live_tool_mux::URL_ENV)
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 #[derive(serde::Deserialize)]
@@ -15,10 +17,10 @@ struct StartFixture {
     assertion: String,
 }
 
-async fn start_fixture(name: &str) -> Option<(ToolStartRequest, ToolStart)> {
-    let base = base()?;
-    let fixture: StartFixture =
-        serde_json::from_str(&std::env::var(name).ok()?).expect("typed live fixture");
+async fn start_fixture(name: &str) -> (ToolStartRequest, ToolStart) {
+    let base = base();
+    let fixture: StartFixture = serde_json::from_str(&aex_test_harness::required_env!(name))
+        .expect("typed live fixture");
     let response = reqwest::Client::new()
         .post(format!("{base}/internal/tools/start"))
         .header("x-aex-tool-assertion", fixture.assertion)
@@ -28,14 +30,12 @@ async fn start_fixture(name: &str) -> Option<(ToolStartRequest, ToolStart)> {
         .expect("private Tool Mux endpoint is reachable");
     assert!(response.status().is_success());
     let result = response.json().await.expect("typed start result");
-    Some((fixture.request, result))
+    (fixture.request, result)
 }
 
 #[tokio::test]
 async fn private_service_exposes_health_and_readiness() {
-    let Some(base) = base() else {
-        return;
-    };
+    let base = base();
     let client = reqwest::Client::new();
     for path in ["/internal/healthz", "/internal/readyz"] {
         let response = client
@@ -49,10 +49,7 @@ async fn private_service_exposes_health_and_readiness() {
 
 #[tokio::test]
 async fn disabled_session_returns_a_model_visible_error_without_a_runtime() {
-    let Some((request, response)) = start_fixture(aex_live_tool_mux::DISABLED_REQUEST_ENV).await
-    else {
-        return;
-    };
+    let (request, response) = start_fixture(aex_live_tool_mux::DISABLED_REQUEST_ENV).await;
     assert!(!request.sandbox.enabled && request.sandbox.generation.is_none());
     assert!(matches!(request.target, ToolTarget::OfficialSandbox { .. }));
     let ToolStart::Completed { result } = response else {
@@ -66,10 +63,7 @@ async fn disabled_session_returns_a_model_visible_error_without_a_runtime() {
 
 #[tokio::test]
 async fn official_sandbox_call_waits_for_the_exact_ready_generation() {
-    let Some((request, result)) = start_fixture(aex_live_tool_mux::SANDBOX_REQUEST_ENV).await
-    else {
-        return;
-    };
+    let (request, result) = start_fixture(aex_live_tool_mux::SANDBOX_REQUEST_ENV).await;
     assert!(request.sandbox.enabled && request.sandbox.generation.is_some());
     assert!(matches!(request.target, ToolTarget::OfficialSandbox { .. }));
     assert!(matches!(
@@ -80,10 +74,7 @@ async fn official_sandbox_call_waits_for_the_exact_ready_generation() {
 
 #[tokio::test]
 async fn remote_streamable_http_mcp_completes_without_a_hand() {
-    let Some((request, result)) = start_fixture(aex_live_tool_mux::REMOTE_MCP_REQUEST_ENV).await
-    else {
-        return;
-    };
+    let (request, result) = start_fixture(aex_live_tool_mux::REMOTE_MCP_REQUEST_ENV).await;
     assert!(!request.sandbox.enabled && request.sandbox.generation.is_none());
     assert!(matches!(request.target, ToolTarget::RemoteMcp { .. }));
     assert!(matches!(result, ToolStart::Completed { .. }));
@@ -91,10 +82,7 @@ async fn remote_streamable_http_mcp_completes_without_a_hand() {
 
 #[tokio::test]
 async fn storage_persist_commits_the_verified_latest_value() {
-    let Some((request, result)) = start_fixture(aex_live_tool_mux::STORAGE_REQUEST_ENV).await
-    else {
-        return;
-    };
+    let (request, result) = start_fixture(aex_live_tool_mux::STORAGE_REQUEST_ENV).await;
     assert!(matches!(request.target, ToolTarget::StoragePersist { .. }));
     let ToolStart::Completed { result } = result else {
         panic!("storage.persist fixture must complete")
@@ -105,10 +93,7 @@ async fn storage_persist_commits_the_verified_latest_value() {
 
 #[tokio::test]
 async fn large_tool_output_is_previewed_and_retained_without_live_overflow() {
-    let Some((_request, result)) = start_fixture(aex_live_tool_mux::LARGE_RESULT_REQUEST_ENV).await
-    else {
-        return;
-    };
+    let (_request, result) = start_fixture(aex_live_tool_mux::LARGE_RESULT_REQUEST_ENV).await;
     let ToolStart::Completed { result } = result else {
         panic!("large-result fixture must complete")
     };

@@ -22,6 +22,10 @@ impl FileIntent {
     /// The authority must never reuse a value for the same `(workspace,name)`,
     /// including after delete and recreate. It is deliberately absent from all
     /// public file schemas.
+    ///
+    /// # Panics
+    ///
+    /// If `value` is zero: the authority counter starts at one.
     #[must_use]
     pub const fn from_private_counter(value: u64) -> Self {
         assert!(value != 0, "file intent counter starts at one");
@@ -137,6 +141,11 @@ pub fn admit_inline(
 ///
 /// The old current value is displaced at admission, not completion. New reads
 /// and new sessions therefore cannot fall back to stale bytes while work runs.
+///
+/// # Panics
+///
+/// If `source` is [`FileSource::Inline`]: only asynchronous sources may enter
+/// pending.
 #[must_use]
 pub fn admit_pending(
     current: Option<&WorkspaceFile>,
@@ -277,6 +286,12 @@ pub enum FreezeError {
 ///
 /// Later overwrites cannot change the returned manifest. This is the internal
 /// pin required for session correctness, not a public file-version selector.
+///
+/// # Errors
+///
+/// [`FreezeError::PathCollision`] when two mounts fold to the same path,
+/// [`FreezeError::NotFound`] when a name has no current row, and
+/// [`FreezeError::NotReady`] when the current row has not published bytes.
 pub fn freeze_manifest(
     current: &BTreeMap<ResourceName, WorkspaceFile>,
     mounts: &[FileMount],
@@ -422,6 +437,11 @@ pub enum StoragePersistError {
 
 impl StoragePersistReceipts {
     /// Checks whether this invocation must execute or replay.
+    ///
+    /// # Errors
+    ///
+    /// [`StoragePersistError::IdempotencyConflict`] when the durable tool-call
+    /// identity was already committed with different arguments.
     pub fn admit(
         &self,
         request: &StoragePersistRequest,
