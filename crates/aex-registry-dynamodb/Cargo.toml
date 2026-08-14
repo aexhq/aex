@@ -1,7 +1,7 @@
 [package]
 name = "aex-registry-dynamodb"
 version = "0.1.0"
-description = "Current workspace pointers, multipart upload staging, and receipt rows within the unified `regional-file-authority` table."
+description = "`aex-registry-dynamodb` owns the registry row family within the unified `regional-file-authority` table: the current `(workspace, kind, name)` pointer with its revision and `ETag`, multipart upload staging, and idempotency receipts."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

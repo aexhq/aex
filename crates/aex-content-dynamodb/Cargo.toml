@@ -1,7 +1,7 @@
 [package]
 name = "aex-content-dynamodb"
 version = "0.1.0"
-description = "Content descriptor, body, pin, grant, and lifecycle rows within the unified `regional-file-authority` table."
+description = "`aex-content-dynamodb` owns the content row family within the unified `regional-file-authority` table: body descriptors, inline ciphertext bodies, pins, download grants, the garbage-collection epoch and its candidates."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
