@@ -1,6 +1,7 @@
 //! Production exact-generation runtime waiter and Hands guest adapters.
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use aex_brain_app::ports::{
     CancelToken, DispatchTicket, FenceGuard, HandsOperationStart, HandsOperationStatus, HandsPort,
@@ -13,82 +14,206 @@ use aex_brain_domain::ids::{
 };
 use aex_hands_protocol::operation::{
     EnvName, EnvValue, GuestPath, GuestRoot, OperationRequest, SANDBOX_MCP_REQUEST_VAR,
-    SandboxMcpCall,
+    SandboxMcpCall, SandboxMcpTransport,
 };
 use aex_hands_protocol::rpc::HandsOperationId;
 use aex_runtime_control::HandId;
 use aex_tool_mux::{
-    ExecutorOutput, FullOutput, GuestPort, ReadyHand, RuntimePort, SandboxConfig, ToolCallIdentity,
-    ToolMuxFuture, ToolTarget,
+    ExecutorOutput, FullOutput, GuestPort, ReadyHand, RuntimePort, ToolCallIdentity, ToolMuxFuture,
+    ToolTarget,
 };
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{ContentHash, GenerationId, PrefixedId as _, SessionId, Uuid7};
 use sha2::{Digest as _, Sha256};
 
 use crate::mcp::McpSecretReader;
+use crate::preparation::SandboxPreparationPort;
 
 const GUEST_HELPER: &str = "/proc/self/exe";
 
 /// Runtime Control port over the one production Hands lifecycle authority.
 pub struct ProductionRuntimeAdapter {
-    live: Arc<dyn aex_brain_hands::LiveFileBackend>,
+    preparation: Arc<dyn SandboxPreparationPort>,
+    waiters: Arc<Mutex<BTreeMap<HandsOperationId, WaiterState>>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WaiterState {
+    Running { recovered: bool },
+    CancelRequested { recovered: bool },
+    Ready(ReadyHand),
+    Failed,
 }
 
 impl ProductionRuntimeAdapter {
     /// Binds exact-generation lifecycle operations.
     #[must_use]
-    pub const fn new(live: Arc<dyn aex_brain_hands::LiveFileBackend>) -> Self {
-        Self { live }
+    pub fn new(preparation: Arc<dyn SandboxPreparationPort>) -> Self {
+        Self {
+            preparation,
+            waiters: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    fn schedule(
+        &self,
+        session: SessionId,
+        hand: HandId,
+        generation: GenerationId,
+        call: &ToolCallIdentity,
+        recovered: bool,
+    ) -> Result<(), String> {
+        if hand != HandId::for_session(session) || call.session != session {
+            return Err("tool waiter identity does not own the Hand".to_owned());
+        }
+        let operation = operation_id(call);
+        {
+            let mut waiters = self
+                .waiters
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if waiters.contains_key(&operation) {
+                return Ok(());
+            }
+            waiters.insert(operation, WaiterState::Running { recovered });
+        }
+        let preparation = Arc::clone(&self.preparation);
+        let waiters = Arc::clone(&self.waiters);
+        let call = call.clone();
+        tokio::spawn(async move {
+            let outcome = preparation
+                .prepare_for_tool(call.workspace, session, generation, &call)
+                .await;
+            let settle = {
+                let mut states = waiters.lock().unwrap_or_else(|error| error.into_inner());
+                let cancelled = matches!(
+                    states.get(&operation),
+                    Some(WaiterState::CancelRequested { .. })
+                );
+                match outcome {
+                    Ok(ready) if cancelled => {
+                        states.remove(&operation);
+                        Some(ready)
+                    }
+                    Ok(ready) => {
+                        states.insert(operation, WaiterState::Ready(ready));
+                        None
+                    }
+                    Err(_) => {
+                        preparation.preparation_failed(session, generation, &call.call);
+                        states.insert(operation, WaiterState::Failed);
+                        None
+                    }
+                }
+            };
+            if let Some(ready) = settle {
+                let _ = preparation.settle_tool(ready, &call).await;
+            }
+        });
+        Ok(())
     }
 }
 
 impl RuntimePort for ProductionRuntimeAdapter {
-    fn eager_prepare<'a>(
-        &'a self,
-        session: SessionId,
-        sandbox: SandboxConfig,
-    ) -> ToolMuxFuture<'a, Result<Vec<aex_tool_mux::PreparationProgress>, String>> {
-        Box::pin(async move {
-            let generation = sandbox
-                .generation
-                .ok_or_else(|| "enabled sandbox has no exact generation".to_owned())?;
-            self.live
-                .ensure_ready(session, generation)
-                .await
-                .map_err(|_| "sandbox eager readiness failed".to_owned())?;
-            self.live
-                .suspend_ready(session, generation)
-                .await
-                .map_err(|_| "sandbox eager suspension failed".to_owned())?;
-            Ok(vec![
-                aex_tool_mux::PreparationProgress::Ready,
-                aex_tool_mux::PreparationProgress::Suspended,
-            ])
-        })
-    }
-
-    fn wait_ready<'a>(
+    fn start_waiter<'a>(
         &'a self,
         session: SessionId,
         hand: HandId,
         generation: GenerationId,
         call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<ReadyHand, String>> {
+    ) -> ToolMuxFuture<'a, Result<(), String>> {
+        Box::pin(async move { self.schedule(session, hand, generation, call, false) })
+    }
+
+    fn poll_waiter<'a>(
+        &'a self,
+        session: SessionId,
+        hand: HandId,
+        generation: GenerationId,
+        call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<Option<ReadyHand>, String>> {
         Box::pin(async move {
             if hand != HandId::for_session(session) || call.session != session {
                 return Err("tool waiter identity does not own the Hand".to_owned());
             }
             let operation = operation_id(call);
-            let fence = self
-                .live
-                .hold_tool_waiter(session, generation, operation)
-                .await
-                .map_err(|_| "exact-generation tool waiter admission failed".to_owned())?;
-            Ok(ReadyHand {
-                hand,
-                generation,
-                fence,
-            })
+            let state = self
+                .waiters
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .get(&operation)
+                .copied();
+            match state {
+                Some(WaiterState::Running { .. }) => Ok(None),
+                Some(WaiterState::Ready(ready))
+                    if ready.hand == hand && ready.generation == generation =>
+                {
+                    Ok(Some(ready))
+                }
+                Some(WaiterState::Ready(_)) => {
+                    Err("tool waiter produced a foreign generation".to_owned())
+                }
+                Some(WaiterState::CancelRequested { .. }) => {
+                    Err("tool waiter was cancelled".to_owned())
+                }
+                Some(WaiterState::Failed) => Err("sandbox preparation failed".to_owned()),
+                None => {
+                    self.schedule(session, hand, generation, call, true)?;
+                    Ok(None)
+                }
+            }
+        })
+    }
+
+    fn cancel_waiter<'a>(
+        &'a self,
+        generation: GenerationId,
+        call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<Option<ReadyHand>, String>> {
+        Box::pin(async move {
+            let operation = operation_id(call);
+            let (ready, recover) = {
+                let mut waiters = self
+                    .waiters
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                match waiters.get(&operation).copied() {
+                    Some(WaiterState::Running { recovered: false }) => {
+                        waiters
+                            .insert(operation, WaiterState::CancelRequested { recovered: false });
+                        (None, false)
+                    }
+                    Some(WaiterState::Running { recovered: true }) => {
+                        waiters.insert(operation, WaiterState::CancelRequested { recovered: true });
+                        (None, true)
+                    }
+                    Some(WaiterState::Ready(ready)) => {
+                        waiters.remove(&operation);
+                        (Some(ready), false)
+                    }
+                    Some(WaiterState::CancelRequested { recovered }) => (None, recovered),
+                    Some(WaiterState::Failed) => {
+                        return Err("sandbox preparation failed".to_owned());
+                    }
+                    None => (None, true),
+                }
+            };
+            if let Some(ready) = ready {
+                return Ok(Some(ready));
+            }
+            if !recover {
+                return Ok(None);
+            }
+            // Process-local state cannot prove whether the deterministic guest
+            // operation was already dispatched before a restart. Recover the
+            // exact retained generation and let ToolMux cancel that operation
+            // directly; never acknowledge cancellation based only on an empty
+            // waiter map.
+            let ready = self
+                .preparation
+                .prepare_for_tool(call.workspace, call.session, generation, call)
+                .await?;
+            Ok(Some(ready))
         })
     }
 
@@ -101,10 +226,12 @@ impl RuntimePort for ProductionRuntimeAdapter {
             if ready.hand != HandId::for_session(call.session) {
                 return Err("tool waiter settlement names a foreign Hand".to_owned());
             }
-            self.live
-                .settle_tool_waiter(ready.generation, operation_id(call))
-                .await
-                .map_err(|_| "exact-generation tool waiter settlement failed".to_owned())
+            self.preparation.settle_tool(ready, call).await?;
+            self.waiters
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .remove(&operation_id(call));
+            Ok(())
         })
     }
 }
@@ -142,6 +269,26 @@ impl ProductionGuestAdapter {
                     .map(|encoded| encoded.request)
                     .map_err(|error| error.to_string())
             }
+            ToolTarget::RemoteMcp {
+                endpoint,
+                headers,
+                tool,
+                ..
+            } => {
+                let mut revealed = std::collections::BTreeMap::new();
+                for (name, secret) in headers {
+                    let value = self.secrets.reveal(secret, call).await?;
+                    revealed.insert(name.clone(), EnvValue::new(value.to_string()));
+                }
+                mcp_operation(
+                    SandboxMcpTransport::StreamableHttp {
+                        endpoint: endpoint.clone(),
+                        headers: revealed,
+                    },
+                    tool,
+                    arguments,
+                )
+            }
             ToolTarget::SandboxMcp {
                 command,
                 args,
@@ -160,31 +307,46 @@ impl ProductionGuestAdapter {
                     working_directory.as_deref().unwrap_or("/workspace"),
                 )
                 .map_err(|_| "sandbox MCP working directory is invalid".to_owned())?;
-                let request = SandboxMcpCall {
-                    command: command.clone(),
-                    args: args.clone(),
-                    environment: revealed,
-                    working_directory: cwd.clone(),
-                    tool: tool.clone(),
-                    arguments: CanonicalJson::from_value(arguments)
-                        .map_err(|_| "sandbox MCP arguments are not canonical".to_owned())?,
-                };
-                Ok(OperationRequest::Exec {
-                    argv: vec![GUEST_HELPER.to_owned(), "mcp-call".to_owned()],
-                    cwd,
-                    env: vec![(
-                        EnvName(SANDBOX_MCP_REQUEST_VAR.to_owned()),
-                        EnvValue::new(
-                            serde_json::to_string(&request)
-                                .map_err(|_| "sandbox MCP request is not encodable".to_owned())?,
-                        ),
-                    )],
-                    stdin: None,
-                })
+                mcp_operation(
+                    SandboxMcpTransport::ChildProcess {
+                        command: command.clone(),
+                        args: args.clone(),
+                        environment: revealed,
+                        working_directory: cwd,
+                    },
+                    tool,
+                    arguments,
+                )
             }
             _ => Err("guest adapter received a non-guest target".to_owned()),
         }
     }
+}
+
+fn mcp_operation(
+    transport: SandboxMcpTransport,
+    tool: &str,
+    arguments: &serde_json::Value,
+) -> Result<OperationRequest, String> {
+    let request = SandboxMcpCall {
+        transport,
+        tool: tool.to_owned(),
+        arguments: CanonicalJson::from_value(arguments)
+            .map_err(|_| "MCP arguments are not canonical".to_owned())?,
+    };
+    Ok(OperationRequest::Exec {
+        argv: vec![GUEST_HELPER.to_owned(), "mcp-call".to_owned()],
+        cwd: GuestPath::parse(&GuestRoot::workspace(), "/workspace")
+            .map_err(|_| "workspace path is invalid".to_owned())?,
+        env: vec![(
+            EnvName(SANDBOX_MCP_REQUEST_VAR.to_owned()),
+            EnvValue::new(
+                serde_json::to_string(&request)
+                    .map_err(|_| "MCP request is not encodable".to_owned())?,
+            ),
+        )],
+        stdin: None,
+    })
 }
 
 impl GuestPort for ProductionGuestAdapter {
@@ -208,7 +370,10 @@ impl GuestPort for ProductionGuestAdapter {
         target: &'a ToolTarget,
         arguments: &'a serde_json::Value,
         call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<Result<ExecutorOutput, HandsOperationId>, String>> {
+        deadline_ms: i64,
+        max_result_bytes: usize,
+        timeout_ms: u32,
+    ) -> ToolMuxFuture<'a, Result<HandsOperationId, String>> {
         Box::pin(async move {
             let request = self.operation_request(target, arguments, call).await?;
             let value = serde_json::to_value(&request)
@@ -226,19 +391,21 @@ impl GuestPort for ProductionGuestAdapter {
                         call_hash: BrainHash::of(canonical.as_bytes()),
                         request: value,
                         bounds: ResultBounds {
-                            max_bytes: max_result_bytes(call),
+                            max_bytes: max_result_bytes,
                             max_stream_bytes: aex_tool_mux::MAX_LIVE_PREVIEW_BYTES,
-                            timeout_ms: timeout_ms(call),
+                            timeout_ms,
                         },
-                        deadline: BrainTimestamp::from_millis(deadline_ms(call)),
+                        deadline: BrainTimestamp::from_millis(deadline_ms),
                     },
                 )
                 .await
                 .map_err(|_| "exact-generation guest dispatch failed".to_owned())?;
-            match accepted.result {
-                Some(result) => Ok(Ok(output_from_result(*result)?)),
-                None => Ok(Err(operation)),
+            if accepted.operation.0 != operation.0.to_string()
+                || accepted.generation != ready.generation
+            {
+                return Err("guest accepted a foreign detached operation".to_owned());
             }
+            Ok(operation)
         })
     }
 
@@ -286,9 +453,10 @@ impl GuestPort for ProductionGuestAdapter {
     fn cancel<'a>(
         &'a self,
         ready: ReadyHand,
-        operation: HandsOperationId,
+        call: &'a ToolCallIdentity,
     ) -> ToolMuxFuture<'a, Result<(), String>> {
         Box::pin(async move {
+            let operation = operation_id(call);
             self.hands
                 .cancel(
                     ready.generation,
@@ -305,14 +473,14 @@ fn output_from_result(result: HandsResult) -> Result<ExecutorOutput, String> {
     if result.truncated {
         return Err("guest result exceeded its declared complete-result bound".to_owned());
     }
-    match (result.inline, result.placed, result.sandbox_file) {
-        (Some(body), None, None) => Ok(ExecutorOutput {
+    match (result.inline, result.sandbox_file) {
+        (Some(body), None) => Ok(ExecutorOutput {
             preview: body.as_bytes()[..body.len().min(aex_tool_mux::MAX_LIVE_PREVIEW_BYTES)]
                 .to_vec(),
             full: FullOutput::Inline(body.into_bytes()),
             is_error: result.exit_code != 0,
         }),
-        (None, None, Some(file)) => Ok(ExecutorOutput {
+        (None, Some(file)) => Ok(ExecutorOutput {
             preview: file.preview.into_bytes(),
             full: FullOutput::SandboxFile {
                 path: GuestPath::parse(&GuestRoot::workspace(), &file.path)
@@ -322,15 +490,6 @@ fn output_from_result(result: HandsResult) -> Result<ExecutorOutput, String> {
             },
             is_error: result.exit_code != 0,
         }),
-        (None, Some(placed), None) => {
-            let body = serde_json::to_vec(&placed)
-                .map_err(|_| "guest placed result is not encodable".to_owned())?;
-            Ok(ExecutorOutput {
-                preview: body.clone(),
-                full: FullOutput::Inline(body),
-                is_error: result.exit_code != 0,
-            })
-        }
         _ => Err("guest result body is incoherent".to_owned()),
     }
 }
@@ -387,43 +546,210 @@ fn brain_session(session: SessionId) -> BrainSessionId {
     BrainSessionId(uuid::Uuid::from_bytes(*session.uuid7().as_bytes()))
 }
 
-// ToolStartRequest owns these bounds; Hands start receives them through a
-// task-local request context installed by the HTTP adapter.
-tokio::task_local! {
-    static CALL_BOUNDS: (i64, u32, usize);
-}
-
-pub(crate) async fn with_call_bounds<T>(
-    deadline: i64,
-    timeout: u32,
-    max_result_bytes: usize,
-    future: impl core::future::Future<Output = T>,
-) -> T {
-    CALL_BOUNDS
-        .scope((deadline, timeout, max_result_bytes), future)
-        .await
-}
-
-fn deadline_ms(_call: &ToolCallIdentity) -> i64 {
-    CALL_BOUNDS
-        .try_with(|value| value.0)
-        .unwrap_or_else(|_| now_millis().saturating_add(60_000))
-}
-
-fn timeout_ms(_call: &ToolCallIdentity) -> u32 {
-    CALL_BOUNDS.try_with(|value| value.1).unwrap_or(60_000)
-}
-
-fn max_result_bytes(_call: &ToolCallIdentity) -> usize {
-    CALL_BOUNDS
-        .try_with(|value| value.2)
-        .unwrap_or(aex_hands_protocol::rpc::MAX_GUEST_BODY_BYTES)
-}
-
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .and_then(|duration| i64::try_from(duration.as_millis()).ok())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use aex_hands_protocol::rpc::Fence;
+    use aex_wire::ids::{AgentId, MessageId, OrganizationId, WorkspaceId};
+
+    use super::*;
+
+    struct PreparationFake {
+        starts: AtomicUsize,
+        released: AtomicBool,
+        gate: tokio::sync::Notify,
+    }
+
+    impl PreparationFake {
+        fn new(released: bool) -> Self {
+            Self {
+                starts: AtomicUsize::new(0),
+                released: AtomicBool::new(released),
+                gate: tokio::sync::Notify::new(),
+            }
+        }
+    }
+
+    impl SandboxPreparationPort for PreparationFake {
+        fn prepare_for_tool<'a>(
+            &'a self,
+            _workspace: WorkspaceId,
+            session: SessionId,
+            generation: GenerationId,
+            _call: &'a ToolCallIdentity,
+        ) -> ToolMuxFuture<'a, Result<ReadyHand, String>> {
+            Box::pin(async move {
+                self.starts.fetch_add(1, Ordering::SeqCst);
+                while !self.released.load(Ordering::SeqCst) {
+                    self.gate.notified().await;
+                }
+                Ok(ReadyHand {
+                    hand: HandId::for_session(session),
+                    generation,
+                    fence: Fence(7),
+                })
+            })
+        }
+
+        fn settle_tool<'a>(
+            &'a self,
+            _ready: ReadyHand,
+            _call: &'a ToolCallIdentity,
+        ) -> ToolMuxFuture<'a, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn preparation_failed(&self, _session: SessionId, _generation: GenerationId, _call: &str) {}
+    }
+
+    fn id<T: aex_wire::ids::PrefixedId>(seed: u8) -> T {
+        T::from_uuid7(Uuid7::compose(u64::from(seed), [seed; 10]))
+    }
+
+    fn call() -> ToolCallIdentity {
+        ToolCallIdentity {
+            organization: id::<OrganizationId>(1),
+            workspace: id::<WorkspaceId>(2),
+            session: id::<SessionId>(3),
+            agent: id::<AgentId>(4),
+            message: id::<MessageId>(5),
+            batch: 0,
+            call: "detached-call".to_owned(),
+            attempt: 1,
+        }
+    }
+
+    async fn wait_ready(
+        adapter: &ProductionRuntimeAdapter,
+        identity: &ToolCallIdentity,
+        generation: GenerationId,
+    ) -> ReadyHand {
+        for _ in 0..100 {
+            if let Some(ready) = adapter
+                .poll_waiter(
+                    identity.session,
+                    HandId::for_session(identity.session),
+                    generation,
+                    identity,
+                )
+                .await
+                .expect("poll")
+            {
+                return ready;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("preparation did not finish")
+    }
+
+    #[tokio::test]
+    async fn start_returns_before_the_first_generation_is_ready() {
+        let preparation = Arc::new(PreparationFake::new(false));
+        let adapter = ProductionRuntimeAdapter::new(preparation.clone());
+        let identity = call();
+        let generation = id::<GenerationId>(6);
+        tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            adapter.start_waiter(
+                identity.session,
+                HandId::for_session(identity.session),
+                generation,
+                &identity,
+            ),
+        )
+        .await
+        .expect("start is detached")
+        .expect("scheduled");
+        assert!(
+            adapter
+                .poll_waiter(
+                    identity.session,
+                    HandId::for_session(identity.session),
+                    generation,
+                    &identity,
+                )
+                .await
+                .expect("poll")
+                .is_none()
+        );
+        preparation.released.store(true, Ordering::SeqCst);
+        preparation.gate.notify_waiters();
+        assert_eq!(
+            wait_ready(&adapter, &identity, generation).await.generation,
+            generation
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_process_state_is_reconstructed_by_read_polling() {
+        let preparation = Arc::new(PreparationFake::new(true));
+        let adapter = ProductionRuntimeAdapter::new(preparation.clone());
+        let identity = call();
+        let generation = id::<GenerationId>(6);
+        assert!(
+            adapter
+                .poll_waiter(
+                    identity.session,
+                    HandId::for_session(identity.session),
+                    generation,
+                    &identity,
+                )
+                .await
+                .expect("reconstruction scheduled")
+                .is_none()
+        );
+        assert_eq!(
+            wait_ready(&adapter, &identity, generation).await.generation,
+            generation
+        );
+        assert_eq!(preparation.starts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_process_state_is_reconstructed_before_cancellation_acknowledges() {
+        let preparation = Arc::new(PreparationFake::new(true));
+        let adapter = ProductionRuntimeAdapter::new(preparation.clone());
+        let identity = call();
+        let generation = id::<GenerationId>(6);
+        let ready = adapter
+            .cancel_waiter(generation, &identity)
+            .await
+            .expect("restart cancellation recovers")
+            .expect("guest cancellation must follow");
+        assert_eq!(ready.generation, generation);
+        assert_eq!(preparation.starts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn original_preparation_cancellation_does_not_start_a_guest_operation() {
+        let preparation = Arc::new(PreparationFake::new(false));
+        let adapter = ProductionRuntimeAdapter::new(preparation);
+        let identity = call();
+        let generation = id::<GenerationId>(6);
+        adapter
+            .start_waiter(
+                identity.session,
+                HandId::for_session(identity.session),
+                generation,
+                &identity,
+            )
+            .await
+            .expect("waiter starts");
+        assert!(
+            adapter
+                .cancel_waiter(generation, &identity)
+                .await
+                .expect("pre-dispatch cancellation")
+                .is_none()
+        );
+    }
 }

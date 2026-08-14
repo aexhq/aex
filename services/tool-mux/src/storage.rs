@@ -1,6 +1,8 @@
 //! Trusted `storage.persist` composition over exact-generation guest streaming
 //! and the latest-only workspace-file authority.
 
+use std::sync::Arc;
+
 use aex_hands_protocol::operation::GuestPath;
 use aex_tool_mux::{
     ExecutorOutput, FullOutput, ReadyHand, StoragePersistPort, ToolCallIdentity, ToolMuxFuture,
@@ -133,7 +135,20 @@ pub trait LatestFileAuthorityPort: Send + Sync + 'static {
     ) -> ToolMuxFuture<'a, Result<PersistedLatest, PersistAuthorityError>>;
 }
 
-/// Adapter passed to [`aex_tool_mux::ToolMux`].
+/// One trusted persistence execution before detached scheduling.
+pub trait StorageOperationPort: Send + Sync + 'static {
+    /// Streams, verifies and commits one exact latest-only value.
+    fn persist<'a>(
+        &'a self,
+        ready: ReadyHand,
+        source: &'a GuestPath,
+        logical_name: &'a str,
+        media_type: Option<&'a str>,
+        call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<ExecutorOutput, String>>;
+}
+
+/// Trusted synchronous operation assembled behind the detached adapter.
 pub struct StorageAdapter<G, A> {
     guest: G,
     authority: A,
@@ -147,7 +162,7 @@ impl<G, A> StorageAdapter<G, A> {
     }
 }
 
-impl<G, A> StoragePersistPort for StorageAdapter<G, A>
+impl<G, A> StorageOperationPort for StorageAdapter<G, A>
 where
     G: GuestFileStreamPort,
     A: LatestFileAuthorityPort,
@@ -210,6 +225,78 @@ where
                 );
             }
             render_result(persisted, call.workspace, &name, &media_type, source)
+        })
+    }
+}
+
+/// Fast detached facade passed to [`aex_tool_mux::ToolMux`].
+pub struct DetachedStorageAdapter {
+    operation: Arc<dyn StorageOperationPort>,
+    executions: crate::detached::DetachedExecutions,
+}
+
+impl DetachedStorageAdapter {
+    /// Binds the exact trusted persistence operation.
+    #[must_use]
+    pub fn new(operation: Arc<dyn StorageOperationPort>) -> Self {
+        Self {
+            operation,
+            executions: crate::detached::DetachedExecutions::default(),
+        }
+    }
+}
+
+impl StoragePersistPort for DetachedStorageAdapter {
+    fn start_persist<'a>(
+        &'a self,
+        ready: ReadyHand,
+        source: &'a GuestPath,
+        logical_name: &'a str,
+        media_type: Option<&'a str>,
+        call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let operation = crate::detached::operation_id(call, "storage-persist");
+            let executor = Arc::clone(&self.operation);
+            let source = source.clone();
+            let logical_name = logical_name.to_owned();
+            let media_type = media_type.map(str::to_owned);
+            let call = call.clone();
+            self.executions.start(operation, async move {
+                executor
+                    .persist(ready, &source, &logical_name, media_type.as_deref(), &call)
+                    .await
+            });
+            Ok(())
+        })
+    }
+
+    fn read_persist<'a>(
+        &'a self,
+        ready: ReadyHand,
+        call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
+        Box::pin(async move {
+            if ready.hand.session() != call.session {
+                return Err("storage.persist received a foreign ready Hand".to_owned());
+            }
+            self.executions
+                .read(crate::detached::operation_id(call, "storage-persist"))
+        })
+    }
+
+    fn cancel_persist<'a>(
+        &'a self,
+        ready: ReadyHand,
+        call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            if ready.hand.session() != call.session {
+                return Err("storage.persist received a foreign ready Hand".to_owned());
+            }
+            self.executions
+                .cancel(crate::detached::operation_id(call, "storage-persist"));
+            Ok(())
         })
     }
 }

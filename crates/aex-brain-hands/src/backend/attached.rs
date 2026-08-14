@@ -8,21 +8,10 @@ use super::{
     require_operation, response_error, result_rejected,
 };
 
-/// The declared wall bound at or below which an operation is delivered attached.
-///
-/// The boundary is the operation's own declared budget, not its name or a
-/// configuration list. The call's bound is already the catalog timeout narrowed
-/// by its arguments, so this comparison remains the sole selection authority.
-pub const ATTACH_MAX_WALL_MS: u32 = 60_000;
-
 /// Which delivery mode one declared wall bound selects.
 #[must_use]
-pub const fn delivery_for(timeout_ms: u32) -> DeliveryMode {
-    if timeout_ms <= ATTACH_MAX_WALL_MS {
-        DeliveryMode::Attached
-    } else {
-        DeliveryMode::Detached
-    }
+pub const fn delivery_for(_timeout_ms: u32) -> DeliveryMode {
+    DeliveryMode::Detached
 }
 
 impl ProductionHandsBackend {
@@ -161,7 +150,6 @@ impl ProductionHandsBackend {
             generation,
             exit_code: exit_code(&terminal.exit),
             inline,
-            placed: None,
             sandbox_file,
             truncated: terminal.truncated,
             duration_ms: u32::try_from(duration_ms.max(0)).unwrap_or(u32::MAX),
@@ -172,30 +160,33 @@ impl ProductionHandsBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{ATTACH_MAX_WALL_MS, delivery_for};
+    use super::delivery_for;
     use aex_brain_tool_catalog::wire_pending::ExecutorRoute as CatalogRoute;
     use aex_hands_protocol::operation::DeliveryMode;
 
     #[test]
-    fn the_delivery_boundary_is_the_operations_own_declared_wall_bound() {
-        assert_eq!(ATTACH_MAX_WALL_MS, 60_000);
-        for (timeout_ms, expected) in [
-            (1, DeliveryMode::Attached),
-            (15_000, DeliveryMode::Attached),
-            (30_000, DeliveryMode::Attached),
-            (60_000, DeliveryMode::Attached),
-            (60_001, DeliveryMode::Detached),
-            (120_000, DeliveryMode::Detached),
-            (600_000, DeliveryMode::Detached),
-            (1_800_000, DeliveryMode::Detached),
-            (u32::MAX, DeliveryMode::Detached),
+    fn every_operation_starts_detached_regardless_of_its_wall_bound() {
+        for timeout_ms in [
+            1,
+            15_000,
+            30_000,
+            60_000,
+            60_001,
+            120_000,
+            600_000,
+            1_800_000,
+            u32::MAX,
         ] {
-            assert_eq!(delivery_for(timeout_ms), expected, "{timeout_ms} ms");
+            assert_eq!(
+                delivery_for(timeout_ms),
+                DeliveryMode::Detached,
+                "{timeout_ms} ms"
+            );
         }
     }
 
     #[test]
-    fn the_mvp_catalogue_has_one_detached_command_and_three_attached_file_tools() {
+    fn the_mvp_catalogue_starts_every_sandbox_tool_detached() {
         let entries =
             aex_brain_tool_catalog::catalog::builtin_entries().expect("the catalogue builds");
         let mut attached = Vec::new();
@@ -217,7 +208,10 @@ mod tests {
         }
         attached.sort();
         detached.sort();
-        assert_eq!(detached, vec!["bash"]);
-        assert_eq!(attached, vec!["edit_file", "read_file", "write_file"]);
+        assert_eq!(
+            detached,
+            vec!["bash", "edit_file", "read_file", "write_file"]
+        );
+        assert!(attached.is_empty());
     }
 }

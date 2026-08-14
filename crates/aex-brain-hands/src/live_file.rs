@@ -1,8 +1,7 @@
-//! Exact-generation live-file transport exposed to the regional session API.
+//! Exact-generation live-file transport for sandbox preparation and live files.
 
 use aex_brain_app::ports::{BoxFuture, HandsError};
 use aex_hands_protocol::files::{FileRequest, FileResponse};
-use aex_hands_protocol::operation::SandboxMcpQualification;
 use aex_hands_protocol::rpc::Fence;
 use aex_hands_protocol::rpc::HandsOperationId;
 use aex_wire::ids::{GenerationId, SessionId};
@@ -26,9 +25,10 @@ pub struct LiveFileReply {
 
 /// Provider-authoritative readiness for one exact retained generation.
 ///
-/// Session creation uses this before it publishes a public head. Reaching this
-/// value proves both that the provider settled the elected generation as
-/// running and that the authenticated Hands endpoint answered for it.
+/// Detached preparation and first-call recovery use this after the public
+/// session identity exists. Reaching this value proves both that the provider
+/// settled the elected generation as running and that the authenticated Hands
+/// endpoint answered for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiveGenerationReady {
     /// Exact generation that became reachable.
@@ -43,7 +43,8 @@ pub struct LiveGenerationReady {
     pub lifecycle_fence: u64,
 }
 
-/// The narrow live-file capability consumed by the public regional edge.
+/// The narrow exact-generation capability consumed by sandbox preparation and
+/// the public live-file edge.
 ///
 /// The port cannot launch a successor generation. Every call names the retained
 /// session and exact generation; a suspended generation is resumed in place,
@@ -98,8 +99,8 @@ pub trait LiveFileBackend: Send + Sync + 'static {
     }
 
     /// Suspends a fully prepared exact generation when no durable tool waiter
-    /// exists. Session admission invokes this only after workspace setup and
-    /// MCP qualification have completed.
+    /// exists. Detached preparation invokes this only after workspace setup has
+    /// completed.
     fn suspend_ready(
         &self,
         _session: SessionId,
@@ -112,27 +113,6 @@ pub trait LiveFileBackend: Send + Sync + 'static {
                 detail: aex_brain_app::ports::RedactedDetail::internal(
                     aex_brain_app::ports::ProviderFailureKind::ServerError,
                     "eager sandbox suspension is not composed",
-                ),
-            })
-        })
-    }
-
-    /// Starts one sandbox-process MCP server inside the exact generation,
-    /// completes the pinned handshake, and returns its bounded tool names.
-    fn qualify_sandbox_mcp<'a>(
-        &'a self,
-        _session: SessionId,
-        _generation: GenerationId,
-        _activity: HandsOperationId,
-        _request: &'a SandboxMcpQualification,
-    ) -> BoxFuture<'a, Result<Vec<String>, HandsError>> {
-        Box::pin(async {
-            Err(HandsError::Transport {
-                stage: aex_brain_domain::effect::DispatchStage::PreDispatch,
-                proof: aex_brain_domain::effect::DispatchProof::NotSent,
-                detail: aex_brain_app::ports::RedactedDetail::internal(
-                    aex_brain_app::ports::ProviderFailureKind::ServerError,
-                    "sandbox MCP qualification is not composed",
                 ),
             })
         })

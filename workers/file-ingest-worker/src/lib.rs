@@ -266,29 +266,36 @@ pub fn ready_document(
     }
 }
 
-/// Minimal stream locator decoded before the authoritative point read.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// Minimal pointer locator decoded from a `KEYS_ONLY` stream record before the
+/// authoritative point read.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamLocator {
-    /// Item family.
-    pub item_type: String,
     /// Workspace owner.
     pub workspace_id: WorkspaceId,
-    /// Registry kind.
-    pub kind: String,
     /// Current logical name.
     pub name: ResourceName,
-    /// Current state projected into the stream.
-    pub state: String,
 }
 
-/// Returns a URL-ingest candidate from a stream image. The authority is always
-/// reloaded before any network effect.
+#[derive(Debug, Deserialize)]
+struct StreamKey {
+    pk: String,
+    sk: String,
+}
+
+/// Returns a file-pointer candidate from stream keys. State and source type are
+/// deliberately absent from the event and are reloaded from authority before
+/// any network effect.
 #[must_use]
 pub fn stream_candidate(item: serde_dynamo::Item) -> Option<StreamLocator> {
-    let locator: StreamLocator = serde_dynamo::from_item(item).ok()?;
-    (locator.item_type == "registry_pointer"
-        && locator.kind == "file"
-        && locator.state == "pending")
-        .then_some(locator)
+    let key: StreamKey = serde_dynamo::from_item(item).ok()?;
+    let partition = key.pk.strip_prefix("REG#")?;
+    let (workspace, kind) = partition.rsplit_once('#')?;
+    if kind != "file" {
+        return None;
+    }
+    let name = key.sk.strip_prefix("NAME#")?;
+    Some(StreamLocator {
+        workspace_id: WorkspaceId::parse(workspace).ok()?,
+        name: ResourceName::parse(name).ok()?,
+    })
 }

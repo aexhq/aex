@@ -10,7 +10,6 @@ use super::proof::DispatchTicket;
 use super::provider::RedactedDetail;
 use aex_brain_domain::effect::{DispatchProof, DispatchStage};
 use aex_brain_domain::ids::{ContentHash, Fence, HandsOperationId, SessionId, Timestamp};
-use aex_brain_domain::wire_pending::ContentRef;
 use aex_wire::ids::GenerationId;
 
 /// Lifecycle and operations against one session's Hands `MicroVM`.
@@ -158,8 +157,6 @@ pub struct HandsResult {
     pub exit_code: i32,
     /// Inline output, when it fitted the bounds.
     pub inline: Option<String>,
-    /// A pointer to the placed output, when it did not.
-    pub placed: Option<ContentRef>,
     /// A complete result retained inside the exact sandbox generation. The
     /// bounded preview is safe for the model and live telemetry; `path` is the
     /// authority for consumers that need the full body.

@@ -63,9 +63,11 @@ catalog labels.
 ## Hosted paid tools
 
 The launch built-in model tool catalog contains `read_file`, `write_file`,
-`edit_file`, Bash, and `storage.persist` (wire name `storage_persist`). Sandbox
-tools execute inside the one optional Hand; storage persistence crosses trusted
-Tool Mux code and gives the guest no object-store credential. Hosted
+`edit_file`, Bash, MCP, and `storage.persist` (wire name `storage_persist`).
+Sandbox tools and both frozen MCP transports execute through the one optional
+Hand; storage persistence crosses trusted Tool Mux code and gives the guest no
+object-store credential. Large result files remain sandbox-local until that
+explicit persistence call. Hosted
 credential-backed tools such as web search, their public executor deployable,
 and any user BYOK tool-key surface are absent from the release rather than
 hidden behind an unreachable catalog row.
@@ -78,8 +80,11 @@ bindings, and live receipts together.
 
 ## Sandbox snapshot and generation reconstruction
 
-Launch persists durable Brain context checkpoints in S3 and hydrates them on
-activation. The optional sandbox still retains only one exact generation for
+Launch persists no automatic Brain checkpoint or tool-result objects in the
+workspace content bucket. Brain rebuilds from its durable journal and may use
+only process-local fold acceleration; persistent context compaction is deferred
+until it has an authority that does not silently create session S3 output. The
+optional sandbox still retains only one exact generation for
 the session lifetime: idle compute may suspend and resume that generation, but
 there is no public persistent sandbox workspace or MicroVM snapshot. Explicit
 termination destroys sandbox compute and local files; sandbox loss returns

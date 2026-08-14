@@ -17,7 +17,8 @@ A session-centered distributed agent runtime.
   the first waiting sandbox tool call; sessions can explicitly disable it
 - Latest-only workspace files from inline bytes, HTTPS URLs, or direct upload,
   with frozen session mounts and model-invoked `storage.persist`
-- Built-in file and Bash tools plus qualified remote and sandbox-process MCP
+- Built-in file, Bash, storage, and MCP tools; large results stay in sandbox
+  files unless the model explicitly invokes `storage.persist`
 - Durable parallel tool effects and native subagents, bounded to 12 children
   per session lifetime and depth 3
 - Live assistant previews with committed reconciliation, retained telemetry,

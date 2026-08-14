@@ -11,26 +11,6 @@ variable "cluster_name" { type = string }
 variable "service_discovery_namespace" { type = string }
 variable "artifact_bucket" { type = string }
 
-variable "content_bucket" {
-  type        = string
-  description = "Existing unversioned customer-content bucket containing immutable Brain checkpoints."
-
-  validation {
-    condition     = can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.content_bucket))
-    error_message = "The content bucket must be a valid S3 bucket name."
-  }
-}
-
-variable "content_bucket_owner" {
-  type        = string
-  description = "Twelve-digit AWS account that owns the customer-content bucket."
-
-  validation {
-    condition     = can(regex("^[0-9]{12}$", var.content_bucket_owner))
-    error_message = "The content bucket owner must be a 12-digit AWS account id."
-  }
-}
-
 variable "alb" {
   type = object({ name = string, certificate_arn = string, access_logs_bucket = string })
 }

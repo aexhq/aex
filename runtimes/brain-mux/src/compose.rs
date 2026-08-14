@@ -319,6 +319,10 @@ mod tests {
         assert_eq!(envelope.network_lane, 128);
         assert_eq!(envelope.hands_rpcs, 48);
         assert!(envelope.validate().is_ok());
+        assert!(
+            !launch_policy().persistent_context_checkpoints,
+            "launch must not create automatic session-content objects"
+        );
     }
 
     /// An over-committed envelope would let every pool be granted in full and the task still

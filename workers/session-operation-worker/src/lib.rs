@@ -1,6 +1,5 @@
 //! Fenced, bounded continuation kernel for regional session operations.
 
-mod checkpoint_objects;
 pub mod config;
 mod deletion;
 
@@ -459,8 +458,6 @@ impl DynamoLifecyclePort {
         tables: aex_session_dynamodb::plan::RegionalTables,
         runtime_queue_url: impl Into<String>,
         session_telemetry_bucket: impl Into<String>,
-        content_bucket: impl Into<String>,
-        content_bucket_owner: impl Into<String>,
     ) -> Self {
         let runtime_queue_url = runtime_queue_url.into();
         let deletion = deletion::DynamoDeletionCoordinator::new(
@@ -470,8 +467,6 @@ impl DynamoLifecyclePort {
             tables.clone(),
             runtime_queue_url.clone(),
             session_telemetry_bucket,
-            content_bucket,
-            content_bucket_owner,
         );
         Self {
             sessions: aex_session_dynamodb::store::SessionReads::new(

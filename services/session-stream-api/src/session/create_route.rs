@@ -1,10 +1,14 @@
-//! Production synchronous session-create orchestration.
+//! Production session admission and background sandbox preparation.
 //!
-//! The public session does not exist while this module launches compute. A
-//! receipt-keyed private preparation first elects every identity and selected
-//! file revision. Only after the exact generation is reachable, all bytes are
-//! materialized, and root `AgentStarted` is durable does one final transaction
-//! publish the head and exact response receipt.
+//! A receipt-keyed private preparation elects every identity and selected file
+//! revision. Root `AgentStarted`, the requested generation row, public head and
+//! exact response receipt become durable before this module starts provider or
+//! guest I/O. A best-effort eager task starts the elected preparation; Tool Mux
+//! recovers the same manifest from detached first-call polling and uses the
+//! same exact-generation runtime authority.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use aex_brain_domain::budget::Dimension;
 use aex_brain_domain::journal::JournalRecord;
@@ -14,9 +18,9 @@ use aex_session_app::ports::{
     AgentExecutionLimits, IdFactory as _, RunBudgetLimits, SessionReader as _,
 };
 use aex_session_app::{
-    CreateSession, PrepareSessionCreateOutcome, PreparedSessionCreate, ReadySessionLaunch,
+    CreateSession, PrepareSessionCreateOutcome, PreparedSessionCreate, RequestedSessionLaunch,
     ResolvedInitialFile, RootStartedEvidence, initial_root_record, prepare_session_create,
-    publish_ready_session, replay_session_create_receipt,
+    publish_requested_session, replay_session_create_receipt,
 };
 use aex_session_domain::{
     AccountRevision, AgentRevision, IdempotencyIdentity, JournalSeq, PinnedRuntime,
@@ -30,6 +34,11 @@ use aex_session_dynamodb::create_preparation::{
 };
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::Participant;
+use aex_session_dynamodb::sandbox_preparation::{
+    SANDBOX_PREPARATION_HEARTBEAT_MILLIS, SANDBOX_PREPARATION_LEASE_MILLIS,
+    SandboxPreparationAuthority, SandboxPreparationAuthorityError, SandboxPreparationClaim,
+    SandboxPreparationLease,
+};
 use aex_wire::canonical::{CanonicalJson, to_jcs_bytes};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::idempotency::{IntentDigest, ReplayIdentity};
@@ -38,11 +47,12 @@ use aex_wire::routes::RouteId;
 use aex_wire::types::{DecimalU128, Timestamp};
 
 use super::create_readiness::{
-    ContentObjects, MaterializedFile, StartupGuest, StartupGuestError, materialize_selected,
+    ContentObjects, StartupBody, StartupContent, StartupFileError, StartupGuest, StartupGuestError,
+    materialize_selected,
 };
-use super::handlers::Routes;
+use super::handlers::{Routes, Shared};
 
-/// Runs the only public session activation path to a truthful ready `201`.
+/// Runs the public admission path to a truthful requested `201`.
 pub(super) async fn create_session(
     routes: &Routes,
     request: models::SessionCreateRequest,
@@ -96,8 +106,8 @@ pub(super) async fn create_session(
         .map_err(|error| preparation_failure(&error))?
         .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
     derive_runtime_authority(routes, &prepared, &winner).await?;
-    let readiness = establish_readiness(routes, &preparations, &winner).await?;
-    publish_ready_head(routes, &command, &prepared, &winner, &readiness).await
+    let launch = establish_admission(routes, &preparations, &winner).await?;
+    publish_requested_head(routes, &command, &prepared, &winner, &launch).await
 }
 
 async fn replay_existing(
@@ -122,11 +132,18 @@ async fn replay_existing(
     else {
         return Ok(None);
     };
-    replayed(
+    let session = replayed(
         replay_session_create_receipt(&stored, command)
             .map_err(|error| create_app_failure(&error))?,
-    )
-    .map(Some)
+    )?;
+    if session.sandbox_status == models::SandboxStatus::Requested {
+        schedule_replayed_eager_preparation(
+            routes.shared.clone(),
+            command.workspace,
+            session.id,
+        );
+    }
+    Ok(Some(session))
 }
 
 async fn derive_runtime_authority(
@@ -155,42 +172,13 @@ async fn derive_runtime_authority(
     Ok(())
 }
 
-async fn establish_readiness(
+async fn establish_admission(
     routes: &Routes,
     preparations: &CreatePreparationStore,
     winner: &CreatePreparation,
-) -> WireResult<ReadySessionLaunch> {
-    if winner.generation.is_none() {
-        qualify_mcp_servers(routes, winner).await?;
-        let root = persist_root_started(routes, preparations, winner, winner.prepared_at).await?;
-        return Ok(ReadySessionLaunch {
-            generation: None,
-            launched_at: winner.prepared_at,
-            materialized_files: Vec::new(),
-            root_started: RootStartedEvidence {
-                agent: winner.root_agent,
-                session: winner.session,
-                generation: None,
-                occurred_at: root.occurred_at,
-                revision: AgentRevision(root.revision),
-                journal_tail: JournalSeq(root.journal_tail),
-                journal_tail_hash: root.journal_tail_hash,
-            },
-        });
-    }
-    let first_ready = ensure_initial_readiness(routes, winner).await?;
-    let materialized = materialize_initial_files(routes, winner).await?;
-    qualify_mcp_servers(routes, winner).await?;
-    let ready = confirm_readiness(routes, winner, &first_ready).await?;
-    suspend_prepared_generation(routes, winner).await?;
-    let root = persist_root_started(routes, preparations, winner, ready.observed_at).await?;
-    Ok(ReadySessionLaunch {
-        generation: winner.generation,
-        launched_at: ready.launched_at,
-        materialized_files: materialized
-            .into_iter()
-            .map(|file| (file.name, file.revision))
-            .collect(),
+) -> WireResult<RequestedSessionLaunch> {
+    let root = persist_root_started(routes, preparations, winner, winner.prepared_at).await?;
+    Ok(RequestedSessionLaunch {
         root_started: RootStartedEvidence {
             agent: winner.root_agent,
             session: winner.session,
@@ -201,147 +189,6 @@ async fn establish_readiness(
             journal_tail_hash: root.journal_tail_hash,
         },
     })
-}
-
-async fn qualify_mcp_servers(routes: &Routes, winner: &CreatePreparation) -> WireResult<()> {
-    let config: aex_brain_domain::wire_pending::ResolvedAgentConfig =
-        serde_json::from_slice(&winner.resolved_config)
-            .map_err(|_| WireError::new(ErrorCode::InternalError))?;
-    if config.mcp_servers.is_empty() {
-        return Ok(());
-    }
-    if let Err(error) = routes
-        .shared
-        .mcp_qualifier
-        .qualify(
-            winner.organization,
-            winner.workspace,
-            winner.session,
-            winner.generation,
-            &config.mcp_servers,
-            winner.prepared_at,
-        )
-        .await
-    {
-        if winner.generation.is_some() {
-            compensate(routes, winner, "MCP qualification", &error).await;
-        }
-        tracing::warn!(
-            target: "aex::session_telemetry",
-            event = "sandbox_progress_failed",
-            progress = "qualifying_sandbox_mcp",
-            session = %winner.session,
-        );
-        return Err(WireError::new(ErrorCode::InternalError));
-    }
-    Ok(())
-}
-
-async fn suspend_prepared_generation(
-    routes: &Routes,
-    winner: &CreatePreparation,
-) -> WireResult<()> {
-    let generation = winner
-        .generation
-        .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
-    if let Err(error) = routes
-        .shared
-        .live_files
-        .suspend_ready(winner.session, generation)
-        .await
-    {
-        compensate(routes, winner, "initial sandbox suspension", &error).await;
-        return Err(WireError::new(ErrorCode::InternalError));
-    }
-    Ok(())
-}
-
-async fn ensure_initial_readiness(
-    routes: &Routes,
-    winner: &CreatePreparation,
-) -> WireResult<aex_brain_hands::LiveGenerationReady> {
-    let generation = winner
-        .generation
-        .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
-    let ready = match routes
-        .shared
-        .live_files
-        .ensure_ready(winner.session, generation)
-        .await
-    {
-        Ok(ready) => ready,
-        Err(error) => {
-            compensate(routes, winner, "launch readiness", &error).await;
-            return Err(WireError::new(ErrorCode::InternalError));
-        }
-    };
-    if !has_exact_provider_lifetime(&ready) {
-        compensate(
-            routes,
-            winner,
-            "provider lifetime validation",
-            &"the ready generation does not carry the fixed eight-hour fence",
-        )
-        .await;
-        return Err(WireError::new(ErrorCode::InternalError));
-    }
-    Ok(ready)
-}
-
-async fn materialize_initial_files(
-    routes: &Routes,
-    winner: &CreatePreparation,
-) -> WireResult<Vec<MaterializedFile>> {
-    let content = ContentObjects::new(routes.shared.content_objects.as_ref(), winner.workspace);
-    let guest = StartupHands(routes.shared.live_files.as_ref());
-    match materialize_selected(&content, &guest, winner).await {
-        Ok(files) => Ok(files),
-        Err(error) => {
-            compensate(routes, winner, "startup file materialization", &error).await;
-            Err(WireError::new(ErrorCode::InternalError))
-        }
-    }
-}
-
-async fn confirm_readiness(
-    routes: &Routes,
-    winner: &CreatePreparation,
-    first_ready: &aex_brain_hands::LiveGenerationReady,
-) -> WireResult<aex_brain_hands::LiveGenerationReady> {
-    let generation = winner
-        .generation
-        .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
-    // A final authenticated observation proves that the generation remained
-    // reachable after the last guest rename. Its observation time is the
-    // truthful occurrence time for the durable root start.
-    match routes
-        .shared
-        .live_files
-        .ensure_ready(winner.session, generation)
-        .await
-    {
-        Ok(ready)
-            if ready.generation == first_ready.generation
-                && ready.launched_at == first_ready.launched_at
-                && ready.expires_at == first_ready.expires_at =>
-        {
-            Ok(ready)
-        }
-        Ok(_) => {
-            compensate(
-                routes,
-                winner,
-                "readiness identity drift",
-                &"mismatched readiness",
-            )
-            .await;
-            Err(WireError::new(ErrorCode::InternalError))
-        }
-        Err(error) => {
-            compensate(routes, winner, "final readiness", &error).await;
-            Err(WireError::new(ErrorCode::InternalError))
-        }
-    }
 }
 
 async fn persist_root_started(
@@ -362,17 +209,17 @@ async fn persist_root_started(
     }
 }
 
-async fn publish_ready_head(
+async fn publish_requested_head(
     routes: &Routes,
     command: &CreateSession,
     prepared: &PreparedSessionCreate,
     winner: &CreatePreparation,
-    readiness: &ReadySessionLaunch,
+    launch: &RequestedSessionLaunch,
 ) -> WireResult<models::Session> {
-    let planned = match publish_ready_session(prepared, readiness) {
+    let planned = match publish_requested_session(prepared, launch) {
         Ok(planned) => planned,
         Err(error) => {
-            compensate(routes, winner, "ready publication planning", &error).await;
+            compensate(routes, winner, "requested publication planning", &error).await;
             return Err(create_app_failure(&error));
         }
     };
@@ -385,24 +232,413 @@ async fn publish_ready_head(
         routes.shared.authority.clone(),
         routes.shared.tables.clone(),
         binding,
-        readiness.root_started.occurred_at,
+        launch.root_started.occurred_at,
         ApiHintSink,
     );
     if let Err(error) = committer
         .commit_replayable(&planned.plan, &FamilyCompilers::new())
         .await
     {
-        return recover_publication(
+        let response = recover_publication(
             routes,
             command,
             winner,
-            readiness.root_started.occurred_at,
+            launch.root_started.occurred_at,
             &error,
         )
-        .await;
+        .await?;
+        schedule_eager_preparation(routes.shared.clone(), winner.clone());
+        return Ok(response);
     }
-    aex_session_app::public_session(&planned.projected)
-        .map_err(|_| WireError::new(ErrorCode::InternalError))
+    let response = aex_session_app::public_session(&planned.projected)
+        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+    schedule_eager_preparation(routes.shared.clone(), winner.clone());
+    Ok(response)
+}
+
+/// Starts the eager optimization only after Requested is publicly durable.
+///
+/// This process-local task is deliberately not the correctness mechanism: a
+/// task or service instance may stop at any await. Tool Mux reloads the same
+/// elected preparation by session on the first detached tool poll and
+/// idempotently completes any missing step.
+fn schedule_eager_preparation(shared: std::sync::Arc<Shared>, prepared: CreatePreparation) {
+    if prepared.generation.is_none() {
+        return;
+    }
+    tokio::spawn(async move {
+        if let Err(reason) = eagerly_prepare_sandbox(&shared, &prepared).await {
+            tracing::warn!(
+                target: "aex::session_telemetry",
+                event = "sandbox_progress_failed",
+                progress = reason,
+                session = %prepared.session,
+                generation = %prepared.generation.expect("checked before spawn"),
+            );
+        }
+    });
+}
+
+fn schedule_replayed_eager_preparation(
+    shared: std::sync::Arc<Shared>,
+    workspace: aex_wire::ids::WorkspaceId,
+    session: aex_wire::ids::SessionId,
+) {
+    tokio::spawn(async move {
+        let result = async {
+            let head = shared
+                .commands
+                .load_session_strong(workspace, session)
+                .await
+                .map_err(|_| "loading_replayed_session")?;
+            let preparations = CreatePreparationStore::new(
+                shared.authority.clone(),
+                shared.tables.session_authority.clone(),
+            );
+            let prepared = preparations
+                .load_for_session(workspace, session, head.generation)
+                .await
+                .map_err(|_| "loading_replayed_preparation")?
+                .ok_or("loading_replayed_preparation")?;
+            eagerly_prepare_sandbox(&shared, &prepared).await
+        }
+        .await;
+        if let Err(progress) = result {
+            tracing::warn!(
+                target: "aex::session_telemetry",
+                event = "sandbox_progress_failed",
+                progress,
+                session = %session,
+            );
+        }
+    });
+}
+
+#[async_trait::async_trait]
+trait PreparationLeaseAuthority: Send + Sync {
+    async fn renew(
+        &self,
+        session: aex_wire::ids::SessionId,
+        lease: &mut SandboxPreparationLease,
+        now: Timestamp,
+    ) -> Result<(), SandboxPreparationAuthorityError>;
+
+    async fn release(
+        &self,
+        session: aex_wire::ids::SessionId,
+        lease: &SandboxPreparationLease,
+    ) -> Result<(), SandboxPreparationAuthorityError>;
+}
+
+#[async_trait::async_trait]
+impl PreparationLeaseAuthority for SandboxPreparationAuthority {
+    async fn renew(
+        &self,
+        session: aex_wire::ids::SessionId,
+        lease: &mut SandboxPreparationLease,
+        now: Timestamp,
+    ) -> Result<(), SandboxPreparationAuthorityError> {
+        SandboxPreparationAuthority::renew(self, session, lease, now).await
+    }
+
+    async fn release(
+        &self,
+        session: aex_wire::ids::SessionId,
+        lease: &SandboxPreparationLease,
+    ) -> Result<(), SandboxPreparationAuthorityError> {
+        SandboxPreparationAuthority::release(self, session, lease).await
+    }
+}
+
+struct LeaseHeartbeat {
+    authority: Arc<dyn PreparationLeaseAuthority>,
+    lease: Arc<tokio::sync::Mutex<SandboxPreparationLease>>,
+    stopped: Arc<AtomicBool>,
+    lost: Arc<AtomicBool>,
+    wake: Arc<tokio::sync::Notify>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl LeaseHeartbeat {
+    fn start(
+        authority: Arc<dyn PreparationLeaseAuthority>,
+        lease: SandboxPreparationLease,
+    ) -> Self {
+        let lease = Arc::new(tokio::sync::Mutex::new(lease));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let lost = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new(tokio::sync::Notify::new());
+        let task_authority = Arc::clone(&authority);
+        let task_lease = Arc::clone(&lease);
+        let task_stopped = Arc::clone(&stopped);
+        let task_lost = Arc::clone(&lost);
+        let task_wake = Arc::clone(&wake);
+        let task = tokio::spawn(async move {
+            loop {
+                if task_stopped.load(Ordering::Acquire) {
+                    return;
+                }
+                tokio::select! {
+                    () = task_wake.notified() => {
+                        if task_stopped.load(Ordering::Acquire) {
+                            return;
+                        }
+                    }
+                    () = tokio::time::sleep(std::time::Duration::from_millis(
+                        SANDBOX_PREPARATION_HEARTBEAT_MILLIS,
+                    )) => {}
+                }
+                if renew_if_due(task_authority.as_ref(), &task_lease, &task_lost)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+        Self {
+            authority,
+            lease,
+            stopped,
+            lost,
+            wake,
+            task: Some(task),
+        }
+    }
+
+    async fn pulse(&self) -> Result<(), &'static str> {
+        renew_if_due(self.authority.as_ref(), &self.lease, &self.lost).await
+    }
+
+    async fn release(mut self) -> Result<(), SandboxPreparationAuthorityError> {
+        self.stop();
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
+        let lease = self.lease.lock().await.clone();
+        self.authority.release(lease.session, &lease).await
+    }
+
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+        self.wake.notify_one();
+    }
+}
+
+impl Drop for LeaseHeartbeat {
+    fn drop(&mut self) {
+        self.stop();
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
+async fn renew_if_due(
+    authority: &dyn PreparationLeaseAuthority,
+    lease: &tokio::sync::Mutex<SandboxPreparationLease>,
+    lost: &AtomicBool,
+) -> Result<(), &'static str> {
+    if lost.load(Ordering::Acquire) {
+        return Err("sandbox_preparation_lease_lost");
+    }
+    let Some(now) = wall_clock_now() else {
+        lost.store(true, Ordering::Release);
+        return Err("reading_preparation_clock");
+    };
+    let mut lease = lease.lock().await;
+    if lost.load(Ordering::Acquire) {
+        return Err("sandbox_preparation_lease_lost");
+    }
+    let renew_at = lease.lease_until.unix_millis().saturating_sub(
+        SANDBOX_PREPARATION_LEASE_MILLIS
+            .saturating_sub(i64::try_from(SANDBOX_PREPARATION_HEARTBEAT_MILLIS).unwrap_or(i64::MAX)),
+    );
+    if now.unix_millis() < renew_at {
+        return Ok(());
+    }
+    let session = lease.session;
+    if authority.renew(session, &mut lease, now).await.is_err() {
+        lost.store(true, Ordering::Release);
+        return Err("sandbox_preparation_lease_lost");
+    }
+    Ok(())
+}
+
+async fn eagerly_prepare_sandbox(
+    shared: &Shared,
+    prepared: &CreatePreparation,
+) -> Result<(), &'static str> {
+    let generation = prepared.generation.ok_or("missing_generation")?;
+    let authority = Arc::new(SandboxPreparationAuthority::new(
+        shared.authority.clone(),
+        shared.tables.session_authority.clone(),
+    ));
+    let checkpoint = authority
+        .observe(
+            prepared.workspace,
+            prepared.organization,
+            prepared.session,
+            generation,
+        )
+        .await
+        .map_err(|_| "observing_sandbox_checkpoint")?;
+    if checkpoint != aex_session_domain::SandboxPreparationStatus::Requested {
+        return Ok(());
+    }
+    let owner = uuid::Uuid::now_v7().to_string();
+    let claim = authority
+        .claim(
+            prepared.workspace,
+            prepared.organization,
+            prepared.session,
+            generation,
+            &owner,
+            wall_clock_now().ok_or("reading_preparation_clock")?,
+        )
+        .await
+        .map_err(|_| "claiming_sandbox_preparation")?;
+    let Some(lease) = acquired_lease(claim) else {
+        return Ok(());
+    };
+    let heartbeat = LeaseHeartbeat::start(authority.clone(), lease);
+    let result = eagerly_prepare_owned(shared, prepared, generation, authority.as_ref(), &heartbeat)
+        .await;
+    let release = heartbeat.release().await;
+    match result {
+        Err(reason) => Err(reason),
+        Ok(()) => release.map_err(|_| "releasing_sandbox_preparation"),
+    }
+}
+
+fn acquired_lease(claim: SandboxPreparationClaim) -> Option<SandboxPreparationLease> {
+    match claim {
+        SandboxPreparationClaim::Acquired(lease) => Some(lease),
+        SandboxPreparationClaim::Contended { .. } => None,
+    }
+}
+
+async fn eagerly_prepare_owned(
+    shared: &Shared,
+    prepared: &CreatePreparation,
+    generation: aex_wire::ids::GenerationId,
+    authority: &SandboxPreparationAuthority,
+    lease: &LeaseHeartbeat,
+) -> Result<(), &'static str> {
+    // Completion may have won between the pre-claim observation and the
+    // conditional lease write. Re-observe under the lease before the first
+    // provider or guest effect so Ready/Suspended is a hard no-rematerialize
+    // barrier.
+    let checkpoint = authority
+        .observe(
+            prepared.workspace,
+            prepared.organization,
+            prepared.session,
+            generation,
+        )
+        .await
+        .map_err(|_| "observing_claimed_sandbox_checkpoint")?;
+    if checkpoint != aex_session_domain::SandboxPreparationStatus::Requested {
+        return Ok(());
+    }
+    sandbox_progress(prepared, "requested");
+    sandbox_progress(prepared, "provisioning");
+    lease.pulse().await?;
+    let first_ready = shared
+        .live_files
+        .ensure_ready(prepared.session, generation)
+        .await
+        .map_err(|_| "provisioning")?;
+    lease.pulse().await?;
+    if !has_exact_provider_lifetime(&first_ready) {
+        return Err("provider_lifetime_validation");
+    }
+
+    sandbox_progress(prepared, "materializing_registered_files");
+    let content = LeasedContent {
+        inner: ContentObjects::new(shared.content_objects.as_ref(), prepared.workspace),
+        lease,
+    };
+    let guest = StartupHands {
+        live: shared.live_files.as_ref(),
+        lease,
+    };
+    materialize_selected(&content, &guest, prepared)
+        .await
+        .map_err(|_| "materializing_registered_files")?;
+
+    lease.pulse().await?;
+    let confirmed = shared
+        .live_files
+        .ensure_ready(prepared.session, generation)
+        .await
+        .map_err(|_| "confirming_materialized_sandbox")?;
+    lease.pulse().await?;
+    if confirmed.generation != first_ready.generation
+        || confirmed.launched_at != first_ready.launched_at
+        || confirmed.expires_at != first_ready.expires_at
+    {
+        return Err("confirming_materialized_sandbox");
+    }
+    sandbox_progress(prepared, "workspace_materialized");
+
+    // A durable tool waiter may race eager setup. In that case suspension can
+    // be refused and the truthful checkpoint is Ready, not a failed setup.
+    lease.pulse().await?;
+    let suspended = match shared
+        .live_files
+        .suspend_ready(prepared.session, generation)
+        .await
+    {
+        Ok(()) => true,
+        Err(aex_brain_app::ports::HandsError::Transport { detail, .. })
+            if detail.kind == aex_brain_app::ports::ProviderFailureKind::Overloaded =>
+        {
+            false
+        }
+        Err(_) => return Err("suspending_prepared_sandbox"),
+    };
+    lease.pulse().await?;
+    let settled_at = if suspended {
+        wall_clock_now().unwrap_or(confirmed.observed_at)
+    } else {
+        confirmed.observed_at
+    };
+    if suspended {
+        sandbox_progress(prepared, "suspended");
+    }
+    sandbox_progress(prepared, "ready");
+    lease.pulse().await?;
+    authority
+        .settle(
+            prepared.workspace,
+            prepared.organization,
+            prepared.session,
+            generation,
+            suspended,
+            settled_at,
+        )
+        .await
+        .map_err(|_| "publishing_sandbox_checkpoint")?;
+    Ok(())
+}
+
+fn wall_clock_now() -> Option<Timestamp> {
+    let duration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    let millis = i64::try_from(duration.as_millis()).ok()?;
+    Timestamp::from_unix_millis(millis).ok()
+}
+
+fn sandbox_progress(prepared: &CreatePreparation, progress: &'static str) {
+    tracing::info!(
+        target: "aex::session_telemetry",
+        event = "sandbox_progress",
+        progress,
+        session = %prepared.session,
+        generation = %prepared.generation.expect("called only for enabled sandboxes"),
+    );
 }
 
 async fn recover_publication(
@@ -649,7 +885,31 @@ fn rehydrate(
     })
 }
 
-struct StartupHands<'a>(&'a dyn aex_brain_hands::LiveFileBackend);
+struct LeasedContent<'a> {
+    inner: ContentObjects<'a>,
+    lease: &'a LeaseHeartbeat,
+}
+
+#[async_trait::async_trait]
+impl StartupContent for LeasedContent<'_> {
+    async fn read(&self, file: &PreparedFile) -> Result<StartupBody, StartupFileError> {
+        self.lease
+            .pulse()
+            .await
+            .map_err(|_| StartupGuestError::Unavailable)?;
+        let body = self.inner.read(file).await?;
+        self.lease
+            .pulse()
+            .await
+            .map_err(|_| StartupGuestError::Unavailable)?;
+        Ok(body)
+    }
+}
+
+struct StartupHands<'a> {
+    live: &'a dyn aex_brain_hands::LiveFileBackend,
+    lease: &'a LeaseHeartbeat,
+}
 
 impl StartupGuest for StartupHands<'_> {
     async fn call(
@@ -659,9 +919,17 @@ impl StartupGuest for StartupHands<'_> {
         activity: HandsOperationId,
         requests: Vec<FileRequest>,
     ) -> Result<Vec<FileResponse>, StartupGuestError> {
+        self.lease
+            .pulse()
+            .await
+            .map_err(|_| StartupGuestError::Unavailable)?;
         let reply = self
-            .0
+            .live
             .call(session, generation, activity, &requests)
+            .await
+            .map_err(|_| StartupGuestError::Unavailable)?;
+        self.lease
+            .pulse()
             .await
             .map_err(|_| StartupGuestError::Unavailable)?;
         if reply.generation != generation {
@@ -669,6 +937,14 @@ impl StartupGuest for StartupHands<'_> {
         }
         Ok(reply.responses)
     }
+}
+
+fn has_exact_provider_lifetime(ready: &aex_brain_hands::LiveGenerationReady) -> bool {
+    let Ok(lifetime_ms) = i64::try_from(aex_runtime_control::PROVIDER_LIFETIME_MS) else {
+        return false;
+    };
+    ready.launched_at.unix_millis().checked_add(lifetime_ms)
+        == Some(ready.expires_at.unix_millis())
 }
 
 async fn compensate(
@@ -735,35 +1011,99 @@ fn preparation_failure(error: &CreatePreparationError) -> WireError {
     }
 }
 
-fn has_exact_provider_lifetime(ready: &aex_brain_hands::LiveGenerationReady) -> bool {
-    let Ok(lifetime_ms) = i64::try_from(aex_runtime_control::PROVIDER_LIFETIME_MS) else {
-        return false;
-    };
-    ready.launched_at.unix_millis().checked_add(lifetime_ms) == Some(ready.expires_at.unix_millis())
-}
-
 #[cfg(test)]
 mod tests {
-    use aex_brain_hands::LiveGenerationReady;
-    use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
-    use aex_wire::types::Timestamp;
+    use std::sync::atomic::AtomicUsize;
 
-    use super::has_exact_provider_lifetime;
+    use super::*;
+    use aex_wire::ids::{GenerationId, OrganizationId, SessionId, Uuid7, WorkspaceId};
 
-    fn ready(expires_at_ms: i64) -> LiveGenerationReady {
-        LiveGenerationReady {
-            generation: GenerationId::from_uuid7(Uuid7::compose(1, [1; 10])),
-            launched_at: Timestamp::from_unix_millis(1_000).expect("launch"),
-            expires_at: Timestamp::from_unix_millis(expires_at_ms).expect("expiry"),
-            observed_at: Timestamp::from_unix_millis(2_000).expect("observation"),
-            lifecycle_fence: 1,
+    struct FakeLeaseAuthority {
+        renews: AtomicUsize,
+        releases: AtomicUsize,
+        lose_on_renew: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl PreparationLeaseAuthority for FakeLeaseAuthority {
+        async fn renew(
+            &self,
+            _session: SessionId,
+            _lease: &mut SandboxPreparationLease,
+            _now: Timestamp,
+        ) -> Result<(), SandboxPreparationAuthorityError> {
+            self.renews.fetch_add(1, Ordering::SeqCst);
+            if self.lose_on_renew {
+                Err(SandboxPreparationAuthorityError::LeaseLost)
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn release(
+            &self,
+            _session: SessionId,
+            _lease: &SandboxPreparationLease,
+        ) -> Result<(), SandboxPreparationAuthorityError> {
+            self.releases.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn lease(lease_until: Timestamp) -> SandboxPreparationLease {
+        SandboxPreparationLease {
+            workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            organization: OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10])),
+            session: SessionId::from_uuid7(Uuid7::compose(1, [3; 10])),
+            generation: GenerationId::from_uuid7(Uuid7::compose(1, [4; 10])),
+            owner: "eager-owner".to_owned(),
+            lease_until,
         }
     }
 
     #[test]
-    fn create_accepts_only_the_native_eight_hour_provider_fence() {
-        assert!(has_exact_provider_lifetime(&ready(28_801_000)));
-        assert!(!has_exact_provider_lifetime(&ready(28_800_999)));
-        assert!(!has_exact_provider_lifetime(&ready(28_801_001)));
+    fn contended_claim_does_not_select_an_eager_materializer() {
+        let lease_until = wall_clock_now().expect("clock");
+        assert!(
+            acquired_lease(SandboxPreparationClaim::Contended { lease_until }).is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn lease_loss_is_sticky_across_future_pulses() {
+        let authority = FakeLeaseAuthority {
+            renews: AtomicUsize::new(0),
+            releases: AtomicUsize::new(0),
+            lose_on_renew: true,
+        };
+        let expired = wall_clock_now().expect("clock");
+        let lease = tokio::sync::Mutex::new(lease(expired));
+        let lost = AtomicBool::new(false);
+
+        assert!(renew_if_due(&authority, &lease, &lost).await.is_err());
+        assert!(renew_if_due(&authority, &lease, &lost).await.is_err());
+        assert!(lost.load(Ordering::SeqCst));
+        assert_eq!(authority.renews.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn release_stops_the_heartbeat_before_releasing_the_claim() {
+        let authority = Arc::new(FakeLeaseAuthority {
+            renews: AtomicUsize::new(0),
+            releases: AtomicUsize::new(0),
+            lose_on_renew: false,
+        });
+        let now = wall_clock_now().expect("clock");
+        let lease_until = Timestamp::from_unix_millis(
+            now.unix_millis()
+                .saturating_add(SANDBOX_PREPARATION_LEASE_MILLIS),
+        )
+        .expect("deadline");
+        let heartbeat = LeaseHeartbeat::start(authority.clone(), lease(lease_until));
+
+        heartbeat.release().await.expect("release");
+
+        assert_eq!(authority.renews.load(Ordering::SeqCst), 0);
+        assert_eq!(authority.releases.load(Ordering::SeqCst), 1);
     }
 }

@@ -51,11 +51,13 @@ variable "kms_key_arn" {
 
 variable "lifecycle_role_arn" {
   type        = string
-  description = "The one role permitted to delete an object. Every other principal is denied delete by bucket policy."
+  default     = null
+  nullable    = true
+  description = "Optional sole role permitted to delete an object. When null, bucket policy denies deletion to every principal."
 
   validation {
-    condition     = can(regex("^arn:aws[a-z-]*:iam::[0-9A-Za-z-]{1,64}:role/[A-Za-z0-9+=,.@_/-]+$", var.lifecycle_role_arn))
-    error_message = "The lifecycle role must be an IAM role ARN."
+    condition     = var.lifecycle_role_arn == null || can(regex("^arn:aws[a-z-]*:iam::[0-9A-Za-z-]{1,64}:role/[A-Za-z0-9+=,.@_/-]+$", var.lifecycle_role_arn))
+    error_message = "When supplied, the lifecycle role must be an IAM role ARN."
   }
 }
 

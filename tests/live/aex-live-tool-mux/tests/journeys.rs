@@ -79,14 +79,14 @@ async fn official_sandbox_call_waits_for_the_exact_ready_generation() {
 }
 
 #[tokio::test]
-async fn remote_streamable_http_mcp_completes_without_a_hand() {
+async fn remote_streamable_http_mcp_starts_through_the_exact_hand() {
     let Some((request, result)) = start_fixture(aex_live_tool_mux::REMOTE_MCP_REQUEST_ENV).await
     else {
         return;
     };
-    assert!(!request.sandbox.enabled && request.sandbox.generation.is_none());
+    assert!(request.sandbox.enabled && request.sandbox.generation.is_some());
     assert!(matches!(request.target, ToolTarget::RemoteMcp { .. }));
-    assert!(matches!(result, ToolStart::Completed { .. }));
+    assert!(matches!(result, ToolStart::Accepted { .. }));
 }
 
 #[tokio::test]
@@ -96,25 +96,15 @@ async fn storage_persist_commits_the_verified_latest_value() {
         return;
     };
     assert!(matches!(request.target, ToolTarget::StoragePersist { .. }));
-    let ToolStart::Completed { result } = result else {
-        panic!("storage.persist fixture must complete")
-    };
-    assert!(result.error.is_none());
-    assert!(result.retained.is_some());
+    assert!(matches!(result, ToolStart::Accepted { .. }));
 }
 
 #[tokio::test]
-async fn large_tool_output_is_previewed_and_retained_without_live_overflow() {
-    let Some((_request, result)) = start_fixture(aex_live_tool_mux::LARGE_RESULT_REQUEST_ENV).await
+async fn large_tool_output_starts_detached_without_holding_the_private_connection() {
+    let Some((request, result)) = start_fixture(aex_live_tool_mux::LARGE_RESULT_REQUEST_ENV).await
     else {
         return;
     };
-    let ToolStart::Completed { result } = result else {
-        panic!("large-result fixture must complete")
-    };
-    assert!(result.preview.len() <= aex_tool_mux::MAX_LIVE_PREVIEW_BYTES);
-    assert!(result.truncated);
-    let retained = result.retained.expect("complete output retained");
-    assert!(retained.bytes > result.preview.len() as u64);
-    assert!(retained.sandbox_path.is_some());
+    assert!(request.sandbox.enabled && request.sandbox.generation.is_some());
+    assert!(matches!(result, ToolStart::Accepted { .. }));
 }

@@ -1,8 +1,8 @@
 //! The port traits every Brain peer stream implements.
 //!
 //! These signatures are the cross-stream contract. `aex-brain-provider-gateway`,
-//! `aex-model-catalog`, `aex-brain-tool-catalog`, Tool Mux, `aex-brain-mcp`,
-//! `aex-brain-hands` and `aex-brain-store-dynamodb` each implement one or more of them; nothing
+//! `aex-model-catalog`, `aex-brain-tool-catalog`, Tool Mux, `aex-brain-hands`
+//! and `aex-brain-store-dynamodb` each implement one or more of them; nothing
 //! in this crate knows a vendor.
 //!
 //! # Why every future is boxed
@@ -38,7 +38,7 @@ pub mod tool;
 pub type BoxFuture<'a, T> = core::pin::Pin<Box<dyn core::future::Future<Output = T> + Send + 'a>>;
 
 pub use catalog::{CatalogError, CatalogPort, ClockPort, IdPort, SteadyInstant};
-pub use checkpoint::{CheckpointError, ContextCheckpointStore};
+pub use checkpoint::{CheckpointError, ContextCheckpointStore, DisabledContextCheckpointStore};
 pub use hands::{
     HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart, HandsOperationStatus, HandsPort,
     HandsResult, HandsSandboxFile, ResultBounds,

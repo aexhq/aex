@@ -50,6 +50,9 @@ pub const RECEIPT_DIRECTORY_PREFIX: &str = "DELETE#RECEIPT#";
 /// Locator for the separately keyed private create-preparation partition.
 pub const CREATE_PREPARATION_EDGE_SK: &str = "CREATEPREP#AUTHORITY";
 
+/// The private lease fencing the single startup-file materializer.
+pub const SANDBOX_PREPARATION_LEASE_SK: &str = "SANDBOX#PREPARATION";
+
 /// `SESSION#{session_id}`.
 #[must_use]
 pub fn session_partition(session: SessionId) -> String {
@@ -98,6 +101,15 @@ pub fn create_preparation_edge(session: SessionId) -> Key {
     Key::new(
         session_partition(session),
         CREATE_PREPARATION_EDGE_SK.to_owned(),
+    )
+}
+
+/// The private lease fencing asynchronous sandbox preparation.
+#[must_use]
+pub fn sandbox_preparation_lease(session: SessionId) -> Key {
+    Key::new(
+        session_partition(session),
+        SANDBOX_PREPARATION_LEASE_SK.to_owned(),
     )
 }
 

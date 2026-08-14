@@ -13,39 +13,45 @@ use std::collections::BTreeMap;
 /// Environment slot carrying one bounded sandbox-process MCP invocation to
 /// the guest's maintained rmcp helper. It exists only inside the exact Hand.
 pub const SANDBOX_MCP_REQUEST_VAR: &str = "AEX_SANDBOX_MCP_REQUEST";
-/// Environment slot carrying one sandbox MCP startup qualification request.
-pub const SANDBOX_MCP_QUALIFY_VAR: &str = "AEX_SANDBOX_MCP_QUALIFY";
 
-/// One sandbox-process MCP server handshake executed during session admission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SandboxMcpQualification {
-    /// MCP server executable.
-    pub command: String,
-    /// Server arguments.
-    pub args: Vec<String>,
-    /// Complete explicit server environment. Values redact in diagnostics.
-    pub environment: BTreeMap<String, EnvValue>,
-    /// Working directory inside `/workspace`.
-    pub working_directory: GuestPath,
-}
-
-/// One sandbox-process MCP call executed inside the exact guest generation.
+/// One builtin MCP call executed inside the exact guest generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SandboxMcpCall {
-    /// MCP server executable.
-    pub command: String,
-    /// Server arguments.
-    pub args: Vec<String>,
-    /// Complete explicit server environment. Values redact in diagnostics.
-    pub environment: BTreeMap<String, EnvValue>,
-    /// Working directory inside `/workspace`.
-    pub working_directory: GuestPath,
+    /// Frozen server transport and its revealed session-scoped credentials.
+    pub transport: SandboxMcpTransport,
     /// Remote tool name.
     pub tool: String,
     /// Canonical tool arguments.
     pub arguments: aex_wire::CanonicalJson,
+}
+
+/// Transport used by the builtin MCP executable inside one Hand.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "transport",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum SandboxMcpTransport {
+    /// Frozen Streamable HTTP server reached through the sandbox network.
+    StreamableHttp {
+        /// Frozen HTTPS endpoint.
+        endpoint: String,
+        /// Revealed headers kept inside the exact operation environment.
+        headers: BTreeMap<String, EnvValue>,
+    },
+    /// Frozen child process installed in the sandbox image/workspace.
+    ChildProcess {
+        /// MCP server executable.
+        command: String,
+        /// Server arguments.
+        args: Vec<String>,
+        /// Complete explicit server environment. Values redact in diagnostics.
+        environment: BTreeMap<String, EnvValue>,
+        /// Working directory inside `/workspace`.
+        working_directory: GuestPath,
+    },
 }
 
 /// The guest filesystem root every path is resolved against.
@@ -945,11 +951,16 @@ mod tests {
     #[test]
     fn sandbox_mcp_environment_values_never_enter_debug_diagnostics() {
         let request = SandboxMcpCall {
-            command: "server".to_owned(),
-            args: Vec::new(),
-            environment: BTreeMap::from([("TOKEN".to_owned(), EnvValue::new("customer-secret"))]),
-            working_directory: GuestPath::parse(&GuestRoot::workspace(), "/workspace")
-                .expect("path"),
+            transport: SandboxMcpTransport::ChildProcess {
+                command: "server".to_owned(),
+                args: Vec::new(),
+                environment: BTreeMap::from([(
+                    "TOKEN".to_owned(),
+                    EnvValue::new("customer-secret"),
+                )]),
+                working_directory: GuestPath::parse(&GuestRoot::workspace(), "/workspace")
+                    .expect("path"),
+            },
             tool: "lookup".to_owned(),
             arguments: aex_wire::CanonicalJson::from_value(&serde_json::json!({}))
                 .expect("arguments"),

@@ -42,3 +42,29 @@ pub trait ContextCheckpointStore: Send + Sync + 'static {
         checkpoint: &'a ContextCheckpoint,
     ) -> BoxFuture<'a, Result<CheckpointMetadata, CheckpointError>>;
 }
+
+/// Explicit launch binding used while durable context checkpoints are deferred.
+///
+/// Production policy keeps checkpoint publication disabled, so these methods
+/// are defensive refusals rather than an implicit fallback storage path.
+#[derive(Debug, Default)]
+pub struct DisabledContextCheckpointStore;
+
+impl ContextCheckpointStore for DisabledContextCheckpointStore {
+    fn load<'a>(
+        &'a self,
+        _key: AgentKey,
+        _metadata: &'a CheckpointMetadata,
+    ) -> BoxFuture<'a, Result<ContextCheckpoint, CheckpointError>> {
+        Box::pin(async { Err(CheckpointError::Unavailable) })
+    }
+
+    fn save<'a>(
+        &'a self,
+        _guard: &'a FenceGuard,
+        _authority: &'a SessionAuthority,
+        _checkpoint: &'a ContextCheckpoint,
+    ) -> BoxFuture<'a, Result<CheckpointMetadata, CheckpointError>> {
+        Box::pin(async { Err(CheckpointError::Unavailable) })
+    }
+}

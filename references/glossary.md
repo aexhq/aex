@@ -72,12 +72,6 @@ session lifetime and is not an independent public session or run. The root is
 depth 0, children may reach depth 3, and at most 12 non-root identities may be
 allocated over the session lifetime.
 
-### checkpoint
-
-An internal immutable S3 context snapshot used to hydrate durable Brain state
-after activation. Checkpoints are session-scoped correctness data, not public
-versions or a sandbox snapshot, and session deletion removes them.
-
 ## Workspace and content terms
 
 ### workspace
@@ -117,8 +111,9 @@ arbitrary bytes may be ordinary files; they are not separate typed registries.
 
 A file inside the session's optional sandbox. There is no public live-file CRUD
 API. The model reaches sandbox files through built-in tools or Bash; a large tool
-result is also written to a stable call-scoped path. `storage.persist` can
-overwrite a named registered workspace file through trusted Tool Mux code.
+result is also written to a stable call-scoped path and is not uploaded
+automatically. `storage.persist` can explicitly overwrite a named registered
+workspace file through trusted Tool Mux code.
 
 ### content hash
 
@@ -156,9 +151,9 @@ CPU, peak memory, disk, bandwidth, and connection limits are observable facts.
 The one optional untrusted tool-execution sandbox for a session. It is enabled
 by default, prepared eagerly, and suspended when ready and unused. Its raw
 network policy is `none` or `public_internet`. The launch built-in model tools
-are `read_file`, `edit_file`, `write_file`, Bash, and `storage.persist` (wire
-name `storage_persist`); Tool Mux also exposes qualified remote and sandbox MCP
-tools.
+are `read_file`, `edit_file`, `write_file`, Bash, MCP, and `storage.persist`
+(wire name `storage_persist`). Frozen remote and sandbox-process MCP servers
+are both invoked through that built-in MCP tool.
 
 ### resolved configuration
 

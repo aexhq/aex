@@ -137,6 +137,12 @@ pub struct ActivationPolicy {
     pub restore_resident_bytes: u64,
     /// The context view policy.
     pub context: ContextPolicy,
+    /// Whether this activation may publish durable context checkpoints.
+    ///
+    /// Launch keeps this off: the journal remains authoritative and no
+    /// automatic session-content object is created. A future authority must be
+    /// selected and bound explicitly before enabling it.
+    pub persistent_context_checkpoints: bool,
     /// How long one external effect attempt may run, in milliseconds.
     pub effect_deadline_ms: i64,
     /// The most deliveries one receive asks for.
@@ -193,6 +199,7 @@ impl Default for ActivationPolicy {
             // Correct typed deferral is preferable to overcommitting a 1M-context mux.
             restore_resident_bytes: 64 * 1_024 * 1_024,
             context: ContextPolicy::default(),
+            persistent_context_checkpoints: false,
             effect_deadline_ms: 600_000,
             receive_batch: 10,
             long_poll: core::time::Duration::from_secs(20),

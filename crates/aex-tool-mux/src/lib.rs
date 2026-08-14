@@ -1,8 +1,8 @@
-//! Trusted Tool Mux application: one-Hand readiness, official tools, MCP, storage and bounded live/retained results.
+//! Trusted Tool Mux application: one-Hand readiness, official tools, MCP, storage and bounded live/local results.
 //!
 //! Tool Mux is the only component that may combine runtime readiness, the
 //! credential-free Hands guest, remote MCP, sandbox-process MCP, storage grants,
-//! bounded live previews, and full retained results. Brain stores handles and
+//! bounded live previews, and full sandbox-local results. Brain stores handles and
 //! reads outcomes; it never connects to any executor directly.
 
 mod contract;
@@ -12,14 +12,12 @@ mod telemetry;
 
 pub use contract::MAX_LIVE_PREVIEW_BYTES;
 pub use contract::{
-    EagerPrepareRequest, ExecutorOutput, FullOutput, OfficialSandboxTool, ReadyHand,
-    RetainedResult, SandboxConfig, ToolCallIdentity, ToolCompletion, ToolError, ToolHandle,
-    ToolHandleRequest, ToolRead, ToolStart, ToolStartRequest, ToolTarget,
+    ExecutorOutput, FullOutput, OfficialSandboxTool, ReadyHand, SandboxConfig, SandboxResultFile,
+    ToolCallIdentity, ToolCompletion, ToolError, ToolHandle, ToolHandleRequest, ToolRead,
+    ToolStart, ToolStartRequest, ToolTarget,
 };
 pub use mux::ToolMux;
-pub use ports::{
-    GuestPort, McpPort, ResultRetentionPort, RuntimePort, StoragePersistPort, ToolMuxFuture,
-};
+pub use ports::{GuestPort, RuntimePort, StoragePersistPort, ToolMuxFuture};
 pub use telemetry::{
     PreparationProgress, TelemetryEnvelope, TelemetryEvent, TelemetryGap, TelemetryKind,
     TelemetryPort, TelemetryPressure, TelemetryProducer,

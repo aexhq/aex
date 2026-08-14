@@ -4,12 +4,12 @@ use std::sync::{Arc, Mutex};
 
 use aex_hands_protocol::operation::{GuestPath, GuestRoot};
 use aex_hands_protocol::rpc::{Fence, HandsOperationId};
-use aex_runtime_control::{HandId, HandRecord};
+use aex_runtime_control::HandId;
 use aex_tool_mux::{
-    ExecutorOutput, FullOutput, GuestPort, McpPort, OfficialSandboxTool, PreparationProgress,
-    ReadyHand, ResultRetentionPort, RuntimePort, SandboxConfig, StoragePersistPort, TelemetryEvent,
-    TelemetryKind, TelemetryPort, ToolCallIdentity, ToolCompletion, ToolHandle, ToolMux,
-    ToolMuxFuture, ToolStart, ToolStartRequest, ToolTarget,
+    ExecutorOutput, FullOutput, GuestPort, OfficialSandboxTool, ReadyHand, RuntimePort,
+    SandboxConfig, StoragePersistPort, TelemetryEvent, TelemetryKind, TelemetryPort,
+    ToolCallIdentity, ToolHandle, ToolMux, ToolMuxFuture, ToolRead, ToolStart, ToolStartRequest,
+    ToolTarget,
 };
 use aex_wire::ids::{
     AgentId, ContentHash, GenerationId, MessageId, PrefixedId, ResourceName, SessionId, Uuid7,
@@ -52,57 +52,53 @@ fn request(target: ToolTarget, enabled: bool) -> ToolStartRequest {
     }
 }
 
-#[derive(Default)]
 struct RuntimeFake {
-    eager: Mutex<u32>,
     waits: Mutex<u32>,
     settles: Mutex<u32>,
+    cancels: Mutex<u32>,
+    ready: Mutex<bool>,
     foreign_generation: Mutex<bool>,
 }
 
+impl Default for RuntimeFake {
+    fn default() -> Self {
+        Self {
+            waits: Mutex::new(0),
+            settles: Mutex::new(0),
+            cancels: Mutex::new(0),
+            ready: Mutex::new(true),
+            foreign_generation: Mutex::new(false),
+        }
+    }
+}
+
 impl RuntimePort for RuntimeFake {
-    fn eager_prepare<'a>(
+    fn start_waiter<'a>(
         &'a self,
         session: SessionId,
-        sandbox: SandboxConfig,
-    ) -> ToolMuxFuture<'a, Result<Vec<PreparationProgress>, String>> {
-        *self.eager.lock().expect("eager mutex") += 1;
+        hand: HandId,
+        _generation: GenerationId,
+        _call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<(), String>> {
+        *self.waits.lock().expect("wait mutex") += 1;
         Box::pin(async move {
-            let mut hand = HandRecord::new(
-                session,
-                sandbox.generation.expect("enabled generation"),
-                sandbox.enabled,
-            );
-            let _ = hand.eager_action();
-            let _ = hand.phase_succeeded().expect("provisioned");
-            let _ = hand.phase_succeeded().expect("booted");
-            let _ = hand.phase_succeeded().expect("materialized");
-            let _ = hand.phase_succeeded().expect("qualified");
-            let _ = hand.phase_succeeded().expect("suspended");
-            Ok(vec![
-                PreparationProgress::Provisioning,
-                PreparationProgress::Booting,
-                PreparationProgress::MaterializingWorkspace,
-                PreparationProgress::QualifyingSandboxMcp,
-                PreparationProgress::Ready,
-                PreparationProgress::Suspending,
-                PreparationProgress::Suspended,
-            ])
+            assert_eq!(hand, HandId::for_session(session));
+            Ok(())
         })
     }
 
-    fn wait_ready<'a>(
+    fn poll_waiter<'a>(
         &'a self,
         session: SessionId,
         hand: HandId,
         generation: GenerationId,
         _call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<ReadyHand, String>> {
-        *self.waits.lock().expect("wait mutex") += 1;
+    ) -> ToolMuxFuture<'a, Result<Option<ReadyHand>, String>> {
+        let ready = *self.ready.lock().expect("ready mutex");
         let foreign = *self.foreign_generation.lock().expect("foreign mutex");
         Box::pin(async move {
             assert_eq!(hand, HandId::for_session(session));
-            Ok(ReadyHand {
+            Ok(ready.then_some(ReadyHand {
                 hand,
                 generation: if foreign {
                     id::<GenerationId>(99)
@@ -110,7 +106,23 @@ impl RuntimePort for RuntimeFake {
                     generation
                 },
                 fence: Fence(8),
-            })
+            }))
+        })
+    }
+
+    fn cancel_waiter<'a>(
+        &'a self,
+        generation: GenerationId,
+        _call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<Option<ReadyHand>, String>> {
+        *self.cancels.lock().expect("cancel mutex") += 1;
+        let ready = *self.ready.lock().expect("ready mutex");
+        Box::pin(async move {
+            Ok(ready.then_some(ReadyHand {
+                hand: HandId::for_session(identity().session),
+                generation,
+                fence: Fence(8),
+            }))
         })
     }
 
@@ -152,36 +164,15 @@ impl GuestPort for GuestFake {
         target: &'a ToolTarget,
         _arguments: &'a serde_json::Value,
         _call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<Result<ExecutorOutput, HandsOperationId>, String>> {
+        _deadline_ms: i64,
+        _max_result_bytes: usize,
+        _timeout_ms: u32,
+    ) -> ToolMuxFuture<'a, Result<HandsOperationId, String>> {
         self.starts
             .lock()
             .expect("start mutex")
             .push((ready, target.clone()));
-        let large = *self.large.lock().expect("large mutex");
-        Box::pin(async move {
-            if large {
-                let path = GuestPath::parse(
-                    &GuestRoot::workspace(),
-                    "/workspace/.aex/tool-results/call-6.bin",
-                )
-                .expect("contained result path");
-                Ok(Ok(ExecutorOutput {
-                    preview: vec![b'x'; 70_000],
-                    full: FullOutput::SandboxFile {
-                        path,
-                        bytes: 12_000_000,
-                        hash: ContentHash::from_bytes([9; 32]),
-                    },
-                    is_error: false,
-                }))
-            } else {
-                Ok(Ok(ExecutorOutput {
-                    preview: b"ok".to_vec(),
-                    full: FullOutput::Inline(b"ok".to_vec()),
-                    is_error: false,
-                }))
-            }
-        })
+        Box::pin(async { Ok(HandsOperationId(Uuid7::compose(9, [9; 10]))) })
     }
 
     fn read<'a>(
@@ -191,42 +182,41 @@ impl GuestPort for GuestFake {
         _max_result_bytes: usize,
         _timeout_ms: u32,
     ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
-        Box::pin(async { Ok(None) })
+        let large = *self.large.lock().expect("large mutex");
+        Box::pin(async move {
+            let output = if large {
+                let path = GuestPath::parse(
+                    &GuestRoot::workspace(),
+                    "/workspace/.aex/tool-results/call-6.bin",
+                )
+                .expect("contained result path");
+                ExecutorOutput {
+                    preview: vec![b'x'; 70_000],
+                    full: FullOutput::SandboxFile {
+                        path,
+                        bytes: 12_000_000,
+                        hash: ContentHash::from_bytes([9; 32]),
+                    },
+                    is_error: false,
+                }
+            } else {
+                ExecutorOutput {
+                    preview: b"ok".to_vec(),
+                    full: FullOutput::Inline(b"ok".to_vec()),
+                    is_error: false,
+                }
+            };
+            Ok(Some(output))
+        })
     }
 
     fn cancel<'a>(
         &'a self,
         _ready: ReadyHand,
-        _operation: HandsOperationId,
+        _call: &'a ToolCallIdentity,
     ) -> ToolMuxFuture<'a, Result<(), String>> {
         *self.cancels.lock().expect("cancel mutex") += 1;
         Box::pin(async { Ok(()) })
-    }
-}
-
-#[derive(Default)]
-struct McpFake {
-    calls: Mutex<u32>,
-}
-
-impl McpPort for McpFake {
-    fn call_remote<'a>(
-        &'a self,
-        _endpoint: &'a str,
-        _headers: &'a std::collections::BTreeMap<String, ResourceName>,
-        _server: &'a ResourceName,
-        _tool: &'a str,
-        _arguments: &'a serde_json::Value,
-        _call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<ExecutorOutput, String>> {
-        *self.calls.lock().expect("mcp mutex") += 1;
-        Box::pin(async {
-            Ok(ExecutorOutput {
-                preview: b"remote".to_vec(),
-                full: FullOutput::Inline(b"remote".to_vec()),
-                is_error: false,
-            })
-        })
     }
 }
 
@@ -236,78 +226,40 @@ struct StorageFake {
 }
 
 impl StoragePersistPort for StorageFake {
-    fn persist<'a>(
+    fn start_persist<'a>(
         &'a self,
         ready: ReadyHand,
         _source: &'a GuestPath,
         logical_name: &'a str,
         _media_type: Option<&'a str>,
         _call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<ExecutorOutput, String>> {
+    ) -> ToolMuxFuture<'a, Result<(), String>> {
         self.calls.lock().expect("storage mutex").push(ready);
-        let output = format!(r#"{{"name":"{logical_name}","hash":"sha256:09"}}"#);
-        Box::pin(async move {
-            Ok(ExecutorOutput {
-                preview: output.as_bytes().to_vec(),
-                full: FullOutput::Inline(output.into_bytes()),
-                is_error: false,
-            })
-        })
-    }
-}
-
-#[derive(Default)]
-struct ResultsFake {
-    inline: Mutex<u32>,
-    sandbox: Mutex<Vec<ReadyHand>>,
-}
-
-impl ResultRetentionPort for ResultsFake {
-    fn retain_inline<'a>(
-        &'a self,
-        call: &'a ToolCallIdentity,
-        body: &'a [u8],
-    ) -> ToolMuxFuture<'a, Result<aex_tool_mux::RetainedResult, String>> {
-        *self.inline.lock().expect("inline mutex") += 1;
-        let bytes = body.len() as u64;
-        let hash = ContentHash::from_bytes(*blake3::hash(body).as_bytes());
-        let object_ref = format!("session/{}/tool/{}", call.session, call.call);
-        Box::pin(async move {
-            Ok(aex_tool_mux::RetainedResult {
-                object_ref,
-                bytes,
-                hash,
-                sandbox_path: None,
-            })
-        })
+        let _ = logical_name;
+        Box::pin(async move { Ok(()) })
     }
 
-    fn retain_sandbox_file<'a>(
+    fn read_persist<'a>(
         &'a self,
-        call: &'a ToolCallIdentity,
-        ready: ReadyHand,
-        path: &'a GuestPath,
-        bytes: u64,
-        hash: ContentHash,
-    ) -> ToolMuxFuture<'a, Result<aex_tool_mux::RetainedResult, String>> {
-        self.sandbox.lock().expect("sandbox mutex").push(ready);
-        let object_ref = format!("session/{}/tool/{}", call.session, call.call);
-        let sandbox_path = Some(path.as_str().to_owned());
-        Box::pin(async move {
-            Ok(aex_tool_mux::RetainedResult {
-                object_ref,
-                bytes,
-                hash,
-                sandbox_path,
-            })
-        })
-    }
-
-    fn read_handle<'a>(
-        &'a self,
-        _handle: &'a ToolHandle,
+        _ready: ReadyHand,
+        _call: &'a ToolCallIdentity,
     ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
-        Box::pin(async { Ok(None) })
+        Box::pin(async move {
+            let output = br#"{"name":"report.pdf","hash":"sha256:09"}"#.to_vec();
+            Ok(Some(ExecutorOutput {
+                preview: output.clone(),
+                full: FullOutput::Inline(output),
+                is_error: false,
+            }))
+        })
+    }
+
+    fn cancel_persist<'a>(
+        &'a self,
+        _ready: ReadyHand,
+        _call: &'a ToolCallIdentity,
+    ) -> ToolMuxFuture<'a, Result<(), String>> {
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -333,68 +285,28 @@ struct Fixture {
     mux: ToolMux,
     runtime: Arc<RuntimeFake>,
     guest: Arc<GuestFake>,
-    mcp: Arc<McpFake>,
     storage: Arc<StorageFake>,
-    results: Arc<ResultsFake>,
     telemetry: Arc<TelemetryFake>,
 }
 
 fn fixture() -> Fixture {
     let runtime = Arc::new(RuntimeFake::default());
     let guest = Arc::new(GuestFake::default());
-    let mcp = Arc::new(McpFake::default());
     let storage = Arc::new(StorageFake::default());
-    let results = Arc::new(ResultsFake::default());
     let telemetry = Arc::new(TelemetryFake::default());
     let mux = ToolMux::new(
         runtime.clone(),
         guest.clone(),
-        mcp.clone(),
         storage.clone(),
-        results.clone(),
         telemetry.clone(),
     );
     Fixture {
         mux,
         runtime,
         guest,
-        mcp,
         storage,
-        results,
         telemetry,
     }
-}
-
-#[tokio::test]
-async fn eager_setup_is_visible_and_disabled_sessions_make_no_runtime_call() {
-    let fixture = fixture();
-    fixture
-        .mux
-        .eager_prepare(identity().session, sandbox(true))
-        .await
-        .expect("eager setup");
-    assert_eq!(*fixture.runtime.eager.lock().expect("eager mutex"), 1);
-    let events = fixture.telemetry.events.lock().expect("telemetry mutex");
-    assert_eq!(events[0].kind, TelemetryKind::SandboxRequested);
-    assert!(events.iter().any(|event| {
-        event.kind
-            == TelemetryKind::SandboxProgress {
-                progress: PreparationProgress::MaterializingWorkspace,
-            }
-    }));
-    assert!(events.iter().any(|event| {
-        event.kind
-            == TelemetryKind::SandboxProgress {
-                progress: PreparationProgress::Suspended,
-            }
-    }));
-    drop(events);
-    fixture
-        .mux
-        .eager_prepare(identity().session, sandbox(false))
-        .await
-        .expect("disabled is a no-op");
-    assert_eq!(*fixture.runtime.eager.lock().expect("eager mutex"), 1);
 }
 
 #[tokio::test]
@@ -422,7 +334,42 @@ async fn sandbox_opt_out_is_model_visible_and_never_touches_runtime_or_guest() {
 }
 
 #[tokio::test]
-async fn remote_streamable_mcp_runs_without_a_hand_even_when_sandbox_is_disabled() {
+async fn start_returns_a_detached_handle_before_first_call_preparation_is_ready() {
+    let fixture = fixture();
+    *fixture.runtime.ready.lock().expect("ready mutex") = false;
+    let ToolStart::Accepted { handle } = fixture
+        .mux
+        .start(&request(
+            ToolTarget::OfficialSandbox {
+                tool: OfficialSandboxTool::Read,
+            },
+            true,
+        ))
+        .await
+        .expect("start only schedules preparation")
+    else {
+        panic!("sandbox call is detached")
+    };
+    assert_eq!(*fixture.runtime.waits.lock().expect("wait mutex"), 1);
+    assert!(fixture.guest.hellos.lock().expect("hello mutex").is_empty());
+    let read = aex_tool_mux::ToolHandleRequest {
+        identity: identity(),
+        handle: handle.clone(),
+    };
+    assert_eq!(
+        fixture.mux.read(&read).await.expect("poll"),
+        ToolRead::Pending
+    );
+    assert!(fixture.guest.hellos.lock().expect("hello mutex").is_empty());
+    *fixture.runtime.ready.lock().expect("ready mutex") = true;
+    assert!(matches!(
+        fixture.mux.read(&read).await.expect("completed poll"),
+        ToolRead::Completed { .. }
+    ));
+}
+
+#[tokio::test]
+async fn remote_streamable_mcp_requires_the_same_sandbox_as_every_other_tool() {
     let fixture = fixture();
     let outcome = fixture
         .mux
@@ -437,8 +384,10 @@ async fn remote_streamable_mcp_runs_without_a_hand_even_when_sandbox_is_disabled
         ))
         .await
         .expect("remote MCP");
-    assert!(matches!(outcome, ToolStart::Completed { .. }));
-    assert_eq!(*fixture.mcp.calls.lock().expect("mcp mutex"), 1);
+    let ToolStart::Completed { result } = outcome else {
+        panic!("disabled sandbox is terminal")
+    };
+    assert_eq!(result.error.expect("disabled").code, "sandbox_disabled");
     assert_eq!(*fixture.runtime.waits.lock().expect("wait mutex"), 0);
     assert!(fixture.guest.hellos.lock().expect("hello mutex").is_empty());
 }
@@ -458,22 +407,39 @@ async fn official_and_sandbox_mcp_wait_for_and_hello_the_exact_generation() {
             working_directory: None,
             tool: "compile".to_owned(),
         },
+        ToolTarget::RemoteMcp {
+            server: ResourceName::parse("clock").expect("name"),
+            endpoint: "https://mcp.example.test/api".to_owned(),
+            headers: std::collections::BTreeMap::new(),
+            tool: "now".to_owned(),
+        },
     ] {
-        fixture
+        let ToolStart::Accepted { handle } = fixture
             .mux
             .start(&request(target, true))
             .await
-            .expect("sandbox target");
+            .expect("sandbox target")
+        else {
+            panic!("sandbox tool starts detached")
+        };
+        fixture
+            .mux
+            .read(&aex_tool_mux::ToolHandleRequest {
+                identity: identity(),
+                handle,
+            })
+            .await
+            .expect("sandbox result");
     }
-    assert_eq!(*fixture.runtime.waits.lock().expect("wait mutex"), 2);
+    assert_eq!(*fixture.runtime.waits.lock().expect("wait mutex"), 3);
     let hellos = fixture.guest.hellos.lock().expect("hello mutex");
-    assert_eq!(hellos.len(), 2);
+    assert_eq!(hellos.len(), 3);
     assert!(
         hellos
             .iter()
             .all(|ready| ready.generation == id::<GenerationId>(7))
     );
-    assert_eq!(*fixture.runtime.settles.lock().expect("settle mutex"), 2);
+    assert_eq!(*fixture.runtime.settles.lock().expect("settle mutex"), 3);
 }
 
 #[tokio::test]
@@ -484,7 +450,7 @@ async fn a_foreign_ready_generation_is_refused_before_guest_dispatch() {
         .foreign_generation
         .lock()
         .expect("foreign mutex") = true;
-    let error = fixture
+    let ToolStart::Accepted { handle } = fixture
         .mux
         .start(&request(
             ToolTarget::OfficialSandbox {
@@ -492,6 +458,17 @@ async fn a_foreign_ready_generation_is_refused_before_guest_dispatch() {
             },
             true,
         ))
+        .await
+        .expect("start")
+    else {
+        panic!("accepted")
+    };
+    let error = fixture
+        .mux
+        .read(&aex_tool_mux::ToolHandleRequest {
+            identity: identity(),
+            handle,
+        })
         .await
         .expect_err("foreign generation");
     assert!(error.contains("foreign Hand generation"));
@@ -506,10 +483,10 @@ async fn a_foreign_ready_generation_is_refused_before_guest_dispatch() {
 }
 
 #[tokio::test]
-async fn a_large_result_is_a_bounded_preview_plus_sandbox_file_and_retained_object() {
+async fn a_large_result_is_a_bounded_preview_plus_a_local_sandbox_file() {
     let fixture = fixture();
     *fixture.guest.large.lock().expect("large mutex") = true;
-    let ToolStart::Completed { result } = fixture
+    let ToolStart::Accepted { handle } = fixture
         .mux
         .start(&request(
             ToolTarget::OfficialSandbox {
@@ -520,20 +497,24 @@ async fn a_large_result_is_a_bounded_preview_plus_sandbox_file_and_retained_obje
         .await
         .expect("large output")
     else {
-        panic!("fake completes")
+        panic!("sandbox start is detached")
+    };
+    let ToolRead::Completed { result } = fixture
+        .mux
+        .read(&aex_tool_mux::ToolHandleRequest {
+            identity: identity(),
+            handle,
+        })
+        .await
+        .expect("large output poll")
+    else {
+        panic!("fake completes on poll")
     };
     assert_eq!(result.preview.len(), 65_536);
     assert!(result.truncated);
-    let retained = result.retained.expect("retained full result");
-    assert_eq!(retained.bytes, 12_000_000);
-    assert_eq!(
-        retained.sandbox_path.as_deref(),
-        Some("/workspace/.aex/tool-results/call-6.bin")
-    );
-    assert_eq!(
-        fixture.results.sandbox.lock().expect("sandbox mutex")[0].generation,
-        id::<GenerationId>(7)
-    );
+    let output_file = result.output_file.expect("local full result");
+    assert_eq!(output_file.bytes, 12_000_000);
+    assert_eq!(output_file.path, "/workspace/.aex/tool-results/call-6.bin");
     let events = fixture.telemetry.events.lock().expect("telemetry mutex");
     assert!(events.iter().any(|event| matches!(
         event.kind,
@@ -544,7 +525,7 @@ async fn a_large_result_is_a_bounded_preview_plus_sandbox_file_and_retained_obje
     )));
     assert!(events.iter().any(|event| matches!(
         event.kind,
-        TelemetryKind::ToolResultRetained {
+        TelemetryKind::ToolResultPlaced {
             bytes: 12_000_000,
             ..
         }
@@ -556,7 +537,7 @@ async fn storage_persist_uses_the_same_exact_generation_readiness_path() {
     let fixture = fixture();
     let source =
         GuestPath::parse(&GuestRoot::workspace(), "/workspace/report.pdf").expect("source path");
-    let outcome = fixture
+    let ToolStart::Accepted { handle } = fixture
         .mux
         .start(&request(
             ToolTarget::StoragePersist {
@@ -567,18 +548,23 @@ async fn storage_persist_uses_the_same_exact_generation_readiness_path() {
             true,
         ))
         .await
-        .expect("persist");
-    let ToolStart::Completed {
-        result:
-            ToolCompletion {
-                error: None,
-                retained: Some(_),
-                ..
-            },
-    } = outcome
+        .expect("persist")
     else {
-        panic!("storage persisted and retained")
+        panic!("storage persistence starts detached")
     };
+    let ToolRead::Completed { result } = fixture
+        .mux
+        .read(&aex_tool_mux::ToolHandleRequest {
+            identity: identity(),
+            handle,
+        })
+        .await
+        .expect("persist result")
+    else {
+        panic!("storage persistence completed")
+    };
+    assert!(result.error.is_none());
+    assert!(result.output_file.is_none());
     assert_eq!(
         fixture.storage.calls.lock().expect("storage mutex")[0].generation,
         id::<GenerationId>(7)
@@ -589,7 +575,7 @@ async fn storage_persist_uses_the_same_exact_generation_readiness_path() {
 async fn readiness_waiter_is_settled_when_guest_startup_fails() {
     let fixture = fixture();
     *fixture.guest.fail_hello.lock().expect("fail hello mutex") = true;
-    fixture
+    let ToolStart::Accepted { handle } = fixture
         .mux
         .start(&request(
             ToolTarget::OfficialSandbox {
@@ -597,6 +583,17 @@ async fn readiness_waiter_is_settled_when_guest_startup_fails() {
             },
             true,
         ))
+        .await
+        .expect("start")
+    else {
+        panic!("accepted")
+    };
+    fixture
+        .mux
+        .read(&aex_tool_mux::ToolHandleRequest {
+            identity: identity(),
+            handle,
+        })
         .await
         .expect_err("guest startup must fail");
     assert_eq!(*fixture.runtime.settles.lock().expect("settle mutex"), 1);
@@ -610,13 +607,41 @@ async fn cancellation_releases_the_durable_waiter() {
         handle: ToolHandle::Sandbox {
             hand: HandId::for_session(identity().session),
             generation: id::<GenerationId>(7),
-            fence: Fence(8),
-            operation: HandsOperationId(Uuid7::compose(9, [9; 10])),
+            target: Box::new(ToolTarget::OfficialSandbox {
+                tool: OfficialSandboxTool::Read,
+            }),
+            arguments: serde_json::json!({}),
+            deadline_ms: 60_000,
             max_result_bytes: 1_048_576,
             timeout_ms: 60_000,
         },
     };
     fixture.mux.cancel(&request).await.expect("cancel");
+    assert_eq!(*fixture.runtime.cancels.lock().expect("cancel mutex"), 1);
     assert_eq!(*fixture.guest.cancels.lock().expect("cancel mutex"), 1);
     assert_eq!(*fixture.runtime.settles.lock().expect("settle mutex"), 1);
+}
+
+#[tokio::test]
+async fn pre_dispatch_cancellation_never_calls_the_guest() {
+    let fixture = fixture();
+    *fixture.runtime.ready.lock().expect("ready mutex") = false;
+    let request = aex_tool_mux::ToolHandleRequest {
+        identity: identity(),
+        handle: ToolHandle::Sandbox {
+            hand: HandId::for_session(identity().session),
+            generation: id::<GenerationId>(7),
+            target: Box::new(ToolTarget::OfficialSandbox {
+                tool: OfficialSandboxTool::Read,
+            }),
+            arguments: serde_json::json!({}),
+            deadline_ms: 60_000,
+            max_result_bytes: 1_048_576,
+            timeout_ms: 60_000,
+        },
+    };
+    fixture.mux.cancel(&request).await.expect("cancel");
+    assert_eq!(*fixture.runtime.cancels.lock().expect("cancel mutex"), 1);
+    assert_eq!(*fixture.guest.cancels.lock().expect("cancel mutex"), 0);
+    assert_eq!(*fixture.runtime.settles.lock().expect("settle mutex"), 0);
 }

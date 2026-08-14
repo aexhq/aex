@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
 
 use aex_hands_protocol::operation::GuestPath;
-use aex_hands_protocol::rpc::{Fence, HandsOperationId};
+use aex_hands_protocol::rpc::Fence;
 use aex_runtime_control::HandId;
-use aex_wire::Uuid7;
 use aex_wire::ids::{
     AgentId, ContentHash, GenerationId, MessageId, OrganizationId, ResourceName, SessionId,
     WorkspaceId,
@@ -48,17 +47,6 @@ pub struct SandboxConfig {
     pub generation: Option<GenerationId>,
 }
 
-/// Session-admission notification that starts sandbox preparation without
-/// making session creation wait for a provider boot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct EagerPrepareRequest {
-    /// Newly admitted session.
-    pub session: SessionId,
-    /// Frozen session sandbox selection and exact generation.
-    pub sandbox: SandboxConfig,
-}
-
 /// Official sandbox commands exposed to the model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,7 +62,7 @@ pub enum OfficialSandboxTool {
 }
 
 /// Qualified target selected from the frozen session catalog.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "target",
     rename_all = "snake_case",
@@ -86,7 +74,7 @@ pub enum ToolTarget {
         /// Exact installed tool.
         tool: OfficialSandboxTool,
     },
-    /// Streamable HTTP MCP outside the Hand.
+    /// Streamable HTTP MCP invoked by the builtin MCP client inside the Hand.
     RemoteMcp {
         /// Frozen server name.
         server: ResourceName,
@@ -128,7 +116,7 @@ impl ToolTarget {
     /// Whether target needs a Hand.
     #[must_use]
     pub const fn needs_hand(&self) -> bool {
-        !matches!(self, Self::RemoteMcp { .. })
+        true
     }
 }
 
@@ -164,7 +152,7 @@ pub struct ReadyHand {
     pub fence: Fence,
 }
 
-/// Full result location before trusted retention.
+/// Full result location before model-facing normalization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FullOutput {
     /// Bounded complete bytes from a small remote result.
@@ -180,7 +168,7 @@ pub enum FullOutput {
     },
 }
 
-/// Executor output before preview and retention normalization.
+/// Executor output before preview and local-file normalization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutorOutput {
     /// Bounded bytes suitable for live preview. Tool Mux applies its own bound again.
@@ -191,18 +179,16 @@ pub struct ExecutorOutput {
     pub is_error: bool,
 }
 
-/// Full retained result reference safe for durable handles and telemetry.
+/// Complete large result retained inside the exact sandbox generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RetainedResult {
-    /// Opaque S3/object reference, never a bearer URL.
-    pub object_ref: String,
+pub struct SandboxResultFile {
+    /// Stable call-scoped path under `/workspace/.aex/tool-results`.
+    pub path: String,
     /// Complete length.
     pub bytes: u64,
     /// Complete hash.
     pub hash: ContentHash,
-    /// Sandbox path when the complete result remains available to the model.
-    pub sandbox_path: Option<String>,
 }
 
 /// Model-visible, streamable terminal result.
@@ -213,8 +199,8 @@ pub struct ToolCompletion {
     pub preview: String,
     /// Whether the preview omits complete content.
     pub truncated: bool,
-    /// Complete retained result metadata.
-    pub retained: Option<RetainedResult>,
+    /// Complete local result metadata when the preview omits bytes.
+    pub output_file: Option<SandboxResultFile>,
     /// Tool-result error, distinct from transport failure.
     pub error: Option<ToolError>,
 }
@@ -236,7 +222,7 @@ impl ToolCompletion {
         Self {
             preview: "Sandbox tools are unavailable because this session disabled its sandbox. Continue without the tool or ask the user to create a sandbox-enabled session.".to_owned(),
             truncated: false,
-            retained: None,
+            output_file: None,
             error: Some(ToolError {
                 code: "sandbox_disabled".to_owned(),
                 message: "This session explicitly disabled its sandbox; no runtime was created."
@@ -254,36 +240,22 @@ impl ToolCompletion {
     rename_all_fields = "camelCase"
 )]
 pub enum ToolHandle {
-    /// Guest operation on one exact Hand generation.
+    /// Deferred guest operation on one exact Hand generation.
     Sandbox {
         /// Logical Hand.
         hand: HandId,
         /// Exact provider generation.
         generation: GenerationId,
-        /// Fence observed after exact-generation readiness.
-        fence: Fence,
-        /// Stable guest operation.
-        operation: HandsOperationId,
+        /// Frozen target dispatched only after preparation completes.
+        target: Box<ToolTarget>,
+        /// Canonical validated arguments.
+        arguments: serde_json::Value,
+        /// Original absolute deadline.
+        deadline_ms: i64,
         /// Result ceiling required for resumable verification.
         max_result_bytes: usize,
         /// Original operation wall-clock ceiling.
         timeout_ms: u32,
-    },
-    /// Remote MCP operation identity.
-    RemoteMcp {
-        /// Frozen server.
-        server: ResourceName,
-        /// Stable opaque operation identity.
-        operation: Uuid7,
-    },
-    /// Latest-only workspace persistence operation.
-    StoragePersist {
-        /// Logical Hand.
-        hand: HandId,
-        /// Exact provider generation.
-        generation: GenerationId,
-        /// Stable opaque operation identity.
-        operation: Uuid7,
     },
 }
 

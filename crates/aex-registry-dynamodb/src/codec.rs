@@ -1,4 +1,4 @@
-//! `regional-registry` row codecs.
+//! Registry row-family codecs for the unified `regional-file-authority` table.
 //!
 //! The `ETag` is **never stored as an independent fact**: it is recomputed from
 //! `(kind, revision, digest)` on the way out and compared with what the row

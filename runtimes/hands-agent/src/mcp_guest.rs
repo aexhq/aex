@@ -4,15 +4,11 @@
 //! `Exec`. The invocation is carried in a redacting environment value and the
 //! helper starts only the configured child with a cleared, explicit environment.
 
-use aex_hands_protocol::operation::{
-    SANDBOX_MCP_QUALIFY_VAR, SANDBOX_MCP_REQUEST_VAR, SandboxMcpCall, SandboxMcpQualification,
-};
-use rmcp::model::{CallToolRequestParams, ClientInfo, PaginatedRequestParams, ProtocolVersion};
+use aex_hands_protocol::operation::{SANDBOX_MCP_REQUEST_VAR, SandboxMcpCall, SandboxMcpTransport};
+use rmcp::model::{CallToolRequestParams, ClientInfo, ProtocolVersion};
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::{ConfigureCommandExt as _, TokioChildProcess};
 use rmcp::{ClientLifecycleMode, ClientServiceExt as _};
-
-const MAX_LIST_PAGES: usize = 8;
-const MAX_TOOLS: usize = 128;
 
 pub async fn run() -> std::process::ExitCode {
     match call().await {
@@ -27,31 +23,20 @@ pub async fn run() -> std::process::ExitCode {
     }
 }
 
-/// Starts one configured server, completes the pinned handshake, and lists a
-/// bounded launch surface before session admission may publish readiness.
-pub async fn qualify() -> std::process::ExitCode {
-    match qualify_server().await {
-        Ok(body) => {
-            println!("{body}");
-            std::process::ExitCode::SUCCESS
-        }
-        Err(reason) => {
-            eprintln!("sandbox MCP qualification failed: {reason}");
-            std::process::ExitCode::FAILURE
-        }
-    }
-}
-
 async fn call() -> Result<String, &'static str> {
     let encoded = std::env::var(SANDBOX_MCP_REQUEST_VAR).map_err(|_| "request_missing")?;
     let request: SandboxMcpCall = serde_json::from_str(&encoded).map_err(|_| "request_invalid")?;
-    let service = connect(
-        &request.command,
-        &request.args,
-        &request.environment,
-        request.working_directory.as_str(),
-    )
-    .await?;
+    let service = match &request.transport {
+        SandboxMcpTransport::StreamableHttp { endpoint, headers } => {
+            connect_remote(endpoint, headers).await?
+        }
+        SandboxMcpTransport::ChildProcess {
+            command,
+            args,
+            environment,
+            working_directory,
+        } => connect_process(command, args, environment, working_directory.as_str()).await?,
+    };
     let arguments = request
         .arguments
         .to_value()
@@ -67,42 +52,7 @@ async fn call() -> Result<String, &'static str> {
     Ok(body)
 }
 
-async fn qualify_server() -> Result<String, &'static str> {
-    let encoded = std::env::var(SANDBOX_MCP_QUALIFY_VAR).map_err(|_| "request_missing")?;
-    let request: SandboxMcpQualification =
-        serde_json::from_str(&encoded).map_err(|_| "request_invalid")?;
-    let service = connect(
-        &request.command,
-        &request.args,
-        &request.environment,
-        request.working_directory.as_str(),
-    )
-    .await?;
-    let mut names = Vec::new();
-    let mut cursor = None;
-    for _ in 0..MAX_LIST_PAGES {
-        let page = service
-            .list_tools(Some(PaginatedRequestParams::default().with_cursor(cursor)))
-            .await
-            .map_err(|_| "tools_list_failed")?;
-        for tool in page.tools {
-            if names.len() == MAX_TOOLS {
-                return Err("too_many_tools");
-            }
-            names.push(tool.name.to_string());
-        }
-        cursor = page.next_cursor;
-        if cursor.is_none() {
-            names.sort();
-            let body = serde_json::to_string(&names).map_err(|_| "result_invalid")?;
-            let _ = service.cancel().await;
-            return Ok(body);
-        }
-    }
-    Err("too_many_pages")
-}
-
-async fn connect(
+async fn connect_process(
     executable: &str,
     args: &[String],
     environment: &std::collections::BTreeMap<String, aex_hands_protocol::operation::EnvValue>,
@@ -128,4 +78,35 @@ async fn connect(
         .await
         .map_err(|_| "protocol_start_failed")?;
     Ok(service)
+}
+
+async fn connect_remote(
+    endpoint: &str,
+    headers: &std::collections::BTreeMap<String, aex_hands_protocol::operation::EnvValue>,
+) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ClientInfo>, &'static str> {
+    let mut config = StreamableHttpClientTransportConfig::with_uri(endpoint.to_owned())
+        .reinit_on_expired_session(false);
+    let mut custom_headers = std::collections::HashMap::new();
+    for (name, value) in headers {
+        let name = http::HeaderName::try_from(name).map_err(|_| "header_invalid")?;
+        let mut value =
+            http::HeaderValue::try_from(value.expose()).map_err(|_| "header_invalid")?;
+        value.set_sensitive(true);
+        custom_headers.insert(name, value);
+    }
+    config.custom_headers = custom_headers;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "client_invalid")?;
+    let transport = rmcp::transport::StreamableHttpClientTransport::with_client(client, config);
+    ClientInfo::default()
+        .serve_with_lifecycle(
+            transport,
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await
+        .map_err(|_| "protocol_start_failed")
 }

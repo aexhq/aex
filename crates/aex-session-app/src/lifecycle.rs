@@ -79,6 +79,56 @@ pub struct LifecycleWorkClaim {
     pub owner: String,
 }
 
+/// Publishes successful background sandbox preparation against the session
+/// revision observed by the worker.
+///
+/// Runtime and guest effects have already completed when this planner is
+/// called. A concurrent message admission wins by revision and the worker
+/// reloads before retrying; preparation never rolls conversation state back.
+///
+/// # Errors
+///
+/// Returns [`AppError`] when the lifecycle checkpoint cannot advance or the
+/// resulting conditional transaction is malformed.
+pub fn settle_sandbox_preparation(
+    session: &Session,
+    suspended: bool,
+    now: Timestamp,
+) -> Result<Planned<Session>, AppError> {
+    let mut head = session.clone();
+    if !head
+        .lifecycle
+        .complete_sandbox_preparation(suspended, now)?
+    {
+        return Ok(Planned {
+            plan: SessionTransaction {
+                intent: TransactionIntent::SettleLifecycle,
+                conditions: Vec::new(),
+                writes: Vec::new(),
+                after_commit: Vec::new(),
+            },
+            projected: head,
+        });
+    }
+    head.status = head.lifecycle.status;
+    head.revision = session.revision.next();
+    head.updated_at = now;
+    let plan = SessionTransaction {
+        intent: TransactionIntent::SettleLifecycle,
+        conditions: vec![Condition::SessionRevision {
+            session: session.id,
+            expected: session.revision,
+        }],
+        writes: vec![Write::PutSessionHead(Box::new(head.clone()))],
+        after_commit: Vec::new(),
+    };
+    plan.validate()?;
+    Ok(Planned {
+        plan,
+        projected: head,
+    })
+}
+
 /// Atomically publishes one completed lifecycle effect.
 ///
 /// The provider/runtime authority is observed before this planner runs. This
@@ -869,6 +919,35 @@ mod tests {
             billing_aggregate_retained: true,
             audit_fact_retained: true,
         }
+    }
+
+    #[test]
+    fn sandbox_preparation_settlement_is_revision_fenced_and_idempotent() {
+        let mut session = aex_session_domain::testing::session_fixture();
+        let generation = session.generation.expect("sandbox generation");
+        session.lifecycle = aex_session_domain::SessionLifecycle::requested(
+            generation,
+            aex_session_domain::testing::moment(0),
+        )
+        .expect("requested lifecycle");
+        session.status = session.lifecycle.status;
+        let original_revision = session.revision;
+
+        let settled = settle_sandbox_preparation(&session, true, now()).expect("settles");
+        assert_eq!(
+            settled.projected.lifecycle.sandbox,
+            aex_session_domain::SandboxPreparationStatus::Suspended,
+        );
+        assert_eq!(settled.projected.revision, original_revision.next());
+        assert!(settled.plan.conditions.iter().any(|condition| matches!(
+            condition,
+            Condition::SessionRevision { expected, .. } if *expected == original_revision
+        )));
+
+        let replay = settle_sandbox_preparation(&settled.projected, true, now())
+            .expect("completion replay is a no-op");
+        assert!(replay.plan.conditions.is_empty());
+        assert!(replay.plan.writes.is_empty());
     }
 
     #[test]

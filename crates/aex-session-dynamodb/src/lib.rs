@@ -39,8 +39,8 @@
 //!   revocation producer.
 //! - `capacity-limit-projection-write`: the regional capacity authority's
 //!   effective-limit transport. It owns no defaults or override policy.
-//! - `create-preparation`: the private synchronous-create election and exact
-//!   selected-file metadata authority.
+//! - `create-preparation`: the private durable create election and exact
+//!   selected-file metadata authority consumed by asynchronous sandbox setup.
 
 #[cfg(feature = "session-authority")]
 pub mod app_authority;
@@ -75,6 +75,8 @@ pub mod keys;
 pub mod regional_control;
 #[cfg(feature = "session-authority")]
 pub mod runtime_effects;
+#[cfg(all(feature = "session-authority", feature = "create-preparation"))]
+pub mod sandbox_preparation;
 #[cfg(feature = "session-authority")]
 pub mod store;
 #[cfg(feature = "session-authority")]

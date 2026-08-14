@@ -37,7 +37,6 @@ pub const CRATES: &[&str] = &[
     "aex-brain-domain",
     "aex-brain-hands",
     "aex-brain-managed-web",
-    "aex-brain-mcp",
     "aex-brain-provider",
     "aex-brain-provider-custody",
     "aex-brain-store-dynamodb",

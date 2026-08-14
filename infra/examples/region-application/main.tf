@@ -10,26 +10,7 @@ module "role" {
   plane            = var.plane
   region           = var.region
   assume_principal = each.value.assume_principal
-  action_grants = concat(each.value.action_grants, each.key == "session-maintenance-worker" ? [
-    {
-      sid                = "CheckpointList"
-      actions            = ["s3:ListBucket"]
-      resources          = ["arn:aws:s3:::${var.content_bucket}"]
-      scopable           = false
-      condition_operator = "StringEquals"
-      condition_key      = ""
-      condition_values   = [""]
-    },
-    {
-      sid                = "CheckpointDelete"
-      actions            = ["s3:DeleteObject"]
-      resources          = ["arn:aws:s3:::${var.content_bucket}/session-content/v1/*"]
-      scopable           = false
-      condition_operator = "StringEquals"
-      condition_key      = ""
-      condition_values   = [""]
-    }
-  ] : [])
+  action_grants                = each.value.action_grants
   wildcard_resource_allowlist = each.value.wildcard_resource_allowlist
   boundary_policy_arn         = var.permissions_boundary_policy_arn
   tags                        = var.tags
@@ -49,10 +30,7 @@ module "function" {
   reserved_concurrency    = each.value.reserved_concurrency
   log_retention_days      = each.value.log_retention_days
   log_kms_key_arn         = var.kms_key_arn
-  env = merge(each.value.env, each.key == "session-maintenance-worker" ? {
-    AEX_CONTENT_BUCKET       = var.content_bucket
-    AEX_CONTENT_BUCKET_OWNER = var.content_bucket_owner
-  } : {})
+  env      = each.value.env
   role_arn = module.role[each.key].role_arn
   tags     = var.tags
 }
@@ -137,7 +115,6 @@ module "session_api" {
   autoscaling_metrics               = var.services["session-api"].autoscaling_metrics
   env = merge(var.services["session-api"].env, {
     AEX_SESSION_API_BRAIN_URL    = "http://${module.service_discovery.hostnames["brain-mux"]}:${var.services["brain-mux"].container_port}"
-    AEX_SESSION_API_TOOL_MUX_URL = "http://${module.service_discovery.hostnames["tool-mux"]}:${var.services["tool-mux"].container_port}"
   })
   task_role_arn                        = module.role["session-api"].role_arn
   execution_role_arn                   = var.services["session-api"].execution_role_arn
@@ -167,7 +144,7 @@ module "brain_mux" {
   autoscaling_bounds     = var.services["brain-mux"].autoscaling_bounds
   autoscaling_metrics    = var.services["brain-mux"].autoscaling_metrics
   env = merge(var.services["brain-mux"].env, {
-    AEX_BRAIN_MUX_TOOL_URL = "http://${module.service_discovery.hostnames["tool-mux"]}:${var.services["tool-mux"].container_port}"
+    AEX_TOOL_MUX_URL = "http://${module.service_discovery.hostnames["tool-mux"]}:${var.services["tool-mux"].container_port}"
   })
   task_role_arn                        = module.role["brain-mux"].role_arn
   execution_role_arn                   = var.services["brain-mux"].execution_role_arn
@@ -209,7 +186,7 @@ module "tool_mux" {
   interface_endpoint_security_group_id = var.interface_endpoint_security_group_id
   gateway_endpoint_prefix_list_ids     = var.gateway_endpoint_prefix_list_ids
   service_discovery_arn                = module.service_discovery.service_arns["tool-mux"]
-  public_https_egress                  = true
+  public_https_egress                  = false
   tags                                 = var.tags
 }
 

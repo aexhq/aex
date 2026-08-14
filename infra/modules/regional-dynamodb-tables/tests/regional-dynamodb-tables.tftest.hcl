@@ -18,7 +18,7 @@ variables {
     { logical_name = "session-authority", authority = "session", hash_key = "pk", range_key = "sk", billing_mode = "PAY_PER_REQUEST", point_in_time_recovery_days = 35, deletion_protection = true, ttl_attribute = "expiresAtEpochSeconds", stream_view_type = "KEYS_ONLY", attributes = [{ name = "pk", type = "S" }, { name = "sk", type = "S" }] },
     { logical_name = "regional-work", authority = "work", hash_key = "pk", range_key = "sk", billing_mode = "PAY_PER_REQUEST", point_in_time_recovery_days = 35, deletion_protection = true, ttl_attribute = "expiresAtEpochSeconds", stream_view_type = "NEW_IMAGE", attributes = [{ name = "pk", type = "S" }, { name = "sk", type = "S" }] },
     { logical_name = "runtime-activity", authority = "runtime", hash_key = "pk", range_key = "sk", billing_mode = "PAY_PER_REQUEST", point_in_time_recovery_days = 35, deletion_protection = true, ttl_attribute = "expiresAtEpochSeconds", stream_view_type = "NEW_IMAGE", attributes = [{ name = "pk", type = "S" }, { name = "sk", type = "S" }] },
-    { logical_name = "regional-file-authority", authority = "file", hash_key = "pk", range_key = "sk", billing_mode = "PAY_PER_REQUEST", point_in_time_recovery_days = 35, deletion_protection = true, ttl_attribute = "expiresAtEpochSeconds", stream_view_type = "NEW_IMAGE", attributes = [{ name = "pk", type = "S" }, { name = "sk", type = "S" }] },
+    { logical_name = "regional-file-authority", authority = "file", hash_key = "pk", range_key = "sk", billing_mode = "PAY_PER_REQUEST", point_in_time_recovery_days = 35, deletion_protection = true, ttl_attribute = "expiresAtEpochSeconds", stream_view_type = "KEYS_ONLY", attributes = [{ name = "pk", type = "S" }, { name = "sk", type = "S" }] },
   ]
 }
 

@@ -1,10 +1,10 @@
 //! Session admission.
 //!
-//! Session creation has a private preparation/election phase and a public
-//! readiness publication phase. The public head and exact response receipt do
-//! not exist until the exact provider generation is launched, every selected
-//! workspace-file revision is materialized, and the root `AgentStarted` fact
-//! is durable.
+//! Session creation has a private preparation/election phase and one public
+//! admission transaction. The public head and exact response receipt become
+//! visible after the root `AgentStarted` fact and the sandbox preparation
+//! request are durable; provider launch and workspace materialization continue
+//! asynchronously.
 //!
 //! # What this use case deliberately does not do
 //!
@@ -16,7 +16,7 @@
 //! The serving adapter must durably elect and reload the prepared identities
 //! before making provider or guest effects. A concurrent loser must reuse that
 //! claim; it must never mint and launch a second generation. This module keeps
-//! preparation and publication separate so an unready session cannot be
+//! preparation and publication separate so an unelected session cannot be
 //! projected accidentally.
 
 use std::collections::BTreeMap;
@@ -48,11 +48,11 @@ use crate::ports::AppContext;
 /// key is the whole identity.
 pub const CREATE_SCOPE: &str = "session.create";
 
-/// Synchronous creation's non-adjustable transport-honesty ceiling.
+/// Initial workspace materialization's non-adjustable byte ceiling.
 ///
 /// The effective revisioned workspace limit may lower this value, but may not
-/// raise it: the smallest supported endpoint needs to finish launch and the
-/// complete initial transfer within the serving request budget.
+/// raise it: the smallest supported sandbox must still prepare the complete
+/// frozen workspace within the bounded setup envelope.
 pub const INITIAL_FILES_HARD_MAX_BYTES: u64 = 536_870_912;
 
 /// Admit one session.
@@ -130,7 +130,7 @@ pub struct PreparedSessionCreate {
     pub agent_execution: crate::ports::AgentExecutionLimits,
     /// Revisioned per-message budget ceilings.
     pub run_budget: crate::ports::RunBudgetLimits,
-    /// Account projection revision rechecked after synchronous launch work.
+    /// Account projection revision rechecked by the admission transaction.
     pub account_revision: aex_session_domain::AccountRevision,
     /// Root-plus-subagent materialization ceiling used to derive active children.
     pub materialized_agents: u64,
@@ -144,15 +144,9 @@ pub struct PreparedSessionCreate {
     pub prepared_at: aex_wire::types::Timestamp,
 }
 
-/// Readiness evidence supplied only after all create effects finish.
+/// Durable evidence supplied when publishing the requested session.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReadySessionLaunch {
-    /// Exact generation the provider launched.
-    pub generation: Option<GenerationId>,
-    /// Provider-authoritative launch instant.
-    pub launched_at: aex_wire::types::Timestamp,
-    /// Registered names and revisions materialized into the guest, in order.
-    pub materialized_files: Vec<(ResourceName, u64)>,
+pub struct RequestedSessionLaunch {
     /// Physical root-control evidence after durable `AgentStarted` sequence zero.
     pub root_started: RootStartedEvidence,
 }
@@ -169,7 +163,7 @@ pub struct RootStartedEvidence {
     pub session: SessionId,
     /// Exact elected generation.
     pub generation: Option<GenerationId>,
-    /// Provider-observation instant of the durable ready transition.
+    /// Admission instant stored on the durable root-start record.
     pub occurred_at: aex_wire::types::Timestamp,
     /// Physical control revision after the append.
     pub revision: AgentRevision,
@@ -450,51 +444,38 @@ pub fn replay_session_create_receipt(
     }
 }
 
-/// Publishes a session only after exact-generation readiness is proven.
+/// Publishes a session after its exact sandbox preparation request is durable.
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] if the evidence names another generation, omits or
-/// reorders an elected registered-file revision, lacks `AgentStarted`, or if
-/// the provider launch instant cannot express the fixed eight-hour fence.
-pub fn publish_ready_session(
+/// Returns [`AppError`] if the evidence names another generation or lacks the
+/// elected root `AgentStarted` fact.
+pub fn publish_requested_session(
     prepared: &PreparedSessionCreate,
-    readiness: &ReadySessionLaunch,
+    launch: &RequestedSessionLaunch,
 ) -> Result<Planned<Session>, AppError> {
-    let expected_files = prepared
-        .initial_files
-        .iter()
-        .map(|file| (file.name.clone(), file.revision))
-        .collect::<Vec<_>>();
-    if readiness.generation != prepared.generation
-        || readiness.materialized_files != expected_files
-        || readiness.root_started.agent != prepared.root_agent
-        || readiness.root_started.session != prepared.session
-        || readiness.root_started.generation != prepared.generation
-        || readiness.root_started.occurred_at < readiness.launched_at
-        || readiness.root_started.revision.0 == 0
+    if launch.root_started.agent != prepared.root_agent
+        || launch.root_started.session != prepared.session
+        || launch.root_started.generation != prepared.generation
+        || launch.root_started.revision.0 == 0
     {
         return Err(AppError::Port(crate::ports::PortError::Corrupt {
-            kind: "session create readiness",
-            reason: "readiness does not prove the elected generation, file revisions and root AgentStarted",
+            kind: "session create admission",
+            reason: "admission does not prove the elected generation and root AgentStarted",
         }));
     }
-    let mut lifecycle = prepared
+    let lifecycle = prepared
         .generation
         .map_or_else(
-            || SessionLifecycle::sandbox_disabled(readiness.launched_at),
-            |generation| SessionLifecycle::launched(generation, readiness.launched_at),
+            || SessionLifecycle::sandbox_disabled(prepared.prepared_at),
+            |generation| SessionLifecycle::requested(generation, prepared.prepared_at),
         )
         .map_err(|_| {
             AppError::Port(crate::ports::PortError::Corrupt {
                 kind: "session lifecycle",
-                reason: "the current instant cannot express the eight-hour provider lifetime",
+                reason: "the admission instant cannot express the eight-hour session lifetime",
             })
         })?;
-    if prepared.generation.is_some() {
-        lifecycle.begin_suspend()?;
-        lifecycle.complete_suspend(readiness.root_started.occurred_at)?;
-    }
     let session = Session {
         id: prepared.session,
         workspace: prepared.command.workspace,
@@ -515,7 +496,7 @@ pub fn publish_ready_session(
         resolved: prepared.resolved.clone(),
         metadata: prepared.metadata.clone(),
         created_at: prepared.prepared_at,
-        updated_at: readiness.root_started.occurred_at,
+        updated_at: launch.root_started.occurred_at,
     };
 
     let receipt = IdempotencyReceipt {
@@ -533,13 +514,13 @@ pub fn publish_ready_session(
             // The bytes that were sent, not a recipe for re-rendering them.
             response: ResponseBody::of(&crate::projection::canonical_session_bytes(&session)?),
         },
-        created_at: readiness.root_started.occurred_at,
+        created_at: launch.root_started.occurred_at,
         expires_at: None,
     };
 
     let plan = build_plan(
         &session,
-        &readiness.root_started,
+        &launch.root_started,
         prepared.account_revision,
         receipt,
     );
@@ -791,7 +772,7 @@ fn build_plan(
 ) -> SessionTransaction {
     // Head/receipt guards merge into their writes. The already-started root
     // control and commit-time active-account projection are two read-only
-    // conditions, keeping ready publication at four constant actions.
+    // conditions, keeping requested publication at five constant actions.
     let conditions = vec![
         Condition::ItemAbsent(ItemKey {
             family: TableFamily::SessionAuthority,
@@ -838,8 +819,9 @@ fn build_plan(
         intent: TransactionIntent::CreateSession,
         conditions,
         writes,
-        // AgentStarted and materialization already committed behind the private
-        // claim. Publishing the head is the only public creation fact.
+        // AgentStarted and the exact preparation election are already durable.
+        // This head exposes Requested; materialization asynchronously consumes
+        // the same elected authority.
         after_commit: Vec::new(),
     }
 }

@@ -18,10 +18,6 @@ schemas:
     values:
       - { value: disabled, doc: "The caller explicitly opted out; sandbox tools return sandbox_disabled." }
       - { value: requested, doc: "Preparation was durably requested." }
-      - { value: provisioning, doc: "Runtime infrastructure is being provisioned." }
-      - { value: booting, doc: "The exact generation is booting." }
-      - { value: materializing_workspace, doc: "Frozen files and setup are being applied." }
-      - { value: qualifying_mcp, doc: "Sandbox-process MCP servers are being qualified." }
       - { value: ready, doc: "Ready to execute a waiting tool call." }
       - { value: suspending, doc: "No waiter exists and initial preparation is suspending." }
       - { value: suspended, doc: "Prepared and suspended until the first sandbox tool call." }
@@ -92,7 +88,7 @@ schemas:
       packages: { type: array, max: 64, optional: true, items: { type: ref, to: PackageRequest }, doc: "Pinned packages applied before initial suspension." }
 
   RemoteMcpServer:
-    doc: A remote Streamable HTTP MCP server qualified at session setup.
+    doc: A remote Streamable HTTP MCP server frozen at session setup and invoked on demand inside the sandbox.
     type: object
     fields:
       url: { type: https_url, doc: "Official server endpoint." }
@@ -120,7 +116,7 @@ schemas:
     type: object
     fields:
       name: { type: resource_name, doc: "Unique server/tool namespace." }
-      transport: { type: ref, to: McpTransport, doc: "How Tool Mux reaches it." }
+      transport: { type: ref, to: McpTransport, doc: "How the built-in sandbox MCP tool reaches it." }
 
   SessionCreateRequest:
     doc: Create a durable session with a write-only BYOK key, frozen file/MCP config and a default-on eager sandbox.
@@ -267,7 +263,7 @@ schemas:
       arguments: { type: canonical_json, doc: "Validated arguments." }
 
   MessagePartToolResult:
-    doc: Bounded tool result; large/full bytes live at its sandbox path and in retained telemetry.
+    doc: Bounded tool result; large/full bytes remain at its sandbox path unless storage.persist explicitly registers them as a workspace file.
     type: object
     fields:
       id: { type: id, of: tool_call, doc: "Call identity." }

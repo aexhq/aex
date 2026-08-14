@@ -1,70 +1,16 @@
-//! Production remote MCP egress and session-secret custody adapters.
+//! Production session-secret custody adapter for the builtin sandbox MCP tool.
 
-use std::num::{NonZeroU64, NonZeroUsize};
 use std::sync::Arc;
 
-use aex_brain_mcp::pool::{
-    ConnectionPool, PooledClient, ServerRevision, TenantScope, screened_client,
-};
 use aex_secret_aws::{SealedSecret, SecretCrypto};
 use aex_secret_custody_dynamodb::{CustodyStore, SecretCustodyStore};
 use aex_secret_domain::{EncryptionContext, SecretState, SourceGeneration};
 use aex_tool_mux::{ToolCallIdentity, ToolMuxFuture};
-use aex_wire::ids::{ContentHash, ResourceName};
+use aex_wire::ids::ResourceName;
 
-use crate::mcp::{McpSecretReader, QualifiedMcpClientPort};
+use crate::mcp::McpSecretReader;
 
 const MCP_SECRET_FRAME_V1: u8 = 0x01;
-
-/// DNS-screened, tenant/revision partitioned rmcp client authority.
-pub struct ProductionQualifiedMcpClients {
-    pool: ConnectionPool,
-}
-
-impl ProductionQualifiedMcpClients {
-    /// Builds the bounded per-process connection pool.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            pool: ConnectionPool::new(NonZeroUsize::new(64).expect("positive")),
-        }
-    }
-}
-
-impl Default for ProductionQualifiedMcpClients {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl QualifiedMcpClientPort for ProductionQualifiedMcpClients {
-    fn acquire<'a>(
-        &'a self,
-        server: &'a ResourceName,
-        endpoint: &'a str,
-        call: &'a ToolCallIdentity,
-    ) -> ToolMuxFuture<'a, Result<PooledClient, String>> {
-        Box::pin(async move {
-            screened_client(
-                &self.pool,
-                &aex_brain_managed_web::egress::SystemDnsResolver,
-                TenantScope {
-                    organization: call.organization,
-                    workspace: call.workspace,
-                },
-                ServerRevision {
-                    server: server.clone(),
-                    revision: NonZeroU64::new(1).expect("positive"),
-                    secret_generation: NonZeroU64::new(1).expect("positive"),
-                    manifest_digest: ContentHash::of(endpoint.as_bytes()),
-                },
-                endpoint,
-            )
-            .await
-            .map_err(|_| "remote MCP endpoint failed egress screening".to_owned())
-        })
-    }
-}
 
 /// Exact-context, purpose-framed MCP secret reader.
 pub struct ProductionMcpSecrets {

@@ -31,14 +31,15 @@ pub mod use_cases;
 
 pub use create::{
     CREATE_SCOPE, CreateSession, INITIAL_FILES_HARD_MAX_BYTES, PrepareSessionCreateOutcome,
-    PreparedSessionCreate, ReadySessionLaunch, ResolvedInitialFile, RootStartedEvidence,
-    initial_root_record, prepare_session_create, publish_ready_session,
+    PreparedSessionCreate, RequestedSessionLaunch, ResolvedInitialFile, RootStartedEvidence,
+    initial_root_record, prepare_session_create, publish_requested_session,
     replay_session_create_receipt,
 };
 pub use error::AppError;
 pub use lifecycle::{
     LifecycleAdmissionOutcome, LifecycleCommand, LifecycleWorkClaim, admit_lifecycle_operation,
-    settle_lifecycle_loss, settle_lifecycle_operation, settle_session_delete,
+    settle_lifecycle_loss, settle_lifecycle_operation, settle_sandbox_preparation,
+    settle_session_delete,
 };
 pub use outcome::{Attempted, Observed, ProviderAnswer, Resolution, resolve};
 pub use plan::{

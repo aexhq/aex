@@ -36,7 +36,7 @@ models are derived from that authority and never edited by hand.
    deletion each declare their replay identity. No public resource offers
    revision history, restore, or version selection.
 3. **Execution identities stay internal.** Agents, effects, tool handles,
-   Hands, generations, checkpoints, and immutable content hashes are durable
+   Hands, generations, and immutable content hashes are durable
    correctness identities, not public resources.
 4. **One optional sandbox per session.** It is enabled by default, prepared in
    the background, and suspended when ready and unused. Explicit opt-out creates
@@ -52,6 +52,9 @@ provider-native model, freezes file mounts and MCP configuration, commits the
 root agent, and durably requests default-on sandbox preparation. It returns
 without waiting for VM provisioning and does not admit a prompt. A separate
 message call accepts one text body and starts the session's current root work.
+Caller-provided file content is registered in the workspace before its current
+content identity can enter the frozen mount manifest; preparation downloads
+that manifest from registry-backed content into the MicroVM.
 
 Public session status is:
 
@@ -61,10 +64,11 @@ Public session status is:
 - `terminated`
 - `deleting`
 
-Sandbox progress is a separate status: `disabled`, `requested`, `provisioning`,
-`booting`, `materializing_workspace`, `qualifying_mcp`, `ready`, `suspending`,
-`suspended`, `resuming`, or `lost`. Sandbox loss produces ordinary tool errors;
-it does not terminate durable agent state.
+Sandbox readiness is a separate durable status: `disabled`, `requested`,
+`ready`, `suspending`, `suspended`, `resuming`, or `lost`. Provisioning and
+workspace-transfer details are telemetry progress rather than extra public-head
+states. Sandbox loss produces ordinary tool errors; it does not terminate
+durable agent state.
 
 Complete sealed messages are durable and listed in immutable seal-visibility
 order. Assistant streaming is an explicitly lossy preview protocol with
@@ -100,13 +104,15 @@ resource.
 
 The session has a hard maximum lifetime of 28,800 seconds. Sandbox suspension
 never extends it. Preparation eagerly provisions the one logical Hand,
-materializes the frozen workspace, qualifies sandbox-process MCP, and suspends
-the exact generation when no tool call is waiting. The first waiting sandbox
-tool call resumes it and waits for readiness before execution.
+materializes the frozen workspace, and suspends the exact generation when no
+tool call is waiting. Provisioning and
+materialization never hold session creation open. The first waiting sandbox
+tool call is the only caller that waits for preparation or resume readiness
+before execution.
 
 Termination permanently destroys sandbox compute while retaining session
 metadata, sealed messages, accounting, and telemetry. Irreversible deletion is
-a separate durable operation that removes session checkpoints, telemetry, and
+a separate durable operation that removes session telemetry and
 declared session-scoped content before leaving only a minimal tombstone plus
 independent aggregate facts. Workspace-file registry values remain independent.
 
@@ -125,15 +131,21 @@ await aex.sessions.sessionTerminate({
 ## Tools and subagents
 
 Tool Mux is the only execution boundary. The built-in model-tool surface is
-`read_file`, `edit_file`, `write_file`, Bash, and `storage.persist` (wire name
-`storage_persist`). Sandbox tools execute through the exact Hand generation;
-`storage.persist` streams a selected sandbox result through trusted code and
-overwrites the named workspace file without guest AWS credentials.
+`read_file`, `edit_file`, `write_file`, Bash, MCP, and `storage.persist` (wire
+name `storage_persist`). Sandbox tools execute through the exact Hand
+generation; `storage.persist` streams a selected sandbox file through trusted
+code and overwrites the named workspace file without guest AWS credentials.
+Every start is detached: Tool Mux returns a durable handle promptly, execution
+continues asynchronously, and Brain polls for completion rather than holding an
+HTTP connection to Tool Mux for the duration of a tool.
 
-Remote Streamable HTTP MCP and sandbox-process MCP are frozen and qualified per
-session. Unsupported or disabled sandbox work is returned to the model as a
-structured tool result. Hosted web/search, custom executable tools, generic
-secret injection, and human approval round trips are not launch features.
+Remote Streamable HTTP MCP and sandbox-process MCP configuration is frozen per
+session. Both transports are invoked on demand through the built-in MCP tool
+and obey the same sandbox result-file contract as CLI-backed tools; Brain has
+no direct inline MCP execution path. Unsupported or disabled sandbox work is
+returned to the model as a structured tool result. Hosted web/search, custom
+executable tools, generic secret injection, and human approval round trips are
+not launch features.
 
 Subagents are native durable agents in the same session, not public sessions or
 runs. The root is depth 0; children may reach depth 3, and at most 12 non-root
@@ -148,16 +160,20 @@ and direct uploads publish a pending current intent and later become ready or
 failed only if that intent is still latest. Every successful write overwrites
 the public current value; prior values cannot be listed, selected, or restored.
 
-Session creation resolves declared current file names to private immutable
+Session creation first requires caller-provided content to be registered as
+current workspace files, then resolves the selected names to private immutable
 content hashes and normalized `/workspace` mount paths. That manifest is frozen
-for the session; later overwrites do not mutate a running sandbox. Arbitrary
-images, PDFs, videos, archives, and other bytes are supported as files, but a
-message references their paths rather than attaching provider-native content.
+for the session and downloaded during asynchronous sandbox preparation; later
+overwrites do not mutate a running sandbox. Arbitrary images, PDFs, videos,
+archives, and other bytes are supported as files, but a message references
+their paths rather than attaching provider-native content.
 
 Tool results are bounded in model context and live telemetry. Large/full output
-is written to a stable call-scoped sandbox path and retained in S3; the result
-contains the path, hash, byte count, and truncation status. Workspace-file and
-telemetry downloads are short-lived, integrity-bound grants.
+is written to a stable call-scoped sandbox path; the result contains the path,
+hash, byte count, and truncation status. It is never uploaded to S3
+automatically. Only an explicit `storage.persist` invocation registers and
+persists selected output as a workspace file. Workspace-file and telemetry
+downloads are short-lived, integrity-bound grants.
 
 ## Telemetry and usage
 

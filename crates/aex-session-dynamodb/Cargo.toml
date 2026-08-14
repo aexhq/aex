@@ -58,7 +58,7 @@ authz-projection-write = []
 # The regional capacity authority's workspace-limit projection producer. This
 # is transport only: it owns no defaults, override policy or production caller.
 capacity-limit-projection-write = []
-# The private synchronous-create preparation authority. This feature is kept
+# The private durable create-preparation authority. This feature is kept
 # independent of the broad session adapter so its exact row and boundary tests
 # remain runnable while unrelated lifecycle surfaces are changing.
 create-preparation = ["dep:aex-brain-domain"]

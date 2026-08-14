@@ -29,10 +29,6 @@ pub const RUNTIME_ACTIVITY_TABLE: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
 pub const RUNTIME_LIFECYCLE_QUEUE_URL: &str = "AEX_RUNTIME_LIFECYCLE_QUEUE_URL";
 /// Existing immutable session-telemetry bucket whose session prefix deletion owns.
 pub const SESSION_TELEMETRY_BUCKET: &str = "AEX_SESSION_TELEMETRY_BUCKET";
-/// Existing unversioned customer-content bucket containing Brain checkpoints.
-pub const CONTENT_BUCKET: &str = "AEX_CONTENT_BUCKET";
-/// Twelve-digit AWS account that owns the customer-content bucket.
-pub const CONTENT_BUCKET_OWNER: &str = "AEX_CONTENT_BUCKET_OWNER";
 /// How many deterministic shards the due scan sweeps.
 pub const DUE_SCAN_SHARDS: &str = "AEX_DUE_SCAN_SHARDS";
 /// Claim lease in milliseconds.
@@ -43,7 +39,7 @@ pub const STEP_DEADLINE_MS: &str = "AEX_STEP_DEADLINE_MS";
 pub const MAX_ATTEMPTS: &str = "AEX_MAX_ATTEMPTS";
 
 /// Every variable a healthy `session-maintenance-worker` requires.
-pub const REQUIRED: [&str; 16] = [
+pub const REQUIRED: [&str; 14] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
@@ -54,8 +50,6 @@ pub const REQUIRED: [&str; 16] = [
     RUNTIME_ACTIVITY_TABLE,
     RUNTIME_LIFECYCLE_QUEUE_URL,
     SESSION_TELEMETRY_BUCKET,
-    CONTENT_BUCKET,
-    CONTENT_BUCKET_OWNER,
     DUE_SCAN_SHARDS,
     LEASE_MS,
     STEP_DEADLINE_MS,
@@ -73,7 +67,7 @@ pub const FORBIDDEN: [(&str, &str); 2] = [
     ),
     (
         "AEX_CONTENT_QUEUE_URL",
-        "session maintenance deletes checkpoint pages directly; no content queue exists",
+        "session maintenance owns no customer-content persistence path",
     ),
 ];
 
@@ -100,10 +94,6 @@ pub struct Config {
     pub runtime_lifecycle_queue_url: String,
     /// Immutable session telemetry bucket.
     pub session_telemetry_bucket: String,
-    /// Existing unversioned customer-content bucket.
-    pub content_bucket: String,
-    /// AWS account that must own the customer-content bucket.
-    pub content_bucket_owner: String,
     /// Deterministic due-scan shard count.
     pub due_scan_shards: u64,
     /// Claim lease in milliseconds.
@@ -160,17 +150,6 @@ impl Config {
                 ),
             });
         }
-        let content_bucket_owner = required(lookup, CONTENT_BUCKET_OWNER)?;
-        if content_bucket_owner.len() != 12
-            || !content_bucket_owner
-                .bytes()
-                .all(|byte| byte.is_ascii_digit())
-        {
-            return Err(RegionalHttpConfigError::Invalid {
-                name: CONTENT_BUCKET_OWNER,
-                reason: "must be a 12-digit AWS account id".to_owned(),
-            });
-        }
         Ok(Self {
             plane,
             region,
@@ -185,8 +164,6 @@ impl Config {
             runtime_activity_table: required(lookup, RUNTIME_ACTIVITY_TABLE)?,
             runtime_lifecycle_queue_url: queue_url(lookup, RUNTIME_LIFECYCLE_QUEUE_URL, region)?,
             session_telemetry_bucket: required(lookup, SESSION_TELEMETRY_BUCKET)?,
-            content_bucket: required(lookup, CONTENT_BUCKET)?,
-            content_bucket_owner,
             due_scan_shards,
             lease_ms: i64::try_from(bounded_u64(lookup, LEASE_MS, 1_000, 900_000)?).map_err(
                 |_| RegionalHttpConfigError::Invalid {

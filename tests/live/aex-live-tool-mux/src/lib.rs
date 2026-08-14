@@ -1,4 +1,4 @@
-//! Live exact-generation, MCP and retained-result scenarios for tool-mux.
+//! Live exact-generation, builtin MCP and local-result scenarios for tool-mux.
 
 /// Required private service URL for an explicitly approved live run.
 pub const URL_ENV: &str = "AEX_LIVE_TOOL_MUX_URL";
@@ -6,7 +6,7 @@ pub const URL_ENV: &str = "AEX_LIVE_TOOL_MUX_URL";
 pub const DISABLED_REQUEST_ENV: &str = "AEX_LIVE_TOOL_MUX_DISABLED_REQUEST";
 /// Enabled-sandbox official-tool request plus its exact body-bound assertion.
 pub const SANDBOX_REQUEST_ENV: &str = "AEX_LIVE_TOOL_MUX_SANDBOX_REQUEST";
-/// Disabled-sandbox remote Streamable HTTP MCP request plus assertion.
+/// Enabled-sandbox remote Streamable HTTP MCP request plus assertion.
 pub const REMOTE_MCP_REQUEST_ENV: &str = "AEX_LIVE_TOOL_MUX_REMOTE_MCP_REQUEST";
 /// Exact-generation storage.persist request plus assertion.
 pub const STORAGE_REQUEST_ENV: &str = "AEX_LIVE_TOOL_MUX_STORAGE_REQUEST";

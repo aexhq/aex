@@ -46,13 +46,17 @@ locals {
         Resource  = [local.bucket_arn, local.object_arn]
         Condition = { NumericGreaterThan = { "s3:signatureAge" = tostring(var.signature_age_ms) } }
       },
-      {
-        Sid          = "DenyDeleteExceptLifecycleRole"
-        Effect       = "Deny"
-        NotPrincipal = { AWS = [var.lifecycle_role_arn] }
-        Action       = ["s3:DeleteObject", "s3:DeleteObjectVersion"]
-        Resource     = local.object_arn
-      },
+      merge(
+        {
+          Sid      = var.lifecycle_role_arn == null ? "DenyDeleteAll" : "DenyDeleteExceptLifecycleRole"
+          Effect   = "Deny"
+          Action   = ["s3:DeleteObject", "s3:DeleteObjectVersion"]
+          Resource = local.object_arn
+        },
+        var.lifecycle_role_arn == null
+        ? { Principal = "*" }
+        : { NotPrincipal = { AWS = [var.lifecycle_role_arn] } }
+      ),
     ]
   })
 }

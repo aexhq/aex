@@ -190,9 +190,6 @@ async fn main() -> std::process::ExitCode {
     if std::env::args().nth(1).as_deref() == Some("mcp-call") {
         return mcp_guest::run().await;
     }
-    if std::env::args().nth(1).as_deref() == Some("mcp-qualify") {
-        return mcp_guest::qualify().await;
-    }
     // Agent diagnostics use the process's own stdout. The Hands protocol is
     // HTTP on the configured listener, and supervised child stdout/stderr are
     // separate pipes, so JSON log lines cannot enter either protocol stream.
@@ -344,12 +341,23 @@ mod boundary {
         "aex-runtime-control-aws",
     ];
 
+    // Rustls may select AWS-LC as a pure cryptographic implementation. These
+    // crates contain no AWS client, credential provider, signing, or service
+    // authority despite the historical package-name prefix.
+    const NON_AUTHORITY_AWS_PREFIX: [&str; 2] = ["aws-lc-rs", "aws-lc-sys"];
+
+    fn forbidden(name: &str) -> bool {
+        (!NON_AUTHORITY_AWS_PREFIX.contains(&name)
+            && FORBIDDEN_PREFIXES
+                .iter()
+                .any(|prefix| name.starts_with(prefix)))
+            || FORBIDDEN_EXACT.contains(&name)
+    }
+
     /// The normal-and-build dependency closure of the shipped binary, by package name.
     fn closure() -> BTreeSet<String> {
-        // `cargo metadata` resolves features for the whole workspace, which
-        // falsely attributes Brain's remote-MCP HTTP features to this guest's
-        // child-process-only rmcp edge. `cargo tree -p` resolves the artifact
-        // Cargo actually ships and still includes normal/build dependencies.
+        // `cargo tree -p` resolves the artifact Cargo actually ships and still
+        // includes normal/build dependencies.
         let output = std::process::Command::new(env!("CARGO"))
             .args([
                 "tree",
@@ -381,15 +389,7 @@ mod boundary {
             !closure.is_empty(),
             "an empty closure would make this assertion vacuous"
         );
-        let offenders: Vec<&String> = closure
-            .iter()
-            .filter(|name| {
-                FORBIDDEN_PREFIXES
-                    .iter()
-                    .any(|prefix| name.starts_with(prefix))
-                    || FORBIDDEN_EXACT.contains(&name.as_str())
-            })
-            .collect();
+        let offenders: Vec<&String> = closure.iter().filter(|name| forbidden(name)).collect();
         assert!(
             offenders.is_empty(),
             "the guest binary must hold no cloud authority, but its closure contains {offenders:?}"
@@ -397,17 +397,10 @@ mod boundary {
     }
 
     #[test]
-    fn the_binary_carries_no_tls_stack_it_could_reach_a_cloud_endpoint_with() {
-        // Not a hygiene sweep: the workspace's pinned TLS backend is `aws-lc-rs`,
-        // whose crate name the scan above already rejects. That is why workspace
-        // materialize and persist — which need presigned HTTPS — are refused by this
-        // guest and recorded as a gap rather than quietly linked in.
+    fn the_binary_carries_the_builtin_remote_mcp_client_without_cloud_authority() {
         let closure = closure();
-        for client in ["reqwest", "rustls", "hyper-rustls", "native-tls"] {
-            assert!(
-                !closure.contains(client),
-                "the guest links `{client}`, which is how a credential-free boundary stops being one"
-            );
-        }
+        assert!(closure.contains("reqwest"));
+        assert!(closure.contains("rmcp"));
+        assert!(!closure.iter().any(|name| forbidden(name)));
     }
 }

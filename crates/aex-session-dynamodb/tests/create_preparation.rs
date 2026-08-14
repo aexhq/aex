@@ -1,4 +1,4 @@
-//! Regression coverage for the private synchronous-create preparation authority.
+//! Regression coverage for the private durable create-preparation authority.
 
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::ids::{CatalogPin, ModelSlug};

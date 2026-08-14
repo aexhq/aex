@@ -983,7 +983,7 @@ impl<'a> CreateWrites<'a> {
             | Write::PutTombstone(_)
             | Write::DeleteItem(_) => {
                 return Err(create_error(
-                    "ready publication writes only the public head and exact receipt",
+                    "requested publication writes only the public head, exact receipt, and its directory locator",
                 ));
             }
         }
@@ -1004,7 +1004,7 @@ impl<'a> CreateWrites<'a> {
         }
         if self.root_writes != 0 {
             return Err(create_error(
-                "ready publication must not overwrite the root control whose AgentStarted tail it conditions on",
+                "requested publication must not overwrite the root control whose AgentStarted tail it conditions on",
             ));
         }
         if self.receipts != 1 {
@@ -1191,7 +1191,7 @@ impl SessionTransaction {
 
     /// The largest number of items a create transaction may ever carry.
     ///
-    /// Five always: the ready public head, exact receipt, its deletion
+    /// Five always: the requested public head, exact receipt, its deletion
     /// directory locator, one condition on the
     /// already-started root control/journal authority, and the commit-time
     /// active-account fence. This is a
@@ -1231,7 +1231,7 @@ impl SessionTransaction {
         if !has_root_revision || !has_root_tail || !has_root_tail_hash || !has_active_account_fence
         {
             return Err(create_error(
-                "ready publication must condition on the elected root AgentStarted revision, journal tail and tail hash plus the active-account revision",
+                "requested publication must condition on the elected root AgentStarted revision, journal tail and tail hash plus the active-account revision",
             ));
         }
         Ok(())
@@ -1702,7 +1702,7 @@ mod tests {
     }
 
     #[test]
-    fn ready_create_publication_is_five_constant_actions() {
+    fn requested_create_publication_is_five_constant_actions() {
         let shape = create_plan(&aex_session_domain::testing::session_fixture())
             .validate()
             .expect("the minimal create is complete");

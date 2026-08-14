@@ -15,8 +15,6 @@ pub enum PreparationProgress {
     Booting,
     /// Frozen workspace is being materialized.
     MaterializingWorkspace,
-    /// Sandbox MCP is being qualified.
-    QualifyingSandboxMcp,
     /// Generation reached readiness.
     Ready,
     /// No waiter existed; suspend started.
@@ -25,6 +23,8 @@ pub enum PreparationProgress {
     Suspended,
     /// A waiter caused resume.
     Resuming,
+    /// Preparation failed before the sandbox could become ready.
+    Failed,
 }
 
 /// Live and retained telemetry vocabulary owned by Tool Mux.
@@ -35,7 +35,7 @@ pub enum PreparationProgress {
     rename_all_fields = "camelCase"
 )]
 pub enum TelemetryKind {
-    /// Eager setup was durably requested.
+    /// Sandbox preparation was durably requested.
     SandboxRequested,
     /// One setup phase became visible.
     SandboxProgress {
@@ -46,7 +46,7 @@ pub enum TelemetryKind {
     ToolWaiting,
     /// Exact generation is ready and execution starts.
     ToolStarted,
-    /// Remote MCP starts without touching Runtime Control.
+    /// Remote MCP starts through the builtin client in the exact Hand.
     RemoteMcpStarted,
     /// Bounded preview is available live.
     ToolPreview {
@@ -55,11 +55,11 @@ pub enum TelemetryKind {
         /// Whether complete bytes live elsewhere.
         truncated: bool,
     },
-    /// Full bytes are retained for replay/download.
-    ToolResultRetained {
-        /// Opaque retained object reference.
-        object_ref: String,
-        /// Complete retained byte count.
+    /// Full bytes were placed at a call-scoped sandbox path.
+    ToolResultPlaced {
+        /// Stable path inside the exact sandbox generation.
+        path: String,
+        /// Complete local byte count.
         bytes: u64,
     },
     /// Tool reached a model-visible terminal outcome.
@@ -126,9 +126,10 @@ pub trait TelemetryPort: Send + Sync + 'static {
 
 /// Fail-open producer that turns bounded-ingress pressure into coalesced gap
 /// evidence on the next accepted envelope.
+#[derive(Clone)]
 pub struct TelemetryProducer {
     sink: Arc<dyn TelemetryPort>,
-    sessions: Mutex<BTreeMap<SessionId, ProducerState>>,
+    sessions: Arc<Mutex<BTreeMap<SessionId, ProducerState>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -159,7 +160,7 @@ impl TelemetryProducer {
     pub fn new(sink: Arc<dyn TelemetryPort>) -> Self {
         Self {
             sink,
-            sessions: Mutex::new(BTreeMap::new()),
+            sessions: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 

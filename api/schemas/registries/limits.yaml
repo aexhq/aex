@@ -5,8 +5,8 @@
 limits:
   - { id: "context.tool_result_bytes", shape: scalar, doc: "Largest tool result admitted into the next model context." }
   - { id: "session.materialized_agents", shape: scalar, doc: "Root-plus-subagents concurrently materialized in one session." }
-  - { id: "session.initial_files_bytes", shape: scalar, doc: "Largest aggregate byte size of registered workspace files materialized synchronously before session creation returns ready." }
-  - { id: "session.initial_files_count", shape: scalar, doc: "Largest number of registered workspace files selected for synchronous session creation." }
+  - { id: "session.initial_files_bytes", shape: scalar, doc: "Largest aggregate byte size of registered workspace files frozen at session admission and materialized during asynchronous sandbox preparation." }
+  - { id: "session.initial_files_count", shape: scalar, doc: "Largest number of registered workspace files frozen at session admission for asynchronous sandbox preparation." }
   - { id: "session.agent_execution", shape: map, dimensions: [max_turns, max_steps_per_turn, turn_deadline_ms, max_depth, max_fanout], doc: "Revisioned Brain planner and structural ceilings pinned when a session is created." }
   - { id: "session.run_budget", shape: map, dimensions: [max_run_duration_ms, total_children_created, provider_calls, hands_calls, queued_children, retained_result_bytes], doc: "Revisioned per-message duration and Brain budget ceilings pinned when a session is created." }
   - { id: "api.json_body", shape: scalar, doc: "Largest accepted encoded JSON request body." }

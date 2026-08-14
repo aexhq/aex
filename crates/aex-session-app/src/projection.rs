@@ -32,11 +32,30 @@ pub const fn public_status(status: SessionStatus) -> models::SessionStatus {
 }
 
 fn sandbox_status(session: &Session) -> models::SandboxStatus {
+    use aex_session_domain::SandboxPreparationStatus;
+
     let enabled =
         serde_json::from_value::<models::ResolvedConfig>(session.resolved.document().to_value())
             .map_or(true, |resolved| resolved.sandbox_enabled);
     if !enabled {
         return models::SandboxStatus::Disabled;
+    }
+    match session.lifecycle.sandbox {
+        SandboxPreparationStatus::Disabled => return models::SandboxStatus::Disabled,
+        SandboxPreparationStatus::Lost => return models::SandboxStatus::Lost,
+        SandboxPreparationStatus::Requested
+            if matches!(
+                session.lifecycle.status,
+                SessionStatus::Idle | SessionStatus::Running
+            ) => return models::SandboxStatus::Requested,
+        SandboxPreparationStatus::Suspended
+            if session.lifecycle.status == SessionStatus::Suspended =>
+        {
+            return models::SandboxStatus::Suspended;
+        }
+        SandboxPreparationStatus::Requested
+        | SandboxPreparationStatus::Ready
+        | SandboxPreparationStatus::Suspended => {}
     }
     match session.lifecycle.status {
         SessionStatus::Suspending => models::SandboxStatus::Suspending,
@@ -206,6 +225,27 @@ mod tests {
         assert_eq!(item.model, session.resolved.model());
         assert_eq!(item.created_at, session.created_at);
         assert_eq!(item.updated_at, session.updated_at);
+    }
+
+    #[test]
+    fn requested_setup_does_not_mask_a_lifecycle_transition() {
+        let mut session = aex_session_domain::testing::session_fixture();
+        let generation = session.generation.expect("sandbox generation");
+        session.lifecycle = aex_session_domain::SessionLifecycle::requested(
+            generation,
+            session.created_at,
+        )
+        .expect("requested lifecycle");
+        session
+            .lifecycle
+            .begin_terminate(aex_session_domain::TerminationReason::User)
+            .expect("termination starts");
+        session.status = session.lifecycle.status;
+
+        assert_eq!(
+            super::public_session_list_item(&session).sandbox_status,
+            aex_wire::models::SandboxStatus::Terminating,
+        );
     }
 
     #[test]

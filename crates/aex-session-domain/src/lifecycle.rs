@@ -43,6 +43,26 @@ pub enum LifecycleStatus {
     Deleting,
 }
 
+/// Preparation state of the session's optional sandbox.
+///
+/// Conversation activity and sandbox preparation are deliberately separate:
+/// a session may run model work while its default-on sandbox is still being
+/// prepared. Fine-grained setup progress is telemetry; this value is the
+/// durable checkpoint used by reads and recovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SandboxPreparationStatus {
+    /// The caller explicitly disabled the sandbox.
+    Disabled,
+    /// Preparation is durably requested but not yet complete.
+    Requested,
+    /// The exact generation is reachable and workspace setup is complete.
+    Ready,
+    /// The prepared generation is retained without running compute.
+    Suspended,
+    /// Preparation or the retained generation was irrecoverably lost.
+    Lost,
+}
+
 impl LifecycleStatus {
     /// Every public state in canonical order.
     pub const ALL: [Self; 8] = [
@@ -98,9 +118,12 @@ pub struct SessionLifecycle {
     pub status: LifecycleStatus,
     /// Current message activity, only while running.
     pub active: Option<ActiveMessage>,
-    /// When the provider generation first launched.
+    /// Durable sandbox preparation checkpoint; detailed progress is telemetry.
+    pub sandbox: SandboxPreparationStatus,
+    /// Lifecycle anchor: admission for requested sandboxes, provider launch for
+    /// already-ready legacy construction.
     pub launched_at: Timestamp,
-    /// Exactly eight hours after `launched_at`.
+    /// Exactly eight hours after the lifecycle anchor.
     pub expires_at: Timestamp,
     /// When the session most recently became idle.
     pub idle_since: Option<Timestamp>,
@@ -147,6 +170,82 @@ pub enum SessionLifecycleError {
 pub(crate) type LifecycleError = SessionLifecycleError;
 
 impl SessionLifecycle {
+    /// Starts a session whose exact generation is durably requested and will
+    /// be prepared outside the create request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LifecycleError::TimestampOverflow`] near the end of the wire
+    /// timestamp range.
+    pub fn requested(
+        generation: GenerationId,
+        created_at: Timestamp,
+    ) -> Result<Self, LifecycleError> {
+        let expires_at = add_millis(created_at, MAXIMUM_LIFETIME_MILLIS)?;
+        Ok(Self {
+            generation: Some(generation),
+            revision: LifecycleRevision(0),
+            status: LifecycleStatus::Idle,
+            active: None,
+            sandbox: SandboxPreparationStatus::Requested,
+            launched_at: created_at,
+            expires_at,
+            idle_since: Some(created_at),
+            suspend_at: None,
+            suspended_at: None,
+            terminated_at: None,
+            termination_reason: None,
+        })
+    }
+
+    /// Records successful background preparation.
+    ///
+    /// When no message or tool waiter raced preparation, the generation is
+    /// already suspended. If conversation activity is live, preparation only
+    /// advances the sandbox checkpoint to ready; it never suspends active work.
+    /// Replaying completion after the checkpoint advanced is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LifecycleError::TimestampOverflow`] when an idle suspend
+    /// deadline cannot be expressed, or [`LifecycleError::RevisionExhausted`]
+    /// when the lifecycle token cannot advance.
+    pub fn complete_sandbox_preparation(
+        &mut self,
+        suspended: bool,
+        now: Timestamp,
+    ) -> Result<bool, LifecycleError> {
+        if self.sandbox != SandboxPreparationStatus::Requested {
+            return Ok(false);
+        }
+        if matches!(
+            self.status,
+            LifecycleStatus::Terminating | LifecycleStatus::Terminated | LifecycleStatus::Deleting
+        ) {
+            return Ok(false);
+        }
+        let suspend_at = if !suspended && self.status == LifecycleStatus::Idle {
+            Some(add_millis(now, IDLE_SUSPEND_AFTER_MILLIS)?)
+        } else {
+            None
+        };
+        self.bump_revision()?;
+        if suspended && self.status == LifecycleStatus::Idle {
+            self.status = LifecycleStatus::Suspended;
+            self.sandbox = SandboxPreparationStatus::Suspended;
+            self.suspended_at = Some(now);
+            self.idle_since = None;
+            self.suspend_at = None;
+        } else {
+            self.sandbox = SandboxPreparationStatus::Ready;
+            if self.status == LifecycleStatus::Idle {
+                self.idle_since = Some(now);
+                self.suspend_at = suspend_at;
+            }
+        }
+        Ok(true)
+    }
+
     /// Starts an idle, launched generation with exact suspend and expiry rows.
     ///
     /// # Errors
@@ -164,6 +263,7 @@ impl SessionLifecycle {
             revision: LifecycleRevision(0),
             status: LifecycleStatus::Idle,
             active: None,
+            sandbox: SandboxPreparationStatus::Ready,
             launched_at,
             expires_at,
             idle_since: Some(launched_at),
@@ -184,6 +284,7 @@ impl SessionLifecycle {
             revision: LifecycleRevision(0),
             status: LifecycleStatus::Idle,
             active: None,
+            sandbox: SandboxPreparationStatus::Disabled,
             launched_at: created_at,
             expires_at,
             idle_since: Some(created_at),
@@ -301,6 +402,7 @@ impl SessionLifecycle {
         }
         self.bump_revision()?;
         self.status = LifecycleStatus::Suspended;
+        self.sandbox = SandboxPreparationStatus::Suspended;
         self.suspended_at = Some(now);
         self.idle_since = None;
         self.suspend_at = None;
@@ -341,6 +443,7 @@ impl SessionLifecycle {
         if self.active.is_some() {
             self.bump_revision()?;
             self.status = LifecycleStatus::Running;
+            self.sandbox = SandboxPreparationStatus::Ready;
             self.suspended_at = None;
             return Ok(());
         }
@@ -380,6 +483,7 @@ impl SessionLifecycle {
         }
         self.bump_revision()?;
         self.status = LifecycleStatus::Terminated;
+        self.sandbox = SandboxPreparationStatus::Lost;
         self.terminated_at = Some(now);
         Ok(())
     }
@@ -406,6 +510,11 @@ impl SessionLifecycle {
         let suspend_at = add_millis(now, IDLE_SUSPEND_AFTER_MILLIS)?;
         self.bump_revision()?;
         self.status = LifecycleStatus::Idle;
+        if self.generation.is_some()
+            && self.sandbox != SandboxPreparationStatus::Requested
+        {
+            self.sandbox = SandboxPreparationStatus::Ready;
+        }
         self.active = None;
         self.idle_since = Some(now);
         self.suspend_at = Some(suspend_at);
@@ -475,6 +584,67 @@ mod tests {
         let lifecycle = SessionLifecycle::launched(generation(1), at(1_000)).expect("launch");
         assert_eq!(lifecycle.suspend_at, Some(at(181_000)));
         assert_eq!(lifecycle.expires_at, at(28_801_000));
+    }
+
+    #[test]
+    fn requested_sandbox_is_independent_of_conversation_admission() {
+        let mut lifecycle = SessionLifecycle::requested(generation(1), at(1_000))
+            .expect("requested lifecycle");
+        assert_eq!(lifecycle.sandbox, SandboxPreparationStatus::Requested);
+        assert_eq!(lifecycle.status, LifecycleStatus::Idle);
+        assert_eq!(lifecycle.suspend_at, None);
+
+        lifecycle
+            .admit_message(message(1), run(1), bounds(at(10_000)), at(2_000))
+            .expect("model work starts while setup continues");
+        assert_eq!(lifecycle.status, LifecycleStatus::Running);
+        assert_eq!(lifecycle.sandbox, SandboxPreparationStatus::Requested);
+        assert!(
+            lifecycle
+                .complete_sandbox_preparation(false, at(3_000))
+                .expect("background setup settles")
+        );
+        assert_eq!(lifecycle.status, LifecycleStatus::Running);
+        assert_eq!(lifecycle.sandbox, SandboxPreparationStatus::Ready);
+    }
+
+    #[test]
+    fn a_message_that_uses_no_tools_does_not_claim_setup_finished() {
+        let mut lifecycle = SessionLifecycle::requested(generation(1), at(1_000))
+            .expect("requested lifecycle");
+        lifecycle
+            .admit_message(message(1), run(1), bounds(at(10_000)), at(2_000))
+            .expect("model work starts while setup continues");
+        lifecycle
+            .complete_message(run(1), at(3_000))
+            .expect("message completes without a tool call");
+        assert_eq!(lifecycle.status, LifecycleStatus::Idle);
+        assert_eq!(lifecycle.sandbox, SandboxPreparationStatus::Requested);
+    }
+
+    #[test]
+    fn ready_idle_preparation_starts_the_normal_suspend_window() {
+        let mut lifecycle = SessionLifecycle::requested(generation(1), at(1_000))
+            .expect("requested lifecycle");
+        lifecycle
+            .complete_sandbox_preparation(false, at(3_000))
+            .expect("background setup settles");
+        assert_eq!(lifecycle.status, LifecycleStatus::Idle);
+        assert_eq!(lifecycle.sandbox, SandboxPreparationStatus::Ready);
+        assert_eq!(lifecycle.idle_since, Some(at(3_000)));
+        assert_eq!(lifecycle.suspend_at, Some(at(183_000)));
+    }
+
+    #[test]
+    fn idle_eager_preparation_settles_as_suspended() {
+        let mut lifecycle = SessionLifecycle::requested(generation(1), at(1_000))
+            .expect("requested lifecycle");
+        lifecycle
+            .complete_sandbox_preparation(true, at(3_000))
+            .expect("background setup settles");
+        assert_eq!(lifecycle.status, LifecycleStatus::Suspended);
+        assert_eq!(lifecycle.sandbox, SandboxPreparationStatus::Suspended);
+        assert_eq!(lifecycle.suspended_at, Some(at(3_000)));
     }
 
     #[test]

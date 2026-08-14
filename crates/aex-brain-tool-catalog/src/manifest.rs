@@ -116,7 +116,7 @@ pub enum ToolNameError {
         byte: u8,
     },
     /// A non-MCP source tried to claim the MCP namespace.
-    #[error("the `mcp__` prefix is reserved for qualified MCP tools")]
+    #[error("the `mcp__` prefix is reserved for MCP-derived tool names")]
     ReservedPrefix,
 }
 

@@ -1,18 +1,19 @@
 //! Private distributed Tool Mux service.
 
 pub mod auth;
+pub mod detached;
 pub mod mcp;
+pub mod preparation;
 pub mod production_hands;
 pub mod production_mcp;
 pub mod production_storage;
-pub mod retention;
 pub mod storage;
 pub mod telemetry;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use aex_tool_mux::{EagerPrepareRequest, ToolHandleRequest, ToolMux, ToolStartRequest};
+use aex_tool_mux::{ToolHandleRequest, ToolMux, ToolStartRequest};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -77,7 +78,6 @@ pub fn router(app: App) -> Router {
     Router::new()
         .route("/internal/healthz", get(|| async { StatusCode::OK }))
         .route("/internal/readyz", get(ready))
-        .route("/internal/hands/prepare", post(prepare))
         .route("/internal/tools/start", post(start))
         .route("/internal/tools/read", post(read))
         .route("/internal/tools/cancel", post(cancel))
@@ -89,32 +89,6 @@ async fn ready(State(app): State<App>) -> StatusCode {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
-    }
-}
-
-async fn prepare(
-    State(app): State<App>,
-    headers: HeaderMap,
-    Json(request): Json<EagerPrepareRequest>,
-) -> Response {
-    let Ok(binding) = aex_tool_mux::request_binding(&request) else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
-    if app
-        .authorizer
-        .authorize(&headers, auth::scope(request.session, None, None), binding)
-        .await
-        .is_err()
-    {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    match app
-        .mux
-        .eager_prepare(request.session, request.sandbox)
-        .await
-    {
-        Ok(()) => StatusCode::ACCEPTED.into_response(),
-        Err(_) => StatusCode::BAD_GATEWAY.into_response(),
     }
 }
 
@@ -142,14 +116,7 @@ async fn start(
     {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    match production_hands::with_call_bounds(
-        request.deadline_ms,
-        request.timeout_ms,
-        request.max_result_bytes,
-        app.mux.start(&request),
-    )
-    .await
-    {
+    match app.mux.start(&request).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(_) => StatusCode::BAD_GATEWAY.into_response(),
     }

@@ -151,8 +151,6 @@ impl Worker {
             tables,
             config.runtime_lifecycle_queue_url.clone(),
             config.session_telemetry_bucket.clone(),
-            config.content_bucket.clone(),
-            config.content_bucket_owner.clone(),
         );
         let reconciler = OperationReconciler::new(
             work,

@@ -11,7 +11,6 @@ pub mod create_readiness;
 pub mod create_route;
 pub mod handlers;
 pub mod live_composition;
-pub mod mcp_readiness;
 pub mod operation_worker;
 pub mod provider_key;
 pub mod registry;

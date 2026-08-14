@@ -238,17 +238,10 @@ async fn run(config: &Config) -> Result<(), SessionStreamApiRunError> {
         },
         config.region,
     ));
-    let mcp_qualifier = Arc::new(
-        session_stream_api::session::mcp_readiness::ProductionMcpQualifier::new(
-            Arc::clone(&provider_keys) as Arc<_>,
-            Arc::clone(&live_files),
-        ),
-    );
     let dispatcher = Dispatcher::new(Arc::new(Shared {
         catalog,
         deployment: config.deployment.clone(),
         live_files,
-        mcp_qualifier,
         provider_keys,
         registry: Arc::new(stores.registry.clone()),
         content: Arc::new(stores.content.clone()),

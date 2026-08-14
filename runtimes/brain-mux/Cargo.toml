@@ -35,7 +35,6 @@ path = "src/main.rs"
 [dependencies]
 aex-brain-app = { path = "../../crates/aex-brain-app" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }
-aex-content-aws = { path = "../../crates/aex-content-aws" }
 aex-tool-mux = { path = "../../crates/aex-tool-mux" }
 aex-hands-protocol = { path = "../../crates/aex-hands-protocol" }
 aex-control-domain = { path = "../../crates/aex-control-domain" }

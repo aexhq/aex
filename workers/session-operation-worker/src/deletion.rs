@@ -37,7 +37,6 @@ pub(crate) struct DynamoDeletionCoordinator {
     operations: aex_session_dynamodb::store::OperationStore,
     runtime: aex_runtime_activity_dynamodb::RuntimeActivityDynamoStore,
     telemetry: aex_session_telemetry_aws::SessionTelemetryDeleter,
-    checkpoints: crate::checkpoint_objects::S3CheckpointObjects,
 }
 
 impl DynamoDeletionCoordinator {
@@ -48,11 +47,7 @@ impl DynamoDeletionCoordinator {
         tables: RegionalTables,
         runtime_queue_url: impl Into<String>,
         session_telemetry_bucket: impl Into<String>,
-        content_bucket: impl Into<String>,
-        content_bucket_owner: impl Into<String>,
     ) -> Self {
-        let content_bucket = content_bucket.into();
-        let content_bucket_owner = content_bucket_owner.into();
         Self {
             sessions: SessionDeletionStore::new(dynamodb.clone(), tables.session_authority.clone()),
             operations: aex_session_dynamodb::store::OperationStore::new(
@@ -64,13 +59,8 @@ impl DynamoDeletionCoordinator {
                 tables.runtime_activity.clone(),
             ),
             telemetry: aex_session_telemetry_aws::SessionTelemetryDeleter::new(
-                s3.clone(),
-                session_telemetry_bucket,
-            ),
-            checkpoints: crate::checkpoint_objects::S3CheckpointObjects::new(
                 s3,
-                content_bucket,
-                content_bucket_owner,
+                session_telemetry_bucket,
             ),
             dynamodb,
             sqs,
@@ -515,19 +505,6 @@ impl DynamoDeletionCoordinator {
         snapshot: &SessionDeletionSnapshot,
         now: Timestamp,
     ) -> Result<LifecycleReadiness, StoreError> {
-        if self
-            .checkpoints
-            .delete_page(
-                snapshot.progress.session,
-                crate::checkpoint_objects::CHECKPOINT_DELETE_PAGE_MAX,
-            )
-            .await
-            .map_err(|error| StoreError::Unavailable {
-                detail: format!("session checkpoint deletion failed: {error}"),
-            })?
-        {
-            return Ok(LifecycleReadiness::Deferred);
-        }
         if self
             .telemetry
             .delete_page(snapshot.progress.session, DELETE_PAGE)

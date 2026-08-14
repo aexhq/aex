@@ -1,6 +1,6 @@
-//! `aex-content-dynamodb` owns the `regional-content` table adapter: body
-//! descriptors, inline ciphertext bodies, Merkle pages, root and body pins,
-//! download grants, the garbage-collection epoch and its candidates.
+//! `aex-content-dynamodb` owns the content row family within the unified
+//! `regional-file-authority` table: body descriptors, inline ciphertext bodies,
+//! pins, download grants, the garbage-collection epoch and its candidates.
 //!
 //! # Invariants
 //!

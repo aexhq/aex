@@ -631,13 +631,6 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-brain-mcp",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `mcp.streamable_http` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
     "subject": "crates/aex-brain-provider",
     "owner": "providers",
     "blocking_rule": "aex-unearned-evidence",

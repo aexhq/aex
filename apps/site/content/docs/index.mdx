@@ -69,22 +69,23 @@ handle.
 
 Termination stops new work while retaining committed history, usage, and
 telemetry. Irreversible session deletion separately removes session-owned
-agents, work, sandbox state, encrypted session configuration, checkpoints, and
-telemetry through an idempotent maintenance flow.
+agents, work, sandbox state, encrypted session configuration, and telemetry
+through an idempotent maintenance flow.
 
 ## Files and tools
 
 Workspace files expose only their latest value. Replace a logical name from
 inline text/bytes, an HTTPS URL, or a direct multipart upload. Session creation
 freezes selected names and mount paths; later overwrites do not change that
-session's inputs. Large tool results are written into the sandbox and retained
-through the standard content and telemetry paths. A model can call
+session's inputs. Large tool results are written into the sandbox and are not
+uploaded automatically. A model can call
 `storage_persist` (product name `storage.persist`) to publish a sandbox file as
 the latest workspace value.
 
-The built-in sandbox surface is `read_file`, `edit_file`, `write_file`, and
-Bash. Sessions may also configure qualified remote HTTP MCP servers or
-sandbox-process MCP servers. Native `create_subagent`, `wait_subagents`, and
+The built-in sandbox surface is `read_file`, `edit_file`, `write_file`, Bash,
+MCP, and `storage_persist`. Sessions may configure remote HTTP or
+sandbox-process MCP servers; both are invoked through the built-in MCP tool.
+Native `create_subagent`, `wait_subagents`, and
 `stop_subagent` tools use independent agent authorities, with at most 12 child
 identities over a session lifetime and maximum depth 3.
 
