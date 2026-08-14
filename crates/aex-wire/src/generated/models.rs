@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:52ff41955fd9af6425583de5952856c0d3f942926d45ebe4e96c14c1d55a18c4`.
+//! `sha256:ec8637e9442587d0020caccfed0ab6fccef5a6d61dae1c162fe2d78e2af0dec8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -159,6 +159,30 @@ pub struct ApiKeyPage {
     /// Continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
+}
+
+/// The closed first-party client completing Google authorization.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthClient {
+    /// The hosted dashboard callback.
+    Dashboard,
+    /// The native CLI loopback callback.
+    Cli,
+}
+
+impl AuthClient {
+    /// Every value, in declared order.
+    pub const ALL: &'static [AuthClient] = &[AuthClient::Dashboard, AuthClient::Cli];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dashboard => "dashboard",
+            Self::Cli => "cli",
+        }
+    }
 }
 
 /// The current prepaid position of the caller's personal account.
@@ -455,6 +479,18 @@ impl CardBrand {
     }
 }
 
+/// Public, non-secret Google authorization configuration for the native CLI.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct CliAuthConfig {
+    /// Google's pinned authorization endpoint.
+    pub authorization_url: HttpsUrl,
+    /// The public Google OAuth client identifier.
+    pub client_id: String,
+    /// The exact fixed CLI loopback callback URI registered with Google.
+    pub redirect_uri: String,
+}
+
 /// The only launch currency.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -495,22 +531,24 @@ pub struct DashboardBootstrap {
     pub workspace: Workspace,
 }
 
-/// A rotated browser session returned exactly once.
+/// A rotated first-party user session returned exactly once.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DashboardSessionCredential {
     /// When it stops verifying.
     pub expires_at: Timestamp,
-    /// Bearer credential for an `HttpOnly` cookie.
+    /// Bearer credential held only in a dashboard `HttpOnly` cookie or transient CLI memory.
     pub session: String,
     /// The Google-linked person.
     pub user_id: UserId,
 }
 
-/// Complete a Google OAuth browser sign-in using PKCE-bound state.
+/// Complete a Google OAuth sign-in using PKCE-bound state and one registered first-party callback.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DashboardSessionRequest {
+    /// Which registered first-party callback received the authorization code.
+    pub client: AuthClient,
     /// Single-use Google authorization code.
     pub code: String,
     /// The browser-held PKCE verifier.

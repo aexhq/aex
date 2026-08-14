@@ -382,6 +382,11 @@ struct Rule {
 /// floor — plus the resource class the floor is evaluated against.
 const RULES: &[Rule] = &[
     Rule {
+        route: RouteId::AuthConfigGet,
+        class: ResourceClass::None,
+        min_role: None,
+    },
+    Rule {
         route: RouteId::DashboardSessionCreate,
         class: ResourceClass::None,
         min_role: None,

@@ -1,7 +1,7 @@
 {
   "routes": [
     {
-      "altPrincipal": null,
+      "altPrincipal": "user_session",
       "bodyClass": "aex_json",
       "errors": [
         "unauthenticated",
@@ -43,7 +43,7 @@
       "transport": "unary"
     },
     {
-      "altPrincipal": null,
+      "altPrincipal": "user_session",
       "bodyClass": "none",
       "errors": [
         "unauthenticated",
@@ -80,7 +80,7 @@
       "transport": "unary"
     },
     {
-      "altPrincipal": null,
+      "altPrincipal": "user_session",
       "bodyClass": "none",
       "errors": [
         "unauthenticated",
@@ -120,7 +120,36 @@
       "transport": "unary"
     },
     {
-      "altPrincipal": null,
+      "altPrincipal": "anonymous",
+      "bodyClass": "none",
+      "errors": [
+        "internal_error"
+      ],
+      "etag": "none",
+      "fragment": "auth",
+      "idempotency": "none",
+      "method": "GET",
+      "operationId": "auth_config_get",
+      "path": "/api/auth/config",
+      "pathParams": [],
+      "pauseExempt": false,
+      "plane": "central",
+      "queryParams": [],
+      "requestSchema": null,
+      "requiredScope": null,
+      "responseSchema": "CliAuthConfig",
+      "safeRetry": true,
+      "scenarios": [
+        "SC-IDENTITY-ACCOUNT"
+      ],
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
+      "successStatus": 200,
+      "summary": "Read the public Google OAuth configuration required by the native CLI.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": "user_session",
       "bodyClass": "none",
       "errors": [
         "unauthenticated",
@@ -152,7 +181,7 @@
       "transport": "unary"
     },
     {
-      "altPrincipal": null,
+      "altPrincipal": "user_session",
       "bodyClass": "none",
       "errors": [
         "unauthenticated",
@@ -189,7 +218,7 @@
       "transport": "unary"
     },
     {
-      "altPrincipal": null,
+      "altPrincipal": "user_session",
       "bodyClass": "aex_json",
       "errors": [
         "unauthenticated",
@@ -224,7 +253,7 @@
       "transport": "unary"
     },
     {
-      "altPrincipal": null,
+      "altPrincipal": "user_session",
       "bodyClass": "none",
       "errors": [
         "unauthenticated",
@@ -257,7 +286,7 @@
       "transport": "unary"
     },
     {
-      "altPrincipal": null,
+      "altPrincipal": "user_session",
       "bodyClass": "aex_json",
       "errors": [
         "unauthenticated",
@@ -292,7 +321,7 @@
       "transport": "unary"
     },
     {
-      "altPrincipal": null,
+      "altPrincipal": "user_session",
       "bodyClass": "none",
       "errors": [
         "unauthenticated",
@@ -327,7 +356,7 @@
       "transport": "unary"
     },
     {
-      "altPrincipal": null,
+      "altPrincipal": "user_session",
       "bodyClass": "none",
       "errors": [
         "unauthenticated",
@@ -429,7 +458,7 @@
       "servedArtifact": "control-api",
       "servingArtifact": "control-api",
       "successStatus": 201,
-      "summary": "Exchange a provider authorization code for a browser session.",
+      "summary": "Exchange a provider authorization code for a first-party user session.",
       "transport": "unary"
     },
     {
@@ -462,7 +491,7 @@
       "servedArtifact": "control-api",
       "servingArtifact": "control-api",
       "successStatus": 204,
-      "summary": "Close the browser session the caller presented.",
+      "summary": "Close the first-party user session the caller presented.",
       "transport": "unary"
     },
     {

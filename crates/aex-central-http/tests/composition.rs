@@ -15,10 +15,10 @@ fn the_consolidated_runtime_owns_the_exact_personal_central_surface() {
         .collect();
     let owned: BTreeSet<_> = CentralServiceId::CentralApi.routes().into_iter().collect();
 
-    assert_eq!(published.len(), 13);
+    assert_eq!(published.len(), 14);
     assert_eq!(owned, published);
     assert_eq!(API_KEYS_ROUTES.len(), 3);
-    assert_eq!(AUTH_ROUTES.len(), 2);
+    assert_eq!(AUTH_ROUTES.len(), 3);
     assert_eq!(BILLING_ROUTES.len(), 7);
     assert_eq!(BOOTSTRAP_ROUTES.len(), 1);
     assert_eq!(central_groups().len(), 4);

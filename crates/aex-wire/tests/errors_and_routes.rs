@@ -172,6 +172,37 @@ fn the_route_table_is_indexed_by_route_id() {
 }
 
 #[test]
+fn dashboard_sessions_are_admitted_by_every_dashboard_route_and_no_other_route() {
+    let admitted: BTreeSet<&str> = ROUTES
+        .iter()
+        .filter(|route| {
+            route.alt_principal == Some(aex_wire::idempotency::PrincipalKind::UserSession)
+        })
+        .map(|route| route.operation_id)
+        .collect();
+
+    assert_eq!(
+        admitted,
+        [
+            "api_key_create",
+            "api_key_revoke",
+            "api_keys_list",
+            "billing_balance_get",
+            "billing_payment_method_delete",
+            "billing_payment_method_session_create",
+            "billing_payment_methods_list",
+            "billing_top_up_checkout_create",
+            "billing_transactions_list",
+            "billing_usage_get",
+            "dashboard_bootstrap_get",
+            "dashboard_session_delete",
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
+#[test]
 fn the_session_lifecycle_vocabulary_is_session_centric() {
     // The MVP has one eight-hour session and no public run, persistence,
     // suspend/resume, or trash/restore lifecycle: sandbox suspension is the

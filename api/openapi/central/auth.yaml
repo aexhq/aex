@@ -1,5 +1,6 @@
 plane: central
 fragment: auth
 operations:
-  - { id: dashboard_session_create, method: POST, path: /api/auth/sessions, summary: "Exchange a provider authorization code for a browser session.", altPrincipal: anonymous, request: DashboardSessionRequest, successStatus: 201, success: DashboardSessionCredential, pauseExempt: true, errors: [invalid_request, unauthenticated, forbidden, rate_limited, internal_error] }
-  - { id: dashboard_session_delete, method: DELETE, path: /api/auth/sessions/current, summary: "Close the browser session the caller presented.", scope: "account:write", altPrincipal: user_session, successStatus: 204, pauseExempt: true, errors: [unauthenticated, forbidden, insufficient_scope, rate_limited, internal_error] }
+  - { id: auth_config_get, method: GET, path: /api/auth/config, summary: "Read the public Google OAuth configuration required by the native CLI.", altPrincipal: anonymous, success: CliAuthConfig, errors: [internal_error] }
+  - { id: dashboard_session_create, method: POST, path: /api/auth/sessions, summary: "Exchange a provider authorization code for a first-party user session.", altPrincipal: anonymous, request: DashboardSessionRequest, successStatus: 201, success: DashboardSessionCredential, pauseExempt: true, errors: [invalid_request, unauthenticated, forbidden, rate_limited, internal_error] }
+  - { id: dashboard_session_delete, method: DELETE, path: /api/auth/sessions/current, summary: "Close the first-party user session the caller presented.", scope: "account:write", altPrincipal: user_session, successStatus: 204, pauseExempt: true, errors: [unauthenticated, forbidden, insufficient_scope, rate_limited, internal_error] }

@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:52ff41955fd9af6425583de5952856c0d3f942926d45ebe4e96c14c1d55a18c4`.
+//! `sha256:ec8637e9442587d0020caccfed0ab6fccef5a6d61dae1c162fe2d78e2af0dec8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -58,6 +58,7 @@ use crate::models::BillingTransactionsListQuery;
 use crate::models::BillingUsageCategory;
 use crate::models::BillingUsageGetQuery;
 use crate::models::BillingUsagePage;
+use crate::models::CliAuthConfig;
 use crate::models::DashboardBootstrap;
 use crate::models::DashboardSessionCredential;
 use crate::models::DashboardSessionRequest;
@@ -199,6 +200,7 @@ pub const API_KEYS_ROUTES: &[RouteId] = &[
 
 /// Every route of `central:auth`, in `RouteId` order.
 pub const AUTH_ROUTES: &[RouteId] = &[
+    RouteId::AuthConfigGet,
     RouteId::DashboardSessionCreate,
     RouteId::DashboardSessionDelete,
 ];
@@ -253,6 +255,7 @@ impl RouteId {
             Self::ApiKeyCreate => RouteGroup::ApiKeys,
             Self::ApiKeyRevoke => RouteGroup::ApiKeys,
             Self::ApiKeysList => RouteGroup::ApiKeys,
+            Self::AuthConfigGet => RouteGroup::Auth,
             Self::DashboardSessionCreate => RouteGroup::Auth,
             Self::DashboardSessionDelete => RouteGroup::Auth,
             Self::BillingBalanceGet => RouteGroup::Billing,
@@ -421,13 +424,20 @@ pub async fn dispatch_api_keys<A: ApiKeysApi + ?Sized>(
 
 // --- central:auth ---------------------------------------------------------------
 
-/// The `auth` fragment of the central plane: 2 operations.
+/// The `auth` fragment of the central plane: 3 operations.
 /// Every method returns a future that is `Send`, so the composition crate can spawn it without
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
 pub trait AuthApi: Send + Sync + 'static {
+    /// `GET /api/auth/config`
+    /// Read the public Google OAuth configuration required by the native CLI.
+    fn auth_config_get(
+        &self,
+        cx: &RequestContext,
+    ) -> impl Future<Output = WireResult<CliAuthConfig>> + Send;
+
     /// `POST /api/auth/sessions`
-    /// Exchange a provider authorization code for a browser session.
+    /// Exchange a provider authorization code for a first-party user session.
     fn dashboard_session_create(
         &self,
         cx: &RequestContext,
@@ -435,7 +445,7 @@ pub trait AuthApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<Created<DashboardSessionCredential>>> + Send;
 
     /// `DELETE /api/auth/sessions/current`
-    /// Close the browser session the caller presented.
+    /// Close the first-party user session the caller presented.
     fn dashboard_session_delete(
         &self,
         cx: &RequestContext,
@@ -456,6 +466,12 @@ pub async fn dispatch_auth<A: AuthApi + ?Sized>(
 ) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
     let _reader = QueryReader::parse(raw.route, raw.query)?;
     match raw.route {
+        RouteId::AuthConfigGet => {
+            expect_no_body(&raw)?;
+            let handled = api.auth_config_get(cx);
+            let answer = declared(raw.route, handled.await)?;
+            Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
+        }
         RouteId::DashboardSessionCreate => {
             let body = decode_body::<DashboardSessionRequest>(&raw, limits)?;
             let handled = api.dashboard_session_create(cx, body);

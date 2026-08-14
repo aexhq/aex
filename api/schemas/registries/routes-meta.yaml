@@ -1,7 +1,7 @@
 # The launch route allowlist and exact serving ownership.
 contractVersion: v1
 expected:
-  central: 13
+  central: 14
   regional: 19
 pathParams:
   apiKeyId: { type: id, of: api_key, doc: "API key metadata." }
@@ -28,6 +28,7 @@ deferredOperations: {}
 
 servedOperations:
   control-api:
+    - auth_config_get
     - api_key_create
     - api_key_revoke
     - api_keys_list

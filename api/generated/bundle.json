@@ -14,7 +14,7 @@
       ],
       "operations": [
         {
-          "altPrincipal": null,
+          "altPrincipal": "user_session",
           "bodyClass": "aex_json",
           "errors": [
             "unauthenticated",
@@ -51,7 +51,7 @@
           "transport": "unary"
         },
         {
-          "altPrincipal": null,
+          "altPrincipal": "user_session",
           "bodyClass": "none",
           "errors": [
             "unauthenticated",
@@ -83,7 +83,7 @@
           "transport": "unary"
         },
         {
-          "altPrincipal": null,
+          "altPrincipal": "user_session",
           "bodyClass": "none",
           "errors": [
             "unauthenticated",
@@ -118,7 +118,31 @@
           "transport": "unary"
         },
         {
-          "altPrincipal": null,
+          "altPrincipal": "anonymous",
+          "bodyClass": "none",
+          "errors": [
+            "internal_error"
+          ],
+          "etag": "none",
+          "fragment": "auth",
+          "idempotency": "none",
+          "method": "GET",
+          "operationId": "auth_config_get",
+          "path": "/api/auth/config",
+          "pathParams": [],
+          "pauseExempt": false,
+          "plane": "central",
+          "queryParams": [],
+          "requestSchema": null,
+          "requiredScope": null,
+          "responseSchema": "CliAuthConfig",
+          "safeRetry": true,
+          "successStatus": 200,
+          "summary": "Read the public Google OAuth configuration required by the native CLI.",
+          "transport": "unary"
+        },
+        {
+          "altPrincipal": "user_session",
           "bodyClass": "none",
           "errors": [
             "unauthenticated",
@@ -145,7 +169,7 @@
           "transport": "unary"
         },
         {
-          "altPrincipal": null,
+          "altPrincipal": "user_session",
           "bodyClass": "none",
           "errors": [
             "unauthenticated",
@@ -177,7 +201,7 @@
           "transport": "unary"
         },
         {
-          "altPrincipal": null,
+          "altPrincipal": "user_session",
           "bodyClass": "aex_json",
           "errors": [
             "unauthenticated",
@@ -207,7 +231,7 @@
           "transport": "unary"
         },
         {
-          "altPrincipal": null,
+          "altPrincipal": "user_session",
           "bodyClass": "none",
           "errors": [
             "unauthenticated",
@@ -235,7 +259,7 @@
           "transport": "unary"
         },
         {
-          "altPrincipal": null,
+          "altPrincipal": "user_session",
           "bodyClass": "aex_json",
           "errors": [
             "unauthenticated",
@@ -265,7 +289,7 @@
           "transport": "unary"
         },
         {
-          "altPrincipal": null,
+          "altPrincipal": "user_session",
           "bodyClass": "none",
           "errors": [
             "unauthenticated",
@@ -295,7 +319,7 @@
           "transport": "unary"
         },
         {
-          "altPrincipal": null,
+          "altPrincipal": "user_session",
           "bodyClass": "none",
           "errors": [
             "unauthenticated",
@@ -382,7 +406,7 @@
           "responseSchema": "DashboardSessionCredential",
           "safeRetry": false,
           "successStatus": 201,
-          "summary": "Exchange a provider authorization code for a browser session.",
+          "summary": "Exchange a provider authorization code for a first-party user session.",
           "transport": "unary"
         },
         {
@@ -410,7 +434,7 @@
           "responseSchema": null,
           "safeRetry": false,
           "successStatus": 204,
-          "summary": "Close the browser session the caller presented.",
+          "summary": "Close the first-party user session the caller presented.",
           "transport": "unary"
         }
       ],
@@ -2110,6 +2134,13 @@
       ],
       "type": "object"
     },
+    "AuthClient": {
+      "enum": [
+        "dashboard",
+        "cli"
+      ],
+      "type": "string"
+    },
     "BillingBalance": {
       "additionalProperties": false,
       "properties": {
@@ -2528,6 +2559,35 @@
       ],
       "type": "string"
     },
+    "CliAuthConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "authorizationUrl": {
+          "description": "Google's pinned authorization endpoint.",
+          "format": "uri",
+          "maxLength": 2048,
+          "type": "string"
+        },
+        "clientId": {
+          "description": "The public Google OAuth client identifier.",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "redirectUri": {
+          "description": "The exact fixed CLI loopback callback URI registered with Google.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "authorizationUrl",
+        "clientId",
+        "redirectUri"
+      ],
+      "type": "object"
+    },
     "ComputeShape": {
       "additionalProperties": false,
       "properties": {
@@ -2631,7 +2691,7 @@
           "x-aex-time": "rfc3339-ms"
         },
         "session": {
-          "description": "Bearer credential for an `HttpOnly` cookie.",
+          "description": "Bearer credential held only in a dashboard `HttpOnly` cookie or transient CLI memory.",
           "maxLength": 4096,
           "minLength": 16,
           "type": "string"
@@ -2653,6 +2713,10 @@
     "DashboardSessionRequest": {
       "additionalProperties": false,
       "properties": {
+        "client": {
+          "$ref": "aex:schema:AuthClient",
+          "description": "Which registered first-party callback received the authorization code."
+        },
         "code": {
           "description": "Single-use Google authorization code.",
           "maxLength": 2048,
@@ -2673,6 +2737,7 @@
         }
       },
       "required": [
+        "client",
         "code",
         "codeVerifier",
         "state"

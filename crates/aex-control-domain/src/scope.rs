@@ -331,6 +331,27 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_sessions_get_the_exact_central_surface_without_widening_workspace_keys() {
+        assert_eq!(
+            ScopeSet::dashboard_session(),
+            ScopeSet::of(&[
+                Scope::AccountRead,
+                Scope::AccountWrite,
+                Scope::ApiKeysRead,
+                Scope::ApiKeysWrite,
+                Scope::BillingRead,
+                Scope::BillingWrite,
+            ])
+        );
+        assert_eq!(
+            ScopeSet::dashboard_session().intersect(ScopeSet::WORKSPACE_KEY_MINTABLE),
+            ScopeSet::EMPTY,
+            "dashboard-session authority must not leak into workspace API keys"
+        );
+        assert_eq!(ScopeSet::WORKSPACE_KEY_MINTABLE, ScopeSet::REGIONAL);
+    }
+
+    #[test]
     fn owner_and_admin_share_the_current_central_ceiling() {
         assert_eq!(ScopeSet::OWNER, ScopeSet::CENTRAL);
         assert_eq!(ScopeSet::ADMIN, ScopeSet::CENTRAL);

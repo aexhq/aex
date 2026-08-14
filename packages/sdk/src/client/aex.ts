@@ -6,7 +6,7 @@ import { GeneratedResources, type ExecuteOptions } from "../generated/resources.
 import { WorkspaceFiles } from "../files/workspace-files.js";
 import { apiErrorFromResponse } from "../transport/errors.js";
 
-const SDK_VERSION = "0.53.1";
+const SDK_VERSION = "0.54.0";
 
 export interface AexOptions {
   readonly apiKey?: string;

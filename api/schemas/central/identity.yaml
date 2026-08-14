@@ -72,6 +72,21 @@ schemas:
       items: { type: array, max: 100, items: { type: ref, to: ApiKey }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
+  AuthClient:
+    doc: The closed first-party client completing Google authorization.
+    type: enum
+    values:
+      - { value: dashboard, doc: "The hosted dashboard callback." }
+      - { value: cli, doc: "The native CLI loopback callback." }
+
+  CliAuthConfig:
+    doc: Public, non-secret Google authorization configuration for the native CLI.
+    type: object
+    fields:
+      clientId: { type: string, min: 1, max: 512, doc: "The public Google OAuth client identifier." }
+      authorizationUrl: { type: https_url, doc: "Google's pinned authorization endpoint." }
+      redirectUri: { type: string, min: 1, max: 256, doc: "The exact fixed CLI loopback callback URI registered with Google." }
+
   ApiKeyCreateRequest:
     doc: Mint a key for the account's fixed workspace.
     type: object
@@ -92,18 +107,19 @@ schemas:
       value: { type: string, min: 60, max: 128, doc: "The one-time secret value." }
 
   DashboardSessionRequest:
-    doc: Complete a Google OAuth browser sign-in using PKCE-bound state.
+    doc: Complete a Google OAuth sign-in using PKCE-bound state and one registered first-party callback.
     type: object
     fields:
+      client: { type: ref, to: AuthClient, doc: "Which registered first-party callback received the authorization code." }
       code: { type: string, min: 1, max: 2048, doc: "Single-use Google authorization code." }
       state: { type: string, min: 43, max: 128, doc: "The echoed S256 challenge." }
       codeVerifier: { type: string, min: 43, max: 128, doc: "The browser-held PKCE verifier." }
 
   DashboardSessionCredential:
-    doc: A rotated browser session returned exactly once.
+    doc: A rotated first-party user session returned exactly once.
     type: object
     fields:
-      session: { type: string, min: 16, max: 4096, doc: "Bearer credential for an `HttpOnly` cookie." }
+      session: { type: string, min: 16, max: 4096, doc: "Bearer credential held only in a dashboard `HttpOnly` cookie or transient CLI memory." }
       userId: { type: id, of: user, doc: "The Google-linked person." }
       expiresAt: { type: timestamp, doc: "When it stops verifying." }
 

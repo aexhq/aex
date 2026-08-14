@@ -209,6 +209,7 @@ export function isFreshState(state: SignInState, now = Date.now()): boolean {
 
 function encodeCanonicalJson(body: DashboardSessionRequest): Uint8Array {
   return new TextEncoder().encode(JSON.stringify({
+    client: body.client,
     code: body.code,
     codeVerifier: body.codeVerifier,
     state: body.state,

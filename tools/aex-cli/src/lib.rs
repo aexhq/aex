@@ -1,5 +1,7 @@
 //! Native `aex` command-line client.
 
+mod account;
+
 /// Closed clap command tree.
 pub mod cli;
 /// Local profile and precedence policy.

@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/AuthClient.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The closed first-party client completing Google authorization.",
+  "enum": [
+    "dashboard",
+    "cli"
+  ],
+  "title": "AuthClient",
+  "type": "string"
+}

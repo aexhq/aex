@@ -3,7 +3,7 @@
 //! The low-level client: one request builder and one method per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:52ff41955fd9af6425583de5952856c0d3f942926d45ebe4e96c14c1d55a18c4`.
+//! `sha256:ec8637e9442587d0020caccfed0ab6fccef5a6d61dae1c162fe2d78e2af0dec8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -58,6 +58,7 @@ use crate::models::BillingTransactionsListQuery;
 use crate::models::BillingUsageCategory;
 use crate::models::BillingUsageGetQuery;
 use crate::models::BillingUsagePage;
+use crate::models::CliAuthConfig;
 use crate::models::DashboardBootstrap;
 use crate::models::DashboardSessionCredential;
 use crate::models::DashboardSessionRequest;
@@ -221,6 +222,27 @@ pub fn api_keys_list_request(query: &ApiKeysListQuery) -> Result<WireRequest, Cl
         method: HttpMethod::Get,
         path: path.finish()?,
         query: writer.finish(),
+        headers: request_headers(route, None, None, None),
+        body: None,
+    })
+}
+
+/// `GET /api/auth/config`
+/// Read the public Google OAuth configuration required by the native CLI.
+///
+/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
+/// a recorded fixture — can take the request and run it.
+///
+/// # Errors
+/// Returns [`ClientError::Encode`] when the request cannot be rendered.
+pub fn auth_config_get_request() -> Result<WireRequest, ClientError> {
+    let route = RouteId::AuthConfigGet;
+    let path = PathWriter::new(route);
+    Ok(WireRequest {
+        route,
+        method: HttpMethod::Get,
+        path: path.finish()?,
+        query: String::new(),
         headers: request_headers(route, None, None, None),
         body: None,
     })
@@ -417,7 +439,7 @@ pub fn dashboard_bootstrap_get_request() -> Result<WireRequest, ClientError> {
 }
 
 /// `POST /api/auth/sessions`
-/// Exchange a provider authorization code for a browser session.
+/// Exchange a provider authorization code for a first-party user session.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -440,7 +462,7 @@ pub fn dashboard_session_create_request(
 }
 
 /// `DELETE /api/auth/sessions/current`
-/// Close the browser session the caller presented.
+/// Close the first-party user session the caller presented.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -998,6 +1020,19 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::ApiKeysList, &response)
     }
 
+    /// `GET /api/auth/config`
+    /// Read the public Google OAuth configuration required by the native CLI.
+    ///
+    /// # Errors
+    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
+    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
+    /// not match the contract.
+    pub async fn auth_config_get(&self) -> Result<CliAuthConfig, ClientError> {
+        let request = auth_config_get_request()?;
+        let response = self.send(request).await?;
+        decode_response(RouteId::AuthConfigGet, &response)
+    }
+
     /// `GET /api/billing/balance`
     /// Read the caller's prepaid balance and active reservations.
     ///
@@ -1121,7 +1156,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `POST /api/auth/sessions`
-    /// Exchange a provider authorization code for a browser session.
+    /// Exchange a provider authorization code for a first-party user session.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
@@ -1137,7 +1172,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `DELETE /api/auth/sessions/current`
-    /// Close the browser session the caller presented.
+    /// Close the first-party user session the caller presented.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]

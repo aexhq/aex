@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:52ff41955fd9af6425583de5952856c0d3f942926d45ebe4e96c14c1d55a18c4`.
+//! `sha256:ec8637e9442587d0020caccfed0ab6fccef5a6d61dae1c162fe2d78e2af0dec8`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -31,6 +31,9 @@ pub enum RouteId {
     ApiKeyRevoke,
     /// `GET /api/api-keys` — List workspace API key metadata.
     ApiKeysList,
+    /// `GET /api/auth/config` — Read the public Google OAuth configuration required by the native
+    /// CLI.
+    AuthConfigGet,
     /// `GET /api/billing/balance` — Read the caller's prepaid balance and active reservations.
     BillingBalanceGet,
     /// `DELETE /api/billing/payment-methods/{paymentMethodId}` — Detach a card owned by the
@@ -50,9 +53,11 @@ pub enum RouteId {
     BillingUsageGet,
     /// `GET /api/bootstrap` — One bounded read that fills the dashboard shell.
     DashboardBootstrapGet,
-    /// `POST /api/auth/sessions` — Exchange a provider authorization code for a browser session.
+    /// `POST /api/auth/sessions` — Exchange a provider authorization code for a first-party user
+    /// session.
     DashboardSessionCreate,
-    /// `DELETE /api/auth/sessions/current` — Close the browser session the caller presented.
+    /// `DELETE /api/auth/sessions/current` — Close the first-party user session the caller
+    /// presented.
     DashboardSessionDelete,
     /// `DELETE /api/files/{name}` — Delete one current workspace file.
     RegistryFilesDelete,
@@ -115,6 +120,7 @@ impl RouteId {
         RouteId::ApiKeyCreate,
         RouteId::ApiKeyRevoke,
         RouteId::ApiKeysList,
+        RouteId::AuthConfigGet,
         RouteId::BillingBalanceGet,
         RouteId::BillingPaymentMethodDelete,
         RouteId::BillingPaymentMethodSessionCreate,
@@ -153,6 +159,7 @@ impl RouteId {
             Self::ApiKeyCreate => "api_key_create",
             Self::ApiKeyRevoke => "api_key_revoke",
             Self::ApiKeysList => "api_keys_list",
+            Self::AuthConfigGet => "auth_config_get",
             Self::BillingBalanceGet => "billing_balance_get",
             Self::BillingPaymentMethodDelete => "billing_payment_method_delete",
             Self::BillingPaymentMethodSessionCreate => "billing_payment_method_session_create",
@@ -206,7 +213,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::ApiKeysWrite),
-        alt_principal: None,
+        alt_principal: Some(PrincipalKind::UserSession),
         idempotency: IdempotencyKind::IdempotencyKey,
         body_class: BodyClass::AexJson,
         transport: TransportKind::Unary,
@@ -245,7 +252,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         path_params: &["apiKeyId"],
         query_params: &[],
         required_scope: Some(ScopeId::ApiKeysWrite),
-        alt_principal: None,
+        alt_principal: Some(PrincipalKind::UserSession),
         idempotency: IdempotencyKind::None,
         body_class: BodyClass::None,
         transport: TransportKind::Unary,
@@ -277,7 +284,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         path_params: &[],
         query_params: &["cursor", "limit", "workspaceId"],
         required_scope: Some(ScopeId::ApiKeysRead),
-        alt_principal: None,
+        alt_principal: Some(PrincipalKind::UserSession),
         idempotency: IdempotencyKind::None,
         body_class: BodyClass::None,
         transport: TransportKind::Unary,
@@ -299,6 +306,30 @@ pub static ROUTES: &[RouteDescriptor] = &[
         pause_exempt: false,
     },
     RouteDescriptor {
+        id: RouteId::AuthConfigGet,
+        operation_id: "auth_config_get",
+        plane: Plane::Central,
+        fragment: "auth",
+        serving_artifact: "control-api",
+        deferred: false,
+        method: HttpMethod::Get,
+        template: "/api/auth/config",
+        path_params: &[],
+        query_params: &[],
+        required_scope: None,
+        alt_principal: Some(PrincipalKind::Anonymous),
+        idempotency: IdempotencyKind::None,
+        body_class: BodyClass::None,
+        transport: TransportKind::Unary,
+        success_status: 200,
+        etag: EtagPolicy::None,
+        errors: &[ErrorCode::InternalError],
+        request_schema: None,
+        response_schema: Some("CliAuthConfig"),
+        safe_retry: true,
+        pause_exempt: false,
+    },
+    RouteDescriptor {
         id: RouteId::BillingBalanceGet,
         operation_id: "billing_balance_get",
         plane: Plane::Central,
@@ -310,7 +341,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::BillingRead),
-        alt_principal: None,
+        alt_principal: Some(PrincipalKind::UserSession),
         idempotency: IdempotencyKind::None,
         body_class: BodyClass::None,
         transport: TransportKind::Unary,
@@ -339,7 +370,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         path_params: &["paymentMethodId"],
         query_params: &[],
         required_scope: Some(ScopeId::BillingWrite),
-        alt_principal: None,
+        alt_principal: Some(PrincipalKind::UserSession),
         idempotency: IdempotencyKind::IdempotencyKey,
         body_class: BodyClass::None,
         transport: TransportKind::Unary,
@@ -371,7 +402,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::BillingWrite),
-        alt_principal: None,
+        alt_principal: Some(PrincipalKind::UserSession),
         idempotency: IdempotencyKind::IdempotencyKey,
         body_class: BodyClass::AexJson,
         transport: TransportKind::Unary,
@@ -403,7 +434,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::BillingRead),
-        alt_principal: None,
+        alt_principal: Some(PrincipalKind::UserSession),
         idempotency: IdempotencyKind::None,
         body_class: BodyClass::None,
         transport: TransportKind::Unary,
@@ -433,7 +464,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::BillingWrite),
-        alt_principal: None,
+        alt_principal: Some(PrincipalKind::UserSession),
         idempotency: IdempotencyKind::IdempotencyKey,
         body_class: BodyClass::AexJson,
         transport: TransportKind::Unary,
@@ -465,7 +496,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         path_params: &[],
         query_params: &["cursor", "limit"],
         required_scope: Some(ScopeId::BillingRead),
-        alt_principal: None,
+        alt_principal: Some(PrincipalKind::UserSession),
         idempotency: IdempotencyKind::None,
         body_class: BodyClass::None,
         transport: TransportKind::Unary,
@@ -494,7 +525,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         path_params: &[],
         query_params: &["category", "cursor", "from", "limit", "sessionId", "to"],
         required_scope: Some(ScopeId::BillingRead),
-        alt_principal: None,
+        alt_principal: Some(PrincipalKind::UserSession),
         idempotency: IdempotencyKind::None,
         body_class: BodyClass::None,
         transport: TransportKind::Unary,

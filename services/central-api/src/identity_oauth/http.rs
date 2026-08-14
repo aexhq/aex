@@ -17,9 +17,11 @@ use oauth2::{
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use aex_wire::models::AuthClient;
+
 use super::client::OauthClient;
 use super::profile::google_profile;
-use super::{HandshakeError, ProviderHandshake, challenge_of};
+use super::{CLI_REDIRECT_URI, HandshakeError, ProviderHandshake, challenge_of};
 
 const GOOGLE_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -122,7 +124,8 @@ type ProviderClient<TR> = Client<
 pub struct HttpProviderHandshake {
     http: HardenedHttp,
     google: OauthClient,
-    redirect_uri: RedirectUrl,
+    dashboard_redirect_uri: RedirectUrl,
+    cli_redirect_uri: RedirectUrl,
     endpoints: Endpoints,
     deadline: Duration,
 }
@@ -156,22 +159,24 @@ impl HttpProviderHandshake {
             ))
             .build()
             .map_err(|_| ClientBuildError("the HTTPS executor could not be built".to_owned()))?;
-        let redirect_uri = RedirectUrl::new(redirect_uri)
+        let dashboard_redirect_uri = RedirectUrl::new(redirect_uri)
             .map_err(|_| ClientBuildError("the sign-in redirect URI is invalid".to_owned()))?;
+        let cli_redirect_uri = RedirectUrl::new(CLI_REDIRECT_URI.to_owned())
+            .map_err(|_| ClientBuildError("the compiled CLI redirect URI is invalid".to_owned()))?;
         let endpoints = Endpoints::default();
         TokenUrl::new(endpoints.google_token.clone())
             .map_err(|_| ClientBuildError("Google's compiled token URI is invalid".to_owned()))?;
         Ok(Self {
             http: HardenedHttp { client: http },
             google,
-            redirect_uri,
+            dashboard_redirect_uri,
+            cli_redirect_uri,
             endpoints,
             deadline,
         })
     }
 
     fn client<TR>(
-        &self,
         configured: &OauthClient,
         token_endpoint: &str,
     ) -> Result<ProviderClient<TR>, HandshakeError>
@@ -183,18 +188,30 @@ impl HttpProviderHandshake {
             .set_auth_type(AuthType::RequestBody)
             .set_token_uri(TokenUrl::new(token_endpoint.to_owned()).map_err(|_| {
                 HandshakeError::Unusable("a compiled provider token URI is invalid".to_owned())
-            })?)
-            .set_redirect_uri(self.redirect_uri.clone()))
+            })?))
     }
 
-    async fn google(&self, code: &str, verifier: &str) -> Result<OauthProfile, HandshakeError> {
-        let response: GoogleTokenResponse = self
-            .client::<GoogleTokenResponse>(&self.google, &self.endpoints.google_token)?
-            .exchange_code(AuthorizationCode::new(code.to_owned()))
-            .set_pkce_verifier(PkceCodeVerifier::new(verifier.to_owned()))
-            .request_async(&self.http)
-            .await
-            .map_err(|error| token_error("Google", error, &self.google.secret))?;
+    pub(super) fn redirect_uri(&self, client: AuthClient) -> &RedirectUrl {
+        match client {
+            AuthClient::Dashboard => &self.dashboard_redirect_uri,
+            AuthClient::Cli => &self.cli_redirect_uri,
+        }
+    }
+
+    async fn google(
+        &self,
+        client: AuthClient,
+        code: &str,
+        verifier: &str,
+    ) -> Result<OauthProfile, HandshakeError> {
+        let response: GoogleTokenResponse =
+            Self::client::<GoogleTokenResponse>(&self.google, &self.endpoints.google_token)?
+                .set_redirect_uri(self.redirect_uri(client).clone())
+                .exchange_code(AuthorizationCode::new(code.to_owned()))
+                .set_pkce_verifier(PkceCodeVerifier::new(verifier.to_owned()))
+                .request_async(&self.http)
+                .await
+                .map_err(|error| token_error("Google", error, &self.google.secret))?;
         let id_token = response
             .extra_fields()
             .id_token
@@ -214,8 +231,17 @@ impl HttpProviderHandshake {
 
 #[async_trait::async_trait]
 impl ProviderHandshake for HttpProviderHandshake {
-    async fn identify(&self, code: &str, verifier: &str) -> Result<OauthProfile, HandshakeError> {
-        let exchange = self.google(code, verifier);
+    fn public_client_id(&self) -> &str {
+        self.google.id()
+    }
+
+    async fn identify(
+        &self,
+        client: AuthClient,
+        code: &str,
+        verifier: &str,
+    ) -> Result<OauthProfile, HandshakeError> {
+        let exchange = self.google(client, code, verifier);
         tokio::time::timeout(self.deadline, exchange)
             .await
             .map_err(|_| {
