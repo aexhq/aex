@@ -47,7 +47,7 @@ directly when their evidence environment is supplied.
 Run the deployed journeys only against a disposable dev evidence account:
 
 ```bash
-bun run test:user:live
+bun run test:live
 ```
 
 The common inputs are `AEX_API_URL`, `AEX_API_KEY`,
