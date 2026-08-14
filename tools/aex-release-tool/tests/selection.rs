@@ -21,6 +21,11 @@ fn run_for_lane(root: &std::path::Path, changed: &[&str], mode: Mode, lane: Lane
     select(&built, &inputs, &changed, mode, lane).expect("a selection")
 }
 
+#[test]
+fn retired_assurance_lane_is_rejected() {
+    assert!(serde_json::from_str::<Lane>("\"assurance\"").is_err());
+}
+
 fn ids(selection: &[aex_release_tool::graph::select::Selected]) -> Vec<String> {
     let mut ids: Vec<String> = selection
         .iter()

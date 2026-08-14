@@ -67,7 +67,7 @@ pub struct Variant {
 }
 
 impl Variant {
-    /// Parses one of the five published non-browser variants.
+    /// Parses the published 2 GiB non-browser variant.
     ///
     /// # Errors
     ///
@@ -81,7 +81,7 @@ impl Variant {
             })
         } else {
             Err(format!(
-                "`{name}` is not an offered variant; the five are {}",
+                "`{name}` is not an offered variant; the launch variant is {}",
                 offered
                     .iter()
                     .map(|variant| variant.size.to_owned())
@@ -107,12 +107,8 @@ impl Variant {
     #[must_use]
     pub fn minimum_memory_mib(&self) -> u32 {
         match self.size.as_str() {
-            "512mb" => 512,
-            "1gb" => 1_024,
             "2gb" => 2_048,
-            "4gb" => 4_096,
-            "8gb" => 8_192,
-            _ => unreachable!("Variant::parse admits exactly five sizes"),
+            _ => unreachable!("Variant::parse admits exactly the 2gb size"),
         }
     }
 
@@ -357,7 +353,7 @@ mod tests {
             71,
             "a sha256 reference is `sha256:` plus 64 hex characters"
         );
-        let generated = containerfile(&Variant::parse("1gb").expect("an offered variant"));
+        let generated = containerfile(&Variant::parse("2gb").expect("the launch variant"));
         assert!(generated.contains(&base));
         assert!(
             !generated.contains("al2023-minimal\n"),
@@ -371,7 +367,7 @@ mod tests {
         // of the build are the same AL2023 release rather than two that happen to
         // work together today.
         assert_eq!(RELEASEVER, "2023.12.20260629");
-        let generated = containerfile(&Variant::parse("1gb").expect("an offered variant"));
+        let generated = containerfile(&Variant::parse("2gb").expect("the launch variant"));
         assert!(
             generated.contains(&format!("--releasever={RELEASEVER}")),
             "an unpinned dnf resolves against whatever the mirror serves today"
@@ -381,7 +377,7 @@ mod tests {
 
     #[test]
     fn the_base_minimal_packages_stay_untouched_and_full_packages_are_never_listed() {
-        let generated = containerfile(&Variant::parse("1gb").expect("an offered variant"));
+        let generated = containerfile(&Variant::parse("2gb").expect("the launch variant"));
         assert!(!generated.contains("dnf swap"), "{generated}");
         assert!(generated.contains("-y install"), "{generated}");
         assert!(!generated.contains(" curl \\"), "{generated}");
@@ -393,9 +389,9 @@ mod tests {
 
     #[test]
     fn browser_variants_are_refused_before_a_context_can_be_built() {
-        let base = Variant::parse("4gb").expect("an offered variant");
+        let base = Variant::parse("2gb").expect("the launch variant");
         assert!(!Variant::packages().contains(&"chromium-headless"));
-        assert_eq!(base.tag(), "aex-hands:4gb");
+        assert_eq!(base.tag(), "aex-hands:2gb");
         for name in [
             "512mb-browser",
             "1gb-browser",
@@ -412,15 +408,14 @@ mod tests {
 
     #[test]
     fn an_unknown_variant_is_refused_with_the_offered_set() {
-        let error = Variant::parse("16gb").expect_err("there is no sixth shape");
-        assert!(error.contains("512mb"), "{error}");
-        assert!(error.contains("8gb"), "{error}");
+        let error = Variant::parse("16gb").expect_err("there is only one launch shape");
+        assert!(error.contains("2gb"), "{error}");
         assert!(!error.contains("browser"), "{error}");
     }
 
     #[test]
     fn the_rootfs_contract_and_the_generated_build_agree_about_every_path() {
-        let generated = containerfile(&Variant::parse("1gb").expect("an offered variant"));
+        let generated = containerfile(&Variant::parse("2gb").expect("the launch variant"));
         for entry in aex_hands_agent::ROOTFS_CONTRACT {
             assert!(
                 generated.contains(entry.path),
@@ -443,7 +438,7 @@ mod tests {
 
     #[test]
     fn the_guest_environment_contract_is_written_by_the_image() {
-        let generated = containerfile(&Variant::parse("1gb").expect("an offered variant"));
+        let generated = containerfile(&Variant::parse("2gb").expect("the launch variant"));
         for name in aex_hands_agent::boot::REQUIRED_VARS {
             assert!(
                 generated.contains(&format!("ENV {name}=")),
@@ -458,7 +453,7 @@ mod tests {
 
     #[test]
     fn the_build_inputs_are_the_ones_a_second_build_would_have_to_match() {
-        let inputs = build_inputs(&Variant::parse("1gb").expect("an offered variant"));
+        let inputs = build_inputs(&Variant::parse("2gb").expect("the launch variant"));
         assert!(inputs.iter().any(|input| input.contains(BASE_IMAGE_DIGEST)));
         assert!(inputs.iter().any(|input| input.contains(RELEASEVER)));
         assert!(
@@ -477,11 +472,11 @@ mod tests {
     #[test]
     fn the_registration_descriptor_is_an_exact_provider_configuration() {
         let descriptor =
-            registration_descriptor(&Variant::parse("8gb").expect("an offered variant"));
+            registration_descriptor(&Variant::parse("2gb").expect("the launch variant"));
         assert_eq!(descriptor.schema, "aex.microvm-image-registration.v1");
-        assert_eq!(descriptor.variant, "8gb");
+        assert_eq!(descriptor.variant, "2gb");
         assert!(!descriptor.browser);
-        assert_eq!(descriptor.resources[0].minimum_memory_in_mi_b, 8_192);
+        assert_eq!(descriptor.resources[0].minimum_memory_in_mi_b, 2_048);
         assert_eq!(descriptor.cpu_configurations[0].architecture, "ARM_64");
         assert_eq!(descriptor.additional_os_capabilities, ["ALL"]);
         assert_eq!(descriptor.hooks.port, 8_080);
@@ -493,7 +488,7 @@ mod tests {
         assert!(
             serde_json::to_string(&descriptor)
                 .expect("fixed descriptor serializes")
-                .contains("\"minimumMemoryInMiB\":8192")
+                .contains("\"minimumMemoryInMiB\":2048")
         );
     }
 

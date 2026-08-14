@@ -61,6 +61,27 @@ fn command(request: models::SessionCreateRequest) -> CreateSession {
 }
 
 #[tokio::test]
+async fn a_retired_compute_size_is_refused_at_admission() {
+    let mut request = minimal_request();
+    request.sandbox = Some(models::SessionSandboxRequest {
+        compute: Some(models::SessionComputeRequest {
+            size: Some(aex_wire::types::ComputeSize::Gb1),
+        }),
+        enabled: Some(true),
+        network: None,
+        packages: None,
+    });
+    let ports = ScriptedPorts::idle();
+    assert_eq!(
+        plan_of(&ports, &command(request))
+            .await
+            .expect_err("the launch catalog contains only 2gb")
+            .code(),
+        ErrorCode::InvalidRequest
+    );
+}
+
+#[tokio::test]
 async fn root_start_uses_only_the_revisioned_launch_limit_maps() {
     let ports = ScriptedPorts::idle();
     let clock = clock();
@@ -71,6 +92,16 @@ async fn root_start_uses_only_the_revisioned_launch_limit_maps() {
     let PrepareSessionCreateOutcome::Prepared(prepared) = outcome else {
         panic!("a fresh identity cannot replay");
     };
+    assert_eq!(
+        prepared
+            .pinned_runtime
+            .as_ref()
+            .expect("the default-on sandbox is pinned")
+            .definition()
+            .size,
+        aex_wire::types::ComputeSize::Gb2,
+        "the launch baseline is the one published image"
+    );
     let aex_brain_domain::JournalRecord::AgentStarted { config, budget, .. } =
         initial_root_record(&prepared).expect("the root record derives from elected facts")
     else {

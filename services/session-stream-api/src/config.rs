@@ -99,7 +99,7 @@ pub const RUNTIME_DUE_PAGE_READS: &str = "AEX_RUNTIME_DUE_PAGE_READS";
 pub const PRICING_VERSION: &str = "AEX_PRICING_VERSION";
 /// The account that must own the content bucket.
 pub const CONTENT_BUCKET_OWNER: &str = "AEX_CONTENT_BUCKET_OWNER";
-/// Exact release-derived five-row Hands image catalog.
+/// Exact release-derived one-row Hands image catalog.
 pub const HANDS_IMAGE_CATALOG: &str = "AEX_HANDS_IMAGE_CATALOG";
 /// Whether this plane binds the managed public-internet egress connector.
 pub const HANDS_PUBLIC_INTERNET_EGRESS: &str = "AEX_HANDS_PUBLIC_INTERNET_EGRESS";

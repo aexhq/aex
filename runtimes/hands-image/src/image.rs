@@ -139,17 +139,10 @@ pub struct ImageVariant {
     pub minimum_memory_mib: u32,
 }
 
-/// The five non-browser variants the local generator and release authority offer.
+/// The one general-purpose launch variant the generator and release authority offer.
 #[must_use]
 pub fn variants() -> Vec<ImageVariant> {
-    let shapes: [(&str, u32); 5] = [
-        ("512mb", 512),
-        ("1gb", 1_024),
-        ("2gb", 2_048),
-        ("4gb", 4_096),
-        ("8gb", 8_192),
-    ];
-    shapes
+    [("2gb", 2_048)]
         .into_iter()
         .map(|(size, minimum_memory_mib)| ImageVariant {
             size,
@@ -178,21 +171,21 @@ mod tests {
     }
 
     #[test]
-    fn five_non_browser_variants_are_published_per_region() {
+    fn one_general_purpose_variant_is_published_per_region() {
         let published = variants();
-        assert_eq!(published.len(), 5);
+        assert_eq!(published.len(), 1);
         assert_eq!(
             published
                 .iter()
                 .map(|variant| variant.size)
                 .collect::<Vec<_>>(),
-            vec!["512mb", "1gb", "2gb", "4gb", "8gb"]
+            vec!["2gb"]
         );
     }
 
     #[test]
     fn every_variant_declares_its_minimum_memory() {
-        let expected = [512, 1_024, 2_048, 4_096, 8_192];
+        let expected = [2_048];
         let observed: Vec<u32> = variants()
             .iter()
             .map(|variant| variant.minimum_memory_mib)

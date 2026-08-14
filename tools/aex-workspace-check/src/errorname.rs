@@ -208,7 +208,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         "PrefixError",
         &[
             "crates/aex-brain-test-support/src/prefix.rs",
-            "crates/aex-central-test-support/src/prefix.rs",
             "crates/aex-regional-test-support/src/prefix.rs",
         ],
     ),
@@ -218,10 +217,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "crates/aex-regional-http/src/edge.rs",
             "crates/aex-regional-http/src/projection.rs",
         ],
-    ),
-    (
-        "QueryError",
-        &["crates/aex-usage-query-dynamodb/src/expressions.rs"],
     ),
     (
         "ReadinessError",

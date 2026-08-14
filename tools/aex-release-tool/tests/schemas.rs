@@ -231,6 +231,25 @@ fn the_receipt_schema_makes_a_skip_structurally_impossible() {
 }
 
 #[test]
+fn the_receipt_schema_rejects_the_retired_assurance_lane() {
+    for lane in ["pr", "main", "release"] {
+        let mut receipt = valid_receipt();
+        receipt["lane"] = json!(lane);
+        assert!(
+            schema_accepts(SchemaName::EvidenceReceipt, &receipt),
+            "the active `{lane}` lane must remain admissible"
+        );
+    }
+
+    let mut receipt = valid_receipt();
+    receipt["lane"] = json!("assurance");
+    assert!(
+        !schema_accepts(SchemaName::EvidenceReceipt, &receipt),
+        "the retired assurance lane must not remain in the receipt contract"
+    );
+}
+
+#[test]
 fn the_receipt_schema_forbids_an_observed_secret_canary() {
     let mut receipt = valid_receipt();
     receipt["data"]["secretCanaryObserved"] = json!(true);

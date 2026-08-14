@@ -6,10 +6,8 @@
 //! generation it was issued against, so a stale cursor expires instead of
 //! silently mixing two generations.
 //!
-//! The grammar lives in the domain because both halves need it and neither may
-//! own it: `aex-usage-app` folds facts into these keys, and
-//! `aex-usage-query-dynamodb` reads them back without being able to write. A second
-//! copy would let the writer and the reader disagree about where a row lives.
+//! The grammar lives in the domain because projection writers and readers need
+//! the same keys. A second copy would let them disagree about where a row lives.
 use std::fmt;
 
 use crate::identity::FactId;

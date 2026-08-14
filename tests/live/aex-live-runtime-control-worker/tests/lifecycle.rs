@@ -6,7 +6,7 @@
 //!
 //! The pure halves already pass in the default lane: the exact 179999/180000 ms
 //! boundary, the fence algebra, the lifetime margins, the pressure ranking, the
-//! shape-to-meter table and the fact derivation are all decided by
+//! launch-shape metering and the fact derivation are decided by
 //! `aex-runtime-control` with no clock and no I/O. What is unavailable here is
 //! the part that needs a provider to actually do something.
 
@@ -40,8 +40,10 @@ fn the_eight_hour_lifetime_drains_and_terminates_on_time() {
 }
 
 #[test]
-fn every_compute_shape_produces_the_exact_metered_quantity() {
-    panic!("{UNAVAILABLE}: run all five shapes and reconcile against the provider interval");
+fn the_launch_shape_produces_the_exact_metered_quantity() {
+    panic!(
+        "{UNAVAILABLE}: run the published 2gb shape and reconcile against the provider interval"
+    );
 }
 
 #[test]

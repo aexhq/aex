@@ -112,7 +112,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Download the prepared workspace tools
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: workspace-tools-${{ github.run_id }}
           path: ${{ runner.temp }}/aex-tools
@@ -299,7 +299,7 @@ jobs:
           persist-credentials: false
 
       - name: Download the exact certified artifact inventory
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: certified-envelopes
           path: handoff/certified
@@ -309,7 +309,7 @@ jobs:
       # the readback the publishing job performed, which the composition
       # re-validates rather than trusts.
       - name: Download every registry publication identity
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           pattern: npm-publication-*
           path: handoff/npm-publications

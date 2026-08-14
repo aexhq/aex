@@ -59,7 +59,7 @@
       ]
     },
     "layer": { "enum": ["unit", "smoke", "integration", "e2e", "user"] },
-    "lane": { "enum": ["pr", "main", "assurance", "release"] },
+    "lane": { "enum": ["pr", "main", "release"] },
     "concerns": {
       "type": "array",
       "items": {

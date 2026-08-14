@@ -18,11 +18,12 @@
 # can grant itself a retry around a flaky engine.
 #
 # What this lane deliberately does NOT do: emit an evidence receipt. A semantic
-# receipt is keyed to a deployable unit's own package, and every crate here but
-# `central-schema-admin` is a library with no unit row, so there is nothing for a
-# receipt to be about. This lane therefore gates - a red job fails the run - but
-# it does not yet feed the release ledger. Giving library evidence a place in
-# that ledger is a `release/units.toml` decision, not a workflow one.
+# receipt is keyed to a deployable unit's own package. The crates selected here
+# are libraries with no unit row, except `central-schema-admin`, which is an
+# owner-invoked tool with no unit row. There is therefore nothing for a receipt
+# to be about. This lane gates - a red job fails the run - but does not yet feed
+# the release ledger. Giving non-unit evidence a place in that ledger is a
+# `release/units.toml` decision, not a workflow one.
 
 name: integration-lane
 
@@ -113,7 +114,7 @@ jobs:
 
       - name: Upload the JUnit report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: junit-${{ inputs.lane }}-integration-${{ matrix.name }}
           path: target/nextest/integration/junit.xml

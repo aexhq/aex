@@ -573,13 +573,16 @@ async fn prepare_create<'a>(
         .admit(command.request.provider, &command.request.model)
         .map_err(|refusal| AppError::Conflict(refusal.code()))?;
 
-    let size = command
+    let requested_size = command
         .request
         .sandbox
         .as_ref()
         .and_then(|sandbox| sandbox.compute.as_ref())
-        .and_then(|compute| compute.size)
-        .unwrap_or(ComputeSize::DEFAULT);
+        .and_then(|compute| compute.size);
+    let size = match requested_size {
+        None | Some(ComputeSize::Gb2) => ComputeSize::Gb2,
+        Some(_) => return Err(AppError::Conflict(ErrorCode::InvalidRequest)),
+    };
     let network = network_policy(deployment, command)?;
     check_package_ecosystems(deployment, command)?;
 

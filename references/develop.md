@@ -22,7 +22,9 @@ related:
 
 Use Bun from the repository root or owning workspace package. `package.json`
 scripts are the command source of truth; do not copy a mutable command catalog
-into prose.
+into prose. The root validation script runs the Rust delivery-graph verifier
+before the Bun policy suite, so local validation reads the release registries
+with the same strict UTF-8 parser and `graph verify` command as protected CI.
 
 For fast pre-commit feedback, the affected-development command reuses the same
 release graph that routes protected CI. It plans by default, combines committed

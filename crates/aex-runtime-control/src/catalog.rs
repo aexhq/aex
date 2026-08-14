@@ -1,13 +1,8 @@
 //! Immutable Hands image selection.
 //!
-//! A release publishes the five base images.  The three browser-capable variants
-//! are excluded during prelaunch -- see the browser-variant entry in
-//! `references/backlog.md` -- because the pinned AL2023 ARM64 repository
-//! publishes no Chromium,
-//! so listing them would mint artifacts that deterministically fail in the
-//! provider image builder.  The catalog is resolved once from the authenticated
-//! release placement, validated as a closed five-row document at process start,
-//! and then selected only by the
+//! A release publishes one general-purpose 2 GiB image. The catalog is resolved
+//! once from the authenticated release placement, validated as a closed one-row
+//! document at process start, and then selected only by the
 //! [`ImagePin`], so generation allocation can persist the exact provider ARN,
 //! provider version and artifact digest before any launch is attempted.
 
@@ -29,12 +24,9 @@ pub const HANDS_PACKAGE_ECOSYSTEMS: [aex_wire::models::PackageEcosystem; 3] = [
 
 /// The published release variant keys, in deterministic selection order.
 ///
-/// This must equal the `hands-image-*` unit set in `release/units.toml`. It
-/// listed the three browser variants while the release published five, so
-/// `runtime-control-worker` refused every start and the runtime reaper never
-/// swept. Restoring a browser row here requires restoring its release unit in
-/// the same change.
-pub const HANDS_IMAGE_VARIANTS: [&str; 5] = ["512mb", "1gb", "2gb", "4gb", "8gb"];
+/// This must equal the `hands-image` unit's MicroVM variant in
+/// `release/units.toml`.
+pub const HANDS_IMAGE_VARIANTS: [&str; 1] = ["2gb"];
 
 /// One immutable resolved image identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,7 +55,7 @@ pub struct HandsImageCatalog {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CatalogError {
     /// The document did not contain exactly the published release variants.
-    #[error("Hands image catalog keys must be exactly the five published release variants")]
+    #[error("Hands image catalog keys must be exactly the published 2gb release variant")]
     VariantSet,
     /// An entry did not agree with the size encoded by its key.
     #[error(
@@ -79,16 +71,16 @@ pub enum CatalogError {
         /// Variant with the absent identity component.
         variant: String,
     },
-    /// Two variants point at one provider image ARN.
-    #[error("Hands image catalog image ARN `{identifier}` is assigned to more than one variant")]
-    DuplicateImage {
-        /// Reused provider identifier.
-        identifier: String,
-    },
     /// The requested public shape does not offer all required capabilities.
     #[error("compute size `{size}` has no browser-capable Hands image")]
     CapabilityUnavailable {
         /// Public shape that cannot carry the capability.
+        size: &'static str,
+    },
+    /// The requested legacy size is not part of the launch catalog.
+    #[error("compute size `{size}` is unavailable; the launch image is 2gb")]
+    SizeUnavailable {
+        /// Requested public token.
         size: &'static str,
     },
 }
@@ -176,7 +168,6 @@ impl HandsImageCatalog {
             return Err(CatalogError::VariantSet);
         }
 
-        let mut identifiers = BTreeSet::new();
         for (variant, entry) in &entries {
             let (size, browser) = variant_shape(variant).ok_or(CatalogError::VariantSet)?;
             if entry.minimum_memory_mib != size.minimum_memory_mib() || entry.browser != browser {
@@ -189,63 +180,40 @@ impl HandsImageCatalog {
                     variant: variant.clone(),
                 });
             }
-            if !identifiers.insert(entry.image_arn.0.clone()) {
-                return Err(CatalogError::DuplicateImage {
-                    identifier: entry.image_arn.0.clone(),
-                });
-            }
         }
         Ok(Self { entries })
     }
 
     /// Selects the exact immutable image for one generation definition.
     ///
-    /// Browser is the only optional image capability in strict v1.  The selected
-    /// pair is cloned into the immutable generation record; launch retries never
-    /// consult this catalog again.
+    /// The selected pair is cloned into the immutable generation record; launch
+    /// retries never consult this catalog again.
     ///
     /// # Errors
     ///
-    /// Returns [`CatalogError::CapabilityUnavailable`] when browser is requested
-    /// for a shape below 2 GiB, or for any shape while no browser variant is
-    /// published.
+    /// Returns [`CatalogError::CapabilityUnavailable`] when browser is requested,
+    /// or [`CatalogError::SizeUnavailable`] for a retired launch size.
     pub fn select(
         &self,
         size: ComputeSize,
         required_capabilities: &[ImageCapability],
     ) -> Result<ImagePin, CatalogError> {
-        let browser = required_capabilities.contains(&ImageCapability::Browser);
-        if browser && !size.offers_browser() {
+        if required_capabilities.contains(&ImageCapability::Browser) {
             return Err(CatalogError::CapabilityUnavailable {
                 size: size.as_str(),
             });
         }
-        let key = if browser {
-            format!("{}-browser", size.as_str())
-        } else {
-            size.as_str().to_owned()
-        };
-        // A missing browser row is an unavailable capability, not a malformed
-        // document: `from_entries` already proved the catalog holds exactly the
-        // published variants, so the only way to miss here is to ask for one that
-        // this release does not publish. `VariantSet` would send a reader hunting
-        // for corruption that is not there.
-        let entry = self.entries.get(&key).ok_or(if browser {
-            CatalogError::CapabilityUnavailable {
+        if size != ComputeSize::Gb2 {
+            return Err(CatalogError::SizeUnavailable {
                 size: size.as_str(),
-            }
-        } else {
-            CatalogError::VariantSet
-        })?;
+            });
+        }
+        let entry = self.entries.get("2gb").ok_or(CatalogError::VariantSet)?;
         Ok(ImagePin {
             identifier: entry.image_arn.clone(),
             version: entry.image_version.clone(),
             artifact_digest: entry.artifact_digest,
-            capabilities: if browser {
-                vec![ImageCapability::Browser]
-            } else {
-                Vec::new()
-            },
+            capabilities: Vec::new(),
         })
     }
 
@@ -258,14 +226,7 @@ impl HandsImageCatalog {
 
 fn variant_shape(variant: &str) -> Option<(ComputeSize, bool)> {
     Some(match variant {
-        "512mb" => (ComputeSize::Mb512, false),
-        "1gb" => (ComputeSize::Gb1, false),
         "2gb" => (ComputeSize::Gb2, false),
-        "2gb-browser" => (ComputeSize::Gb2, true),
-        "4gb" => (ComputeSize::Gb4, false),
-        "4gb-browser" => (ComputeSize::Gb4, true),
-        "8gb" => (ComputeSize::Gb8, false),
-        "8gb-browser" => (ComputeSize::Gb8, true),
         _ => return None,
     })
 }
@@ -284,22 +245,14 @@ mod tests {
             .enumerate()
             .map(|(index, variant)| {
                 let digest_byte = u8::try_from(index).expect("the catalog is small");
-                let size = match variant.split('-').next().expect("a size") {
-                    "512mb" => 512,
-                    "1gb" => 1_024,
-                    "2gb" => 2_048,
-                    "4gb" => 4_096,
-                    "8gb" => 8_192,
-                    _ => unreachable!(),
-                };
                 (
                     variant.to_owned(),
                     HandsImageCatalogEntry {
                         image_arn: ImageIdentifier(format!("arn:image:{index}")),
                         image_version: ImageVersion((index + 1).to_string()),
                         artifact_digest: ContentHash::from_bytes([digest_byte; 32]),
-                        minimum_memory_mib: size,
-                        browser: variant.ends_with("-browser"),
+                        minimum_memory_mib: 2_048,
+                        browser: false,
                     },
                 )
             })
@@ -312,61 +265,54 @@ mod tests {
         assert!(HandsImageCatalog::from_entries(complete.clone()).is_ok());
 
         let mut missing = complete.clone();
-        missing.remove("8gb");
+        missing.remove("2gb");
         assert_eq!(
             HandsImageCatalog::from_entries(missing),
             Err(CatalogError::VariantSet)
         );
 
-        // A browser variant is not published, so an entry claiming the capability
-        // is a shape violation rather than an unknown key.
+        // A browser variant is not published, so an extra row is not accepted.
         let mut extra = complete.clone();
-        extra.insert("8gb-browser".to_owned(), complete["8gb"].clone());
+        extra.insert("2gb-browser".to_owned(), complete["2gb"].clone());
         assert_eq!(
             HandsImageCatalog::from_entries(extra),
             Err(CatalogError::VariantSet)
         );
 
-        let mut wrong_shape = complete.clone();
-        wrong_shape.get_mut("4gb").expect("row").browser = true;
+        let mut wrong_shape = complete;
+        wrong_shape.get_mut("2gb").expect("row").minimum_memory_mib = 4_096;
         assert!(matches!(
             HandsImageCatalog::from_entries(wrong_shape),
-            Err(CatalogError::Shape { variant }) if variant == "4gb"
-        ));
-
-        let mut duplicate = complete;
-        duplicate.get_mut("8gb").expect("row").image_arn = duplicate["4gb"].image_arn.clone();
-        assert!(matches!(
-            HandsImageCatalog::from_entries(duplicate),
-            Err(CatalogError::DuplicateImage { .. })
+            Err(CatalogError::Shape { variant }) if variant == "2gb"
         ));
     }
 
     #[test]
     fn capability_and_memory_select_the_exact_pin() {
         let catalog = HandsImageCatalog::from_entries(entries()).expect("catalog");
-        let base = catalog.select(ComputeSize::Gb4, &[]).expect("base image");
-        assert_eq!(base.identifier.0, "arn:image:3");
-        assert_eq!(base.version.0, "4");
+        let base = catalog.select(ComputeSize::Gb2, &[]).expect("base image");
+        assert_eq!(base.identifier.0, "arn:image:0");
+        assert_eq!(base.version.0, "1");
         assert!(base.capabilities.is_empty());
     }
 
     #[test]
-    fn the_browser_capability_is_unavailable_at_every_published_size() {
-        // No browser variant is published during prelaunch, so asking for the
-        // capability must name the size and refuse rather than silently hand back
-        // a base image that cannot do it.
+    fn the_launch_catalog_refuses_browser_and_retired_sizes() {
         let catalog = HandsImageCatalog::from_entries(entries()).expect("catalog");
-        for (size, name) in [
-            (ComputeSize::Gb1, "1gb"),
-            (ComputeSize::Gb2, "2gb"),
-            (ComputeSize::Gb4, "4gb"),
-            (ComputeSize::Gb8, "8gb"),
+        assert_eq!(
+            catalog.select(ComputeSize::Gb2, &[ImageCapability::Browser]),
+            Err(CatalogError::CapabilityUnavailable { size: "2gb" })
+        );
+        for size in [
+            ComputeSize::Mb512,
+            ComputeSize::Gb1,
+            ComputeSize::Gb4,
+            ComputeSize::Gb8,
         ] {
-            assert_eq!(
-                catalog.select(size, &[ImageCapability::Browser]),
-                Err(CatalogError::CapabilityUnavailable { size: name })
-            );
+            assert!(matches!(
+                catalog.select(size, &[]),
+                Err(CatalogError::SizeUnavailable { .. })
+            ));
         }
     }
 

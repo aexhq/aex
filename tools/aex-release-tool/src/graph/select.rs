@@ -30,8 +30,6 @@ pub enum Lane {
     Pr,
     /// Protected main build and publication.
     Main,
-    /// Scheduled assurance.
-    Assurance,
     /// Explicit environment release.
     Release,
 }

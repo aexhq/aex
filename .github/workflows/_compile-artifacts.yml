@@ -68,7 +68,7 @@ jobs:
       # The toolchain and the cache above stay: this job compiles the artifact
       # itself. Only the release tool is no longer rebuilt here.
       - name: Download the prepared workspace tools
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: workspace-tools-${{ github.run_id }}
           path: ${{ runner.temp }}/aex-tools
@@ -267,27 +267,6 @@ jobs:
               --toolchain "$RELEASE_DIR/oci-toolchain.json"
           done
 
-      - name: Bind the pinned AWS RDS CA bundle for central schema admin
-        if: ${{ matrix.name == 'central-schema-admin' && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
-        run: |
-          set -euo pipefail
-          ca="$RUNNER_TEMP/aex-rds-global-bundle.pem"
-          curl --fail --location --proto '=https' --tlsv1.2 \
-            --output "$ca" \
-            https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
-          echo "e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3  $ca" \
-            | sha256sum --check --strict
-          ca_digest="sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3"
-          for attempt in 1 2; do
-            context="$RELEASE_DIR/context-$attempt"
-            install -m 0644 "$ca" "$context/aws-rds-global-bundle.pem"
-            sed -i '/^COPY --chmod=0555 artifact/i LABEL dev.aex.rds-ca-bundle-sha256="sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3"' "$context/Dockerfile"
-            sed -i '/^COPY --chmod=0555 artifact/i COPY aws-rds-global-bundle.pem /usr/local/share/aex/aws-rds-global-bundle.pem' "$context/Dockerfile"
-            jq --arg digest "$ca_digest" '.labels["dev.aex.rds-ca-bundle-sha256"] = $digest' \
-              "$RELEASE_DIR/binding-$attempt.json" > "$RELEASE_DIR/binding-$attempt.tmp.json"
-            mv "$RELEASE_DIR/binding-$attempt.tmp.json" "$RELEASE_DIR/binding-$attempt.json"
-          done
-
       - name: Build and inspect two independent OCI layouts
         if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         run: |
@@ -417,7 +396,7 @@ jobs:
 
       - name: Upload the packaged bytes
         if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: artifact-${{ matrix.name }}
           path: |
@@ -430,7 +409,7 @@ jobs:
 
       - name: Upload reproducible OCI build evidence
         if: ${{ always() && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: oci-artifact-${{ matrix.name }}
           path: |
@@ -454,7 +433,7 @@ jobs:
       # existing downloader pattern.
       - name: Upload the exact OCI publish context
         if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: oci-context-${{ matrix.name }}
           path: ${{ env.RELEASE_DIR }}/context-1

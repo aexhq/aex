@@ -175,8 +175,6 @@ pub struct CentralMigrations {
     pub bundle_digest: String,
     /// Declared head version.
     pub head: String,
-    /// The schema-admin image whose bytes embed the same migrations.
-    pub admin_image_digest: String,
 }
 
 /// The regional table generation.
@@ -907,14 +905,6 @@ pub fn new_handoff_manifest(
                 }
             }
         }
-    }
-    if let Some(admin) = envelopes.get("central-schema-admin")
-        && admin.output.digest != inputs.migrations.central.admin_image_digest
-    {
-        violations.push(Violation::new(
-            "handoff-central-admin-image-mismatch",
-            "the central migration admin image digest differs from the central-schema-admin artifact digest",
-        ));
     }
     if !violations.is_empty() {
         violations.sort();
@@ -1657,7 +1647,7 @@ mod tests {
             },
             "units": {},
             "migrations": {
-                "central": { "bundleDigest": "sha256:bb", "head": "0007", "adminImageDigest": "sha256:cc" },
+                "central": { "bundleDigest": "sha256:bb", "head": "0007" },
                 "regional": {
                     "bundleDigest": "sha256:dd",
                     "bundleSizeBytes": 1,

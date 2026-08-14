@@ -56,6 +56,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
+      # This envelope is deliberately written before any fail-closed gate. If
+      # a required upstream job failed (or the caller supplied malformed
+      # JSON), the aggregate job must still preserve what it was asked to
+      # evaluate without adding a misleading missing-artifact failure.
+      - name: Capture the required workflow job results
+        env:
+          REQUIRED_JOB_RESULTS: ${{ inputs.required_job_results }}
+          RECEIPT_LANE: ${{ inputs.lane }}
+        run: |
+          set -euo pipefail
+          jq -cn --arg lane "$RECEIPT_LANE" --arg requiredJobResults "$REQUIRED_JOB_RESULTS" '
+            {
+              schema: "aex.workflow-job-results-input.v1",
+              lane: $lane,
+              requiredJobResults: $requiredJobResults
+            }
+          ' > required-job-results-input.json
+
       # No Rust toolchain: this job only ever runs `evidence aggregate`, which
       # reads and writes files and never shells out to cargo.
       - name: Require every workflow job to pass
@@ -71,12 +89,22 @@ jobs:
               (.value | type == "object") and
               (.value | keys | sort) == ["allowSkipped", "result"] and
               (.value.allowSkipped | type == "boolean") and
-              (
-                .value.result == "success" or
-                (.value.allowSkipped and .value.result == "skipped")
-              )
+              (.value.result | type == "string")
             )
           ' <<<"$REQUIRED_JOB_RESULTS" >/dev/null
+          failed_jobs="$(jq -c '
+            [to_entries[] |
+              select(
+                .value.result != "success" and
+                ((.value.allowSkipped and .value.result == "skipped") | not)
+              ) |
+              {job: .key, result: .value.result, allowSkipped: .value.allowSkipped}
+            ]
+          ' <<<"$REQUIRED_JOB_RESULTS")"
+          if [ "$(jq 'length' <<<"$failed_jobs")" -gt 0 ]; then
+            echo "required workflow jobs did not pass: $failed_jobs" >&2
+            exit 1
+          fi
           jq -cn --arg lane "$RECEIPT_LANE" --argjson jobs "$REQUIRED_JOB_RESULTS" '
             {schema: "aex.workflow-job-results.v1", lane: $lane, jobs: $jobs}
           ' > required-job-results.json
@@ -84,7 +112,7 @@ jobs:
       # After the job-result gate, never before it. A failed `tools` job must
       # be reported by name here rather than turning into a missing artifact.
       - name: Download the prepared workspace tools
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: workspace-tools-${{ github.run_id }}
           path: ${{ runner.temp }}/aex-tools
@@ -191,7 +219,7 @@ jobs:
 
       - name: Download every receipt
         if: steps.expected.outputs.has_receipts == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           pattern: receipt-*
           path: receipts
@@ -215,10 +243,12 @@ jobs:
 
       - name: Upload the lane receipt
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: lane-receipt-${{ inputs.lane }}
           path: |
             lane-receipt.json
             required-job-results.json
+            required-job-results-input.json
           if-no-files-found: error
+          overwrite: true

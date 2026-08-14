@@ -66,6 +66,63 @@ fn handoff_inputs() -> CompositionInputs {
     serde_json::from_value(value).unwrap()
 }
 
+fn catalog_authority_registry() -> Units {
+    toml::from_str(
+        r#"
+schema = "aex.units.v1"
+
+[[unit]]
+id = "brain-mux"
+kind = "rust-lambda"
+plane = "regional"
+package = "brain-mux"
+bin = "brain-mux"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "brain-mux"
+
+[unit.lambda]
+memory_mb = 1024
+timeout_s = 30
+reserved_concurrency = 8
+"#,
+    )
+    .unwrap()
+}
+
+fn catalog_authority_envelope() -> ArtifactEnvelope {
+    let mut value = valid_envelope();
+    value["unit"]["id"] = serde_json::json!("brain-mux");
+    value["identities"]["catalogs"] = serde_json::json!({ "tool": common::docs::digest(0x55) });
+    serde_json::from_value::<ArtifactEnvelope>(value)
+        .unwrap()
+        .seal()
+        .unwrap()
+}
+
+#[test]
+fn complete_release_envelopes_do_not_require_an_owner_invoked_schema_admin() {
+    let registry = catalog_authority_registry();
+    assert!(
+        registry
+            .units
+            .iter()
+            .all(|unit| unit.id != "central-schema-admin"),
+        "the owner-invoked tool must stay outside the release registry"
+    );
+    let (store, authorities) = aex_release_tool::composition_inputs::envelope_authorities(
+        &registry,
+        vec![catalog_authority_envelope()],
+    )
+    .expect("the complete deployable registry is enough to derive composition authorities");
+    assert_eq!(store.len(), 1);
+    assert_eq!(authorities.catalogs["tool"], common::docs::digest(0x55));
+}
+
 #[test]
 fn module_bundle_is_deterministic_and_rooted_at_modules() {
     let root = tempfile::tempdir().unwrap();

@@ -34,7 +34,7 @@ pub const LIFECYCLE_QUEUE_VAR: &str = "AEX_RUNTIME_LIFECYCLE_QUEUE_URL";
 pub const RATING_QUEUE_VAR: &str = "AEX_USAGE_RATING_QUEUE_URL";
 /// Environment variable naming the `MicroVM` control-plane endpoint.
 pub const PROVIDER_ENDPOINT_VAR: &str = "AEX_MICROVM_CONTROL_ENDPOINT";
-/// Environment variable containing the eight immutable Hands image identities.
+/// Environment variable containing the immutable 2 GiB Hands image identity.
 pub const IMAGE_CATALOG_VAR: &str = "AEX_HANDS_IMAGE_CATALOG";
 /// Environment variable naming how many shards the due index is spread over.
 pub const DUE_SHARDS_VAR: &str = "AEX_RUNTIME_DUE_SHARDS";
@@ -371,15 +371,7 @@ mod tests {
     }
 
     fn catalog_json(plane: &str, region: &str, account: &str) -> String {
-        // The published set. Browser variants are excluded during prelaunch, so a
-        // fixture carrying them describes no release this worker can be given.
-        let variants = [
-            ("512mb", 512, false),
-            ("1gb", 1_024, false),
-            ("2gb", 2_048, false),
-            ("4gb", 4_096, false),
-            ("8gb", 8_192, false),
-        ];
+        let variants = [("2gb", 2_048, false)];
         let rows = variants
             .into_iter()
             .enumerate()
@@ -389,7 +381,7 @@ mod tests {
                     serde_json::json!({
                         "imageArn": format!(
                             "arn:aws:lambda:{region}:{account}:microvm-image:aex-{plane}-{}",
-                            char::from(b'a' + u8::try_from(index).expect("eight rows")).to_string().repeat(52),
+                            char::from(b'a' + u8::try_from(index).expect("one row")).to_string().repeat(52),
                         ),
                         "imageVersion": (index + 1).to_string(),
                         "artifactDigest": format!("sha256:{index:064x}"),
@@ -414,7 +406,7 @@ mod tests {
         assert_eq!(config.plane, "dev");
         assert_eq!(config.region, Region::EuWest1);
         assert_eq!(config.account_id, "522921482290");
-        assert_eq!(config.image_catalog.image_identifiers().len(), 5);
+        assert_eq!(config.image_catalog.image_identifiers().len(), 1);
         assert_eq!(config.runtime_activity_table, "aex-dev-runtime-activity");
         assert_eq!(config.due_shards, 8);
         assert_eq!(config.page.max_items, 32);
@@ -504,7 +496,7 @@ mod tests {
         let mut partial = complete();
         let mut catalog: serde_json::Value =
             serde_json::from_str(&partial[IMAGE_CATALOG_VAR]).expect("catalog");
-        catalog.as_object_mut().expect("object").remove("8gb");
+        catalog.as_object_mut().expect("object").remove("2gb");
         partial.insert(IMAGE_CATALOG_VAR, catalog.to_string());
         assert!(matches!(
             read(&partial),

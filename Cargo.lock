@@ -284,16 +284,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-central-test-support"
-version = "0.1.0"
-dependencies = [
- "aex-test-harness",
- "thiserror 2.0.19",
- "time",
- "uuid",
-]
-
-[[package]]
 name = "aex-cli"
 version = "0.50.0"
 dependencies = [
@@ -1228,25 +1218,6 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror 2.0.19",
  "time",
-]
-
-[[package]]
-name = "aex-usage-query-dynamodb"
-version = "0.1.0"
-dependencies = [
- "aex-test-harness",
- "aex-usage-domain",
- "async-trait",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-smithy-types",
- "futures",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "time",
- "tokio",
- "uuid",
 ]
 
 [[package]]

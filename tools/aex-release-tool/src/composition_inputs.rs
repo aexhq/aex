@@ -51,10 +51,6 @@ pub struct PublicRunIdentity {
 /// Identities that can only be derived after the complete envelope set exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvelopeAuthorities {
-    /// Exact central schema-admin image digest.
-    pub central_admin_image_digest: String,
-    /// Central migration bundle digest carried by the schema-admin artifact.
-    pub central_bundle_digest: String,
     /// Catalogue names to immutable digests.
     pub catalogs: BTreeMap<String, String>,
 }
@@ -63,38 +59,13 @@ pub struct EnvelopeAuthorities {
 ///
 /// # Errors
 /// Returns the handoff verifier's classified failure for an incomplete set,
-/// or [`Exit::CompositionIncompatible`] when the schema admin or Brain omits
-/// the identities only those artifacts can establish.
+/// or [`Exit::CompositionIncompatible`] when Brain omits the catalogue identity
+/// only its certified artifact can establish.
 pub fn envelope_authorities(
     registry: &Units,
     envelopes: Vec<ArtifactEnvelope>,
 ) -> Result<(BTreeMap<String, ArtifactEnvelope>, EnvelopeAuthorities)> {
     let store = crate::manifest::verify_handoff_envelopes(registry, envelopes)?;
-    let admin = store.get("central-schema-admin").ok_or_else(|| {
-        ToolError::single(
-            Exit::CompositionIncompatible,
-            "composition-central-admin-missing",
-            "the complete registry has no certified central-schema-admin artifact",
-        )
-    })?;
-    let central_admin_image_digest = admin.output.digest.clone();
-    let central_bundle_digest = admin
-        .identities
-        .migration
-        .as_ref()
-        .and_then(|migration| migration.central_bundle_digest.as_ref())
-        .ok_or_else(|| {
-            ToolError::single(
-                Exit::CompositionIncompatible,
-                "composition-central-admin-bundle-missing",
-                "the certified central-schema-admin artifact carries no central migration bundle digest",
-            )
-        })?
-        .clone();
-    require_sha256(
-        &central_bundle_digest,
-        "composition-central-admin-bundle-digest",
-    )?;
     let brain = store.get("brain-mux").ok_or_else(|| {
         ToolError::single(
             Exit::CompositionIncompatible,
@@ -118,14 +89,7 @@ pub fn envelope_authorities(
     })?;
     require_sha256(digest, "composition-catalog-digest")?;
     let catalogs = BTreeMap::from([("tool".to_owned(), digest.clone())]);
-    Ok((
-        store,
-        EnvelopeAuthorities {
-            central_admin_image_digest,
-            central_bundle_digest,
-            catalogs,
-        },
-    ))
+    Ok((store, EnvelopeAuthorities { catalogs }))
 }
 
 /// Produce the complete non-envelope input document from checked authorities.
@@ -144,7 +108,7 @@ pub fn produce(
     validate_run(root, run)?;
     validate_authorities(root, &authorities)?;
     let packages = registry_packages(registry, files.npm_publications)?;
-    let published = read_published_inputs(root, files, &authorities)?;
+    let published = read_published_inputs(root, files)?;
     let base = release_base(run);
     let source = PublicSource {
         repository: run.repository.clone(),
@@ -171,7 +135,6 @@ pub fn produce(
             central: CentralMigrations {
                 bundle_digest: published.central_bundle_digest,
                 head: published.central_head,
-                admin_image_digest: authorities.central_admin_image_digest,
             },
             regional: RegionalMigrations {
                 bundle_digest: canon::digest_bytes(&published.regional_bytes),
@@ -287,10 +250,6 @@ fn registry_packages(
 }
 
 fn validate_authorities(root: &Path, authorities: &EnvelopeAuthorities) -> Result<()> {
-    require_sha256(
-        &authorities.central_admin_image_digest,
-        "composition-central-admin-digest",
-    )?;
     let source_tool_catalog = crate::artifact::tool_catalog_digest(root)?;
     if authorities.catalogs.get("tool") != Some(&source_tool_catalog) {
         return Err(ToolError::single(
@@ -317,11 +276,7 @@ struct PublishedInputs {
     central_head: String,
 }
 
-fn read_published_inputs(
-    root: &Path,
-    files: PublicInputFiles<'_>,
-    authorities: &EnvelopeAuthorities,
-) -> Result<PublishedInputs> {
+fn read_published_inputs(root: &Path, files: PublicInputFiles<'_>) -> Result<PublishedInputs> {
     let tool_bytes = read(files.release_tool, "composition-release-tool-missing")?;
     let module_bytes = read(files.module_bundle, "composition-module-bundle-missing")?;
     let expected_modules = crate::publication::package_module_bundle(root)?;
@@ -350,16 +305,6 @@ fn read_published_inputs(
             Exit::ManifestInvalid,
             "composition-central-lock-stale",
             "migrations/central/bundle.lock.json does not match the canonical migration source bundle",
-        ));
-    }
-    if authorities.central_bundle_digest != central_bundle_digest {
-        return Err(ToolError::single(
-            Exit::CompositionIncompatible,
-            "composition-central-admin-bundle-mismatch",
-            format!(
-                "the certified central-schema-admin bundle is `{}`, not source-bound `{central_bundle_digest}`",
-                authorities.central_bundle_digest
-            ),
         ));
     }
     Ok(PublishedInputs {
@@ -646,12 +591,7 @@ mod tests {
     }
 
     fn authorities(root: &Path) -> EnvelopeAuthorities {
-        let bundle = crate::migration::build_bundle(root).expect("central bundle");
         EnvelopeAuthorities {
-            central_admin_image_digest: digest(1),
-            central_bundle_digest: canon::digest_bytes(
-                &canon::to_file_bytes(&bundle).expect("canonical central bundle"),
-            ),
             catalogs: BTreeMap::from([
                 ("model".to_owned(), digest(2)),
                 (
@@ -741,11 +681,18 @@ mod tests {
     }
 
     #[test]
-    fn composition_is_derived_from_source_and_exact_acquired_bytes() {
+    fn composition_is_derived_from_source_without_a_schema_admin_artifact() {
         let root = workspace();
         let temp = tempfile::tempdir().expect("tempdir");
         let (tool, modules, regional) = acquired(&root, temp.path());
         let units = registry(&root);
+        assert!(
+            units
+                .units
+                .iter()
+                .all(|unit| unit.id != "central-schema-admin"),
+            "the owner-invoked schema tool is not a release unit"
+        );
         let published = publications(&root, temp.path());
         assert!(
             units.units.iter().any(|unit| unit.kind == "npm-package"),
@@ -773,6 +720,10 @@ mod tests {
         assert_eq!(inputs.infra.terraform_version, "1.14.0");
         assert_eq!(inputs.infra.provider_versions["hashicorp/aws"], "6.57.1");
         assert_eq!(inputs.migrations.regional.generation, 1);
+        let central = serde_json::to_value(&inputs.migrations.central).expect("central identity");
+        let central = central.as_object().expect("central identity object");
+        assert_eq!(central.len(), 2);
+        assert!(!central.contains_key("adminImageDigest"));
         assert_eq!(inputs.catalogs["tool"], authorities(&root).catalogs["tool"]);
         let sdk = &inputs.packages["npm"]["@aexhq/sdk"];
         assert_eq!(sdk.version, "0.50.0");

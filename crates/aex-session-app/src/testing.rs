@@ -712,21 +712,19 @@ pub fn deployment_facts() -> crate::ports::DeploymentFacts {
     use aex_runtime_control::generation::{ImageIdentifier, ImageVersion};
     use aex_runtime_control::shape::ShapeCapacity as _;
 
-    let entries = aex_wire::types::ComputeSize::ALL
-        .into_iter()
-        .map(|size| {
-            (
-                size.as_str().to_owned(),
-                HandsImageCatalogEntry {
-                    image_arn: ImageIdentifier(format!("aex-hands-{}", size.as_str())),
-                    image_version: ImageVersion("1".to_owned()),
-                    artifact_digest: aex_wire::ids::ContentHash::from_bytes([7; 32]),
-                    minimum_memory_mib: size.minimum_memory_mib(),
-                    browser: false,
-                },
-            )
-        })
-        .collect();
+    let size = aex_wire::types::ComputeSize::Gb2;
+    let entries = [(
+        size.as_str().to_owned(),
+        HandsImageCatalogEntry {
+            image_arn: ImageIdentifier(format!("aex-hands-{}", size.as_str())),
+            image_version: ImageVersion("1".to_owned()),
+            artifact_digest: aex_wire::ids::ContentHash::from_bytes([7; 32]),
+            minimum_memory_mib: size.minimum_memory_mib(),
+            browser: false,
+        },
+    )]
+    .into_iter()
+    .collect();
     crate::ports::DeploymentFacts {
         public_internet_egress: true,
         images: HandsImageCatalog::from_entries(entries).expect("a fixture catalog is complete"),

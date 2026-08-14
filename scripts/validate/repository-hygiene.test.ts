@@ -149,7 +149,7 @@ describe("repository hygiene", () => {
     };
 
     expect(pkg.scripts?.["test:validate"]).toBe(
-      "bun scripts/with-generated-dist-lock.mjs bun scripts/cicd/run-validation-tests.mjs"
+      "bun run test:graph && bun scripts/with-generated-dist-lock.mjs bun scripts/cicd/run-validation-tests.mjs"
     );
   });
 });

@@ -129,10 +129,6 @@ describe("public main-push publication", () => {
     const packageStep = compileJob.steps.find(
       (step: { readonly name?: string }) => step.name === "Package"
     );
-    const rdsBundle = compileJob.steps.find(
-      (step: { readonly name?: string }) =>
-        step.name === "Bind the pinned AWS RDS CA bundle for central schema admin"
-    );
 
     expect(packagers?.with.tool).toBe("cargo-lambda@1.8.6,cargo-auditable@0.7.1");
     expect(packagers?.with.fallback).toBe("none");
@@ -188,11 +184,7 @@ describe("public main-push publication", () => {
     // The equality the npm publication step used to prove inline. The recipe's
     // build output exists only in this job now, so the proof lives here.
     expect(packageStep?.run).toContain('cmp --silent "$input" "$RELEASE_DIR/artifact.bin"');
-    expect(rdsBundle?.if).toContain("matrix.name == 'central-schema-admin'");
-    expect(rdsBundle?.run).toContain("https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem");
-    expect(rdsBundle?.run).toContain("e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3");
-    expect(rdsBundle?.run).toContain("/usr/local/share/aex/aws-rds-global-bundle.pem");
-    expect(rdsBundle?.run).toContain("dev.aex.rds-ca-bundle-sha256");
+    expect(source).not.toContain("central-schema-admin");
 
     // The publish job reads `kind` and, for `sdk`, the packed tarball's own
     // basename out of the recipe, so the recipe has to travel with the bytes.

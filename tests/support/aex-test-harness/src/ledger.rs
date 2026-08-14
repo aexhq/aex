@@ -1,6 +1,6 @@
 //! The cleanup ledger.
 //!
-//! One type, here, re-exported by the four `*-test-support` crates. A resource
+//! One type, here, re-exported by the domain-specific `*-test-support` crates. A resource
 //! is recorded **before** the create call returns, so a process that dies
 //! between the create and the record cannot hide residue; the janitor
 //! cross-references the ledger against what it finds by tag and reports
@@ -530,10 +530,9 @@ pub fn residue_reports_during_panic() -> usize {
 /// stood down - a failing test is exactly when a leak matters most - only its
 /// channel changes.
 ///
-/// This is the one implementation. The four `*-test-support` fixture ledgers
-/// call it rather than each deciding for themselves what to do while a thread
-/// is unwinding; that decision, taken four times, is how the guard came to be
-/// disabled in all four.
+/// This is the one implementation. Domain-specific fixture ledgers call it
+/// rather than each deciding for themselves what to do while a thread is
+/// unwinding; duplicating that decision is how the guard came to be disabled.
 ///
 /// # Panics
 ///
@@ -958,7 +957,7 @@ mod tests {
         }
     }
 
-    /// The shared primitive the four `*-test-support` fixture ledgers call
+    /// The shared primitive the domain-specific `*-test-support` fixture ledgers call
     /// instead of each deciding for themselves what to do during an unwind.
     #[test]
     fn report_residue_panics_when_it_can_and_counts_when_it_cannot() {
@@ -1235,7 +1234,7 @@ mod tests {
         assert!(message.contains("2 unreclaimed resource(s)"), "{message}");
     }
 
-    /// F11: the four `*-test-support` copies stood down while panicking, which
+    /// F11: the domain-specific copies stood down while panicking, which
     /// disabled the leak check exactly when a test was failing. The check is
     /// kept; only its channel changes, because panicking during an unwind
     /// aborts the process and destroys the original message.

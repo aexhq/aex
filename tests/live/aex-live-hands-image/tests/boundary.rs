@@ -60,8 +60,8 @@ fn b9_two_generations_cannot_see_each_other() {
 }
 
 #[test]
-fn the_image_boots_on_every_offered_shape() {
-    panic!("{UNAVAILABLE}: boot all five base variants and the three browser variants");
+fn the_launch_image_boots_at_two_gibibytes() {
+    panic!("{UNAVAILABLE}: boot the published non-browser 2gb image");
 }
 
 #[test]

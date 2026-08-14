@@ -1,6 +1,6 @@
 //! Live-test companion package for the `hands-image` deployable.
 //!
-//! Primary live concerns: boot on every compute shape, credential/root/network isolation,
+//! Primary live concerns: boot the launch image, credential/root/network isolation,
 //! package manifest and hostile workload.
 //!
 //! This package is `publish = false`, is never linked into a production artifact, uses the

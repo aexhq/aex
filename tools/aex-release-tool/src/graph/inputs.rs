@@ -892,6 +892,7 @@ mod tests {
     use super::{
         EdgeKind, GraphInputs, Units, expand_workspace_glob, parse_cargo, terraform_module_sources,
     };
+    use crate::error::Exit;
     use serde_json::json;
     use std::collections::BTreeSet;
     use std::path::Path;
@@ -1009,6 +1010,27 @@ module "external" {
         let err = super::read_registry::<Units>(temp.path(), "release/units.toml", "aex.units.v1")
             .unwrap_err();
         assert_eq!(err.rules(), vec!["registry-unparseable"]);
+    }
+
+    #[test]
+    fn a_registry_that_is_not_utf8_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("release")).unwrap();
+        std::fs::write(
+            temp.path().join("release/units.toml"),
+            [0xff, 0xfe, b's', 0],
+        )
+        .unwrap();
+        let err = super::read_registry::<Units>(temp.path(), "release/units.toml", "aex.units.v1")
+            .unwrap_err();
+        assert_eq!(err.exit, Exit::Usage);
+        assert!(
+            err.violations[0]
+                .detail
+                .contains("stream did not contain valid UTF-8"),
+            "{}",
+            err.violations[0].detail
+        );
     }
 
     #[test]

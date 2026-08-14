@@ -45,7 +45,6 @@ pub const CRATES: &[&str] = &[
     "aex-capacity-dynamodb",
     "aex-central-aws",
     "aex-central-http",
-    "aex-central-test-support",
     "aex-content-aws",
     "aex-content-domain",
     "aex-content-dynamodb",
@@ -84,7 +83,6 @@ pub const CRATES: &[&str] = &[
     "aex-tool-mux",
     "aex-usage-app",
     "aex-usage-domain",
-    "aex-usage-query-dynamodb",
     "aex-usage-rating",
     "aex-wire",
     "aex-work-dynamodb",
@@ -102,11 +100,16 @@ pub const SERVICES: &[&str] = &[
 /// Deployable workers that must own live companions.
 pub const WORKERS: &[&str] = &[
     "central-control-worker",
-    "central-schema-admin",
     "file-ingest-worker",
     "runtime-control-worker",
     "session-operation-worker",
 ];
+
+/// Worker-root packages retained as owner-invoked tools, not release units.
+///
+/// Their code remains reusable and testable in the workspace, but they own no
+/// placed compute, live companion, or artifact in `release/units.toml`.
+pub const OWNER_INVOKED_WORKERS: &[&str] = &["central-schema-admin"];
 
 /// Deployable runtimes that must own live companions.
 pub const RUNTIMES: &[&str] = &["brain-mux", "hands-agent", "hands-image"];
@@ -126,7 +129,6 @@ pub const TOOLS: &[&str] = &[
 pub const LIVE_TARGETS: &[&str] = &[
     "billing-worker",
     "brain-mux",
-    "central-schema-admin",
     "control-api",
     "control-projection-worker",
     "dashboard",
@@ -159,8 +161,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        CRATES, HARNESSES, LIVE_TARGETS, MEMBER_ROOTS, NON_CARGO_DIRECTORIES, RUNTIMES, SERVICES,
-        TOOLS, WORKERS,
+        CRATES, HARNESSES, LIVE_TARGETS, MEMBER_ROOTS, NON_CARGO_DIRECTORIES,
+        OWNER_INVOKED_WORKERS, RUNTIMES, SERVICES, TOOLS, WORKERS,
     };
 
     fn is_sorted_and_unique(names: &[&str]) -> bool {
@@ -172,6 +174,10 @@ mod tests {
         assert!(is_sorted_and_unique(CRATES), "crates");
         assert!(is_sorted_and_unique(SERVICES), "services");
         assert!(is_sorted_and_unique(WORKERS), "workers");
+        assert!(
+            is_sorted_and_unique(OWNER_INVOKED_WORKERS),
+            "owner-invoked workers"
+        );
         assert!(is_sorted_and_unique(RUNTIMES), "runtimes");
         assert!(is_sorted_and_unique(TOOLS), "tools");
         assert!(is_sorted_and_unique(LIVE_TARGETS), "live targets");
@@ -215,6 +221,20 @@ mod tests {
             assert!(
                 LIVE_TARGETS.contains(&live_target),
                 "`{name}` has no live companion"
+            );
+        }
+    }
+
+    #[test]
+    fn owner_invoked_workers_cannot_be_classified_as_deployables_or_live_targets() {
+        for name in OWNER_INVOKED_WORKERS {
+            assert!(
+                !WORKERS.contains(name),
+                "`{name}` is not deployable compute"
+            );
+            assert!(
+                !LIVE_TARGETS.contains(name),
+                "`{name}` owns no placed live target"
             );
         }
     }

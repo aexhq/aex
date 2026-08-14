@@ -173,11 +173,10 @@
         "central": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["bundleDigest", "head", "adminImageDigest"],
+          "required": ["bundleDigest", "head"],
           "properties": {
             "bundleDigest": { "$ref": "#/$defs/sha256" },
-            "head": { "type": "string", "pattern": "^[0-9]{14}$" },
-            "adminImageDigest": { "$ref": "#/$defs/sha256" }
+            "head": { "type": "string", "pattern": "^[0-9]{14}$" }
           }
         },
         "regional": {

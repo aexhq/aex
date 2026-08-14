@@ -17,10 +17,30 @@ const workflowPaths = readdirSync(new URL("../../.github/workflows/", import.met
   .map((name) => `.github/workflows/${name}`)
   .sort();
 
+const uploadArtifact =
+  "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
+const downloadArtifact =
+  "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
+
 describe("workflow evidence producers", () => {
+  test("artifact transfers use the current pinned action generations", () => {
+    for (const path of workflowPaths) {
+      for (const step of Object.values(readWorkflow(path).jobs ?? {}).flatMap((job) =>
+        workflowSteps(job)
+      )) {
+        if (step.uses?.startsWith("actions/upload-artifact@")) {
+          expect(step.uses, path).toBe(uploadArtifact);
+        }
+        if (step.uses?.startsWith("actions/download-artifact@")) {
+          expect(step.uses, path).toBe(downloadArtifact);
+        }
+      }
+      expect(readRepoFile(path), path).not.toContain("assurance");
+    }
+  });
+
   test("nextest is exact, verified, and downloaded only once per matrix lane", () => {
-    const download =
-      "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093";
+    const download = downloadArtifact;
 
     for (const [path, consumerId, artifactName] of [
       [
@@ -367,9 +387,9 @@ describe("workflow evidence producers", () => {
       expect(Object.keys(results)).toEqual([...resultJobs]);
       // `integration` is deliberately absent from the producers: it gates (a red
       // engine lane fails the run) but emits no evidence receipt, because a
-      // semantic receipt is keyed to a deployable unit's own package and every
-      // crate in that lane bar `central-schema-admin` is a library with no unit
-      // row. Giving library evidence a seat in the ledger is a
+      // semantic receipt is keyed to a deployable unit's own package. The lane
+      // contains libraries and the owner-invoked `central-schema-admin` tool,
+      // none of which has a unit row. Giving non-unit evidence a seat in the ledger is a
       // `release/units.toml` decision, so until it is taken this asymmetry is
       // recorded here rather than left to be discovered.
       expect(Object.keys(producers)).toEqual(["rust", "node", "terraform"]);
@@ -483,6 +503,9 @@ describe("workflow evidence producers", () => {
     expect(workflowCall.inputs.node_matrix?.required).toBeTrue();
     expect(workflowCall.inputs.terraform_matrix?.required).toBeTrue();
     expect(workflowCall.inputs.required_job_results?.required).toBeTrue();
+    expect(stepIndex(job, "Capture the required workflow job results")).toBeLessThan(
+      stepIndex(job, "Require every workflow job to pass")
+    );
     expect(stepIndex(job, "Require every workflow job to pass")).toBeLessThan(
       stepIndex(job, "Declare the expected receipt job set")
     );
@@ -495,10 +518,10 @@ describe("workflow evidence producers", () => {
       stepIndex(job, "Download every receipt")
     );
     expect(workflowStep(job, "Require every workflow job to pass").run).toContain(
-      '.value.result == "success"'
+      'required workflow jobs did not pass:'
     );
     expect(workflowStep(job, "Require every workflow job to pass").run).toContain(
-      '.value.allowSkipped and .value.result == "skipped"'
+      '.value.result != "success"'
     );
     expect(workflowStep(job, "Require every workflow job to pass").run).toContain(
       'aex.workflow-job-results.v1'
@@ -526,11 +549,13 @@ describe("workflow evidence producers", () => {
     expect(workflowStep(job, "Aggregate").run).not.toContain("receipts/*.json");
     expect(source).toContain("if: steps.expected.outputs.has_receipts == 'true'");
     expect(source).toContain("required-job-results.json");
+    expect(source).toContain("required-job-results-input.json");
     expect(source).not.toContain("no receipt was collected at all");
+    expect(workflowStep(job, "Upload the lane receipt").with?.overwrite).toBeTrue();
   });
 
   test("one producer builds both workspace tools and every consumer proves the digest", () => {
-    const download = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093";
+    const download = downloadArtifact;
     const artifact = "workspace-tools-${{ github.run_id }}";
     const producer = workflowJob(readWorkflow(".github/workflows/_tools.yml"), "tools");
     const build = workflowStep(producer, "Build both workspace tools once");

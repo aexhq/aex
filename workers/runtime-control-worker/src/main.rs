@@ -39,7 +39,7 @@ use health::{Bindings, Dependency};
 const SCHEDULE_JITTER_MS: u64 = 0;
 const DEPLOYABLE: &str = "runtime-control-worker";
 
-/// Maximum concurrent provider reads during the eight-image startup probe.
+/// Maximum concurrent provider reads during the image startup probe.
 const IMAGE_PROBE_CONCURRENCY: usize = 4;
 
 /// Why `runtime-control-worker` stopped.
@@ -257,7 +257,7 @@ async fn resolve(config: &Config) -> Result<Adapters, RuntimeControlWorkerRunErr
 /// Proves the provider read path accepts every exact release image identifier.
 ///
 /// Four concurrent reads keep cold-start latency bounded without sending an
-/// eight-request burst through a newly assumed execution role.
+/// burst through a newly assumed execution role.
 async fn probe_image_catalog(
     provider: &AwsMicrovmControl,
     catalog: &aex_runtime_control::catalog::HandsImageCatalog,
@@ -456,14 +456,7 @@ mod tests {
     }
 
     fn catalog_json() -> String {
-        // The published set; browser variants are excluded during prelaunch.
-        let variants = [
-            ("512mb", 512, false),
-            ("1gb", 1_024, false),
-            ("2gb", 2_048, false),
-            ("4gb", 4_096, false),
-            ("8gb", 8_192, false),
-        ];
+        let variants = [("2gb", 2_048, false)];
         let rows = variants
             .into_iter()
             .enumerate()
@@ -509,15 +502,13 @@ mod tests {
 
     #[test]
     fn startup_scopes_the_provider_probe_to_every_published_image() {
-        // Five published variants at four concurrent reads is two waves. What the
-        // assertion protects is that the probe is bounded and covers the whole
-        // catalog, not the particular arithmetic.
-        assert_eq!(config().image_catalog.image_identifiers().len(), 5);
+        // The probe stays bounded and covers the whole launch catalog.
+        assert_eq!(config().image_catalog.image_identifiers().len(), 1);
         assert_eq!(super::IMAGE_PROBE_CONCURRENCY, 4);
     }
 
     #[test]
-    fn readiness_and_the_composition_read_the_same_five_options() {
+    fn readiness_and_the_composition_read_the_same_bindings() {
         let adapters = Adapters::default();
         let Readiness::NotReady { missing } = adapters.bindings().readiness() else {
             panic!("an empty adapter set is not ready");

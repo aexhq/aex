@@ -175,8 +175,7 @@ pub fn valid_manifest() -> Value {
         "migrations": {
             "central": {
                 "bundleDigest": digest(0x21),
-                "head": "20260801000100",
-                "adminImageDigest": digest(0x22)
+                "head": "20260801000100"
             },
             "regional": {
                 "bundleDigest": digest(0x23),

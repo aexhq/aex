@@ -14,13 +14,7 @@ use session_stream_api::capability;
 use session_stream_api::config::{self, Config, EDGE_COUNT};
 
 fn catalog_json() -> String {
-    let variants = [
-        ("512mb", 512),
-        ("1gb", 1_024),
-        ("2gb", 2_048),
-        ("4gb", 4_096),
-        ("8gb", 8_192),
-    ];
+    let variants = [("2gb", 2_048)];
     let rows = variants
         .into_iter()
         .enumerate()
@@ -30,7 +24,7 @@ fn catalog_json() -> String {
                 serde_json::json!({
                     "imageArn": format!(
                         "arn:aws:lambda:eu-west-1:000000000000:microvm-image:aex-dev-{}",
-                        char::from(b'a' + u8::try_from(index).expect("five rows")).to_string().repeat(52),
+                        char::from(b'a' + u8::try_from(index).expect("one row")).to_string().repeat(52),
                     ),
                     "imageVersion": (index + 1).to_string(),
                     "artifactDigest": format!("sha256:{index:064x}"),

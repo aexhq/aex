@@ -3,9 +3,8 @@
 //! Bundling and identity are owned here; the migration bodies belong to the
 //! central finance stream and the regional table definitions to the
 //! regional-stores stream. The central bundle's identity is the bundle lock
-//! plus the `central-schema-admin` image digest, because that image embeds the
-//! same bytes — a second independent bundle artifact would be a drift source
-//! rather than a second opinion.
+//! and its checked lock. The owner-invoked schema tool is not a placed release
+//! unit, so the composition carries no synthetic image identity for it.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -51,9 +50,6 @@ pub struct Bundle {
     pub files: Vec<BundleFile>,
     /// Digest of `grants.toml`.
     pub grants_digest: String,
-    /// The schema-admin image that embeds these bytes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub admin_image_digest: Option<String>,
     /// Regional table generation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regional_generation: Option<u32>,
@@ -293,7 +289,6 @@ pub fn build_bundle(root: &Path) -> Result<Bundle> {
         head,
         files,
         grants_digest,
-        admin_image_digest: None,
         regional_generation: None,
         regional_tables_digest: None,
     };
@@ -351,8 +346,7 @@ pub fn verify_deployed_prefix(root: &Path, bundle: &Bundle) -> Result<()> {
 ///
 /// # Errors
 /// Returns [`Exit::ManifestInvalid`] when a version at or below the declared
-/// head was inserted or changed, or when the bundle and the schema-admin image
-/// disagree.
+/// head was inserted or changed.
 pub fn verify_bundle(bundle: &Bundle, head: &SchemaHead) -> Result<()> {
     let mut violations = Vec::new();
     if bundle.schema != "aex.migration-bundle.v1" {
@@ -401,14 +395,6 @@ pub fn verify_bundle(bundle: &Bundle, head: &SchemaHead) -> Result<()> {
                 "the bundle head `{}` is below the declared head `{}`",
                 bundle.head, head.central
             ),
-        ));
-    }
-    if let Some(image) = &bundle.admin_image_digest
-        && image.is_empty()
-    {
-        violations.push(Violation::new(
-            "migration-admin-image-unset",
-            "the bundle names an empty schema-admin image digest",
         ));
     }
     if violations.is_empty() {

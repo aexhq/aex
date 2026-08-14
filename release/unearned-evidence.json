@@ -1,13 +1,6 @@
 [
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-central-test-support",
-    "owner": "central-identity",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the central-identity stream; the cases land with the crate's own implementation"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tools/eslint-plugin-aex",
     "owner": "delivery",
     "blocking_rule": "aex-empty-unit",
@@ -89,13 +82,6 @@
     "owner": "regional-stores",
     "blocking_rule": "aex-empty-unit",
     "detail": "regional-stores: the retired regional-secret-keystore table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
-  },
-  {
-    "reason_class": "inline_unit_evidence",
-    "subject": "crates/aex-usage-query-dynamodb",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "observations-usage: the retired usage-query-projection table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
   },
   {
     "reason_class": "inline_unit_evidence",
@@ -978,13 +964,6 @@
     "owner": "tools-mcp",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-usage-query-dynamodb",
-    "owner": "observations-usage",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

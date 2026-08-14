@@ -234,7 +234,7 @@ mod tests {
           "targets": [{ "name": "aex_a", "kind": ["lib"] }],
           "dependencies": [
             { "name": "serde", "kind": null },
-            { "name": "aex-central-test-support", "kind": "dev" },
+            { "name": "aex-regional-test-support", "kind": "dev" },
             { "name": "prost-build", "kind": "build" }
           ]
         },

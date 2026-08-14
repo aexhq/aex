@@ -57,7 +57,7 @@ jobs:
       # `evidence *`, both of which are pure file scans that never shell out
       # to cargo.
       - name: Download the prepared workspace tools
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: workspace-tools-${{ github.run_id }}
           path: ${{ runner.temp }}/aex-tools
@@ -284,7 +284,7 @@ jobs:
             --receipt "$RECEIPT_FILE"
 
       - name: Upload the Terraform receipt
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: receipt-${{ inputs.lane }}-terraform-${{ steps.identity.outputs.artifact_key }}
           path: target/aex-evidence/terraform-${{ steps.identity.outputs.artifact_key }}/receipt-${{ steps.identity.outputs.artifact_key }}.json
@@ -292,7 +292,7 @@ jobs:
 
       - name: Upload the Terraform test evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: terraform-evidence-${{ inputs.lane }}-${{ steps.identity.outputs.artifact_key }}
           path: |

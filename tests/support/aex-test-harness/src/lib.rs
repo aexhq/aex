@@ -5,10 +5,8 @@
 //! places across four plans with three conflicting homes. It lives here, once,
 //! together with the run identity, resource prefix, budget, TTL, secret canary,
 //! fault ports and the pinned container-image registry that every one of those
-//! declarations also needed. `aex-central-test-support`,
-//! `aex-regional-test-support`, `aex-brain-test-support` and
-//! Domain-specific test-support crates re-export these types; they never define a
-//! second one.
+//! declarations also needed. Domain-specific test-support crates re-export
+//! these types; they never define a second one.
 //!
 //! # Invariants
 //!
@@ -25,7 +23,7 @@
 //!
 //! # Not this crate's job
 //!
-//! - product fixtures: those stay in the four `*-test-support` crates;
+//! - product fixtures: those stay in the domain-specific `*-test-support` crates;
 //! - talking to AWS: this crate links no SDK, so an integration target builds
 //!   its own client against the endpoint a [`containers`] handle exposes;
 //! - starting a container on the unit lane: [`containers`] sits behind the

@@ -35,7 +35,7 @@ struct Cli {
 enum Command {
     /// Writes the build context for one variant.
     Context {
-        /// Which non-browser variant, such as `1gb` or `4gb`.
+        /// The non-browser launch variant (`2gb`).
         #[arg(long)]
         variant: String,
         /// Where to write it.
@@ -70,7 +70,7 @@ enum Command {
     /// This is the release recipe. Its child build argv and SBOM projection are
     /// fixed in source, so CI has no unrecorded shell pre-step.
     Artifact {
-        /// Which of the five non-browser image variants to produce.
+        /// The non-browser 2 GiB launch variant to produce.
         #[arg(long)]
         variant: String,
         /// An empty directory that becomes the root of the service ZIP.
@@ -102,7 +102,7 @@ enum Command {
 /// Why `hands-image` stopped.
 #[derive(Debug, thiserror::Error)]
 enum HandsImageRunError {
-    /// A variant name was not one of the five published variants.
+    /// A variant name was not the published 2 GiB variant.
     #[error("{0}")]
     Variant(String),
     /// A file could not be read or written.
@@ -408,7 +408,7 @@ mod tests {
         // The AEX half of the build is reproducible, and this is the cheapest place
         // the claim can be falsified: the generated Dockerfile is derived from
         // constants only, so two writes must not differ.
-        let variant = Variant::parse("1gb").expect("an offered variant");
+        let variant = Variant::parse("2gb").expect("the launch variant");
         let first = tempfile::tempdir().expect("a temporary directory");
         let second = tempfile::tempdir().expect("a temporary directory");
         let (first_agent, first_sbom) = inputs(first.path());
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn a_reused_nonempty_context_is_refused() {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let variant = Variant::parse("1gb").expect("an offered variant");
+        let variant = Variant::parse("2gb").expect("the launch variant");
         let (agent, sbom) = inputs(dir.path());
         let context = dir.path().join("context");
         std::fs::create_dir(&context).expect("context directory");
@@ -509,7 +509,7 @@ mod tests {
         assert!(matches!(run(&cli), Err(HandsImageRunError::Variant(_))));
         assert!(
             !dir.path().join("context").exists(),
-            "the arity is five and a sixth shape writes nothing at all"
+            "a retired shape writes nothing at all"
         );
     }
 
@@ -519,7 +519,7 @@ mod tests {
             "hands-image",
             "publish",
             "--variant",
-            "8gb",
+            "2gb",
             "--region",
             "eu-west-1",
         ]);
@@ -536,15 +536,15 @@ mod tests {
             "hands-image",
             "artifact",
             "--variant",
-            "4gb",
+            "2gb",
             "--out",
-            "target/microvm/hands-image-4gb",
+            "target/microvm/hands-image-2gb",
         ]);
         assert!(matches!(
             cli.command,
             Command::Artifact { variant, out }
-                if variant == "4gb"
-                    && out == std::path::Path::new("target/microvm/hands-image-4gb")
+                if variant == "2gb"
+                    && out == std::path::Path::new("target/microvm/hands-image-2gb")
         ));
     }
 }

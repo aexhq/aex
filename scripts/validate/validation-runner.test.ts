@@ -31,8 +31,11 @@ describe("repository validation runner isolation", () => {
     const manifest = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")) as {
       readonly scripts?: Record<string, string>;
     };
+    expect(manifest.scripts?.["test:graph"]).toBe(
+      "cargo run --locked -p aex-release-tool -- graph verify"
+    );
     expect(manifest.scripts?.["test:validate"]).toBe(
-      `bun scripts/with-generated-dist-lock.mjs bun ${runnerRelativePath}`
+      `bun run test:graph && bun scripts/with-generated-dist-lock.mjs bun ${runnerRelativePath}`
     );
     expect(manifest.scripts?.["test:unit"]).toContain("bun run test:validate");
     expect(existsSync(runnerPath)).toBe(true);
