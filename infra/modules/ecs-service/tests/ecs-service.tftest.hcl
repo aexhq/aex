@@ -11,19 +11,19 @@ override_resource {
 }
 
 variables {
-  name                   = "session-stream-api"
-  task_definition_family = "aex-dev-eu-west-1-session-stream-api"
+  name                   = "session-api"
+  task_definition_family = "aex-dev-eu-west-1-session-api"
   cluster_arn            = "arn:aws:ecs:eu-west-1:000000000000:cluster/aex-dev-euw1"
   cluster_name           = "aex-dev-euw1"
-  image                  = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/session-stream-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  image                  = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/session-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   cpu                    = 1024
   memory                 = 2048
   stop_timeout           = 30
   container_port         = 8080
-  task_role_arn          = "arn:aws:iam::000000000000:role/aex-dev-session-stream-api"
+  task_role_arn          = "arn:aws:iam::000000000000:role/aex-dev-session-api"
   execution_role_arn     = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
   subnets                = ["subnet-0123456789abcdef0"]
-  log_group_name         = "/aex/dev/session-stream-api"
+  log_group_name         = "/aex/dev/session-api"
   region                 = "eu-west-1"
 
   vpc_id                               = "vpc-0123456789abcdef0"
@@ -133,12 +133,12 @@ run "tasks_never_get_a_public_address" {
   }
 }
 
-run "regional_stream_drains_for_thirty_seconds" {
+run "session_api_drains_for_thirty_seconds" {
   command = plan
 
   assert {
     condition     = jsondecode(aws_ecs_task_definition.this.container_definitions)[0].stopTimeout == 30
-    error_message = "session-stream-api must use a 30 second stop timeout."
+    error_message = "session-api must use a 30 second stop timeout."
   }
 }
 
@@ -300,7 +300,7 @@ run "rejects_a_tag_reference" {
   command = plan
 
   variables {
-    image = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/session-stream-api:v1"
+    image = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/session-api:v1"
   }
 
   expect_failures = [var.image]
@@ -347,13 +347,13 @@ run "rejects_an_unqualified_task_definition_family" {
   command = plan
 
   variables {
-    task_definition_family = "session-stream-api"
+    task_definition_family = "session-api"
   }
 
   expect_failures = [var.task_definition_family]
 }
 
-run "rejects_a_session_stream_api_stop_timeout_that_is_not_thirty_seconds" {
+run "rejects_a_session_api_stop_timeout_that_is_not_thirty_seconds" {
   command = plan
 
   variables {
@@ -684,14 +684,14 @@ run "rejects_shedding_capacity_faster_than_it_is_added" {
   expect_failures = [var.autoscaling_metrics]
 }
 
-# --- session-stream-api ------------------------------------------------------
+# --- session-api -------------------------------------------------------------
 #
-# `regional-session-api` and `regional-stream` merged into one deployable, so the
-# suite default above already carries this name and the stop-timeout pin is
-# exercised by `rejects_a_session_stream_api_stop_timeout_that_is_not_thirty_seconds`.
+# The suite default above already carries this name, so the 30-second
+# stop-timeout pin is exercised by
+# `rejects_a_session_api_stop_timeout_that_is_not_thirty_seconds`.
 # What is left here is the shape a public-edge service must carry.
 
-run "session_stream_api_drains_for_thirty_seconds_behind_a_target_group" {
+run "session_api_drains_for_thirty_seconds_behind_a_target_group" {
   command = plan
 
   variables {
@@ -712,12 +712,12 @@ run "session_stream_api_drains_for_thirty_seconds_behind_a_target_group" {
 
   assert {
     condition     = jsondecode(aws_ecs_task_definition.this.container_definitions)[0].stopTimeout == 30
-    error_message = "session-stream-api must use a 30 second stop timeout; the process derives its own admitted drain deadline ceiling from it."
+    error_message = "session-api must use a 30 second stop timeout; the process derives its own admitted drain deadline ceiling from it."
   }
 
   assert {
     condition     = aws_ecs_service.static[0].desired_count == 2
-    error_message = "The reviewed session-stream-api floor is two tasks. It is two rather than four because this one service replaced regional-session-api and regional-stream."
+    error_message = "The reviewed session-api floor is two tasks."
   }
 
   assert {
@@ -726,7 +726,7 @@ run "session_stream_api_drains_for_thirty_seconds_behind_a_target_group" {
   }
 }
 
-run "rejects_a_session_stream_api_stop_timeout_below_the_pin" {
+run "rejects_a_session_api_stop_timeout_below_the_pin" {
   command = plan
 
   variables {
@@ -748,7 +748,7 @@ run "the_service_creates_the_group_its_tasks_run_with" {
 
   assert {
     condition     = aws_security_group.task.name == "${var.task_definition_family}-task"
-    error_message = "The group name must be derived from the plane- and region-qualified family, never supplied. The bare service name would read as though it named the only `session-stream-api` group, and both planes live in one account."
+    error_message = "The group name must be derived from the plane- and region-qualified family, never supplied. The bare service name would read as though it named the only `session-api` group, and both planes live in one account."
   }
 
   assert {
@@ -980,7 +980,7 @@ run "rejects_an_additional_group_that_is_not_a_security_group" {
   command = plan
 
   variables {
-    additional_security_group_ids = ["aex-dev-eu-west-1-session-stream-api-task"]
+    additional_security_group_ids = ["aex-dev-eu-west-1-session-api-task"]
   }
 
   expect_failures = [var.additional_security_group_ids]
