@@ -29,12 +29,13 @@ fn operations(plane: &str) -> BTreeSet<String> {
 }
 
 #[test]
-fn launch_routes_are_the_exact_thirteen_plus_nineteen_allowlist() {
+fn launch_routes_are_the_exact_fourteen_plus_nineteen_allowlist() {
     let central = BTreeSet::from(
         [
             "api_key_create",
             "api_key_revoke",
             "api_keys_list",
+            "auth_config_get",
             "billing_balance_get",
             "billing_payment_method_delete",
             "billing_payment_method_session_create",
