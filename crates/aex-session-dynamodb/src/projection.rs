@@ -1,11 +1,10 @@
 //! The read-only `regional-authz-projection` reader.
 //!
 //! Placement, profile and key authorization rows are written by
-//! `central-control-worker`; effective-limit rows, including the hot admission
-//! subset, are reserved for the regional capacity authority. Every serving
-//! regional role holds read actions on the table and nothing else, and this
-//! module contains no write operation at all — a source conformance test
-//! asserts that, because "read-only by convention" is not a property.
+//! `central-control-worker`. Every serving regional role holds read actions on
+//! the table and nothing else, and this module contains no write operation at
+//! all — a source conformance test asserts that, because "read-only by
+//! convention" is not a property.
 //!
 //! [`AuthorizationProjection::read_admission_snapshot`] is the request path.
 //! Everything else here is a cold or diagnostic read.
@@ -26,9 +25,8 @@ use crate::error::{Idempotence, StoreError, classify};
 use crate::paging::{PageBudget, PagePosition};
 use crate::plan::key;
 use crate::wire_pending::{
-    AdmissionSnapshot, EdgeLimits, FeedFrontier, KeyAuthorization, KeyAuthorizationState,
-    ProjectedLimitBundle, ProjectedLimitBundleHead, ProjectedWorkspaceLimit, WorkspacePlacement,
-    WorkspaceProfile,
+    AdmissionSnapshot, FeedFrontier, KeyAuthorization, KeyAuthorizationState, ProjectedLimitBundle,
+    ProjectedLimitBundleHead, ProjectedWorkspaceLimit, WorkspacePlacement, WorkspaceProfile,
 };
 
 pub use crate::projection_limit::{
@@ -114,24 +112,25 @@ pub trait AuthorizationProjection: Send + Sync + 'static {
         api_key: ApiKeyId,
     ) -> Result<KeyAuthorization, StoreError>;
 
-    /// Reads the key, placement and edge-limit rows together.
+    /// Reads the key and placement rows together.
     ///
-    /// Three concurrent point reads. They are not one snapshot: a revocation
+    /// Two concurrent point reads. They are not one snapshot: a revocation
     /// landing between them can produce a torn set, which `reconcile` refuses
     /// rather than admits, so the race costs one retried request and never an
     /// admission. The rows change only on operator-paced events, and the
     /// admission transaction's own `ConditionCheck` on the placement epochs is
     /// the commit-time fence in any case.
     ///
-    /// `workspace` is the identity the presented credential *claims*. It selects
-    /// which placement and limit rows are read; whether the claim is true is
+    /// `workspace` is the identity the presented credential *claims*. It
+    /// selects which placement row is read; whether the claim is true is
     /// decided by comparing it against the key row this returns, which no
-    /// caller may skip.
+    /// caller may skip. Request ceilings are a deployable binding in the
+    /// session MVP and therefore do not belong to this durable identity read.
     ///
     /// # Errors
     ///
     /// [`StoreError::Misconfigured`] when a row the snapshot needs is absent, or
-    /// when the three rows do not describe one consistent identity — both are
+    /// when the two rows do not describe one consistent identity — both are
     /// refusals, never optimistic admissions. Any other [`StoreError`] for a
     /// transport or decode failure.
     async fn read_admission_snapshot(
@@ -307,10 +306,10 @@ impl AuthorizationProjection for ProjectionReader {
         api_key: ApiKeyId,
         workspace: WorkspaceId,
     ) -> Result<AdmissionSnapshot, StoreError> {
-        // Three concurrent eventually consistent point reads, not a
+        // Two concurrent eventually consistent point reads, not a
         // `TransactGetItems`: this is the hot admission path, and the
         // serializable read cost roughly doubled every request for rows that
-        // change only on operator-paced placement, key or limit events. The
+        // change only on operator-paced placement or key events. The
         // reads are no longer one snapshot, so a write landing between them can
         // produce a torn set - `reconcile` then refuses it (`absent()` ->
         // `Unauthenticated`) and the caller retries. A torn read is therefore a
@@ -319,24 +318,20 @@ impl AuthorizationProjection for ProjectionReader {
         // horizon, per the projection-consistency charter.
         let (authorization_partition, authorization_sort) = authorization_key(api_key);
         let (placement_partition, placement_sort) = placement_key(workspace);
-        let (limits_partition, limits_sort) = edge_limits_key(workspace);
-        let (key_item, placement_item, limits_item) = futures::try_join!(
+        let (key_item, placement_item) = futures::try_join!(
             self.get(
                 &authorization_partition,
                 &authorization_sort,
                 Consistency::Eventual
             ),
             self.get(&placement_partition, &placement_sort, Consistency::Eventual),
-            self.get(&limits_partition, &limits_sort, Consistency::Eventual),
         )?;
         let key_item = key_item.ok_or_else(|| self.absent())?;
         let placement_item = placement_item.ok_or_else(|| self.absent())?;
-        let limits_item = limits_item.ok_or_else(|| self.absent())?;
 
         let key = decode_key_authorization(&key_item, api_key)?;
         let placement = decode_placement(&placement_item, workspace)?;
-        let limits = decode_edge_limits(&limits_item, workspace)?;
-        reconcile(key, placement, limits, workspace).ok_or_else(|| self.absent())
+        reconcile(key, placement, workspace).ok_or_else(|| self.absent())
     }
 
     async fn read_frontier(&self) -> Result<FeedFrontier, StoreError> {
@@ -612,7 +607,7 @@ fn scopes(row: &Row<'_>) -> Result<ScopeSet, CodecError> {
     Ok(ScopeSet::new(scopes))
 }
 
-/// Proves three separately-decoded rows describe one consistent identity.
+/// Proves the separately-decoded key and placement describe one identity.
 ///
 /// `None` is the whole fail-closed family. Every check here is a refusal rather
 /// than a store fault: the workspace a credential names is a *claim* that
@@ -627,38 +622,12 @@ fn scopes(row: &Row<'_>) -> Result<ScopeSet, CodecError> {
 pub fn reconcile(
     key: KeyAuthorization,
     placement: WorkspacePlacement,
-    limits: EdgeLimits,
     workspace: WorkspaceId,
 ) -> Option<AdmissionSnapshot> {
     let consistent = key.workspace == workspace
         && placement.workspace == workspace
-        && limits.workspace == workspace
-        && key.organization == placement.organization
-        && limits.is_complete();
-    consistent.then_some(AdmissionSnapshot {
-        key,
-        placement,
-        limits,
-    })
-}
-
-/// Decodes the hot admission limit subset.
-///
-/// # Errors
-///
-/// [`CodecError`] for any missing, mistyped or foreign-tenant attribute.
-pub fn decode_edge_limits(item: &Item, asserted: WorkspaceId) -> Result<EdgeLimits, CodecError> {
-    let row = Row::bind(item, WORKSPACE_EDGE_LIMITS)?;
-    row.owned_by("workspaceId", &asserted.to_string())?;
-    Ok(EdgeLimits {
-        workspace: asserted,
-        revision: row.u64("revision")?,
-        json_body_bytes: row.u64("jsonBodyBytes")?,
-        otlp_body_bytes: row.u64("otlpBodyBytes")?,
-        query_page_items: row.u64("queryPageItems")?,
-        query_page_bytes: row.u64("queryPageBytes")?,
-        changed_at: row.timestamp("changedAt")?,
-    })
+        && key.organization == placement.organization;
+    consistent.then_some(AdmissionSnapshot { key, placement })
 }
 
 /// Decodes the signed feed frontier.
@@ -704,11 +673,10 @@ mod tests {
     use aex_wire::types::DecimalU128;
 
     use super::{
-        FEED_FRONTIER, KEY_AUTHORIZATION, WORKSPACE_EDGE_LIMITS, WORKSPACE_LIMIT,
-        WORKSPACE_PLACEMENT, WORKSPACE_PROFILE, admits_execution, authorization_key,
-        decode_edge_limits, decode_frontier, decode_key_authorization, decode_limit,
-        decode_limit_at, decode_placement, decode_profile, edge_limits_key, frontier_key, guard,
-        limit_key, placement_key, profile_key,
+        FEED_FRONTIER, KEY_AUTHORIZATION, WORKSPACE_LIMIT, WORKSPACE_PLACEMENT, WORKSPACE_PROFILE,
+        admits_execution, authorization_key, decode_frontier, decode_key_authorization,
+        decode_limit, decode_limit_at, decode_placement, decode_profile, edge_limits_key,
+        frontier_key, guard, limit_key, placement_key, profile_key,
     };
     use crate::attr::{CodecError, ItemBuilder, n, s};
     use crate::wire_pending::KeyAuthorizationState;
@@ -1075,99 +1043,38 @@ mod tests {
             feed_sequence: 1,
             updated_at: stamp,
         };
-        let limits = |workspace, json| crate::wire_pending::EdgeLimits {
-            workspace,
-            revision: 1,
-            json_body_bytes: json,
-            otlp_body_bytes: 1,
-            query_page_items: 1,
-            query_page_bytes: 1,
-            changed_at: stamp,
-        };
         let mine = workspace(1);
         let theirs = workspace(9);
         let other_org = aex_wire::ids::OrganizationId::from_uuid7(Uuid7::compose(1, [5; 10]));
 
         assert!(
-            super::reconcile(
-                key(mine, organization),
-                placement(mine, organization),
-                limits(mine, 1),
-                mine
-            )
-            .is_some(),
+            super::reconcile(key(mine, organization), placement(mine, organization), mine)
+                .is_some(),
             "a consistent set is the only accepted one"
         );
 
-        for (name, key, placement, limits) in [
+        for (name, key, placement) in [
             (
                 "the key row names another workspace",
                 key(theirs, organization),
                 placement(mine, organization),
-                limits(mine, 1),
             ),
             (
                 "the placement names another workspace",
                 key(mine, organization),
                 placement(theirs, organization),
-                limits(mine, 1),
-            ),
-            (
-                "the limits name another workspace",
-                key(mine, organization),
-                placement(mine, organization),
-                limits(theirs, 1),
             ),
             (
                 "the key row and the placement disagree about the organization",
                 key(mine, other_org),
                 placement(mine, organization),
-                limits(mine, 1),
-            ),
-            (
-                "a ceiling is zero",
-                key(mine, organization),
-                placement(mine, organization),
-                limits(mine, 0),
             ),
         ] {
             assert!(
-                super::reconcile(key, placement, limits, mine).is_none(),
+                super::reconcile(key, placement, mine).is_none(),
                 "{name} was admitted"
             );
         }
-    }
-
-    #[test]
-    fn the_hot_limit_subset_decodes_and_a_zero_ceiling_is_incomplete() {
-        let row = |json: u64| {
-            ItemBuilder::new(WORKSPACE_EDGE_LIMITS)
-                .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
-                .set("sk", s("EDGE_LIMITS"))
-                .set("workspaceId", s(workspace(1).to_string()))
-                .set("revision", n(4))
-                .set("jsonBodyBytes", n(json))
-                .set("otlpBodyBytes", n(4 * 1_024 * 1_024))
-                .set("queryPageItems", n(1_000))
-                .set("queryPageBytes", n(8 * 1_024 * 1_024))
-                .set("changedAt", s("2026-08-01T00:00:00.000Z"))
-                .build()
-        };
-        let decoded = decode_edge_limits(&row(65_536), workspace(1)).expect("decodes");
-        assert_eq!(decoded.revision, 4);
-        assert_eq!(decoded.json_body_bytes, 65_536);
-        assert!(decoded.is_complete());
-
-        assert!(
-            !decode_edge_limits(&row(0), workspace(1))
-                .expect("decodes")
-                .is_complete(),
-            "a zero ceiling admits nothing and is refused rather than enforced"
-        );
-        assert!(matches!(
-            decode_edge_limits(&row(65_536), workspace(9)),
-            Err(CodecError::WrongTenant { .. })
-        ));
     }
 
     #[test]

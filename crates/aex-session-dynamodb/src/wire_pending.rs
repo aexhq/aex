@@ -510,11 +510,11 @@ pub struct KeyAuthorization {
     pub updated_at: Timestamp,
 }
 
-/// The hot admission subset of one workspace's effective limits.
+/// The legacy projected subset of one workspace's effective limits.
 ///
-/// The full limit bundle stays where it is for the cold APIs that page it. This
-/// row is the four numbers a request edge applies before it parses a body, held
-/// in one item so admission never pays a head read plus a bundle read.
+/// The capacity adapter still owns this writer shape, but the session MVP has
+/// no capacity controller and no serving reader for this row. Request ceilings
+/// are validated deployment configuration instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EdgeLimits {
     /// The workspace.
@@ -547,20 +547,19 @@ impl EdgeLimits {
     }
 }
 
-/// One reconciled answer to every question request admission asks.
+/// One reconciled durable identity answer for request admission.
 ///
-/// The three rows are read concurrently and then cross-checked by
-/// `reconcile`: a set torn by a concurrent revocation or placement change
-/// fails the identity checks and is refused, so a value of this type always
-/// names one consistent identity even though the reads were not one snapshot.
+/// The two rows are read concurrently and then cross-checked by `reconcile`: a
+/// set torn by a concurrent revocation or placement change fails the identity
+/// checks and is refused, so a value of this type always names one consistent
+/// identity even though the reads were not one snapshot. Request ceilings are
+/// release-independent deployable configuration, not a third identity row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmissionSnapshot {
     /// The presented key's authorization row.
     pub key: KeyAuthorization,
     /// The placement of the workspace that key names.
     pub placement: WorkspacePlacement,
-    /// That workspace's hot limit subset.
-    pub limits: EdgeLimits,
 }
 
 // TODO(cross-stream): `aex-workspace-domain` publishes no feed frontier.

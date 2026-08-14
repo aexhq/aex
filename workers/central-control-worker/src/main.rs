@@ -1,4 +1,4 @@
-//! `central-control-worker` composition root (Rust Lambda ZIP).
+//! `control-projection-worker` composition root (Rust Lambda ZIP).
 //!
 //! The composition lives in the library beside this file. The binary is the
 //! process: diagnostics installation, the start-up refusal and the exit code, and
@@ -9,7 +9,7 @@ use central_control_worker::{Config, DEPLOYABLE, run};
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     if let Err(error) = aex_platform_diagnostics::install_json() {
-        eprintln!("central-control-worker: refusing to start: {error}");
+        eprintln!("control-projection-worker: refusing to start: {error}");
         return std::process::ExitCode::FAILURE;
     }
     let config = match Config::from_env() {
@@ -22,7 +22,7 @@ async fn main() -> std::process::ExitCode {
                 error = %error,
                 "configuration rejected"
             );
-            eprintln!("central-control-worker: refusing to start: {error}");
+            eprintln!("control-projection-worker: refusing to start: {error}");
             return std::process::ExitCode::FAILURE;
         }
     };
@@ -30,7 +30,7 @@ async fn main() -> std::process::ExitCode {
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("central-control-worker: stopped: {error}");
+            eprintln!("control-projection-worker: stopped: {error}");
             std::process::ExitCode::FAILURE
         }
     }

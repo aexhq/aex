@@ -436,7 +436,7 @@ fn build_edge(
     );
     RegionalEdge::new(
         peppers,
-        RegionalProjection::new(projection, config.region),
+        RegionalProjection::new(projection, config.region, config.limits()),
         SystemClock,
         EdgeBinding {
             audience,

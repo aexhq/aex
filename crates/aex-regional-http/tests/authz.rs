@@ -27,8 +27,7 @@ use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::projection::AuthorizationProjection;
 use aex_session_dynamodb::wire_pending::{
-    AdmissionSnapshot, EdgeLimits, FeedFrontier, KeyAuthorization, KeyAuthorizationState,
-    WorkspacePlacement,
+    AdmissionSnapshot, FeedFrontier, KeyAuthorization, KeyAuthorizationState, WorkspacePlacement,
 };
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IdempotencyKind;
@@ -309,15 +308,15 @@ fn snapshot(status: &str, state: KeyAuthorizationState) -> AdmissionSnapshot {
             updated_at: moment(1_000),
         },
         placement: placement(status),
-        limits: EdgeLimits {
-            workspace: workspace(),
-            revision: 4,
-            json_body_bytes: 1_048_576,
-            otlp_body_bytes: 4 * 1_024 * 1_024,
-            query_page_items: 1_000,
-            query_page_bytes: 8 * 1_024 * 1_024,
-            changed_at: moment(1_000),
-        },
+    }
+}
+
+const fn static_limits() -> EffectiveLimits {
+    EffectiveLimits {
+        json_body_bytes: 1_048_576,
+        otlp_body_bytes: 4 * 1_024 * 1_024,
+        query_page_items: 1_000,
+        query_page_bytes: 8 * 1_024 * 1_024,
     }
 }
 
@@ -333,6 +332,7 @@ async fn a_snapshot_projects_everything_admission_needs_and_nothing_it_does_not(
                 snapshot: Ok(snapshot(status, KeyAuthorizationState::Active)),
             },
             Region::EuWest1,
+            static_limits(),
         );
         let state = projection
             .snapshot(sample::<ApiKeyId>(5), workspace())
@@ -375,6 +375,7 @@ async fn a_revoked_key_row_raises_the_floor_and_reports_the_revocation() {
             snapshot: Ok(revoked),
         },
         Region::EuWest1,
+        static_limits(),
     );
     let state = projection
         .snapshot(sample::<ApiKeyId>(5), workspace())
@@ -396,6 +397,7 @@ async fn a_snapshot_placed_in_another_region_is_not_projected_here() {
             snapshot: Ok(foreign),
         },
         Region::EuWest1,
+        static_limits(),
     );
     assert_eq!(
         projection
@@ -414,6 +416,7 @@ async fn a_key_row_and_a_placement_that_disagree_about_region_fail_closed() {
             snapshot: Ok(split),
         },
         Region::EuWest1,
+        static_limits(),
     );
     assert_eq!(
         projection
@@ -430,6 +433,7 @@ async fn a_placement_status_outside_the_vocabulary_is_never_guessed_at() {
             snapshot: Ok(snapshot("teleported", KeyAuthorizationState::Active)),
         },
         Region::EuWest1,
+        static_limits(),
     );
     assert_eq!(
         projection
@@ -448,6 +452,7 @@ async fn an_absent_snapshot_is_unknown_and_an_unreadable_one_is_unavailable() {
             }),
         },
         Region::EuWest1,
+        static_limits(),
     );
     assert_eq!(
         absent.snapshot(sample::<ApiKeyId>(5), workspace()).await,
@@ -459,6 +464,7 @@ async fn an_absent_snapshot_is_unknown_and_an_unreadable_one_is_unavailable() {
             snapshot: Err(StoreError::Contended),
         },
         Region::EuWest1,
+        static_limits(),
     );
     assert_eq!(
         unreadable

@@ -718,7 +718,9 @@ fn system_audit(
         resource_kind: ResourceKind::Workspace,
         resource_id: Some(workspace.id),
         outcome: AuditOutcome::Allowed,
-        request_id: RequestId::new("central-control-worker").as_str().to_owned(),
+        request_id: RequestId::new("control-projection-worker")
+            .as_str()
+            .to_owned(),
         operation_id: Some(workspace.provision_operation_id),
         detail: serde_json::json!({ "to_status": "active" }),
         occurred_at: now,

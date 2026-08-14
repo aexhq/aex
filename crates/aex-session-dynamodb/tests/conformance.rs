@@ -266,11 +266,10 @@ async fn a_scoped_point_read_hides_foreign_tenants_and_refuses_deleted_parents()
 }
 
 #[tokio::test]
-async fn the_admission_snapshot_is_three_concurrent_eventual_point_reads() {
+async fn the_admission_snapshot_is_two_concurrent_eventual_identity_reads() {
     use aex_session_dynamodb::projection::AuthorizationProjection as _;
 
     let (client, replay) = scripted_client(vec![
-        serde_json::json!({}).to_string(),
         serde_json::json!({}).to_string(),
         serde_json::json!({}).to_string(),
     ]);
@@ -279,7 +278,7 @@ async fn the_admission_snapshot_is_three_concurrent_eventual_point_reads() {
     let _refused = reads.read_admission_snapshot(api_key, workspace()).await;
 
     let bodies = request_bodies(&replay);
-    assert_eq!(bodies.len(), 3, "key, placement and edge-limit point reads");
+    assert_eq!(bodies.len(), 2, "key and placement point reads");
     let mut partitions = Vec::new();
     for body in &bodies {
         assert!(
@@ -294,11 +293,7 @@ async fn the_admission_snapshot_is_three_concurrent_eventual_point_reads() {
     }
     partitions.sort_unstable();
     let expected = {
-        let mut expected = vec![
-            format!("KEY#{api_key}"),
-            format!("WS#{}", workspace()),
-            format!("LIMIT#WS#{}", workspace()),
-        ];
+        let mut expected = vec![format!("KEY#{api_key}"), format!("WS#{}", workspace())];
         expected.sort_unstable();
         expected
     };
