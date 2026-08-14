@@ -1,9 +1,9 @@
 //! Irreversible session-deletion redaction.
 //!
 //! When a session is deleted, the operations it already produced must stop
-//! carrying its content — but the envelope survives, so `GET /operations/{id}`
-//! still answers and the measurement identity still reconciles against usage.
-//! Only the minimal session-delete tombstone survives intact.
+//! carrying its content — but the envelope survives, so its measurement
+//! identity still reconciles against usage. Only the minimal session-delete
+//! tombstone survives intact.
 
 use crate::operation::{Operation, OperationCommit, OperationFailure, OperationResult};
 

@@ -4,8 +4,8 @@
 //! `status`**: once it is set the operation is non-cancelable even while it is
 //! still `Running`, and `fail` after it is a typed error rather than a silent
 //! overwrite. And every inline operation still creates a durable envelope,
-//! committed already `Succeeded` (D-07), so one `GET /operations/{id}` answers
-//! for both execution shapes without a workflow engine.
+//! committed already `Succeeded` (D-07), so queued commands and inline commands
+//! share one durable record without a workflow engine.
 
 use aex_wire::CanonicalJson;
 use aex_wire::error::ErrorCode;
@@ -679,11 +679,9 @@ pub fn cancel(operation: &Operation, now: Timestamp) -> Result<OperationCommit, 
 
 #[cfg(test)]
 mod tests {
-    use aex_wire::CanonicalJson;
     use aex_wire::error::ErrorCode;
     use aex_wire::idempotency::IntentDigest;
-    use aex_wire::ids::{OperationId, PrefixedId as _, SessionId, Uuid7, WorkspaceId};
-    use aex_wire::models;
+    use aex_wire::ids::{OperationId, PrefixedId as _, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
 
     use super::{
@@ -833,56 +831,5 @@ mod tests {
             )
             .is_err()
         );
-    }
-
-    #[test]
-    fn public_projection_uses_the_envelope_kind_and_keeps_the_phase() {
-        let session = SessionId::from_uuid7(Uuid7::compose(1, [3; 10]));
-        let payload = models::SessionCancelResult {
-            changed: true,
-            session_id: session,
-            session_revision: 9,
-        };
-        let mut stored = operation(OperationKind::SessionCancel);
-        stored.session = Some(session);
-        stored.scope = OperationScope::Session(session);
-        stored.status = OperationStatus::Succeeded;
-        stored.progress = Some(Progress {
-            phase: "stopping".to_owned(),
-            processed: 1,
-            total_hint: Some(1),
-        });
-        stored.result = Some(OperationResult {
-            measurement: None,
-            content: Some(
-                CanonicalJson::from_value(&serde_json::to_value(payload).expect("json"))
-                    .expect("canonical"),
-            ),
-        });
-
-        let public = stored.public().expect("projects").expect("public kind");
-        assert_eq!(public.progress.expect("progress").phase, "stopping");
-        assert!(matches!(
-            public.result,
-            Some(models::OperationResult::SessionCancel(result))
-                if result.session_id == session && result.session_revision == 9
-        ));
-    }
-
-    #[test]
-    fn internal_or_malformed_results_cannot_poison_the_public_surface() {
-        assert!(
-            operation(OperationKind::ContentGc)
-                .public()
-                .expect("internal exclusion is not an error")
-                .is_none()
-        );
-
-        let mut malformed = operation(OperationKind::SessionCancel);
-        malformed.result = Some(OperationResult {
-            measurement: None,
-            content: Some(CanonicalJson::parse(r#"{"wrong":true}"#).expect("canonical")),
-        });
-        assert!(malformed.public().is_err());
     }
 }
