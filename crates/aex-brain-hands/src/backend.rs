@@ -1156,7 +1156,7 @@ impl LiveFileBackend for ProductionHandsBackend {
                 )
                 .await?;
             if hello.protocol_version != aex_hands_protocol::rpc::PROTOCOL_V1
-                || hello.max_body_bytes < MAX_FRAME_BYTES as u64
+                || hello.max_body_bytes < u64::from(MAX_FRAME_BYTES)
             {
                 return Err(dispatched(
                     ProviderFailureKind::ProtocolViolation,
@@ -1223,6 +1223,10 @@ impl LiveFileBackend for ProductionHandsBackend {
         })
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "request encoding, the fenced admission, the attached start and the terminal tool-list validation are one ordered qualification boundary"
+    )]
     fn qualify_sandbox_mcp<'a>(
         &'a self,
         session: SessionId,
