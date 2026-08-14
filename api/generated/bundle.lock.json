@@ -13,7 +13,7 @@
     "api/openapi/central/bootstrap.yaml": "sha256:7da7fcb45cf7186e5380e2ec5a9705addc69c3de8a7ec4dfb98b835763e059f6",
     "api/openapi/plane.central.yaml": "sha256:6a060bce06d5d0cb2cc1c89fff8a6bdf6caa455ea15c2df408edcc14e9996288",
     "api/openapi/plane.regional.yaml": "sha256:49d0ee43acdfe15fc62382314f3238759dfb95124ada076202121d42bb4313ed",
-    "api/openapi/regional/registry.yaml": "sha256:5639546d4b299566d045c0296cc91c4ac84d1d1eb0546fe87884dfc6ee5c8168",
+    "api/openapi/regional/registry.yaml": "sha256:3e71acf9a0353249ff1c67fe9157eab594ac0b0f94fd600c7a9d2507951eb303",
     "api/openapi/regional/sessions.yaml": "sha256:4bddbe64690bede82f48d9dee4a474fdf5fd7f3f4548d9d404412d901529673f",
     "api/openapi/regional/uploads.yaml": "sha256:6d4195cb28929f3b872a2f36b18d2117b6105e91edf64097c36691d64a486134",
     "api/schemas/central/billing.yaml": "sha256:676e4364d7ead6bd92099231c5c72411158a83b9fc6675c0433dab8b72e2b6a6",
