@@ -10,7 +10,7 @@ use aex_brain_managed_web::egress::{
     DnsResolver, EgressPolicy, EgressRejection, SystemDnsResolver, resolve_and_screen, validate,
 };
 use aex_content_domain::identity::RegistryKind;
-use aex_wire::ids::{OrganizationId, ResourceName, WorkspaceId};
+use aex_wire::ids::{OrganizationId, PrefixedId as _, ResourceName, WorkspaceId};
 use aex_wire::models;
 use aex_workspace_domain::registry::{RegistryPointer, RegistryState};
 use bytes::BytesMut;
@@ -21,7 +21,7 @@ use serde::Deserialize;
 /// Largest URL-sourced body admitted by the launch worker.
 pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
 /// Complete wall-clock bound including redirects and body progress.
-pub const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
+pub const FETCH_TIMEOUT: Duration = Duration::from_mins(2);
 const TTFB_TIMEOUT: Duration = Duration::from_secs(15);
 const PROGRESS_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -131,6 +131,11 @@ pub enum PendingError {
 
 /// Fetches arbitrary bytes through an HTTPS-only, DNS-screened, pinned-address
 /// client. Redirects are re-resolved and screened before every connection.
+///
+/// # Errors
+///
+/// Returns a stable failure when URL admission, DNS screening, transport,
+/// redirect, response-status, size, or timeout enforcement fails.
 pub async fn fetch_url(url: &str) -> Result<FetchedFile, FetchFailure> {
     tokio::time::timeout(
         FETCH_TIMEOUT,
@@ -141,6 +146,12 @@ pub async fn fetch_url(url: &str) -> Result<FetchedFile, FetchFailure> {
 }
 
 /// Resolver-injected form used by security tests.
+///
+/// # Errors
+///
+/// Returns a stable failure when the requested bound is invalid or URL
+/// admission, DNS screening, transport, redirect, response-status, size, or
+/// timeout enforcement fails.
 pub async fn fetch_with_resolver(
     url: &str,
     resolver: &dyn DnsResolver,
@@ -153,12 +164,12 @@ pub async fn fetch_with_resolver(
     let mut next = url.to_owned();
     let mut redirects = 0_u8;
     loop {
-        let parsed = validate(&policy, &next).map_err(classify_egress)?;
+        let parsed = validate(&policy, &next).map_err(|error| classify_egress(&error))?;
         let target =
             tokio::time::timeout(Duration::from_secs(5), resolve_and_screen(parsed, resolver))
                 .await
                 .map_err(|_| FetchFailure::SourceTimeout)?
-                .map_err(classify_egress)?;
+                .map_err(|error| classify_egress(&error))?;
         let pinned = target
             .addrs
             .iter()
@@ -241,7 +252,7 @@ pub async fn fetch_with_resolver(
     }
 }
 
-fn classify_egress(error: EgressRejection) -> FetchFailure {
+fn classify_egress(error: &EgressRejection) -> FetchFailure {
     match error {
         EgressRejection::RedirectLoop
         | EgressRejection::RedirectLimit
@@ -251,6 +262,7 @@ fn classify_egress(error: EgressRejection) -> FetchFailure {
 }
 
 /// Builds the public ready value document for exact fetched bytes.
+#[must_use]
 pub fn ready_document(
     pending: &PendingUrlFile,
     digest: aex_wire::ids::ContentHash,

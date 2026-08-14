@@ -1412,7 +1412,7 @@ impl JournalStore for MemoryStore {
                         }
                         child_row.stop_requested = true;
                         child_row.stop_reason = Some(FinishReason::Cancelled);
-                        child_row.phase = "stopping".to_owned();
+                        "stopping".clone_into(&mut child_row.phase);
                     }
                     ChildWrite::Transition { .. }
                     | ChildWrite::Terminal { .. }

@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/MessagePartToolResult.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Bounded tool result; large/full bytes live at its sandbox path and in retained telemetry.",
+  "description": "Bounded tool result; large/full bytes remain at its sandbox path unless storage.persist explicitly registers them as a workspace file.",
   "properties": {
     "id": {
       "description": "Call identity.",

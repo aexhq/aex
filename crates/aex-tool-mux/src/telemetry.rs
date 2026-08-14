@@ -121,6 +121,11 @@ pub enum TelemetryPressure {
 /// Bounded, nonblocking ingress owned by the session telemetry gateway.
 pub trait TelemetryPort: Send + Sync + 'static {
     /// Attempts one enqueue without awaiting network, disk, or queue capacity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TelemetryPressure::Full`] when ingress is at capacity and
+    /// [`TelemetryPressure::Closed`] when ingress is unavailable.
     fn try_emit(&self, envelope: TelemetryEnvelope) -> Result<(), TelemetryPressure>;
 }
 
@@ -147,7 +152,7 @@ impl core::fmt::Debug for TelemetryProducer {
                 &self
                     .sessions
                     .lock()
-                    .unwrap_or_else(|error| error.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .len(),
             )
             .finish_non_exhaustive()
@@ -171,7 +176,7 @@ impl TelemetryProducer {
         let mut sessions = self
             .sessions
             .lock()
-            .unwrap_or_else(|error| error.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let state = sessions.entry(session).or_insert(ProducerState {
             next_ordinal: 1,
             pending_gap: None,

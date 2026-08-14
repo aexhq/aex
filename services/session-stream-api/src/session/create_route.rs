@@ -7,8 +7,8 @@
 //! recovers the same manifest from detached first-call polling and uses the
 //! same exact-generation runtime authority.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use aex_brain_domain::budget::Dimension;
 use aex_brain_domain::journal::JournalRecord;
@@ -137,11 +137,7 @@ async fn replay_existing(
             .map_err(|error| create_app_failure(&error))?,
     )?;
     if session.sandbox_status == models::SandboxStatus::Requested {
-        schedule_replayed_eager_preparation(
-            routes.shared.clone(),
-            command.workspace,
-            session.id,
-        );
+        schedule_replayed_eager_preparation(routes.shared.clone(), command.workspace, session.id);
     }
     Ok(Some(session))
 }
@@ -451,8 +447,9 @@ async fn renew_if_due(
         return Err("sandbox_preparation_lease_lost");
     }
     let renew_at = lease.lease_until.unix_millis().saturating_sub(
-        SANDBOX_PREPARATION_LEASE_MILLIS
-            .saturating_sub(i64::try_from(SANDBOX_PREPARATION_HEARTBEAT_MILLIS).unwrap_or(i64::MAX)),
+        SANDBOX_PREPARATION_LEASE_MILLIS.saturating_sub(
+            i64::try_from(SANDBOX_PREPARATION_HEARTBEAT_MILLIS).unwrap_or(i64::MAX),
+        ),
     );
     if now.unix_millis() < renew_at {
         return Ok(());
@@ -502,8 +499,8 @@ async fn eagerly_prepare_sandbox(
         return Ok(());
     };
     let heartbeat = LeaseHeartbeat::start(authority.clone(), lease);
-    let result = eagerly_prepare_owned(shared, prepared, generation, authority.as_ref(), &heartbeat)
-        .await;
+    let result =
+        eagerly_prepare_owned(shared, prepared, generation, authority.as_ref(), &heartbeat).await;
     let release = heartbeat.release().await;
     match result {
         Err(reason) => Err(reason),
@@ -781,21 +778,7 @@ fn rehydrate(
     winner: &CreatePreparation,
     command: &CreateSession,
 ) -> WireResult<PreparedSessionCreate> {
-    let pinned_runtime = winner
-        .runtime_definition
-        .as_deref()
-        .map(|bytes| {
-            let definition = serde_json::from_slice(bytes)
-                .map_err(|_| WireError::new(ErrorCode::InternalError))?;
-            PinnedRuntime::new(
-                winner.session,
-                winner.workspace,
-                winner.organization,
-                definition,
-            )
-            .map_err(|_| WireError::new(ErrorCode::InternalError))
-        })
-        .transpose()?;
+    let pinned_runtime = rehydrate_pinned_runtime(winner)?;
     let resolved_document = std::str::from_utf8(&winner.resolved_config)
         .ok()
         .and_then(|text| CanonicalJson::parse(text).ok())
@@ -809,17 +792,7 @@ fn rehydrate(
         resolved_public.model,
     )
     .map_err(|_| WireError::new(ErrorCode::InternalError))?;
-    let metadata = winner
-        .metadata
-        .as_deref()
-        .map(|bytes| {
-            let text =
-                std::str::from_utf8(bytes).map_err(|_| WireError::new(ErrorCode::InternalError))?;
-            let document =
-                CanonicalJson::parse(text).map_err(|_| WireError::new(ErrorCode::InternalError))?;
-            SessionMetadata::new(document).map_err(|_| WireError::new(ErrorCode::InternalError))
-        })
-        .transpose()?;
+    let metadata = rehydrate_metadata(winner)?;
     let JournalRecord::AgentStarted { config, budget, .. } = &winner.root_record else {
         return Err(WireError::new(ErrorCode::InternalError));
     };
@@ -885,6 +858,38 @@ fn rehydrate(
     })
 }
 
+fn rehydrate_pinned_runtime(winner: &CreatePreparation) -> WireResult<Option<PinnedRuntime>> {
+    winner
+        .runtime_definition
+        .as_deref()
+        .map(|bytes| {
+            let definition = serde_json::from_slice(bytes)
+                .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+            PinnedRuntime::new(
+                winner.session,
+                winner.workspace,
+                winner.organization,
+                definition,
+            )
+            .map_err(|_| WireError::new(ErrorCode::InternalError))
+        })
+        .transpose()
+}
+
+fn rehydrate_metadata(winner: &CreatePreparation) -> WireResult<Option<SessionMetadata>> {
+    winner
+        .metadata
+        .as_deref()
+        .map(|bytes| {
+            let text =
+                std::str::from_utf8(bytes).map_err(|_| WireError::new(ErrorCode::InternalError))?;
+            let document =
+                CanonicalJson::parse(text).map_err(|_| WireError::new(ErrorCode::InternalError))?;
+            SessionMetadata::new(document).map_err(|_| WireError::new(ErrorCode::InternalError))
+        })
+        .transpose()
+}
+
 struct LeasedContent<'a> {
     inner: ContentObjects<'a>,
     lease: &'a LeaseHeartbeat,
@@ -943,8 +948,7 @@ fn has_exact_provider_lifetime(ready: &aex_brain_hands::LiveGenerationReady) -> 
     let Ok(lifetime_ms) = i64::try_from(aex_runtime_control::PROVIDER_LIFETIME_MS) else {
         return false;
     };
-    ready.launched_at.unix_millis().checked_add(lifetime_ms)
-        == Some(ready.expires_at.unix_millis())
+    ready.launched_at.unix_millis().checked_add(lifetime_ms) == Some(ready.expires_at.unix_millis())
 }
 
 async fn compensate(
@@ -1016,7 +1020,9 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use super::*;
-    use aex_wire::ids::{GenerationId, OrganizationId, SessionId, Uuid7, WorkspaceId};
+    use aex_wire::ids::{
+        GenerationId, OrganizationId, PrefixedId as _, SessionId, Uuid7, WorkspaceId,
+    };
 
     struct FakeLeaseAuthority {
         renews: AtomicUsize,
@@ -1064,9 +1070,7 @@ mod tests {
     #[test]
     fn contended_claim_does_not_select_an_eager_materializer() {
         let lease_until = wall_clock_now().expect("clock");
-        assert!(
-            acquired_lease(SandboxPreparationClaim::Contended { lease_until }).is_none()
-        );
+        assert!(acquired_lease(SandboxPreparationClaim::Contended { lease_until }).is_none());
     }
 
     #[tokio::test]

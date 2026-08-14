@@ -250,6 +250,10 @@ impl Config {
     ///
     /// Identical to [`Config::from_env`].
     #[allow(clippy::too_many_lines, reason = "one arm per declared variable")]
+    #[allow(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "AWS requires the literal lowercase `.fifo` suffix for FIFO queue names"
+    )]
     pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, RegionalHttpConfigError> {
         for (name, reason) in FORBIDDEN {
             forbidden(lookup, name, DEPLOYABLE, reason)?;

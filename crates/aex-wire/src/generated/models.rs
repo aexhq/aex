@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:08520468115cc260f4be164db5586e89934667e7a775ccaaa13ba8fa85a4f908`.
+//! `sha256:e7f95cd7fc830a0871b1276cde9ae11e4245d0b843cd3dba567e133e551e051f`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -1060,7 +1060,7 @@ pub enum LimitValue {
 pub struct McpServer {
     /// Unique server/tool namespace.
     pub name: ResourceName,
-    /// How Tool Mux reaches it.
+    /// How the built-in sandbox MCP tool reaches it.
     pub transport: McpTransport,
 }
 
@@ -1133,7 +1133,8 @@ pub struct MessagePartToolCall {
     pub name: String,
 }
 
-/// Bounded tool result; large/full bytes live at its sandbox path and in retained telemetry.
+/// Bounded tool result; large/full bytes remain at its sandbox path unless storage.persist
+/// explicitly registers them as a workspace file.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessagePartToolResult {
@@ -1475,7 +1476,8 @@ pub struct RegistryDownloadRequest {
     pub range: Option<ByteRange>,
 }
 
-/// A remote Streamable HTTP MCP server qualified at session setup.
+/// A remote Streamable HTTP MCP server frozen at session setup and invoked on demand inside the
+/// sandbox.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RemoteMcpServer {
@@ -1599,14 +1601,6 @@ pub enum SandboxStatus {
     Disabled,
     /// Preparation was durably requested.
     Requested,
-    /// Runtime infrastructure is being provisioned.
-    Provisioning,
-    /// The exact generation is booting.
-    Booting,
-    /// Frozen files and setup are being applied.
-    MaterializingWorkspace,
-    /// Sandbox-process MCP servers are being qualified.
-    QualifyingMcp,
     /// Ready to execute a waiting tool call.
     Ready,
     /// No waiter exists and initial preparation is suspending.
@@ -1624,10 +1618,6 @@ impl SandboxStatus {
     pub const ALL: &'static [SandboxStatus] = &[
         SandboxStatus::Disabled,
         SandboxStatus::Requested,
-        SandboxStatus::Provisioning,
-        SandboxStatus::Booting,
-        SandboxStatus::MaterializingWorkspace,
-        SandboxStatus::QualifyingMcp,
         SandboxStatus::Ready,
         SandboxStatus::Suspending,
         SandboxStatus::Suspended,
@@ -1641,10 +1631,6 @@ impl SandboxStatus {
         match self {
             Self::Disabled => "disabled",
             Self::Requested => "requested",
-            Self::Provisioning => "provisioning",
-            Self::Booting => "booting",
-            Self::MaterializingWorkspace => "materializing_workspace",
-            Self::QualifyingMcp => "qualifying_mcp",
             Self::Ready => "ready",
             Self::Suspending => "suspending",
             Self::Suspended => "suspended",

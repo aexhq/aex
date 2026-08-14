@@ -85,6 +85,11 @@ pub enum CliConfigError {
 }
 
 /// Apply flag → environment → profile → built-in precedence per setting.
+///
+/// # Errors
+///
+/// Returns an error when a configured URL is not a bare HTTPS origin or an
+/// environment-provided output format is invalid.
 pub fn resolve_config(input: ConfigInputs) -> Result<ResolvedConfig, CliConfigError> {
     let central_url = input
         .central_url
@@ -128,6 +133,11 @@ fn is_bare_https_origin(value: &str) -> bool {
 }
 
 /// Selects the config path without creating it.
+///
+/// # Errors
+///
+/// Returns [`CliConfigError::MissingConfigPath`] when no explicit or
+/// platform-default configuration path is available.
 pub fn config_path(explicit: Option<&Path>) -> Result<PathBuf, CliConfigError> {
     if let Some(path) = explicit {
         return Ok(path.to_path_buf());
@@ -151,10 +161,19 @@ pub fn config_path(explicit: Option<&Path>) -> Result<PathBuf, CliConfigError> {
 }
 
 /// Loads the selected profile. A missing file/profile is an empty profile.
+///
+/// # Errors
+///
+/// Returns an error when the configuration file cannot be read or decoded.
 pub fn load_profile(path: &Path, name: &str) -> Result<Profile, CliConfigError> {
     Ok(load_file(path)?.profiles.remove(name).unwrap_or_default())
 }
 
+/// Loads the configuration file. A missing file is an empty configuration.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or contains malformed JSON.
 pub fn load_file(path: &Path) -> Result<ConfigFile, CliConfigError> {
     match fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| CliConfigError::Malformed),
@@ -164,6 +183,11 @@ pub fn load_file(path: &Path) -> Result<ConfigFile, CliConfigError> {
 }
 
 /// Writes one admitted non-secret profile key atomically.
+///
+/// # Errors
+///
+/// Returns an error when the key or value is invalid, the existing
+/// configuration is unreadable, or the replacement file cannot be committed.
 pub fn set_value(
     path: &Path,
     profile_name: &str,
@@ -197,6 +221,11 @@ pub fn set_value(
 }
 
 /// Removes one admitted non-secret profile key.
+///
+/// # Errors
+///
+/// Returns an error when the key is secret or unknown, the existing
+/// configuration is unreadable, or the replacement file cannot be committed.
 pub fn unset_value(path: &Path, profile_name: &str, key: &str) -> Result<(), CliConfigError> {
     reject_secret_key(key)?;
     let mut file = load_file(path)?;
@@ -214,6 +243,10 @@ pub fn unset_value(path: &Path, profile_name: &str, key: &str) -> Result<(), Cli
 
 /// Returns a JSON-safe value for one key. References, never credential bytes,
 /// are returned for `api-key-ref`.
+///
+/// # Errors
+///
+/// Returns an error when the requested key is secret or unknown.
 pub fn get_value(profile: &Profile, key: &str) -> Result<Option<String>, CliConfigError> {
     reject_secret_key(key)?;
     match key {
@@ -231,6 +264,11 @@ pub fn get_value(profile: &Profile, key: &str) -> Result<Option<String>, CliConf
 }
 
 /// Resolve API key material without retaining it in CLI state or Debug output.
+///
+/// # Errors
+///
+/// Returns an error when the profile reference is invalid, its source is
+/// unavailable or insecure, or the resolved value is not an API key.
 pub fn resolve_api_key(
     profile: &Profile,
     env: &BTreeMap<String, String>,
@@ -252,6 +290,11 @@ pub fn resolve_api_key(
 
 /// Resolve a dashboard-session credential for central billing routes. This is
 /// independent from the workspace API key used by regional routes.
+///
+/// # Errors
+///
+/// Returns an error when the profile reference is invalid, its source is
+/// unavailable or insecure, or the resolved value is not a dashboard session.
 pub fn resolve_dashboard_session(
     profile: &Profile,
     env: &BTreeMap<String, String>,
@@ -339,6 +382,7 @@ fn write_file(path: &Path, file: &ConfigFile) -> Result<(), CliConfigError> {
     let temporary = path.with_extension("json.part");
     let bytes = serde_json::to_vec_pretty(file).map_err(|_| CliConfigError::Malformed)?;
     fs::write(&temporary, bytes).map_err(|_| CliConfigError::Write)?;
+    #[cfg(unix)]
     set_private_permissions(&temporary)?;
     fs::rename(&temporary, path).map_err(|_| CliConfigError::Write)?;
     Ok(())
@@ -348,11 +392,6 @@ fn write_file(path: &Path, file: &ConfigFile) -> Result<(), CliConfigError> {
 fn set_private_permissions(path: &Path) -> Result<(), CliConfigError> {
     use std::os::unix::fs::PermissionsExt as _;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|_| CliConfigError::Write)
-}
-
-#[cfg(not(unix))]
-fn set_private_permissions(_path: &Path) -> Result<(), CliConfigError> {
-    Ok(())
 }
 
 #[cfg(unix)]
@@ -380,5 +419,5 @@ fn validate_credential_file(_path: &Path) -> Result<(), CliConfigError> {
 /// Unix credential files must be readable only by their owner.
 #[must_use]
 pub const fn credentials_mode_is_private(mode: u32) -> bool {
-    mode & 0o077 == 0
+    mode.trailing_zeros() >= 6
 }

@@ -1334,6 +1334,11 @@ impl SessionCommandReads {
     /// its transaction. Background completion is different: after an
     /// ambiguous or raced write it must observe its own latest checkpoint
     /// before deciding whether another write is necessary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PortError`] when the exact bound head is unavailable or cannot
+    /// be decoded as a valid session.
     pub async fn load_session_strong(
         &self,
         workspace: WorkspaceId,

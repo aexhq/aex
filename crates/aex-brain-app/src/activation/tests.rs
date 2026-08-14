@@ -414,17 +414,17 @@ fn batch_route(name: &str) -> ToolRoute {
     }
 }
 
-fn batch_result(text: &str) -> Result<ToolOutcome, ToolDispatchError> {
+fn batch_result(text: &str) -> ToolOutcome {
     let content = vec![aex_model_catalog::canonical::ToolResultPart::Text {
         text: BoundedString::truncating(text),
     }];
-    Ok(ToolOutcome::Completed(ToolResultBody {
+    ToolOutcome::Completed(ToolResultBody {
         checksum: ContentHash::of(text.as_bytes()),
         content,
         is_error: false,
         duration_ms: 1,
         executed_on: ExecutorRoute::ToolMux,
-    }))
+    })
 }
 
 fn retryable_query_error() -> ToolDispatchError {
@@ -1086,7 +1086,10 @@ fn tool_batch_starts_concurrently_but_commits_model_context_in_call_order() {
     ])
     .with_tools(
         [batch_route("tool_first"), batch_route("tool_second")],
-        [batch_result("first-result"), batch_result("second-result")],
+        [
+            Ok(batch_result("first-result")),
+            Ok(batch_result("second-result")),
+        ],
     );
     harness.tools.require_concurrent_starts(2);
     harness.wake();
@@ -1122,10 +1125,14 @@ fn tool_batch_starts_concurrently_but_commits_model_context_in_call_order() {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the complete recovered batch fixture keeps both durable member states auditable in one regression"
+)]
 fn recovery_never_redispatches_an_ambiguous_batch_member_and_resumes_prepared_siblings() {
     let mut harness = Harness::new(Vec::new()).with_tools(
         [batch_route("tool_first"), batch_route("tool_second")],
-        [batch_result("second-result")],
+        [Ok(batch_result("second-result"))],
     );
     harness.policy.max_steps_per_activation = 2;
     let model_effect = EffectId([0x40; 16]);
@@ -3317,11 +3324,14 @@ fn checkpoint_object_first_crash_is_harmless_and_only_the_current_fence_moves_th
         successor.head.cancel_epoch,
         CancelToken::new(),
     );
-    let mut state = fold(&history()).expect("the source journal folds");
-    let covers_through = state.tail.expect("the fixture has a tail");
-    let covers_hash = *state.hashes.last().expect("the fixture has a tail hash");
-    state.hashes.clear();
-    state.base_seq = covers_through.next();
+    let mut checkpoint_state = fold(&history()).expect("the source journal folds");
+    let covers_through = checkpoint_state.tail.expect("the fixture has a tail");
+    let covers_hash = *checkpoint_state
+        .hashes
+        .last()
+        .expect("the fixture has a tail hash");
+    checkpoint_state.hashes.clear();
+    checkpoint_state.base_seq = covers_through.next();
     let checkpoint = ContextCheckpoint {
         schema_version: CHECKPOINT_SCHEMA_VERSION,
         key: key(),
@@ -3333,7 +3343,7 @@ fn checkpoint_object_first_crash_is_harmless_and_only_the_current_fence_moves_th
         approximate_tokens: 10,
         compactor: "test".to_owned(),
         created_at: harness.clock.now(),
-        state,
+        state: checkpoint_state,
     };
 
     let error = block_on(

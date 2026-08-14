@@ -1,4 +1,4 @@
-//! Raw ToolMux wire-shape conformance.
+//! Raw `ToolMux` wire-shape conformance.
 
 use aex_tool_mux::{OfficialSandboxTool, ToolTarget};
 

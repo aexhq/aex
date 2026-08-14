@@ -171,11 +171,9 @@ pub fn plan_spawn(
     }
     let structural = StructuralLimits {
         max_depth: state.structural.max_depth.min(MAX_SUBAGENT_DEPTH),
-        max_fanout: state
-            .structural
-            .max_fanout
-            .min(u32::try_from(MAX_SUBAGENTS_PER_SESSION)
-                .expect("the launch subagent ceiling fits u32")),
+        max_fanout: state.structural.max_fanout.min(
+            u32::try_from(MAX_SUBAGENTS_PER_SESSION).expect("the launch subagent ceiling fits u32"),
+        ),
     };
     BudgetNode::check_fanout(request.count, structural)?;
     let session_allocated = capacity

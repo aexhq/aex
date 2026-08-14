@@ -489,7 +489,7 @@
           },
           "transport": {
             "$ref": "aex:schema:McpTransport",
-            "description": "How Tool Mux reaches it."
+            "description": "How the built-in sandbox MCP tool reaches it."
           }
         },
         "required": [
@@ -1236,10 +1236,6 @@
         "enum": [
           "disabled",
           "requested",
-          "provisioning",
-          "booting",
-          "materializing_workspace",
-          "qualifying_mcp",
           "ready",
           "suspending",
           "suspended",

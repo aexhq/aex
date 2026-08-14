@@ -34,8 +34,9 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                 let allowed = match table.table.as_str() {
                     // Session deletion owns terminal cleanup: the maintenance
                     // worker removes session heads and their locators.
-                    "session-authority" => grant.role == "session-maintenance-worker",
-                    "regional-work" => grant.role == "session-maintenance-worker",
+                    "session-authority" | "regional-work" => {
+                        grant.role == "session-maintenance-worker"
+                    }
                     // The file authority deletes stale pointers, abandoned
                     // uploads and expired grants; all three deleters are the
                     // session/file lifecycle owners.

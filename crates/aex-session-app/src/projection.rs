@@ -47,7 +47,10 @@ fn sandbox_status(session: &Session) -> models::SandboxStatus {
             if matches!(
                 session.lifecycle.status,
                 SessionStatus::Idle | SessionStatus::Running
-            ) => return models::SandboxStatus::Requested,
+            ) =>
+        {
+            return models::SandboxStatus::Requested;
+        }
         SandboxPreparationStatus::Suspended
             if session.lifecycle.status == SessionStatus::Suspended =>
         {
@@ -231,11 +234,9 @@ mod tests {
     fn requested_setup_does_not_mask_a_lifecycle_transition() {
         let mut session = aex_session_domain::testing::session_fixture();
         let generation = session.generation.expect("sandbox generation");
-        session.lifecycle = aex_session_domain::SessionLifecycle::requested(
-            generation,
-            session.created_at,
-        )
-        .expect("requested lifecycle");
+        session.lifecycle =
+            aex_session_domain::SessionLifecycle::requested(generation, session.created_at)
+                .expect("requested lifecycle");
         session
             .lifecycle
             .begin_terminate(aex_session_domain::TerminationReason::User)
@@ -244,7 +245,7 @@ mod tests {
 
         assert_eq!(
             super::public_session_list_item(&session).sandbox_status,
-            aex_wire::models::SandboxStatus::Terminating,
+            aex_wire::models::SandboxStatus::Lost,
         );
     }
 

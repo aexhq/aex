@@ -96,7 +96,6 @@ fn validate_capabilities(request: &CanonicalModelRequest) -> Result<(), RequestB
         &request.structured_output,
         request.selection.structured_output(),
     ) {
-        (None, _) => Ok(()),
         (Some(StructuredOutputRequest::JsonObject), StructuredOutputLevel::None) => Err(
             RequestBuildError::UnsupportedCapability("structured JSON output"),
         ),
@@ -106,7 +105,7 @@ fn validate_capabilities(request: &CanonicalModelRequest) -> Result<(), RequestB
         (Some(StructuredOutputRequest::JsonSchema { .. }), _) => Err(
             RequestBuildError::UnsupportedCapability("native JSON Schema output"),
         ),
-        (Some(StructuredOutputRequest::JsonObject), _) => Ok(()),
+        (None | Some(StructuredOutputRequest::JsonObject), _) => Ok(()),
     }
 }
 

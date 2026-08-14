@@ -51,7 +51,7 @@ pub struct SandboxPreparationLease {
     pub generation: GenerationId,
     /// Unique invocation token. It is never shared by concurrent tasks.
     pub owner: String,
-    /// Explicit expiry used for crash recovery; DynamoDB TTL is not a fence.
+    /// Explicit expiry used for crash recovery; `DynamoDB` TTL is not a fence.
     pub lease_until: Timestamp,
 }
 
@@ -173,6 +173,12 @@ impl SandboxPreparationAuthority {
     /// A unique `owner` is required for every invocation. An expired lease can
     /// be taken over for crash recovery; a current-generation contender only
     /// observes the existing deadline and performs no guest I/O.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SandboxPreparationAuthorityError`] when the session binding or
+    /// checkpoint is invalid, or the conditional lease write cannot be
+    /// resolved by a strong read.
     pub async fn claim(
         &self,
         workspace: WorkspaceId,
@@ -260,6 +266,11 @@ impl SandboxPreparationAuthority {
     }
 
     /// Renews an owned lease before the next bounded guest transfer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SandboxPreparationAuthorityError`] when ownership is lost,
+    /// the lease binding is corrupt, or the update outcome cannot be resolved.
     pub async fn renew(
         &self,
         session: SessionId,
@@ -320,6 +331,11 @@ impl SandboxPreparationAuthority {
     }
 
     /// Releases an owned lease after the public checkpoint is durable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SandboxPreparationAuthorityError`] when ownership is lost,
+    /// the lease binding is corrupt, or deletion cannot be resolved strongly.
     pub async fn release(
         &self,
         session: SessionId,
@@ -418,10 +434,7 @@ impl SandboxPreparationAuthority {
                     });
                 }
                 Err(CommitError::ConditionFailed { .. })
-                    if attempt + 1 < MAX_SETTLEMENT_ATTEMPTS =>
-                {
-                    continue;
-                }
+                    if attempt + 1 < MAX_SETTLEMENT_ATTEMPTS => {}
                 Err(CommitError::ConditionFailed { .. }) => {
                     return Err(SandboxPreparationAuthorityError::Contended);
                 }

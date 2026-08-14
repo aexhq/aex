@@ -11,12 +11,12 @@
       "shape": "scalar"
     },
     {
-      "description": "Largest aggregate byte size of registered workspace files materialized synchronously before session creation returns ready.",
+      "description": "Largest aggregate byte size of registered workspace files frozen at session admission and materialized during asynchronous sandbox preparation.",
       "id": "session.initial_files_bytes",
       "shape": "scalar"
     },
     {
-      "description": "Largest number of registered workspace files selected for synchronous session creation.",
+      "description": "Largest number of registered workspace files frozen at session admission for asynchronous sandbox preparation.",
       "id": "session.initial_files_count",
       "shape": "scalar"
     },

@@ -3,7 +3,7 @@
 //! The effective-limit registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:08520468115cc260f4be164db5586e89934667e7a775ccaaa13ba8fa85a4f908`.
+//! `sha256:e7f95cd7fc830a0871b1276cde9ae11e4245d0b843cd3dba567e133e551e051f`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -35,11 +35,11 @@ pub enum LimitId {
     #[serde(rename = "session.materialized_agents")]
     SessionMaterializedAgents,
     /// `session.initial_files_bytes` — Largest aggregate byte size of registered workspace files
-    /// materialized synchronously before session creation returns ready.
+    /// frozen at session admission and materialized during asynchronous sandbox preparation.
     #[serde(rename = "session.initial_files_bytes")]
     SessionInitialFilesBytes,
-    /// `session.initial_files_count` — Largest number of registered workspace files selected for
-    /// synchronous session creation.
+    /// `session.initial_files_count` — Largest number of registered workspace files frozen at
+    /// session admission for asynchronous sandbox preparation.
     #[serde(rename = "session.initial_files_count")]
     SessionInitialFilesCount,
     /// `session.agent_execution` — Revisioned Brain planner and structural ceilings pinned when a

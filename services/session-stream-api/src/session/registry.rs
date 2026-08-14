@@ -63,7 +63,7 @@ pub(crate) struct RegistryWriteState<'a> {
     pub state: RegistryState,
     /// The failure code recorded for a failed import row.
     pub failure_code: Option<String>,
-    /// The exact ETag this put replaces, when guarded.
+    /// The exact `ETag` this put replaces, when guarded.
     pub exact_current: Option<&'a aex_wire::types::ETag>,
 }
 impl Routes {

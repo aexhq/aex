@@ -693,14 +693,16 @@ proptest! {
                     live.push(commit.agent);
                 }
                 Err(AgentError::CeilingExceeded { effective, .. }) => {
-                    prop_assert_eq!(effective, ceiling);
+                    prop_assert_eq!(effective + 1, ceiling);
                     prop_assert_eq!(admitted + 1, ceiling);
                 }
                 Err(other) => prop_assert!(false, "unexpected {other:?}"),
             }
         }
 
-        // Terminal agents never consume budget.
+        // Terminal agents remain lifetime history and continue to consume the
+        // session-wide identity budget. Replaying an existing identity is
+        // still idempotent and consumes no additional slot.
         for agent in &mut live {
             *agent = complete_agent(
                 agent,
@@ -711,18 +713,37 @@ proptest! {
             .expect("completes")
             .agent;
         }
-        prop_assert!(
-            spawn(
-                id::<AgentId>(200),
-                &root_agent,
-                &session,
-                &limits(ceiling),
-                &live,
-                materialized_state(),
-                moment(3),
-            )
-            .is_ok()
+        let replay = spawn(
+            live[0].id,
+            &root_agent,
+            &session,
+            &limits(ceiling),
+            &live,
+            materialized_state(),
+            moment(3),
+        )
+        .expect("an existing identity replays");
+        prop_assert!(!replay.changed);
+
+        let next = spawn(
+            id::<AgentId>(200),
+            &root_agent,
+            &session,
+            &limits(ceiling),
+            &live,
+            materialized_state(),
+            moment(3),
         );
+        if admitted + 1 < ceiling {
+            prop_assert!(next.is_ok());
+        } else {
+            match next {
+                Err(AgentError::CeilingExceeded { effective, .. }) => {
+                    prop_assert_eq!(effective + 1, ceiling);
+                }
+                other => prop_assert!(false, "unexpected {other:?}"),
+            }
+        }
     }
 
     /// 21 `cancel_session_work_epoch`.

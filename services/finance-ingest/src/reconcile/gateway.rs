@@ -24,6 +24,10 @@ pub struct StripeSecret(Zeroizing<String>);
 
 impl StripeSecret {
     /// Wraps a non-empty provider credential.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the credential is empty.
     pub fn new(secret: String) -> Result<Self, SweepError> {
         if secret.is_empty() {
             return Err(SweepError::RecoveryUnknown(
@@ -50,6 +54,10 @@ pub struct StripeEffectRecoveryGateway {
 
 impl StripeEffectRecoveryGateway {
     /// Builds the pinned provider client.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the HTTPS client cannot be constructed.
     pub fn new(secret: StripeSecret) -> Result<Self, SweepError> {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -149,6 +157,10 @@ impl StripeEffectRecoveryGateway {
 }
 
 #[async_trait::async_trait]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the exhaustive finance-command mapping is clearest as one auditable trait method"
+)]
 impl EffectRecoveryGateway for StripeEffectRecoveryGateway {
     async fn execute(
         &self,

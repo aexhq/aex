@@ -160,7 +160,7 @@ impl core::fmt::Debug for HttpTransport {
             .debug_struct("HttpTransport")
             .field("base", &self.base)
             .field("api_key", &"<redacted>")
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -246,6 +246,11 @@ struct Clients {
 }
 
 /// Executes one parsed invocation.
+///
+/// # Errors
+///
+/// Returns an error when configuration or credentials are invalid, local I/O
+/// fails, or the selected API operation fails.
 pub async fn execute(cli: Cli) -> Result<(), RuntimeError> {
     if matches!(cli.command, Some(Command::Version)) {
         println!(
@@ -520,29 +525,7 @@ async fn execute_file(
             media_type,
             executable,
         } => {
-            let content = if let Some(url) = url {
-                BlobInput::Url(BlobUrl {
-                    url: HttpsUrl::parse(url)
-                        .map_err(|error| RuntimeError::usage(error.to_string()))?,
-                })
-            } else {
-                let bytes = match path {
-                    Some(path) => std::fs::read(path)
-                        .map_err(|_| RuntimeError::local_io("the inline file could not be read"))?,
-                    None => read_bounded_stdin(INLINE_ENCODED_MAX)?,
-                };
-                let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                if data.len() > INLINE_ENCODED_MAX {
-                    return Err(RuntimeError::usage(
-                        "inline data exceeds 32768 encoded bytes; use `aex file upload`",
-                    ));
-                }
-                BlobInput::Inline(BlobInline {
-                    data,
-                    encoding: BlobEncoding::Base64,
-                    sha256: ContentHash::of(&bytes),
-                })
-            };
+            let content = file_put_content(path.as_deref(), url.as_deref())?;
             let file = clients
                 .regional
                 .registry_files_put(
@@ -619,6 +602,30 @@ async fn execute_file(
             emit(&serde_json::json!({"name": name, "deleted": true}), output)
         }
     }
+}
+
+fn file_put_content(path: Option<&Path>, url: Option<&str>) -> Result<BlobInput, RuntimeError> {
+    if let Some(url) = url {
+        return Ok(BlobInput::Url(BlobUrl {
+            url: HttpsUrl::parse(url).map_err(|error| RuntimeError::usage(error.to_string()))?,
+        }));
+    }
+    let bytes = match path {
+        Some(path) => std::fs::read(path)
+            .map_err(|_| RuntimeError::local_io("the inline file could not be read"))?,
+        None => read_bounded_stdin(INLINE_ENCODED_MAX)?,
+    };
+    let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    if data.len() > INLINE_ENCODED_MAX {
+        return Err(RuntimeError::usage(
+            "inline data exceeds 32768 encoded bytes; use `aex file upload`",
+        ));
+    }
+    Ok(BlobInput::Inline(BlobInline {
+        data,
+        encoding: BlobEncoding::Base64,
+        sha256: ContentHash::of(&bytes),
+    }))
 }
 
 async fn upload_file(
@@ -1111,9 +1118,7 @@ fn credential_environment(profile: &Profile, plane: CredentialPlane) -> BTreeMap
 }
 
 fn replay_key(value: Option<&str>) -> Result<IdempotencyKey, RuntimeError> {
-    let value = value
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("cli-{}", uuid::Uuid::now_v7()));
+    let value = value.map_or_else(|| format!("cli-{}", uuid::Uuid::now_v7()), str::to_owned);
     IdempotencyKey::parse(&value).map_err(|error| RuntimeError::usage(error.to_string()))
 }
 

@@ -158,7 +158,7 @@ impl HandRecord {
                 HandState::MaterializingWorkspace,
                 HandAction::MaterializeWorkspace,
             ),
-            HandState::MaterializingWorkspace => {
+            HandState::MaterializingWorkspace | HandState::Resuming => {
                 if self.waiters == 0 {
                     (HandState::Suspending, HandAction::Suspend)
                 } else {
@@ -170,13 +170,6 @@ impl HandRecord {
                     (HandState::Suspended, HandAction::Wait)
                 } else {
                     (HandState::Resuming, HandAction::Resume)
-                }
-            }
-            HandState::Resuming => {
-                if self.waiters == 0 {
-                    (HandState::Suspending, HandAction::Suspend)
-                } else {
-                    (HandState::Ready, HandAction::Execute)
                 }
             }
             state => return Err(HandDecisionError::InvalidState { state }),

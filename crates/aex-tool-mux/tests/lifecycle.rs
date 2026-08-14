@@ -146,7 +146,7 @@ struct GuestFake {
 }
 
 impl GuestPort for GuestFake {
-    fn hello<'a>(&'a self, ready: ReadyHand) -> ToolMuxFuture<'a, Result<(), String>> {
+    fn hello(&self, ready: ReadyHand) -> ToolMuxFuture<'_, Result<(), String>> {
         self.hellos.lock().expect("hello mutex").push(ready);
         let fail = *self.fail_hello.lock().expect("fail hello mutex");
         Box::pin(async move {
@@ -175,13 +175,13 @@ impl GuestPort for GuestFake {
         Box::pin(async { Ok(HandsOperationId(Uuid7::compose(9, [9; 10]))) })
     }
 
-    fn read<'a>(
-        &'a self,
+    fn read(
+        &self,
         _ready: ReadyHand,
         _operation: HandsOperationId,
         _max_result_bytes: usize,
         _timeout_ms: u32,
-    ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
+    ) -> ToolMuxFuture<'_, Result<Option<ExecutorOutput>, String>> {
         let large = *self.large.lock().expect("large mutex");
         Box::pin(async move {
             let output = if large {

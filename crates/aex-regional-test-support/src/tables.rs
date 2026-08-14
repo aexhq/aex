@@ -851,10 +851,10 @@ mod tests {
         let writer = writers[0];
         assert_eq!(writer.role, "control-projection-worker");
         assert!(
-            writer.actions.iter().all(|action| matches!(
-                action.as_str(),
-                "dynamodb:GetItem" | "dynamodb:PutItem"
-            )),
+            writer
+                .actions
+                .iter()
+                .all(|action| matches!(action.as_str(), "dynamodb:GetItem" | "dynamodb:PutItem")),
             "{} holds a broad action: {:?}",
             writer.role,
             writer.actions

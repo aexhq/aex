@@ -515,9 +515,7 @@ impl SessionLifecycle {
         let suspend_at = add_millis(now, IDLE_SUSPEND_AFTER_MILLIS)?;
         self.bump_revision()?;
         self.status = LifecycleStatus::Idle;
-        if self.generation.is_some()
-            && self.sandbox != SandboxPreparationStatus::Requested
-        {
+        if self.generation.is_some() && self.sandbox != SandboxPreparationStatus::Requested {
             self.sandbox = SandboxPreparationStatus::Ready;
         }
         self.active = None;
@@ -593,8 +591,8 @@ mod tests {
 
     #[test]
     fn requested_sandbox_is_independent_of_conversation_admission() {
-        let mut lifecycle = SessionLifecycle::requested(generation(1), at(1_000))
-            .expect("requested lifecycle");
+        let mut lifecycle =
+            SessionLifecycle::requested(generation(1), at(1_000)).expect("requested lifecycle");
         assert_eq!(lifecycle.sandbox, SandboxPreparationStatus::Requested);
         assert_eq!(lifecycle.status, LifecycleStatus::Idle);
         assert_eq!(lifecycle.suspend_at, None);
@@ -615,8 +613,8 @@ mod tests {
 
     #[test]
     fn a_message_that_uses_no_tools_does_not_claim_setup_finished() {
-        let mut lifecycle = SessionLifecycle::requested(generation(1), at(1_000))
-            .expect("requested lifecycle");
+        let mut lifecycle =
+            SessionLifecycle::requested(generation(1), at(1_000)).expect("requested lifecycle");
         lifecycle
             .admit_message(message(1), run(1), bounds(at(10_000)), at(2_000))
             .expect("model work starts while setup continues");
@@ -629,8 +627,8 @@ mod tests {
 
     #[test]
     fn ready_idle_preparation_starts_the_normal_suspend_window() {
-        let mut lifecycle = SessionLifecycle::requested(generation(1), at(1_000))
-            .expect("requested lifecycle");
+        let mut lifecycle =
+            SessionLifecycle::requested(generation(1), at(1_000)).expect("requested lifecycle");
         lifecycle
             .complete_sandbox_preparation(false, at(3_000))
             .expect("background setup settles");
@@ -642,8 +640,8 @@ mod tests {
 
     #[test]
     fn idle_eager_preparation_settles_as_suspended() {
-        let mut lifecycle = SessionLifecycle::requested(generation(1), at(1_000))
-            .expect("requested lifecycle");
+        let mut lifecycle =
+            SessionLifecycle::requested(generation(1), at(1_000)).expect("requested lifecycle");
         lifecycle
             .complete_sandbox_preparation(true, at(3_000))
             .expect("background setup settles");

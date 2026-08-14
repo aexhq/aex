@@ -1,10 +1,10 @@
 //! rig client construction per dialect class.
 //!
 //! One client per dispatch, built over the shared workspace `reqwest::Client`
-//! with the decrypted key borrowed by value. DeepSeek, xAI, and Moonshot use
-//! their maintained Rig providers. Meta and Alibaba use Rig's generic
-//! OpenAI-compatible chat-completions client with their compiled official
-//! origins. OpenAI and Anthropic use native Rig providers. Aex owns no
+//! with the decrypted key borrowed by value. `DeepSeek`, `xAI`, and `Moonshot` use
+//! their maintained Rig providers. `Meta` and `Alibaba` use Rig's generic
+//! `OpenAI`-compatible chat-completions client with their compiled official
+//! origins. `OpenAI` and `Anthropic` use native Rig providers. Aex owns no
 //! provider wire implementation.
 
 use aex_model_vocabulary::DialectClass;
@@ -30,13 +30,13 @@ pub enum ClientBuildError {
 pub(crate) enum DispatchClient {
     /// Native `OpenAI` (Responses).
     OpenAi(openai::Client),
-    /// Native Anthropic Messages.
+    /// Native `Anthropic` Messages.
     Anthropic(anthropic::Client),
-    /// Native DeepSeek OpenAI-compatible transport.
+    /// Native `DeepSeek` `OpenAI`-compatible transport.
     DeepSeek(deepseek::Client),
-    /// Native xAI Responses transport.
+    /// Native `xAI` Responses transport.
     XAi(xai::Client),
-    /// Native Moonshot OpenAI-compatible transport.
+    /// Native `Moonshot` `OpenAI`-compatible transport.
     Moonshot(moonshot::Client),
     /// Rig's maintained generic OpenAI-compatible chat-completions transport.
     OpenAiCompatible(openai::CompletionsClient),

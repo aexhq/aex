@@ -71,7 +71,7 @@ impl ProductionRuntimeAdapter {
             let mut waiters = self
                 .waiters
                 .lock()
-                .unwrap_or_else(|error| error.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if waiters.contains_key(&operation) {
                 return Ok(());
             }
@@ -85,7 +85,9 @@ impl ProductionRuntimeAdapter {
                 .prepare_for_tool(call.workspace, session, generation, &call)
                 .await;
             let settle = {
-                let mut states = waiters.lock().unwrap_or_else(|error| error.into_inner());
+                let mut states = waiters
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let cancelled = matches!(
                     states.get(&operation),
                     Some(WaiterState::CancelRequested { .. })
@@ -140,7 +142,7 @@ impl RuntimePort for ProductionRuntimeAdapter {
             let state = self
                 .waiters
                 .lock()
-                .unwrap_or_else(|error| error.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .get(&operation)
                 .copied();
             match state {
@@ -176,7 +178,7 @@ impl RuntimePort for ProductionRuntimeAdapter {
                 let mut waiters = self
                     .waiters
                     .lock()
-                    .unwrap_or_else(|error| error.into_inner());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match waiters.get(&operation).copied() {
                     Some(WaiterState::Running { recovered: false }) => {
                         waiters
@@ -229,7 +231,7 @@ impl RuntimePort for ProductionRuntimeAdapter {
             self.preparation.settle_tool(ready, call).await?;
             self.waiters
                 .lock()
-                .unwrap_or_else(|error| error.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .remove(&operation_id(call));
             Ok(())
         })
@@ -318,7 +320,9 @@ impl ProductionGuestAdapter {
                     arguments,
                 )
             }
-            _ => Err("guest adapter received a non-guest target".to_owned()),
+            ToolTarget::StoragePersist { .. } => {
+                Err("guest adapter received a non-guest target".to_owned())
+            }
         }
     }
 }
@@ -350,7 +354,7 @@ fn mcp_operation(
 }
 
 impl GuestPort for ProductionGuestAdapter {
-    fn hello<'a>(&'a self, ready: ReadyHand) -> ToolMuxFuture<'a, Result<(), String>> {
+    fn hello(&self, ready: ReadyHand) -> ToolMuxFuture<'_, Result<(), String>> {
         Box::pin(async move {
             let endpoint = self
                 .hands
@@ -409,13 +413,13 @@ impl GuestPort for ProductionGuestAdapter {
         })
     }
 
-    fn read<'a>(
-        &'a self,
+    fn read(
+        &self,
         ready: ReadyHand,
         operation: HandsOperationId,
         max_result_bytes: usize,
         timeout_ms: u32,
-    ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
+    ) -> ToolMuxFuture<'_, Result<Option<ExecutorOutput>, String>> {
         Box::pin(async move {
             let brain = BrainOperationId(operation.0.to_string());
             match self

@@ -19,8 +19,8 @@ struct StartFixture {
 
 async fn start_fixture(name: &str) -> (ToolStartRequest, ToolStart) {
     let base = base();
-    let fixture: StartFixture = serde_json::from_str(&aex_test_harness::required_env!(name))
-        .expect("typed live fixture");
+    let fixture: StartFixture =
+        serde_json::from_str(&aex_test_harness::required_env!(name)).expect("typed live fixture");
     let response = reqwest::Client::new()
         .post(format!("{base}/internal/tools/start"))
         .header("x-aex-tool-assertion", fixture.assertion)

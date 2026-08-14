@@ -478,12 +478,14 @@ where
                 .map(|item| {
                     let signed = item.available_delta;
                     Ok(BillingTransaction {
-                        amount_cents: cents(Microusd::new(signed.unsigned_abs() as i64).map_err(
-                            |error| {
-                                WireError::new(ErrorCode::InternalError)
-                                    .with_message(error.to_string())
-                            },
-                        )?)?,
+                        amount_cents: cents(
+                            Microusd::new(signed.unsigned_abs().cast_signed()).map_err(
+                                |error| {
+                                    WireError::new(ErrorCode::InternalError)
+                                        .with_message(error.to_string())
+                                },
+                            )?,
+                        )?,
                         balance_after_cents: cents(
                             Microusd::new(item.balance_after.max(0)).map_err(|error| {
                                 WireError::new(ErrorCode::InternalError)

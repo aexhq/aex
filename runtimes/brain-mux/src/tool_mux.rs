@@ -1,4 +1,4 @@
-//! Brain client for the placed ToolMux service.
+//! Brain client for the placed `ToolMux` service.
 
 use std::sync::Arc;
 
@@ -30,7 +30,7 @@ use base64::Engine as _;
 const DETACHED_PREFIX: &str = "tool-mux.v1";
 const ASSERTION_HEADER: &str = "x-aex-tool-assertion";
 
-/// Placed ToolMux client. It is the only non-native tool executor Brain owns.
+/// Placed `ToolMux` client. It is the only non-native tool executor Brain owns.
 pub struct RemoteToolMux {
     endpoint: String,
     client: reqwest::Client,
@@ -40,10 +40,10 @@ pub struct RemoteToolMux {
 }
 
 impl RemoteToolMux {
-    /// Binds the private service endpoint and local AgentSession signer.
+    /// Binds the private service endpoint and local `AgentSession` signer.
     #[must_use]
     pub fn new(
-        endpoint: String,
+        endpoint: &str,
         signer: Arc<LocalSigner>,
         plane: Plane,
         region: aex_wire::types::Region,
@@ -567,7 +567,7 @@ mod tests {
     }
 
     impl GuestPort for ContractPorts {
-        fn hello<'a>(&'a self, _ready: ReadyHand) -> ToolMuxFuture<'a, Result<(), String>> {
+        fn hello(&self, _ready: ReadyHand) -> ToolMuxFuture<'_, Result<(), String>> {
             Box::pin(async { Ok(()) })
         }
 
@@ -602,13 +602,13 @@ mod tests {
             })
         }
 
-        fn read<'a>(
-            &'a self,
+        fn read(
+            &self,
             _ready: ReadyHand,
             _operation: aex_hands_protocol::rpc::HandsOperationId,
             _max_result_bytes: usize,
             _timeout_ms: u32,
-        ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
+        ) -> ToolMuxFuture<'_, Result<Option<ExecutorOutput>, String>> {
             Box::pin(async {
                 let body = br#"{"echo":7}"#.to_vec();
                 Ok(Some(ExecutorOutput {
@@ -743,7 +743,7 @@ mod tests {
                 .expect("fixture service stopped cleanly");
         });
         let client = RemoteToolMux::new(
-            format!("http://{address}"),
+            &format!("http://{address}"),
             signer,
             Plane::Dev,
             aex_wire::types::Region::EuWest1,
@@ -806,7 +806,7 @@ mod tests {
             &Zeroizing::new([8; 32]),
         ));
         let client = RemoteToolMux::new(
-            format!("http://{address}"),
+            &format!("http://{address}"),
             signer,
             Plane::Dev,
             aex_wire::types::Region::EuWest1,

@@ -987,8 +987,11 @@ impl SessionTelemetryReader {
             return Err(SessionTelemetryError::SegmentTooLarge);
         }
         let sha256 = hex::encode(Sha256::digest(&compressed));
-        let first = frames.first().expect("non-empty").sequence.get();
-        let last = frames.last().expect("non-empty").sequence.get();
+        let (Some(first), Some(last)) = (frames.first(), frames.last()) else {
+            return Err(SessionTelemetryError::NotFound);
+        };
+        let first = first.sequence.get();
+        let last = last.sequence.get();
         let key = format!("sessions/{session}/exports/{first:020}-{last:020}-{sha256}.ndjson.zst");
         let checksum =
             base64::engine::general_purpose::STANDARD.encode(Sha256::digest(&compressed));
@@ -1122,10 +1125,7 @@ impl SessionTelemetryDeleter {
     }
 }
 
-fn deletion_tail<'a>(
-    owned_prefix: &str,
-    key: &'a str,
-) -> Result<&'a str, SessionTelemetryError> {
+fn deletion_tail<'a>(owned_prefix: &str, key: &'a str) -> Result<&'a str, SessionTelemetryError> {
     key.strip_prefix(owned_prefix)
         .ok_or(SessionTelemetryError::InvalidStoredKey)
 }

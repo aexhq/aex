@@ -86,6 +86,10 @@ impl TelemetryPort for BoundedTelemetryIngress {
 
 /// Drains the fail-open ingress, allocates one contiguous range per session,
 /// and writes immutable compressed OTLP segments outside tool latency.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the exporter keeps range allocation, loss accounting and immutable segment publication in one ordered batch flow"
+)]
 pub async fn export(
     mut receiver: mpsc::Receiver<TelemetryEnvelope>,
     sequences: aws_sdk_dynamodb::Client,

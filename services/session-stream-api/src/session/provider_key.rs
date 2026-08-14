@@ -408,6 +408,10 @@ impl Backoff for YieldBackoff {
 
 #[async_trait::async_trait]
 impl ProviderCredentialReader for SessionProviderKeys {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "provider-key binding keeps replay resolution, plaintext lifetime, envelope sealing and atomic custody commit in one auditable flow"
+    )]
     async fn bind_session_api_key(
         &self,
         request: aex_session_app::ports::BindSessionApiKey<'_>,
@@ -1138,6 +1142,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the focused test verifies framing, per-value sealing, replay-before-KMS, durable redaction and conflict behavior together"
+    )]
     async fn every_mcp_value_is_individually_framed_sealed_and_replayed_before_kms() {
         const HEADER_SECRET: &str = "Bearer remote-mcp-token";
         const ENV_SECRET: &str = "sandbox-mcp-token";

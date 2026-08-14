@@ -81,7 +81,7 @@ impl RuntimePort for Unused {
 }
 
 impl GuestPort for Unused {
-    fn hello<'a>(&'a self, _ready: ReadyHand) -> ToolMuxFuture<'a, Result<(), String>> {
+    fn hello(&self, _ready: ReadyHand) -> ToolMuxFuture<'_, Result<(), String>> {
         Box::pin(async { Err("unused".to_owned()) })
     }
 
@@ -98,13 +98,13 @@ impl GuestPort for Unused {
         Box::pin(async { Err("unused".to_owned()) })
     }
 
-    fn read<'a>(
-        &'a self,
+    fn read(
+        &self,
         _ready: ReadyHand,
         _operation: aex_hands_protocol::rpc::HandsOperationId,
         _max_result_bytes: usize,
         _timeout_ms: u32,
-    ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>> {
+    ) -> ToolMuxFuture<'_, Result<Option<ExecutorOutput>, String>> {
         Box::pin(async { Err("unused".to_owned()) })
     }
 

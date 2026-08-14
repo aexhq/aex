@@ -981,13 +981,6 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-tool-mux",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `mcp.streamable_http` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
     "subject": "crates/aex-usage-query-dynamodb",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
@@ -1307,20 +1300,6 @@
     "owner": "tools-mcp",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "services/tool-mux",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `mcp.streamable_http` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "services/tool-mux",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `net.public_egress` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
@@ -1867,20 +1846,6 @@
     "owner": "tools-mcp",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `hands.guest.lifecycle` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-tool-mux",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `mcp.streamable_http` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-tool-mux",
-    "owner": "tools-mcp",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `net.public_egress` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

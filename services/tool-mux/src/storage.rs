@@ -129,10 +129,10 @@ pub trait LatestFileAuthorityPort: Send + Sync + 'static {
     ) -> ToolMuxFuture<'a, Result<Option<PersistedLatest>, PersistAuthorityError>>;
 
     /// Atomically commits or replays a verified current-value overwrite.
-    fn persist_latest<'a>(
-        &'a self,
+    fn persist_latest(
+        &self,
         command: PersistLatest,
-    ) -> ToolMuxFuture<'a, Result<PersistedLatest, PersistAuthorityError>>;
+    ) -> ToolMuxFuture<'_, Result<PersistedLatest, PersistAuthorityError>>;
 }
 
 /// One trusted persistence execution before detached scheduling.
@@ -488,10 +488,10 @@ mod tests {
             })
         }
 
-        fn persist_latest<'a>(
-            &'a self,
+        fn persist_latest(
+            &self,
             command: PersistLatest,
-        ) -> ToolMuxFuture<'a, Result<PersistedLatest, PersistAuthorityError>> {
+        ) -> ToolMuxFuture<'_, Result<PersistedLatest, PersistAuthorityError>> {
             Box::pin(async move {
                 if *self.stale.lock().expect("stale") {
                     return Err(PersistAuthorityError::StaleIntent);

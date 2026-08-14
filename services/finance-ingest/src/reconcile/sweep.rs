@@ -372,11 +372,12 @@ const fn command_kind(kind: EffectKind) -> Option<CommandKind> {
     match kind {
         EffectKind::CustomerCreate => Some(CommandKind::EnsureCustomer),
         EffectKind::CheckoutSessionCreate => Some(CommandKind::CreateTopUpCheckout),
-        // Off-session charging is retired from the prepaid MVP. Historical
-        // rows are never replayed into a provider command by this build.
-        EffectKind::OffSessionCharge => None,
         EffectKind::RefundCreate => Some(CommandKind::RefundCharge),
-        EffectKind::TaxCalculationCreate | EffectKind::TaxTransactionCreate => None,
+        // Off-session charging and provider tax commands are absent from the
+        // prepaid MVP. Historical rows are never replayed by this build.
+        EffectKind::OffSessionCharge
+        | EffectKind::TaxCalculationCreate
+        | EffectKind::TaxTransactionCreate => None,
     }
 }
 

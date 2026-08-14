@@ -750,10 +750,9 @@ pub fn initial_root_record(
                     .agent_execution
                     .max_depth
                     .min(aex_wire::limits::MAX_SUBAGENT_DEPTH),
-                max_fanout: prepared
-                    .agent_execution
-                    .max_fanout
-                    .min(aex_wire::limits::MAX_SUBAGENTS_PER_SESSION as u32),
+                max_fanout: prepared.agent_execution.max_fanout.min(
+                    u32::try_from(aex_wire::limits::MAX_SUBAGENTS_PER_SESSION).unwrap_or(u32::MAX),
+                ),
             },
         }),
         parent: None,

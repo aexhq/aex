@@ -37,7 +37,12 @@ pub enum InvocationError {
 
 /// Classifies raw Lambda JSON without letting one event source impersonate
 /// another. SQS is recognized by its `Records` envelope; direct requests use
-/// their explicit `request` tag; an ordinary EventBridge envelope means sweep.
+/// their explicit `request` tag; an ordinary `EventBridge` envelope means sweep.
+///
+/// # Errors
+///
+/// Returns an error when a recognized envelope is malformed or the invocation
+/// has no admitted event-source discriminant.
 pub fn classify(value: Value) -> Result<Invocation, InvocationError> {
     if value.get("Records").is_some() {
         return serde_json::from_value(value)
@@ -57,11 +62,10 @@ pub fn classify(value: Value) -> Result<Invocation, InvocationError> {
             }),
         Some("readyz") => Ok(Invocation::Readyz),
         Some("sweep") => Ok(Invocation::Reconcile(ReconcileRequest::Sweep)),
-        Some(_) => Err(InvocationError::Unsupported),
         None if value.get("source").is_some() || value.get("detail-type").is_some() => {
             Ok(Invocation::Reconcile(ReconcileRequest::Sweep))
         }
-        None => Err(InvocationError::Unsupported),
+        Some(_) | None => Err(InvocationError::Unsupported),
     }
 }
 

@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:63984ceebdac85b3fe5e9b118be158ca8582fc6c867a215ecd064f7fb1eb545b",
+  "digest": "blake3:2d42d5ec8a562ac11a636bca866f54962f09cfcc1a038ce8fbcb067796712de8",
   "tables": [
     {
       "schema": "aex.regional-table.v1",

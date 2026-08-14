@@ -50,6 +50,10 @@ impl Config {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
+    #[allow(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "AWS requires the literal lowercase `.fifo` suffix for FIFO queue names"
+    )]
     fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         let required = |name: &'static str| {
             lookup(name)
@@ -159,6 +163,10 @@ async fn main() -> ExitCode {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the composition root keeps the service's exact regional authority wiring visible in one place"
+)]
 async fn run(config: Config) -> Result<(), String> {
     let sdk = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .region(aws_sdk_dynamodb::config::Region::new(
@@ -369,11 +377,12 @@ mod tests {
                 "AEX_PRICING_VERSION" => "launch",
                 "AEX_FILE_AUTHORITY_TABLE" => "regional-file-authority",
                 "AEX_CONTENT_BUCKET" => "content",
-                "AEX_CONTENT_BUCKET_OWNER" => "123456789012",
+                "AEX_CONTENT_BUCKET_OWNER" | "AEX_SESSION_TELEMETRY_BUCKET_OWNER" => {
+                    "123456789012"
+                }
                 "AEX_CONTENT_KMS_KEY_ARN" => "arn:aws:kms:eu-west-1:1:key/content",
                 "AEX_SECRET_KMS_KEY_ARN" => "arn:aws:kms:eu-west-1:1:key/secret",
                 "AEX_SESSION_TELEMETRY_BUCKET" => "telemetry",
-                "AEX_SESSION_TELEMETRY_BUCKET_OWNER" => "123456789012",
                 "AEX_SESSION_TELEMETRY_KMS_KEY_ARN" => {
                     "arn:aws:kms:eu-west-1:1:key/telemetry"
                 }

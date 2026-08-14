@@ -30,7 +30,10 @@ impl DetachedExecutions {
     where
         F: Future<Output = Result<ExecutorOutput, String>> + Send + 'static,
     {
-        let mut states = self.states.lock().expect("detached execution mutex");
+        let mut states = self
+            .states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if states.contains_key(&operation) {
             return;
         }
@@ -39,7 +42,9 @@ impl DetachedExecutions {
         let task = tokio::spawn(async move {
             let _ = released.await;
             let outcome = future.await;
-            let mut states = shared.lock().expect("detached execution mutex");
+            let mut states = shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if matches!(states.get(&operation), Some(State::Running(_))) {
                 states.insert(operation, State::Completed(outcome));
             }
@@ -50,11 +55,15 @@ impl DetachedExecutions {
     }
 
     /// Reads one execution without starting it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the retained operation failure, or rejects an unknown operation.
     pub fn read(&self, operation: Uuid7) -> Result<Option<ExecutorOutput>, String> {
         match self
             .states
             .lock()
-            .expect("detached execution mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&operation)
             .cloned()
         {
@@ -66,7 +75,10 @@ impl DetachedExecutions {
 
     /// Cancels one execution and retains a stable cancelled result.
     pub fn cancel(&self, operation: Uuid7) {
-        let mut states = self.states.lock().expect("detached execution mutex");
+        let mut states = self
+            .states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(State::Running(task)) = states.get(&operation) {
             task.abort();
         }
@@ -75,6 +87,7 @@ impl DetachedExecutions {
 }
 
 /// Derives a namespace-separated, deterministic operation id from call identity.
+#[must_use]
 pub fn operation_id(call: &ToolCallIdentity, namespace: &str) -> Uuid7 {
     let digest = Sha256::digest(
         serde_json::to_vec(&(namespace, call))

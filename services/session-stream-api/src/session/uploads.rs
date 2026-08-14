@@ -391,7 +391,7 @@ impl Routes {
     }
 
     /// Loads and binds the exact pending pointer this upload is permitted to
-    /// complete. The returned ETag is a private publication fence: a newer URL,
+    /// complete. The returned `ETag` is a private publication fence: a newer URL,
     /// inline value or upload can move the current name while S3 completion is
     /// in flight, but this older completion can then no longer publish.
     async fn current_upload_fence(&self, upload: &Upload) -> WireResult<aex_wire::types::ETag> {

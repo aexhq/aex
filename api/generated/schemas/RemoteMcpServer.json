@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/RemoteMcpServer.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A remote Streamable HTTP MCP server qualified at session setup.",
+  "description": "A remote Streamable HTTP MCP server frozen at session setup and invoked on demand inside the sandbox.",
   "properties": {
     "headers": {
       "additionalProperties": {

@@ -841,7 +841,7 @@ impl WakeLoop {
                 return Ok(Outcome::Released(Release::Draining));
             }
         };
-        self.activation.run(delivery).await
+        Box::pin(self.activation.run(delivery)).await
     }
 }
 

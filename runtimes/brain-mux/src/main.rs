@@ -1,7 +1,7 @@
 //! `brain-mux` composition root (Rust Fargate OCI).
 //!
 //! Exclusive responsibility: activations, providers, native subagents, and the warm fold
-//! cache. Every non-native tool is sent to the separately placed ToolMux service.
+//! cache. Every non-native tool is sent to the separately placed `ToolMux` service.
 //!
 //! This binary is a composition root only. Configuration is validated before anything
 //! starts, diagnostics are installed through `aex_platform_diagnostics`, and the behaviour
@@ -70,7 +70,7 @@ pub struct Config {
     pub pricing_version: String,
     /// Maximum concurrently active activations for one task.
     pub budget: u32,
-    /// Private ToolMux service base URL.
+    /// Private `ToolMux` service base URL.
     pub tool_mux_url: String,
     /// Release-projected non-secret verifier anchors used to select the signer's key id.
     pub tool_mux_assertion_trust_anchors: Vec<(uuid::Uuid, [u8; 32])>,
@@ -154,11 +154,11 @@ pub const SECRET_KMS_KEY_ARN_VAR: &str = "AEX_SECRET_KMS_KEY_ARN";
 pub const RUNTIME_ACTIVITY_TABLE_VAR: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
 /// Environment variable naming the single central rating FIFO.
 pub const USAGE_RATING_QUEUE_VAR: &str = "AEX_USAGE_RATING_QUEUE_URL";
-/// Private distributed ToolMux service URL.
+/// Private distributed `ToolMux` service URL.
 pub const TOOL_MUX_URL_VAR: &str = "AEX_TOOL_MUX_URL";
 /// Release-projected `kid:base64url-public` verifier anchors.
 pub const ASSERTION_TRUST_ANCHORS_VAR: &str = "AEX_ASSERTION_TRUST_ANCHORS";
-/// Secrets Manager reference holding the ToolMux assertion signing seed.
+/// Secrets Manager reference holding the `ToolMux` assertion signing seed.
 pub const TOOL_MUX_ASSERTION_SIGNING_KEY_REF_VAR: &str = "AEX_TOOL_MUX_ASSERTION_SIGNING_KEY_REF";
 /// Environment variable naming the runtime due-index shard count.
 pub const RUNTIME_DUE_SHARDS_VAR: &str = "AEX_RUNTIME_DUE_SHARDS";
@@ -199,6 +199,10 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
+    #[allow(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "AWS requires the literal lowercase `.fifo` suffix for FIFO queue names"
+    )]
     pub fn from_lookup<F>(lookup: F) -> Result<Self, BrainMuxConfigError>
     where
         F: Fn(&str) -> Option<String>,
@@ -643,7 +647,7 @@ fn resolve_production_ports(
         })?;
     let assertion_signer = resolve_tool_mux_assertion_signer(config, &aws.sdk, runtime)?;
     let hands = wake::remote_tool_mux_binding(
-        config.tool_mux_url.clone(),
+        &config.tool_mux_url,
         std::sync::Arc::new(assertion_signer),
         assertion_plane,
         config.placement_region(),
@@ -1370,10 +1374,7 @@ mod tests {
     fn tool_mux_endpoint_is_private_or_encrypted() {
         let mut vars = complete();
         let config = read(&vars).expect("private service discovery HTTP is accepted");
-        assert_eq!(
-            config.tool_mux_url,
-            "http://tool-mux.aex-dev.internal:8080"
-        );
+        assert_eq!(config.tool_mux_url, "http://tool-mux.aex-dev.internal:8080");
 
         vars.insert(TOOL_MUX_URL_VAR, "http://tool-mux.example:8080".to_owned());
         assert!(matches!(
@@ -1384,10 +1385,7 @@ mod tests {
             })
         ));
 
-        vars.insert(
-            TOOL_MUX_URL_VAR,
-            "https://tool-mux.example".to_owned(),
-        );
+        vars.insert(TOOL_MUX_URL_VAR, "https://tool-mux.example".to_owned());
         assert!(read(&vars).is_ok(), "HTTPS remains valid outside Cloud Map");
     }
 

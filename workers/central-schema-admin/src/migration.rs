@@ -14,7 +14,7 @@
 //! this crate admits and the gate refuses, or the reverse, is the drift both
 //! exist to prevent.
 //! The current chain includes the one-user personal-account/workspace and its
-//! UUIDv7 prepaid ledger identities; those rows are ordinary transactional DDL
+//! `UUIDv7` prepaid ledger identities; those rows are ordinary transactional DDL
 //! inputs, not a post-migration bootstrap script.
 
 use std::path::Path;

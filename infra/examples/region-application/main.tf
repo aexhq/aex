@@ -6,11 +6,11 @@ module "role" {
   source   = "../../modules/iam-deployable-role"
   for_each = var.deployable_grants
 
-  deployable       = each.key
-  plane            = var.plane
-  region           = var.region
-  assume_principal = each.value.assume_principal
-  action_grants                = each.value.action_grants
+  deployable                  = each.key
+  plane                       = var.plane
+  region                      = var.region
+  assume_principal            = each.value.assume_principal
+  action_grants               = each.value.action_grants
   wildcard_resource_allowlist = each.value.wildcard_resource_allowlist
   boundary_policy_arn         = var.permissions_boundary_policy_arn
   tags                        = var.tags
@@ -30,9 +30,9 @@ module "function" {
   reserved_concurrency    = each.value.reserved_concurrency
   log_retention_days      = each.value.log_retention_days
   log_kms_key_arn         = var.kms_key_arn
-  env      = each.value.env
-  role_arn = module.role[each.key].role_arn
-  tags     = var.tags
+  env                     = each.value.env
+  role_arn                = module.role[each.key].role_arn
+  tags                    = var.tags
 }
 
 module "event_source" {
@@ -114,7 +114,7 @@ module "session_api" {
   autoscaling_bounds                = var.services["session-api"].autoscaling_bounds
   autoscaling_metrics               = var.services["session-api"].autoscaling_metrics
   env = merge(var.services["session-api"].env, {
-    AEX_SESSION_API_BRAIN_URL    = "http://${module.service_discovery.hostnames["brain-mux"]}:${var.services["brain-mux"].container_port}"
+    AEX_SESSION_API_BRAIN_URL = "http://${module.service_discovery.hostnames["brain-mux"]}:${var.services["brain-mux"].container_port}"
   })
   task_role_arn                        = module.role["session-api"].role_arn
   execution_role_arn                   = var.services["session-api"].execution_role_arn

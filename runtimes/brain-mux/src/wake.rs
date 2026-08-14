@@ -10,7 +10,7 @@
 //! | --- | --- | --- |
 //! | `WakeQueue` | `aex_brain_store_dynamodb::SqsWakeQueue` | real, over the configured queue and the `regional-work` due index |
 //! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_dynamodb::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
-//! | `ToolPort` | Brain-inline tools plus the placed ToolMux service | activation never receives a concrete executor reference |
+//! | `ToolPort` | Brain-inline tools plus the placed `ToolMux` service | activation never receives a concrete executor reference |
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
 //! | `ProviderPort` | regional custody + KMS + six-provider router, or explicit startup refusal | dispatch uses the immutable session pin and ticket-scoped tenant authority; registration remains owned by the secret API |
 //! | `CatalogPort` | release-bound `VerifiedCatalogPort` | the complete retained collection verifies before a port exists |
@@ -742,11 +742,11 @@ impl core::fmt::Debug for HandsBindings {
     }
 }
 
-/// Binds Brain to the placed ToolMux service. Brain retains no runtime,
+/// Binds Brain to the placed `ToolMux` service. Brain retains no runtime,
 /// sandbox, MCP or storage executor authority.
 #[must_use]
 pub fn remote_tool_mux_binding(
-    endpoint: String,
+    endpoint: &str,
     signer: Arc<aex_identity_domain::assertion::LocalSigner>,
     plane: aex_identity_domain::assertion::Plane,
     region: aex_wire::types::Region,

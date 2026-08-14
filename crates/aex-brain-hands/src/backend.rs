@@ -1153,7 +1153,7 @@ impl LiveFileBackend for ProductionHandsBackend {
                 )
                 .await?;
             if hello.protocol_version != aex_hands_protocol::rpc::PROTOCOL_V1
-                || hello.max_body_bytes < MAX_FRAME_BYTES as u64
+                || hello.max_body_bytes < u64::from(MAX_FRAME_BYTES)
             {
                 return Err(dispatched(
                     ProviderFailureKind::ProtocolViolation,

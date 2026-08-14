@@ -96,22 +96,7 @@ async fn run(
         settlement_config.database_role,
     ));
 
-    let stripe_secret = aws_sdk_secretsmanager::Client::new(&aws)
-        .get_secret_value()
-        .secret_id(&reconcile_config.stripe_api_secret_arn)
-        .send()
-        .await
-        .map_err(|error| lambda_runtime::Error::from(error.to_string()))?
-        .secret_string()
-        .ok_or_else(|| lambda_runtime::Error::from("Stripe secret has no SecretString"))?
-        .to_owned();
-    let recovery = Arc::new(
-        StripeEffectRecoveryGateway::new(
-            StripeSecret::new(stripe_secret)
-                .map_err(|error| lambda_runtime::Error::from(error.to_string()))?,
-        )
-        .map_err(|error| lambda_runtime::Error::from(error.to_string()))?,
-    );
+    let recovery = stripe_recovery(&aws, &reconcile_config.stripe_api_secret_arn).await?;
     let reconcile_client = client(&aws, &reconcile_config.data_api);
     let reconcile = Arc::new(AuroraReconcileAuthority::new(
         reconcile_client,
@@ -198,6 +183,26 @@ async fn run(
         }
     }))
     .await
+}
+
+async fn stripe_recovery(
+    aws: &aws_config::SdkConfig,
+    secret_arn: &str,
+) -> Result<Arc<StripeEffectRecoveryGateway>, lambda_runtime::Error> {
+    let stripe_secret = aws_sdk_secretsmanager::Client::new(aws)
+        .get_secret_value()
+        .secret_id(secret_arn)
+        .send()
+        .await
+        .map_err(|error| lambda_runtime::Error::from(error.to_string()))?
+        .secret_string()
+        .ok_or_else(|| lambda_runtime::Error::from("Stripe secret has no SecretString"))?
+        .to_owned();
+    let secret = StripeSecret::new(stripe_secret)
+        .map_err(|error| lambda_runtime::Error::from(error.to_string()))?;
+    StripeEffectRecoveryGateway::new(secret)
+        .map(Arc::new)
+        .map_err(|error| lambda_runtime::Error::from(error.to_string()))
 }
 
 fn client(

@@ -1,4 +1,4 @@
-//! Immutable S3 checkpoint bodies and fenced DynamoDB head pointers.
+//! Immutable `S3` checkpoint bodies and fenced `DynamoDB` head pointers.
 
 use aex_brain_app::ports::{
     BoxFuture, CheckpointError, ContextCheckpointStore, FenceGuard, SessionAuthority,
@@ -331,6 +331,9 @@ mod tests {
         assert!(first.starts_with("session-content/v1/session="));
         assert_ne!(first, object_key(b, checkpoint, body));
         assert_ne!(first, object_key(a, checkpoint, ContentHash::of(b"other")));
-        assert!(first.ends_with(".json"));
+        assert_eq!(
+            std::path::Path::new(&first).extension(),
+            Some(std::ffi::OsStr::new("json"))
+        );
     }
 }

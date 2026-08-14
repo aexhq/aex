@@ -11,7 +11,7 @@
     },
     "transport": {
       "$ref": "aex:schema:McpTransport",
-      "description": "How Tool Mux reaches it."
+      "description": "How the built-in sandbox MCP tool reaches it."
     }
   },
   "required": [

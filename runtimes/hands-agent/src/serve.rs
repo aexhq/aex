@@ -459,45 +459,7 @@ fn answer(
                 state,
             )
         }
-        Verb::Start => {
-            let request: StartRequest = decode_guest_request(body, state)?;
-            let input = StartInput {
-                operation: request.operation,
-                call_hash: request.call_hash,
-                request: request.request.clone(),
-                bounds: request.bounds,
-                deadline: request.deadline,
-                open_operations: 0,
-                browser_available: state.browser,
-            };
-            let decision = state
-                .supervisor
-                .decide_start(&input, now())
-                .map_err(|error| journal_error(&error))?;
-            if let StartDecision::Spawn { meta } = &decision {
-                // Rule 1: `meta.json` is written and fsynced **before** anything is
-                // spawned. A crash between the two is observed on replay as an
-                // interrupted operation rather than as a lost one.
-                guest
-                    .journal
-                    .record_start(meta)
-                    .map_err(|error| journal_error(&error))?;
-                let dispatched = guest
-                    .executor
-                    .dispatch(&guest.journal, meta, request.delivery, now())
-                    .map_err(|error| journal_error(&error))?;
-                // Every synchronous terminal is recorded, whatever the delivery
-                // mode: a detached workspace read finishes right here, and
-                // skipping the record left it polling to its deadline.
-                if let Dispatch::Terminal(terminal) = dispatched {
-                    match guest.journal.record_terminal(meta.operation, &terminal) {
-                        Ok(()) | Err(JournalError::AlreadyTerminal { .. }) => {}
-                        Err(error) => return Err(journal_error(&error)),
-                    }
-                }
-            }
-            encode_guest_response(&decision.response(request.operation), state)
-        }
+        Verb::Start => answer_start(guest, state, body),
         Verb::Status => {
             let request: StatusRequest = decode_guest_request(body, state)?;
             let response = state
@@ -558,6 +520,46 @@ fn answer(
             encode_guest_response(&guest.files.answer(request), state)
         }
     }
+}
+
+fn answer_start(guest: &Guest, state: &mut Bound, body: &[u8]) -> Result<Vec<u8>, GuestError> {
+    let request: StartRequest = decode_guest_request(body, state)?;
+    let input = StartInput {
+        operation: request.operation,
+        call_hash: request.call_hash,
+        request: request.request.clone(),
+        bounds: request.bounds,
+        deadline: request.deadline,
+        open_operations: 0,
+        browser_available: state.browser,
+    };
+    let decision = state
+        .supervisor
+        .decide_start(&input, now())
+        .map_err(|error| journal_error(&error))?;
+    if let StartDecision::Spawn { meta } = &decision {
+        // Rule 1: `meta.json` is written and fsynced **before** anything is
+        // spawned. A crash between the two is observed on replay as an
+        // interrupted operation rather than as a lost one.
+        guest
+            .journal
+            .record_start(meta)
+            .map_err(|error| journal_error(&error))?;
+        let dispatched = guest
+            .executor
+            .dispatch(&guest.journal, meta, request.delivery, now())
+            .map_err(|error| journal_error(&error))?;
+        // Every synchronous terminal is recorded, whatever the delivery
+        // mode: a detached workspace read finishes right here, and skipping
+        // the record left it polling to its deadline.
+        if let Dispatch::Terminal(terminal) = dispatched {
+            match guest.journal.record_terminal(meta.operation, &terminal) {
+                Ok(()) | Err(JournalError::AlreadyTerminal { .. }) => {}
+                Err(error) => return Err(journal_error(&error)),
+            }
+        }
+    }
+    encode_guest_response(&decision.response(request.operation), state)
 }
 
 /// Hands the cancel ladder to a background thread.

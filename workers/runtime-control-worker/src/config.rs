@@ -218,6 +218,10 @@ impl Config {
             },
             pricing_version: required(&lookup, PRICING_VERSION_VAR)?,
         };
+        #[allow(
+            clippy::case_sensitive_file_extension_comparisons,
+            reason = "SQS FIFO queue URLs use the exact lower-case `.fifo` service suffix"
+        )]
         if !config.rating_queue_url.ends_with(".fifo") {
             return Err(RuntimeControlWorkerConfigError::Invalid {
                 name: RATING_QUEUE_VAR,

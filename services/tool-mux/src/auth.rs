@@ -1,4 +1,4 @@
-//! Short-lived, body-bound AgentSession assertion verification.
+//! Short-lived, body-bound `AgentSession` assertion verification.
 
 use aex_control_domain::epoch::{Epoch, EpochSubjectKind};
 use aex_identity_domain::assertion::{
@@ -22,7 +22,7 @@ impl EpochProjection for EmptyProjection {
     }
 }
 
-/// Regional ToolMux assertion verifier.
+/// Regional `ToolMux` assertion verifier.
 pub struct AssertionAuthorizer {
     keys: VerificationKeySet,
     audience: Audience,

@@ -108,107 +108,107 @@ impl ToolMux {
     ///
     /// Refuses foreign exact-generation handles and redacted executor failures.
     pub async fn read(&self, request: &ToolHandleRequest) -> Result<ToolRead, String> {
-        let (ready, output) = match &request.handle {
-            ToolHandle::Sandbox {
-                hand,
-                generation,
-                target,
-                arguments,
-                deadline_ms,
-                max_result_bytes,
-                timeout_ms,
-            } => {
-                if *hand != HandId::for_session(request.identity.session) {
-                    return Err("tool handle belongs to a foreign Hand".to_owned());
-                }
-                let Some(ready) = self
-                    .runtime
-                    .poll_waiter(
-                        request.identity.session,
-                        *hand,
-                        *generation,
-                        &request.identity,
-                    )
-                    .await?
-                else {
-                    return Ok(ToolRead::Pending);
-                };
-                if ready.hand != *hand || ready.generation != *generation {
-                    return Err("Runtime Control returned a foreign Hand generation".to_owned());
-                }
-                let output = async {
-                    self.guest.hello(ready).await?;
-                    self.emit_identity(
-                        &request.identity,
-                        Some(ready.hand),
-                        Some(ready.generation),
-                        TelemetryKind::ToolStarted,
-                    );
-                    match target.as_ref() {
-                        ToolTarget::OfficialSandbox { .. }
-                        | ToolTarget::RemoteMcp { .. }
-                        | ToolTarget::SandboxMcp { .. } => {
-                            if matches!(target.as_ref(), ToolTarget::RemoteMcp { .. }) {
-                                self.emit_identity(
-                                    &request.identity,
-                                    Some(ready.hand),
-                                    Some(ready.generation),
-                                    TelemetryKind::RemoteMcpStarted,
-                                );
-                            }
-                            let operation = self
-                                .guest
-                                .start(
-                                    ready,
-                                    target,
-                                    arguments,
-                                    &request.identity,
-                                    *deadline_ms,
-                                    *max_result_bytes,
-                                    *timeout_ms,
-                                )
-                                .await?;
-                            self.guest
-                                .read(ready, operation, *max_result_bytes, *timeout_ms)
-                                .await
-                        }
-                        ToolTarget::StoragePersist {
-                            source,
-                            logical_name,
-                            media_type,
-                        } => {
-                            self.storage
-                                .start_persist(
-                                    ready,
-                                    source,
-                                    logical_name,
-                                    media_type.as_deref(),
-                                    &request.identity,
-                                )
-                                .await?;
-                            self.storage.read_persist(ready, &request.identity).await
-                        }
-                    }
-                }
-                .await;
-                let output = match output {
-                    Ok(output) => output,
-                    Err(error) => {
-                        let _ = self.runtime.settle_waiter(ready, &request.identity).await;
-                        return Err(error);
-                    }
-                };
-                (ready, output)
+        let ToolHandle::Sandbox {
+            hand, generation, ..
+        } = &request.handle;
+        if *hand != HandId::for_session(request.identity.session) {
+            return Err("tool handle belongs to a foreign Hand".to_owned());
+        }
+        let Some(ready) = self
+            .runtime
+            .poll_waiter(
+                request.identity.session,
+                *hand,
+                *generation,
+                &request.identity,
+            )
+            .await?
+        else {
+            return Ok(ToolRead::Pending);
+        };
+        if ready.hand != *hand || ready.generation != *generation {
+            return Err("Runtime Control returned a foreign Hand generation".to_owned());
+        }
+        let output = match self.read_ready_output(request, ready).await {
+            Ok(output) => output,
+            Err(error) => {
+                let _ = self.runtime.settle_waiter(ready, &request.identity).await;
+                return Err(error);
             }
         };
         let Some(output) = output else {
             return Ok(ToolRead::Pending);
         };
-        let result = self
-            .finish_detached(&request.identity, Some(ready), output)
-            .await?;
+        let result = self.finish_detached(&request.identity, Some(ready), &output);
         self.runtime.settle_waiter(ready, &request.identity).await?;
         Ok(ToolRead::Completed { result })
+    }
+
+    async fn read_ready_output(
+        &self,
+        request: &ToolHandleRequest,
+        ready: ReadyHand,
+    ) -> Result<Option<ExecutorOutput>, String> {
+        let ToolHandle::Sandbox {
+            target,
+            arguments,
+            deadline_ms,
+            max_result_bytes,
+            timeout_ms,
+            ..
+        } = &request.handle;
+        self.guest.hello(ready).await?;
+        self.emit_identity(
+            &request.identity,
+            Some(ready.hand),
+            Some(ready.generation),
+            TelemetryKind::ToolStarted,
+        );
+        match target.as_ref() {
+            ToolTarget::OfficialSandbox { .. }
+            | ToolTarget::RemoteMcp { .. }
+            | ToolTarget::SandboxMcp { .. } => {
+                if matches!(target.as_ref(), ToolTarget::RemoteMcp { .. }) {
+                    self.emit_identity(
+                        &request.identity,
+                        Some(ready.hand),
+                        Some(ready.generation),
+                        TelemetryKind::RemoteMcpStarted,
+                    );
+                }
+                let operation = self
+                    .guest
+                    .start(
+                        ready,
+                        target,
+                        arguments,
+                        &request.identity,
+                        *deadline_ms,
+                        *max_result_bytes,
+                        *timeout_ms,
+                    )
+                    .await?;
+                self.guest
+                    .read(ready, operation, *max_result_bytes, *timeout_ms)
+                    .await
+            }
+            ToolTarget::StoragePersist {
+                source,
+                logical_name,
+                media_type,
+            } => {
+                self.storage
+                    .start_persist(
+                        ready,
+                        source,
+                        logical_name,
+                        media_type.as_deref(),
+                        &request.identity,
+                    )
+                    .await?;
+                self.storage.read_persist(ready, &request.identity).await
+            }
+        }
     }
 
     /// Best-effort exact-handle cancellation. It never starts another attempt.
@@ -256,12 +256,12 @@ impl ToolMux {
         }
     }
 
-    async fn finish_detached(
+    fn finish_detached(
         &self,
         identity: &crate::ToolCallIdentity,
         ready: Option<ReadyHand>,
-        output: ExecutorOutput,
-    ) -> Result<ToolCompletion, String> {
+        output: &ExecutorOutput,
+    ) -> ToolCompletion {
         let preview_len = output.preview.len().min(MAX_LIVE_PREVIEW_BYTES);
         let preview = String::from_utf8_lossy(&output.preview[..preview_len]).into_owned();
         let preview_was_cut = output.preview.len() > preview_len;
@@ -305,7 +305,7 @@ impl ToolMux {
                 is_error: output.is_error,
             },
         );
-        Ok(ToolCompletion {
+        ToolCompletion {
             preview,
             truncated,
             output_file,
@@ -315,7 +315,7 @@ impl ToolMux {
                     "The tool returned an error result; inspect the preview or local output file."
                         .to_owned(),
             }),
-        })
+        }
     }
 
     fn emit_for(

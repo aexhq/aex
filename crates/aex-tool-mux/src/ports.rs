@@ -51,9 +51,13 @@ pub trait RuntimePort: Send + Sync + 'static {
 /// Credential-free exact-generation Hands bridge.
 pub trait GuestPort: Send + Sync + 'static {
     /// Performs `/hello` and validates the response against `ready`.
-    fn hello<'a>(&'a self, ready: ReadyHand) -> ToolMuxFuture<'a, Result<(), String>>;
+    fn hello(&self, ready: ReadyHand) -> ToolMuxFuture<'_, Result<(), String>>;
 
     /// Starts an official or sandbox-MCP call on the exact generation.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the guest boundary preserves the signed call limits without allocating an intermediate request"
+    )]
     fn start<'a>(
         &'a self,
         ready: ReadyHand,
@@ -66,13 +70,13 @@ pub trait GuestPort: Send + Sync + 'static {
     ) -> ToolMuxFuture<'a, Result<HandsOperationId, String>>;
 
     /// Reads an already accepted guest operation without starting another.
-    fn read<'a>(
-        &'a self,
+    fn read(
+        &self,
         ready: ReadyHand,
         operation: HandsOperationId,
         max_result_bytes: usize,
         timeout_ms: u32,
-    ) -> ToolMuxFuture<'a, Result<Option<ExecutorOutput>, String>>;
+    ) -> ToolMuxFuture<'_, Result<Option<ExecutorOutput>, String>>;
 
     /// Best-effort cancellation on the exact generation.
     fn cancel<'a>(

@@ -88,6 +88,10 @@ impl ProductionGuestFileStream {
 }
 
 impl GuestFileStreamPort for ProductionGuestFileStream {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the download keeps descriptor, chunk and close verification beside private staging cleanup as one integrity flow"
+    )]
     fn stream_verified<'a>(
         &'a self,
         ready: ReadyHand,
@@ -280,14 +284,14 @@ impl ProductionLatestFileAuthority {
             .registry
             .read_receipt(intent.workspace, &scope, &key, now()?)
             .await
-            .map_err(store_failed)?
+            .map_err(|error| store_failed(&error))?
         else {
             return Ok(None);
         };
         if receipt.intent != intent_digest(intent) {
             return Err(PersistAuthorityError::IdempotencyConflict);
         }
-        let stored = SetReceipt::decode_receipt(&receipt).map_err(store_failed)?;
+        let stored = SetReceipt::decode_receipt(&receipt).map_err(|error| store_failed(&error))?;
         persisted_from_pointer(stored.pointer(intent.workspace), true, Vec::new()).map(Some)
     }
 }
@@ -300,10 +304,14 @@ impl LatestFileAuthorityPort for ProductionLatestFileAuthority {
         Box::pin(self.replay(intent))
     }
 
-    fn persist_latest<'a>(
-        &'a self,
+    #[allow(
+        clippy::too_many_lines,
+        reason = "latest publication keeps immutable upload, content admission, conditional pointer commit and replay receipt in one transaction flow"
+    )]
+    fn persist_latest(
+        &self,
         command: PersistLatest,
-    ) -> ToolMuxFuture<'a, Result<PersistedLatest, PersistAuthorityError>> {
+    ) -> ToolMuxFuture<'_, Result<PersistedLatest, PersistAuthorityError>> {
         Box::pin(async move {
             if let Some(replay) = self.replay(&command.intent).await? {
                 cleanup_staging(&self.staging_root, &command.staging_ref).await;
@@ -359,7 +367,7 @@ impl LatestFileAuthorityPort for ProductionLatestFileAuthority {
                     now,
                 )
                 .await
-                .map_err(store_failed)?;
+                .map_err(|error| store_failed(&error))?;
             let current = self
                 .registry
                 .load_pointer(
@@ -368,7 +376,7 @@ impl LatestFileAuthorityPort for ProductionLatestFileAuthority {
                     command.intent.name.as_str(),
                 )
                 .await
-                .map_err(store_failed)?;
+                .map_err(|error| store_failed(&error))?;
             let value = RegisteredFileRead {
                 content: ContentRef {
                     sha256: command.hash,
@@ -410,7 +418,7 @@ impl LatestFileAuthorityPort for ProductionLatestFileAuthority {
                 response_kind: aex_registry_dynamodb::store::SET_RESPONSE_KIND.to_owned(),
                 response: SetReceipt::of(outcome, &commit.pointer)
                     .to_body()
-                    .map_err(store_failed)?,
+                    .map_err(|error| store_failed(&error))?,
                 committed_at: now,
                 expires_at: Timestamp::from_unix_millis(now.unix_millis().saturating_add(
                     i64::try_from(RECEIPT_RETENTION.as_millis()).unwrap_or(i64::MAX),
@@ -441,7 +449,7 @@ impl LatestFileAuthorityPort for ProductionLatestFileAuthority {
                 {
                     return Err(PersistAuthorityError::StaleIntent);
                 }
-                Err(error) => return Err(store_failed(error)),
+                Err(error) => return Err(store_failed(&error)),
             };
             cleanup_staging(&self.staging_root, &command.staging_ref).await;
             persisted_from_pointer(pointer, false, command.preview)
@@ -537,7 +545,7 @@ fn now() -> Result<Timestamp, PersistAuthorityError> {
         .map_err(|error| PersistAuthorityError::Failed(error.to_string()))
 }
 
-fn store_failed(error: StoreError) -> PersistAuthorityError {
+fn store_failed(error: &StoreError) -> PersistAuthorityError {
     PersistAuthorityError::Failed(error.to_string())
 }
 

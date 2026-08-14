@@ -69,7 +69,7 @@ impl LeaseHeartbeat {
                 {
                     *task_failure
                         .lock()
-                        .unwrap_or_else(|error| error.into_inner()) =
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
                         Some("sandbox materialization heartbeat lost its lease".to_owned());
                     return;
                 }
@@ -89,7 +89,7 @@ impl LeaseHeartbeat {
         if let Some(error) = self
             .failure
             .lock()
-            .unwrap_or_else(|failure| failure.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
         {
             return Err(error);
@@ -327,6 +327,10 @@ impl ProductionSandboxPreparation {
 }
 
 impl SandboxPreparationPort for ProductionSandboxPreparation {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "preparation keeps lease ownership, readiness fencing, checkpointing and waiter cleanup in one ordered recovery flow"
+    )]
     fn prepare_for_tool<'a>(
         &'a self,
         workspace: WorkspaceId,
@@ -404,15 +408,12 @@ impl SandboxPreparationPort for ProductionSandboxPreparation {
                     return Err(error);
                 }
             }
-            let ready = match self.live.ensure_ready(session, generation).await {
-                Ok(ready) => ready,
-                Err(_) => {
-                    if let Some(lease) = lease.take() {
-                        let _ = lease.release().await;
-                    }
-                    let _ = self.live.settle_tool_waiter(generation, operation).await;
-                    return Err("sandbox final readiness failed".to_owned());
+            let Ok(ready) = self.live.ensure_ready(session, generation).await else {
+                if let Some(lease) = lease.take() {
+                    let _ = lease.release().await;
                 }
+                let _ = self.live.settle_tool_waiter(generation, operation).await;
+                return Err("sandbox final readiness failed".to_owned());
             };
             if ready.generation != generation || ready.lifecycle_fence != fence.0 {
                 if let Some(lease) = lease.take() {
@@ -722,7 +723,7 @@ mod tests {
             parts: vec![FilePartReceipt {
                 part_number: 1,
                 offset: 0,
-                size_bytes: bytes.len() as u32,
+                size_bytes: u32::try_from(bytes.len()).expect("fixture length fits"),
                 sha256: ContentHash::of(bytes),
             }],
             complete: false,

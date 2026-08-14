@@ -269,16 +269,15 @@ impl DynamoDeletionCoordinator {
         now: Timestamp,
     ) -> Result<LifecycleReadiness, StoreError> {
         let Some(generation) = head.generation else {
-            return if !snapshot
+            let owner = if snapshot
                 .evidence
                 .contains_key(&DeletionOwner::BillingAggregate)
             {
-                self.record(snapshot, DeletionOwner::BillingAggregate, now)
-                    .await
+                DeletionOwner::GenerationTerminated
             } else {
-                self.record(snapshot, DeletionOwner::GenerationTerminated, now)
-                    .await
+                DeletionOwner::BillingAggregate
             };
+            return self.record(snapshot, owner, now).await;
         };
         let view = self
             .runtime

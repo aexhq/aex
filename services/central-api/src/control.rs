@@ -99,7 +99,7 @@ impl ControlService {
                 },
             })
             .await
-            .map_err(store_error)?;
+            .map_err(|error| store_error(&error))?;
         let organization = organizations.items.first().ok_or_else(|| {
             WireError::new(ErrorCode::AccountStateUnavailable)
                 .with_message("the personal account has not been provisioned")
@@ -119,7 +119,7 @@ impl ControlService {
                 },
             })
             .await
-            .map_err(store_error)?;
+            .map_err(|error| store_error(&error))?;
         if workspaces.items.len() != 1 {
             return Err(WireError::new(ErrorCode::AccountStateUnavailable)
                 .with_message("the fixed workspace has not been provisioned"));
@@ -135,13 +135,13 @@ impl ControlService {
             .store
             .get_workspace_view(workspace_id)
             .await
-            .map_err(store_error)?
+            .map_err(|error| store_error(&error))?
             .ok_or_else(|| WireError::new(ErrorCode::NotFound))?;
         let organization = self
             .store
             .get_organization_view(workspace.workspace.organization_id, Self::user(cx)?)
             .await
-            .map_err(store_error)?
+            .map_err(|error| store_error(&error))?
             .ok_or_else(|| WireError::new(ErrorCode::Forbidden))?;
         if !organization.caller_role.at_least(OrgRole::Admin) {
             return Err(WireError::new(ErrorCode::Forbidden));
@@ -263,7 +263,7 @@ impl ApiKeysApi for ControlService {
                 page,
             })
             .await
-            .map_err(store_error)?;
+            .map_err(|error| store_error(&error))?;
         Ok(ApiKeyPage {
             items: result
                 .items
@@ -315,7 +315,7 @@ impl ApiKeysApi for ControlService {
             .peppers
             .active(PepperPurpose::ApiKey)
             .await
-            .map_err(store_error)?;
+            .map_err(|error| store_error(&error))?;
         let keyed = verifier(&pepper, &digest);
         let command = CreateApiKeyTx { preassigned_id: key_id, workspace_id, organization_id: workspace.workspace.organization_id,
             name: body.name.clone(), scopes, region: workspace.workspace.region, verifier: *keyed.as_bytes(), pepper_version: pepper_version.get(),
@@ -325,7 +325,7 @@ impl ApiKeysApi for ControlService {
             idempotency: self.idempotency(cx, workspace_id, &body)?, audit: self.audit(cx, "api_key.create", workspace.workspace.organization_id, workspace_id, key_id)?, now: self.now() };
         let created = CreateApiKey::run(self.store.as_ref(), &command)
             .await
-            .map_err(|error| control_error(cx, error))?;
+            .map_err(|error| control_error(cx, &error))?;
         if !created.first {
             return Err(WireError::new(ErrorCode::ApiKeySecretUnavailable));
         }
@@ -349,7 +349,7 @@ impl ApiKeysApi for ControlService {
             .store
             .get_api_key(key_id)
             .await
-            .map_err(store_error)?
+            .map_err(|error| store_error(&error))?
             .ok_or_else(|| WireError::new(ErrorCode::NotFound))?;
         self.require_owner(cx, key.workspace_id).await?;
         let command = RevokeApiKeyTx { key_id, workspace_id: key.workspace_id, expected_revision: cx.if_match.as_ref().map(parse_revision).transpose()?,
@@ -359,7 +359,7 @@ impl ApiKeysApi for ControlService {
             audit: self.audit(cx, "api_key.revoke", key.organization_id, key.workspace_id, key_id)?, now: self.now() };
         RevokeApiKey::run(self.store.as_ref(), &command)
             .await
-            .map_err(|error| control_error(cx, error))?;
+            .map_err(|error| control_error(cx, &error))?;
         Ok(NoContent)
     }
 }
@@ -372,7 +372,7 @@ impl BootstrapApi for ControlService {
             .store
             .user_identity(user)
             .await
-            .map_err(store_error)?
+            .map_err(|error| store_error(&error))?
             .ok_or_else(|| WireError::new(ErrorCode::Forbidden))?;
         let account = AccountId::from_uuid7(uuid7(workspace.workspace.organization_id)?);
         Ok(DashboardBootstrap {
@@ -380,7 +380,7 @@ impl BootstrapApi for ControlService {
             email: identity.email,
             account_id: account,
             account_state: account_operational_state(&workspace.account.profile)
-                .map_err(account_projection_error)?,
+                .map_err(|error| account_projection_error(&error))?,
             workspace: Workspace {
                 id: wire::<WorkspaceId>(workspace.workspace.id)?,
                 name: workspace.workspace.name,
@@ -393,7 +393,7 @@ impl BootstrapApi for ControlService {
                 operational_state: WorkspaceOperationalState {
                     account_id: account,
                     state: account_operational_state(&workspace.account.profile)
-                        .map_err(account_projection_error)?,
+                        .map_err(|error| account_projection_error(&error))?,
                 },
                 created_at: timestamp(workspace.workspace.created_at)?,
             },
@@ -412,13 +412,13 @@ fn api_key_wire(key: &DomainApiKey) -> WireResult<ApiKey> {
         workspace_id: wire(key.workspace_id)?,
     })
 }
-fn account_projection_error(error: AccountProjectionError) -> WireError {
+fn account_projection_error(error: &AccountProjectionError) -> WireError {
     match error {
         AccountProjectionError::Unavailable => WireError::new(ErrorCode::AccountStateUnavailable),
         _ => WireError::new(ErrorCode::InternalError),
     }
 }
-fn store_error(error: StoreError) -> WireError {
+fn store_error(error: &StoreError) -> WireError {
     match error {
         StoreError::NotFound => WireError::new(ErrorCode::NotFound),
         StoreError::Conflict { .. } => WireError::new(ErrorCode::ResourceConflict),
@@ -427,7 +427,7 @@ fn store_error(error: StoreError) -> WireError {
         _ => WireError::new(ErrorCode::InternalError),
     }
 }
-fn control_error(cx: &RequestContext, error: ControlError) -> WireError {
+fn control_error(cx: &RequestContext, error: &ControlError) -> WireError {
     match error {
         ControlError::Conflict { .. } => WireError::new(ErrorCode::ResourceConflict),
         ControlError::NotFound => WireError::new(ErrorCode::NotFound),

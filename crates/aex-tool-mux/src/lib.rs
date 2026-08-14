@@ -23,10 +23,14 @@ pub use telemetry::{
     TelemetryPort, TelemetryPressure, TelemetryProducer,
 };
 
-/// Canonical request-body binding signed by Brain and recomputed by ToolMux.
+/// Canonical request-body binding signed by Brain and recomputed by [`ToolMux`].
 ///
 /// Both peers operate on the typed internal contract, so the ordinary serde
 /// struct encoding is deterministic and includes every admitted request field.
+///
+/// # Errors
+///
+/// Returns the serialization error when the typed request cannot be encoded.
 pub fn request_binding<T: serde::Serialize>(request: &T) -> Result<[u8; 32], serde_json::Error> {
     use sha2::Digest as _;
 
@@ -37,6 +41,10 @@ pub fn request_binding<T: serde::Serialize>(request: &T) -> Result<[u8; 32], ser
 ///
 /// The list is bounded, canonical, duplicate-free, and contains public
 /// verification material only. Signing seeds always come from secret custody.
+///
+/// # Errors
+///
+/// Rejects malformed, duplicate, noncanonical or over-limit anchor lists.
 pub fn parse_assertion_trust_anchors(value: &str) -> Result<Vec<(uuid::Uuid, [u8; 32])>, String> {
     use base64::Engine as _;
 

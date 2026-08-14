@@ -178,12 +178,7 @@ async fn execute_upload<G: StartupGuest>(
         }
         let request_count = batch.len();
         let responses = guest
-            .call(
-                session,
-                generation,
-                activity_id(upload, ordinal),
-                batch,
-            )
+            .call(session, generation, activity_id(upload, ordinal), batch)
             .await?;
         if verify_batch(expected, ordinal, request_count, &responses)?
             == UploadBatchProgress::Complete
@@ -283,13 +278,15 @@ fn verify_open_request(
     requests: &[FileRequest],
 ) -> Result<(), StartupFileError> {
     match requests {
-        [FileRequest::UploadOpen {
-            upload,
-            path,
-            size_bytes,
-            sha256,
-            mode: requested_mode,
-        }] if *upload == expected.upload
+        [
+            FileRequest::UploadOpen {
+                upload,
+                path,
+                size_bytes,
+                sha256,
+                mode: requested_mode,
+            },
+        ] if *upload == expected.upload
             && *path == expected.path
             && *size_bytes == expected.size_bytes
             && *sha256 == expected.sha256
@@ -548,19 +545,14 @@ mod tests {
 
         let assert_mismatched = |state| {
             assert!(matches!(
-                verify_batch(
-                    &expected,
-                    0,
-                    1,
-                    &[FileResponse::Upload { state }],
-                ),
+                verify_batch(&expected, 0, 1, &[FileResponse::Upload { state }],),
                 Err(StartupFileError::Guest(StartupGuestError::Mismatched))
             ));
         };
 
         let mut wrong_path = completed.clone();
-        wrong_path.path = GuestPath::parse(&GuestRoot::workspace(), "/workspace/other")
-            .expect("guest path");
+        wrong_path.path =
+            GuestPath::parse(&GuestRoot::workspace(), "/workspace/other").expect("guest path");
         assert_mismatched(wrong_path);
 
         let mut wrong_size = completed.clone();

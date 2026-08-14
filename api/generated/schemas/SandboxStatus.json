@@ -5,10 +5,6 @@
   "enum": [
     "disabled",
     "requested",
-    "provisioning",
-    "booting",
-    "materializing_workspace",
-    "qualifying_mcp",
     "ready",
     "suspending",
     "suspended",

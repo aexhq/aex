@@ -82,6 +82,11 @@ pub const DEFERRED_MARKER: &str = "(not yet available)";
 /// The exact launch surface contains no deferred commands. Startup still
 /// verifies this against the generated route authority so a dead placeholder
 /// cannot become visible after contract drift.
+///
+/// # Panics
+///
+/// Panics when a checked-in command names no generated route or names a route
+/// marked as deferred.
 #[must_use]
 pub fn marked_command() -> clap::Command {
     let command = Cli::command();

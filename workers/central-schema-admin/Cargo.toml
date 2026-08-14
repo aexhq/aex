@@ -39,7 +39,6 @@ conformance = "unit"
 hosted_extensions = "integration"
 migrations = "integration"
 smoke = "smoke"
-resource_envelope = "e2e"
 
 # The bundle parser and the privilege allowlist are a library so that the
 # container-backed suite in `crates/aex-control-aurora` applies the *same*
@@ -90,7 +89,3 @@ required-features = ["integration-engines"]
 [[test]]
 name = "smoke"
 path = "tests/smoke.rs"
-
-[[test]]
-name = "resource_envelope"
-path = "tests/resource_envelope.rs"

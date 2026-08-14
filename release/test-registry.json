@@ -11,7 +11,7 @@
     "awaiting_owner": 5,
     "capacity_gates": 15,
     "live_targets": 13,
-    "packages": 97,
+    "packages": 96,
     "seams_claimed": 36,
     "seams_declared": 38,
     "workloads": 9
@@ -691,10 +691,12 @@
         "risk": [
           "concurrency"
         ],
-        "scenarios": [],
+        "scenarios": [
+          "SC-FILES-CURRENT"
+        ],
         "targets": {},
         "not_applicable": {
-          "inline_targets": "regional-stores: the retired regional-content table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
+          "inline_targets": "regional-stores: this active regional-file-authority row-family adapter keeps unit evidence in inline modules; unified-table composition is exercised by session-stream-api, file-ingest-worker, tool-mux, and aex-live-session-api"
         }
       },
       "unmapped_targets": [],
@@ -1401,10 +1403,12 @@
         "risk": [
           "concurrency"
         ],
-        "scenarios": [],
+        "scenarios": [
+          "SC-FILES-CURRENT"
+        ],
         "targets": {},
         "not_applicable": {
-          "inline_targets": "regional-stores: the retired regional-registry table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
+          "inline_targets": "regional-stores: this active regional-file-authority row-family adapter keeps unit evidence in inline modules; unified-table composition is exercised by session-stream-api, file-ingest-worker, tool-mux, and aex-live-session-api"
         }
       },
       "unmapped_targets": [],
@@ -1812,8 +1816,7 @@
           "security"
         ],
         "seams": [
-          "hands.guest.lifecycle",
-          "mcp.streamable_http"
+          "hands.guest.lifecycle"
         ],
         "security_tier": "internal",
         "risk": [
@@ -2461,9 +2464,7 @@
           "aws.s3.conditional_put",
           "aws.s3.sse_kms",
           "aws.sqs.fifo",
-          "hands.guest.lifecycle",
-          "mcp.streamable_http",
-          "net.public_egress"
+          "hands.guest.lifecycle"
         ],
         "security_tier": "internal",
         "risk": [
@@ -2976,9 +2977,7 @@
           "aws.s3.conditional_put",
           "aws.s3.sse_kms",
           "aws.sqs.fifo",
-          "hands.guest.lifecycle",
-          "mcp.streamable_http",
-          "net.public_egress"
+          "hands.guest.lifecycle"
         ],
         "security_tier": "internal",
         "risk": [
@@ -3333,7 +3332,6 @@
           "conformance": "unit",
           "hosted_extensions": "integration",
           "migrations": "integration",
-          "resource_envelope": "e2e",
           "smoke": "smoke"
         },
         "not_applicable": {
@@ -3595,13 +3593,11 @@
       "aex-live-tool-mux"
     ],
     "mcp.streamable_http": [
-      "aex-live-brain-mux",
-      "aex-live-tool-mux"
+      "aex-live-brain-mux"
     ],
     "net.public_egress": [
       "aex-live-brain-mux",
-      "aex-live-session-api",
-      "aex-live-tool-mux"
+      "aex-live-session-api"
     ],
     "provider.alibaba.stream": [
       "aex-live-brain-mux"
