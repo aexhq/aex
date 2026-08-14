@@ -27,11 +27,8 @@ security_tier = "secret"
 risk = ["concurrency"]
 scenarios = []
 
-[package.metadata.aex.targets]
-conformance = "unit"
-properties = "unit"
-faults = "unit"
-integration = "integration"
+[package.metadata.aex.not_applicable]
+inline_targets = "regional-stores: the retired regional-secret-keystore table adapter keeps only inline unit modules; the deleted integration targets tested the removed table and no replacement is declared"
 
 [features]
 # Engine-backed targets. The unit lane neither builds nor links any of it, so
