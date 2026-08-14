@@ -20,7 +20,7 @@ use crate::upload::UploadState;
 ///
 /// Only files use asynchronous admission in the launch surface, but keeping the
 /// state beside the pointer (rather than inferring it from a value document)
-/// lets list reads remain one projected DynamoDB query. The revision remains a
+/// lets list reads remain one projected `DynamoDB` query. The revision remains a
 /// private stale-completion fence and is never a public file version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RegistryState {

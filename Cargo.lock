@@ -714,6 +714,7 @@ version = "0.1.0"
 name = "aex-live-tool-mux"
 version = "0.1.0"
 dependencies = [
+ "aex-test-harness",
  "aex-tool-mux",
  "aex-wire",
  "reqwest",

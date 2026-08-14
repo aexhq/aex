@@ -36,6 +36,9 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+aex-test-harness = { path = "../../support/aex-test-harness" }
+
 [[test]]
 name = "journeys"
 path = "tests/journeys.rs"

@@ -99,7 +99,8 @@ impl Default for StructuralLimits {
     fn default() -> Self {
         Self {
             max_depth: MAX_SUBAGENT_DEPTH,
-            max_fanout: MAX_SUBAGENTS_PER_SESSION as u32,
+            max_fanout: u32::try_from(MAX_SUBAGENTS_PER_SESSION)
+                .expect("the launch subagent ceiling fits u32"),
         }
     }
 }

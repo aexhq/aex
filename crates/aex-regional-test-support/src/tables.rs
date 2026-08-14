@@ -673,18 +673,10 @@ mod tests {
             names,
             vec![
                 "regional-authz-projection",
-                "regional-capacity-authority",
-                "regional-content",
-                "regional-registry",
-                "regional-secret-custody",
-                "regional-secret-keystore",
+                "regional-file-authority",
                 "regional-work",
                 "runtime-activity",
                 "session-authority",
-                "usage-compute-authority",
-                "usage-query-projection",
-                "usage-storage-authority",
-                "usage-transfer-authority",
             ]
         );
     }
@@ -851,246 +843,38 @@ mod tests {
                     .any(|action| action == "dynamodb:PutItem")
             })
             .collect::<Vec<_>>();
+        assert_eq!(
+            writers.len(),
+            1,
+            "exactly one role owns every projected row family"
+        );
+        let writer = writers[0];
+        assert_eq!(writer.role, "control-projection-worker");
         assert!(
-            !writers.is_empty(),
-            "the projection declares primary writers"
-        );
-
-        let mut owned = std::collections::BTreeSet::new();
-        for writer in &writers {
-            assert!(
-                writer.actions.iter().all(|action| matches!(
-                    action.as_str(),
-                    "dynamodb:GetItem" | "dynamodb:PutItem"
-                )),
-                "{} holds a broad action: {:?}",
-                writer.role,
-                writer.actions
-            );
-            for item_type in &writer.item_types {
-                assert!(
-                    owned.insert(item_type.as_str()),
-                    "`{item_type}` has more than one write owner"
-                );
-            }
-        }
-        assert_eq!(
-            owned,
-            table
-                .item_types
-                .iter()
-                .map(String::as_str)
-                .collect::<std::collections::BTreeSet<_>>()
-        );
-
-        let central = writers
-            .iter()
-            .find(|grant| grant.role == "central-control-worker")
-            .expect("central control owns its row families");
-        assert!(
-            !central
-                .item_types
-                .iter()
-                .any(|kind| kind == "workspace_limit")
-        );
-        assert_eq!(central.actions, ["dynamodb:PutItem"]);
-        assert_eq!(
-            central
-                .condition
-                .as_ref()
-                .expect("central writes are key restricted")
-                .values,
-            ["WS#*", "KEY#*", "FEED"]
-        );
-
-        let capacity = writers
-            .iter()
-            .find(|grant| grant.role == "regional-capacity-controller")
-            .expect("regional capacity owns workspace limits");
-        assert_eq!(
-            capacity.item_types,
-            [
-                "workspace_limit",
-                "workspace_limit_bundle_head",
-                "workspace_limit_bundle",
-                "workspace_edge_limits"
-            ]
-        );
-        assert_eq!(
-            capacity.actions,
-            ["dynamodb:PutItem"],
-            "transactional Put actions are authorized by the underlying PutItem permission"
-        );
-        // The hot admission subset is filed under the capacity partition rather
-        // than the workspace's. `dynamodb:LeadingKeys` is the only key this
-        // fence can condition on, so a `WS#` spelling would have handed the
-        // capacity authority the partition that holds placement.
-        assert_eq!(
-            capacity
-                .condition
-                .as_ref()
-                .expect("capacity writes are key restricted")
-                .values,
-            ["LIMIT#*"]
-        );
-    }
-
-    #[test]
-    fn regional_control_uses_placement_only_as_a_transaction_fence() {
-        let tables = load_all(&definitions_directory()).expect("the definitions load");
-        let table = tables
-            .iter()
-            .find(|table| table.table == "regional-authz-projection")
-            .expect("the authorization projection is declared");
-        let pause_fence = table
-            .iam
-            .iter()
-            .find(|grant| {
-                grant.role == "regional-control"
-                    && grant
-                        .actions
-                        .iter()
-                        .any(|action| action == "dynamodb:TransactWriteItems")
-            })
-            .expect("regional control can fence a pause transaction on placement");
-        assert!(
-            pause_fence.actions.iter().all(|action| matches!(
+            writer.actions.iter().all(|action| matches!(
                 action.as_str(),
-                "dynamodb:GetItem" | "dynamodb:TransactWriteItems"
+                "dynamodb:GetItem" | "dynamodb:PutItem"
             )),
-            "the pause participant cannot own a primitive projection write"
+            "{} holds a broad action: {:?}",
+            writer.role,
+            writer.actions
         );
-        assert_eq!(pause_fence.item_types, ["workspace_placement"]);
-        let pause_condition = pause_fence
-            .condition
-            .as_ref()
-            .expect("pause transactions are leading-key restricted");
-        assert_eq!(pause_condition.operator, "ForAllValues:StringLike");
-        assert_eq!(pause_condition.key, "dynamodb:LeadingKeys");
-        for required in ["WS#*", "SESSION#*", "AGENT#*", "ACTIVE#*"] {
-            assert!(
-                pause_condition.values.iter().any(|value| value == required),
-                "pause transactions must admit their `{required}` participant"
-            );
-        }
-    }
 
-    #[test]
-    fn regional_control_deletes_only_active_session_locators() {
-        let tables = load_all(&definitions_directory()).expect("the definitions load");
-        let table = tables
-            .iter()
-            .find(|table| table.table == "session-authority")
-            .expect("the session authority is declared");
-        let delete_grants = table.iam.iter().filter(|grant| {
-            grant.role == "regional-control"
-                && grant
-                    .actions
-                    .iter()
-                    .any(|action| action == "dynamodb:DeleteItem")
-        });
-        let mut found = false;
-        for grant in delete_grants {
-            found = true;
-            assert!(
-                grant
-                    .actions
-                    .iter()
-                    .all(|action| action == "dynamodb:DeleteItem"),
-                "locator deletion stays separate from broader capabilities"
-            );
-            assert_eq!(grant.resources, ["table"]);
-            assert!(
-                !grant.item_types.is_empty()
-                    && grant
-                        .item_types
-                        .iter()
-                        .all(|item_type| item_type == "active_session"),
-                "regional control can delete only active-session locators"
-            );
-            let condition = grant
-                .condition
-                .as_ref()
-                .expect("locator deletion is leading-key restricted");
-            assert_eq!(condition.operator, "ForAllValues:StringLike");
-            assert_eq!(condition.key, "dynamodb:LeadingKeys");
-            assert!(
-                !condition.values.is_empty()
-                    && condition.values.iter().all(|value| value == "ACTIVE#*"),
-                "locator deletion cannot escape the active-session partition"
-            );
-        }
-        assert!(found, "regional control declares locator deletion");
-    }
-
-    #[test]
-    fn capacity_authority_has_one_key_scoped_underlying_put_writer() {
-        let tables = load_all(&definitions_directory()).expect("the definitions load");
-        let table = tables
-            .iter()
-            .find(|table| table.table == "regional-capacity-authority")
-            .expect("the capacity authority is declared");
-
-        assert_eq!(
-            table.server_side_encryption.key_authority,
-            "regional-capacity"
-        );
-        assert_eq!(table.item_types, ["workspace_capacity", "capacity_audit"]);
-        assert!(!table.stream.enabled);
-        assert!(!table.time_to_live.enabled);
-
-        // Exactly one index, and it is the sweep enumeration. It is sparse so
-        // an immutable `capacity_audit` sibling can never appear beside its
-        // authority row and be reconciled twice, and it is KEYS_ONLY so a query
-        // over it yields an identity and never a stored capacity value.
-        assert_eq!(table.global_secondary_indexes.len(), 1);
-        let sweep = &table.global_secondary_indexes[0];
-        assert_eq!(sweep.name, "gsi_all_workspaces");
-        assert_eq!(sweep.partition, "gsiAllPk");
-        assert_eq!(sweep.sort, "gsiAllSk");
-        assert!(sweep.sparse);
-        assert!(!sweep.projects_record_body);
-        assert_eq!(sweep.projection.projection_type, "KEYS_ONLY");
-        assert!(sweep.projection.attributes.is_empty());
-
-        // Two statements for one role, deliberately. The leading-key fence is
-        // the *table's*: the sweep index has a single partition, so a fenced
-        // statement over it would deny the enumeration outright rather than
-        // protect a keyspace the index does not expose.
-        assert_eq!(table.iam.len(), 2);
-
-        let writer = &table.iam[0];
-        assert_eq!(writer.role, "regional-capacity-controller");
-        assert_eq!(
-            writer.actions,
-            ["dynamodb:GetItem", "dynamodb:PutItem"],
-            "transactional Put actions are authorized by the underlying PutItem permission"
-        );
-        assert_eq!(writer.resources, ["table"]);
-        assert_eq!(writer.item_types, ["workspace_capacity", "capacity_audit"]);
         let condition = writer
             .condition
             .as_ref()
-            .expect("capacity authority writes are key restricted");
+            .expect("projection writes are key restricted");
         assert_eq!(condition.operator, "ForAllValues:StringLike");
         assert_eq!(condition.key, "dynamodb:LeadingKeys");
-        assert_eq!(condition.values, ["WS#*"]);
-
-        let sweeper = &table.iam[1];
-        assert_eq!(sweeper.role, "regional-capacity-controller");
         assert_eq!(
-            sweeper.actions,
-            ["dynamodb:Query"],
-            "the sweep enumerates and never writes through the index"
+            condition.values,
+            ["WS#*", "KEY#*", "FEED#*"],
+            "the write fence admits exactly the three projected row families"
         );
-        assert_eq!(sweeper.resources, ["index/*"]);
-        assert!(
-            sweeper.item_types.is_empty(),
-            "the enumeration is read-only and owns no item family"
-        );
-        assert!(
-            sweeper.condition.is_none(),
-            "a leading-key fence over the one-partition sweep index would deny the enumeration"
+        assert_eq!(
+            table.item_types,
+            ["workspace_placement", "key_authorization", "feed_frontier"],
+            "no row family may exist outside the single write owner's fence"
         );
     }
 
@@ -1235,7 +1019,7 @@ mod tests {
     }
 
     #[test]
-    fn the_three_secret_and_content_tables_hold_distinct_keys() {
+    fn every_table_holds_a_distinct_key_authority() {
         let tables = load_all(&definitions_directory()).expect("the definitions load");
         let authorities: Vec<&str> = tables
             .iter()
@@ -1266,7 +1050,7 @@ mod tests {
     }
 
     #[test]
-    fn exactly_one_table_pins_its_physical_name() {
+    fn no_table_pins_its_physical_name() {
         let pinned: Vec<String> = load_all(&definitions_directory())
             .expect("the definitions load")
             .into_iter()
@@ -1275,9 +1059,8 @@ mod tests {
             .collect();
         assert_eq!(
             pinned,
-            vec!["regional-secret-keystore".to_owned()],
-            "the hierarchical keyring's branch-key store is the one table whose physical name \
-             is bound to its contents; any other pinned name is an environment escaping its prefix"
+            Vec::<String>::new(),
+            "every physical name comes from the environment prefix; a pinned name escapes it"
         );
     }
 

@@ -38,7 +38,7 @@ pub const SMALL_ITEM_BYTES: usize = 512;
 
 /// The most children one spawn transaction admits.
 ///
-/// DynamoDB could carry more, but the MVP permits only twelve non-root identities
+/// `DynamoDB` could carry more, but the MVP permits only twelve non-root identities
 /// for the entire session. One admission therefore always fits one transaction.
 pub const SPAWN_PAGE_CHILDREN: u32 = 12;
 
