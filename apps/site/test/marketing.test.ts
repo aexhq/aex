@@ -6,20 +6,28 @@ import { loadMarketingPage, parseInline, parseMarketingPage, slugify } from "../
 
 const CONTENT_PATH = resolve(import.meta.dir, "../content/marketing/index.mdx");
 const README_PATH = resolve(import.meta.dir, "../../../README.md");
+const PUBLIC_SHELL_PATH = resolve(import.meta.dir, "../app/_components/public-shell.tsx");
 const page = loadMarketingPage(CONTENT_PATH);
 
 describe("the landing page content model", () => {
-  test("parses the hero, its actions, and its status note", () => {
+  test("parses the positioning, features, and links", () => {
     expect(page.title.length).toBeGreaterThan(0);
     expect(page.description.length).toBeGreaterThan(0);
-    expect(page.hero.heading).toBe("Durable infrastructure for agents that think and act");
-    expect(page.hero.body.length).toBeGreaterThanOrEqual(1);
-    expect(page.hero.links.map((link) => link.href)).toEqual(["/docs", "#capability-surface"]);
-    const status = page.hero.note.map((span) => span.value).join("");
+    expect(page.intro).toHaveLength(1);
+    expect(page.features.map((feature) => feature.title)).toEqual([
+      "800+ models",
+      "Sessions",
+      "Files, skills, and tools",
+      "Built-in tools",
+      "Compute and subagents",
+      "Observability",
+      "Pricing",
+    ]);
+    expect(page.links.map((link) => link.href)).toEqual(["/docs", "https://aex.dev/signin?next=/app"]);
+    const status = page.note.map((span) => span.value).join("");
 
-    expect(status).toContain("active prelaunch development");
-    expect(status).toContain("not guaranteed to work");
-    expect(status).toContain("do not use AEX for production workloads yet");
+    expect(status).toContain("currently in alpha");
+    expect(status).toContain("Expect breaking changes");
   });
 
   test("keeps the repository entry point explicit about development status", () => {
@@ -30,91 +38,91 @@ describe("the landing page content model", () => {
     expect(readme).toContain("do not rely on AEX for production workloads yet");
   });
 
-  test("carries exactly the two owner-specified sections, in order", () => {
-    expect(page.sections.map((section) => section.slug)).toEqual(["why-aex", "capability-surface"]);
-  });
-
-  test("gives every entry a slug, a title, and a body", () => {
-    const empty = page.sections.flatMap((section) =>
-      section.entries.filter((entry) => entry.slug.length === 0 || entry.body.length === 0).map((entry) => entry.title)
-    );
-
-    expect(empty).toEqual([]);
-  });
-
-  test("never repeats an entry title across sections", () => {
-    // The DRY rule the brief sets: a claim appears once, in one place.
-    const titles = page.sections.flatMap((section) => section.entries.map((entry) => entry.title));
-
-    expect(titles.length).toBe(new Set(titles).size);
-  });
-
-  test("resolves every in-page anchor to a real section", () => {
-    const slugs = new Set(page.sections.map((section) => section.slug));
-    const anchors = page.hero.links.filter((link) => link.href.startsWith("#")).map((link) => link.href.slice(1));
-
-    expect(anchors.length).toBeGreaterThan(0);
-    expect(anchors.filter((anchor) => !slugs.has(anchor))).toEqual([]);
-  });
-
   test("emits no empty code span", () => {
-    const spans = [
-      ...page.hero.body,
-      page.hero.note,
-      ...page.sections.flatMap((section) => [...section.lede, ...section.entries.flatMap((entry) => entry.body)])
-    ].flat();
+    const spans = [...page.intro, page.note, ...page.features.flatMap((feature) => feature.body)].flat();
 
     expect(spans.filter((span) => span.value.length === 0)).toEqual([]);
   });
 
+  test("uses no top-level headline or dash punctuation", () => {
+    const source = readFileSync(CONTENT_PATH, "utf8");
+
+    expect(source).not.toMatch(/[—–]/);
+    expect(source).not.toMatch(/^# /m);
+  });
+
   test("publishes no rate-book value", () => {
-    // Two accepted decisions meet here. `references/rules.md` forbids public
-    // docs from carrying billing/rate policy, and Area 5 U-COGS keeps every
-    // real AEX rate-book revision out of the public repository. The page names
-    // the four meters instead. Publishing a figure is therefore a deliberate
-    // decision that has to change this gate too, not an edit that slips past it.
     const source = readFileSync(CONTENT_PATH, "utf8");
 
     expect(source).not.toMatch(/\$\s?\d/);
-    expect(source).toContain("compute, memory, retained storage and outbound data transfer");
+  });
+
+  test("states the implemented developer-facing capabilities", () => {
+    const source = readFileSync(CONTENT_PATH, "utf8");
+
+    expect(source).toContain("800+ models");
+    expect(source).toContain("Bring your own provider");
+    expect(source).toContain("`AGENTS.md`");
+    expect(source).toContain("skills, tool bundles");
+    expect(source).toContain("MCP configuration");
+    expect(source).toContain("Bash, `read_file`, `edit_file`, and `write_file`");
+    expect(source).toContain("apt, pip, and npm");
+    expect(source).toContain("recursive subagents");
+    expect(source).toContain("AG-UI events");
+    expect(source).toContain("free during alpha");
+  });
+
+  test("links the open source repository and partnership contact", () => {
+    const source = readFileSync(PUBLIC_SHELL_PATH, "utf8");
+
+    expect(source).toContain('href="https://github.com/aexhq/aex"');
+    expect(source).toContain("Open source under Apache-2.0");
+    expect(source).toContain("For partnerships and enquiries, contact");
+    expect(source).toContain('href="mailto:support@aex.dev"');
   });
 });
 
 describe("the content parser fails closed", () => {
   const frontmatter = "---\ntitle: T\ndescription: D\n---\n\n";
-  const hero = "# Heading\n\nLede.\n\n- [Docs](/docs)\n\n> Note.\n\n";
-  const section = "## Why AEX\n\n### Entry\n\nBody.\n";
+  const pageBody = "A short introduction.\n\n- [Docs](/docs)\n\n## Sessions\n\nRun them.\n\n> Prelaunch.\n";
 
   test("accepts the minimal well-formed document", () => {
-    const parsed = parseMarketingPage(`${frontmatter}${hero}${section}`);
+    const parsed = parseMarketingPage(`${frontmatter}${pageBody}`);
 
-    expect(parsed.sections[0]?.entries[0]?.title).toBe("Entry");
+    expect(parsed.intro).toHaveLength(1);
+    expect(parsed.features[0]?.title).toBe("Sessions");
   });
 
   test("rejects a missing frontmatter field", () => {
-    expect(() => parseMarketingPage(`---\ntitle: T\n---\n\n${hero}${section}`)).toThrow(/description/);
+    expect(() => parseMarketingPage(`---\ntitle: T\n---\n\n${pageBody}`)).toThrow(/description/);
   });
 
-  test("rejects a document that does not open with a hero heading", () => {
-    expect(() => parseMarketingPage(`${frontmatter}Body only.\n`)).toThrow(/hero heading/);
+  test("rejects a top-level heading", () => {
+    expect(() => parseMarketingPage(`${frontmatter}# Heading\n\n${pageBody}`)).toThrow(/top-level heading/);
   });
 
-  test("rejects a hero with no call to action", () => {
-    expect(() => parseMarketingPage(`${frontmatter}# Heading\n\nLede.\n\n> Note.\n\n${section}`)).toThrow(/link list/);
+  test("rejects a page with no links", () => {
+    const broken = `${frontmatter}A short introduction.\n\n## Sessions\n\nRun them.\n\n> Prelaunch.\n`;
+
+    expect(() => parseMarketingPage(broken)).toThrow(/link list/);
   });
 
-  test("rejects an entry with no body", () => {
-    expect(() => parseMarketingPage(`${frontmatter}${hero}## Why AEX\n\n### Entry\n`)).toThrow(/has no body/);
+  test("rejects a feature with no explanation", () => {
+    const broken = `${frontmatter}A short introduction.\n\n- [Docs](/docs)\n\n## Sessions\n\n> Prelaunch.\n`;
+
+    expect(() => parseMarketingPage(broken)).toThrow(/has no explanation/);
   });
 
-  test("rejects a section with no entries", () => {
-    expect(() => parseMarketingPage(`${frontmatter}${hero}## Why AEX\n\nLede only.\n`)).toThrow(/has no entries/);
+  test("rejects a page with no features", () => {
+    const broken = `${frontmatter}A short introduction.\n\n- [Docs](/docs)\n\n> Prelaunch.\n`;
+
+    expect(() => parseMarketingPage(broken)).toThrow(/at least one feature/);
   });
 
-  test("rejects an anchor that matches no section", () => {
-    const broken = `${frontmatter}# Heading\n\nLede.\n\n- [Nowhere](#nowhere)\n\n> Note.\n\n${section}`;
+  test("rejects a page with no status note", () => {
+    const broken = `${frontmatter}A short introduction.\n\n- [Docs](/docs)\n\n## Sessions\n\nRun them.\n`;
 
-    expect(() => parseMarketingPage(broken)).toThrow(/does not match any section anchor/);
+    expect(() => parseMarketingPage(broken)).toThrow(/status note/);
   });
 
   test("rejects unbalanced inline code", () => {

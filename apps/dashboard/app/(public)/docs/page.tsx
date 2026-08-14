@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { DocsPage, docsPage } from "../_components/docs";
+import { DocsPage, docsPage } from "../../../../site/app/_components/docs";
 
 export const metadata: Metadata = {
   title: docsPage.title,

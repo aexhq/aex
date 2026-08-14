@@ -1,164 +1,51 @@
 ---
 title: AEX
-description: Durable infrastructure for AI agents that think and act.
+description: AEX is a distributed agent runtime in the cloud for developers to build and run agent sessions for their apps.
 ---
 
-# Durable infrastructure for agents that think and act
+AEX is a distributed agent runtime in the cloud for developers to build and run
+agent sessions for their apps. Each session has a model, an isolated Linux
+workspace, files, and tools. Control it through the TypeScript SDK or HTTP API.
 
-A model turn is the thinking. Real code in a real machine is the acting. AEX
-gives a session its own MicroVM and a durable journal of every step, suspends
-the machine when the work stops, and resumes the same one when it starts again.
+- [Read the docs](/docs)
+- [Log in](https://aex.dev/signin?next=/app)
 
-- [Read the documentation](/docs)
-- [See the capability surface](#capability-surface)
+## 800+ models
 
-> AEX is in active prelaunch development. Not all documented capabilities are
-> deployed or verified, and the product is not guaranteed to work. Expect
-> breaking changes and interruptions; do not use AEX for production workloads
-> yet. Statements below describe accepted launch design rather than measured
-> production results, and rates remain provisional until qualification.
+Use 800+ models across OpenAI, Anthropic, Google, DeepSeek, Z.ai, Moonshot AI,
+OpenRouter, and Vercel AI Gateway. Bring your own provider key and choose the
+model for each session.
 
-## Why AEX
+## Sessions
 
-### Your provider, your key
+Run multi-message sessions for up to eight hours. Idle sessions suspend after
+three minutes and resume with the same workspace on the next message. Start,
+inspect, suspend, resume, or stop sessions through the API.
 
-Six providers at launch: `openai`, `anthropic`, `deepseek`, `zai`, `moonshotai`
-and `google`. A selection is an explicit `provider` and `model` pair, so there
-is no model-name inference and no cross-provider fallback. Your key stays an
-encrypted workspace binding that only the model runtime decrypts, immediately
-before it dispatches. It never enters the sandbox, a prompt, a journal, tool
-output, telemetry, an export or an error body.
+## Files, skills, and tools
 
-### An interrupted turn says so
+Upload project files, `AGENTS.md`, custom instructions, skills, tool bundles,
+MCP configuration, and other assets. Mount the files each session needs.
 
-If a provider stream drops after the request may already have arrived, the turn
-is recorded as interrupted with an unknown outcome. AEX does not resend your
-prompt to a second provider and does not quietly start a second generation. On
-reconnect it replays its own durable events rather than pretending it can
-reattach to someone else's socket.
+## Built-in tools
 
-### Subagents that scale out
+Every session includes Bash, `read_file`, `edit_file`, and `write_file`.
+Preinstall pinned apt, pip, and npm packages, then allow or block public network
+access.
 
-A child runs on its own durable journal while inheriting its parent's exact
-session, workspace generation, cancellation scope and authorization envelope. A
-parent may grant a strict subset of its tools, models and budget, and a child
-can never widen it. There is no compiled child ceiling: total, active, depth,
-fanout, byte, provider and cost budgets are each a separate adjustable
-admission.
+## Compute and subagents
 
-### Waiting is not billed as work
+Choose from 512 MB, 1 GB, 2 GB, 4 GB, or 8 GB of memory. Agents can create
+recursive subagents in the same session and workspace.
 
-A parked agent holds no execution resources, and a machine that has been truly
-quiet for the 180-second default suspends. Suspension stops the compute and
-memory meters outright. Only the bytes the snapshot retains keep costing
-anything, and they are billed as storage.
+## Observability
 
-### Four meters, and model tokens are not one of them
+Stream messages as AG-UI events. Query, stream, or export OpenTelemetry logs,
+spans, metrics, and traces, including after a session suspends or stops.
 
-AEX charges for compute, memory, retained storage and outbound data transfer.
-Model spend settles with your provider: AEX records normalized usage evidence
-for budgeting, writes a zero-dollar model line and never adds a markup. Usage is
-prepaid with no free tier, and your own isolated usage carries no arbitrary
-product quota: no session, turn, step, storage or concurrency ceiling. Work
-pauses when the balance cannot fund the next admitted unit.
+## Pricing
 
-### A turn does not pay a cold start
+AEX runtime usage is free during alpha. Model usage is billed by the provider
+through your own key.
 
-A warm regional runtime serves turns without starting a process for each one,
-and multiplexes provider waits rather than blocking on them. The MicroVM
-launches lazily, so a session that only calls a model never starts one at all.
-
-### The catalog is yours to extend
-
-Registering a tool creates an immutable, content-addressed revision with a
-precomputed manifest: schema, executor, effect and recovery class, approval
-policy, byte and duration bounds, credential and egress class. Updating a tool
-creates a new digest instead of changing an existing revision, and the model is
-offered a tool only when exactly one ready executor matches the manifest the
-session pinned.
-
-### Files and skills are pinned resources
-
-Files and skills are immutable session resources rather than executable tools of
-their own. A skill is a read-only view over the resources the session pinned at
-admission, so a run works against exactly the revisions it was admitted with.
-
-### OpenTelemetry in, and your data out
-
-Send OTLP straight to AEX: a batch returns success only after its durable
-transaction commits, and no request ever returns partial success. Query what you
-sent, tail it over a stream that resumes from a durable cursor, or export it as
-NDJSON, Parquet or OTLP. Authoritative observations carry no TTL, so AEX never
-expires your record of what an agent did.
-
-## Capability surface
-
-One catalog, pinned to the session. Provider-hosted search, file search, code
-execution, computer use and MCP are all disabled at launch, because each of them
-bypasses the authority, receipts, recovery and cost visibility that everything
-below runs through.
-
-### The machine
-
-Five shapes: `512mb`, `1gb`, `2gb`, `4gb` and `8gb`. The `1gb` default gives
-1 GiB of memory and 0.5 vCPU of baseline compute, bursting to 4 GiB and 2 vCPU,
-with an 8 GiB disk. One MicroVM belongs to one session generation, and the root
-agent and all of its children share it.
-
-### Suspend and resume
-
-The default suspend target is 180 seconds of proved quiescence. The machine
-suspends, its filesystem is held as a snapshot, and work continues on the same
-generation afterwards. Running and suspended time together are capped at eight
-hours per MicroVM by the provider, and the remaining lifetime is reported on
-session status.
-
-### Filesystem
-
-Read, list, search and grep, write, and revision-checked edit and apply-patch. A
-write against a stale revision returns a structured conflict instead of
-overwriting what changed underneath it.
-
-### Shell and development
-
-Shell and exec, foreground and background process status, output and stop, code
-and interpreter execution, Git, and package installation. Arbitrary shell stays
-honestly non-transactional: the runtime owns operation identity and output
-bounds rather than pretending a command can be replayed.
-
-### Browser control
-
-Bounded browser launch, control, status and result, where the image capability
-is installed and qualified. It is a long operation inside one exact VM
-generation, so losing the guest interrupts it.
-
-### Subagent fanout
-
-`create_subagent` returns a durable child ID and state immediately; when active
-capacity is short the child stays queued until a weighted-fair scheduler claims
-it. `get_subagent`, `list_subagents`, `read_subagent_history`,
-`send_subagent_message`, `dequeue_subagent` and `stop_subagent` cover the rest.
-Every child reports its state, queue reason, attempt, budget reservation and
-durable progress.
-
-### Control and durable waits
-
-`todo_read`, `todo_write`, `request_approval` and `submit_result` are
-journal-backed control state, not hidden file writes. `wait` and
-`wait_subagents`, for `any` child or `all` of them, neither poll nor hold an
-activation: they record idempotent waiter edges, park the parent and release its
-execution resources until a child's terminal transaction wakes it.
-
-### Web access
-
-`web_fetch` applies SSRF, redirect and size limits. `web_search` runs on search
-credentials you supply, so the search bill stays between you and your search
-provider.
-
-### MCP and custom tools
-
-Tools are discovered from immutable registered remote MCP manifests over
-Streamable HTTP, with namespaced names. Your own tools route to the sandbox or
-to a remote MCP server through that same pinned manifest. An ordinary MCP call
-is treated as non-replayable unless the server's task and result behavior proves
-that it recovers.
+> AEX is currently in alpha. Expect breaking changes and occasional interruptions.

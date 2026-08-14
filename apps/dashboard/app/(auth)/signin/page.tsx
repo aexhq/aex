@@ -87,7 +87,7 @@ export default async function SignIn({
         )}
 
         <p className="small muted">
-          <a href="https://aex.dev/docs">Documentation</a>
+          <a href="/docs">Documentation</a>
         </p>
       </div>
     </main>

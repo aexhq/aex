@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 
-import type { Paragraph } from "../_lib/marketing.js";
+import type { Paragraph } from "../_lib/marketing";
 
 /**
  * Renders one parsed paragraph. The only inline form the content model has is

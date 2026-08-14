@@ -47,7 +47,7 @@ export default async function AppLayout({ children }: Readonly<{ children: React
       <a className="skip" href="#main">Skip to content</a>
       <header className="banner">
         <div className="frame banner-inner">
-          <a className="brand" href="/">AEX</a>
+          <a className="brand" href="/app">AEX</a>
           <span className="crumb">/</span>
           <a href={`/w/${bootstrap.workspace.id}/sessions`}>{bootstrap.workspace.name}</a>
           <span className="spacer" />
@@ -57,7 +57,7 @@ export default async function AppLayout({ children }: Readonly<{ children: React
       <AccountBanner account={bootstrap.accountState} />
       {children}
       <footer className="frame small muted" style={{ paddingBlock: "var(--aex-space-6)" }}>
-        <a href="https://aex.dev/docs">Documentation</a>
+        <a href="/docs">Documentation</a>
         <span aria-hidden="true"> · </span>
         <span>Shell read at {bootstrap.generatedAt}</span>
       </footer>

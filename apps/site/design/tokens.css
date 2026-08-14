@@ -95,6 +95,12 @@
   --aex-duration-fast: 120ms;
   --aex-duration-slow: 240ms;
   --aex-ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+
+  /* Application states. Text and glyphs still carry the semantic label. */
+  --aex-status-good: #0ca30c;
+  --aex-status-warning: #fab219;
+  --aex-status-serious: #ec835a;
+  --aex-status-critical: #d03b3b;
 }
 
 @media (prefers-color-scheme: dark) {

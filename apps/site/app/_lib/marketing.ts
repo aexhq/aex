@@ -2,9 +2,8 @@
  * The marketing content reader.
  *
  * `content/marketing/index.mdx` is the single file a contributor edits to change
- * a claim on the landing page. This module turns it into typed data; the
- * components under `app/_components` decide how it looks and never carry copy of
- * their own.
+ * the landing page. This module turns it into typed data; the components under
+ * `app/_components` decide how it looks and never carry copy of their own.
  *
  * The accepted shape is deliberately small, so the parser can be exact rather
  * than a general Markdown engine:
@@ -13,19 +12,16 @@
  *   title: ...
  *   description: ...
  *   ---
- *   # Heading                 the hero heading, exactly one
- *   Paragraph                 hero body, one or more
- *   - [Label](/href)          hero links, exactly one list
- *   > Note                    hero note, exactly one blockquote
- *   ## Section                one or more sections
- *   Paragraph                 optional section lede
- *   ### Entry                 one or more entries per section
- *   Paragraph                 entry body, one or more
+ *   Paragraph                 introduction, one or more
+ *   - [Label](/href)          page links, exactly one list
+ *   ## Feature               feature name, one or more
+ *   Paragraph                feature explanation, one or more
+ *   > Note                   status note, exactly one
  *
  * Every deviation throws. A landing page that silently drops a claim because a
  * heading level was mistyped is worse than a build that fails.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 /** A run of plain text, or a run of `inline code`. */
@@ -42,37 +38,38 @@ export interface ContentLink {
   readonly href: string;
 }
 
-export interface Entry {
-  readonly slug: string;
+export interface Feature {
   readonly title: string;
   readonly body: readonly Paragraph[];
-}
-
-export interface Section {
-  readonly slug: string;
-  readonly title: string;
-  readonly lede: readonly Paragraph[];
-  readonly entries: readonly Entry[];
-}
-
-export interface Hero {
-  readonly heading: string;
-  readonly body: readonly Paragraph[];
-  readonly links: readonly ContentLink[];
-  readonly note: Paragraph;
 }
 
 export interface MarketingPage {
   readonly title: string;
   readonly description: string;
-  readonly hero: Hero;
-  readonly sections: readonly Section[];
+  readonly intro: readonly Paragraph[];
+  readonly links: readonly ContentLink[];
+  readonly features: readonly Feature[];
+  readonly note: Paragraph;
 }
 
 const LINK_ITEM = /^- \[([^\]]+)\]\(([^)]+)\)$/;
 
-export function marketingSourcePath(root: string = process.cwd()): string {
-  return resolve(root, "content", "marketing", "index.mdx");
+export function marketingSourcePath(root?: string): string {
+  return siteContentPath("marketing/index.mdx", root);
+}
+
+/** Resolve canonical site prose while either Next workspace is being built. */
+export function siteContentPath(relativePath: string, root?: string): string {
+  const candidates = root === undefined
+    ? [
+        resolve(process.cwd(), "content", relativePath),
+        resolve(process.cwd(), "apps", "site", "content", relativePath),
+        resolve(process.cwd(), "..", "site", "content", relativePath),
+      ]
+    : [resolve(root, "content", relativePath)];
+  const match = candidates.find((candidate) => existsSync(candidate));
+  if (match === undefined) throw new Error(`site content is missing: ${relativePath}`);
+  return match;
 }
 
 export function loadMarketingPage(path: string = marketingSourcePath()): MarketingPage {
@@ -90,95 +87,53 @@ export function parseMarketingPage(source: string): MarketingPage {
     .map((block) => block.trim())
     .filter((block) => block.length > 0);
 
-  const [headingBlock, ...rest] = blocks;
-  if (headingBlock === undefined || !headingBlock.startsWith("# ")) {
-    throw new Error("marketing content must open with a single `# ` hero heading");
-  }
-
-  const heroBlocks: string[] = [];
-  let index = 0;
-  while (index < rest.length && !(rest[index] ?? "").startsWith("## ")) {
-    heroBlocks.push(rest[index] as string);
-    index += 1;
-  }
-
-  const hero = parseHero(headingBlock.slice(2).trim(), heroBlocks);
-  const sections = parseSections(rest.slice(index));
-  assertAnchorsResolve(hero.links, sections);
-
-  return { title, description, hero, sections };
+  return { title, description, ...parseContent(blocks) };
 }
 
-function parseHero(heading: string, blocks: readonly string[]): Hero {
-  const body: Paragraph[] = [];
+function parseContent(blocks: readonly string[]): Pick<MarketingPage, "intro" | "links" | "features" | "note"> {
+  const intro: Paragraph[] = [];
   let links: ContentLink[] | undefined;
+  const features: Feature[] = [];
+  let feature: { title: string; body: Paragraph[] } | undefined;
   let note: Paragraph | undefined;
 
+  const closeFeature = (): void => {
+    if (feature === undefined) return;
+    if (feature.body.length === 0) throw new Error(`feature "${feature.title}" has no explanation`);
+    features.push(feature);
+    feature = undefined;
+  };
+
   for (const block of blocks) {
+    if (block.startsWith("# ")) throw new Error("the landing page does not use a top-level heading");
+    if (block.startsWith("## ")) {
+      closeFeature();
+      feature = { title: block.slice(3).trim(), body: [] };
+      continue;
+    }
     if (block.startsWith("- ")) {
-      if (links !== undefined) throw new Error("the hero accepts exactly one link list");
+      if (feature !== undefined) throw new Error("the link list must appear before the features");
+      if (links !== undefined) throw new Error("the landing page accepts exactly one link list");
       links = block.split("\n").map(parseLinkItem);
       continue;
     }
     if (block.startsWith("> ")) {
-      if (note !== undefined) throw new Error("the hero accepts exactly one note");
+      if (note !== undefined) throw new Error("the landing page accepts exactly one status note");
       note = parseInline(unwrapQuote(block));
       continue;
     }
-    body.push(parseInline(joinLines(block)));
-  }
-
-  if (body.length === 0) throw new Error("the hero needs at least one paragraph");
-  if (links === undefined || links.length === 0) throw new Error("the hero needs a link list");
-  if (note === undefined) throw new Error("the hero needs a `> ` note");
-
-  return { heading, body, links, note };
-}
-
-function parseSections(blocks: readonly string[]): Section[] {
-  const sections: Section[] = [];
-  let section: { title: string; lede: Paragraph[]; entries: Entry[] } | undefined;
-  let entry: { title: string; body: Paragraph[] } | undefined;
-
-  const closeEntry = (): void => {
-    if (entry === undefined) return;
-    if (section === undefined) throw new Error(`entry "${entry.title}" is outside any section`);
-    if (entry.body.length === 0) throw new Error(`entry "${entry.title}" has no body`);
-    section.entries.push({ slug: slugify(entry.title), title: entry.title, body: entry.body });
-    entry = undefined;
-  };
-
-  const closeSection = (): void => {
-    closeEntry();
-    if (section === undefined) return;
-    if (section.entries.length === 0) throw new Error(`section "${section.title}" has no entries`);
-    sections.push({ slug: slugify(section.title), title: section.title, lede: section.lede, entries: section.entries });
-    section = undefined;
-  };
-
-  for (const block of blocks) {
-    if (block.startsWith("## ")) {
-      closeSection();
-      section = { title: block.slice(3).trim(), lede: [], entries: [] };
-      continue;
-    }
-    if (block.startsWith("### ")) {
-      closeEntry();
-      entry = { title: block.slice(4).trim(), body: [] };
-      continue;
-    }
+    if (block.startsWith("#")) throw new Error(`unsupported marketing heading: ${block}`);
     const paragraph = parseInline(joinLines(block));
-    if (entry !== undefined) {
-      entry.body.push(paragraph);
-      continue;
-    }
-    if (section === undefined) throw new Error("a paragraph appears before the first `## ` section");
-    section.lede.push(paragraph);
+    if (feature === undefined) intro.push(paragraph);
+    else feature.body.push(paragraph);
   }
-  closeSection();
+  closeFeature();
 
-  if (sections.length === 0) throw new Error("marketing content needs at least one `## ` section");
-  return sections;
+  if (intro.length === 0) throw new Error("the landing page needs an introduction");
+  if (links === undefined || links.length === 0) throw new Error("the landing page needs a link list");
+  if (features.length === 0) throw new Error("the landing page needs at least one feature");
+  if (note === undefined) throw new Error("the landing page needs a status note");
+  return { intro, links, features, note };
 }
 
 /** Splits a paragraph into plain and `code` runs. Unbalanced backticks throw. */
@@ -197,16 +152,6 @@ export function slugify(title: string): string {
     .replace(/^-|-$/g, "");
   if (slug.length === 0) throw new Error(`title "${title}" produces an empty slug`);
   return slug;
-}
-
-function assertAnchorsResolve(links: readonly ContentLink[], sections: readonly Section[]): void {
-  const slugs = new Set(sections.map((section) => section.slug));
-  for (const link of links) {
-    if (!link.href.startsWith("#")) continue;
-    if (!slugs.has(link.href.slice(1))) {
-      throw new Error(`hero link "${link.href}" does not match any section anchor`);
-    }
-  }
 }
 
 function parseLinkItem(line: string): ContentLink {
