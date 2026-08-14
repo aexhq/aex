@@ -1419,7 +1419,7 @@ mod tests {
         };
         format!(
             r#"{{ "owner": "regional-services", "role": "live_companion", "artifact": "none",
-            "deployable": "session-stream-api", "layers": ["smoke", "e2e"],
+            "deployable": "session-api", "layers": ["smoke", "e2e"],
             "concerns": ["fault", "security", "performance"], "seams": [],
             "security_tier": "public_edge", "risk": ["none"], "scenarios": [], {targets}
             "not_applicable": {{ "targets": "awaiting the regional-services stream" }} }}"#

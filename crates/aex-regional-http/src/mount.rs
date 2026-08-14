@@ -225,7 +225,7 @@ impl<D, A> Clone for MountState<D, A> {
 /// The refusal set is keyed on `RouteDescriptor::deferred`, never on
 /// `owned − served()`. The `session-api` release unit spans both transport
 /// halves, so its unary half's `served()` legitimately
-/// excludes 24 NDJSON routes that *work*; refusing "everything owned and not
+/// excludes three NDJSON routes that *work*; refusing "everything owned and not
 /// served" would take them down.
 ///
 /// # Errors

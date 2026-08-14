@@ -1,6 +1,6 @@
 # `ecs-service`
 
-A long-running Fargate service: `brain-mux` or `session-stream-api`.
+A long-running Fargate service release unit: `brain-mux` or `session-api`.
 
 The image is always a digest. A service that follows a tag can restart onto
 different bytes with no deployment, no manifest and no receipt, which would make
@@ -68,7 +68,7 @@ nothing anywhere created it: no module built these groups and the private
 deployment repository may not declare resources in an environment root, so the
 group a root was naming could not exist. The name is derived from the plane- and
 region-qualified `task_definition_family` rather than from `name`, because
-`name` is bare - `session-stream-api` - and both planes live in one account.
+`name` is bare - `session-api` - and both planes live in one account.
 
 Ingress is one rule or none. A service given `load_balancer_security_group_ids`
 admits that group on `container_port`, and nothing else: not a CIDR, not a
@@ -113,14 +113,14 @@ substituted for it.
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `name` | `string` | Service name; also selects the `brain-mux` and `session-stream-api` pins. |
+| `name` | `string` | Release-unit service name; also selects the `brain-mux` and `session-api` pins. |
 | `task_definition_family` | `string` | Plane- and region-qualified family, `aex-<dev\|prd>-<region>-<service-name>`. |
 | `cluster_arn` / `cluster_name` | `string` | Cluster the service runs in. |
 | `image` | `string` | Digest-pinned image. |
 | `cpu` / `memory` | `number` | Fargate task size. |
 | `runtime_platform` | `object` | Explicit architecture and OS family. |
 | `desired_count` | `number` | Task count; defaults to 1. At least 2 for production `brain-mux`, exactly 1 for development `brain-mux`. |
-| `stop_timeout` | `number` | Drain window: 120 for `brain-mux`, 30 for `session-stream-api`. |
+| `stop_timeout` | `number` | Drain window: 120 for `brain-mux`, 30 for `session-api`. |
 | `deregistration_delay` | `number` | Target-group drain window; at least 30. |
 | `health_check_grace_period_seconds` | `number` | Required behind a load balancer, rejected without one. |
 | `circuit_breaker` | `object` | `{ enable = true, rollback = false }`; the breaker stops unhealthy deployments and releases fix forward. |
@@ -157,8 +157,8 @@ substituted for it.
 - `desired_count` defaults to 1. A production `brain-mux` below two tasks is
   rejected, a development `brain-mux` other than one task is rejected, and for
   `brain-mux` any capacity bound that does not equal `desired_count` is rejected.
-- `stop_timeout` is 120 for `brain-mux` and 30 for `session-stream-api`; any
-  other value for those two services is rejected. The `session-stream-api` pin is
+- `stop_timeout` is 120 for `brain-mux` and 30 for `session-api`; any
+  other value for those two services is rejected. The `session-api` pin is
   load-bearing in both directions: the process derives its admitted
   `AEX_DRAIN_DEADLINE_MS` ceiling from the same 30 seconds and refuses to start
   on a deadline that could not fire before SIGKILL.
@@ -198,5 +198,5 @@ substituted for it.
 ## Not asserted here
 
 Drain behaviour, deregistration timing and the real task-start interval are the
-`aws.ecs.run_task` seam, owned by the `brain-mux` and `session-stream-api` live
+`aws.ecs.run_task` seam, owned by the `brain-mux` and `session-api` live
 suites.

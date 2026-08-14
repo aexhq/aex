@@ -11,8 +11,8 @@ override_resource {
 }
 
 variables {
-  name                   = "session-stream-api"
-  task_definition_family = "aex-dev-eu-west-1-session-stream-api"
+  name                   = "session-api"
+  task_definition_family = "aex-dev-eu-west-1-session-api"
   cluster_arn            = "arn:aws:ecs:eu-west-1:000000000000:cluster/aex-dev-euw1"
   cluster_name           = "aex-dev-euw1"
   image                  = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/session-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
@@ -133,12 +133,12 @@ run "tasks_never_get_a_public_address" {
   }
 }
 
-run "session_stream_api_drains_for_thirty_seconds" {
+run "session_api_drains_for_thirty_seconds" {
   command = plan
 
   assert {
     condition     = jsondecode(aws_ecs_task_definition.this.container_definitions)[0].stopTimeout == 30
-    error_message = "session-stream-api must use a 30 second stop timeout."
+    error_message = "session-api must use a 30 second stop timeout."
   }
 }
 
@@ -300,7 +300,7 @@ run "rejects_a_tag_reference" {
   command = plan
 
   variables {
-    image = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/session-stream-api:v1"
+    image = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/session-api:v1"
   }
 
   expect_failures = [var.image]
@@ -353,7 +353,7 @@ run "rejects_an_unqualified_task_definition_family" {
   expect_failures = [var.task_definition_family]
 }
 
-run "rejects_a_session_stream_api_stop_timeout_that_is_not_thirty_seconds" {
+run "rejects_a_session_api_stop_timeout_that_is_not_thirty_seconds" {
   command = plan
 
   variables {
@@ -688,10 +688,10 @@ run "rejects_shedding_capacity_faster_than_it_is_added" {
 #
 # The suite default above already carries this name, so the 30-second
 # stop-timeout pin is exercised by
-# `rejects_a_session_stream_api_stop_timeout_that_is_not_thirty_seconds`.
+# `rejects_a_session_api_stop_timeout_below_the_pin`.
 # What is left here is the shape a public-edge service must carry.
 
-run "session_stream_api_drains_for_thirty_seconds_behind_a_target_group" {
+run "session_api_drains_for_thirty_seconds_behind_a_target_group" {
   command = plan
 
   variables {
@@ -726,7 +726,7 @@ run "session_stream_api_drains_for_thirty_seconds_behind_a_target_group" {
   }
 }
 
-run "rejects_a_session_stream_api_stop_timeout_below_the_pin" {
+run "rejects_a_session_api_stop_timeout_below_the_pin" {
   command = plan
 
   variables {

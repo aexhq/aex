@@ -66,6 +66,7 @@ pub fn load_unearned(root: &Path) -> Result<Vec<UnearnedRow>> {
 #[derive(Debug, Clone, Default)]
 pub struct UnearnedIndex {
     by_subject: BTreeMap<String, Vec<UnearnedRow>>,
+    package_subject_by_unit: BTreeMap<String, String>,
 }
 
 impl UnearnedIndex {
@@ -76,15 +77,28 @@ impl UnearnedIndex {
         for row in rows {
             by_subject.entry(row.subject.clone()).or_default().push(row);
         }
-        Self { by_subject }
+        Self {
+            by_subject,
+            package_subject_by_unit: BTreeMap::new(),
+        }
     }
 
     /// Load the index from a repository root.
     ///
     /// # Errors
-    /// Propagates a missing or unparseable ledger.
+    /// Propagates a missing or unparseable registry or ledger.
     pub fn load(root: &Path) -> Result<Self> {
-        Ok(Self::new(load_unearned(root)?))
+        let registry = load_document(root)?;
+        let mut index = Self::new(load_unearned(root)?);
+        index.package_subject_by_unit = registry
+            .packages
+            .into_iter()
+            .filter(|(_, package)| {
+                matches!(package.meta.role.as_str(), "deployable" | "runtime_image")
+            })
+            .filter_map(|(path, package)| package.meta.deployable.map(|unit| (unit, path)))
+            .collect();
+        Ok(index)
     }
 
     /// Whether anything about this subject is recorded as unearned.
@@ -95,12 +109,20 @@ impl UnearnedIndex {
 
     /// The recorded reason a subject cannot produce evidence yet, if any.
     ///
-    /// The subject is matched by exact id and by suffix, because the ledger
-    /// keys on the manifest path (`services/regional-session-api`) while
-    /// admission asks about a unit id (`regional-session-api`).
+    /// The subject is matched by exact id, by the registry's release-unit to
+    /// package-path mapping, and finally by suffix for packages whose unit and
+    /// package names are identical. The explicit mapping matters for units such
+    /// as `session-api`, whose package path is `services/session-stream-api`.
     #[must_use]
     pub fn reason_for(&self, subject: &str) -> Option<&UnearnedRow> {
         if let Some(rows) = self.by_subject.get(subject) {
+            return rows.first();
+        }
+        if let Some(rows) = self
+            .package_subject_by_unit
+            .get(subject)
+            .and_then(|path| self.by_subject.get(path))
+        {
             return rows.first();
         }
         self.by_subject
@@ -195,20 +217,18 @@ mod tests {
     }
 
     #[test]
-    fn the_index_resolves_a_unit_id_against_a_manifest_path() {
-        let index = UnearnedIndex::new(vec![row(
-            "services/regional-session-api",
-            "regional-services",
-        )]);
+    fn the_index_resolves_a_matching_unit_id_against_a_manifest_path_suffix() {
+        let index =
+            UnearnedIndex::new(vec![row("workers/file-ingest-worker", "regional-services")]);
         assert_eq!(
             index
-                .reason_for("regional-session-api")
+                .reason_for("file-ingest-worker")
                 .map(|row| row.owner.as_str()),
             Some("regional-services")
         );
         assert_eq!(
             index
-                .reason_for("services/regional-session-api")
+                .reason_for("workers/file-ingest-worker")
                 .map(|row| row.owner.as_str()),
             Some("regional-services")
         );
@@ -270,6 +290,13 @@ mod tests {
             !index.is_empty(),
             "nothing is deployed, so live evidence must be listed as unearned rather \
              than silently absent"
+        );
+        assert_eq!(
+            index
+                .reason_for("session-api")
+                .map(|row| row.subject.as_str()),
+            Some("services/session-stream-api"),
+            "release-unit evidence must resolve through the package mapping"
         );
 
         let inputs = crate::graph::inputs::GraphInputs::load(&root).expect("graph inputs");

@@ -10,4 +10,4 @@ risk = ["none"]
 scenarios = []
 
 [aex.not_applicable]
-live_suite = "A cluster holds no behaviour of its own; task placement and drain are proven by the aws.ecs.run_task seam owned by the brain-mux and session-stream-api live suites."
+live_suite = "A cluster holds no behaviour of its own; task placement and drain are proven by the aws.ecs.run_task seam owned by the brain-mux and session-api live suites."

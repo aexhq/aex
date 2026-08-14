@@ -10,4 +10,4 @@ risk = ["none"]
 scenarios = []
 
 [aex.not_applicable]
-live_suite = "Service drain, deregistration and scaling are proven by the aws.ecs.run_task seam owned by the brain-mux and session-stream-api live suites."
+live_suite = "Service drain, deregistration and scaling are proven by the aws.ecs.run_task seam owned by the brain-mux and session-api live suites."
