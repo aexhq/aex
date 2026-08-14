@@ -173,10 +173,12 @@ fn the_route_table_is_indexed_by_route_id() {
 
 #[test]
 fn the_session_lifecycle_vocabulary_is_session_centric() {
-    // The MVP has one eight-hour session and no public run, persistence, or
-    // trash/restore lifecycle. Prelaunch clean cut means those old names are
-    // gone rather than aliased: a compatibility alias would let a generated
-    // client keep calling semantics that no longer exist.
+    // The MVP has one eight-hour session and no public run, persistence,
+    // suspend/resume, or trash/restore lifecycle: sandbox suspension is the
+    // runtime's internal one-Hand state machine. Prelaunch clean cut means
+    // those old names are gone rather than aliased: a compatibility alias
+    // would let a generated client keep calling semantics that no longer
+    // exist.
     for retired in [
         "session_fork",
         "session_stop",
@@ -184,6 +186,8 @@ fn the_session_lifecycle_vocabulary_is_session_centric() {
         "session_restore",
         "session_purge",
         "session_persist",
+        "session_suspend",
+        "session_resume",
     ] {
         assert_eq!(RouteId::parse(retired), None, "`{retired}` must be gone");
         assert!(
@@ -200,22 +204,9 @@ fn the_session_lifecycle_vocabulary_is_session_centric() {
     assert!(!create.pause_exempt);
     assert!(create.declares(ErrorCode::AccountPaused));
 
-    // Resume can increase active compute and therefore remains behind the
-    // account-pause gate. Suspend, terminate, and irreversible deletion reduce
-    // or destroy retained resources, so they remain reachable while paused.
+    // Termination destroys sandbox compute and irreversible deletion destroys
+    // retained session content, so both remain reachable while paused.
     for (id, operation, template, pause_exempt) in [
-        (
-            RouteId::SessionResume,
-            "session_resume",
-            "/api/sessions/{sessionId}/resumptions",
-            false,
-        ),
-        (
-            RouteId::SessionSuspend,
-            "session_suspend",
-            "/api/sessions/{sessionId}/suspensions",
-            true,
-        ),
         (
             RouteId::SessionTerminate,
             "session_terminate",
@@ -289,12 +280,12 @@ fn every_route_binds_through_the_matcher() {
 
 #[test]
 fn the_matcher_refuses_near_misses() {
-    assert!(match_route(Plane::Central, HttpMethod::Get, "/api/account").is_some());
+    assert!(match_route(Plane::Central, HttpMethod::Get, "/api/api-keys").is_some());
     for path in [
-        "/api/account/",
-        "/api/Account",
-        "api/account",
-        "/api/account/extra",
+        "/api/api-keys/",
+        "/api/ApiKeys",
+        "api/api-keys",
+        "/api/api-keys/extra",
         "/api",
     ] {
         assert!(
@@ -303,8 +294,8 @@ fn the_matcher_refuses_near_misses() {
         );
     }
     // A central path is not reachable on the regional plane, and vice versa.
-    assert!(match_route(Plane::Regional, HttpMethod::Get, "/api/account").is_none());
-    assert!(match_route(Plane::Central, HttpMethod::Get, "/api/workspace").is_none());
+    assert!(match_route(Plane::Regional, HttpMethod::Get, "/api/api-keys").is_none());
+    assert!(match_route(Plane::Central, HttpMethod::Get, "/api/sessions").is_none());
 }
 
 #[test]
@@ -344,7 +335,8 @@ fn route_obligations_are_internally_consistent() {
             ),
         }
 
-        // 204 is the only bodyless success, and 202 is only ever an operation.
+        // 204 is the only bodyless success, and 202 is only ever a session
+        // command receipt; there is no generic operations resource.
         if descriptor.response_schema.is_none() {
             assert_eq!(
                 descriptor.success_status,
@@ -357,7 +349,7 @@ fn route_obligations_are_internally_consistent() {
             );
         }
         if descriptor.success_status == 202 {
-            assert_eq!(descriptor.response_schema, Some("Operation"), "{operation}");
+            assert_eq!(descriptor.response_schema, Some("SessionCommandReceipt"), "{operation}");
             assert_eq!(
                 descriptor.idempotency,
                 IdempotencyKind::OperationId,
@@ -365,7 +357,7 @@ fn route_obligations_are_internally_consistent() {
             );
         }
 
-        // A durable-operation admission is a POST that returns 202.
+        // A session command admission is a POST that returns 202.
         if descriptor.idempotency == IdempotencyKind::OperationId {
             assert_eq!(descriptor.method, HttpMethod::Post, "{operation}");
             assert_eq!(descriptor.success_status, 202, "{operation}");
@@ -377,10 +369,11 @@ fn route_obligations_are_internally_consistent() {
             assert_eq!(descriptor.idempotency, IdempotencyKind::None, "{operation}");
         }
 
-        // An NDJSON route is a bounded typed read, so it is a POST with a body.
+        // An NDJSON route is a bounded typed stream: a GET with no request body.
         if descriptor.transport == TransportKind::Ndjson {
-            assert_eq!(descriptor.method, HttpMethod::Post, "{operation}");
-            assert!(descriptor.request_schema.is_some(), "{operation}");
+            assert_eq!(descriptor.method, HttpMethod::Get, "{operation}");
+            assert_eq!(descriptor.body_class, BodyClass::None, "{operation}");
+            assert!(descriptor.request_schema.is_none(), "{operation}");
         }
         if descriptor.transport == TransportKind::Binary {
             assert_eq!(descriptor.method, HttpMethod::Get, "{operation}");
@@ -408,11 +401,10 @@ fn route_obligations_are_internally_consistent() {
 
 #[test]
 fn pause_exempt_routes_are_exactly_the_declared_exemptions() {
-    // Security revocation, current-work cancellation, stop, discard,
-    // destructive deletion, account and workspace state, billing, safe control
-    // reads, and the credential ceremony.
-    // Anything else that claims exemption is a bug in the fragment, not a policy
-    // question.
+    // Security revocation, current-work cancellation, destructive deletion,
+    // billing, the bootstrap read and the live streams, and the credential
+    // ceremony. Anything else that claims exemption is a bug in the fragment,
+    // not a policy question.
     //
     // The ceremony is exempt for the reason the pause exists: a paused account
     // is told to top up, and topping up happens in a browser the person must be
@@ -424,25 +416,14 @@ fn pause_exempt_routes_are_exactly_the_declared_exemptions() {
             || matches!(
                 operation,
                 "session_cancel"
-                    | "session_suspend"
+                    | "session_messages_stream"
+                    | "session_telemetry_stream"
                     | "session_terminate"
-                    | "session_files_live_list"
-                    | "session_files_live_stat"
             )
-            || operation.starts_with("session_files_live_download")
             || operation.contains("revocation")
             || operation.contains("revoke")
             || operation.contains("delete")
-            || operation.contains("trash")
-            || operation.contains("purge")
-            || operation.contains("discard")
-            || operation.contains("stop")
-            || operation.contains("abort")
-            || operation.contains("operation")
             || operation.contains("billing")
-            || operation.contains("account")
-            || operation.contains("workspace")
-            || operation.contains("usage")
             || operation.contains("bootstrap");
         assert!(
             exempt,

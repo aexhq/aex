@@ -1,6 +1,6 @@
 //! The generated server traits, the dispatch surface and the low-level client.
 //!
-//! These are behaviour assertions, not presence assertions: coverage of all 146
+//! These are behaviour assertions, not presence assertions: coverage of all 32
 //! operations is a generator gate (`aex-contract-gen`'s `surface` suite), and
 //! this suite proves that what is generated actually decodes strictly, answers
 //! with the status the route declares, and refuses a code the route does not.
@@ -13,26 +13,32 @@ use aex_wire::client::{
     BaseUrl, ClientError, HEADER_ACCEPT, HEADER_CONTENT_TYPE, HEADER_IDEMPOTENCY_KEY,
     HEADER_IF_MATCH, HEADER_OPERATION_ID, PathWriter, QueryWriter, ToParam, Transport,
     TransportError, WireClient, WireRequest, WireResponse, api_key_revoke_request,
-    api_keys_list_request, percent_encode, workspace_delete_request, workspaces_list_request,
+    api_keys_list_request, percent_encode, session_terminate_request, sessions_list_request,
 };
 use aex_wire::dispatch::{
     DispatchOutcome, FromParam, QueryReader, RawRequest, RequestIdentity, RequestLimits,
-    binary_body, canonical_intent, percent_decode, request_identity,
+    canonical_intent, percent_decode, request_identity,
 };
 use aex_wire::error::{ErrorCode, ErrorDetails, WireError, WireResult};
 use aex_wire::idempotency::{IdempotencyKey, IdempotencyKind, PrincipalScope};
-use aex_wire::ids::{ApiKeyId, OperationId, OrganizationId, PrefixedId, UserId, WorkspaceId};
+use aex_wire::ids::{
+    ApiKeyId, OperationId, OrganizationId, PrefixedId, SessionId, UserId, WorkspaceId,
+};
 use aex_wire::limits::LimitId;
 use aex_wire::models::{
-    ApiKeyCreateRequest, ApiKeyPage, NewApiKey, Operation, OperationKind, OperationStatus,
-    Workspace, WorkspaceCreateRequest, WorkspaceDeleteRequest, WorkspacePage, WorkspacesListQuery,
+    ApiKeyCreateRequest, ApiKeyPage, BillingUsageCategory, EmptyRequest, MessagePage,
+    MessageSendRequest, MessageSendResult, NewApiKey, Session, SessionCommandReceipt,
+    SessionCreateRequest, SessionListItem, SessionListPage, SessionMessagesListQuery,
+    SessionMessagesStreamQuery, SessionStatus, SessionTelemetryReplayQuery,
+    SessionTelemetryStreamQuery, SessionsListQuery, TelemetryDownloadGrant,
+    TelemetryDownloadRequest,
 };
 use aex_wire::provider::ProviderId;
 use aex_wire::routes::{Plane, RouteId, match_route, route};
 use aex_wire::scopes::ScopeSet;
 use aex_wire::server::{
-    ApiKeysApi, Created, NoContent, RequestContext, RouteGroup, WorkspacesApi, dispatch_api_keys,
-    dispatch_workspaces,
+    ApiKeysApi, Created, NdjsonStream, NoContent, RequestContext, RouteGroup, SessionsApi, WithETag,
+    dispatch_api_keys, dispatch_sessions,
 };
 use aex_wire::types::{ETag, HttpMethod, RequestId, Timestamp};
 
@@ -79,6 +85,36 @@ fn operation_id() -> OperationId {
     OperationId::parse(&format!("op_{SUFFIX}")).expect("operation id")
 }
 
+fn session_id() -> SessionId {
+    SessionId::parse(&format!("ses_{SUFFIX}")).expect("session id")
+}
+
+/// One row a session list answers with.
+fn session_list_item() -> SessionListItem {
+    serde_json::from_value(serde_json::json!({
+        "createdAt": "2026-08-01T00:00:00.000Z",
+        "expiresAt": "2026-08-01T08:00:00.000Z",
+        "id": format!("ses_{SUFFIX}"),
+        "model": "gpt-4.1-mini",
+        "provider": "openai",
+        "sandboxStatus": "suspended",
+        "status": "idle",
+        "updatedAt": "2026-08-01T00:00:00.000Z",
+        "workspaceId": format!("wsp_{SUFFIX}"),
+    }))
+    .expect("session fixture matches the generated model")
+}
+
+/// The receipt a session command admission answers with.
+fn receipt() -> SessionCommandReceipt {
+    serde_json::from_value(serde_json::json!({
+        "acceptedAt": "2026-08-01T00:00:00.000Z",
+        "operationId": format!("op_{SUFFIX}"),
+        "sessionId": format!("ses_{SUFFIX}"),
+    }))
+    .expect("receipt fixture matches the generated model")
+}
+
 fn context(id: RouteId) -> RequestContext {
     RequestContext {
         request_id: RequestId::parse("req-0001").expect("request id"),
@@ -107,42 +143,6 @@ fn raw<'a>(id: RouteId, path: &'a str, query: &'a str, body: &'a [u8]) -> RawReq
         query,
         body,
     }
-}
-
-fn workspace() -> Workspace {
-    serde_json::from_value(serde_json::json!({
-        "apiUrl": "https://eu-west-1.api.aex.dev",
-        "createdAt": "2026-08-01T00:00:00.000Z",
-        "id": format!("wsp_{SUFFIX}"),
-        "name": "Fixture",
-        "operationalState": {
-            "inheritedFrom": "account",
-            "organizationId": format!("org_{SUFFIX}"),
-            "state": {
-                "status": "active",
-                "changedAt": "2026-08-01T00:00:00.000Z",
-                "revision": 1,
-            },
-        },
-        "organizationId": format!("org_{SUFFIX}"),
-        "region": "eu-west-1",
-        "slug": "fixture",
-        "status": "active",
-    }))
-    .expect("workspace fixture matches the generated model")
-}
-
-fn operation() -> Operation {
-    serde_json::from_value(serde_json::json!({
-        "cancelable": true,
-        "createdAt": "2026-08-01T00:00:00.000Z",
-        "id": format!("op_{SUFFIX}"),
-        "kind": "workspace_delete",
-        "status": "queued",
-        "updatedAt": "2026-08-01T00:00:00.000Z",
-        "workspaceId": format!("wsp_{SUFFIX}"),
-    }))
-    .expect("operation fixture matches the generated model")
 }
 
 /// A stub that answers every route of its group.
@@ -206,39 +206,116 @@ impl ApiKeysApi for Stub {
     }
 }
 
-impl WorkspacesApi for Stub {
-    async fn workspace_create(
+impl SessionsApi for Stub {
+    type FrameStream = ();
+
+    async fn session_cancel(
         &self,
         _cx: &RequestContext,
-        _body: WorkspaceCreateRequest,
-    ) -> WireResult<aex_wire::server::Created<Workspace>> {
-        self.check(Created(workspace()))
+        _session_id: SessionId,
+        _body: EmptyRequest,
+    ) -> WireResult<SessionCommandReceipt> {
+        self.check(receipt())
     }
 
-    async fn workspace_delete(
+    async fn session_create(
         &self,
         _cx: &RequestContext,
-        _workspace_id: WorkspaceId,
-        _body: WorkspaceDeleteRequest,
-    ) -> WireResult<aex_wire::server::Accepted> {
-        self.check(aex_wire::server::Accepted(operation()))
+        _body: SessionCreateRequest,
+    ) -> WireResult<Created<Session>> {
+        unreachable!("the session-create dispatch is not exercised by this suite")
     }
 
-    async fn workspace_get(
+    async fn session_delete(
         &self,
         _cx: &RequestContext,
-        _workspace_id: WorkspaceId,
-    ) -> WireResult<Workspace> {
-        self.check(workspace())
+        _session_id: SessionId,
+        _body: EmptyRequest,
+    ) -> WireResult<SessionCommandReceipt> {
+        self.check(receipt())
     }
 
-    async fn workspaces_list(
+    async fn session_get(
         &self,
         _cx: &RequestContext,
-        _query: WorkspacesListQuery,
-    ) -> WireResult<WorkspacePage> {
-        self.check(WorkspacePage {
-            items: vec![workspace()],
+        _session_id: SessionId,
+    ) -> WireResult<WithETag<Session>> {
+        unreachable!("the session-get dispatch is not exercised by this suite")
+    }
+
+    async fn session_message_send(
+        &self,
+        _cx: &RequestContext,
+        _session_id: SessionId,
+        _body: MessageSendRequest,
+    ) -> WireResult<Created<MessageSendResult>> {
+        unreachable!("the message-send dispatch is not exercised by this suite")
+    }
+
+    async fn session_messages_list(
+        &self,
+        _cx: &RequestContext,
+        _session_id: SessionId,
+        _query: SessionMessagesListQuery,
+    ) -> WireResult<MessagePage> {
+        self.check(MessagePage {
+            items: Vec::new(),
+            next_cursor: None,
+        })
+    }
+
+    async fn session_messages_stream(
+        &self,
+        _cx: &RequestContext,
+        _session_id: SessionId,
+        _query: SessionMessagesStreamQuery,
+    ) -> WireResult<NdjsonStream<Self::FrameStream>> {
+        self.check(NdjsonStream(()))
+    }
+
+    async fn session_telemetry_download_create(
+        &self,
+        _cx: &RequestContext,
+        _session_id: SessionId,
+        _body: TelemetryDownloadRequest,
+    ) -> WireResult<Created<TelemetryDownloadGrant>> {
+        unreachable!("the telemetry-download dispatch is not exercised by this suite")
+    }
+
+    async fn session_telemetry_replay(
+        &self,
+        _cx: &RequestContext,
+        _session_id: SessionId,
+        _query: SessionTelemetryReplayQuery,
+    ) -> WireResult<NdjsonStream<Self::FrameStream>> {
+        self.check(NdjsonStream(()))
+    }
+
+    async fn session_telemetry_stream(
+        &self,
+        _cx: &RequestContext,
+        _session_id: SessionId,
+        _query: SessionTelemetryStreamQuery,
+    ) -> WireResult<NdjsonStream<Self::FrameStream>> {
+        self.check(NdjsonStream(()))
+    }
+
+    async fn session_terminate(
+        &self,
+        _cx: &RequestContext,
+        _session_id: SessionId,
+        _body: EmptyRequest,
+    ) -> WireResult<SessionCommandReceipt> {
+        self.check(receipt())
+    }
+
+    async fn sessions_list(
+        &self,
+        _cx: &RequestContext,
+        _query: SessionsListQuery,
+    ) -> WireResult<SessionListPage> {
+        self.check(SessionListPage {
+            items: vec![session_list_item()],
             next_cursor: None,
         })
     }
@@ -401,14 +478,13 @@ fn a_bodyless_route_answers_with_204_and_no_body() {
 }
 
 #[test]
-fn an_admission_answers_202_with_a_location() {
-    let body = serde_json::to_vec(&serde_json::json!({ "confirmation": format!("wsp_{SUFFIX}") }))
-        .expect("body");
-    let path = format!("/api/workspaces/wsp_{SUFFIX}/deletions");
-    let request = raw(RouteId::WorkspaceDelete, &path, "", &body);
-    let mut cx = context(RouteId::WorkspaceDelete);
+fn a_command_admission_answers_202_with_its_receipt() {
+    let body = serde_json::to_vec(&serde_json::json!({})).expect("body");
+    let path = format!("/api/sessions/ses_{SUFFIX}/terminations");
+    let request = raw(RouteId::SessionTerminate, &path, "", &body);
+    let mut cx = context(RouteId::SessionTerminate);
     cx.operation_id = Some(operation_id());
-    let outcome = block_on(dispatch_workspaces(
+    let outcome = block_on(dispatch_sessions(
         &Stub::ok(),
         &cx,
         request,
@@ -417,10 +493,9 @@ fn an_admission_answers_202_with_a_location() {
     .expect("dispatch");
     let response = outcome.into_unary().expect("a unary answer");
     assert_eq!(response.status, 202);
-    assert_eq!(
-        response.location.as_deref(),
-        Some(format!("/api/operations/op_{SUFFIX}").as_str())
-    );
+    assert!(response.location.is_none());
+    let decoded: SessionCommandReceipt = serde_json::from_slice(&response.body).expect("body");
+    assert_eq!(decoded, receipt());
 }
 
 #[test]
@@ -472,42 +547,6 @@ fn a_body_over_the_bound_is_refused_before_it_is_parsed() {
 }
 
 #[test]
-fn a_binary_body_is_borrowed_and_bounded_at_one_logical_part() {
-    let bytes = vec![0xa5; RequestLimits::DEFAULT_BINARY_BODY_BYTES];
-    let request = raw(RouteId::WorkspacesList, "/api/workspaces", "", &bytes);
-    let borrowed = binary_body(&request, RequestLimits::DEFAULT).expect("one part is accepted");
-    assert_eq!(
-        borrowed.as_ptr(),
-        bytes.as_ptr(),
-        "the decoder copied the part"
-    );
-
-    let too_large = vec![0; RequestLimits::DEFAULT_BINARY_BODY_BYTES + 1];
-    let request = raw(RouteId::WorkspacesList, "/api/workspaces", "", &too_large);
-    let failure = binary_body(&request, RequestLimits::DEFAULT).expect_err("oversize part");
-    assert_eq!(failure.code, ErrorCode::PayloadTooLarge);
-}
-
-#[test]
-fn a_binary_response_preserves_every_byte_and_uses_the_exact_media_type() {
-    let bytes = vec![0, 1, 0xff, 2];
-    let raw = aex_wire::dispatch::RawResponse::binary(200, bytes.clone());
-    assert_eq!(raw.content_type, Some("application/octet-stream"));
-    assert_eq!(raw.body, bytes);
-
-    let decoded = aex_wire::client::decode_binary(
-        RouteId::WorkspacesList,
-        WireResponse {
-            status: 200,
-            etag: None,
-            body: vec![0, 1, 0xff, 2],
-        },
-    )
-    .expect("declared status");
-    assert_eq!(decoded, vec![0, 1, 0xff, 2]);
-}
-
-#[test]
 fn a_route_with_no_declared_body_refuses_one() {
     let path = format!("/api/api-keys/key_{SUFFIX}");
     let request = raw(RouteId::ApiKeyRevoke, &path, "", b"{}");
@@ -523,15 +562,10 @@ fn a_route_with_no_declared_body_refuses_one() {
 
 #[test]
 fn an_undeclared_query_parameter_is_rejected() {
-    let request = raw(
-        RouteId::WorkspacesList,
-        "/api/workspaces",
-        "surprise=1",
-        b"",
-    );
-    let failure = block_on(dispatch_workspaces(
+    let request = raw(RouteId::SessionsList, "/api/sessions", "surprise=1", b"");
+    let failure = block_on(dispatch_sessions(
         &Stub::ok(),
-        &context(RouteId::WorkspacesList),
+        &context(RouteId::SessionsList),
         request,
         RequestLimits::DEFAULT,
     ))
@@ -541,15 +575,10 @@ fn an_undeclared_query_parameter_is_rejected() {
 
 #[test]
 fn a_query_parameter_outside_its_declared_bounds_is_rejected() {
-    let request = raw(
-        RouteId::WorkspacesList,
-        "/api/workspaces",
-        "limit=100000",
-        b"",
-    );
-    let failure = block_on(dispatch_workspaces(
+    let request = raw(RouteId::SessionsList, "/api/sessions", "limit=100000", b"");
+    let failure = block_on(dispatch_sessions(
         &Stub::ok(),
-        &context(RouteId::WorkspacesList),
+        &context(RouteId::SessionsList),
         request,
         RequestLimits::DEFAULT,
     ))
@@ -559,7 +588,7 @@ fn a_query_parameter_outside_its_declared_bounds_is_rejected() {
 
 #[test]
 fn a_repeated_query_parameter_is_rejected() {
-    let reader = QueryReader::parse(RouteId::WorkspacesList, "limit=1&limit=2");
+    let reader = QueryReader::parse(RouteId::SessionsList, "limit=1&limit=2");
     let failure = reader.expect_err("a repeated key is a 400");
     assert_eq!(failure.code, ErrorCode::InvalidRequest);
 }
@@ -591,10 +620,10 @@ fn a_malformed_path_parameter_is_rejected_before_the_handler_runs() {
 
 #[test]
 fn a_route_from_another_group_never_reaches_a_handler() {
-    let request = raw(RouteId::WorkspacesList, "/api/workspaces", "", b"");
+    let request = raw(RouteId::SessionsList, "/api/sessions", "", b"");
     let failure = block_on(dispatch_api_keys(
         &Stub::ok(),
-        &context(RouteId::WorkspacesList),
+        &context(RouteId::SessionsList),
         request,
         RequestLimits::DEFAULT,
     ))
@@ -604,11 +633,11 @@ fn a_route_from_another_group_never_reaches_a_handler() {
 
 #[test]
 fn a_declared_failure_reaches_the_wire_unchanged() {
-    assert!(route(RouteId::WorkspacesList).declares(ErrorCode::InvalidCursor));
-    let request = raw(RouteId::WorkspacesList, "/api/workspaces", "", b"");
-    let failure = block_on(dispatch_workspaces(
+    assert!(route(RouteId::SessionsList).declares(ErrorCode::InvalidCursor));
+    let request = raw(RouteId::SessionsList, "/api/sessions", "", b"");
+    let failure = block_on(dispatch_sessions(
         &Stub::failing(ErrorCode::InvalidCursor),
-        &context(RouteId::WorkspacesList),
+        &context(RouteId::SessionsList),
         request,
         RequestLimits::DEFAULT,
     ))
@@ -618,13 +647,13 @@ fn a_declared_failure_reaches_the_wire_unchanged() {
 
 #[test]
 fn an_undeclared_failure_never_reaches_the_wire() {
-    // `workspaces_list` declares neither of these, so a handler that answers one
+    // `sessions_list` declares neither of these, so a handler that answers one
     // is a contract violation the boundary refuses rather than forwards.
-    assert!(!route(RouteId::WorkspacesList).declares(ErrorCode::SessionNotIdle));
-    let request = raw(RouteId::WorkspacesList, "/api/workspaces", "", b"");
-    let failure = block_on(dispatch_workspaces(
+    assert!(!route(RouteId::SessionsList).declares(ErrorCode::SessionNotIdle));
+    let request = raw(RouteId::SessionsList, "/api/sessions", "", b"");
+    let failure = block_on(dispatch_sessions(
         &Stub::failing(ErrorCode::SessionNotIdle),
-        &context(RouteId::WorkspacesList),
+        &context(RouteId::SessionsList),
         request,
         RequestLimits::DEFAULT,
     ))
@@ -634,7 +663,7 @@ fn an_undeclared_failure_never_reaches_the_wire() {
         failure
             .message
             .as_deref()
-            .is_some_and(|message| message.contains("workspaces_list")),
+            .is_some_and(|message| message.contains("sessions_list")),
         "the refusal does not name the operation: {:?}",
         failure.message
     );
@@ -654,9 +683,9 @@ fn a_route_that_requires_a_replay_key_refuses_a_request_without_one() {
 
 #[test]
 fn a_route_that_requires_no_replay_key_refuses_one() {
-    let mut cx = context(RouteId::WorkspacesList);
+    let mut cx = context(RouteId::SessionsList);
     cx.idempotency_key = Some(IdempotencyKey::parse("k").expect("key"));
-    let request = raw(RouteId::WorkspacesList, "/api/workspaces", "", b"");
+    let request = raw(RouteId::SessionsList, "/api/sessions", "", b"");
     let failure =
         request_identity(&cx, &request).expect_err("an unused `Idempotency-Key` is a 400");
     assert_eq!(failure.code, ErrorCode::InvalidRequest);
@@ -666,28 +695,28 @@ fn a_route_that_requires_no_replay_key_refuses_one() {
 fn the_replay_intent_is_over_canonical_bytes_not_the_bytes_that_arrived() {
     let compact = br#"{"b":2,"a":1}"#;
     let spaced = br#"{ "a" : 1 , "b" : 2 }"#;
-    let path = format!("/api/workspaces/wsp_{SUFFIX}/deletions");
-    let first = canonical_intent(&raw(RouteId::WorkspaceDelete, &path, "", compact))
+    let path = format!("/api/sessions/ses_{SUFFIX}/terminations");
+    let first = canonical_intent(&raw(RouteId::SessionTerminate, &path, "", compact))
         .expect("canonical intent");
     let second =
-        canonical_intent(&raw(RouteId::WorkspaceDelete, &path, "", spaced)).expect("intent");
+        canonical_intent(&raw(RouteId::SessionTerminate, &path, "", spaced)).expect("intent");
     assert_eq!(first, second, "two spellings produced two intents");
 
-    let mut cx = context(RouteId::WorkspaceDelete);
+    let mut cx = context(RouteId::SessionTerminate);
     cx.operation_id = Some(operation_id());
-    let identity = request_identity(&cx, &raw(RouteId::WorkspaceDelete, &path, "", compact))
+    let identity = request_identity(&cx, &raw(RouteId::SessionTerminate, &path, "", compact))
         .expect("operation identity");
     let RequestIdentity::Operation(identity) = identity else {
         panic!("an `Aex-Operation-Id` route produced another identity");
     };
-    assert_eq!(identity.route, RouteId::WorkspaceDelete);
+    assert_eq!(identity.route, RouteId::SessionTerminate);
     assert_eq!(identity.intent, first);
 }
 
 #[test]
 fn a_route_with_no_replay_identity_reports_none() {
-    let request = raw(RouteId::WorkspacesList, "/api/workspaces", "", b"");
-    let identity = request_identity(&context(RouteId::WorkspacesList), &request).expect("identity");
+    let request = raw(RouteId::SessionsList, "/api/sessions", "", b"");
+    let identity = request_identity(&context(RouteId::SessionsList), &request).expect("identity");
     assert_eq!(identity, RequestIdentity::None);
 }
 
@@ -717,15 +746,15 @@ fn every_parameter_type_round_trips_between_the_two_codecs() {
             *provider
         );
     }
-    for kind in OperationKind::ALL {
+    for category in BillingUsageCategory::ALL {
         assert_eq!(
-            OperationKind::from_param(&kind.to_param()).expect("kind"),
-            *kind
+            BillingUsageCategory::from_param(&category.to_param()).expect("category"),
+            *category
         );
     }
-    for status in OperationStatus::ALL {
+    for status in SessionStatus::ALL {
         assert_eq!(
-            OperationStatus::from_param(&status.to_param()).expect("status"),
+            SessionStatus::from_param(&status.to_param()).expect("status"),
             *status
         );
     }
@@ -778,10 +807,9 @@ fn a_built_request_carries_the_declared_method_path_and_headers() {
 
 #[test]
 fn a_built_request_carries_the_identity_header_its_route_declares() {
-    let request = workspace_delete_request(
-        workspace_id(),
-        &serde_json::from_value(serde_json::json!({ "confirmation": format!("wsp_{SUFFIX}") }))
-            .expect("body"),
+    let request = session_terminate_request(
+        session_id(),
+        &serde_json::from_value(serde_json::json!({})).expect("body"),
         operation_id(),
     )
     .expect("request");
@@ -798,10 +826,10 @@ fn a_built_request_carries_the_identity_header_its_route_declares() {
 
 #[test]
 fn a_built_request_encodes_only_the_query_parameters_that_were_supplied() {
-    let bare = workspaces_list_request(&WorkspacesListQuery {
-        organization_id: None,
+    let bare = sessions_list_request(&SessionsListQuery {
         cursor: None,
         limit: None,
+        status: None,
     })
     .expect("request");
     assert!(
@@ -810,15 +838,15 @@ fn a_built_request_encodes_only_the_query_parameters_that_were_supplied() {
         bare.query
     );
 
-    let filtered = workspaces_list_request(&WorkspacesListQuery {
-        organization_id: Some(organization_id()),
+    let filtered = sessions_list_request(&SessionsListQuery {
         cursor: None,
         limit: Some(25),
+        status: Some(SessionStatus::Idle),
     })
     .expect("request");
     assert_eq!(
         filtered.query,
-        format!("limit=25&organizationId=org_{SUFFIX}"),
+        "limit=25&status=idle",
         "the query is not in the registry's parameter order"
     );
 }
@@ -838,15 +866,15 @@ fn a_built_request_renders_a_required_query_parameter() {
 #[test]
 fn a_request_url_joins_the_origin_without_doubling_a_separator() {
     let base = BaseUrl::parse("https://api.aex.dev/").expect("base");
-    let request = workspaces_list_request(&WorkspacesListQuery {
-        organization_id: None,
+    let request = sessions_list_request(&SessionsListQuery {
         cursor: None,
         limit: Some(1),
+        status: None,
     })
     .expect("request");
     assert_eq!(
         request.url(&base),
-        "https://api.aex.dev/api/workspaces?limit=1"
+        "https://api.aex.dev/api/sessions?limit=1"
     );
 }
 
@@ -892,8 +920,8 @@ impl Transport for Scripted {
 
 #[test]
 fn a_client_call_decodes_the_declared_success_body() {
-    let page = WorkspacePage {
-        items: vec![workspace()],
+    let page = SessionListPage {
+        items: vec![session_list_item()],
         next_cursor: None,
     };
     let client = WireClient::new(
@@ -903,10 +931,10 @@ fn a_client_call_decodes_the_declared_success_body() {
         },
         BaseUrl::parse("https://api.aex.dev").expect("base"),
     );
-    let answer = block_on(client.workspaces_list(&WorkspacesListQuery {
-        organization_id: None,
+    let answer = block_on(client.sessions_list(&SessionsListQuery {
         cursor: None,
         limit: None,
+        status: None,
     }))
     .expect("call");
     assert_eq!(answer, page);
@@ -917,7 +945,7 @@ fn a_client_call_decodes_the_published_error_envelope() {
     let envelope = serde_json::json!({
         "error": {
             "code": "insufficient_scope",
-            "message": "the credential lacks `workspaces:read`",
+            "message": "the credential lacks `sessions:read`",
             "requestId": "req-0002",
             "retryable": false,
         }
@@ -929,10 +957,10 @@ fn a_client_call_decodes_the_published_error_envelope() {
         },
         BaseUrl::parse("https://api.aex.dev").expect("base"),
     );
-    let failure = block_on(client.workspaces_list(&WorkspacesListQuery {
-        organization_id: None,
+    let failure = block_on(client.sessions_list(&SessionsListQuery {
         cursor: None,
         limit: None,
+        status: None,
     }))
     .expect_err("a 403 is not a success");
     assert_eq!(failure.code(), Some(ErrorCode::InsufficientScope));
@@ -940,7 +968,7 @@ fn a_client_call_decodes_the_published_error_envelope() {
         panic!("a published envelope decoded as something else");
     };
     assert_eq!(status, 403);
-    assert_eq!(route, RouteId::WorkspacesList);
+    assert_eq!(route, RouteId::SessionsList);
 }
 
 #[test]
@@ -952,10 +980,10 @@ fn a_success_status_the_route_does_not_declare_is_never_a_success() {
         },
         BaseUrl::parse("https://api.aex.dev").expect("base"),
     );
-    let failure = block_on(client.workspaces_list(&WorkspacesListQuery {
-        organization_id: None,
+    let failure = block_on(client.sessions_list(&SessionsListQuery {
         cursor: None,
         limit: None,
+        status: None,
     }))
     .expect_err("a 201 on a 200 route is not a success");
     assert!(matches!(failure, ClientError::Decode { .. }));
@@ -963,15 +991,15 @@ fn a_success_status_the_route_does_not_declare_is_never_a_success() {
 
 #[test]
 fn a_path_writer_refuses_an_arity_that_does_not_match_the_template() {
-    let writer = PathWriter::new(RouteId::WorkspaceGet);
+    let writer = PathWriter::new(RouteId::SessionGet);
     let failure = writer.finish().expect_err("an unbound template is refused");
     assert!(matches!(failure, ClientError::Encode { .. }));
 
-    let mut writer = PathWriter::new(RouteId::WorkspaceGet);
-    writer.bind(&workspace_id());
+    let mut writer = PathWriter::new(RouteId::SessionGet);
+    writer.bind(&session_id());
     assert_eq!(
         writer.finish().expect("path"),
-        format!("/api/workspaces/wsp_{SUFFIX}")
+        format!("/api/sessions/ses_{SUFFIX}")
     );
 }
 
@@ -1004,10 +1032,11 @@ fn a_query_writer_and_the_strict_reader_agree() {
 fn a_dispatch_outcome_of_a_group_without_a_stream_can_never_be_a_stream() {
     // `NoStream` is uninhabited, so this is a type-level assertion: the only
     // constructible arm for a non-streaming group is `Unary`.
-    let request = raw(RouteId::WorkspacesList, "/api/workspaces", "", b"");
-    let outcome: DispatchOutcome<aex_wire::dispatch::NoStream> = block_on(dispatch_workspaces(
+    let query = format!("workspaceId=wsp_{SUFFIX}");
+    let request = raw(RouteId::ApiKeysList, "/api/api-keys", &query, b"");
+    let outcome: DispatchOutcome<aex_wire::dispatch::NoStream> = block_on(dispatch_api_keys(
         &Stub::ok(),
-        &context(RouteId::WorkspacesList),
+        &context(RouteId::ApiKeysList),
         request,
         RequestLimits::DEFAULT,
     ))

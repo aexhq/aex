@@ -36,12 +36,14 @@ struct InvalidCase {
 /// leave a type untested.
 fn parse_as(kind: IdKind, text: &str) -> bool {
     use aex_wire::ids::{
-        AgentId, ApiKeyId, ApprovalId, FileDownloadId, FileUploadId, GenerationId, InvitationId,
-        MeasurementId, MembershipId, MessageId, ObservationId, OperationId, OrganizationId,
-        ProviderCredentialId, SessionId, StatementId, ToolCallId, UploadId, UserId, WorkspaceId,
+        AccountId, AgentId, ApiKeyId, ApprovalId, BillingTransactionId, FileDownloadId,
+        FileUploadId, GenerationId, InvitationId, MeasurementId, MembershipId, MessageId,
+        ObservationId, OperationId, OrganizationId, PaymentMethodId, ProviderCredentialId,
+        SessionId, StatementId, ToolCallId, UploadId, UserId, WorkspaceId,
     };
     match kind {
         IdKind::User => UserId::parse(text).is_ok(),
+        IdKind::Account => AccountId::parse(text).is_ok(),
         IdKind::Organization => OrganizationId::parse(text).is_ok(),
         IdKind::Membership => MembershipId::parse(text).is_ok(),
         IdKind::Invitation => InvitationId::parse(text).is_ok(),
@@ -61,6 +63,8 @@ fn parse_as(kind: IdKind, text: &str) -> bool {
         IdKind::Upload => UploadId::parse(text).is_ok(),
         IdKind::Measurement => MeasurementId::parse(text).is_ok(),
         IdKind::Statement => StatementId::parse(text).is_ok(),
+        IdKind::PaymentMethod => PaymentMethodId::parse(text).is_ok(),
+        IdKind::BillingTransaction => BillingTransactionId::parse(text).is_ok(),
     }
 }
 
