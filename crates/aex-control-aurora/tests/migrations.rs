@@ -419,9 +419,11 @@ async fn the_control_roles_hold_nothing_in_finance_and_identity_writes() {
         );
     }
 
-    // The whole finance surface either control role may reach is one view, and
-    // even that is read-only. Everything else — the ledger, the balances, the
-    // provider edges — is out of reach in every mode, including `SELECT`.
+    // The whole finance surface either control role may reach is two read-only
+    // objects: the published account state projection, and — for the control
+    // API that owns account establishment — the personal ledger account rows.
+    // Everything else — the ledger, the balances, the provider edges — is out
+    // of reach in every mode, including `SELECT`.
     let finance: Vec<String> = sqlx::query_scalar(
         "SELECT format('%I.%I', table_schema, table_name) FROM information_schema.tables \
          WHERE table_schema = 'finance'",
@@ -437,7 +439,10 @@ async fn the_control_roles_hold_nothing_in_finance_and_identity_writes() {
     for role in ["aex_control_api", "aex_control_worker"] {
         for object in &finance {
             for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
-                let expected = object == "finance.account_state_v1" && privilege == "SELECT";
+                let expected = privilege == "SELECT"
+                    && (object == "finance.account_state_v1"
+                        || (role == "aex_control_api"
+                            && object == "finance.personal_ledger_accounts"));
                 assert_eq!(
                     has_privilege(&mut connection, role, object, privilege).await,
                     expected,

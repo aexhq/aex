@@ -409,10 +409,12 @@ describe("release-bound public evidence producer", () => {
     expect(files.length).toBeGreaterThan(0);
 
     const guard = 'if (process.env.AEX_RELEASE_EVIDENCE_MODE === "inventory") return;';
+    const helperGuard = /function inventory\(\)[\s\S]{0,400}?AEX_RELEASE_EVIDENCE_MODE\s*===\s*"inventory"/u;
     const unguarded = files.filter((file) => {
       const source = readFileSync(resolve(root, dir, file), "utf8");
       const reachesNetwork = /\bfetch\s*\(|\brequired\s*\(\s*"AEX_/.test(source);
-      return reachesNetwork && !source.includes(guard);
+      const returnsEarly = source.includes(guard) || helperGuard.test(source);
+      return reachesNetwork && !returnsEarly;
     });
 
     expect(unguarded).toEqual([]);

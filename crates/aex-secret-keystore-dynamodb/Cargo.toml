@@ -63,20 +63,3 @@ proptest.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 aex-test-harness = { path = "../../tests/support/aex-test-harness" }
-
-[[test]]
-name = "conformance"
-path = "tests/conformance.rs"
-
-[[test]]
-name = "properties"
-path = "tests/properties.rs"
-
-[[test]]
-name = "faults"
-path = "tests/faults.rs"
-
-[[test]]
-name = "integration"
-path = "tests/integration.rs"
-required-features = ["integration-engines"]
