@@ -483,12 +483,16 @@ fn replay_key(intent: &PersistIntent) -> Result<IdempotencyKey, PersistAuthority
 }
 
 fn intent_digest(intent: &PersistIntent) -> IntentDigest {
+    // The lifecycle fence proves the guest stream at execution time, but it is
+    // not part of the durable ToolHandle and changes when the same retained
+    // generation resumes. Receipt replay must remain reconstructible after a
+    // lost completion response, so the stable call, generation, source and
+    // target metadata form the durable intent instead.
     let bytes = serde_json::to_vec(&serde_json::json!({
         "workspace": intent.workspace.to_string(),
         "session": intent.call.session.to_string(),
         "agent": intent.call.agent.to_string(),
         "generation": intent.ready.generation.to_string(),
-        "fence": intent.ready.fence.0,
         "source": intent.source.as_str(),
         "name": intent.name.as_str(),
         "mediaType": intent.media_type,
@@ -535,4 +539,54 @@ fn now() -> Result<Timestamp, PersistAuthorityError> {
 
 fn store_failed(error: StoreError) -> PersistAuthorityError {
     PersistAuthorityError::Failed(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use aex_hands_protocol::operation::{GuestPath, GuestRoot};
+    use aex_hands_protocol::rpc::Fence;
+    use aex_runtime_control::HandId;
+    use aex_tool_mux::ToolCallIdentity;
+    use aex_wire::ids::{
+        AgentId, GenerationId, MessageId, OrganizationId, PrefixedId, ResourceName, SessionId,
+        Uuid7, WorkspaceId,
+    };
+
+    use super::{PersistIntent, intent_digest};
+
+    fn id<T: PrefixedId>(seed: u8) -> T {
+        T::from_uuid7(Uuid7::compose(u64::from(seed), [seed; 10]))
+    }
+
+    fn intent(fence: u64) -> PersistIntent {
+        let session = id::<SessionId>(3);
+        let workspace = id::<WorkspaceId>(2);
+        PersistIntent {
+            workspace,
+            call: ToolCallIdentity {
+                organization: id::<OrganizationId>(1),
+                workspace,
+                session,
+                agent: id::<AgentId>(4),
+                message: id::<MessageId>(5),
+                batch: 0,
+                call: "durable-storage-call".to_owned(),
+                attempt: 1,
+            },
+            ready: aex_tool_mux::ReadyHand {
+                hand: HandId::for_session(session),
+                generation: id::<GenerationId>(6),
+                fence: Fence(fence),
+            },
+            source: GuestPath::parse(&GuestRoot::workspace(), "/workspace/result.bin")
+                .expect("source"),
+            name: ResourceName::parse("result").expect("name"),
+            media_type: "application/octet-stream".to_owned(),
+        }
+    }
+
+    #[test]
+    fn committed_receipt_replays_after_same_generation_resume_changes_fence() {
+        assert_eq!(intent_digest(&intent(7)), intent_digest(&intent(8)));
+    }
 }
