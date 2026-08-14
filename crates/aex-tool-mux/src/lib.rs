@@ -48,7 +48,9 @@ pub fn parse_assertion_trust_anchors(value: &str) -> Result<Vec<(uuid::Uuid, [u8
             return Err("assertion trust anchors exceed the eight-entry bound".to_owned());
         }
         if entry.trim() != entry || entry.is_empty() {
-            return Err("assertion trust anchor entries must be non-empty and untrimmed".to_owned());
+            return Err(
+                "assertion trust anchor entries must be non-empty and untrimmed".to_owned(),
+            );
         }
         let (kid, encoded) = entry
             .split_once(':')
@@ -69,9 +71,7 @@ pub fn parse_assertion_trust_anchors(value: &str) -> Result<Vec<(uuid::Uuid, [u8
                 *existing_kid == kid || *existing_public == public
             })
         {
-            return Err(
-                "assertion trust anchors must be canonical and duplicate-free".to_owned(),
-            );
+            return Err("assertion trust anchors must be canonical and duplicate-free".to_owned());
         }
         anchors.push((kid, public));
     }

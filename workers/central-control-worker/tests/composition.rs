@@ -30,8 +30,7 @@ use aex_session_dynamodb::projection_write::{KeyAuthorizationWrite, PlacementWri
 use aex_wire::types::{Region, Timestamp};
 use async_trait::async_trait;
 use central_control_worker::runtime::{
-    DrainSettings,
-    OutboxWake, RegionalProjection, WakeDelay, WakeInvoker, Worker,
+    DrainSettings, OutboxWake, RegionalProjection, WakeDelay, WakeInvoker, Worker,
 };
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;

@@ -1,9 +1,9 @@
 //! The staged-upload authority: the four `uploads` routes.
 //!
 //! This is the composition the cluster was missing. Every primitive underneath it
-//! was already written and tested — the presigner, the durable multipart handle,
+//! was already written and tested â€” the presigner, the durable multipart handle,
 //! the conditional expressions, the shared replay combinator, the content
-//! collector — and none of it had a caller.
+//! collector â€” and none of it had a caller.
 //!
 //! Four rules run through every handler here.
 //!
@@ -14,7 +14,7 @@
 //! multipart upload nothing but the bucket lifecycle rule can reclaim.
 //!
 //! **`HeadObject` is the sole oracle** (E D-3). Whenever a completion's outcome
-//! is unknown, the answer comes from heading the durable object key — never from
+//! is unknown, the answer comes from heading the durable object key â€” never from
 //! re-issuing the completion, never from `ListParts`, and never from a timeout
 //! heuristic. Guessing wrong here deletes customer data.
 //!
@@ -54,6 +54,7 @@ use aex_workspace_domain::upload::{
 };
 
 use crate::session::handlers::{Routes, Shared};
+use crate::session::registry::RegistryWriteState;
 
 /// The content-object domain an upload's encryption context names.
 const ENCRYPTION_DOMAIN: &str = "content-object";
@@ -377,10 +378,12 @@ impl Routes {
             aex_content_domain::identity::RegistryKind::File,
             &upload.target_name,
             &document,
-            None,
-            RegistryState::Pending,
-            None,
-            None,
+            RegistryWriteState {
+                payload: None,
+                state: RegistryState::Pending,
+                failure_code: None,
+                exact_current: None,
+            },
             aex_regional_http::projection::registered_file,
         )
         .await?;
@@ -564,7 +567,7 @@ impl Routes {
         // Three items, two tables, one transaction: the upload row, the
         // `registry.upload_expiry` due item and the receipt. The receipt has to
         // land with the row, or a replay could be answered after the row exists
-        // but before the receipt does — and would open a second multipart upload.
+        // but before the receipt does â€” and would open a second multipart upload.
         let mut transaction = TransactionPlan::new(format!("upload-create:{}", staged.id));
         transaction.put(
             Participant::REGISTRY_UPLOAD,
@@ -884,10 +887,12 @@ impl aex_wire::server::UploadsApi for Routes {
             aex_content_domain::identity::RegistryKind::File,
             &ready.target_name,
             &read,
-            Some(RegisteredValueRef::Upload { upload: ready.id }),
-            RegistryState::Ready,
-            None,
-            Some(&fence),
+            RegistryWriteState {
+                payload: Some(RegisteredValueRef::Upload { upload: ready.id }),
+                state: RegistryState::Ready,
+                failure_code: None,
+                exact_current: Some(&fence),
+            },
             aex_regional_http::projection::registered_file,
         )
         .await

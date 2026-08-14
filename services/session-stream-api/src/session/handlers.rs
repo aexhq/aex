@@ -4,14 +4,14 @@
 //!
 //! **A handler never names a status and never invents a code.** The response
 //! type it returns is the status the route declares, and every refusal is one of
-//! the codes the route's descriptor lists — `dispatch::declared` refuses the rest
+//! the codes the route's descriptor lists â€” `dispatch::declared` refuses the rest
 //! at the boundary, so a code that slipped through would be `internal_error`
 //! rather than a lie.
 //!
 //! **A route this deployable does not own is [`not_served`].** Two authoring
 //! fragments are split across two deployables, so implementing a trait means
 //! implementing methods for the other half too. Those arms are unreachable
-//! through the router — [`Routes::served`] never offers them — and the
+//! through the router â€” [`Routes::served`] never offers them â€” and the
 //! composition test proves it.
 
 use std::convert::Infallible;
@@ -165,6 +165,7 @@ pub struct Routes {
     pub(super) cx: RequestContext,
 }
 
+use super::registry::RegistryWriteState;
 impl Routes {
     /// Binds the shared adapters to one verified request.
     #[must_use]
@@ -1519,7 +1520,7 @@ const fn registry_snapshot(kind: RegistryKind) -> &'static str {
 ///
 /// The point reads became servable when the value moved onto the pointer row:
 /// the complete non-payload value is a canonical JSON document stored beside the
-/// digest, so a point read is one `GetItem` and needs no content data key —
+/// digest, so a point read is one `GetItem` and needs no content data key â€”
 /// there is nothing to decrypt because no registry response ever publishes
 /// payload bytes (D-2, D-3). `registry_files_download_create` is the one route
 /// still absent; it needs the content grant and presigning composition, and it

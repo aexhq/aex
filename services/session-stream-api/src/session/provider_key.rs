@@ -668,13 +668,13 @@ mod tests {
     use aex_secret_domain::SecretName;
     use aex_secret_keystore_dynamodb::provision::ProvisionError;
     use aex_secret_keystore_dynamodb::{ActiveBranchKey, BranchKeyId};
+    use aex_session_app::ports::BindSessionApiKey;
     use aex_session_dynamodb::attr::{ITEM_TYPE, Item};
     use aex_session_dynamodb::paging::{PageBudget, PagePosition};
     use aex_session_dynamodb::plan::TransactionPlan;
     use aex_wire::idempotency::{IdempotencyKey, IntentDigest, PrincipalScope, ReplayIdentity};
     use aex_wire::ids::{ApiKeyId, Uuid7};
     use aex_wire::models::{RemoteMcpServer, SandboxMcpServer};
-    use aex_session_app::ports::BindSessionApiKey;
     use aex_wire::routes::RouteId;
     use aex_wire::types::HttpsUrl;
 

@@ -6,8 +6,8 @@
 
 pub mod aurora;
 pub mod authority;
-pub mod service;
 pub mod gateway;
+pub mod service;
 
 /// Purpose-specific database role used by the billing authority.
 pub const REQUIRED_ROLE: &str = "aex_finance_api";
