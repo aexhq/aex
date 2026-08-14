@@ -223,8 +223,8 @@ impl<D, A> Clone for MountState<D, A> {
 /// deferred template is a `405` rather than the `404` it used to be.
 ///
 /// The refusal set is keyed on `RouteDescriptor::deferred`, never on
-/// `owned − served()`. `session-stream-api` is one artifact split across two
-/// deployables by transport, so its unary half's `served()` legitimately
+/// `owned − served()`. The `session-api` release unit spans both transport
+/// halves, so its unary half's `served()` legitimately
 /// excludes 24 NDJSON routes that *work*; refusing "everything owned and not
 /// served" would take them down.
 ///

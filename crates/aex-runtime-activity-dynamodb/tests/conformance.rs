@@ -69,8 +69,8 @@ fn the_session_edge_can_atomically_admit_native_activity() {
         .as_array()
         .expect("IAM grants")
         .iter()
-        .find(|grant| grant["role"].as_str() == Some("regional-session-api"))
-        .expect("regional session grant");
+        .find(|grant| grant["role"].as_str() == Some("session-api"))
+        .expect("session API grant");
     let actions = strings(&grant["actions"]);
     for required in [
         "dynamodb:GetItem",

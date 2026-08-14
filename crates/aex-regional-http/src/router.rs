@@ -30,7 +30,7 @@ impl RouteOwner {
     #[must_use]
     pub const fn deployable(self) -> &'static str {
         match self {
-            Self::SessionApi => "session-stream-api",
+            Self::SessionApi => "session-api",
         }
     }
 
@@ -40,7 +40,7 @@ impl RouteOwner {
     #[must_use]
     pub const fn half(self) -> &'static str {
         match self {
-            Self::SessionApi => "session-stream-api:unary",
+            Self::SessionApi => "session-api:unary",
         }
     }
 

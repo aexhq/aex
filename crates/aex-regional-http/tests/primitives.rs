@@ -409,7 +409,7 @@ fn operation_header_is_the_only_operation_identity_carrier() {
 #[test]
 fn runtime_capability_admission_fails_closed() {
     let manifest = CompositionManifest {
-        deployable: DeployableId::new("regional-session-api").expect("id"),
+        deployable: DeployableId::new("session-api").expect("id"),
         capabilities: BTreeSet::from(["content.encrypt"]),
         bindings: vec![CapabilityBinding::arn(
             "AEX_CONTENT_KMS_KEY_ARN",
@@ -417,7 +417,7 @@ fn runtime_capability_admission_fails_closed() {
         )],
     };
     let valid = ResolvedConfig {
-        deployable: "regional-session-api".into(),
+        deployable: "session-api".into(),
         plane: "dev".into(),
         region: Region::EuWest1,
         account_id: "522921482290".into(),
