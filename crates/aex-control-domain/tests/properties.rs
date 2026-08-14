@@ -16,8 +16,6 @@ use aex_control_domain::{
     AccountPauseCause, AccountProfile, AccountState, IntentHash, OrgRole, PrincipalKindTag,
     Revision, Scope, ScopeSet, Slug, Workspace, WorkspaceStatus, account_operational_state,
 };
-use aex_wire::ids::{OrganizationId, PrefixedId as _, Uuid7};
-use aex_wire::models::{OperationalStateSource, OrganizationAccount, WorkspaceOperationalState};
 use aex_wire::scopes::ScopeId;
 use aex_wire::types::{HttpMethod, Region};
 use proptest::prelude::*;
@@ -385,13 +383,6 @@ fn projected(status: &str, reason: Option<&str>) -> AccountProfile {
 
 #[test]
 fn one_account_profile_projects_byte_identically_on_both_planes() {
-    let organization = OrganizationId::from_uuid7(
-        Uuid7::from_bytes([
-            0x01, 0x92, 0x3f, 0x2a, 0x7c, 0x00, 0x70, 0x00, 0x80, 0x00, 0, 0, 0, 0, 0, 1,
-        ])
-        .expect("a UUIDv7"),
-    );
-
     // Every durable finance state, with the remedy each one publishes. `active`
     // carries no reason: the durable `CHECK` makes the two agree by construction.
     let durable: [(&str, Option<&str>); 4] = [
@@ -419,28 +410,9 @@ fn one_account_profile_projects_byte_identically_on_both_planes() {
         let regional_state =
             account_operational_state(&regional).expect("the regional read projects");
 
-        // The published wrappers, not just the shared value: a second derivation
-        // would most plausibly appear in one renderer rather than in the mapping.
-        let central_wire = serde_json::to_vec(&OrganizationAccount {
-            organization_id: organization,
-            state: central_state,
-        })
-        .expect("the central wrapper serializes");
-        let regional_wire = serde_json::to_vec(&WorkspaceOperationalState {
-            inherited_from: OperationalStateSource::Account,
-            organization_id: organization,
-            state: regional_state,
-        })
-        .expect("the regional wrapper serializes");
-
-        let member = |bytes: &[u8]| -> serde_json::Value {
-            let document: serde_json::Value =
-                serde_json::from_slice(bytes).expect("the wrapper is an object");
-            document["state"].clone()
-        };
         assert_eq!(
-            serde_json::to_vec(&member(&central_wire)).expect("canonical"),
-            serde_json::to_vec(&member(&regional_wire)).expect("canonical"),
+            serde_json::to_vec(&central_state).expect("central state serializes"),
+            serde_json::to_vec(&regional_state).expect("regional state serializes"),
             "`{durable_state}` publishes two different operational states"
         );
     }

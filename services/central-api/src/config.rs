@@ -66,10 +66,6 @@ pub const CONTEXT_LIFETIME_MS: &str = "AEX_CENTRAL_API_CONTEXT_LIFETIME_MS";
 pub const CURSOR_SECRET_ID: &str = "AEX_CENTRAL_API_CURSOR_SECRET_ID";
 /// The logical database inside the cluster.
 pub const DATABASE: &str = "AEX_CENTRAL_API_DATABASE";
-/// Where a person approves a device authorization.
-pub const DEVICE_VERIFICATION_URI: &str = "AEX_CENTRAL_API_DEVICE_VERIFICATION_URI";
-/// How long a statement download grant verifies for.
-pub const DOWNLOAD_GRANT_TTL_MS: &str = "AEX_CENTRAL_API_DOWNLOAD_GRANT_TTL_MS";
 /// How long a drain may run before the listener is abandoned.
 pub const DRAIN_DEADLINE_MS: &str = "AEX_CENTRAL_API_DRAIN_DEADLINE_MS";
 /// The identity credential pepper secret.
@@ -84,8 +80,6 @@ pub const PLANE: &str = "AEX_CENTRAL_API_PLANE";
 pub const PORT: &str = "AEX_CENTRAL_API_PORT";
 /// The bound region.
 pub const REGION: &str = "AEX_CENTRAL_API_REGION";
-/// Direct regional-control Lambda ARNs, `region=arn` comma-separated.
-pub const REGIONAL_FUNCTION_ARNS: &str = "AEX_CENTRAL_API_REGIONAL_FUNCTION_ARNS";
 /// How long one request may take before the edge gives up.
 pub const REQUEST_DEADLINE_MS: &str = "AEX_CENTRAL_API_REQUEST_DEADLINE_MS";
 /// The secret holding Google's registered OAuth client.
@@ -100,8 +94,6 @@ pub const GITHUB_OAUTH_SECRET_ID: &str = "AEX_CENTRAL_API_GITHUB_OAUTH_SECRET_ID
 /// Configured rather than accepted from the request body: a caller that could
 /// choose it could aim a redeemed code at any URI the provider has registered.
 pub const SIGN_IN_REDIRECT_URI: &str = "AEX_CENTRAL_API_SIGN_IN_REDIRECT_URI";
-/// The bucket issued statement artifacts live in.
-pub const STATEMENT_BUCKET: &str = "AEX_CENTRAL_API_STATEMENT_BUCKET";
 /// The `stripe-command-edge` function this deployable may invoke.
 pub const STRIPE_COMMAND_EDGE_ARN: &str = "AEX_CENTRAL_API_STRIPE_COMMAND_EDGE_ARN";
 
@@ -116,8 +108,6 @@ pub const ALL: &[&str] = &[
     CONTEXT_LIFETIME_MS,
     CURSOR_SECRET_ID,
     DATABASE,
-    DEVICE_VERIFICATION_URI,
-    DOWNLOAD_GRANT_TTL_MS,
     DRAIN_DEADLINE_MS,
     GOOGLE_OAUTH_SECRET_ID,
     GITHUB_OAUTH_SECRET_ID,
@@ -127,15 +117,10 @@ pub const ALL: &[&str] = &[
     PLANE,
     PORT,
     REGION,
-    REGIONAL_FUNCTION_ARNS,
     REQUEST_DEADLINE_MS,
     SIGN_IN_REDIRECT_URI,
-    STATEMENT_BUCKET,
     STRIPE_COMMAND_EDGE_ARN,
 ];
-
-/// OD-17 pins a download grant and its signature to the same five minutes.
-pub const MAX_DOWNLOAD_GRANT_TTL_MS: u64 = 300_000;
 
 /// Why `central-api` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -178,20 +163,12 @@ pub struct Config {
     pub sign_in_redirect_uri: String,
     /// The cursor signing secret.
     pub cursor_secret_id: String,
-    /// Every configured region a workspace may be placed in.
-    pub regional_functions: BTreeMap<Region, String>,
     /// Public workspace API base URL for every configured region.
     pub api_urls: BTreeMap<Region, HttpsUrl>,
-    /// Where a person approves a device authorization.
-    pub device_verification_uri: String,
     /// The Stripe command edge function ARN.
     pub stripe_command_edge_arn: String,
-    /// The statement artifact bucket.
-    pub statement_bucket: String,
     /// The largest page a list route answers with.
     pub page_limit: u32,
-    /// How long a statement download grant verifies for.
-    pub download_grant_ttl: Duration,
     /// How long one minted admission context is honoured for.
     pub context_lifetime_ms: u64,
     /// The `TCP` port the one listener binds.
@@ -238,35 +215,7 @@ impl Config {
             reason: reason.to_string(),
         })?;
 
-        let regional_functions = functions(&required(&lookup, REGIONAL_FUNCTION_ARNS)?)?;
         let api_urls = api_urls(&required(&lookup, API_URLS)?)?;
-        if let Some(region) = regional_functions
-            .keys()
-            .find(|region| !api_urls.contains_key(region))
-        {
-            return Err(CentralApiConfigError::Invalid {
-                name: API_URLS,
-                reason: format!(
-                    "no public API URL for configured region `{}`",
-                    region.as_str()
-                ),
-            });
-        }
-        if let Some(region) = api_urls
-            .keys()
-            .find(|region| !regional_functions.contains_key(region))
-        {
-            return Err(CentralApiConfigError::Invalid {
-                name: REGIONAL_FUNCTION_ARNS,
-                reason: format!(
-                    "no function ARN for configured region `{}`",
-                    region.as_str()
-                ),
-            });
-        }
-
-        let download_grant_ttl_ms =
-            bounded(&lookup, DOWNLOAD_GRANT_TTL_MS, 1, MAX_DOWNLOAD_GRANT_TTL_MS)?;
         let page_limit = bounded(&lookup, PAGE_LIMIT, 1, 1_000)?;
         let context_lifetime_ms = bounded(
             &lookup,
@@ -294,13 +243,9 @@ impl Config {
             github_oauth_secret_id: required(&lookup, GITHUB_OAUTH_SECRET_ID)?,
             sign_in_redirect_uri: https_url(&lookup, SIGN_IN_REDIRECT_URI)?,
             cursor_secret_id: required(&lookup, CURSOR_SECRET_ID)?,
-            regional_functions,
             api_urls,
-            device_verification_uri: required(&lookup, DEVICE_VERIFICATION_URI)?,
             stripe_command_edge_arn: required(&lookup, STRIPE_COMMAND_EDGE_ARN)?,
-            statement_bucket: required(&lookup, STATEMENT_BUCKET)?,
             page_limit: u32::try_from(page_limit).unwrap_or(u32::MAX),
-            download_grant_ttl: Duration::from_millis(download_grant_ttl_ms),
             context_lifetime_ms,
             port: u16::try_from(raw_port).map_err(|_| CentralApiConfigError::Invalid {
                 name: PORT,
@@ -345,18 +290,9 @@ impl Config {
                 ),
                 (AURORA_SECRET_ARN.to_owned(), self.aurora_secret_arn.clone()),
                 (
-                    REGIONAL_FUNCTION_ARNS.to_owned(),
-                    self.regional_functions
-                        .iter()
-                        .map(|(region, function)| format!("{}={function}", region.as_str()))
-                        .collect::<Vec<_>>()
-                        .join(","),
-                ),
-                (
                     STRIPE_COMMAND_EDGE_ARN.to_owned(),
                     self.stripe_command_edge_arn.clone(),
                 ),
-                (STATEMENT_BUCKET.to_owned(), self.statement_bucket.clone()),
             ]),
         }
     }
@@ -425,51 +361,6 @@ where
         });
     }
     Ok(value)
-}
-
-/// Parses the `region=lambda-arn` authority map.
-///
-/// Every configured launch region must be present, and it is checked here
-/// rather than at the first `POST /api/workspaces`. A plane may compose a
-/// strict subset while its remaining regional stacks are not yet published, but
-/// it must never claim an unconfigured region is reachable.
-fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralApiConfigError> {
-    let mut map = BTreeMap::new();
-    for entry in raw.split(',').filter(|it| !it.trim().is_empty()) {
-        let (region, function) =
-            entry
-                .split_once('=')
-                .ok_or_else(|| CentralApiConfigError::Invalid {
-                    name: REGIONAL_FUNCTION_ARNS,
-                    reason: "expected `region=lambda-arn` entries".to_owned(),
-                })?;
-        let parsed =
-            Region::from_name(region.trim()).ok_or_else(|| CentralApiConfigError::Invalid {
-                name: REGIONAL_FUNCTION_ARNS,
-                reason: format!("`{region}` is not a launch region"),
-            })?;
-        let function = function.trim();
-        let expected = format!("arn:aws:lambda:{}:", parsed.as_str());
-        if !function.starts_with(&expected)
-            || !function.contains(":function:")
-            || map.insert(parsed, function.to_owned()).is_some()
-        {
-            return Err(CentralApiConfigError::Invalid {
-                name: REGIONAL_FUNCTION_ARNS,
-                reason: format!(
-                    "`{}` is not a unique Lambda ARN in its bound region",
-                    parsed.as_str()
-                ),
-            });
-        }
-    }
-    if map.is_empty() {
-        return Err(CentralApiConfigError::Invalid {
-            name: REGIONAL_FUNCTION_ARNS,
-            reason: "at least one configured region is required".to_owned(),
-        });
-    }
-    Ok(map)
 }
 
 fn api_urls(raw: &str) -> Result<BTreeMap<Region, HttpsUrl>, CentralApiConfigError> {

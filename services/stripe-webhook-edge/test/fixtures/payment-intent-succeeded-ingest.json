@@ -1,0 +1,20 @@
+{
+  "request": "provider_event",
+  "event": {
+    "schemaVersion": 1,
+    "providerEventId": "evt_pi_succeeded_fixture",
+    "object": "pi_fixture",
+    "kind": "payment_intent_succeeded",
+    "occurredAt": "2027-01-15T08:01:40.000Z",
+    "facts": {
+      "kind": "payment_intent_succeeded",
+      "organization": "org_01kyw2qa4pew48j2gb1g6gw3rg",
+      "credit": "1000",
+      "charged": "1000",
+      "intent": "pi_fixture"
+    },
+    "rawDigest": "sha256:bc182551c9df8806a8b80b8ba8264ed101ab6480ea92e24feb150873f4079b97",
+    "providerApiVersion": "2026-06-24.dahlia",
+    "receivedAt": "2027-01-15T08:03:20.000Z"
+  }
+}

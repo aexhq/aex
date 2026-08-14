@@ -1,8 +1,8 @@
 import { requireWorkspace } from "../../../../../../src/server/context";
 import {
-  LiveFilesPanel,
   MessagesPanel,
   SessionHeader,
+  TelemetryPanel,
 } from "../../../../../../src/ui/panels/session-detail";
 
 export const dynamic = "force-dynamic";
@@ -20,8 +20,8 @@ export default async function SessionPage({
   params: Promise<{ slug: string; sessionId: string }>;
 }) {
   const { slug, sessionId } = await params;
-  const { organization, regionCode } = await requireWorkspace(slug);
-  const billingHref = organization ? `/org/${organization.slug}/billing` : undefined;
+  const { regionCode } = await requireWorkspace(slug);
+  const billingHref = "/billing";
   const scope = { slug, region: regionCode, sessionId, billingHref };
 
   return (
@@ -32,7 +32,7 @@ export default async function SessionPage({
       </div>
       <SessionHeader {...scope} />
       <MessagesPanel {...scope} />
-      <LiveFilesPanel {...scope} />
+      <TelemetryPanel {...scope} />
     </div>
   );
 }

@@ -1,0 +1,21 @@
+{
+  "$id": "https://schemas.aex.dev/v1/PaymentMethodPage.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The bounded set of cards attached to the caller's account.",
+  "properties": {
+    "items": {
+      "description": "Cards, newest first.",
+      "items": {
+        "$ref": "aex:schema:PaymentMethod"
+      },
+      "maxItems": 32,
+      "type": "array"
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "PaymentMethodPage",
+  "type": "object"
+}

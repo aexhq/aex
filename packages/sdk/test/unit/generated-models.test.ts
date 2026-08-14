@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import {
   type Aex,
-  assertId,
   isId,
   newId,
   type Id,
@@ -27,7 +26,7 @@ describe("generated public models", () => {
     const request: SessionCreateRequest = {
       provider: "openai",
       model: "gpt-5",
-      providerCredentialId: newId("provider_credential"),
+      providerApiKey: "sk-live-fixture",
     };
     type CreateParams = Parameters<Aex["sessions"]["sessionCreate"]>[0];
     type MessageParams = Parameters<Aex["sessions"]["sessionMessageSend"]>[0];
@@ -48,8 +47,7 @@ describe("generated public models", () => {
     const sendResultIsAuthored: Equal<SendResult, MessageSendResult> = true;
 
     expect(isId("operation", operationId)).toBeTrue();
-    expect(assertId("provider_credential", request.providerCredentialId))
-      .toBe(request.providerCredentialId);
+    expect(request.providerApiKey).toBe("sk-live-fixture");
     expect(createParams.body).toBe(request);
     expect(messageParams.body.text).toBe("hello");
     expect(createBodyIsAuthored).toBeTrue();

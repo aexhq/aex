@@ -7,7 +7,7 @@
 //!
 //! Every refusal names the variable. A start-up failure that says "invalid
 //! configuration" costs an operator a bisect; one that says
-//! `AEX_SESSION_TABLE is missing` costs them nothing.
+//! `AEX_SESSION_AUTHORITY_TABLE is missing` costs them nothing.
 
 use aex_identity_domain::assertion::Plane;
 use aex_wire::types::Region;

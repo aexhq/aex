@@ -4,14 +4,13 @@
 # middleware stack evaluates ascending, so a code's stage says exactly where in
 # the pipeline it may be emitted.
 errors:
-  - { code: unauthenticated, status: 401, retryable: false, class: auth, stage: authentication, message: "no valid credential was presented", remedy: "present a valid account token or workspace API key" }
+  - { code: unauthenticated, status: 401, retryable: false, class: auth, stage: authentication, message: "no valid credential was presented", remedy: "present a valid dashboard session or workspace API key" }
   - { code: forbidden, status: 403, retryable: false, class: auth, stage: authorization, message: "the principal may not act on this resource" }
   - { code: insufficient_scope, status: 403, retryable: false, class: auth, stage: scope, message: "the credential lacks the required scope", remedy: "mint a key that carries the scope named in `details`" }
   - { code: token_invalid, status: 401, retryable: false, class: auth, stage: authentication, message: "the credential did not verify" }
   - { code: token_revoked, status: 401, retryable: false, class: auth, stage: authentication, message: "the credential has been revoked" }
   - { code: token_expired, status: 401, retryable: false, class: auth, stage: authentication, message: "the credential has expired" }
   - { code: malformed_token, status: 401, retryable: false, class: auth, stage: authentication, message: "the credential is not a well-formed AEX credential" }
-  - { code: authorization_pending, status: 400, retryable: true, class: state, stage: domain_state, message: "the device authorization has not been approved yet" }
   - { code: slow_down, status: 429, retryable: true, class: quota, stage: domain_state, message: "poll less often" }
   - { code: not_found, status: 404, retryable: false, class: not_found, stage: tombstone_and_parent, message: "no such resource" }
   - { code: gone, status: 410, retryable: false, class: not_found, stage: tombstone_and_parent, message: "the resource was deleted" }

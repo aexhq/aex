@@ -203,7 +203,7 @@ fn entity_tags_are_deterministic_kind_separated_strong_validators() {
 fn value_document() -> ValueDocument {
     let payload = ContentHash::of(b"body").to_wire();
     let text = format!(
-        r#"{{"mountPath":"/etc/motd","mediaType":"text/plain","mode":"0644",
+        r#"{{"mediaType":"text/plain","mode":"0644",
             "content":{{"sha256":"{payload}","sizeBytes":"4"}}}}"#
     );
     ValueDocument::new(aex_wire::CanonicalJson::parse(&text).expect("valid JSON"))
@@ -238,8 +238,17 @@ fn a_projected_file_survives_the_wire_unchanged() {
     let decoded: models::RegisteredFile =
         serde_json::from_slice(&encoded).expect("it decodes through deny_unknown_fields");
     assert_eq!(decoded, projected);
-    assert_eq!(projected.revision, 7);
-    assert_eq!(projected.size_bytes.get(), 4_096);
+    assert_eq!(projected.state, models::RegisteredState::Ready);
+    assert_eq!(
+        projected
+            .value
+            .as_ref()
+            .expect("ready value")
+            .content
+            .size_bytes
+            .get(),
+        4
+    );
 }
 
 #[test]

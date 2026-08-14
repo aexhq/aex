@@ -255,20 +255,20 @@ fn recipes_name_the_real_build_output_instead_of_guessing_from_the_unit_id() {
     };
 
     assert_eq!(
-        recipe("regional-control").input,
-        "target/lambda/regional-control/bootstrap"
+        recipe("runtime-control-worker").input,
+        "target/lambda/runtime-control-worker/bootstrap"
     );
     assert_eq!(
-        recipe("session-stream-api").input,
+        recipe("session-api").input,
         "target/aarch64-unknown-linux-gnu/release/session-stream-api"
     );
     assert_eq!(
-        recipe("central-api").input,
+        recipe("control-api").input,
         "target/aarch64-unknown-linux-gnu/release/central-api"
     );
     assert_eq!(
-        recipe("stripe-command-edge").input,
-        "services/stripe-command-edge/dist/handler.js"
+        recipe("stripe-webhook-edge").input,
+        "services/stripe-webhook-edge/dist/handler.js"
     );
     assert_eq!(
         recipe("brain-mux").input,
@@ -278,10 +278,7 @@ fn recipes_name_the_real_build_output_instead_of_guessing_from_the_unit_id() {
         recipe("hands-agent").input,
         "target/aarch64-unknown-linux-musl/release/hands-agent"
     );
-    assert_eq!(
-        recipe("hands-image-4gb").input,
-        "target/microvm/hands-image-4gb"
-    );
+    assert_eq!(recipe("hands-image").input, "target/microvm/hands-image");
 }
 
 #[test]
@@ -291,7 +288,7 @@ fn every_catalog_consumer_records_the_exact_catalog_build_bindings() {
         tool_catalog_sha256:
             "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
     };
-    for id in ["brain-mux", "session-stream-api"] {
+    for id in ["brain-mux", "session-api"] {
         let unit = units
             .units
             .iter()
@@ -489,7 +486,7 @@ fn an_envelope_records_the_command_that_ran_and_says_when_it_was_not_the_recipe(
     let artifact = temp.path().join("bootstrap.zip");
     std::fs::write(&artifact, b"PK\x03\x04 fixture archive").unwrap();
 
-    let (recipe_envelope, recipe_ledger) = described("regional-control", &artifact, None);
+    let (recipe_envelope, recipe_ledger) = described("runtime-control-worker", &artifact, None);
     assert_eq!(recipe_envelope.inputs.build_command.argv[1], "lambda");
     assert!(
         !recipe_ledger
@@ -504,7 +501,7 @@ fn an_envelope_records_the_command_that_ran_and_says_when_it_was_not_the_recipe(
         "--profile".to_owned(),
         "release-lambda".to_owned(),
     ];
-    let (envelope, ledger) = described("regional-control", &artifact, Some(ran.clone()));
+    let (envelope, ledger) = described("runtime-control-worker", &artifact, Some(ran.clone()));
     assert_eq!(envelope.inputs.build_command.argv, ran);
     let row = ledger
         .iter()
@@ -539,7 +536,7 @@ fn a_locally_described_envelope_records_real_bytes_and_is_still_refused() {
     let artifact = temp.path().join("bootstrap.zip");
     std::fs::write(&artifact, b"PK\x03\x04 fixture archive").unwrap();
 
-    let err = local_build_of("regional-control", &artifact).unwrap_err();
+    let err = local_build_of("runtime-control-worker", &artifact).unwrap_err();
     assert_eq!(
         err.exit.code(),
         20,

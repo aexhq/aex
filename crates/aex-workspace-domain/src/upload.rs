@@ -24,7 +24,7 @@
 //! verb (E D-4).
 
 use aex_content_domain::{ContentDigest, RegisteredName, RegistryKind};
-use aex_wire::ids::{UploadId, WorkspaceId};
+use aex_wire::ids::{ResourceName, UploadId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use time::Duration;
 
@@ -40,15 +40,13 @@ pub const PART_MIN_BYTES: u64 = 5 * 1024 * 1024;
 /// Largest part.
 pub const PART_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
-/// Largest number of parts.
-pub const PART_MAX_COUNT: u32 = 10_000;
-
-/// Largest number of parts one `upload_parts_grant` call may cover (E D-9).
+/// Largest number of parts in the two-route MVP upload admission.
 ///
-/// A maximal 10 000-part upload therefore needs at least ten grant calls. Such
-/// an upload is at least 50 GB, so the extra round trips are noise against the
-/// transfer they are pacing, and the bound is what keeps both the response and
-/// the persisted part block inside their ceilings.
+/// Every checksum-bound grant is returned by `upload_create`; there is no
+/// follow-up grant route, so the plan and response share this bound.
+pub const PART_MAX_COUNT: u32 = 1_000;
+
+/// Largest number of checksum-bound grants admitted at once.
 pub const PART_GRANT_MAX_PER_CALL: usize = 1_000;
 
 /// Where an upload is.
@@ -219,6 +217,8 @@ pub struct VerifiedObject {
 pub struct Upload {
     /// Its identity.
     pub id: UploadId,
+    /// Latest-only workspace-file name this transport will publish.
+    pub target_name: ResourceName,
     /// The owning workspace.
     pub workspace: WorkspaceId,
     /// Where it is.
@@ -483,6 +483,48 @@ pub fn grant_parts(
         },
         granted,
     })
+}
+
+/// Settles every checksum-bound part declaration at upload admission.
+///
+/// The public MVP has no later grant route. Consequently the declaration must
+/// cover the stored plan exactly: unique contiguous part numbers, exact planned
+/// sizes and a total equal to the upload's declared size. This is deliberately
+/// stricter than [`grant_parts`], which remains useful for private retries.
+///
+/// # Errors
+///
+/// Returns [`UploadError::PartsNotContiguous`] when the declaration omits,
+/// duplicates or reorders a part, and the same size/hash errors as
+/// [`grant_parts`] when a declaration contradicts the plan.
+pub fn admit_all_parts(
+    upload: &Upload,
+    requests: &[PartGrantRequest],
+    now: Timestamp,
+) -> Result<UploadCommit, UploadError> {
+    if requests.len() != upload.parts.parts.len() {
+        return Err(UploadError::PartsNotContiguous);
+    }
+    let mut total = 0_u64;
+    for (index, request) in requests.iter().enumerate() {
+        let expected = u32::try_from(index + 1).unwrap_or(u32::MAX);
+        if request.number != expected {
+            return Err(UploadError::PartsNotContiguous);
+        }
+        total = total
+            .checked_add(request.size_bytes)
+            .ok_or(UploadError::SizeMismatch {
+                declared: upload.declared_size,
+                verified: u64::MAX,
+            })?;
+    }
+    if total != upload.declared_size {
+        return Err(UploadError::SizeMismatch {
+            declared: upload.declared_size,
+            verified: total,
+        });
+    }
+    grant_parts(upload, requests, now)
 }
 
 /// Begins completion against the caller's part receipts.
@@ -790,7 +832,7 @@ mod tests {
         AmbiguityResolution, CompletionEvidence, ExpiryOutcome, HeadOracle,
         PART_GRANT_MAX_PER_CALL, PART_MAX_BYTES, PART_MAX_COUNT, PART_MIN_BYTES, PartGrantRequest,
         PartReceipt, RegistrySelector, Upload, UploadError, UploadState, VerifiedObject, abort,
-        begin_complete, consume, expire, finish_complete, grant_parts, plan_parts,
+        admit_all_parts, begin_complete, consume, expire, finish_complete, grant_parts, plan_parts,
         resolve_completing,
     };
 
@@ -810,6 +852,8 @@ mod tests {
     fn upload(size: u64) -> Upload {
         Upload {
             id: UploadId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            target_name: aex_wire::ids::ResourceName::parse("artifact")
+                .expect("valid resource name"),
             workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [2; 10])),
             state: UploadState::Created,
             provider_upload_id: "provider-mpu-1".to_owned(),
@@ -930,6 +974,52 @@ mod tests {
                 moment(2)
             ),
             Err(UploadError::PartHashChanged { part: 1 })
+        );
+    }
+
+    #[test]
+    fn admission_requires_one_contiguous_checksum_bound_declaration_for_the_whole_plan() {
+        let staged = upload(PART_MIN_BYTES + 17);
+        let requests: Vec<PartGrantRequest> = staged
+            .parts
+            .parts
+            .iter()
+            .map(|part| PartGrantRequest {
+                number: part.number,
+                sha256: ContentDigest::of(&part.number.to_be_bytes()),
+                size_bytes: part.bytes,
+            })
+            .collect();
+        let admitted = admit_all_parts(&staged, &requests, moment(1)).expect("exact admission");
+        assert_eq!(admitted.granted, vec![1, 2]);
+        assert_eq!(admitted.upload.parts.total_bytes(), staged.declared_size);
+        assert!(
+            admitted
+                .upload
+                .parts
+                .parts
+                .iter()
+                .all(|part| part.sha256.is_some())
+        );
+
+        assert_eq!(
+            admit_all_parts(&staged, &requests[..1], moment(1)),
+            Err(UploadError::PartsNotContiguous)
+        );
+        let mut duplicate = requests.clone();
+        duplicate[1].number = 1;
+        assert_eq!(
+            admit_all_parts(&staged, &duplicate, moment(1)),
+            Err(UploadError::PartsNotContiguous)
+        );
+        let mut wrong_total = requests;
+        wrong_total[1].size_bytes -= 1;
+        assert_eq!(
+            admit_all_parts(&staged, &wrong_total, moment(1)),
+            Err(UploadError::SizeMismatch {
+                declared: staged.declared_size,
+                verified: staged.declared_size - 1,
+            })
         );
     }
 

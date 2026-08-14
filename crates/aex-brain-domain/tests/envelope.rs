@@ -6,9 +6,10 @@
 
 use aex_brain_domain::budget::{BudgetDelta, Dimension, DimensionVector};
 use aex_brain_domain::commit::{
-    ChildWrite, ControlUpdate, DecisionCommit, EffectWrite, EnvelopeViolation, FenceGuardRef,
-    MAX_ITEM_BYTES, MAX_TRANSACTION_ACTIONS, MAX_TRANSACTION_BYTES, PublicSessionEvent,
-    RunTransition, SPAWN_PAGE_CHILDREN, SessionHeadTransition, event_seq, fanout_pages,
+    ChildBootstrap, ChildWrite, ControlUpdate, DecisionCommit, EffectWrite, EnvelopeViolation,
+    FenceGuardRef, MAX_ITEM_BYTES, MAX_TRANSACTION_ACTIONS, MAX_TRANSACTION_BYTES,
+    PublicSessionEvent, RunTransition, SPAWN_PAGE_CHILDREN, SessionHeadTransition, event_seq,
+    fanout_pages,
 };
 use aex_brain_domain::effect::{EffectClass, EffectKind};
 use aex_brain_domain::ids::{
@@ -71,6 +72,12 @@ fn spawn(ordinal: u32) -> ChildWrite {
         grant: DimensionVector::uniform(1),
         join: JoinId(Uuid::from_u128(7)),
         queued_reason: None,
+        bootstrap: Box::new(ChildBootstrap {
+            config: Box::new(aex_brain_test_support::journal_gen::config()),
+            input: Vec::new(),
+            depth: 1,
+            budget: DimensionVector::uniform(1),
+        }),
     }
 }
 
@@ -168,8 +175,8 @@ fn only_hands_effects_carry_the_canonical_runtime_generation() {
     ));
 }
 
-/// A real spawn page: the parent control update, the fanout intent, `n` children at three
-/// items each, and the session budget update.
+/// A real spawn page: the parent control update, the fanout intent, `n` children with
+/// index/control/two bootstrap journal items, and the session budget update.
 fn spawn_page(children: u32) -> DecisionCommit {
     let mut writes = vec![ChildWrite::FanoutIntent {
         intent: FanoutIntentId(Uuid::from_u128(11)),
@@ -187,13 +194,13 @@ fn spawn_page(children: u32) -> DecisionCommit {
 
 #[test]
 fn the_page_size_is_derived_from_the_action_envelope_not_guessed() {
-    // A child costs a control put, an index put and a queued-index put; the page also
+    // A child costs a control put, an index put and two bootstrap journal puts; the page also
     // carries the session guard, parent control update, fanout intent and session budget.
-    // That is `3n + 4 <= 100`, so 32. This asserts the derivation, not the constant.
+    // The launch lifetime ceiling (12) now binds before DynamoDB's action ceiling.
     let full = spawn_page(SPAWN_PAGE_CHILDREN)
         .validate()
         .expect("the derived page size fits one transaction");
-    assert_eq!(full.actions, 3 * SPAWN_PAGE_CHILDREN as usize + 4);
+    assert_eq!(full.actions, 4 * SPAWN_PAGE_CHILDREN as usize + 4);
     assert!(full.actions <= MAX_TRANSACTION_ACTIONS, "{full:?}");
 
     let widest = (0..64_u32)
@@ -208,9 +215,9 @@ fn the_page_size_is_derived_from_the_action_envelope_not_guessed() {
 
 #[test]
 fn a_decision_over_the_action_ceiling_is_rejected_before_aws_sees_it() {
-    let error = spawn_page(SPAWN_PAGE_CHILDREN + 1)
+    let error = decision(vec![finished(); MAX_TRANSACTION_ACTIONS], Vec::new())
         .validate()
-        .expect_err("one child over the derived page does not fit");
+        .expect_err("the fixed authority actions put this over the envelope");
     assert!(
         matches!(error, EnvelopeViolation::TooManyActions { actions } if actions > MAX_TRANSACTION_ACTIONS),
         "{error:?}"
@@ -260,8 +267,8 @@ fn a_fanout_pages_into_whole_transactions() {
     assert_eq!(fanout_pages(1), 1);
     assert_eq!(fanout_pages(SPAWN_PAGE_CHILDREN), 1);
     assert_eq!(fanout_pages(SPAWN_PAGE_CHILDREN + 1), 2);
-    // The per-decision admission bound of 128 is realized as exactly four pages.
-    assert_eq!(fanout_pages(128), 4);
+    // The hard lifetime ceiling is exactly one page in the MVP.
+    assert_eq!(fanout_pages(12), 1);
 }
 
 #[test]

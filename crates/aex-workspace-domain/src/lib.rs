@@ -23,32 +23,33 @@
 //! - content bytes or Merkle pages (`aex-content-domain`);
 //! - authorization decisions about who may hold a grant.
 
-pub mod grant;
 pub mod file;
+pub mod grant;
 pub mod registry;
 pub mod upload;
 
 /// The registry name grammar, re-exported so a caller needs one import.
 pub use aex_content_domain::{RegisteredName, RegistryKind, Revision};
-pub use grant::{
-    ByteRange, ContentObjectLocation, DownloadGrant, GRANT_TTL, GrantContentDescriptor,
-    GrantPlacement, GrantRejection, GrantSubject, MAX_SIGNED_RANGE_BYTES, ObjectChecksum,
-    mint_grant,
-};
 pub use file::{
     FileAdmission, FileIntent, FileMount, FilePublish, FileReferences, FileSource, FileState,
     FreezeError, FrozenFile, ReadyFile, StoragePersistError, StoragePersistOutcome,
     StoragePersistReceipts, StoragePersistRequest, StoragePersistResult, WorkspaceFile,
     admit_inline, admit_pending, freeze_manifest, publish_failed, publish_ready,
 };
+pub use grant::{
+    ByteRange, ContentObjectLocation, DownloadGrant, GRANT_TTL, GrantContentDescriptor,
+    GrantPlacement, GrantRejection, GrantSubject, MAX_SIGNED_RANGE_BYTES, ObjectChecksum,
+    mint_grant,
+};
 pub use registry::{
     DeleteCommit, ProposedValue, RegisteredValueRef, RegistryCommit, RegistryPointer,
-    RegistryRejection, RegistryRow, SetOutcome, ValueDocument, ValueError, delete, etag_of, set,
+    RegistryRejection, RegistryRow, RegistryState, SetOutcome, ValueDocument, ValueError, delete,
+    etag_of, set,
 };
 pub use upload::{
     AmbiguityResolution, CompletionEvidence, ExpiryOutcome, HeadOracle, PART_GRANT_MAX_PER_CALL,
     PART_GRANT_TTL, PART_MAX_BYTES, PART_MAX_COUNT, PART_MIN_BYTES, PartGrantRequest, PartPlan,
     PartReceipt, PlannedPart, RegistrySelector, SubmittedPart, UPLOAD_GRACE, Upload, UploadCommit,
-    UploadError, UploadState, VerifiedObject, abort, begin_complete, consume, expire,
-    finish_complete, grant_parts, plan_parts, resolve_completing,
+    UploadError, UploadState, VerifiedObject, abort, admit_all_parts, begin_complete, consume,
+    expire, finish_complete, grant_parts, plan_parts, resolve_completing,
 };

@@ -134,6 +134,7 @@ pub fn cancelled_terminal(
         body_len: retained.len() as u64,
         digest,
         truncated,
+        result_file: None,
         failure: Some(OperationFailure {
             reason: "cancelled".to_owned(),
             detail,

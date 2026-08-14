@@ -2,38 +2,24 @@
   "$id": "https://schemas.aex.dev/v1/SessionTombstone.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The minimal marker left after irreversible deletion. Compute and live files are terminated first; session, message, and Brain user-content payloads are removed. Independent registered workspace files and aggregate billing/audit facts remain.",
+  "description": "Minimal marker after irreversible deletion.",
   "properties": {
     "deletedAt": {
-      "description": "When deletion committed.",
+      "description": "Commit time.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     },
     "id": {
-      "description": "The deleted session.",
+      "description": "Deleted session.",
       "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "session"
-    },
-    "operationId": {
-      "description": "The operation that deleted it.",
-      "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
-      "type": "string",
-      "x-aex-id": "operation"
-    },
-    "workspaceId": {
-      "description": "The owning workspace.",
-      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
-      "type": "string",
-      "x-aex-id": "workspace"
     }
   },
   "required": [
     "deletedAt",
-    "id",
-    "operationId",
-    "workspaceId"
+    "id"
   ],
   "title": "SessionTombstone",
   "type": "object"

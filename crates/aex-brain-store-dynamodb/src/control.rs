@@ -6,6 +6,7 @@
 
 use aex_brain_app::ports::AgentHead;
 use aex_brain_domain::budget::{BudgetNode, DIMENSIONS, DimensionVector};
+use aex_brain_domain::checkpoint::CheckpointMetadata;
 use aex_brain_domain::ids::{
     AgentKey, AgentRevision, CancelEpoch, ContentHash, EffectId, Fence, JournalSeq, Timestamp,
 };
@@ -38,7 +39,7 @@ pub fn decode(
     let has_journal = row.boolean("hasJournal").unwrap_or(tail > 0);
     let tail_hash = row
         .opt_string("journalTailHash")?
-        .map(parse_hash)
+        .map(|value| parse_hash("journalTailHash", value))
         .transpose()?;
     if has_journal != tail_hash.is_some() {
         return Err(CodecError::Malformed {
@@ -49,11 +50,12 @@ pub fn decode(
     }
     Ok(AgentHead {
         key,
-        generation: row.id::<GenerationId>("generationId")?,
+        generation: row.opt_id::<GenerationId>("generationId")?,
         revision: AgentRevision(row.u64("revision")?),
         fence: Fence(row.u64("fence")?),
         journal_tail: has_journal.then_some(JournalSeq(tail)),
         journal_tail_hash: tail_hash,
+        checkpoint: decode_checkpoint(&row)?,
         cancel_epoch: CancelEpoch(row.opt_u64("cancelEpoch")?.unwrap_or(0)),
         finish: row
             .opt_string("finishReason")?
@@ -75,7 +77,41 @@ pub fn decode(
     })
 }
 
-fn parse_hash(text: &str) -> Result<ContentHash, CodecError> {
+fn decode_checkpoint(row: &Row<'_>) -> Result<Option<CheckpointMetadata>, CodecError> {
+    let Some(id) = row.opt_string("checkpointId")? else {
+        return Ok(None);
+    };
+    let required = |attribute: &'static str| {
+        row.opt_string(attribute)?.ok_or(CodecError::Missing {
+            item_type: AGENT_CONTROL,
+            attribute,
+        })
+    };
+    let created_at = row
+        .opt_timestamp("checkpointCreatedAt")?
+        .ok_or(CodecError::Missing {
+            item_type: AGENT_CONTROL,
+            attribute: "checkpointCreatedAt",
+        })?;
+    Ok(Some(CheckpointMetadata {
+        schema_version: u16::try_from(row.u64("checkpointSchemaVersion")?).unwrap_or(u16::MAX),
+        id: parse_hash("checkpointId", id)?,
+        previous: row
+            .opt_string("checkpointPreviousId")?
+            .map(|value| parse_hash("checkpointPreviousId", value))
+            .transpose()?,
+        covers_through: JournalSeq(row.u64("checkpointCoversThrough")?),
+        covers_hash: parse_hash("checkpointCoversHash", required("checkpointCoversHash")?)?,
+        object_hash: parse_hash("checkpointObjectHash", required("checkpointObjectHash")?)?,
+        object_bytes: row.u64("checkpointObjectBytes")?,
+        source_hash: parse_hash("checkpointSourceHash", required("checkpointSourceHash")?)?,
+        approximate_tokens: row.u64("checkpointApproximateTokens")?,
+        compactor: required("checkpointCompactor")?.to_owned(),
+        created_at: Timestamp::from_millis(created_at.unix_millis()),
+    }))
+}
+
+fn parse_hash(attribute: &'static str, text: &str) -> Result<ContentHash, CodecError> {
     if text.len() != 64
         || !text
             .bytes()
@@ -83,7 +119,7 @@ fn parse_hash(text: &str) -> Result<ContentHash, CodecError> {
     {
         return Err(CodecError::Malformed {
             item_type: AGENT_CONTROL,
-            attribute: "journalTailHash",
+            attribute,
             reason: "expected 32 lowercase hexadecimal bytes".to_owned(),
         });
     }
@@ -92,7 +128,7 @@ fn parse_hash(text: &str) -> Result<ContentHash, CodecError> {
         *slot = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).map_err(|_| {
             CodecError::Malformed {
                 item_type: AGENT_CONTROL,
-                attribute: "journalTailHash",
+                attribute,
                 reason: "expected 32 lowercase hexadecimal bytes".to_owned(),
             }
         })?;
@@ -132,8 +168,6 @@ fn decode_budget(row: &Row<'_>) -> Result<BudgetNode, CodecError> {
 fn parse_finish(text: &str) -> Result<FinishReason, CodecError> {
     Ok(match text {
         "completed" => FinishReason::Completed,
-        "max_turns" => FinishReason::MaxTurns,
-        "max_steps" => FinishReason::MaxSteps,
         "budget" => FinishReason::Budget,
         "timeout" => FinishReason::Timeout,
         "cancelled" => FinishReason::Cancelled,
@@ -200,7 +234,7 @@ mod tests {
     fn a_control_row_decodes_into_the_head_a_claim_returns() {
         let head = decode(&row().build(), key(), Vec::new()).expect("a well-formed row");
         assert_eq!(head.revision, AgentRevision(7));
-        assert_eq!(head.generation, generation());
+        assert_eq!(head.generation, Some(generation()));
         assert_eq!(head.fence, Fence(3));
         assert_eq!(head.journal_tail, Some(JournalSeq(11)));
         assert_eq!(
@@ -214,6 +248,40 @@ mod tests {
         );
         assert!(!head.stop_requested);
         assert_eq!(head.finish, None);
+    }
+
+    #[test]
+    fn a_first_checkpoint_decodes_without_an_invented_empty_previous_identity() {
+        let id = aex_brain_domain::ids::ContentHash::of(b"checkpoint");
+        let covers = aex_brain_domain::ids::ContentHash::of(b"covers");
+        let object = aex_brain_domain::ids::ContentHash::of(b"object");
+        let source = aex_brain_domain::ids::ContentHash::of(b"source");
+        let item = row()
+            .set("checkpointSchemaVersion", n(1))
+            .set("checkpointId", s(id.to_hex()))
+            .set("checkpointCoversThrough", n(11))
+            .set("checkpointCoversHash", s(covers.to_hex()))
+            .set("checkpointObjectHash", s(object.to_hex()))
+            .set("checkpointObjectBytes", n(2_048))
+            .set("checkpointSourceHash", s(source.to_hex()))
+            .set("checkpointApproximateTokens", n(512))
+            .set("checkpointCompactor", s("aex-extractive-v1"))
+            .set(
+                "checkpointCreatedAt",
+                stamp(
+                    aex_wire::types::Timestamp::from_unix_millis(1_767_225_600_000)
+                        .expect("in range"),
+                ),
+            )
+            .build();
+
+        let checkpoint = decode(&item, key(), Vec::new())
+            .expect("the first pointer decodes")
+            .checkpoint
+            .expect("the pointer exists");
+        assert_eq!(checkpoint.id, id);
+        assert_eq!(checkpoint.previous, None);
+        assert_eq!(checkpoint.object_hash, object);
     }
 
     /// An agent with no journal yet reports absence, not sequence zero. Conditioning on

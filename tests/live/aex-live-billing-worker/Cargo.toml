@@ -1,0 +1,47 @@
+[package]
+name = "aex-live-billing-worker"
+version = "0.1.0"
+description = "Live-test companion package for the `billing-worker` deployable."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "central-finance"
+role = "live_companion"
+artifact = "none"
+deployable = "billing-worker"
+layers = ["smoke", "e2e"]
+concerns = ["fault", "security", "performance"]
+seams = ["aws.iam.denial", "aws.rds_data.transaction", "aws.sqs.fifo", "aws.sqs.redrive", "stripe.test_mode.webhook", "stripe.test_mode.command"]
+security_tier = "money"
+risk = ["iam"]
+scenarios = ["SC-BILLING-PAYMENT-METHOD-LIFECYCLE"]
+
+[package.metadata.aex.targets]
+payment_methods = "e2e"
+
+[features]
+live = []
+
+[dependencies]
+aws-config.workspace = true
+aws-sdk-lambda.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+aex-test-harness = { path = "../../support/aex-test-harness" }
+
+[[test]]
+name = "payment_methods"
+path = "tests/payment_methods.rs"
+required-features = ["live"]

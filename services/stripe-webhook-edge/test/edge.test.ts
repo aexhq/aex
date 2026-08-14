@@ -8,6 +8,7 @@ import {
   normalizeEvent,
   verifyWithRotatingSecrets,
 } from "../src/edge.js";
+import { ingestRequest } from "../src/handler.js";
 
 const endpointPolicy = JSON.parse(
   readFileSync(new URL("../../../release/stripe-endpoint.json", import.meta.url), "utf8"),
@@ -62,5 +63,91 @@ describe("raw webhook boundary", () => {
       disposition: "ignored_unsupported",
       providerEventId: "evt_2",
     });
+  });
+});
+
+describe("finance-ingest handoff", () => {
+  test("payment-method fixture is byte-shape compatible with the Rust request", () => {
+    const expected = JSON.parse(
+      readFileSync(
+        new URL("./fixtures/payment-method-attached-ingest.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    const event = {
+      id: "evt_pm_attached_fixture",
+      type: "payment_method.attached",
+      api_version: "2026-06-24.dahlia",
+      created: 1_800_000_100,
+      data: {
+        object: {
+          id: "pm_fixture",
+          object: "payment_method",
+          type: "card",
+          customer: "cus_fixture",
+          created: 1_799_999_000,
+          metadata: {},
+          card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2032 },
+        },
+      },
+    };
+    expect(
+      ingestRequest(
+        event as never,
+        Buffer.from("signed-body-fixture"),
+        new Date("2027-01-15T08:03:20.000Z"),
+      ),
+    ).toEqual(expected);
+  });
+
+  test("detach needs neither customer nor metadata and emits no card secrets", () => {
+    const request = ingestRequest(
+      {
+        id: "evt_pm_detached_fixture",
+        type: "payment_method.detached",
+        api_version: "2026-06-24.dahlia",
+        created: 1_800_000_200,
+        data: { object: { id: "pm_fixture", customer: null, metadata: {} } },
+      } as never,
+      Buffer.from("detached"),
+      new Date("2027-01-15T08:05:00.000Z"),
+    );
+    expect(request.event.facts).toEqual({
+      kind: "payment_method_detached",
+      method: "pm_fixture",
+    });
+    expect(JSON.stringify(request)).not.toContain("424242");
+  });
+
+  test("money facts keep the exact existing integer transition inputs", () => {
+    const expected = JSON.parse(
+      readFileSync(
+        new URL("./fixtures/payment-intent-succeeded-ingest.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    const event = {
+      id: "evt_pi_succeeded_fixture",
+      type: "payment_intent.succeeded",
+      api_version: "2026-06-24.dahlia",
+      created: 1_800_000_100,
+      data: {
+        object: {
+          id: "pi_fixture",
+          amount_received: 1000,
+          metadata: {
+            aex_org_id: "org_01kyw2qa4pew48j2gb1g6gw3rg",
+            aex_credit_cents: "1000",
+          },
+        },
+      },
+    };
+    expect(
+      ingestRequest(
+        event as never,
+        Buffer.from("money-fixture"),
+        new Date("2027-01-15T08:03:20.000Z"),
+      ),
+    ).toEqual(expected);
   });
 });

@@ -20,7 +20,7 @@ deployable = "brain-mux"
 live_suite = "aex-live-brain-mux"
 layers = ["unit", "smoke", "e2e"]
 concerns = ["contract", "fault", "security", "performance"]
-seams = ["aws.ecs.run_task", "aws.dynamodb.transact_write", "aws.sqs.fifo", "aws.iam.denial", "provider.openai.stream", "provider.anthropic.stream", "provider.deepseek.stream", "provider.zai.stream", "provider.moonshotai.stream", "provider.google.stream", "mcp.streamable_http", "net.public_egress", "aws.lambda.microvm", "hands.guest.lifecycle"]
+seams = ["aws.dynamodb.transact_write", "aws.sqs.fifo", "aws.iam.denial", "provider.openai.stream", "provider.anthropic.stream", "provider.deepseek.stream", "provider.xai.stream", "provider.meta.stream", "provider.moonshotai.stream", "provider.alibaba.stream", "net.public_egress"]
 security_tier = "internal"
 risk = ["iam"]
 scenarios = []
@@ -35,19 +35,17 @@ path = "src/main.rs"
 [dependencies]
 aex-brain-app = { path = "../../crates/aex-brain-app" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }
-aex-brain-hands = { path = "../../crates/aex-brain-hands" }
-aex-brain-managed-web = { path = "../../crates/aex-brain-managed-web" }
+aex-content-aws = { path = "../../crates/aex-content-aws" }
+aex-tool-mux = { path = "../../crates/aex-tool-mux" }
+aex-hands-protocol = { path = "../../crates/aex-hands-protocol" }
 aex-control-domain = { path = "../../crates/aex-control-domain" }
-aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-brain-provider-custody = { path = "../../crates/aex-brain-provider-custody" }
 aex-brain-provider = { path = "../../crates/aex-brain-provider" }
 aex-brain-store-dynamodb = { path = "../../crates/aex-brain-store-dynamodb" }
 aex-model-catalog = { path = "../../crates/aex-model-catalog" }
-aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
 aex-runtime-control = { path = "../../crates/aex-runtime-control" }
-aex-runtime-control-aws = { path = "../../crates/aex-runtime-control-aws" }
 aex-secret-aws = { path = "../../crates/aex-secret-aws" }
 aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb" }
 aex-secret-domain = { path = "../../crates/aex-secret-domain" }
@@ -61,12 +59,14 @@ aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-kms.workspace = true
 aws-sdk-s3.workspace = true
-aws-sdk-lambdamicrovms.workspace = true
 aws-sdk-sqs.workspace = true
 aws-sdk-secretsmanager.workspace = true
 base64.workspace = true
+hex.workspace = true
 futures.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+serde.workspace = true
 reqwest.workspace = true
 aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
 tracing.workspace = true
@@ -87,6 +87,8 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sign
 # The engine's own in-memory ports, so the composition is asserted against exactly the
 # behaviour the activation is asserted against rather than a second set of fixtures.
 aex-brain-app = { path = "../../crates/aex-brain-app", features = ["testing"] }
+tool-mux = { path = "../../services/tool-mux" }
+axum.workspace = true
 serde.workspace = true
 # The paused clock. The dependency probe's cadence and the reactor window's one-second
 # publication are both schedules, and asserting a schedule against the wall clock is how a

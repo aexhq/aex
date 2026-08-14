@@ -16,7 +16,7 @@
 # is exactly the failure mode being measured.
 id = "finance-backlog"
 owner = "central-finance"
-target = "aex-live-finance-settlement-worker"
+target = "aex-live-billing-worker"
 tier = "t3"
 duration = "60m"
 ttl = "4h"

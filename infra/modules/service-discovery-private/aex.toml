@@ -10,4 +10,4 @@ risk = ["none"]
 scenarios = []
 
 [aex.not_applicable]
-live_suite = "Name resolution and deregistration are observed through the tool-executor live suite, which reaches the executor by the name this module publishes and by no other address."
+live_suite = "No launch deployable currently consumes private Cloud Map; the module's contract and plan tests retain the reusable DNS boundary."

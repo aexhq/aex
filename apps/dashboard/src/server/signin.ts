@@ -219,7 +219,6 @@ function encodeCanonicalJson(body: DashboardSessionRequest): Uint8Array {
   return new TextEncoder().encode(JSON.stringify({
     code: body.code,
     codeVerifier: body.codeVerifier,
-    provider: body.provider,
     state: body.state,
   }));
 }

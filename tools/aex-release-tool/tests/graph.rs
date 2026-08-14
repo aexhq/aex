@@ -898,11 +898,11 @@ fn a_registry_that_marks_nothing_prd_eligible_verifies() {
     verify_fixture(&root).expect("no prd provisioning is a valid state");
 }
 
-/// The shipped registry, not a fixture: the four named journeys are each
-/// claimed exactly once, every prd-eligible scenario is reclaimable, and the
-/// out-list is out.
+/// The shipped registry, not a fixture: all launch journeys have an explicit
+/// executable owner or an honest deferral. Production eligibility remains
+/// empty until those exact-coordinate journeys are promoted deliberately.
 #[test]
-fn the_shipped_prd_set_is_the_reduced_one() {
+fn the_shipped_scenario_set_is_exact_and_honest() {
     let text = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../release/scenario-ownership.toml"),
@@ -910,67 +910,43 @@ fn the_shipped_prd_set_is_the_reduced_one() {
     .expect("the shipped scenario registry");
     let registry: aex_release_tool::graph::inputs::ScenarioOwnership =
         toml::from_str(&text).expect("it parses");
-    let policy = aex_workspace_check::policy::Policy::embedded();
-
-    let mut claims: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
-    for scenario in &registry.scenarios {
-        if let Some(prd) = &scenario.prd {
-            claims
-                .entry(prd.rule.as_str())
-                .or_default()
-                .push(scenario.id.as_str());
-            for kind in &prd.provisions {
-                let row = policy
-                    .janitor
-                    .resources
-                    .get(kind)
-                    .unwrap_or_else(|| panic!("`{kind}` has no [janitor.resource] row"));
-                assert!(
-                    row.reclaimable_from_tags(),
-                    "scenario `{}` provisions unreclaimable `{kind}` in prd",
-                    scenario.id
-                );
-            }
-        }
-    }
-    for rule in [
-        "money_path",
-        "session_lifecycle",
-        "content_path",
-        "secret_path",
-    ] {
-        assert_eq!(
-            claims.get(rule).map(Vec::len),
-            Some(1),
-            "prd rule `{rule}` must be claimed by exactly one scenario, got {:?}",
-            claims.get(rule)
-        );
-    }
-    assert_eq!(claims["money_path"], vec!["SC-FINANCE-PAYMENT"]);
-
-    // The out-list: coverage rather than "does production work".
-    let out: std::collections::BTreeSet<&str> = registry
+    let executable: std::collections::BTreeSet<&str> = registry
         .scenarios
         .iter()
-        .filter(|scenario| scenario.prd.is_none())
+        .filter(|scenario| scenario.package.is_some())
         .map(|scenario| scenario.id.as_str())
         .collect();
-    for excluded in [
-        "SC-HANDS-HOSTILE",
-        "SC-BRAIN-TURN",
-        "SC-SCHEMA-MIGRATE",
-        "SC-FINANCE-RECONCILE",
-        "SC-USAGE-SETTLE",
-    ] {
-        assert!(
-            out.contains(excluded),
-            "`{excluded}` is breadth or pressure and must not provision in prd"
-        );
-    }
+    assert_eq!(
+        executable,
+        std::collections::BTreeSet::from([
+            "SC-BILLING-ESSENTIAL",
+            "SC-FILES-CURRENT",
+            "SC-FILES-UPLOAD",
+            "SC-LONG-CONTEXT",
+            "SC-MCP",
+            "SC-PROVIDER-MATRIX",
+            "SC-SESSION-STREAM",
+            "SC-SESSION-TERMINAL",
+            "SC-TELEMETRY-LIVE-RETAINED",
+            "SC-TOOL-STORAGE",
+        ])
+    );
+    assert!(
+        registry
+            .scenarios
+            .iter()
+            .all(|scenario| scenario.prd.is_none())
+    );
+    assert!(
+        registry
+            .scenarios
+            .iter()
+            .all(|scenario| { scenario.package.is_some() ^ scenario.deferred.is_some() })
+    );
 }
 
-/// The public production path owns the capacity bootstrap now, but source
-/// composition is not a substitute for observing that path on a deployed plane.
+/// Source composition is not a substitute for observing the complete personal
+/// workspace and API-key journey on a deployed plane.
 #[test]
 fn control_workspace_metadata_separates_the_production_caller_from_live_evidence() {
     let text = std::fs::read_to_string(
@@ -991,9 +967,11 @@ fn control_workspace_metadata_separates_the_production_caller_from_live_evidence
         .expect("the scenario remains deferred until real-plane evidence exists");
 
     assert!(scenario.package.is_none() && scenario.target.is_none());
-    assert!(deferred.contains("production worker path"), "{deferred}");
-    assert!(deferred.contains("real plane `e2e`"), "{deferred}");
-    assert!(!deferred.contains("no production caller"), "{deferred}");
+    assert!(deferred.contains("API-key create/revoke"), "{deferred}");
+    assert!(
+        deferred.contains("auto-provisioned personal workspace"),
+        "{deferred}"
+    );
 }
 
 // --- portable web build output ----------------------------------------------

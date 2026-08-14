@@ -1,79 +1,35 @@
 {
   "scopes": [
     {
-      "description": "Read the caller's account and operational state.",
+      "description": "Read bootstrap and personal-account state.",
       "scope": "account:read"
     },
     {
-      "description": "Decide the caller's own device authorizations and close their own browser session.",
+      "description": "Close the caller's own browser session.",
       "scope": "account:write"
     },
     {
-      "description": "List and read organizations the caller belongs to.",
-      "scope": "organizations:read"
-    },
-    {
-      "description": "Create organizations.",
-      "scope": "organizations:write"
-    },
-    {
-      "description": "List memberships of an organization.",
-      "scope": "memberships:read"
-    },
-    {
-      "description": "Invite people to an organization.",
-      "scope": "memberships:write"
-    },
-    {
-      "description": "Redeem invitations addressed to the caller's own verified email.",
-      "scope": "memberships:accept"
-    },
-    {
-      "description": "List and read workspaces.",
-      "scope": "workspaces:read"
-    },
-    {
-      "description": "Create workspaces.",
-      "scope": "workspaces:write"
-    },
-    {
-      "description": "Admit the global workspace-deletion operation.",
-      "scope": "workspaces:delete"
-    },
-    {
-      "description": "List workspace API key metadata.",
+      "description": "List fixed-workspace API key metadata.",
       "scope": "api_keys:read"
     },
     {
-      "description": "Mint and revoke workspace API keys.",
+      "description": "Mint and revoke fixed-workspace API keys.",
       "scope": "api_keys:write"
     },
     {
-      "description": "Read balances, statements and usage.",
+      "description": "Read prepaid balance, card metadata, transactions and rated usage.",
       "scope": "billing:read"
     },
     {
-      "description": "Create checkouts, portal sessions and top-up policy.",
+      "description": "Set up or remove cards and create manual top-up checkouts.",
       "scope": "billing:write"
     },
     {
-      "description": "Read durable operation records.",
-      "scope": "operations:read"
-    },
-    {
-      "description": "Request cancellation of a durable operation.",
-      "scope": "operations:write"
-    },
-    {
-      "description": "Read the current workspace and its effective limits.",
-      "scope": "workspace:read"
-    },
-    {
-      "description": "Read sessions and sealed messages.",
+      "description": "Read sessions, messages and telemetry.",
       "scope": "sessions:read"
     },
     {
-      "description": "Create sessions, send messages, and cancel, suspend, resume or terminate a session.",
+      "description": "Create sessions, send messages, cancel and terminate.",
       "scope": "sessions:write"
     },
     {
@@ -81,24 +37,12 @@
       "scope": "sessions:delete"
     },
     {
-      "description": "Access live session files, automatically resuming the same suspended generation.",
-      "scope": "files:live"
-    },
-    {
-      "description": "Read registered opaque workspace files and mint their download grants.",
+      "description": "Read current workspace files and mint downloads.",
       "scope": "resources:read"
     },
     {
-      "description": "Replace and delete registered opaque workspace files and stage uploads.",
+      "description": "Overwrite/delete current workspace files and upload bytes.",
       "scope": "resources:write"
-    },
-    {
-      "description": "Read dedicated BYOK provider-credential binding metadata.",
-      "scope": "provider_credentials:read"
-    },
-    {
-      "description": "Register and revoke dedicated BYOK provider credentials.",
-      "scope": "provider_credentials:write"
     }
   ]
 }

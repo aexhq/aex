@@ -11,6 +11,36 @@
 //! as cursor values, which is correct only while the session time zone happens
 //! to be UTC.
 
+/// Serializes first-login provisioning for one already-resolved user.
+///
+/// The transaction uses `READ COMMITTED`: after a concurrent caller releases
+/// this lock, the following statement receives a fresh snapshot and observes
+/// the winner. Hash collisions only serialize unrelated first logins and can
+/// never merge their rows.
+pub const LOCK_PERSONAL_ACCOUNT: &str = "\
+SELECT pg_advisory_xact_lock(hashtextextended(CAST(:user_id AS text), 7640891576956012809))";
+
+/// Resolves the complete personal-account aggregate by its stable user key.
+pub const GET_PERSONAL_ACCOUNT: &str = "\
+SELECT p.account_id, p.user_id, p.membership_id, p.workspace_id, \
+       ledger.available_account_id, ledger.reserved_account_id, \
+       (EXTRACT(EPOCH FROM p.created_at)*1000)::bigint AS created_at_ms \
+  FROM control.personal_account p \
+  JOIN finance.personal_ledger_accounts ledger ON ledger.account_id = p.account_id \
+ WHERE p.user_id = :user_id";
+
+/// Inserts the one-to-one user/account/workspace link after every referenced row exists.
+pub const INSERT_PERSONAL_ACCOUNT: &str = "\
+INSERT INTO control.personal_account \
+  (account_id, user_id, membership_id, workspace_id, created_at) \
+VALUES (:account_id, :user_id, :membership_id, :workspace_id, \
+        TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')";
+
+/// Creates the two `UUIDv7` customer ledger accounts and zero balances.
+pub const ENSURE_PERSONAL_LEDGER_ACCOUNTS: &str = "\
+SELECT finance.ensure_personal_ledger_accounts(\
+  :account_id, :available_account_id, :reserved_account_id)";
+
 /// Resolve a workspace API key for an assertion issue.
 ///
 /// **One statement, no transaction.** Everything the issuer needs — the key, the
@@ -39,41 +69,9 @@ SELECT k.id, k.workspace_id, k.organization_id, k.scopes, k.verifier, k.pepper_v
   LEFT JOIN control.authorization_epoch ea ON ea.subject_kind='account'   AND ea.subject_id = o.id \
  WHERE k.id = :key_id";
 
-/// Resolve an account token scoped to one workspace, for an assertion issue.
-///
-/// The same shape as [`RESOLVE_WORKSPACE_KEY`], joined through
-/// `identity.account_token → identity.user → control.membership`, and returning
-/// the two extra epochs a person's assertion carries.
-pub const RESOLVE_ACCOUNT_TOKEN_FOR_WORKSPACE: &str = "\
-SELECT t.id, t.user_id, m.id AS membership_id, m.role, t.scopes, t.verifier, t.pepper_version, \
-       (t.revoked_at IS NOT NULL) AS credential_revoked, \
-       (t.expires_at <= (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')) AS credential_expired, \
-       (u.status = 'active') AS user_active, \
-       w.id AS workspace_id, w.organization_id, w.region, \
-       COALESCE(a.status,'unavailable') AS account_status, \
-       COALESCE(eu.epoch,0) AS epoch_user, \
-       COALESCE(em.epoch,0) AS epoch_membership, \
-       COALESCE(ew.epoch,0) AS epoch_workspace, \
-       COALESCE(ea.epoch,0) AS epoch_account \
-  FROM identity.account_token t \
-  JOIN identity.user u ON u.id = t.user_id \
-  JOIN control.workspace w ON w.id = :workspace_id \
-  JOIN control.membership m ON m.organization_id = w.organization_id \
-                           AND m.user_id = t.user_id AND m.status = 'active' \
-  LEFT JOIN finance.account_state_v1 a ON a.organization_id = w.organization_id \
-  LEFT JOIN control.authorization_epoch eu ON eu.subject_kind='user'       AND eu.subject_id = u.id \
-  LEFT JOIN control.authorization_epoch em ON em.subject_kind='membership' AND em.subject_id = m.id \
-  LEFT JOIN control.authorization_epoch ew ON ew.subject_kind='workspace'  AND ew.subject_id = w.id \
-  LEFT JOIN control.authorization_epoch ea ON ea.subject_kind='account'    AND ea.subject_id = w.organization_id \
- WHERE t.id = :credential_id";
-
 /// Resolve a browser session scoped to one workspace, for an assertion issue.
 ///
-/// Identical to [`RESOLVE_ACCOUNT_TOKEN_FOR_WORKSPACE`] apart from the
-/// credential table. That sameness is the point: a browser session and an
-/// account token are the same principal reaching the same regional surface, so
-/// they take one credential path rather than two. Without this statement every
-/// regional dashboard panel is unimplementable.
+/// Browser sessions are the sole person credential at the regional edge.
 pub const RESOLVE_SESSION_FOR_WORKSPACE: &str = "\
 SELECT s.id, s.user_id, m.id AS membership_id, m.role, \
        ARRAY(SELECT unnest(ARRAY[]::text[])) AS scopes, s.verifier, s.pepper_version, \
@@ -97,20 +95,6 @@ SELECT s.id, s.user_id, m.id AS membership_id, m.role, \
   LEFT JOIN control.authorization_epoch ew ON ew.subject_kind='workspace'  AND ew.subject_id = w.id \
   LEFT JOIN control.authorization_epoch ea ON ea.subject_kind='account'    AND ea.subject_id = w.organization_id \
  WHERE s.id = :credential_id";
-
-/// Resolves an account token and every active organization membership in one read.
-pub const RESOLVE_ACCOUNT_TOKEN_CENTRAL: &str = "\
-SELECT t.id, t.user_id, t.scopes, t.verifier, t.pepper_version, \
-       (t.revoked_at IS NOT NULL) AS credential_revoked, \
-       (t.expires_at <= (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')) AS credential_expired, \
-       (u.status = 'active') AS user_active, \
-       COALESCE((SELECT jsonb_agg(jsonb_build_array(m.organization_id::text, m.id::text, m.role) \
-                                  ORDER BY m.id) \
-                   FROM (SELECT organization_id, id, role FROM control.membership \
-                          WHERE user_id = u.id AND status = 'active' ORDER BY id LIMIT 1001) m), \
-                '[]'::jsonb) AS memberships \
-  FROM identity.account_token t JOIN identity.user u ON u.id = t.user_id \
- WHERE t.id = :credential_id";
 
 /// Resolves a dashboard session and every active organization membership in one read.
 ///
@@ -652,18 +636,17 @@ DELETE FROM control.outbox_message WHERE id IN \
 
 /// Every statement this crate issues, for the discipline scan.
 pub const ALL: &[(&str, &str)] = &[
-    ("RESOLVE_WORKSPACE_KEY", RESOLVE_WORKSPACE_KEY),
+    ("LOCK_PERSONAL_ACCOUNT", LOCK_PERSONAL_ACCOUNT),
+    ("GET_PERSONAL_ACCOUNT", GET_PERSONAL_ACCOUNT),
+    ("INSERT_PERSONAL_ACCOUNT", INSERT_PERSONAL_ACCOUNT),
     (
-        "RESOLVE_ACCOUNT_TOKEN_FOR_WORKSPACE",
-        RESOLVE_ACCOUNT_TOKEN_FOR_WORKSPACE,
+        "ENSURE_PERSONAL_LEDGER_ACCOUNTS",
+        ENSURE_PERSONAL_LEDGER_ACCOUNTS,
     ),
+    ("RESOLVE_WORKSPACE_KEY", RESOLVE_WORKSPACE_KEY),
     (
         "RESOLVE_SESSION_FOR_WORKSPACE",
         RESOLVE_SESSION_FOR_WORKSPACE,
-    ),
-    (
-        "RESOLVE_ACCOUNT_TOKEN_CENTRAL",
-        RESOLVE_ACCOUNT_TOKEN_CENTRAL,
     ),
     ("RESOLVE_SESSION_CENTRAL", RESOLVE_SESSION_CENTRAL),
     ("VERIFICATION_KEY_SET", VERIFICATION_KEY_SET),

@@ -1,0 +1,58 @@
+{
+  "$id": "https://schemas.aex.dev/v1/PaymentMethod.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Display-only metadata for one Stripe card; never PAN, CVC, or a client secret.",
+  "properties": {
+    "brand": {
+      "$ref": "aex:schema:CardBrand",
+      "description": "Card network."
+    },
+    "createdAt": {
+      "description": "When verified webhook state registered it.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "expiryMonth": {
+      "description": "Expiry month.",
+      "maximum": 12,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "expiryYear": {
+      "description": "Four-digit expiry year.",
+      "maximum": 9999,
+      "minimum": 2020,
+      "type": "integer"
+    },
+    "id": {
+      "description": "Aex's opaque card reference.",
+      "pattern": "^pmt_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "payment_method"
+    },
+    "isDefault": {
+      "description": "Whether Stripe reports this as the default card.",
+      "type": "boolean"
+    },
+    "last4": {
+      "description": "Last four digits for display.",
+      "maxLength": 4,
+      "minLength": 4,
+      "pattern": "^[0-9]{4}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "brand",
+    "createdAt",
+    "expiryMonth",
+    "expiryYear",
+    "id",
+    "isDefault",
+    "last4"
+  ],
+  "title": "PaymentMethod",
+  "type": "object"
+}

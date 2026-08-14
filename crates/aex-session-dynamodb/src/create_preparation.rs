@@ -90,13 +90,13 @@ pub struct CreatePreparation {
     /// Root agent identity.
     pub root_agent: AgentId,
     /// Exact Hands generation that launch and upload must use.
-    pub generation: GenerationId,
+    pub generation: Option<GenerationId>,
     /// Exact file selection in caller order.
     pub files: Vec<PreparedFile>,
     /// Exact root fact later committed as journal sequence zero.
     pub root_record: JournalRecord,
     /// Canonical immutable provider/runtime definition.
-    pub runtime_definition: Vec<u8>,
+    pub runtime_definition: Option<Vec<u8>>,
     /// Canonical release-qualified public configuration.
     pub resolved_config: Vec<u8>,
     /// Canonical caller metadata, when supplied.
@@ -272,6 +272,11 @@ fn validate_prepared_files(files: &[PreparedFile]) -> Result<u64, CreatePreparat
 fn validate_root_start(
     prepared: &CreatePreparation,
 ) -> Result<aex_brain_domain::ids::ContentHash, CreatePreparationError> {
+    if prepared.generation.is_some() != prepared.runtime_definition.is_some() {
+        return Err(CreatePreparationError::RootRecord {
+            reason: "generation and runtime definition presence disagree",
+        });
+    }
     let JournalRecord::AgentStarted {
         config,
         parent,
@@ -325,7 +330,7 @@ fn preparation_authority_digest(
         generation: prepared.generation,
         selection_digest,
         root_entry_id: root_entry_id.to_hex(),
-        runtime_definition: ContentHash::of(&prepared.runtime_definition),
+        runtime_definition: prepared.runtime_definition.as_deref().map(ContentHash::of),
         resolved_config: ContentHash::of(&prepared.resolved_config),
         metadata: prepared.metadata.as_deref().map(ContentHash::of),
         materialized_agents: prepared.materialized_agents,
@@ -346,10 +351,10 @@ struct PreparationAuthority {
     coordinator: String,
     session: SessionId,
     root_agent: AgentId,
-    generation: GenerationId,
+    generation: Option<GenerationId>,
     selection_digest: ContentHash,
     root_entry_id: String,
-    runtime_definition: ContentHash,
+    runtime_definition: Option<ContentHash>,
     resolved_config: ContentHash,
     metadata: Option<ContentHash>,
     materialized_agents: u64,
@@ -477,7 +482,12 @@ impl ElectionMaterial {
             .set("coordinator", s(self.coordinator.clone()))
             .set("sessionId", s(prepared.session.to_string()))
             .set("rootAgentId", s(prepared.root_agent.to_string()))
-            .set("generationId", s(prepared.generation.to_string()))
+            .set_opt(
+                "generationId",
+                prepared
+                    .generation
+                    .map(|generation| s(generation.to_string())),
+            )
             .set("selectionDigest", s(self.selection.clone()))
             .set("selectedFileCount", n(self.summary.file_count as u64))
             .set("selectedFileBytes", n(self.summary.total_bytes))
@@ -487,7 +497,10 @@ impl ElectionMaterial {
                 "authorityDigest",
                 s(self.summary.authority_digest.to_wire()),
             )
-            .set("runtimeDefinition", b(prepared.runtime_definition.clone()))
+            .set_opt(
+                "runtimeDefinition",
+                prepared.runtime_definition.clone().map(b),
+            )
             .set("resolvedConfig", b(prepared.resolved_config.clone()))
             .set_opt("metadata", prepared.metadata.clone().map(b))
             .set("materializedAgents", n(prepared.materialized_agents))
@@ -506,7 +519,12 @@ impl ElectionMaterial {
             .set("agentId", s(prepared.root_agent.to_string()))
             .set("sessionId", s(prepared.session.to_string()))
             .set("workspaceId", s(prepared.workspace.to_string()))
-            .set("generationId", s(prepared.generation.to_string()))
+            .set_opt(
+                "generationId",
+                prepared
+                    .generation
+                    .map(|generation| s(generation.to_string())),
+            )
             .set("createCoordinator", s(self.coordinator.clone()))
             .set("createSelectionDigest", s(self.selection.clone()))
             .set("status", s("preparing"))
@@ -564,38 +582,46 @@ pub fn elect_plan(
     let header = material.header(prepared)?;
     let control = material.control(prepared)?;
 
-    let same_election = "attribute_not_exists(pk) OR (authorityDigest = :authority AND coordinator = :coordinator AND sessionId = :session AND rootAgentId = :agent AND generationId = :generation)";
-    let same_control = "attribute_not_exists(pk) OR (createSelectionDigest = :selection AND createCoordinator = :coordinator AND sessionId = :session AND agentId = :agent AND generationId = :generation AND revision = :zero AND hasJournal = :false)";
+    let generation_guard = if prepared.generation.is_some() {
+        "generationId = :generation"
+    } else {
+        "attribute_not_exists(generationId)"
+    };
+    let same_election = format!(
+        "attribute_not_exists(pk) OR (authorityDigest = :authority AND coordinator = :coordinator AND sessionId = :session AND rootAgentId = :agent AND {generation_guard})"
+    );
+    let same_control = format!(
+        "attribute_not_exists(pk) OR (createSelectionDigest = :selection AND createCoordinator = :coordinator AND sessionId = :session AND agentId = :agent AND {generation_guard} AND revision = :zero AND hasJournal = :false)"
+    );
     let mut plan = TransactionPlan::new(format!("create-elect-{}", prepared.intent));
-    plan.put(
-        PREPARATION_PARTICIPANT,
-        Put::builder()
-            .table_name(table)
-            .set_item(Some(header))
-            .condition_expression(same_election)
-            .expression_attribute_values(
-                ":authority",
-                s(material.summary.authority_digest.to_wire()),
-            )
-            .expression_attribute_values(":coordinator", s(material.coordinator.clone()))
-            .expression_attribute_values(":session", s(prepared.session.to_string()))
-            .expression_attribute_values(":agent", s(prepared.root_agent.to_string()))
-            .expression_attribute_values(":generation", s(prepared.generation.to_string())),
-    )?;
-    plan.put(
-        Participant::AGENT_ROOT_CONTROL,
-        Put::builder()
-            .table_name(table)
-            .set_item(Some(control))
-            .condition_expression(same_control)
-            .expression_attribute_values(":selection", s(material.selection.clone()))
-            .expression_attribute_values(":coordinator", s(material.coordinator.clone()))
-            .expression_attribute_values(":session", s(prepared.session.to_string()))
-            .expression_attribute_values(":agent", s(prepared.root_agent.to_string()))
-            .expression_attribute_values(":generation", s(prepared.generation.to_string()))
-            .expression_attribute_values(":zero", n(0))
-            .expression_attribute_values(":false", boolean(false)),
-    )?;
+    let mut header_put = Put::builder()
+        .table_name(table)
+        .set_item(Some(header))
+        .condition_expression(same_election)
+        .expression_attribute_values(":authority", s(material.summary.authority_digest.to_wire()))
+        .expression_attribute_values(":coordinator", s(material.coordinator.clone()))
+        .expression_attribute_values(":session", s(prepared.session.to_string()))
+        .expression_attribute_values(":agent", s(prepared.root_agent.to_string()));
+    if let Some(generation) = prepared.generation {
+        header_put =
+            header_put.expression_attribute_values(":generation", s(generation.to_string()));
+    }
+    plan.put(PREPARATION_PARTICIPANT, header_put)?;
+    let mut control_put = Put::builder()
+        .table_name(table)
+        .set_item(Some(control))
+        .condition_expression(same_control)
+        .expression_attribute_values(":selection", s(material.selection.clone()))
+        .expression_attribute_values(":coordinator", s(material.coordinator.clone()))
+        .expression_attribute_values(":session", s(prepared.session.to_string()))
+        .expression_attribute_values(":agent", s(prepared.root_agent.to_string()))
+        .expression_attribute_values(":zero", n(0))
+        .expression_attribute_values(":false", boolean(false));
+    if let Some(generation) = prepared.generation {
+        control_put =
+            control_put.expression_attribute_values(":generation", s(generation.to_string()));
+    }
+    plan.put(Participant::AGENT_ROOT_CONTROL, control_put)?;
     plan.put(
         PREPARATION_EDGE_PARTICIPANT,
         Put::builder()
@@ -627,12 +653,17 @@ pub fn root_started_plan(
     let selection = summary.selection_digest.to_wire();
     let coordinator = coordinator_text(prepared.coordinator);
     let key = crate::keys::agent_control(prepared.session, prepared.root_agent);
-    let update = Update::builder()
+    let generation_guard = if prepared.generation.is_some() {
+        "generationId = :generation"
+    } else {
+        "attribute_not_exists(generationId)"
+    };
+    let mut update = Update::builder()
         .table_name(table)
         .set_key(Some(crate::plan::key(&key.pk, &key.sk)))
-        .condition_expression(
-            "revision = :zero AND hasJournal = :false AND generationId = :generation AND createSelectionDigest = :selection AND createCoordinator = :coordinator",
-        )
+        .condition_expression(format!(
+            "revision = :zero AND hasJournal = :false AND {generation_guard} AND createSelectionDigest = :selection AND createCoordinator = :coordinator"
+        ))
         .update_expression(
             "SET revision = :one, journalTail = :tail, journalTailHash = :entry, hasJournal = :true, #status = :idle, updatedAt = :now",
         )
@@ -642,12 +673,14 @@ pub fn root_started_plan(
         .expression_attribute_values(":tail", n(0))
         .expression_attribute_values(":false", boolean(false))
         .expression_attribute_values(":true", boolean(true))
-        .expression_attribute_values(":generation", s(prepared.generation.to_string()))
         .expression_attribute_values(":selection", s(selection))
         .expression_attribute_values(":coordinator", s(coordinator))
         .expression_attribute_values(":entry", s(entry_id.clone()))
         .expression_attribute_values(":idle", s("idle"))
         .expression_attribute_values(":now", stamp(started.occurred_at));
+    if let Some(generation) = prepared.generation {
+        update = update.expression_attribute_values(":generation", s(generation.to_string()));
+    }
 
     let journal_key = crate::keys::journal(prepared.session, prepared.root_agent, 0);
     let journal = ItemBuilder::new(JOURNAL_ENTRY)
@@ -900,7 +933,7 @@ pub fn decode_root_started(
             != prepared.session
         || control.id::<AgentId>("agentId").map_err(StoreError::from)? != prepared.root_agent
         || control
-            .id::<GenerationId>("generationId")
+            .opt_id::<GenerationId>("generationId")
             .map_err(StoreError::from)?
             != prepared.generation
         || control.string("status").map_err(StoreError::from)? != "idle"
@@ -1101,13 +1134,13 @@ fn decode_elected_header(
         coordinator,
         session: row.id("sessionId").map_err(StoreError::from)?,
         root_agent: row.id("rootAgentId").map_err(StoreError::from)?,
-        generation: row.id("generationId").map_err(StoreError::from)?,
+        generation: row.opt_id("generationId").map_err(StoreError::from)?,
         files,
         root_record,
         runtime_definition: row
-            .bytes("runtimeDefinition")
+            .opt_bytes("runtimeDefinition")
             .map_err(StoreError::from)?
-            .to_vec(),
+            .map(<[u8]>::to_vec),
         resolved_config: row
             .bytes("resolvedConfig")
             .map_err(StoreError::from)?

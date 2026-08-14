@@ -18,8 +18,14 @@
 //! - SQL, transactions or retry policy (`aex-control-aurora`)
 //! - HTTP, status codes or headers (`aex-central-http`)
 
+pub mod personal_account;
 pub mod ports;
 pub mod use_cases;
+
+pub use personal_account::{
+    PersonalAccountProvision, PersonalAccountProvisionCommand, PersonalAccountProvisionIds,
+    PersonalAccountProvisioner, ProvisionPersonalAccount,
+};
 
 pub use ports::{
     AuthorizationReader, ControlStore, ControlViewStore, EffectError, KeyMaterialReader,

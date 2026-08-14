@@ -6,7 +6,7 @@
   "properties": {
     "partNumber": {
       "description": "Which part.",
-      "maximum": 10000,
+      "maximum": 1000,
       "minimum": 1,
       "type": "integer"
     },

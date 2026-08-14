@@ -106,13 +106,14 @@ fn the_client_request_token_is_deterministic_and_intent_bound() {
 }
 
 #[test]
-fn session_route_partition_contains_credential_registration_and_only_finite_routes() {
+fn session_unary_partition_is_the_generated_sixteen_route_set() {
     let routes = session_route_ids();
-    assert!(routes.contains(&RouteId::ProviderCredentialGet));
-    assert!(routes.contains(&RouteId::ProviderCredentialRegister));
+    assert_eq!(routes.len(), 16);
     assert!(
         routes
             .iter()
             .all(|id| route(*id).transport != TransportKind::Ndjson)
     );
+    assert_eq!(routes.first(), Some(&RouteId::RegistryFilesDelete));
+    assert_eq!(routes.last(), Some(&RouteId::UploadCreate));
 }

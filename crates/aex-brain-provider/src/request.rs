@@ -92,7 +92,10 @@ fn validate_capabilities(request: &CanonicalModelRequest) -> Result<(), RequestB
             "parallel tool calling",
         ));
     }
-    match (&request.structured_output, request.selection.structured_output()) {
+    match (
+        &request.structured_output,
+        request.selection.structured_output(),
+    ) {
         (None, _) => Ok(()),
         (Some(StructuredOutputRequest::JsonObject), StructuredOutputLevel::None) => Err(
             RequestBuildError::UnsupportedCapability("structured JSON output"),
@@ -122,7 +125,14 @@ fn structured_output(
                 "title": "response",
                 "type": "object"
             });
-            Ok((Some(value.try_into().map_err(|_| RequestBuildError::InvalidSchema)?), false))
+            Ok((
+                Some(
+                    value
+                        .try_into()
+                        .map_err(|_| RequestBuildError::InvalidSchema)?,
+                ),
+                false,
+            ))
         }
         StructuredOutputRequest::JsonSchema { name, schema, .. } => {
             let mut value: serde_json::Value = serde_json::from_str(schema.as_str())
@@ -133,7 +143,14 @@ fn structured_output(
             object
                 .entry("title".to_owned())
                 .or_insert_with(|| serde_json::Value::String(name.to_string()));
-            Ok((Some(value.try_into().map_err(|_| RequestBuildError::InvalidSchema)?), false))
+            Ok((
+                Some(
+                    value
+                        .try_into()
+                        .map_err(|_| RequestBuildError::InvalidSchema)?,
+                ),
+                false,
+            ))
         }
     }
 }

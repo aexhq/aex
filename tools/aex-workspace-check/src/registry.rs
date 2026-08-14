@@ -1431,7 +1431,7 @@ mod tests {
             path: "tests/load/workloads/regional-domains/journal-fold.toml".to_owned(),
             id: "journal-fold".to_owned(),
             owner: "regional-domains".to_owned(),
-            target: "aex-live-session-stream-api".to_owned(),
+            target: "aex-live-session-api".to_owned(),
             gates: vec!["PERF-BASELINE-JOURNAL-FOLD".to_owned()],
         }
     }
@@ -1452,8 +1452,8 @@ mod tests {
         let policy = Policy::embedded();
         let mut inputs = input(
             vec![row(
-                "tests/live/aex-live-session-stream-api",
-                "aex-live-session-stream-api",
+                "tests/live/aex-live-session-api",
+                "aex-live-session-api",
                 Some(&live_companion(false)),
             )],
             policy,
@@ -1475,8 +1475,8 @@ mod tests {
         let policy = Policy::embedded();
         let mut inputs = input(
             vec![row(
-                "tests/live/aex-live-session-stream-api",
-                "aex-live-session-stream-api",
+                "tests/live/aex-live-session-api",
+                "aex-live-session-api",
                 Some(&live_companion(true)),
             )],
             policy,
@@ -1528,8 +1528,8 @@ mod tests {
         let policy = Policy::embedded();
         let report = check(&input(
             vec![row(
-                "tests/live/aex-live-session-stream-api",
-                "aex-live-session-stream-api",
+                "tests/live/aex-live-session-api",
+                "aex-live-session-api",
                 Some(&live_companion(false)),
             )],
             policy,
@@ -1537,7 +1537,7 @@ mod tests {
         let recorded = report
             .unearned
             .iter()
-            .find(|row| row.subject == "tests/live/aex-live-session-stream-api")
+            .find(|row| row.subject == "tests/live/aex-live-session-api")
             .expect("a companion with no target is recorded");
         assert_eq!(
             recorded.reason_class, "requires_deployment",

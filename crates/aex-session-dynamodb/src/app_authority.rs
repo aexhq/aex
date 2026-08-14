@@ -1920,7 +1920,10 @@ mod tests {
         let cursor = ContinuationCursor::new(
             aex_operation_domain::cursor::CursorPosition::SessionTerminate {
                 stage: aex_operation_domain::cursor::LifecycleStage::AwaitProvider,
-                generation: session.lifecycle.generation,
+                generation: session
+                    .lifecycle
+                    .generation
+                    .expect("sandbox fixture carries a generation"),
             },
             98,
             None,

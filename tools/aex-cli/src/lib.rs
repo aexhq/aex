@@ -12,8 +12,10 @@ pub mod error;
 pub mod output;
 /// Declarative command-to-route registry.
 pub mod registry;
+/// Authenticated generated-client execution and streaming/download helpers.
+pub mod runtime;
 
-pub use cli::{Cli, Command, CompletionShell};
+pub use cli::{Cli, Command};
 pub use registry::{
     CommandRegistryEntry, DEFERRED_MARKER, command_registry, marked_command, render_completions,
 };

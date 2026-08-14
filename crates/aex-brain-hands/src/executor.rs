@@ -107,7 +107,7 @@ impl ToolExecutor for HandsToolExecutor {
                     "Hands call cancelled before dispatch",
                 ));
             }
-            if call.route.executor != ExecutorRoute::Hands {
+            if call.route.executor != ExecutorRoute::ToolMux {
                 return Err(dispatch_error(
                     DispatchStage::PreDispatch,
                     DispatchProof::NotSent,
@@ -172,9 +172,17 @@ impl ToolExecutor for HandsToolExecutor {
                 bounds,
                 deadline: ticket.issued_at().plus_millis(i64::from(timeout_ms)),
             };
+            let generation = call.hands_generation.ok_or_else(|| {
+                dispatch_error(
+                    DispatchStage::PreDispatch,
+                    DispatchProof::NotSent,
+                    ProviderFailureKind::InvalidRequest,
+                    "sandbox_disabled: this session has no Hands generation",
+                )
+            })?;
             let accepted = self
                 .hands
-                .start(ticket, call.hands_generation, &start)
+                .start(ticket, generation, &start)
                 .await
                 .map_err(hands_error)?;
             // Attached delivery: the guest answered on the connection the start
@@ -306,8 +314,8 @@ fn incorporate_result(
             "Hands result was truncated and cannot be journalled as complete",
         ));
     }
-    let (part, bytes) = match (result.inline, result.placed) {
-        (Some(inline), None) => {
+    let (part, bytes) = match (result.inline, result.placed, result.sandbox_file) {
+        (Some(inline), None, None) => {
             if ContentHash::of(inline.as_bytes()) != result.checksum {
                 return Err(dispatch_error(
                     DispatchStage::Terminal,
@@ -326,7 +334,7 @@ fn incorporate_result(
                 Err(_) => text_part(inline)?,
             }
         }
-        (None, Some(placed)) => {
+        (None, Some(placed), None) => {
             let value = serde_json::to_value(placed).map_err(|_| {
                 dispatch_error(
                     DispatchStage::Terminal,
@@ -337,12 +345,22 @@ fn incorporate_result(
             })?;
             json_part(&value)?
         }
+        (None, None, Some(file)) => {
+            let value = serde_json::json!({
+                "preview": file.preview,
+                "previewTruncated": true,
+                "fullResultPath": file.path,
+                "sizeBytes": file.byte_len,
+                "checksum": result.checksum,
+            });
+            json_part(&value)?
+        }
         _ => {
             return Err(dispatch_error(
                 DispatchStage::Terminal,
                 DispatchProof::ResponseStarted,
                 ProviderFailureKind::ProtocolViolation,
-                "Hands result must carry exactly one inline or placed body",
+                "Hands result must carry exactly one inline, placed or sandbox-file body",
             ));
         }
     };
@@ -359,7 +377,7 @@ fn incorporate_result(
         content: vec![part],
         is_error: result.exit_code != 0,
         duration_ms: result.duration_ms,
-        executed_on: ExecutorRoute::Hands,
+        executed_on: ExecutorRoute::ToolMux,
         checksum,
     })
 }
@@ -522,12 +540,12 @@ mod tests {
 
     mod attached;
 
-    use super::{HandsToolExecutor, decode_detached, operation_for};
+    use super::{HandsToolExecutor, decode_detached, incorporate_result, operation_for};
     use aex_brain_app::ports::{
         BoxFuture, CancelToken, ControlStateView, DetachedStatus, DispatchTicket, FenceGuard,
         HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart, HandsOperationStatus,
-        HandsPort, HandsResult, PreparedToolCall, ResultBounds, ToolOutcome, ToolResultBody,
-        ToolRoute,
+        HandsPort, HandsResult, HandsSandboxFile, PreparedToolCall, ResultBounds, ToolOutcome,
+        ToolResultBody, ToolRoute,
     };
     use aex_brain_domain::effect::EffectClass;
     use aex_brain_domain::ids::{
@@ -635,6 +653,7 @@ mod tests {
                     exit_code: 0,
                     inline: Some(inline.clone()),
                     placed: None,
+                    sandbox_file: None,
                     truncated: *self.result_truncated.lock().expect("truncated"),
                     duration_ms: 17,
                     checksum: self
@@ -662,6 +681,42 @@ mod tests {
             attached: Mutex::new(None),
         });
         (HandsToolExecutor::new(hands.clone()), hands)
+    }
+
+    #[test]
+    fn a_sandbox_retained_result_becomes_a_bounded_preview_and_full_path() {
+        let checksum = ContentHash::of(&vec![b'x'; 65_537]);
+        let body = incorporate_result(
+            HandsResult {
+                operation: HandsOperationId("op".to_owned()),
+                generation: generation(),
+                exit_code: 0,
+                inline: None,
+                placed: None,
+                sandbox_file: Some(HandsSandboxFile {
+                    path: "/workspace/.aex/tool-results/op.out".to_owned(),
+                    byte_len: 65_537,
+                    preview: "bounded".to_owned(),
+                }),
+                truncated: false,
+                duration_ms: 9,
+                checksum,
+            },
+            1_048_576,
+        )
+        .expect("a full sandbox reference is incorporable");
+        let ToolResultPart::Json { value } = &body.content[0] else {
+            panic!("the reference is structured JSON")
+        };
+        let value: serde_json::Value =
+            serde_json::from_slice(value.as_bytes()).expect("canonical JSON");
+        assert_eq!(value["preview"], "bounded");
+        assert_eq!(value["previewTruncated"], true);
+        assert_eq!(
+            value["fullResultPath"],
+            "/workspace/.aex/tool-results/op.out"
+        );
+        assert_eq!(value["sizeBytes"], 65_537);
     }
 
     fn ticket_at(effect: EffectId, at: Timestamp) -> DispatchTicket {
@@ -696,7 +751,7 @@ mod tests {
             call: aex_brain_domain::ids::ToolCallId::new("call-1").expect("call id"),
             route: ToolRoute {
                 name: ToolName::parse("read_file").expect("tool name"),
-                executor: ExecutorRoute::Hands,
+                executor: ExecutorRoute::ToolMux,
                 class: EffectClass::NonReplayable,
                 timeout_ms: 60_000,
                 concurrency_weight: 1,
@@ -707,7 +762,8 @@ mod tests {
             }))
             .expect("canonical input"),
             max_result_bytes: 65_536,
-            hands_generation: generation(),
+            hands_generation: Some(generation()),
+            mcp_servers: Vec::new(),
             control: ControlStateView::default(),
         }
     }
@@ -957,7 +1013,7 @@ mod tests {
             ..
         } = *result;
         assert_eq!(duration_ms, 17);
-        assert_eq!(executed_on, ExecutorRoute::Hands);
+        assert_eq!(executed_on, ExecutorRoute::ToolMux);
         let [ToolResultPart::Json { value }] = content.as_slice() else {
             panic!("canonical JSON result");
         };

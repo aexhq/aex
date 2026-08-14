@@ -1,41 +1,42 @@
-# Sessions and their complete, sealed messages.
-#
-# A session is the only public execution resource. Each admitted user message
-# starts the session's current work; completion or cancellation returns it to
-# `idle`, ready for another message. Internal turn/run identities never cross
-# this contract.
+# Session-centered public execution contract. Agents, Hands, generations,
+# attempts, effects and subagents remain durable internal resources.
 module: regional
 schemas:
   SessionStatus:
-    doc: What a session is doing right now.
+    doc: Customer-visible session lifecycle, independent of sandbox suspension.
     type: enum
     values:
-      - { value: idle, doc: "Ready for another message." }
-      - { value: running, doc: "Processing the active message." }
-      - { value: suspending, doc: "Stopping compute while retaining this exact generation." }
-      - { value: suspended, doc: "Compute is stopped and this exact generation may be resumed." }
-      - { value: resuming, doc: "Restarting the retained generation." }
-      - { value: terminating, doc: "Destroying compute and live files." }
-      - { value: terminated, doc: "Compute and live files are gone; metadata and sealed messages remain." }
-      - { value: deleting, doc: "Irreversible metadata deletion is in progress." }
+      - { value: idle, doc: "Ready for another user message." }
+      - { value: running, doc: "Processing the one active root message." }
+      - { value: terminating, doc: "Destroying sandbox compute." }
+      - { value: terminated, doc: "Sandbox compute is gone; metadata and messages remain." }
+      - { value: deleting, doc: "Irreversible session-content deletion is running." }
 
-  SessionTerminationReason:
-    doc: Why a session permanently lost its compute and live files.
+  SandboxStatus:
+    doc: Observable preparation state of the session's single default-on sandbox.
     type: enum
     values:
-      - { value: user, doc: "The customer explicitly terminated it." }
-      - { value: lifetime_expired, doc: "The eight-hour provider lifetime ended." }
-      - { value: runtime_lost, doc: "The retained runtime was lost; crash recovery is not part of this release." }
+      - { value: disabled, doc: "The caller explicitly opted out; sandbox tools return sandbox_disabled." }
+      - { value: requested, doc: "Preparation was durably requested." }
+      - { value: provisioning, doc: "Runtime infrastructure is being provisioned." }
+      - { value: booting, doc: "The exact generation is booting." }
+      - { value: materializing_workspace, doc: "Frozen files and setup are being applied." }
+      - { value: qualifying_mcp, doc: "Sandbox-process MCP servers are being qualified." }
+      - { value: ready, doc: "Ready to execute a waiting tool call." }
+      - { value: suspending, doc: "No waiter exists and initial preparation is suspending." }
+      - { value: suspended, doc: "Prepared and suspended until the first sandbox tool call." }
+      - { value: resuming, doc: "A tool waiter is resuming the exact generation." }
+      - { value: lost, doc: "The generation was lost; tool calls receive a normal structured error." }
 
   NetworkMode:
-    doc: What the guest may reach.
+    doc: What the sandbox may reach.
     type: enum
     values:
       - { value: none, doc: "No outbound network." }
       - { value: public_internet, doc: "Managed outbound Internet egress." }
 
   PackageEcosystem:
-    doc: The package ecosystems a session may pre-install from.
+    doc: Supported setup package ecosystems.
     type: enum
     values:
       - { value: apt, doc: "Debian packages." }
@@ -43,132 +44,175 @@ schemas:
       - { value: npm, doc: "Node packages." }
 
   PackageRequest:
-    doc: One exactly-pinned package to pre-install.
+    doc: One exactly pinned setup package.
     type: object
     fields:
-      ecosystem: { type: ref, to: PackageEcosystem, doc: "Which ecosystem." }
-      name: { type: string, min: 1, max: 214, doc: "The package name." }
-      version: { type: string, min: 1, max: 64, doc: "The exact version; ranges are rejected." }
+      ecosystem: { type: ref, to: PackageEcosystem, doc: "Which package manager." }
+      name: { type: string, min: 1, max: 214, doc: "Package name." }
+      version: { type: string, min: 1, max: 128, doc: "Exact version; ranges are rejected." }
+
+  WorkspaceFileMount:
+    doc: Resolve one current workspace-file name to a private immutable hash and mount path at admission.
+    type: object
+    fields:
+      name: { type: resource_name, doc: "Current logical workspace-file name." }
+      path: { type: file_path, doc: "Normalized absolute sandbox destination under /workspace." }
 
   SessionRegisteredSelection:
-    doc: Opaque workspace files mounted into the session. Conventional files such as `AGENTS.md` may carry guidance, skills, tool bundles, MCP configuration or custom instructions; the built-in model tools are `read_file`, `edit_file`, `write_file`, and Bash.
+    doc: Files resolved once at session admission; later workspace overwrites cannot mutate this manifest.
     type: object
     fields:
-      files: { type: array, max: 256, optional: true, items: { type: resource_name }, doc: "Registered files to mount." }
+      mounts: { type: array, max: 256, items: { type: ref, to: WorkspaceFileMount }, doc: "Explicit name-to-path mounts." }
 
   SessionComputeRequest:
-    doc: The only customer compute selector.
+    doc: The single sandbox's bounded compute selector.
     type: object
     fields:
-      size: { type: compute_size, optional: true, doc: "The baseline shape; defaults to `1gb`." }
+      size: { type: compute_size, optional: true, doc: "Defaults to the launch baseline." }
 
   HandsNetworkRequest:
-    doc: The guest network policy.
+    doc: The sandbox network policy.
     type: object
     fields:
       mode: { type: ref, to: NetworkMode, doc: "What the guest may reach." }
 
   SessionNetworkRequest:
-    doc: Network policy for the session.
+    doc: Network policy for the one sandbox.
     type: object
     fields:
-      hands: { type: ref, to: HandsNetworkRequest, doc: "The guest policy." }
+      hands: { type: ref, to: HandsNetworkRequest, doc: "Guest policy." }
+
+  SessionSandboxRequest:
+    doc: Default-on sandbox configuration; enabled=false creates no Hand.
+    type: object
+    fields:
+      enabled: { type: boolean, optional: true, doc: "Defaults true." }
+      compute: { type: ref, to: SessionComputeRequest, optional: true, doc: "Bounded compute shape." }
+      network: { type: ref, to: SessionNetworkRequest, optional: true, doc: "Guest egress policy." }
+      packages: { type: array, max: 64, optional: true, items: { type: ref, to: PackageRequest }, doc: "Pinned packages applied before initial suspension." }
+
+  RemoteMcpServer:
+    doc: A remote Streamable HTTP MCP server qualified at session setup.
+    type: object
+    fields:
+      url: { type: https_url, doc: "Official server endpoint." }
+      headers: { type: map, max: 32, optional: true, items: { type: string, min: 1, max: 8192 }, doc: "Write-only session-encrypted request headers." }
+
+  SandboxMcpServer:
+    doc: An MCP process launched inside the sandbox after workspace materialization.
+    type: object
+    fields:
+      command: { type: string, min: 1, max: 1024, doc: "Executable inside the sandbox." }
+      args: { type: array, max: 64, optional: true, items: { type: string, min: 0, max: 4096 }, doc: "Bounded arguments." }
+      environment: { type: map, max: 64, optional: true, items: { type: string, min: 0, max: 8192 }, doc: "Write-only session-encrypted environment." }
+      workingDirectory: { type: file_path, optional: true, doc: "Normalized sandbox working directory." }
+
+  McpTransport:
+    doc: The two admitted MCP transports.
+    type: union
+    tag: kind
+    variants:
+      - { value: remote_http, payload: RemoteMcpServer, doc: "Remote Streamable HTTP." }
+      - { value: sandbox_process, payload: SandboxMcpServer, doc: "Process inside the one sandbox." }
+
+  McpServer:
+    doc: One frozen MCP definition and its bounded tool namespace.
+    type: object
+    fields:
+      name: { type: resource_name, doc: "Unique server/tool namespace." }
+      transport: { type: ref, to: McpTransport, doc: "How Tool Mux reaches it." }
 
   SessionCreateRequest:
-    doc: Create an eight-hour multi-turn session with one write-only, session-scoped BYOK provider key.
+    doc: Create a durable session with a write-only BYOK key, frozen file/MCP config and a default-on eager sandbox.
     type: object
     fields:
-      provider: { type: provider_id, doc: "The direct BYOK provider." }
-      model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
-      providerApiKey: { type: string, min: 8, max: 8192, doc: "The provider key; write-only, encrypted into this session and never returned." }
-      registered: { type: ref, to: SessionRegisteredSelection, optional: true, doc: "Opaque workspace files to mount." }
-      compute: { type: ref, to: SessionComputeRequest, optional: true, doc: "The baseline compute shape." }
-      network: { type: ref, to: SessionNetworkRequest, optional: true, doc: "The guest network policy." }
-      packages: { type: array, max: 64, optional: true, items: { type: ref, to: PackageRequest }, doc: "Packages to pre-install." }
-      metadata: { type: map, max: 64, optional: true, items: { type: metadata_value }, doc: "Caller-defined labels." }
+      provider: { type: provider_id, doc: "Qualified official provider family." }
+      model: { type: string, min: 1, max: 256, doc: "Current admitted provider-native model id." }
+      providerApiKey: { type: string, min: 8, max: 8192, doc: "Write-only session-scoped key; encrypted and never returned." }
+      registered: { type: ref, to: SessionRegisteredSelection, optional: true, doc: "Files to resolve and freeze." }
+      sandbox: { type: ref, to: SessionSandboxRequest, optional: true, doc: "Defaults enabled and prepares asynchronously." }
+      mcpServers: { type: array, max: 16, optional: true, items: { type: ref, to: McpServer }, doc: "Remote and sandbox MCP definitions." }
+      expiresAt: { type: timestamp, optional: true, doc: "Optional earlier expiry within the launch maximum." }
+      maxSpendCents: { type: cents, optional: true, doc: "Session prepaid reservation ceiling." }
+      metadata: { type: map, max: 64, optional: true, items: { type: metadata_value }, doc: "Caller labels." }
 
   ComputeShape:
-    doc: One resolved compute dimension.
+    doc: One resolved sandbox compute dimension.
     type: object
     fields:
       memoryMiB: { type: integer, min: 0, max: 262144, doc: "Memory in mebibytes." }
-      vcpus: { type: float, doc: "Virtual CPUs; fractional at the smaller shapes." }
+      vcpus: { type: float, doc: "Virtual CPUs." }
 
   ResolvedCompute:
-    doc: The complete provider-derived capacity of the selected shape.
+    doc: Complete provider-derived capacity of the frozen shape.
     type: object
     fields:
-      size: { type: compute_size, doc: "The selected baseline token." }
+      size: { type: compute_size, doc: "Selected token." }
       baseline: { type: ref, to: ComputeShape, doc: "Guaranteed capacity." }
       peak: { type: ref, to: ComputeShape, doc: "Burst ceiling." }
       maxDiskGiB: { type: integer, min: 1, max: 1024, doc: "Maximum guest disk." }
       endpointBandwidthMBps: { type: integer, min: 1, max: 1024, doc: "Endpoint bandwidth." }
-      maxConcurrentConnections: { type: integer, min: 1, max: 4096, doc: "Concurrent connection ceiling." }
+      maxConcurrentConnections: { type: integer, min: 1, max: 4096, doc: "Connection ceiling." }
 
   ResolvedNetwork:
-    doc: The resolved guest network policy.
+    doc: Resolved sandbox network policy.
     type: object
     fields:
-      hands: { type: ref, to: HandsNetworkRequest, doc: "What the guest may reach." }
+      hands: { type: ref, to: HandsNetworkRequest, doc: "Guest policy." }
 
   SessionLifecyclePolicy:
-    doc: The immutable automatic lifecycle behavior applied to this session.
+    doc: Immutable public session bounds; sandbox suspension is an internal lifecycle.
     type: object
     fields:
-      idleSuspendAfterSeconds: { type: integer, min: 180, max: 180, doc: "Idle sessions automatically suspend after exactly three minutes." }
-      maximumLifetimeSeconds: { type: integer, min: 28800, max: 28800, doc: "The provider generation expires exactly eight hours after `launchedAt`." }
-      resumeOnMessage: { type: boolean, doc: "A message automatically resumes this same suspended generation." }
-      resumeOnLiveFileAccess: { type: boolean, doc: "A live-file request automatically resumes this same suspended generation." }
+      maximumLifetimeSeconds: { type: integer, min: 1, max: 28800, doc: "Session lifetime, never more than eight hours at launch." }
+      maximumSubagents: { type: integer, min: 12, max: 12, doc: "Exactly 12 non-root identities over the session lifetime." }
+      maximumSubagentDepth: { type: integer, min: 3, max: 3, doc: "Root depth is zero; children may reach depth three." }
 
   ResolvedConfig:
-    doc: Everything the platform resolved for this session.
+    doc: Customer-safe frozen session configuration; all plaintext secrets are omitted.
     type: object
     fields:
-      provider: { type: provider_id, doc: "The provider." }
-      model: { type: string, min: 1, max: 256, doc: "The exact provider-native model id." }
-      compute: { type: ref, to: ResolvedCompute, doc: "Resolved capacity." }
-      network: { type: ref, to: ResolvedNetwork, doc: "Resolved network policy." }
-      registered: { type: ref, to: SessionRegisteredSelection, doc: "Resolved mounted files." }
-      packages: { type: array, max: 64, items: { type: ref, to: PackageRequest }, doc: "Resolved packages." }
-      lifecycle: { type: ref, to: SessionLifecyclePolicy, doc: "Immutable automatic lifecycle behavior." }
+      provider: { type: provider_id, doc: "Provider." }
+      model: { type: string, min: 1, max: 256, doc: "Current model selected at admission." }
+      sandboxEnabled: { type: boolean, doc: "Whether the one sandbox exists." }
+      compute: { type: ref, to: ResolvedCompute, optional: true, doc: "Present only when sandbox is enabled." }
+      network: { type: ref, to: ResolvedNetwork, optional: true, doc: "Present only when sandbox is enabled." }
+      registered: { type: ref, to: SessionRegisteredSelection, doc: "Frozen mount selection; hashes remain private." }
+      packages: { type: array, max: 64, items: { type: ref, to: PackageRequest }, doc: "Resolved setup packages." }
+      mcpServerNames: { type: array, max: 16, items: { type: resource_name }, doc: "Frozen server names; secrets and transport credentials are omitted." }
+      lifecycle: { type: ref, to: SessionLifecyclePolicy, doc: "Immutable session bounds." }
 
   Session:
-    doc: A multi-turn conversation backed by at most one retained provider generation. Termination destroys compute and live files but preserves this metadata and sealed messages until deletion.
+    doc: The only public execution resource; sandbox loss never terminates agent state.
     type: object
     fields:
       id: { type: id, of: session, doc: "Identity." }
-      workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
-      status: { type: ref, to: SessionStatus, doc: "What the session is doing." }
+      workspaceId: { type: id, of: workspace, doc: "Owning fixed workspace." }
+      status: { type: ref, to: SessionStatus, doc: "Conversation lifecycle." }
+      sandboxStatus: { type: ref, to: SandboxStatus, doc: "One-Hand preparation/suspension state." }
       revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      activeMessageId: { type: id, of: message, optional: true, doc: "The user message whose work is active. Absent while no message is active." }
-      activeMaxSpendCents: { type: cents, optional: true, doc: "The effective current-message spend ceiling: the request value, or 1000 when omitted." }
-      activeDeadline: { type: timestamp, optional: true, doc: "The internal bounded deadline for the active message." }
-      launchedAt: { type: timestamp, doc: "When the provider generation first launched." }
-      expiresAt: { type: timestamp, doc: "Exactly 28,800 seconds after `launchedAt`; suspension never extends it." }
-      idleSince: { type: timestamp, optional: true, doc: "When the session most recently became idle." }
-      suspendAt: { type: timestamp, optional: true, doc: "When an idle session will automatically suspend; exactly 180 seconds after `idleSince`." }
-      suspendedAt: { type: timestamp, optional: true, doc: "When this exact generation most recently suspended." }
-      terminatedAt: { type: timestamp, optional: true, doc: "When compute and live files were permanently destroyed." }
-      terminationReason: { type: ref, to: SessionTerminationReason, optional: true, doc: "Why the session permanently terminated." }
-      resolvedConfig: { type: ref, to: ResolvedConfig, doc: "Everything the platform resolved." }
-      metadata: { type: map, max: 64, optional: true, items: { type: metadata_value }, doc: "Caller-defined labels." }
-      createdAt: { type: timestamp, doc: "When metadata was created; this does not determine the provider lifetime." }
-      updatedAt: { type: timestamp, doc: "When the session last changed." }
+      activeMessageId: { type: id, of: message, optional: true, doc: "The one active root user message." }
+      expiresAt: { type: timestamp, doc: "Session expiry." }
+      terminatedAt: { type: timestamp, optional: true, doc: "When explicit compute termination committed." }
+      resolvedConfig: { type: ref, to: ResolvedConfig, doc: "Frozen customer-safe configuration." }
+      metadata: { type: map, max: 64, optional: true, items: { type: metadata_value }, doc: "Caller labels." }
+      createdAt: { type: timestamp, doc: "Admission time." }
+      updatedAt: { type: timestamp, doc: "Last durable change." }
 
   SessionListItem:
-    doc: The collection projection of a session; `resolvedConfig` is omitted.
+    doc: Bounded collection projection.
     type: object
     fields:
       id: { type: id, of: session, doc: "Identity." }
-      workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
-      status: { type: ref, to: SessionStatus, doc: "What the session is doing." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      provider: { type: provider_id, doc: "The provider." }
-      model: { type: string, min: 1, max: 256, doc: "The model." }
-      activeMessageId: { type: id, of: message, optional: true, doc: "The active user message, when any." }
-      expiresAt: { type: timestamp, doc: "When the provider generation's eight-hour lifetime ends." }
-      createdAt: { type: timestamp, doc: "When metadata was created." }
-      updatedAt: { type: timestamp, doc: "When the session last changed." }
+      workspaceId: { type: id, of: workspace, doc: "Workspace." }
+      status: { type: ref, to: SessionStatus, doc: "Conversation lifecycle." }
+      sandboxStatus: { type: ref, to: SandboxStatus, doc: "Sandbox lifecycle." }
+      provider: { type: provider_id, doc: "Provider." }
+      model: { type: string, min: 1, max: 256, doc: "Model." }
+      activeMessageId: { type: id, of: message, optional: true, doc: "Active root message." }
+      expiresAt: { type: timestamp, doc: "Expiry." }
+      createdAt: { type: timestamp, doc: "Admission time." }
+      updatedAt: { type: timestamp, doc: "Last change." }
 
   SessionListPage:
     doc: One page of sessions.
@@ -177,151 +221,177 @@ schemas:
       items: { type: array, max: 100, items: { type: ref, to: SessionListItem }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
-  SessionTelemetrySegment:
-    doc: One immutable official OTLP protobuf log segment generated by AEX after a committed session boundary.
+  SessionCommandReceipt:
+    doc: Admission receipt for an asynchronous session command; there is no generic operations resource.
     type: object
     fields:
-      id: { type: string, min: 85, max: 85, pattern: "^[0-9]{20}-[0-9a-f]{64}$", doc: "The ordered content-addressed segment id." }
-      sequence: { type: decimal, doc: "The native session-event sequence." }
-      sha256: { type: content_hash, doc: "SHA-256 of the exact protobuf bytes." }
-      sizeBytes: { type: decimal, doc: "The exact protobuf byte size." }
-      createdAt: { type: timestamp, optional: true, doc: "When S3 accepted the immutable object." }
-      mediaType: { type: string, min: 22, max: 22, pattern: "^application/x-protobuf$", doc: "Always `application/x-protobuf`." }
-
-  SessionTelemetrySegmentPage:
-    doc: One bounded page of immutable AEX-generated session telemetry.
-    type: object
-    fields:
-      items: { type: array, max: 100, items: { type: ref, to: SessionTelemetrySegment }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  SessionTelemetryDownloadGrant:
-    doc: A five-minute S3 GET grant for one immutable OTLP protobuf segment.
-    type: object
-    fields:
-      segment: { type: ref, to: SessionTelemetrySegment, doc: "The immutable object being granted." }
-      url: { type: https_url, doc: "The signed S3 URL; never printed by the CLI." }
-      expiresAt: { type: timestamp, doc: "When the signature stops verifying." }
+      operationId: { type: id, of: operation, doc: "Diagnostic and idempotency correlation identity." }
+      sessionId: { type: id, of: session, doc: "Target session." }
+      acceptedAt: { type: timestamp, doc: "When the command committed." }
 
   DeletingSession:
-    doc: A session whose irreversible deletion is running; rendered at 410.
+    doc: Minimal deletion marker returned while content cleanup runs.
     type: object
     fields:
-      id: { type: id, of: session, doc: "Identity." }
-      workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
-      operationId: { type: id, of: operation, doc: "The deletion operation." }
+      id: { type: id, of: session, doc: "Session." }
+      operationId: { type: id, of: operation, doc: "Diagnostic deletion identity." }
       startedAt: { type: timestamp, doc: "When deletion began." }
 
   SessionTombstone:
-    doc: The minimal marker left after irreversible deletion. Compute and live files are terminated first; session, message, and Brain user-content payloads are removed. Independent registered workspace files and aggregate billing/audit facts remain.
+    doc: Minimal marker after irreversible deletion.
     type: object
     fields:
-      id: { type: id, of: session, doc: "The deleted session." }
-      workspaceId: { type: id, of: workspace, doc: "The owning workspace." }
-      deletedAt: { type: timestamp, doc: "When deletion committed." }
-      operationId: { type: id, of: operation, doc: "The operation that deleted it." }
+      id: { type: id, of: session, doc: "Deleted session." }
+      deletedAt: { type: timestamp, doc: "Commit time." }
 
   MessageRole:
-    doc: Who produced a message.
+    doc: Who produced a committed message.
     type: enum
     values:
-      - { value: user, doc: "The customer." }
-      - { value: assistant, doc: "The model." }
-      - { value: tool, doc: "A built-in tool result." }
+      - { value: user, doc: "Customer." }
+      - { value: assistant, doc: "Model." }
+      - { value: tool, doc: "Canonical tool result." }
 
   MessagePartText:
-    doc: A text part.
+    doc: Text content.
     type: object
     fields:
-      text: { type: string, min: 0, max: 1048576, doc: "The text." }
+      text: { type: string, min: 0, max: 1048576, doc: "Text." }
 
   MessagePartToolCall:
-    doc: A built-in tool call emitted by the model.
+    doc: Canonical provider-independent tool call.
     type: object
     fields:
-      id: { type: id, of: tool_call, doc: "The call identity." }
-      argumentsDigest: { type: content_hash, doc: "The canonical tool-argument digest." }
+      id: { type: id, of: tool_call, doc: "Call identity." }
+      name: { type: string, min: 1, max: 256, doc: "Official or namespaced MCP tool name." }
+      arguments: { type: canonical_json, doc: "Validated arguments." }
 
   MessagePartToolResult:
-    doc: The canonical result of a built-in tool call.
+    doc: Bounded tool result; large/full bytes live at its sandbox path and in retained telemetry.
     type: object
     fields:
-      id: { type: id, of: tool_call, doc: "The call identity." }
-      resultDigest: { type: content_hash, doc: "The canonical tool-result digest." }
+      id: { type: id, of: tool_call, doc: "Call identity." }
+      preview: { type: string, min: 0, max: 65536, doc: "Bounded live/model preview." }
+      truncated: { type: boolean, doc: "Whether full output exceeded the preview." }
+      sandboxPath: { type: file_path, optional: true, doc: "Stable call-scoped full-result path." }
+      sha256: { type: content_hash, optional: true, doc: "Full-result digest." }
+      sizeBytes: { type: decimal, optional: true, doc: "Full-result length." }
 
   MessagePart:
-    doc: One part of a complete message. Admission is text-only; assistant and tool messages may contain canonical built-in tool records.
+    doc: One part of a complete committed message.
     type: union
     tag: type
     variants:
       - { value: text, payload: MessagePartText, doc: "Text." }
-      - { value: tool_call, payload: MessagePartToolCall, doc: "A canonical built-in tool call." }
-      - { value: tool_result, payload: MessagePartToolResult, doc: "A canonical built-in tool result." }
+      - { value: tool_call, payload: MessagePartToolCall, doc: "Tool call." }
+      - { value: tool_result, payload: MessagePartToolResult, doc: "Tool result." }
 
   Message:
-    doc: One complete, sealed message in a session. `createdAt` is display metadata; collection order is the immutable seal-visibility order and is not derived from this field.
+    doc: One complete sealed message in immutable visibility order.
     type: object
     fields:
       id: { type: id, of: message, doc: "Identity." }
-      sessionId: { type: id, of: session, doc: "The owning session." }
-      role: { type: ref, to: MessageRole, doc: "Who produced it." }
-      content: { type: array, max: 256, items: { type: ref, to: MessagePart }, doc: "The parts." }
-      createdAt: { type: timestamp, doc: "When it was recorded." }
+      sessionId: { type: id, of: session, doc: "Session." }
+      role: { type: ref, to: MessageRole, doc: "Producer." }
+      content: { type: array, max: 256, items: { type: ref, to: MessagePart }, doc: "Parts." }
+      createdAt: { type: timestamp, doc: "Display time; not collection ordering authority." }
 
   MessagePage:
-    doc: One page of complete sealed messages, ordered by the immutable seal-visibility tuple `(sealedAt, messageId)`. Open partial messages are never visible.
+    doc: One page of complete messages.
     type: object
     fields:
       items: { type: array, max: 100, items: { type: ref, to: Message }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
-  MessageSendRequest:
-    doc: Admit one text message of at most 24,576 UTF-8 bytes. Omitting `maxSpendCents` selects the 1000-cent default; an explicit positive value may be higher or lower. Omitting `deadline` uses the session's remaining lifetime/drain fence; an explicit deadline may only shorten it.
+  ResponseFormatKind:
+    doc: Requested final response format.
+    type: enum
+    values:
+      - { value: text, doc: "Ordinary text." }
+      - { value: json_schema, doc: "Native provider JSON Schema support is required." }
+
+  ResponseFormat:
+    doc: Optional native structured-output request; prompt emulation is never presented as strict.
     type: object
     fields:
-      text: { type: string, min: 1, max: 24576, doc: "The complete user text. The MVP bound keeps Brain's canonical admission record below its 32,768-byte inline journal ceiling with envelope overhead; staged message bodies are deferred." }
-      maxSpendCents: { type: cents, optional: true, doc: "The current-message spend ceiling. Omission means 1000 cents; the platform does not reserve account funds." }
-      deadline: { type: timestamp, optional: true, doc: "An earlier absolute deadline. It must be in the future and cannot exceed the session's remaining `expiresAt`/drain fence." }
+      kind: { type: ref, to: ResponseFormatKind, doc: "Format." }
+      schema: { type: canonical_json, optional: true, doc: "Required only for json_schema." }
+
+  MessageSendRequest:
+    doc: Text-only user message; arbitrary files are referenced by mounted paths in this text.
+    type: object
+    fields:
+      text: { type: string, min: 1, max: 24576, doc: "Complete user text; there is no attachment field." }
+      responseFormat: { type: ref, to: ResponseFormat, optional: true, doc: "Native structured output request." }
+      maxSpendCents: { type: cents, optional: true, doc: "Earlier per-message spend fence." }
+      deadline: { type: timestamp, optional: true, doc: "Earlier absolute deadline." }
 
   MessageSendResult:
-    doc: The admitted user message and the session now processing it.
+    doc: The admitted user message and session now processing it.
     type: object
     fields:
-      message: { type: ref, to: Message, doc: "The admitted message." }
-      session: { type: ref, to: Session, doc: "The session with current activity populated." }
+      message: { type: ref, to: Message, doc: "Admitted message." }
+      session: { type: ref, to: Session, doc: "Updated session." }
 
-  SessionCancelResult:
-    doc: The result of cancelling the session's current work. The session is idle afterward and accepts another message.
-    type: object
-    fields:
-      sessionId: { type: id, of: session, doc: "The session." }
-      changed: { type: boolean, doc: "Whether work was active and got cancelled." }
-      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after cancellation." }
+  MessageStreamKind:
+    doc: Preview/commit reconciliation protocol.
+    type: enum
+    values:
+      - { value: preview, doc: "Uncommitted assistant delta; may be lost." }
+      - { value: committed, doc: "A complete message became durable." }
+      - { value: reconcile, doc: "Replace preview state from committed authority." }
+      - { value: gap, doc: "One or more live frames were dropped; replay committed messages." }
+      - { value: heartbeat, doc: "Keeps the bounded connection alive." }
 
-  SessionSuspendResult:
-    doc: The result of manually suspending an idle session's exact retained generation. Active work must be cancelled first.
+  MessageStreamFrame:
+    doc: One bounded NDJSON assistant-stream frame.
     type: object
     fields:
-      sessionId: { type: id, of: session, doc: "The session." }
-      changed: { type: boolean, doc: "Whether the session transitioned to suspended." }
-      suspendedAt: { type: timestamp, doc: "When the generation suspended." }
-      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after suspension." }
+      sequence: { type: decimal, doc: "Monotonic connection-independent sequence." }
+      kind: { type: ref, to: MessageStreamKind, doc: "Frame semantics." }
+      messageId: { type: id, of: message, optional: true, doc: "Message correlation." }
+      text: { type: string, min: 0, max: 65536, optional: true, doc: "Bounded preview text." }
+      message: { type: ref, to: Message, optional: true, doc: "Complete committed/reconcile message." }
 
-  SessionResumeResult:
-    doc: The result of manually resuming the same retained generation to idle.
-    type: object
-    fields:
-      sessionId: { type: id, of: session, doc: "The session." }
-      changed: { type: boolean, doc: "Whether the retained generation was resumed." }
-      status: { type: ref, to: SessionStatus, doc: "Always `idle` after a successful resume." }
-      resumedAt: { type: timestamp, doc: "When the retained generation resumed." }
-      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after resumption." }
+  TelemetryKind:
+    doc: Trusted live and retained session signals.
+    type: enum
+    values:
+      - { value: assistant, doc: "Assistant preview/commit lifecycle." }
+      - { value: tool, doc: "Tool waiting, start, preview and completion." }
+      - { value: runtime, doc: "Sandbox prepare/materialize/suspend/resume/loss lifecycle." }
+      - { value: log, doc: "OpenTelemetry Log record." }
+      - { value: span, doc: "OpenTelemetry Span record." }
+      - { value: usage, doc: "Trusted model/runtime/storage/transfer usage fact." }
+      - { value: gap, doc: "Bounded live delivery dropped frames; replay from S3." }
+      - { value: heartbeat, doc: "Stream heartbeat." }
 
-  SessionTerminateResult:
-    doc: The result of permanently destroying compute and live files while preserving session metadata and sealed messages.
+  TelemetryFrame:
+    doc: One bounded normalized telemetry frame transmitted live and persisted in compressed S3 segments.
     type: object
     fields:
-      sessionId: { type: id, of: session, doc: "The session." }
-      changed: { type: boolean, doc: "Whether live compute or files existed and were destroyed." }
-      terminatedAt: { type: timestamp, doc: "When permanent termination committed." }
-      sessionRevision: { type: integer, min: 0, max: 9007199254740991, doc: "The revision after termination." }
+      sequence: { type: decimal, doc: "Monotonic per-session sequence." }
+      kind: { type: ref, to: TelemetryKind, doc: "Signal family." }
+      occurredAt: { type: timestamp, doc: "Trusted producer time." }
+      traceId: { type: trace_id, optional: true, doc: "Trace correlation." }
+      spanId: { type: span_id, optional: true, doc: "Span correlation." }
+      body: { type: canonical_json, optional: true, doc: "Bounded customer-safe structured event." }
+      preview: { type: string, min: 0, max: 65536, optional: true, doc: "Bounded tool/assistant output preview." }
+      truncated: { type: boolean, doc: "Whether retained data is larger than this frame." }
+
+  TelemetryDownloadRequest:
+    doc: Select a bounded half-open telemetry export.
+    type: object
+    fields:
+      fromSequence: { type: decimal, optional: true, doc: "First included sequence." }
+      toSequence: { type: decimal, optional: true, doc: "Exclusive sequence ceiling." }
+
+  TelemetryDownloadGrant:
+    doc: Short-lived signed download for one immutable compressed telemetry export.
+    type: object
+    fields:
+      url: { type: https_url, doc: "Signed S3 URL; never printed by the CLI." }
+      expiresAt: { type: timestamp, doc: "Grant expiry." }
+      sha256: { type: content_hash, doc: "Exact compressed object digest." }
+      sizeBytes: { type: decimal, doc: "Compressed size." }
+      mediaType: { type: string, min: 1, max: 128, doc: "Compressed NDJSON or OTLP bundle media type." }

@@ -27,7 +27,7 @@ use session_operation_worker::{
 
 /// Bounded work rows read from each due shard in one scheduled invocation.
 const DUE_PAGE_ITEMS: u32 = 25;
-const DEPLOYABLE: &str = "session-operation-worker";
+const DEPLOYABLE: &str = "session-maintenance-worker";
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct ShardOutcome {
     retired: u64,
@@ -136,11 +136,13 @@ impl Worker {
             session_authority: config.session_table.clone(),
             regional_work: config.work_table.clone(),
             runtime_activity: config.runtime_activity_table.clone(),
-            regional_content: "UNBOUND:regional-content".to_owned(),
-            regional_registry: "UNBOUND:regional-registry".to_owned(),
-            regional_secret_custody: "UNBOUND:regional-secret-custody".to_owned(),
-            regional_secret_keystore: "UNBOUND:regional-secret-keystore".to_owned(),
-            regional_authz_projection: "UNBOUND:regional-authz-projection".to_owned(),
+            // The deletion compiler admits only session/work/runtime families.
+            // Empty inactive names fail request construction if that invariant regresses.
+            regional_content: String::new(),
+            regional_registry: String::new(),
+            regional_secret_custody: String::new(),
+            regional_secret_keystore: String::new(),
+            regional_authz_projection: String::new(),
         };
         let lifecycle = DynamoLifecyclePort::new(
             dynamodb.clone(),
@@ -149,11 +151,13 @@ impl Worker {
             tables,
             config.runtime_lifecycle_queue_url.clone(),
             config.session_telemetry_bucket.clone(),
+            config.content_bucket.clone(),
+            config.content_bucket_owner.clone(),
         );
         let reconciler = OperationReconciler::new(
             work,
             operations,
-            format!("session-operation-worker:{}", config.release_digest),
+            format!("session-maintenance-worker:{}", config.release_digest),
             config.lease_ms,
         )
         .map_err(|error| LambdaError::from(error.to_string()))?

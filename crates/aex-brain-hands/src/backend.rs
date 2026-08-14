@@ -13,7 +13,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use aex_brain_app::ports::{
     BoxFuture, DispatchTicket, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
-    HandsOperationStatus, HandsResult, ProviderFailureKind, RedactedDetail, ResultBounds,
+    HandsOperationStatus, HandsResult, HandsSandboxFile, ProviderFailureKind, RedactedDetail,
+    ResultBounds,
 };
 use aex_brain_domain::effect::{DispatchProof, DispatchStage};
 use aex_brain_domain::ids::{
@@ -27,12 +28,13 @@ use aex_hands_control_aws::{
 use aex_hands_protocol::files::{FileRequest, FileResponse};
 use aex_hands_protocol::lifecycle::ProviderRequestId;
 use aex_hands_protocol::operation::{
-    DeliveryMode, OperationBounds, OperationExit, OperationRequest, TerminalMetadata, TerminalState,
+    DeliveryMode, EnvName, EnvValue, OperationBounds, OperationExit, OperationRequest,
+    SANDBOX_MCP_QUALIFY_VAR, SandboxMcpQualification, TerminalMetadata, TerminalState,
 };
 use aex_hands_protocol::rpc::{
     AttachResponse, CallHash, CancelReason, CancelRequest, CancelResponse, HandsOperationId,
-    ResultChunk, ResultRequest, ResultResponse, StartRequest, StartResponse, StatusRequest,
-    StatusResponse, Verb,
+    HelloRequest, HelloResponse, ResultChunk, ResultRequest, ResultResponse, StartRequest,
+    StartResponse, StatusRequest, StatusResponse, Verb,
 };
 use aex_runtime_control::generation::{
     AdmissionRefused, GenerationState, HandsGeneration, ImageCapability, next_fence,
@@ -74,6 +76,9 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 /// idle ceiling and bounds a guest call after its edge request disappears.
 const FILE_RPC_TIMEOUT: Duration = Duration::from_mins(10);
 const FILE_BATCH_MAX_REQUESTS: usize = 10;
+const MCP_QUALIFY_TIMEOUT: Duration = Duration::from_secs(30);
+const MCP_QUALIFY_RESULT_BYTES: usize = 65_536;
+const LIVE_RESULT_PREVIEW_BYTES: usize = 65_536;
 const RESULT_CHUNK_BYTES: u64 = aex_hands_protocol::rpc::MAX_RESULT_CHUNK_BYTES;
 const RESULT_PULL_ATTEMPTS: usize = 32;
 const ENDPOINT_LEASE_CACHE_CAPACITY: usize = 128;
@@ -1131,6 +1136,211 @@ impl LiveFileBackend for ProductionHandsBackend {
         })
     }
 
+    fn hold_tool_waiter(
+        &self,
+        session: SessionId,
+        generation: GenerationId,
+        operation: HandsOperationId,
+    ) -> BoxFuture<'_, Result<aex_hands_protocol::rpc::Fence, HandsError>> {
+        Box::pin(async move {
+            let prepared = self.prepare_generation(session, generation).await?;
+            let admitted = self
+                .admit_operation(generation, operation, prepared)
+                .await?;
+            let hello: HelloResponse = self
+                .call_guest(
+                    &admitted.endpoint,
+                    Verb::Hello,
+                    &HelloRequest {},
+                    STATUS_TIMEOUT,
+                )
+                .await?;
+            if hello.protocol_version != aex_hands_protocol::rpc::PROTOCOL_V1
+                || hello.max_body_bytes < MAX_FRAME_BYTES as u64
+            {
+                return Err(dispatched(
+                    ProviderFailureKind::ProtocolViolation,
+                    "the exact-generation guest failed the Tool Mux hello contract",
+                ));
+            }
+            if admitted.native_resume {
+                self.settle_native_activity(&admitted.view).await?;
+            }
+            Ok(aex_hands_protocol::rpc::Fence(admitted.view.head.fence.0))
+        })
+    }
+
+    fn settle_tool_waiter(
+        &self,
+        generation: GenerationId,
+        operation: HandsOperationId,
+    ) -> BoxFuture<'_, Result<(), HandsError>> {
+        Box::pin(async move { self.settle_operation(generation, operation).await })
+    }
+
+    fn suspend_ready(
+        &self,
+        session: SessionId,
+        generation: GenerationId,
+    ) -> BoxFuture<'_, Result<(), HandsError>> {
+        Box::pin(async move {
+            const ATTEMPTS: usize = 16;
+            for _ in 0..ATTEMPTS {
+                match self
+                    .runtime
+                    .handle_command(
+                        aex_runtime_control_aws::RuntimeCommand::SessionSuspend {
+                            session,
+                            generation,
+                        },
+                        now()?,
+                    )
+                    .await
+                {
+                    CommandOutcome::Settled(Settled::Suspended) => return Ok(()),
+                    CommandOutcome::Settled(Settled::Lost | Settled::AlreadyTerminal { .. }) => {
+                        return Err(HandsError::GenerationLost { generation });
+                    }
+                    CommandOutcome::Settled(Settled::Superseded { .. }) => {
+                        return Err(dispatched(
+                            ProviderFailureKind::ProtocolViolation,
+                            "eager suspension found a successor generation",
+                        ));
+                    }
+                    CommandOutcome::Settled(_) | CommandOutcome::Retry { .. } => {}
+                    CommandOutcome::Poison { .. } => {
+                        return Err(dispatched(
+                            ProviderFailureKind::ProtocolViolation,
+                            "runtime control refused eager sandbox suspension",
+                        ));
+                    }
+                }
+            }
+            Err(dispatched(
+                ProviderFailureKind::Overloaded,
+                "eager sandbox suspension lost its bounded reconciliation budget",
+            ))
+        })
+    }
+
+    fn qualify_sandbox_mcp<'a>(
+        &'a self,
+        session: SessionId,
+        generation: GenerationId,
+        activity: HandsOperationId,
+        request: &'a SandboxMcpQualification,
+    ) -> BoxFuture<'a, Result<Vec<String>, HandsError>> {
+        Box::pin(async move {
+            let encoded = serde_json::to_string(request).map_err(|_| {
+                pre_dispatch(
+                    ProviderFailureKind::InvalidRequest,
+                    "sandbox MCP qualification is not encodable",
+                )
+            })?;
+            let cwd = request.working_directory.clone();
+            let operation_request = OperationRequest::Exec {
+                argv: vec!["/proc/self/exe".to_owned(), "mcp-qualify".to_owned()],
+                cwd,
+                env: vec![(
+                    EnvName(SANDBOX_MCP_QUALIFY_VAR.to_owned()),
+                    EnvValue::new(encoded),
+                )],
+                stdin: None,
+            };
+            let request_value = serde_json::to_value(&operation_request).map_err(|_| {
+                pre_dispatch(
+                    ProviderFailureKind::InvalidRequest,
+                    "sandbox MCP qualification operation is not encodable",
+                )
+            })?;
+            let request_bytes = serde_json::to_vec(&operation_request).map_err(|_| {
+                pre_dispatch(
+                    ProviderFailureKind::InvalidRequest,
+                    "sandbox MCP qualification operation is not encodable",
+                )
+            })?;
+            let hash = ContentHash::of(&request_bytes);
+            let brain_operation = BrainOperationId(activity.0.to_string());
+            let bounds = ResultBounds {
+                max_bytes: MCP_QUALIFY_RESULT_BYTES,
+                max_stream_bytes: MCP_QUALIFY_RESULT_BYTES,
+                timeout_ms: u32::try_from(MCP_QUALIFY_TIMEOUT.as_millis()).unwrap_or(u32::MAX),
+            };
+            let observed = now()?;
+            let deadline = Timestamp::from_unix_millis(
+                observed
+                    .unix_millis()
+                    .saturating_add(i64::from(bounds.timeout_ms)),
+            )
+            .map_err(|_| {
+                pre_dispatch(
+                    ProviderFailureKind::InvalidRequest,
+                    "sandbox MCP qualification deadline is invalid",
+                )
+            })?;
+            let start = HandsOperationStart {
+                operation: brain_operation,
+                call_hash: BrainContentHash(*hash.as_bytes()),
+                request: request_value,
+                bounds,
+                deadline: BrainTimestamp::from_millis(deadline.unix_millis()),
+            };
+            let prepared = self.prepare_generation(session, generation).await?;
+            let admitted = self.admit_operation(generation, activity, prepared).await?;
+            let call = StartRequest {
+                operation: activity,
+                call_hash: CallHash(hash),
+                request: operation_request,
+                bounds: operation_bounds(&admitted.view, &bounds),
+                deadline,
+                delivery: DeliveryMode::Attached,
+            };
+            let accepted = self
+                .start_attached(
+                    &admitted.endpoint,
+                    admitted.native_resume.then_some(&admitted.view),
+                    generation,
+                    activity,
+                    &start,
+                    &call,
+                    MCP_QUALIFY_TIMEOUT,
+                )
+                .await?;
+            let result = accepted.result.ok_or_else(|| {
+                dispatched(
+                    ProviderFailureKind::ProtocolViolation,
+                    "sandbox MCP qualification did not return an attached result",
+                )
+            })?;
+            if result.exit_code != 0 || result.truncated || result.placed.is_some() {
+                return Err(dispatched(
+                    ProviderFailureKind::ProtocolViolation,
+                    "sandbox MCP qualification returned an invalid terminal result",
+                ));
+            }
+            let names: Vec<String> =
+                serde_json::from_str(result.inline.as_deref().ok_or_else(|| {
+                    dispatched(
+                        ProviderFailureKind::ProtocolViolation,
+                        "sandbox MCP qualification returned no inline tool list",
+                    )
+                })?)
+                .map_err(|_| {
+                    dispatched(
+                        ProviderFailureKind::ProtocolViolation,
+                        "sandbox MCP qualification returned an invalid tool list",
+                    )
+                })?;
+            if names.len() > 128 || names.iter().any(|name| name.is_empty() || name.len() > 128) {
+                return Err(dispatched(
+                    ProviderFailureKind::ProtocolViolation,
+                    "sandbox MCP qualification exceeded its tool bounds",
+                ));
+            }
+            Ok(names)
+        })
+    }
+
     fn call<'a>(
         &'a self,
         session: SessionId,
@@ -1614,9 +1824,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                     "a cancelled or interrupted operation has no incorporable result",
                 ));
             }
-            let inline = String::from_utf8(bytes).map_err(|_| {
-                result_rejected(operation, "the inline terminal result is not UTF-8")
-            })?;
+            let (inline, sandbox_file) = result_body(operation, &terminal, bytes)?;
             let duration_ms = terminal
                 .ended_at
                 .unix_millis()
@@ -1625,14 +1833,39 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 operation: operation.clone(),
                 generation,
                 exit_code: exit_code(&terminal.exit),
-                inline: Some(inline),
+                inline,
                 placed: None,
+                sandbox_file,
                 truncated: terminal.truncated,
                 duration_ms: u32::try_from(duration_ms.max(0)).unwrap_or(u32::MAX),
                 checksum: BrainContentHash(*terminal.digest.as_bytes()),
             })
         })
     }
+}
+
+/// Selects either the complete inline body or a bounded preview plus the
+/// guest-retained full-result path. Length and digest have already been
+/// verified by [`ResultAssembly`] before this boundary.
+fn result_body(
+    operation: &BrainOperationId,
+    terminal: &TerminalMetadata,
+    bytes: Vec<u8>,
+) -> Result<(Option<String>, Option<HandsSandboxFile>), HandsError> {
+    if let Some(path) = &terminal.result_file {
+        let preview_len = bytes.len().min(LIVE_RESULT_PREVIEW_BYTES);
+        return Ok((
+            None,
+            Some(HandsSandboxFile {
+                path: path.as_str().to_owned(),
+                byte_len: terminal.body_len,
+                preview: String::from_utf8_lossy(&bytes[..preview_len]).into_owned(),
+            }),
+        ));
+    }
+    let inline = String::from_utf8(bytes)
+        .map_err(|_| result_rejected(operation, "the inline terminal result is not UTF-8"))?;
+    Ok((Some(inline), None))
 }
 
 fn launch_request(definition: &HandsGeneration) -> Result<RunRequest, HandsError> {
@@ -1933,13 +2166,17 @@ fn transport(
 
 #[cfg(test)]
 mod tests {
-    use super::{launch_request, should_invalidate_lease, wire_operation, wire_session};
+    use super::{
+        launch_request, result_body, should_invalidate_lease, wire_operation, wire_session,
+    };
     use aex_brain_app::ports::{HandsError, ProviderFailureKind, RedactedDetail};
     use aex_brain_domain::effect::{DispatchProof, DispatchStage};
     use aex_brain_domain::ids::{
         HandsOperationId as BrainOperationId, SessionId as BrainSessionId,
     };
-    use aex_hands_protocol::operation::GuestRoot;
+    use aex_hands_protocol::operation::{
+        GuestPath, GuestRoot, OperationExit, TerminalMetadata, TerminalState,
+    };
     use aex_runtime_control::generation::{
         HandsGeneration, ImageCapability, ImageIdentifier, ImagePin, ImageVersion, LimitsRevision,
         NetworkPolicy,
@@ -1947,7 +2184,7 @@ mod tests {
     use aex_wire::ids::{
         ContentHash, GenerationId, OrganizationId, PrefixedId as _, SessionId, Uuid7, WorkspaceId,
     };
-    use aex_wire::types::ComputeSize;
+    use aex_wire::types::{ComputeSize, Timestamp};
 
     fn generation() -> HandsGeneration {
         let generation = GenerationId::from_uuid7(Uuid7::compose(4, [4; 10]));
@@ -2022,6 +2259,36 @@ mod tests {
             operation
         );
         assert!(wire_operation(&BrainOperationId("operation-1".to_owned())).is_err());
+    }
+
+    #[test]
+    fn verified_large_result_selects_a_bounded_preview_and_exact_guest_path() {
+        let bytes = vec![b'x'; 65_537];
+        let terminal = TerminalMetadata {
+            state: TerminalState::Succeeded,
+            exit: OperationExit::Ok,
+            started_at: Timestamp::from_unix_millis(0).expect("timestamp"),
+            ended_at: Timestamp::from_unix_millis(1).expect("timestamp"),
+            body_len: bytes.len() as u64,
+            digest: ContentHash::of(&bytes),
+            truncated: false,
+            result_file: Some(
+                GuestPath::parse(
+                    &GuestRoot::workspace(),
+                    "/workspace/.aex/tool-results/operation.out",
+                )
+                .expect("workspace path"),
+            ),
+            failure: None,
+        };
+        let (inline, file) =
+            result_body(&BrainOperationId("operation".to_owned()), &terminal, bytes)
+                .expect("verified result is selected");
+        assert!(inline.is_none());
+        let file = file.expect("large result file");
+        assert_eq!(file.path, "/workspace/.aex/tool-results/operation.out");
+        assert_eq!(file.byte_len, 65_537);
+        assert_eq!(file.preview.len(), 65_536);
     }
 
     #[test]

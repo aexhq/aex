@@ -36,7 +36,7 @@ use aex_wire::dispatch::RequestLimits;
 use session_stream_api::capability::Composition;
 use session_stream_api::config::Config;
 use session_stream_api::session::handlers::{Dispatcher, Shared};
-use session_stream_api::session::secret_registration::Registration;
+use session_stream_api::session::provider_key::SessionProviderKeys;
 
 /// The deployable name every diagnostic record carries.
 const DEPLOYABLE: &str = session_stream_api::config::DEPLOYABLE;
@@ -212,13 +212,7 @@ async fn run(config: &Config) -> Result<(), SessionStreamApiRunError> {
     let live_files =
         session_stream_api::session::live_composition::production_live_files(&aws, config)
             .map_err(|error| SessionStreamApiRunError::Probe(error.to_string()))?;
-    let live_transfers = Arc::new(
-        session_stream_api::session::live_transfer::LiveTransferDynamoStore::new(
-            dynamodb.clone(),
-            stores.session_table.clone(),
-        ),
-    );
-    let credential_registration = Arc::new(Registration::new(
+    let provider_keys = Arc::new(SessionProviderKeys::new(
         Arc::new(stores.custody.clone()),
         stores.custody.table().to_owned(),
         Arc::new(aex_secret_aws::crypto::EnvelopeCrypto::new(
@@ -232,7 +226,7 @@ async fn run(config: &Config) -> Result<(), SessionStreamApiRunError> {
             dynamodb.clone(),
             kms,
             aex_secret_keystore_dynamodb::KeyStoreBinding::new(
-                config.secret_keystore_table.clone(),
+                config.session_table.clone(),
                 config.secret_kms_key.value.clone(),
             ),
             config.plane.as_str(),
@@ -244,15 +238,18 @@ async fn run(config: &Config) -> Result<(), SessionStreamApiRunError> {
         },
         config.region,
     ));
+    let mcp_qualifier = Arc::new(
+        session_stream_api::session::mcp_readiness::ProductionMcpQualifier::new(
+            Arc::clone(&provider_keys) as Arc<_>,
+            Arc::clone(&live_files),
+        ),
+    );
     let dispatcher = Dispatcher::new(Arc::new(Shared {
         catalog,
         deployment: config.deployment.clone(),
         live_files,
-        live_transfers,
-        custody: Arc::new(stores.custody.clone()),
-        custody_reads: stores.custody.clone(),
-        custody_table: stores.custody.table().to_owned(),
-        credential_registration,
+        mcp_qualifier,
+        provider_keys,
         registry: Arc::new(stores.registry.clone()),
         content: Arc::new(stores.content.clone()),
         // One presigner for the whole deployable (E D-10). The upload routes,
@@ -280,11 +277,6 @@ async fn run(config: &Config) -> Result<(), SessionStreamApiRunError> {
             dynamodb.clone(),
             stores.authz_projection_table.clone(),
         )),
-        placements: Arc::new(aex_session_dynamodb::projection::ProjectionReader::new(
-            dynamodb.clone(),
-            stores.authz_projection_table.clone(),
-        )),
-        api_url: config.regional_api_url.clone(),
         operations: Arc::new(aex_session_dynamodb::store::OperationStore::new(
             dynamodb.clone(),
             stores.session_table.clone(),
@@ -292,7 +284,7 @@ async fn run(config: &Config) -> Result<(), SessionStreamApiRunError> {
         operation_worker: Arc::new(
             session_stream_api::session::operation_worker::LambdaOperationWorkerInvoker::new(
                 aws_sdk_lambda::Client::new(&aws),
-                config.session_operation_worker.value.clone(),
+                config.session_maintenance_worker.value.clone(),
             ),
         ),
         // The command path: an eventually consistent reader, the physical table
@@ -306,10 +298,6 @@ async fn run(config: &Config) -> Result<(), SessionStreamApiRunError> {
         ),
         tables: regional_tables(&stores),
         authority: dynamodb.clone(),
-        usage: Arc::new(aex_usage_query_dynamodb::store::UsageQueryStore::new(
-            dynamodb.clone(),
-            stores.usage_query_table.clone(),
-        )),
         cursor_keys: Arc::clone(&cursor_keys),
         runtime_activity: stores.runtime_activity.clone(),
     }));

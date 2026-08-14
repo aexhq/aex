@@ -13,13 +13,7 @@ pub struct CommandRegistryEntry {
     pub path: &'static str,
     /// Generated wire operation id.
     pub route_id: &'static str,
-    /// Whether the contract declares the route and nothing serves it yet.
-    ///
-    /// Read from the generated table, never listed here. The command stays in
-    /// the closed tree and is marked: deleting it and re-adding it as routes
-    /// land would churn the tree and five shell completions once per landing,
-    /// and would hide from the surface a customer explores first that the
-    /// capability exists and is coming.
+    /// Whether the route is deferred. Every launch CLI row must be false.
     pub deferred: bool,
     /// Generated identity used by dispatch; omitted from the JSON view because
     /// `route_id` is its stable wire spelling.
@@ -35,52 +29,33 @@ pub struct CommandRegistryEntry {
 #[must_use]
 pub fn command_registry() -> Vec<CommandRegistryEntry> {
     const ENTRIES: &[(&str, &str)] = &[
-        ("account get", "account_get"),
-        ("org list", "organizations_list"),
-        ("org create", "organization_create"),
-        ("org get", "organization_get"),
-        ("org member list", "memberships_list"),
-        ("org invite create", "invitation_create"),
-        ("workspace list", "workspaces_list"),
-        ("workspace create", "workspace_create"),
-        ("workspace get", "workspace_get"),
-        ("workspace delete", "workspace_delete"),
-        ("workspace current", "workspace_current_get"),
-        ("key list", "api_keys_list"),
-        ("key create", "api_key_create"),
-        ("key revoke", "api_key_revoke"),
         ("session create", "session_create"),
         ("session list", "sessions_list"),
         ("session get", "session_get"),
-        ("session cancel", "session_cancel"),
-        ("session suspend", "session_suspend"),
-        ("session resume", "session_resume"),
         ("session terminate", "session_terminate"),
         ("session delete", "session_delete"),
-        ("message list", "session_messages_list"),
         ("message send", "session_message_send"),
-        ("file list", "registry_files_list"),
-        ("file get", "registry_files_get"),
+        ("message list", "session_messages_list"),
+        ("message tail", "session_messages_stream"),
         ("file put", "registry_files_put"),
         ("file upload", "upload_create"),
+        ("file list", "registry_files_list"),
+        ("file get", "registry_files_get"),
         ("file download", "registry_files_download_create"),
         ("file delete", "registry_files_delete"),
-        ("operation list", "regional_operations_list"),
-        ("operation get", "regional_operation_get"),
-        ("operation cancel", "regional_operation_cancel"),
-        ("provider-credential list", "provider_credentials_list"),
-        ("provider-credential get", "provider_credential_get"),
-        (
-            "provider-credential register",
-            "provider_credential_register",
-        ),
-        ("provider-credential revoke", "provider_credential_revoke"),
-        ("limit list", "workspace_limits_list"),
-        ("limit get", "workspace_limit_get"),
+        ("telemetry tail", "session_telemetry_stream"),
+        ("telemetry replay", "session_telemetry_replay"),
+        ("telemetry download", "session_telemetry_download_create"),
         ("billing balance", "billing_balance_get"),
-        ("billing portal", "billing_portal_session_create"),
+        ("billing cards", "billing_payment_methods_list"),
+        (
+            "billing setup-card",
+            "billing_payment_method_session_create",
+        ),
+        ("billing remove-card", "billing_payment_method_delete"),
         ("billing topup", "billing_top_up_checkout_create"),
-        ("usage query", "usage_query"),
+        ("billing transactions", "billing_transactions_list"),
+        ("billing usage", "billing_usage_get"),
     ];
     ENTRIES
         .iter()
@@ -99,58 +74,25 @@ pub fn command_registry() -> Vec<CommandRegistryEntry> {
         .collect()
 }
 
-/// What `--help` renders beside a command whose route is not built yet.
+/// Compatibility marker retained for consumers of the registry library.
 pub const DEFERRED_MARKER: &str = "(not yet available)";
 
-/// The customer command tree, with every deferred-backed leaf marked.
+/// The customer command tree.
 ///
-/// The mark is applied here rather than authored on the clap declarations
-/// because the deferral is the contract's fact, not the CLI's: a command whose
-/// route lands loses its mark in the same regeneration that publishes the
-/// route, with no edit here. Invoking a marked command still performs the call
-/// and surfaces the `501` — the server is the only authority on what it serves,
-/// and an installed CLI pins one contract digest forever.
-///
-/// # Panics
-///
-/// Panics during startup when a registry path names no command in the tree.
+/// The exact launch surface contains no deferred commands. Startup still
+/// verifies this against the generated route authority so a dead placeholder
+/// cannot become visible after contract drift.
 #[must_use]
 pub fn marked_command() -> clap::Command {
-    let mut command = Cli::command();
+    let command = Cli::command();
     for entry in command_registry() {
-        if !entry.deferred {
-            continue;
-        }
-        let path: Vec<&str> = entry.path.split(' ').collect();
-        command = mark_deferred(command, &path, entry.path);
+        assert!(
+            !entry.deferred,
+            "launch CLI command `{}` references a deferred route",
+            entry.path
+        );
     }
     command
-}
-
-/// Applies [`DEFERRED_MARKER`] to the leaf `path` names.
-fn mark_deferred(command: clap::Command, path: &[&str], full: &str) -> clap::Command {
-    let Some((head, rest)) = path.split_first() else {
-        return command;
-    };
-    assert!(
-        command.find_subcommand(head).is_some(),
-        "command registry path `{full}` names no command in the tree"
-    );
-    command.mut_subcommand(*head, |subcommand| {
-        if rest.is_empty() {
-            let about = subcommand
-                .get_about()
-                .map(ToString::to_string)
-                .filter(|text| !text.is_empty())
-                .map_or_else(
-                    || DEFERRED_MARKER.to_owned(),
-                    |text| format!("{text} {DEFERRED_MARKER}"),
-                );
-            subcommand.about(about)
-        } else {
-            mark_deferred(subcommand, rest, full)
-        }
-    })
 }
 
 /// Render one of the five supported completion formats.

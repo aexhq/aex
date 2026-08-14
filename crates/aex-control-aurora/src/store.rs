@@ -47,7 +47,7 @@ macro_rules! tx_try {
 /// The central-control repository over the one Data API transport.
 #[derive(Debug, Clone)]
 pub struct AuroraControlStore {
-    client: DataApiClient,
+    pub(crate) client: DataApiClient,
 }
 
 /// `PostgreSQL`'s durable answer for the transaction that emitted a wake.
@@ -1178,7 +1178,7 @@ impl ControlStore for AuroraControlStore {
                     ),
             )
         );
-        let scopes = Self::required_scope("workspaces:write");
+        let scopes = ScopeSet::EMPTY;
         tx_try!(
             transaction,
             Self::insert_operation(
@@ -2335,7 +2335,7 @@ mod tests {
                 organization_id: Uuid::from_u128(7),
                 workspace_id: Uuid::from_u128(13),
                 key: &organization.idempotency,
-                scopes: AuroraControlStore::required_scope("workspaces:write"),
+                scopes: AuroraControlStore::required_scope("sessions:write"),
                 now: OffsetDateTime::UNIX_EPOCH,
             },
         )
@@ -2362,7 +2362,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::from_str::<Vec<String>>(encoded).expect("scope JSON"),
-            vec!["workspaces:write"]
+            vec!["sessions:write"]
         );
     }
 

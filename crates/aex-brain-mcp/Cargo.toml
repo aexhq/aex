@@ -37,7 +37,8 @@ aex-brain-tool-catalog = { path = "../aex-brain-tool-catalog" }
 aex-wire = { path = "../aex-wire" }
 base64.workspace = true
 reqwest.workspace = true
-rmcp.workspace = true
+rmcp = { workspace = true, features = ["transport-streamable-http-client-reqwest", "reqwest"] }
+http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

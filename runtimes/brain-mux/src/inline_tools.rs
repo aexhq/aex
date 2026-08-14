@@ -18,13 +18,18 @@ use aex_model_catalog::canonical::ToolResultPart;
 use aex_wire::CanonicalJson;
 use std::time::Instant;
 
-/// Production executor for the currently earned pure control tools.
+/// Production binding for Brain-owned tools. Native subagent calls are
+/// interpreted by the activation before generic tool dispatch; advertising
+/// them here binds their immutable catalog rows to that authority.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BrainControlExecutor;
 
 impl ToolExecutor for BrainControlExecutor {
     fn supports(&self, tool: &ToolName) -> bool {
-        matches!(tool.as_str(), "todo_read" | "todo_write")
+        matches!(
+            tool.as_str(),
+            "todo_read" | "todo_write" | "create_subagent" | "stop_subagent" | "wait_subagents"
+        )
     }
 
     fn invoke<'a>(
@@ -213,7 +218,8 @@ mod tests {
             },
             input,
             max_result_bytes: 65_536,
-            hands_generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
+            hands_generation: Some(GenerationId::from_uuid7(Uuid7::compose(1, [9; 10]))),
+            mcp_servers: Vec::new(),
             control: ControlStateView {
                 todo_state,
                 assistant_turns: 0,

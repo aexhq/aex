@@ -2,11 +2,11 @@
   "$id": "https://schemas.aex.dev/v1/SessionNetworkRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Network policy for the session.",
+  "description": "Network policy for the one sandbox.",
   "properties": {
     "hands": {
       "$ref": "aex:schema:HandsNetworkRequest",
-      "description": "The guest policy."
+      "description": "Guest policy."
     }
   },
   "required": [

@@ -40,8 +40,7 @@ impl AuroraAuthorizationReader {
         i64::try_from(now.unix_timestamp_nanos().div_euclid(1_000_000)).unwrap_or(i64::MAX)
     }
 
-    /// Resolves a workspace-scoped actor through one of the two credential
-    /// statements. Both take the same parameters and produce the same row.
+    /// Resolves a workspace-scoped browser actor.
     async fn resolve_workspace_actor(
         &self,
         statement: &'static str,
@@ -110,21 +109,6 @@ impl AuthorizationReader for AuroraAuthorizationReader {
         Ok(row.map(|row| row.0))
     }
 
-    async fn resolve_account_token_for_workspace(
-        &self,
-        token_id: Uuid,
-        workspace_id: Uuid,
-        now: OffsetDateTime,
-    ) -> Result<Option<AccountActorState>, StoreError> {
-        self.resolve_workspace_actor(
-            sql::RESOLVE_ACCOUNT_TOKEN_FOR_WORKSPACE,
-            token_id,
-            workspace_id,
-            now,
-        )
-        .await
-    }
-
     async fn resolve_session_for_workspace(
         &self,
         session_id: Uuid,
@@ -138,15 +122,6 @@ impl AuthorizationReader for AuroraAuthorizationReader {
             now,
         )
         .await
-    }
-
-    async fn resolve_account_token_central(
-        &self,
-        token_id: Uuid,
-        now: OffsetDateTime,
-    ) -> Result<Option<CentralActorState>, StoreError> {
-        self.resolve_central_actor(sql::RESOLVE_ACCOUNT_TOKEN_CENTRAL, token_id, false, now)
-            .await
     }
 
     async fn resolve_dashboard_session_central(

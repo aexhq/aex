@@ -1,0 +1,33 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionCommandReceipt.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Admission receipt for an asynchronous session command; there is no generic operations resource.",
+  "properties": {
+    "acceptedAt": {
+      "description": "When the command committed.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "operationId": {
+      "description": "Diagnostic and idempotency correlation identity.",
+      "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "operation"
+    },
+    "sessionId": {
+      "description": "Target session.",
+      "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "session"
+    }
+  },
+  "required": [
+    "acceptedAt",
+    "operationId",
+    "sessionId"
+  ],
+  "title": "SessionCommandReceipt",
+  "type": "object"
+}

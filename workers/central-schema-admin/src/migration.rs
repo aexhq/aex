@@ -13,6 +13,9 @@
 //! line and for [`PHASES`]. This parser matches it field for field; a file that
 //! this crate admits and the gate refuses, or the reverse, is the drift both
 //! exist to prevent.
+//! The current chain includes the one-user personal-account/workspace and its
+//! UUIDv7 prepaid ledger identities; those rows are ordinary transactional DDL
+//! inputs, not a post-migration bootstrap script.
 
 use std::path::Path;
 
@@ -382,7 +385,7 @@ mod tests {
     fn every_embedded_migration_byte_matches_the_reviewed_bundle_lock() {
         let bundle = MigrationBundle::embedded()
             .expect("every SQLx migration byte matches its reviewed lock identity");
-        assert_eq!(bundle.head(), 20_260_813_000_100);
+        assert_eq!(bundle.head(), 20_260_814_000_300);
     }
 
     #[test]

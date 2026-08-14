@@ -1,4 +1,4 @@
-//! Validated start-up configuration for `session-operation-worker`.
+//! Validated start-up configuration for `session-maintenance-worker`.
 
 use aex_regional_http::config::{
     Lookup, RegionalHttpConfigError, bounded_u64, bounded_usize, forbidden, plane_name, queue_url,
@@ -7,7 +7,7 @@ use aex_regional_http::config::{
 use aex_wire::types::Region;
 
 /// The deployable this configuration belongs to.
-pub const DEPLOYABLE: &str = "session-operation-worker";
+pub const DEPLOYABLE: &str = "session-maintenance-worker";
 
 /// Deployment plane: `dev` or `prd`.
 pub const PLANE: &str = "AEX_PLANE";
@@ -22,13 +22,17 @@ pub const OPERATION_DLQ_URL: &str = "AEX_OPERATION_DLQ_URL";
 /// The `regional-work` table.
 pub const WORK_TABLE: &str = "AEX_WORK_TABLE";
 /// The `session-authority` table.
-pub const SESSION_TABLE: &str = "AEX_SESSION_TABLE";
+pub const SESSION_AUTHORITY_TABLE: &str = "AEX_SESSION_AUTHORITY_TABLE";
 /// Exact-generation runtime authority table.
 pub const RUNTIME_ACTIVITY_TABLE: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
 /// Existing runtime-control-worker lifecycle queue.
 pub const RUNTIME_LIFECYCLE_QUEUE_URL: &str = "AEX_RUNTIME_LIFECYCLE_QUEUE_URL";
 /// Existing immutable session-telemetry bucket whose session prefix deletion owns.
 pub const SESSION_TELEMETRY_BUCKET: &str = "AEX_SESSION_TELEMETRY_BUCKET";
+/// Existing unversioned customer-content bucket containing Brain checkpoints.
+pub const CONTENT_BUCKET: &str = "AEX_CONTENT_BUCKET";
+/// Twelve-digit AWS account that owns the customer-content bucket.
+pub const CONTENT_BUCKET_OWNER: &str = "AEX_CONTENT_BUCKET_OWNER";
 /// How many deterministic shards the due scan sweeps.
 pub const DUE_SCAN_SHARDS: &str = "AEX_DUE_SCAN_SHARDS";
 /// Claim lease in milliseconds.
@@ -38,18 +42,20 @@ pub const STEP_DEADLINE_MS: &str = "AEX_STEP_DEADLINE_MS";
 /// Attempts before an operation terminalizes to manual review.
 pub const MAX_ATTEMPTS: &str = "AEX_MAX_ATTEMPTS";
 
-/// Every variable a healthy `session-operation-worker` requires.
-pub const REQUIRED: [&str; 14] = [
+/// Every variable a healthy `session-maintenance-worker` requires.
+pub const REQUIRED: [&str; 16] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
     OPERATION_QUEUE_URL,
     OPERATION_DLQ_URL,
     WORK_TABLE,
-    SESSION_TABLE,
+    SESSION_AUTHORITY_TABLE,
     RUNTIME_ACTIVITY_TABLE,
     RUNTIME_LIFECYCLE_QUEUE_URL,
     SESSION_TELEMETRY_BUCKET,
+    CONTENT_BUCKET,
+    CONTENT_BUCKET_OWNER,
     DUE_SCAN_SHARDS,
     LEASE_MS,
     STEP_DEADLINE_MS,
@@ -58,8 +64,8 @@ pub const REQUIRED: [&str; 14] = [
 
 /// Variables this binary must never be bound to.
 ///
-/// Physical object deletion belongs to `content-lifecycle-worker`; a secret key
-/// bound here would give the deletion worker a decrypt capability it cannot use.
+/// The maintenance worker deletes bounded object pages directly, but a secret
+/// key bound here would give it a decrypt capability it cannot use.
 pub const FORBIDDEN: [(&str, &str); 2] = [
     (
         "AEX_SECRET_KMS_KEY_ARN",
@@ -67,7 +73,7 @@ pub const FORBIDDEN: [(&str, &str); 2] = [
     ),
     (
         "AEX_CONTENT_QUEUE_URL",
-        "physical object deletion belongs to content-lifecycle-worker",
+        "session maintenance deletes checkpoint pages directly; no content queue exists",
     ),
 ];
 
@@ -94,6 +100,10 @@ pub struct Config {
     pub runtime_lifecycle_queue_url: String,
     /// Immutable session telemetry bucket.
     pub session_telemetry_bucket: String,
+    /// Existing unversioned customer-content bucket.
+    pub content_bucket: String,
+    /// AWS account that must own the customer-content bucket.
+    pub content_bucket_owner: String,
     /// Deterministic due-scan shard count.
     pub due_scan_shards: u64,
     /// Claim lease in milliseconds.
@@ -150,6 +160,17 @@ impl Config {
                 ),
             });
         }
+        let content_bucket_owner = required(lookup, CONTENT_BUCKET_OWNER)?;
+        if content_bucket_owner.len() != 12
+            || !content_bucket_owner
+                .bytes()
+                .all(|byte| byte.is_ascii_digit())
+        {
+            return Err(RegionalHttpConfigError::Invalid {
+                name: CONTENT_BUCKET_OWNER,
+                reason: "must be a 12-digit AWS account id".to_owned(),
+            });
+        }
         Ok(Self {
             plane,
             region,
@@ -160,10 +181,12 @@ impl Config {
             operation_queue_url: queue_url(lookup, OPERATION_QUEUE_URL, region)?,
             operation_dlq_url: queue_url(lookup, OPERATION_DLQ_URL, region)?,
             work_table: required(lookup, WORK_TABLE)?,
-            session_table: required(lookup, SESSION_TABLE)?,
+            session_table: required(lookup, SESSION_AUTHORITY_TABLE)?,
             runtime_activity_table: required(lookup, RUNTIME_ACTIVITY_TABLE)?,
             runtime_lifecycle_queue_url: queue_url(lookup, RUNTIME_LIFECYCLE_QUEUE_URL, region)?,
             session_telemetry_bucket: required(lookup, SESSION_TELEMETRY_BUCKET)?,
+            content_bucket: required(lookup, CONTENT_BUCKET)?,
+            content_bucket_owner,
             due_scan_shards,
             lease_ms: i64::try_from(bounded_u64(lookup, LEASE_MS, 1_000, 900_000)?).map_err(
                 |_| RegionalHttpConfigError::Invalid {

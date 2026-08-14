@@ -17,8 +17,8 @@ workspace = true
 owner = "central-identity"
 role = "deployable"
 artifact = "oci_image"
-deployable = "central-api"
-live_suite = "aex-live-central-api"
+deployable = "control-api"
+live_suite = "aex-live-control-api"
 layers = ["unit", "smoke", "e2e"]
 concerns = ["contract", "fault", "security", "performance"]
 # No `aws.sqs.fifo`. The control handlers write the outbox row inside the same
@@ -49,9 +49,12 @@ aex-central-aws = { path = "../../crates/aex-central-aws" }
 aex-control-app = { path = "../../crates/aex-control-app" }
 aex-control-aurora = { path = "../../crates/aex-control-aurora" }
 aex-control-domain = { path = "../../crates/aex-control-domain" }
+aex-finance-domain = { path = "../../crates/aex-finance-domain" }
 aex-identity-app = { path = "../../crates/aex-identity-app" }
 aex-identity-aurora = { path = "../../crates/aex-identity-aurora" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
+aex-payment-contracts = { path = "../../crates/aex-payment-contracts" }
 aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
 aex-rds-data = { path = "../../crates/aex-rds-data" }
 # The drain deadline's relationship to the ECS stop timeout is a compile-time
@@ -61,17 +64,22 @@ aex-rds-data = { path = "../../crates/aex-rds-data" }
 # depended on for three constants and nothing else.
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-wire = { path = "../../crates/aex-wire" }
-# The three deployables this one merges, composed as libraries. Nothing is
-# re-implemented here: the handlers, the ports and the adapters are theirs.
-central-control-api = { path = "../central-control-api" }
-central-identity-api = { path = "../central-identity-api" }
-finance-api = { path = "../finance-api" }
+async-trait.workspace = true
 aws-config.workspace = true
 aws-sdk-lambda.workspace = true
 aws-sdk-rdsdata.workspace = true
-aws-sdk-s3.workspace = true
 aws-sdk-secretsmanager.workspace = true
 axum.workspace = true
+base64.workspace = true
+blake3.workspace = true
+futures.workspace = true
+http.workspace = true
+oauth2.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["net", "signal"] }
@@ -79,8 +87,6 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-async-trait.workspace = true
-http.workspace = true
 http-body-util.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -17,11 +17,11 @@ workspace = true
 owner = "regional-services"
 role = "deployable"
 artifact = "lambda_zip"
-deployable = "session-operation-worker"
-live_suite = "aex-live-session-operation-worker"
+deployable = "session-maintenance-worker"
+live_suite = "aex-live-session-maintenance-worker"
 layers = ["unit", "smoke", "e2e"]
 concerns = ["contract", "fault", "security", "performance"]
-seams = ["aws.dynamodb.transact_write", "aws.dynamodb.condition", "aws.sqs.fifo", "aws.iam.denial"]
+seams = ["aws.dynamodb.transact_write", "aws.dynamodb.condition", "aws.sqs.fifo", "aws.s3.unversioned_delete", "aws.iam.denial"]
 security_tier = "internal"
 risk = ["iam"]
 scenarios = []
@@ -64,11 +64,13 @@ serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 xxhash-rust.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 # The fenced-step properties measure a lease TTL, and the lease vocabulary they
 # exercise is expressed in `time::Duration`.
 time.workspace = true
+aws-smithy-http-client.workspace = true
 
 [[test]]
 name = "composition"

@@ -127,16 +127,10 @@ pub struct PositionPage<T> {
 /// The complete public session-status filters understood by the collection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionListStatus {
-    /// No run is in flight.
+    /// No user message is in flight, independent of sandbox suspension.
     Idle,
     /// A run is executing.
     Running,
-    /// Compute is stopping but this generation remains resumable.
-    Suspending,
-    /// Compute is stopped and this generation remains resumable.
-    Suspended,
-    /// The retained generation is starting again.
-    Resuming,
     /// Compute and live files are being destroyed.
     Terminating,
     /// Compute and live files are permanently gone.
@@ -148,11 +142,14 @@ pub enum SessionListStatus {
 impl SessionListStatus {
     const fn matches(self, status: SessionStatus) -> bool {
         match self {
-            Self::Idle => matches!(status, SessionStatus::Idle),
+            Self::Idle => matches!(
+                status,
+                SessionStatus::Idle
+                    | SessionStatus::Suspending
+                    | SessionStatus::Suspended
+                    | SessionStatus::Resuming
+            ),
             Self::Running => matches!(status, SessionStatus::Running),
-            Self::Suspending => matches!(status, SessionStatus::Suspending),
-            Self::Suspended => matches!(status, SessionStatus::Suspended),
-            Self::Resuming => matches!(status, SessionStatus::Resuming),
             Self::Terminating => matches!(status, SessionStatus::Terminating),
             Self::Terminated => matches!(status, SessionStatus::Terminated),
             Self::Deleting => matches!(status, SessionStatus::Deleting),
@@ -1109,6 +1106,14 @@ pub trait SessionQueries: Send + Sync + 'static {
         after: Option<&PagePosition>,
     ) -> Result<SessionScoped<SessionPage<Message>>, StoreError>;
 
+    /// Reads one sealed canonical message under the live session fence.
+    async fn load_message(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        message: aex_wire::ids::MessageId,
+    ) -> Result<SessionScoped<Option<Message>>, StoreError>;
+
     /// Reads one canonical run under one live session fence.
     async fn load_run(
         &self,
@@ -1654,6 +1659,27 @@ impl SessionQueries for SessionReads {
             },
         )
         .await
+    }
+
+    async fn load_message(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        message: aex_wire::ids::MessageId,
+    ) -> Result<SessionScoped<Option<Message>>, StoreError> {
+        let child = keys::message(session, message);
+        let (scope, item) = self.get_scoped_item(workspace, session, &child).await?;
+        match scope {
+            SessionScoped::Active(_) => {}
+            SessionScoped::Missing => return Ok(SessionScoped::Missing),
+            SessionScoped::Deleted => return Ok(SessionScoped::Deleted),
+        }
+        let value = item
+            .as_ref()
+            .map(|item| crate::authority_codec::decode_domain_message(item, workspace))
+            .transpose()?
+            .filter(|message| message.state == aex_session_domain::message::MessageState::Sealed);
+        Ok(SessionScoped::Active(value))
     }
 
     async fn load_run(

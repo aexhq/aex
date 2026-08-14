@@ -1,4 +1,4 @@
-//! Attached delivery integration at the Brain tool-executor boundary.
+//! Attached delivery integration at the Brain-to-Tool-Mux boundary.
 
 use aex_brain_tool_catalog::router::ToolExecutor as _;
 
@@ -18,6 +18,7 @@ async fn an_attached_start_completes_in_place_and_polls_nothing() {
         exit_code: 0,
         inline: Some(body.to_owned()),
         placed: None,
+        sandbox_file: None,
         truncated: false,
         duration_ms: 4,
         checksum: ContentHash::of(body.as_bytes()),
@@ -34,7 +35,7 @@ async fn an_attached_start_completes_in_place_and_polls_nothing() {
     let ToolOutcome::Completed(result) = outcome else {
         panic!("an attached delivery is not a detached operation");
     };
-    assert_eq!(result.executed_on, ExecutorRoute::Hands);
+    assert_eq!(result.executed_on, ExecutorRoute::ToolMux);
     assert_eq!(result.duration_ms, 4);
     let [ToolResultPart::Text { text }] = result.content.as_slice() else {
         panic!("a guest listing is text");

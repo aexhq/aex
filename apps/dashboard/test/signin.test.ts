@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AexTransport, WireRequest, WireResponse } from "@aexhq/sdk";
+import type { AexTransport, WireRequest, WireResponse, WireStreamResponse } from "@aexhq/sdk";
 import { DashboardSessionRequestSchema, newId } from "@aexhq/wire";
 
 import {
@@ -34,6 +34,9 @@ function fakeTransport(response: WireResponse<unknown>): {
         requests.push(request);
         return Promise.resolve(response as WireResponse<T>);
       },
+      stream<T>(): Promise<WireStreamResponse<T>> {
+        throw new Error("this identity test never streams");
+      },
     },
   };
 }
@@ -56,7 +59,6 @@ describe("provider configuration", () => {
     expect(configuredProviders(environment)).toEqual(["github", "google"]);
     expect(isProviderId("github")).toBe(true);
     expect(DashboardSessionRequestSchema.safeParse({
-      provider: "github",
       code: "one-use-code",
       state: STATE,
       codeVerifier: VERIFIER,
@@ -131,7 +133,7 @@ describe("the host-only sign-in binding", () => {
     const binding = {
       provider: "google",
       verifier: VERIFIER,
-      returnTo: "/device?user_code=BCDFG-HJKLM",
+      returnTo: "/w/wsp_example/sessions",
       issuedAt: 1_754_000_000_000,
     } as const;
     expect(decodeSignInState(encodeSignInState(binding))).toEqual(binding);
@@ -168,7 +170,7 @@ describe("the dedicated identity transport", () => {
       },
     });
     const credential = await openDashboardSession(
-      { provider: "google", code: "one-use-code", state: STATE, codeVerifier: VERIFIER },
+      { code: "one-use-code", state: STATE, codeVerifier: VERIFIER },
       transport,
     );
     expect(credential.session).toBe("aex_ds_fixture_1234");
@@ -182,7 +184,6 @@ describe("the dedicated identity transport", () => {
     expect(JSON.parse(new TextDecoder().decode(requests[0]!.body))).toEqual({
       code: "one-use-code",
       codeVerifier: VERIFIER,
-      provider: "google",
       state: STATE,
     });
   });

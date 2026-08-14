@@ -1,0 +1,21 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ResponseFormat.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Optional native structured-output request; prompt emulation is never presented as strict.",
+  "properties": {
+    "kind": {
+      "$ref": "aex:schema:ResponseFormatKind",
+      "description": "Format."
+    },
+    "schema": {
+      "description": "Required only for json_schema.",
+      "x-aex-canonical-json": true
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "title": "ResponseFormat",
+  "type": "object"
+}

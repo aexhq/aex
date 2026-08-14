@@ -5,69 +5,93 @@ description: Start with the explicit v1 client surface.
 
 # AEX documentation
 
-An AEX session is an eight-hour, multi-message conversation backed by one exact
-retained MicroVM generation. It accepts one text message at a time. When that
-activity finishes or is cancelled, send the next message to the same session;
-there is no separate public run resource.
+An AEX session is a durable multi-message conversation. It owns its model
+history, native subagents, frozen file mounts, tool effects, sandbox lifecycle,
+usage facts, and telemetry. Send text messages directly to the session; there
+is no public run resource and no message-attachment API.
 
 ```ts
-import { Aex, assertId, newId } from "@aexhq/sdk";
+import { Aex, newId } from "@aexhq/sdk";
 
-const aex = new Aex(process.env.AEX_WORKSPACE_API_KEY!);
+const aex = new Aex({ apiKey: process.env.AEX_WORKSPACE_API_KEY! });
 const session = await aex.sessions.sessionCreate({
   body: {
     provider: "openai",
     model: process.env.AEX_MODEL!,
-    providerCredentialId: assertId(
-      "provider_credential",
-      process.env.AEX_PROVIDER_CREDENTIAL_ID,
-    ),
+    providerApiKey: process.env.AEX_PROVIDER_API_KEY!,
+    sandbox: { enabled: true },
   },
   idempotencyKey: crypto.randomUUID(),
 });
+
+const committed = (async () => {
+  for await (const frame of aex.sessions.sessionMessagesStream({
+    sessionId: session.id,
+  })) {
+    if (frame.kind === "committed" && frame.message?.role === "assistant") {
+      return frame.message;
+    }
+  }
+  throw new Error("message stream ended before the assistant committed");
+})();
 
 await aex.sessions.sessionMessageSend({
   sessionId: session.id,
   body: { text: "Inspect the repository and report the failing tests." },
   idempotencyKey: crypto.randomUUID(),
 });
+console.log(await committed);
 
-await aex.sessions.sessionSuspend({
+await aex.sessions.sessionTerminate({
   sessionId: session.id,
   body: {},
   operationId: newId("operation"),
 });
 ```
 
-Provider credentials are dedicated, encrypted BYOK resources. A session pins
-one exact credential; AEX does not supply a managed model key at launch.
+The provider key is admitted only for that session, encrypted before durable
+storage, and never returned. The launch provider candidates are OpenAI,
+Anthropic, DeepSeek, xAI, Meta, Moonshot AI, and Alibaba; a family ships only
+when its official endpoint passes the launch qualification suite.
 
 ## Lifecycle
 
-The provider suspends an idle generation after 180 seconds and automatically
-resumes that same generation for a message or live-file call. Manual suspend
-and resume are also available. The hard eight-hour lifetime starts when the
-generation launches and is never extended by suspension.
+The default sandbox is provisioned and materialized during session admission,
+then suspended when no tool call is waiting. Each sandbox call waits for the
+exact generation to become ready. With `sandbox.enabled: false`, no sandbox is
+allocated and sandbox-only tools return a structured error the model can
+handle.
 
-Termination permanently destroys the MicroVM and its live files while retaining
-session metadata, sealed messages, accounting, and telemetry. Runtime loss does
-the same: launch has no snapshot, crash recovery, clone/fork, trash, or restore
-path. Irreversible deletion is a separate operation.
+Termination stops new work while retaining committed history, usage, and
+telemetry. Irreversible session deletion separately removes session-owned
+agents, work, sandbox state, encrypted session configuration, checkpoints, and
+telemetry through an idempotent maintenance flow.
 
 ## Files and tools
 
-Registered workspace files are durable opaque inputs. Session creation selects
-exact revisions and copies them into the MicroVM. Live session files exist only
-in that generation and support exact list/stat plus resumable, digest-verified
-upload and download. They are not persisted or snapshotted when the session
-ends.
+Workspace files expose only their latest value. Replace a logical name from
+inline text/bytes, an HTTPS URL, or a direct multipart upload. Session creation
+freezes selected names and mount paths; later overwrites do not change that
+session's inputs. Large tool results are written into the sandbox and retained
+through the standard content and telemetry paths. A model can call
+`storage_persist` (product name `storage.persist`) to publish a sandbox file as
+the latest workspace value.
 
-The launch model-tool surface is exactly `read_file`, `edit_file`, `write_file`,
-and Bash, all inside the MicroVM. Instructions, skills, tool material, and MCP
-configuration can be ordinary workspace files, but they are not separate typed
-resources. There is no generic secret or interactive approval surface.
+The built-in sandbox surface is `read_file`, `edit_file`, `write_file`, and
+Bash. Sessions may also configure qualified remote HTTP MCP servers or
+sandbox-process MCP servers. Native `create_subagent`, `wait_subagents`, and
+`stop_subagent` tools use independent agent authorities, with at most 12 child
+identities over a session lifetime and maximum depth 3.
 
-Typed observations, OpenTelemetry ingestion, streams, and telemetry exports
-remain durable independently of session execution state.
+Assistant previews are best effort and never delay model work. Every committed
+assistant message produces a reconciliation frame. Tool and runtime telemetry
+is delivered live, retained as compressed immutable segments, and available
+for replay and verified download. Provider/model token usage follows a separate
+trusted billing path and cannot be derived from guest telemetry.
+
+The central API uses a GitHub dashboard session for bootstrap, API-key, and
+billing operations. Regional session and file operations use a workspace API
+key. Card entry and top-up happen only on Stripe-hosted pages; AEX exposes only
+display metadata, balance, transactions, and usage.
 
 For help, email support@aex.dev.

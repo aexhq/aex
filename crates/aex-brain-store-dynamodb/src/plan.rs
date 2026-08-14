@@ -472,18 +472,30 @@ pub fn compile(
     //    room. The agent's own node was folded into the control update above.
     if !commit.session_budget.is_empty() {
         let budget_key = keys::session_budget(agent_key.session)?;
-        plan.update(
-            participant::SESSION_BUDGET,
-            budget_update(table, &budget_key, &commit.session_budget, now)
-                .condition_expression("cancelEpoch = :cancelEpoch")
-                .expression_attribute_values(":cancelEpoch", n(commit.guard.cancel_epoch.0)),
-        )
-        .map_err(PlanError::Store)?;
+        let mut update = budget_update(table, &budget_key, &commit.session_budget, now)
+            .condition_expression("cancelEpoch = :cancelEpoch")
+            .expression_attribute_values(":cancelEpoch", n(commit.guard.cancel_epoch.0));
+        if let Some(admitted) = commit
+            .session_budget
+            .iter()
+            .filter(|delta| delta.dimension == Dimension::TotalChildrenCreated)
+            .map(|delta| delta.quantity)
+            .reduce(u64::saturating_add)
+        {
+            let maximum_before =
+                aex_brain_domain::budget::MAX_SUBAGENTS_PER_SESSION.saturating_sub(admitted);
+            update = update
+                .condition_expression(
+                    "cancelEpoch = :cancelEpoch AND usedTotalChildrenCreated <= :maximumBefore",
+                )
+                .expression_attribute_values(":maximumBefore", n(maximum_before));
+        }
+        plan.update(participant::SESSION_BUDGET, update)
+            .map_err(PlanError::Store)?;
     }
 
-    // 6. Children. A spawn costs three actions — the child index entry, the queued index
-    //    entry and the child's own control row — which is exactly where the 32-child page
-    //    size comes from.
+    // 6. Children. A spawn creates the child index, control row, and two immutable
+    //    bootstrap journal facts; a queued child adds its sparse queue index.
     for write in &commit.children {
         match write {
             ChildWrite::Spawn {
@@ -492,6 +504,7 @@ pub fn compile(
                 grant,
                 join,
                 queued_reason,
+                bootstrap,
             } => {
                 let child_key = AgentKey::new(agent_key.session, *child);
                 let index = keys::child_index(&agent_key, *ordinal, *child)?;
@@ -507,7 +520,14 @@ pub fn compile(
                                 .set("childAgentId", s(child.0.as_hyphenated().to_string()))
                                 .set("ordinal", n(u64::from(*ordinal)))
                                 .set("joinId", s(join.0.as_hyphenated().to_string()))
-                                .set("state", s("queued"))
+                                .set(
+                                    "state",
+                                    s(if queued_reason.is_some() {
+                                        "queued"
+                                    } else {
+                                        "starting"
+                                    }),
+                                )
                                 .set_opt(
                                     "queuedReason",
                                     queued_reason.map(|reason| s(queued_reason_name(reason))),
@@ -520,60 +540,117 @@ pub fn compile(
                 )
                 .map_err(PlanError::Store)?;
 
-                let queued = keys::queued_index(
-                    agent_key.session,
-                    CONTINUATION_PRIORITY,
-                    context.now.millis(),
-                    *child,
-                )?;
-                plan.put(
-                    participant::QUEUED_INDEX,
-                    aws_sdk_dynamodb::types::Put::builder()
-                        .table_name(table)
-                        .set_item(Some(
-                            ItemBuilder::new(BRAIN_QUEUED)
-                                .set(aex_session_dynamodb::attr::PK, s(queued.pk))
-                                .set(aex_session_dynamodb::attr::SK, s(queued.sk))
-                                .set("workspaceId", s(context.authority.workspace.to_string()))
-                                .set("parentAgentId", s(agent.to_string()))
-                                .set("childAgentId", s(child.0.as_hyphenated().to_string()))
-                                .set("grant", grant_attribute(*grant))
-                                .set_opt(
-                                    "queuedReason",
-                                    queued_reason.map(|reason| s(queued_reason_name(reason))),
-                                )
-                                .set("enqueuedAt", stamp(now))
-                                .build(),
-                        ))
-                        .condition_expression(IMMUTABLE),
-                )
-                .map_err(PlanError::Store)?;
+                if let Some(reason) = queued_reason {
+                    let queued = keys::queued_index(
+                        agent_key.session,
+                        CONTINUATION_PRIORITY,
+                        context.now.millis(),
+                        *child,
+                    )?;
+                    plan.put(
+                        participant::QUEUED_INDEX,
+                        aws_sdk_dynamodb::types::Put::builder()
+                            .table_name(table)
+                            .set_item(Some(
+                                ItemBuilder::new(BRAIN_QUEUED)
+                                    .set(aex_session_dynamodb::attr::PK, s(queued.pk))
+                                    .set(aex_session_dynamodb::attr::SK, s(queued.sk))
+                                    .set("workspaceId", s(context.authority.workspace.to_string()))
+                                    .set("parentAgentId", s(agent.to_string()))
+                                    .set("childAgentId", s(child.0.as_hyphenated().to_string()))
+                                    .set("grant", grant_attribute(*grant))
+                                    .set("queuedReason", s(queued_reason_name(*reason)))
+                                    .set("enqueuedAt", stamp(now))
+                                    .build(),
+                            ))
+                            .condition_expression(IMMUTABLE),
+                    )
+                    .map_err(PlanError::Store)?;
+                }
+
+                let bootstrap_records = [
+                    aex_brain_domain::journal::JournalRecord::AgentStarted {
+                        config: bootstrap.config.clone(),
+                        parent: Some(agent_key.agent),
+                        join: Some(*join),
+                        depth: bootstrap.depth,
+                        budget: bootstrap.budget,
+                    },
+                    aex_brain_domain::journal::JournalRecord::UserMessage {
+                        content: bootstrap.input.clone(),
+                        origin: aex_brain_domain::journal::MessageOrigin::ParentMessage,
+                    },
+                ];
+                let tail_hash = bootstrap_records[1]
+                    .content_hash()
+                    .map_err(aex_brain_domain::commit::EnvelopeViolation::from)?;
 
                 let child_control = keys::control(&child_key)?;
+                let mut child_item = ItemBuilder::new(codec::AGENT_CONTROL)
+                    .set(aex_session_dynamodb::attr::PK, s(child_control.pk))
+                    .set(aex_session_dynamodb::attr::SK, s(child_control.sk))
+                    .set("workspaceId", s(context.authority.workspace.to_string()))
+                    .set("agentId", s(child.0.as_hyphenated().to_string()))
+                    .set("sessionId", s(session.to_string()))
+                    .set("parentAgentId", s(agent.to_string()))
+                    .set_opt(
+                        "generationId",
+                        bootstrap
+                            .config
+                            .hands_generation
+                            .map(|generation| s(generation.to_string())),
+                    )
+                    .set("status", s("awaiting_model"))
+                    .set("revision", n(0))
+                    .set("journalTail", n(1))
+                    .set("journalTailHash", s(tail_hash.to_hex()))
+                    .set("hasJournal", aex_session_dynamodb::attr::boolean(true))
+                    .set("fence", n(0))
+                    .set("cancelEpoch", n(commit.guard.cancel_epoch.0))
+                    .set("depth", n(u64::from(bootstrap.depth)))
+                    .set("createdAt", stamp(now))
+                    .set("updatedAt", stamp(now));
+                for dimension in aex_brain_domain::budget::DIMENSIONS {
+                    child_item = child_item.set(
+                        limit_attribute(dimension),
+                        n(bootstrap.budget.get(dimension)),
+                    );
+                }
                 plan.put(
                     Participant::AGENT_CONTROL,
                     aws_sdk_dynamodb::types::Put::builder()
                         .table_name(table)
-                        .set_item(Some(
-                            ItemBuilder::new(codec::AGENT_CONTROL)
-                                .set(aex_session_dynamodb::attr::PK, s(child_control.pk))
-                                .set(aex_session_dynamodb::attr::SK, s(child_control.sk))
-                                .set("workspaceId", s(context.authority.workspace.to_string()))
-                                .set("agentId", s(child.0.as_hyphenated().to_string()))
-                                .set("sessionId", s(session.to_string()))
-                                .set("parentAgentId", s(agent.to_string()))
-                                .set("status", s("queued"))
-                                .set("revision", n(0))
-                                .set("journalTail", n(0))
-                                .set("fence", n(0))
-                                .set("cancelEpoch", n(commit.guard.cancel_epoch.0))
-                                .set("createdAt", stamp(now))
-                                .set("updatedAt", stamp(now))
-                                .build(),
-                        ))
+                        .set_item(Some(child_item.build()))
                         .condition_expression(IMMUTABLE),
                 )
                 .map_err(PlanError::Store)?;
+
+                for (seq, record) in bootstrap_records.iter().enumerate() {
+                    let body = record
+                        .canonical_bytes()
+                        .map_err(aex_brain_domain::commit::EnvelopeViolation::from)?;
+                    let hash = aex_brain_domain::ids::ContentHash::of(&body);
+                    let stored = codec::encode_journal(
+                        session,
+                        translate::agent(*child).map_err(BrainKeyError::from)?,
+                        &aex_session_dynamodb::wire_pending::JournalEntry {
+                            seq: seq as u64,
+                            entry_id: hash.to_hex(),
+                            kind: record.kind_name().to_owned(),
+                            body: aex_session_dynamodb::wire_pending::Body::Inline(body.clone()),
+                            body_bytes: body.len() as u64,
+                            occurred_at: now,
+                        },
+                    );
+                    plan.put(
+                        Participant::AGENT_JOURNAL,
+                        aws_sdk_dynamodb::types::Put::builder()
+                            .table_name(table)
+                            .set_item(Some(stored))
+                            .condition_expression(IMMUTABLE),
+                    )
+                    .map_err(PlanError::Store)?;
+                }
             }
             ChildWrite::Transition {
                 child,
@@ -631,6 +708,33 @@ pub fn compile(
                                 .build(),
                         ))
                         .condition_expression(IMMUTABLE),
+                )
+                .map_err(PlanError::Store)?;
+            }
+            ChildWrite::RequestStop { child } => {
+                let child_key = AgentKey::new(agent_key.session, *child);
+                let child_control = keys::control(&child_key)?;
+                plan.update(
+                    Participant::AGENT_CONTROL,
+                    aws_sdk_dynamodb::types::Update::builder()
+                        .table_name(table)
+                        .set_key(Some(key(&child_control.pk, &child_control.sk)))
+                        .condition_expression(
+                            "parentAgentId = :parent AND attribute_not_exists(finishReason)",
+                        )
+                        .update_expression(
+                            "SET #status = :status, stopRequested = :requested, \
+                             stopReason = :reason, updatedAt = :now",
+                        )
+                        .expression_attribute_names("#status", "status")
+                        .expression_attribute_values(":parent", s(agent.to_string()))
+                        .expression_attribute_values(":status", s("stopping"))
+                        .expression_attribute_values(
+                            ":requested",
+                            aex_session_dynamodb::attr::boolean(true),
+                        )
+                        .expression_attribute_values(":reason", s("cancelled"))
+                        .expression_attribute_values(":now", stamp(now)),
                 )
                 .map_err(PlanError::Store)?;
             }
@@ -1044,7 +1148,7 @@ const fn finish_outcome(reason: FinishReason) -> &'static str {
         FinishReason::Interrupted | FinishReason::Budget | FinishReason::AccountPaused => {
             "interrupted"
         }
-        FinishReason::MaxTurns | FinishReason::MaxSteps | FinishReason::Failed => "failed",
+        FinishReason::Failed => "failed",
     }
 }
 
@@ -1079,14 +1183,6 @@ fn terminal_outcome(
                 )),
             })
         }
-        FinishReason::MaxTurns | FinishReason::MaxSteps => RunOutcome::Failed {
-            error: DomainError {
-                code: ErrorCode::LimitExceeded,
-                message: "the current message reached its execution limit".to_owned(),
-                detail: None,
-                retryable: false,
-            },
-        },
         FinishReason::Failed => {
             let failure = transition.failure.as_ref();
             RunOutcome::Failed {
@@ -1307,8 +1403,6 @@ const fn finish_name(reason: aex_brain_domain::journal::FinishReason) -> &'stati
     use aex_brain_domain::journal::FinishReason as Finish;
     match reason {
         Finish::Completed => "completed",
-        Finish::MaxTurns => "max_turns",
-        Finish::MaxSteps => "max_steps",
         Finish::Budget => "budget",
         Finish::Timeout => "timeout",
         Finish::Cancelled => "cancelled",

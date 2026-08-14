@@ -178,13 +178,6 @@ fn every_route_registry_row_has_a_scenario_owner_without_polluting_the_wire_bund
 /// `regional-session-api` name once silently emptied this check, so the serving
 /// artifact boundary remains explicit here.
 const SESSION_STREAM_MOUNTS: &[&str] = &[
-    "provider_credential_get",
-    "provider_credential_register",
-    "provider_credential_revoke",
-    "provider_credentials_list",
-    "regional_operation_cancel",
-    "regional_operation_get",
-    "regional_operations_list",
     "registry_files_delete",
     "registry_files_download_create",
     "registry_files_get",
@@ -193,34 +186,17 @@ const SESSION_STREAM_MOUNTS: &[&str] = &[
     "session_cancel",
     "session_create",
     "session_delete",
-    "session_files_live_download_complete",
-    "session_files_live_download_create",
-    "session_files_live_download_delete",
-    "session_files_live_download_part_get",
-    "session_files_live_list",
-    "session_files_live_stat",
-    "session_files_live_upload_complete",
-    "session_files_live_upload_create",
-    "session_files_live_upload_delete",
-    "session_files_live_upload_get",
-    "session_files_live_upload_part_put",
     "session_get",
     "session_message_send",
     "session_messages_list",
-    "session_resume",
-    "session_suspend",
-    "session_telemetry_segment_download_create",
-    "session_telemetry_segments_list",
+    "session_messages_stream",
+    "session_telemetry_download_create",
+    "session_telemetry_replay",
+    "session_telemetry_stream",
     "session_terminate",
     "sessions_list",
-    "upload_abort",
     "upload_complete",
     "upload_create",
-    "upload_parts_grant",
-    "usage_query",
-    "workspace_current_get",
-    "workspace_limit_get",
-    "workspace_limits_list",
 ];
 
 #[test]
@@ -235,7 +211,7 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
     let rows = routes["routes"].as_array().expect("route rows");
     let stream_api: BTreeSet<_> = rows
         .iter()
-        .filter(|route| route["servedArtifact"] == "session-stream-api")
+        .filter(|route| route["servedArtifact"] == "session-api")
         .map(|route| route["operationId"].as_str().expect("operation id"))
         .collect();
     assert_eq!(
@@ -248,10 +224,8 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
     assert!(
         !rows
             .iter()
-            .any(|route| route["servedArtifact"] == "regional-session-api"),
-        "`regional-session-api` was merged into `session-stream-api`; a route \
-         reappearing under the retired name means this check has been silently \
-         emptied again"
+            .any(|route| route["servedArtifact"] == "session-stream-api"),
+        "the launch artifact is `session-api`; the retired split name returned"
     );
 
     let bundle: serde_json::Value =

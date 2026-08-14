@@ -123,17 +123,12 @@ pub fn settle_lifecycle_operation(
                 }));
             }
             head.lifecycle.cancel_current(now)?;
-            let changed = operation.progress.as_ref().is_some_and(|progress| {
-                progress.phase == "cancelling_current"
-                    && progress.processed == 0
-                    && progress.total_hint == Some(1)
-            });
             head.active_run = None;
             head.work_admission = aex_session_domain::WorkAdmission::Open;
-            canonical_result(&models::SessionCancelResult {
-                changed,
+            canonical_result(&models::SessionCommandReceipt {
+                accepted_at: now,
+                operation_id: operation.id,
                 session_id: session.id,
-                session_revision: session.revision.next().0,
             })?
         }
         OperationKind::SessionSuspend => {
@@ -141,11 +136,10 @@ pub fn settle_lifecycle_operation(
             if changed {
                 head.lifecycle.complete_suspend(now)?;
             }
-            canonical_result(&models::SessionSuspendResult {
-                changed,
+            canonical_result(&models::SessionCommandReceipt {
+                accepted_at: now,
+                operation_id: operation.id,
                 session_id: session.id,
-                session_revision: session.revision.next().0,
-                suspended_at: head.lifecycle.suspended_at.unwrap_or(now),
             })?
         }
         OperationKind::SessionResume => {
@@ -153,12 +147,10 @@ pub fn settle_lifecycle_operation(
             if changed {
                 head.lifecycle.complete_resume(now)?;
             }
-            canonical_result(&models::SessionResumeResult {
-                changed,
-                resumed_at: now,
+            canonical_result(&models::SessionCommandReceipt {
+                accepted_at: now,
+                operation_id: operation.id,
                 session_id: session.id,
-                session_revision: session.revision.next().0,
-                status: crate::projection::public_status(head.lifecycle.status),
             })?
         }
         OperationKind::SessionTerminate => {
@@ -166,11 +158,10 @@ pub fn settle_lifecycle_operation(
             if changed {
                 head.lifecycle.complete_terminate(now)?;
             }
-            canonical_result(&models::SessionTerminateResult {
-                changed,
+            canonical_result(&models::SessionCommandReceipt {
+                accepted_at: now,
+                operation_id: operation.id,
                 session_id: session.id,
-                session_revision: session.revision.next().0,
-                terminated_at: head.lifecycle.terminated_at.unwrap_or(now),
             })?
         }
         OperationKind::SessionDelete => {
@@ -266,8 +257,6 @@ pub fn settle_session_delete(
     let result = canonical_result(&models::SessionTombstone {
         deleted_at: tombstone.deleted_at,
         id: tombstone.session,
-        operation_id: tombstone.deleted_by,
-        workspace_id: tombstone.workspace,
     })?;
     let succeeded = succeed(operation, result, now)?.operation;
     let plan = SessionTransaction {
@@ -1227,7 +1216,10 @@ mod tests {
                 .result
                 .as_ref()
                 .and_then(|result| result.content.as_ref())
-                .is_some_and(|content| content.as_str().contains("\"changed\":true"))
+                .is_some_and(|content| {
+                    content.as_str().contains("\"operationId\"")
+                        && content.as_str().contains("\"sessionId\"")
+                })
         );
     }
 

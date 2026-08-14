@@ -33,24 +33,8 @@ test("no browser source imports a package, so the contract table cannot arrive a
   }
 });
 
-test("the explicit node session-files subpath imports only builtins and local modules", () => {
-  const manifest = JSON.parse(readFileSync(resolve(packageRoot, "package.json"), "utf8")) as {
-    exports?: Record<string, unknown>;
-  };
-  expect(manifest.exports?.["./node/session-files"]).toBeDefined();
-
-  for (const file of walk(resolve(packageRoot, "src/node"))) {
-    const source = readFileSync(file, "utf8");
-    for (const match of source.matchAll(/\bfrom\s+"([^"]+)"/g)) {
-      const specifier = match[1] ?? "";
-      expect(specifier.startsWith("node:") || specifier.startsWith(".")).toBeTrue();
-    }
-  }
-});
-
 function browserSources(): string[] {
-  const nodeRoot = resolve(packageRoot, "src/node");
-  return walk(resolve(packageRoot, "src")).filter((file) => !file.startsWith(nodeRoot));
+  return walk(resolve(packageRoot, "src"));
 }
 
 function walk(directory: string): string[] {

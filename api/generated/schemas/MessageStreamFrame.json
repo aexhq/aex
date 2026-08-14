@@ -1,0 +1,39 @@
+{
+  "$id": "https://schemas.aex.dev/v1/MessageStreamFrame.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One bounded NDJSON assistant-stream frame.",
+  "properties": {
+    "kind": {
+      "$ref": "aex:schema:MessageStreamKind",
+      "description": "Frame semantics."
+    },
+    "message": {
+      "$ref": "aex:schema:Message",
+      "description": "Complete committed/reconcile message."
+    },
+    "messageId": {
+      "description": "Message correlation.",
+      "pattern": "^msg_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "message"
+    },
+    "sequence": {
+      "description": "Monotonic connection-independent sequence.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "text": {
+      "description": "Bounded preview text.",
+      "maxLength": 65536,
+      "minLength": 0,
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "sequence"
+  ],
+  "title": "MessageStreamFrame",
+  "type": "object"
+}

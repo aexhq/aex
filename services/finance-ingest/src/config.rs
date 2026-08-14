@@ -9,33 +9,30 @@ use std::time::Duration;
 use aex_rds_data::config::{DataApiConfig, DatabaseName, ResourceArn, SecretArn};
 
 /// The configuration namespace `release/units.toml` registers for this unit.
-pub const NAMESPACE: &str = "AEX_FINANCE_INGEST_";
+pub const NAMESPACE: &str = "AEX_BILLING_WORKER_";
 
 /// The deployment plane.
-pub const PLANE_VAR: &str = "AEX_FINANCE_INGEST_PLANE";
+pub const PLANE_VAR: &str = "AEX_BILLING_WORKER_PLANE";
 /// The bound AWS region.
-pub const REGION_VAR: &str = "AEX_FINANCE_INGEST_REGION";
+pub const REGION_VAR: &str = "AEX_BILLING_WORKER_REGION";
 /// The Aurora cluster holding the `finance` schema.
-pub const CLUSTER_ARN_VAR: &str = "AEX_FINANCE_INGEST_AURORA_CLUSTER_ARN";
+pub const CLUSTER_ARN_VAR: &str = "AEX_BILLING_WORKER_AURORA_CLUSTER_ARN";
 /// The Secrets Manager secret naming this deployable's own login role.
-pub const SECRET_ARN_VAR: &str = "AEX_FINANCE_INGEST_AURORA_SECRET_ARN";
+pub const SECRET_ARN_VAR: &str = "AEX_BILLING_WORKER_AURORA_SECRET_ARN";
 /// The logical database inside the cluster.
-pub const DATABASE_NAME_VAR: &str = "AEX_FINANCE_INGEST_DATABASE_NAME";
-/// The `PostgreSQL` role this deployable connects as.
-pub const DATABASE_ROLE_VAR: &str = "AEX_FINANCE_INGEST_DATABASE_ROLE";
+pub const DATABASE_NAME_VAR: &str = "AEX_BILLING_WORKER_DATABASE_NAME";
 /// The provider API version every accepted event must declare.
-pub const PINNED_API_VERSION_VAR: &str = "AEX_FINANCE_INGEST_PINNED_STRIPE_API_VERSION";
+pub const PINNED_API_VERSION_VAR: &str = "AEX_BILLING_WORKER_PINNED_STRIPE_API_VERSION";
 /// The application deadline for one Aurora transaction.
-pub const TX_DEADLINE_VAR: &str = "AEX_FINANCE_INGEST_TX_DEADLINE_MS";
+pub const TX_DEADLINE_VAR: &str = "AEX_BILLING_WORKER_TX_DEADLINE_MS";
 
 /// Every variable this deployable requires, in declaration order.
-pub const REQUIRED_VARS: [&str; 8] = [
+pub const REQUIRED_VARS: [&str; 7] = [
     PLANE_VAR,
     REGION_VAR,
     CLUSTER_ARN_VAR,
     SECRET_ARN_VAR,
     DATABASE_NAME_VAR,
-    DATABASE_ROLE_VAR,
     PINNED_API_VERSION_VAR,
     TX_DEADLINE_VAR,
 ];
@@ -114,13 +111,7 @@ impl Config {
             .map_err(|error| invalid(SECRET_ARN_VAR, &error))?;
         let database = DatabaseName::parse(&required(&lookup, DATABASE_NAME_VAR)?)
             .map_err(|error| invalid(DATABASE_NAME_VAR, &error))?;
-        let database_role = required(&lookup, DATABASE_ROLE_VAR)?;
-        if database_role != REQUIRED_ROLE {
-            return Err(FinanceIngestConfigError::Invalid {
-                name: DATABASE_ROLE_VAR,
-                reason: format!("expected `{REQUIRED_ROLE}`, got `{database_role}`"),
-            });
-        }
+        let database_role = REQUIRED_ROLE.to_owned();
         let pinned_api_version = required(&lookup, PINNED_API_VERSION_VAR)?;
         let deadline_ms = required(&lookup, TX_DEADLINE_VAR)?;
         let deadline_ms = deadline_ms
@@ -171,8 +162,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CLUSTER_ARN_VAR, Config, DATABASE_ROLE_VAR, FinanceIngestConfigError, NAMESPACE, PLANE_VAR,
-        REQUIRED_VARS,
+        CLUSTER_ARN_VAR, Config, FinanceIngestConfigError, NAMESPACE, PLANE_VAR, REQUIRED_VARS,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -189,7 +179,6 @@ mod tests {
                     .to_owned(),
             ),
             (super::DATABASE_NAME_VAR, "aex".to_owned()),
-            (super::DATABASE_ROLE_VAR, "aex_finance_ingest".to_owned()),
             (
                 super::PINNED_API_VERSION_VAR,
                 "2026-06-24.dahlia".to_owned(),
@@ -230,17 +219,6 @@ mod tests {
                 "removing {name}"
             );
         }
-    }
-
-    #[test]
-    fn the_wrong_database_role_is_refused_before_a_connection_exists() {
-        let mut vars = complete();
-        vars.insert(DATABASE_ROLE_VAR, "aex_finance_api".to_owned());
-        let error = read(&vars).expect_err("finance-ingest may only be aex_finance_ingest");
-        assert!(
-            matches!(error, FinanceIngestConfigError::Invalid { name, .. } if name == DATABASE_ROLE_VAR),
-            "{error:?}"
-        );
     }
 
     #[test]

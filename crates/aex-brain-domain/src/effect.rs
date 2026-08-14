@@ -564,7 +564,7 @@ mod tests {
     fn a_detached_operation_ref_has_one_closed_persisted_shape() {
         let reference = DetachedOperationRef {
             id: DetachedOperationId("same-id".to_owned()),
-            executor: ExecutorRoute::Mcp,
+            executor: ExecutorRoute::ToolMux,
         };
         let encoded = serde_json::to_vec(&reference).expect("the reference serializes");
         assert_eq!(
@@ -574,7 +574,7 @@ mod tests {
         );
         assert!(
             serde_json::from_str::<DetachedOperationRef>(
-                r#"{"id":"same-id","executor":"mcp","broadcast":true}"#,
+                r#"{"id":"same-id","executor":"tool_mux","broadcast":true}"#,
             )
             .is_err(),
             "unknown routing fields must fail closed"

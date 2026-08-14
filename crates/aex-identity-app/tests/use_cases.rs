@@ -13,22 +13,18 @@ use uuid::Uuid;
 
 use aex_control_domain::Revision;
 use aex_identity_app::ports::{
-    Clock, ConsumeDeviceAuthorizationCommand, ConsumeEmailChallengeCommand,
-    CreateDashboardSessionCommand, CreateDeviceAuthorizationCommand,
-    DecideDeviceAuthorizationCommand, DeviceConsumeOutcome, IdFactory, IdentityStore,
+    Clock, ConsumeEmailChallengeCommand, CreateDashboardSessionCommand, IdFactory, IdentityStore,
     IssueEmailChallengeCommand, PepperKeystore, PepperPurpose, ReconcileIdentity, RequestContext,
     RequestId, ResolveDashboardSessionQuery, ResolveExternalIdentity, ResolvedUser,
-    RevokeAccountTokenCommand, RevokeDashboardSessionCommand, SetUserStatusCommand, StoreError,
-    TxOutcome, UnknownCommit,
+    RevokeDashboardSessionCommand, SetUserStatusCommand, StoreError, TxOutcome, UnknownCommit,
 };
 use aex_identity_app::use_cases::{
     ConsumeEmailLink, IdentityDeps, IdentityError, IssueEmailLink, OpenDashboardSession,
     ResolveActor, ceremony,
 };
 use aex_identity_domain::{
-    CredentialKind, DASHBOARD_SESSION_TTL, DashboardSession, DeviceAuthorization, EmailChallenge,
-    NormalizedEmail, Pepper, PepperVersion, PresentedDigest, SecretRng, User, UserStatus, mint,
-    verifier,
+    CredentialKind, DASHBOARD_SESSION_TTL, DashboardSession, EmailChallenge, NormalizedEmail,
+    Pepper, PepperVersion, PresentedDigest, SecretRng, User, UserStatus, mint, verifier,
 };
 
 const USER: u128 = 0x0192_3f2a_1c00_7000_8000_0000_0000_0001;
@@ -233,50 +229,6 @@ impl IdentityStore for Store {
     async fn unlink_external_identity(
         &self,
         _command: &aex_identity_app::ports::UnlinkExternalIdentityCommand,
-    ) -> Result<TxOutcome<()>, StoreError> {
-        unreachable!("{UNDRIVEN}")
-    }
-
-    async fn create_device_authorization(
-        &self,
-        _command: &CreateDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
-        unreachable!("{UNDRIVEN}")
-    }
-
-    async fn approve_device_authorization(
-        &self,
-        _command: &DecideDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
-        unreachable!("{UNDRIVEN}")
-    }
-
-    async fn deny_device_authorization(
-        &self,
-        _command: &DecideDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
-        unreachable!("{UNDRIVEN}")
-    }
-
-    async fn poll_device_authorization(
-        &self,
-        _device_id: Uuid,
-        _digest: &PresentedDigest,
-        _now: OffsetDateTime,
-    ) -> Result<Option<DeviceAuthorization>, StoreError> {
-        unreachable!("{UNDRIVEN}")
-    }
-
-    async fn consume_device_authorization(
-        &self,
-        _command: &ConsumeDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceConsumeOutcome>, StoreError> {
-        unreachable!("{UNDRIVEN}")
-    }
-
-    async fn revoke_account_token(
-        &self,
-        _command: &RevokeAccountTokenCommand,
     ) -> Result<TxOutcome<()>, StoreError> {
         unreachable!("{UNDRIVEN}")
     }

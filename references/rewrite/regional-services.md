@@ -1,7 +1,7 @@
 ---
-title: Regional services rewrite handoff
-description: Implementation and merge handoff for the regional-services stream.
-status: accepted
+title: Historical regional services rewrite handoff
+description: Point-in-time implementation and merge handoff for the superseded regional-services stream.
+status: superseded historical record — session-plane clean cut 2026-08-14
 owner: regional-services
 keywords:
   - regional http
@@ -18,6 +18,12 @@ related:
 ---
 
 # Regional services rewrite handoff
+
+> **Superseded (2026-08-14).** This point-in-time rewrite record deliberately
+> names regional routes, stores, workers, and deployables removed or consolidated
+> by the session-plane clean cut. It is retained for provenance, not as current
+> serving guidance. See [`../architecture.md`](../architecture.md), the 32-route
+> authored registry, and the 14-unit release registry for current behavior.
 
 Plan of record: `references/rust-native-rewrite-2026-07-31/plans/06-regional-services.md` in the parent workspace.
 

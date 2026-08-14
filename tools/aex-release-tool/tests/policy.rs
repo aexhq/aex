@@ -195,7 +195,7 @@ fn protected_catalog_consumers_require_preflight_before_build() {
         "snapshot verification must run before compilation"
     );
     assert!(workflow.contains("matrix.name == 'brain-mux'"));
-    assert!(workflow.contains("matrix.name == 'session-stream-api'"));
+    assert!(workflow.contains("matrix.name == 'session-api'"));
     assert!(workflow.contains("env.update(recipe['env'])"));
 
     // The publishing half still owns `publish`, and must never regain the

@@ -3,9 +3,9 @@
 //! Recovery is not a mode. A new owner claims, folds and calls [`plan`]; there is no
 //! separate replay path that could disagree with the normal one.
 //!
-//! Enforcement runs **before** any I/O. Turn deadline, max turns, max steps and budget
-//! breach each map to an honest [`FinishReason`], so a run that cannot legally continue
-//! never reserves a permit or opens a socket first.
+//! Enforcement runs **before** any I/O. Deadline and budget breach each map to an honest
+//! [`FinishReason`], so a run that cannot legally continue never reserves a permit or opens
+//! a socket first. Scheduling work quanta are activation policy, never semantic terminals.
 
 use serde::{Deserialize, Serialize};
 
@@ -62,10 +62,6 @@ pub struct PlanPolicy {
     pub now: Timestamp,
     /// The session cancellation epoch the agent was claimed under.
     pub cancel_requested: bool,
-    /// Maximum assistant turns.
-    pub max_turns: u32,
-    /// Maximum planner steps inside one turn.
-    pub max_steps_per_turn: u32,
     /// Wall-clock ceiling for one turn, in milliseconds.
     pub turn_deadline_ms: u32,
 }
@@ -77,8 +73,6 @@ impl PlanPolicy {
         Self {
             now,
             cancel_requested: false,
-            max_turns: limits.max_turns,
-            max_steps_per_turn: limits.max_steps_per_turn,
             turn_deadline_ms: limits.turn_deadline_ms,
         }
     }
@@ -178,12 +172,6 @@ fn breach(state: &FoldState, policy: &PlanPolicy) -> Option<FinishReason> {
     {
         return Some(FinishReason::Timeout);
     }
-    if state.assistant_turns >= policy.max_turns {
-        return Some(FinishReason::MaxTurns);
-    }
-    if state.steps_this_turn >= policy.max_steps_per_turn {
-        return Some(FinishReason::MaxSteps);
-    }
     if let Some(started) = state.turn_started_at {
         let elapsed = policy.now.millis().saturating_sub(started.millis());
         if elapsed >= i64::from(policy.turn_deadline_ms) {
@@ -221,8 +209,6 @@ mod tests {
         PlanPolicy {
             now: Timestamp::from_millis(0),
             cancel_requested: false,
-            max_turns: 100,
-            max_steps_per_turn: 100,
             turn_deadline_ms: 60_000,
         }
     }
@@ -261,39 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn each_breach_maps_to_its_own_honest_reason() {
-        let mut turns = state();
-        turns.assistant_turns = 5;
-        turns.phase = Phase::AwaitingModel;
-        assert_eq!(
-            plan(
-                &turns,
-                &PlanPolicy {
-                    max_turns: 5,
-                    ..policy()
-                }
-            ),
-            OwedStep::Finish {
-                reason: FinishReason::MaxTurns
-            }
-        );
-
-        let mut steps = state();
-        steps.steps_this_turn = 7;
-        steps.phase = Phase::AwaitingModel;
-        assert_eq!(
-            plan(
-                &steps,
-                &PlanPolicy {
-                    max_steps_per_turn: 7,
-                    ..policy()
-                }
-            ),
-            OwedStep::Finish {
-                reason: FinishReason::MaxSteps
-            }
-        );
-
+    fn each_semantic_breach_maps_to_its_own_honest_reason() {
         let mut timed = state();
         timed.turn_started_at = Some(Timestamp::from_millis(0));
         timed.phase = Phase::AwaitingModel;

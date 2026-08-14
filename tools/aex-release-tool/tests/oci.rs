@@ -103,7 +103,7 @@ fn context_accepts_complete_release_bound_catalog_recipes() {
         tool_catalog_sha256:
             "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
     };
-    for unit_name in ["brain-mux", "session-stream-api"] {
+    for unit_name in ["brain-mux", "session-api"] {
         let unit = shipped_unit(unit_name);
         let plan = artifact::plan_with_catalog(&unit, Some(&inputs)).expect("release plan");
         let binary = temp.path().join(unit_name);
@@ -514,7 +514,12 @@ fn all_declared_oci_units_share_the_supported_shape() {
     for unit in oci {
         assert_eq!(unit.target, "aarch64-unknown-linux-gnu.2.34");
         assert_eq!(unit.form, "oci-image");
-        assert_eq!(unit.bin.as_deref(), Some(unit.id.as_str()));
+        let expected_bin = match unit.id.as_str() {
+            "control-api" => "central-api",
+            "session-api" => "session-stream-api",
+            id => id,
+        };
+        assert_eq!(unit.bin.as_deref(), Some(expected_bin));
         assert!(
             unit.base_image
                 .as_deref()

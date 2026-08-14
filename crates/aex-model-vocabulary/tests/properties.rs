@@ -336,7 +336,7 @@ fn s02_a_sealed_message_carries_its_provider_model_and_revision() {
 fn s04_reasoning_tokens_are_always_a_subset_of_output_tokens() {
     let candidates = 120u64;
     let thoughts = 45u64;
-    let google = NormalizedUsage {
+    let candidate_based = NormalizedUsage {
         input_tokens: 10,
         output_tokens: candidates + thoughts,
         reasoning_tokens: thoughts,
@@ -344,8 +344,8 @@ fn s04_reasoning_tokens_are_always_a_subset_of_output_tokens() {
         completeness: UsageCompleteness::Exact,
         ..NormalizedUsage::default()
     };
-    assert!(google.reasoning_tokens <= google.output_tokens);
-    assert_eq!(google.output_tokens, 165);
+    assert!(candidate_based.reasoning_tokens <= candidate_based.output_tokens);
+    assert_eq!(candidate_based.output_tokens, 165);
 
     let anthropic = NormalizedUsage {
         input_tokens: 10,
@@ -354,8 +354,8 @@ fn s04_reasoning_tokens_are_always_a_subset_of_output_tokens() {
         completeness: UsageCompleteness::Exact,
         ..NormalizedUsage::default()
     };
-    assert_eq!(anthropic.output_tokens, google.output_tokens);
-    assert_eq!(anthropic.reasoning_tokens, google.reasoning_tokens);
+    assert_eq!(anthropic.output_tokens, candidate_based.output_tokens);
+    assert_eq!(anthropic.reasoning_tokens, candidate_based.reasoning_tokens);
 }
 
 #[test]

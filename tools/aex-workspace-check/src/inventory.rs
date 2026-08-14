@@ -18,13 +18,12 @@ pub const MEMBER_ROOTS: &[&str] = &[
 
 /// Directories inside [`MEMBER_ROOTS`] that are deliberately not Cargo members.
 ///
-/// The two Stripe edges are `TypeScript` Lambdas retained by `P-AUTH-EDGE`, and
+/// The Stripe edge is a `TypeScript` Lambda retained by `P-AUTH-EDGE`, and
 /// `eslint-plugin-aex` is a retained `TypeScript` package. The three `tests/load`
 /// directories hold workload descriptors, tier profiles and the descriptor
 /// schema: `D-11` puts load *executors* in the owning live companion, so
 /// `aex-load-harness` is the only package that root will ever contain.
 pub const NON_CARGO_DIRECTORIES: &[&str] = &[
-    "services/stripe-command-edge",
     "services/stripe-webhook-edge",
     "tools/eslint-plugin-aex",
     "tests/load/profiles",
@@ -83,14 +82,11 @@ pub const CRATES: &[&str] = &[
     "aex-session-app",
     "aex-session-domain",
     "aex-session-dynamodb",
+    "aex-tool-mux",
     "aex-usage-app",
-    "aex-usage-authority-dynamodb",
-    "aex-usage-compute-dynamodb",
     "aex-usage-domain",
     "aex-usage-query-dynamodb",
     "aex-usage-rating",
-    "aex-usage-storage-dynamodb",
-    "aex-usage-transfer-dynamodb",
     "aex-wire",
     "aex-work-dynamodb",
     "aex-workspace-domain",
@@ -99,31 +95,18 @@ pub const CRATES: &[&str] = &[
 /// Deployable services that must own live companions.
 pub const SERVICES: &[&str] = &[
     "central-api",
-    "central-authz",
-    "central-control-api",
-    "central-identity-api",
-    "finance-api",
     "finance-ingest",
     "session-stream-api",
+    "tool-mux",
 ];
 
 /// Deployable workers that must own live companions.
 pub const WORKERS: &[&str] = &[
     "central-control-worker",
     "central-schema-admin",
-    "content-lifecycle-worker",
-    "finance-reconcile",
-    "finance-settlement-worker",
-    "provider-cost-reconciler",
-    "regional-capacity-controller",
-    "regional-control",
-    "regional-secret-key-admin",
+    "file-ingest-worker",
     "runtime-control-worker",
     "session-operation-worker",
-    "usage-compute-worker",
-    "usage-receipt-dispatcher",
-    "usage-storage-worker",
-    "usage-transfer-worker",
 ];
 
 /// Deployable runtimes that must own live companions.
@@ -142,35 +125,20 @@ pub const TOOLS: &[&str] = &[
 /// This set is checked against metadata-derived `live_suite` declarations plus
 /// companions that explicitly record their deployable as not yet applicable.
 pub const LIVE_TARGETS: &[&str] = &[
+    "billing-worker",
     "brain-mux",
-    "central-api",
-    "central-authz",
-    "central-control-api",
-    "central-control-worker",
-    "central-identity-api",
     "central-schema-admin",
-    "content-lifecycle-worker",
+    "control-api",
+    "control-projection-worker",
     "dashboard",
-    "finance-api",
-    "finance-ingest",
-    "finance-reconcile",
-    "finance-settlement-worker",
     "hands-agent",
     "hands-image",
-    "provider-cost-reconciler",
-    "regional-capacity-controller",
-    "regional-control",
-    "regional-secret-key-admin",
     "runtime-control-worker",
-    "session-operation-worker",
-    "session-stream-api",
+    "session-api",
+    "session-maintenance-worker",
     "site",
-    "stripe-command-edge",
     "stripe-webhook-edge",
-    "usage-compute-worker",
-    "usage-receipt-dispatcher",
-    "usage-storage-worker",
-    "usage-transfer-worker",
+    "tool-mux",
 ];
 
 /// The shared test-infrastructure packages, as `(root, package name)`.
@@ -237,8 +205,16 @@ mod tests {
     #[test]
     fn every_rust_deployable_owns_a_live_companion() {
         for name in SERVICES.iter().chain(WORKERS).chain(RUNTIMES) {
+            let live_target = match *name {
+                "central-api" => "control-api",
+                "central-control-worker" => "control-projection-worker",
+                "file-ingest-worker" | "session-stream-api" => "session-api",
+                "finance-ingest" => "billing-worker",
+                "session-operation-worker" => "session-maintenance-worker",
+                target => target,
+            };
             assert!(
-                LIVE_TARGETS.contains(name),
+                LIVE_TARGETS.contains(&live_target),
                 "`{name}` has no live companion"
             );
         }

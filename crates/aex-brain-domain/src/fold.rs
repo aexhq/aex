@@ -15,8 +15,8 @@ use crate::ids::{
     AgentId, ContentHash, EffectId, JoinId, JournalSeq, Timestamp, ToolCallId, WaitId,
 };
 use crate::journal::{
-    ExecutorRoute, FinishReason, JournalEntry, JournalRecord, ParkReason, PreservedCounters,
-    TypedFailure, WaitResolution,
+    ExecutorRoute, FinishReason, JournalEntry, JournalRecord, ParkReason, TypedFailure,
+    WaitResolution,
 };
 use crate::wire_pending::{
     CanonicalBlock, CanonicalMessage, ContentBlockRef, JoinGroup, JoinMode, NormalizedUsage,
@@ -80,6 +80,17 @@ pub struct ResolvedCall {
     pub duration_ms: u32,
 }
 
+/// A committed assistant usage observation awaiting the regional FIFO handoff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingModelUsage {
+    /// The complete provider message carries provider and model attribution.
+    pub message: crate::wire_pending::CompleteAssistantMessage,
+    /// Provider-reported usage.
+    pub usage: NormalizedUsage,
+    /// Time of the authoritative assistant commit.
+    pub observed_at: Timestamp,
+}
+
 /// Everything the fold derives from an agent's journal.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct FoldState {
@@ -123,10 +134,16 @@ pub struct FoldState {
     /// Effects opened and not yet settled.
     #[serde(with = "ordered_map_entries")]
     pub open_effects: BTreeMap<EffectId, EffectState>,
+    /// Durable call-to-effect links for open members of the current tool batch.
+    #[serde(with = "ordered_map_entries")]
+    pub tool_effects: BTreeMap<ToolCallId, EffectId>,
     /// Effects that have settled, so a settlement without a preparation is refused.
     pub settled_effects: BTreeSet<EffectId>,
     /// Cumulative provider usage.
     pub usage: NormalizedUsage,
+    /// Assistant observations without a matching durable publication marker.
+    #[serde(with = "ordered_map_entries")]
+    pub pending_model_usage: BTreeMap<EffectId, PendingModelUsage>,
     /// This agent's budget node.
     pub budget: BudgetNode,
     /// Children, keyed by identity.
@@ -142,7 +159,8 @@ pub struct FoldState {
     pub phase: Phase,
     /// The last applied sequence, `None` before the first record.
     pub tail: Option<JournalSeq>,
-    /// The first sequence still represented in `hashes`, moved forward by compaction.
+    /// The first sequence still represented in `hashes`, moved forward by a verified
+    /// checkpoint baseline.
     pub base_seq: JournalSeq,
     /// The content hash of every applied entry from `base_seq` onward, so a duplicate is a
     /// no-op and a fork is detected rather than folded.
@@ -151,8 +169,6 @@ pub struct FoldState {
     pub turn_started_at: Option<Timestamp>,
     /// How many assistant turns have committed.
     pub assistant_turns: u32,
-    /// How many planner steps have run inside the current turn.
-    pub steps_this_turn: u32,
     /// The parent's monotonic spawn counter.
     pub spawn_ordinal: u32,
     /// The terminal reason, once `AgentFinished` has been applied.
@@ -257,6 +273,12 @@ pub enum FoldError {
         /// Where it arrived.
         seq: JournalSeq,
     },
+    /// A publication marker named no committed assistant usage observation.
+    #[error("model usage publication for unknown effect {effect}")]
+    UnknownModelUsagePublication {
+        /// The effect named by the malformed marker.
+        effect: EffectId,
+    },
     /// The provider receipt does not name or commit to the assistant outcome.
     #[error("provider receipt at sequence {seq} does not identify the assistant outcome")]
     ReceiptMismatch {
@@ -280,6 +302,24 @@ pub enum FoldError {
     UnknownEffect {
         /// The effect.
         effect: EffectId,
+    },
+    /// A tool effect did not name the immutable batch call it executes.
+    #[error("tool effect {effect} does not name a tool call")]
+    MissingToolEffectCall {
+        /// The malformed tool effect.
+        effect: EffectId,
+    },
+    /// A non-tool effect attempted to carry a tool-batch call link.
+    #[error("non-tool effect {effect} unexpectedly names a tool call")]
+    UnexpectedToolEffectCall {
+        /// The malformed non-tool effect.
+        effect: EffectId,
+    },
+    /// Two open effects attempted to execute the same batch call.
+    #[error("tool call `{call}` already has an open effect")]
+    DuplicateToolEffectCall {
+        /// Provider-minted duplicate call identity.
+        call: String,
     },
     /// A run boundary did not name the root run currently owned by this fold.
     #[error("run boundary for {presented} does not match active run {active:?}")]
@@ -315,14 +355,6 @@ pub enum FoldError {
     UnknownWait {
         /// The wait.
         wait: WaitId,
-    },
-    /// A compaction claimed a prefix that is not in the journal.
-    #[error("compaction replaces through {replaces_through}, past tail {tail:?}")]
-    CompactionOutOfRange {
-        /// What the compaction claimed.
-        replaces_through: JournalSeq,
-        /// The tail at that point.
-        tail: Option<JournalSeq>,
     },
     /// The envelope hash does not cover the record it carries.
     #[error("envelope hash at sequence {seq} does not cover its record")]
@@ -398,7 +430,7 @@ mod control_projection_tests {
             Some(&first.input),
             "a tool-level failure cannot mutate the folded replacement"
         );
-        project_control_state(&mut state, &failed, false, ExecutorRoute::Hands);
+        project_control_state(&mut state, &failed, false, ExecutorRoute::ToolMux);
         assert_eq!(
             state.todo_state.as_ref(),
             Some(&first.input),
@@ -602,10 +634,8 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             deadline,
             limits_revision: _,
         } => {
-            // Limits named by the admitted message are per run. Model history and
-            // cumulative usage survive the boundary, while its planner turn count does
-            // not: a retained multi-turn session must give each message its own
-            // `max_turns` envelope.
+            // Model history and cumulative usage survive run boundaries. Assistant-turn
+            // count remains diagnostic/control context; it is not a semantic stop limit.
             state.assistant_turns = 0;
             state.active_run = Some(*run);
             state.active_message = Some(*message);
@@ -613,7 +643,6 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             state.active_deadline = Some(*deadline);
             state.open_user.extend(content.iter().cloned());
             state.turn_started_at = Some(entry.envelope.recorded_at);
-            state.steps_this_turn = 0;
             state.phase = Phase::AwaitingModel;
         }
 
@@ -624,7 +653,6 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
                 // the agent fresh work, and charging that work against the previous turn's
                 // clock would time out a healthy conversation.
                 state.turn_started_at = Some(entry.envelope.recorded_at);
-                state.steps_this_turn = 0;
             }
             state.phase = Phase::AwaitingModel;
             let _ = origin;
@@ -635,7 +663,7 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             message,
             usage,
             receipt,
-            ..
+            effect,
         } => {
             if !message.proof_covers(usage) {
                 return Err(FoldError::UnprovenAssistantMessage { seq });
@@ -647,6 +675,14 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             state.model_history.push(message.as_message());
             state.last_stop_reason = Some(message.stop_reason);
             state.usage.add(*usage);
+            state.pending_model_usage.insert(
+                *effect,
+                PendingModelUsage {
+                    message: message.clone(),
+                    usage: *usage,
+                    observed_at: entry.envelope.recorded_at,
+                },
+            );
             state.assistant_turns = state.assistant_turns.saturating_add(1);
             state.retired_calls.clear();
             state.resolved_calls.clear();
@@ -671,9 +707,14 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             } else {
                 Phase::AwaitingTools
             };
-            state.steps_this_turn = state.steps_this_turn.saturating_add(1);
             if let Some(message) = public_message {
                 state.active_output_messages.push(*message);
+            }
+        }
+
+        JournalRecord::ModelUsagePublished { effect } => {
+            if state.pending_model_usage.remove(effect).is_none() {
+                return Err(FoldError::UnknownModelUsagePublication { effect: *effect });
             }
         }
 
@@ -722,6 +763,8 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
 
         JournalRecord::EffectPrepared {
             effect,
+            tool_call,
+            kind,
             attempt,
             reservation,
             ..
@@ -735,8 +778,19 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             state
                 .open_effects
                 .insert(*effect, EffectState::Prepared { attempt: *attempt });
+            if *kind == crate::effect::EffectKind::ToolCall {
+                let call = tool_call
+                    .as_ref()
+                    .ok_or(FoldError::MissingToolEffectCall { effect: *effect })?;
+                if state.tool_effects.insert(call.clone(), *effect).is_some() {
+                    return Err(FoldError::DuplicateToolEffectCall {
+                        call: call.as_str().to_owned(),
+                    });
+                }
+            } else if tool_call.is_some() {
+                return Err(FoldError::UnexpectedToolEffectCall { effect: *effect });
+            }
             state.phase = Phase::Effecting { effect: *effect };
-            state.steps_this_turn = state.steps_this_turn.saturating_add(1);
         }
 
         JournalRecord::EffectSettled {
@@ -745,17 +799,32 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             if state.open_effects.remove(effect).is_none() {
                 return Err(FoldError::UnknownEffect { effect: *effect });
             }
+            let tool_effect = state
+                .tool_effects
+                .iter()
+                .find_map(|(call, linked)| (*linked == *effect).then(|| call.clone()));
+            if let Some(call) = &tool_effect {
+                state.tool_effects.remove(call);
+            }
             state.settled_effects.insert(*effect);
             if let SettledOutcome::OutcomeUnknown { .. } = outcome {
-                // A child remains terminal for life. The root agent instead owes a
-                // `RunFinished` boundary that settles the current message and returns
-                // the retained session to input-ready state.
-                if state.parent.is_none() && state.active_run.is_some() {
-                    state.ambiguous_effect = Some(*effect);
-                    state.phase = Phase::AwaitingFinish;
+                if tool_effect.is_some() {
+                    state.phase = if state.pending_calls.is_empty() {
+                        Phase::AwaitingFinish
+                    } else {
+                        Phase::AwaitingTools
+                    };
                 } else {
-                    state.finish = Some(FinishReason::Interrupted);
-                    state.phase = Phase::Finished;
+                    // A child remains terminal for life. The root agent instead owes a
+                    // `RunFinished` boundary that settles the current message and returns
+                    // the retained session to input-ready state.
+                    if state.parent.is_none() && state.active_run.is_some() {
+                        state.ambiguous_effect = Some(*effect);
+                        state.phase = Phase::AwaitingFinish;
+                    } else {
+                        state.finish = Some(FinishReason::Interrupted);
+                        state.phase = Phase::Finished;
+                    }
                 }
             } else if matches!(state.phase, Phase::Effecting { effect: open } if open == *effect) {
                 state.phase = if state.pending_calls.is_empty() {
@@ -881,14 +950,6 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             };
         }
 
-        JournalRecord::Compaction {
-            replaces_through,
-            summary,
-            preserved,
-        } => {
-            apply_compaction(state, *replaces_through, summary, *preserved)?;
-        }
-
         JournalRecord::RunFinished {
             run,
             reason: _,
@@ -918,7 +979,6 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
             state.open_effects.clear();
             state.turn_started_at = None;
             state.assistant_turns = 0;
-            state.steps_this_turn = 0;
             state.failure = None;
             state.finish = None;
             state.phase = Phase::AwaitingInput;
@@ -1001,38 +1061,6 @@ fn project_control_state(
     {
         state.todo_state = Some(pending.input.clone());
     }
-}
-
-fn apply_compaction(
-    state: &mut FoldState,
-    replaces_through: JournalSeq,
-    summary: &[CanonicalBlock],
-    preserved: PreservedCounters,
-) -> Result<(), FoldError> {
-    let tail = state.tail;
-    if tail.is_none_or(|tail| replaces_through > tail) {
-        return Err(FoldError::CompactionOutOfRange {
-            replaces_through,
-            tail,
-        });
-    }
-    // The model-visible prefix is replaced; every counter is carried forward exactly, so a
-    // compacted fold agrees with an uncompacted one on budget, usage, children, joins and
-    // pending calls.
-    state.model_history = vec![CanonicalMessage {
-        role: Role::User,
-        blocks: summary.to_vec(),
-    }];
-    state.last_stop_reason = None;
-    state.usage = preserved.usage;
-    state.assistant_turns = preserved.assistant_turns;
-    state.spawn_ordinal = state.spawn_ordinal.max(preserved.spawn_ordinal);
-    let drop_through = replaces_through.get().saturating_sub(state.base_seq.get());
-    let drop_count = usize::try_from(drop_through.saturating_add(1)).unwrap_or(state.hashes.len());
-    let drop_count = drop_count.min(state.hashes.len());
-    state.hashes.drain(..drop_count);
-    state.base_seq = replaces_through.next();
-    Ok(())
 }
 
 /// A turn-neutral summary of the fold, for diagnostics and admission decisions.

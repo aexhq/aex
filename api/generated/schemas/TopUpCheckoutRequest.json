@@ -2,22 +2,22 @@
   "$id": "https://schemas.aex.dev/v1/TopUpCheckoutRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Create a hosted top-up checkout.",
+  "description": "Request a one-time Stripe-hosted prepaid top-up.",
   "properties": {
     "amountCents": {
-      "description": "The amount to add, in whole cents.",
+      "description": "Credit to buy in whole cents, within configured bounds.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string",
       "x-aex-money": "cents"
     },
     "cancelUrl": {
-      "description": "Where to return after cancellation.",
+      "description": "Browser return after cancellation.",
       "format": "uri",
       "maxLength": 2048,
       "type": "string"
     },
     "successUrl": {
-      "description": "Where to return after success.",
+      "description": "Browser return after provider success; not money authority.",
       "format": "uri",
       "maxLength": 2048,
       "type": "string"

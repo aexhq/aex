@@ -72,11 +72,10 @@ fn root_record(generation: GenerationId) -> JournalRecord {
             model: ModelSlug::truncating("deepseek-chat"),
             system: None,
             tool_manifest_digests: Vec::new(),
+            mcp_servers: Vec::new(),
             hands_generation: generation,
             limits_revision: 1,
             limits: AgentLimits {
-                max_turns: 32,
-                max_steps_per_turn: 16,
                 turn_deadline_ms: 600_000,
                 max_run_duration_ms: 3_600_000,
                 max_depth: 4,

@@ -22,7 +22,7 @@ integration-engines = ["aex-test-harness/containers"]
 owner = "central-identity"
 role = "adapter"
 artifact = "none"
-live_suite = "aex-live-central-control-api"
+live_suite = "aex-live-control-api"
 layers = ["unit", "integration"]
 concerns = ["contract", "property", "fault", "security"]
 seams = ["aws.rds_data.transaction", "aws.aurora.serverless_v2"]
@@ -31,8 +31,9 @@ risk = ["sql"]
 scenarios = []
 
 [package.metadata.aex.targets]
-statements = "unit"
 migrations = "integration"
+personal_account = "unit"
+statements = "unit"
 
 [dependencies]
 async-trait.workspace = true
@@ -61,6 +62,10 @@ uuid.workspace = true
 [[test]]
 name = "statements"
 path = "tests/statements.rs"
+
+[[test]]
+name = "personal_account"
+path = "tests/personal_account.rs"
 
 [[test]]
 name = "migrations"

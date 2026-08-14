@@ -17,8 +17,8 @@ workspace = true
 owner = "regional-services"
 role = "deployable"
 artifact = "oci_image"
-deployable = "session-stream-api"
-live_suite = "aex-live-session-stream-api"
+deployable = "session-api"
+live_suite = "aex-live-session-api"
 layers = ["unit", "smoke", "e2e"]
 concerns = ["contract", "fault", "security", "performance"]
 seams = [
@@ -38,7 +38,6 @@ admission = "unit"
 composition = "unit"
 served = "unit"
 performance_contract = "e2e"
-provider_credential_registration = "unit"
 
 [[bin]]
 name = "session-stream-api"
@@ -63,9 +62,12 @@ base64.workspace = true
 bytes.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["net"] }
+zeroize.workspace = true
 aex-content-domain = { path = "../../crates/aex-content-domain" }
 aex-model-catalog = { path = "../../crates/aex-model-catalog" }
 aex-brain-hands = { path = "../../crates/aex-brain-hands" }
+aex-brain-managed-web = { path = "../../crates/aex-brain-managed-web" }
+aex-brain-mcp = { path = "../../crates/aex-brain-mcp" }
 aex-brain-app = { path = "../../crates/aex-brain-app" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }
 aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
@@ -93,11 +95,7 @@ aex-secret-domain = { path = "../../crates/aex-secret-domain" }
 aex-session-app = { path = "../../crates/aex-session-app" }
 aex-session-domain = { path = "../../crates/aex-session-domain" }
 aex-session-telemetry-aws = { path = "../../crates/aex-session-telemetry-aws" }
-# The read-only usage projection adapter. It publishes no method that accepts
-# a row, so composing it cannot give this deployable write authority over the
-# billing projection.
 aex-usage-domain = { path = "../../crates/aex-usage-domain" }
-aex-usage-query-dynamodb = { path = "../../crates/aex-usage-query-dynamodb" }
 aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
 aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = [
     "authz-projection",
@@ -141,7 +139,3 @@ path = "tests/served.rs"
 [[test]]
 name = "performance_contract"
 path = "tests/load.rs"
-
-[[test]]
-name = "provider_credential_registration"
-path = "tests/provider_credential_registration.rs"

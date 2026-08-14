@@ -20,8 +20,10 @@ variable "vpc" {
     az_count           = number
     availability_zones = list(string)
     endpoints          = list(string)
+    allow_nat          = bool
+    nat_justification  = string
   })
-  description = "Regional network shape. Zone names are supplied because zone naming is per-account."
+  description = "Regional network shape. NAT is explicit because provider and MCP calls leave AWS from private Brain/Tool tasks."
 }
 
 variable "authority_keys" {

@@ -13,7 +13,7 @@
     "layers": ["unit", "smoke", "e2e"],
     "concerns": ["contract", "fault", "security", "performance"],
     "seams": ["aws.iam.denial", "stripe.test_mode.webhook"],
-    "security_tier": "public_edge",
+    "security_tier": "secret",
     "risk": ["untrusted_input", "iam"],
     "scenarios": [],
     "targets": {

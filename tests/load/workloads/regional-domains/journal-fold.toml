@@ -17,7 +17,7 @@
 # LOAD-REGIONAL-ADMISSION.
 id = "journal-fold"
 owner = "regional-domains"
-target = "aex-live-session-stream-api"
+target = "aex-live-session-api"
 tier = "t2"
 duration = "10m"
 ttl = "1h"

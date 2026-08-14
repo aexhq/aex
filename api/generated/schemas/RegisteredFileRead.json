@@ -17,19 +17,12 @@
     "mode": {
       "$ref": "aex:schema:RegisteredFileMode",
       "description": "POSIX mode."
-    },
-    "mountPath": {
-      "description": "Where it is mounted in the guest.",
-      "maxLength": 4096,
-      "type": "string",
-      "x-aex-path": "posix"
     }
   },
   "required": [
     "content",
     "mediaType",
-    "mode",
-    "mountPath"
+    "mode"
   ],
   "title": "RegisteredFileRead",
   "type": "object"

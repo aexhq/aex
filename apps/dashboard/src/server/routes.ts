@@ -14,40 +14,39 @@ import { ROUTES, type RouteDescriptor, type RouteId } from "@aexhq/sdk";
  * `api/generated/registries/routes.json`.
  */
 export const DASHBOARD_ROUTES = [
-  // Shell and account.
-  "account_get",
-  "organization_create",
-  "workspace_create",
-  // The human end of the CLI device flow. This is the one operation a browser
-  // must reach for `aex auth login` to complete at all: nothing else in the
-  // product moves a device authorization off `pending`.
-  "device_decision_create",
   // API keys.
   "api_keys_list",
   "api_key_create",
   "api_key_revoke",
-  // Billing, organization-scoped.
+  // Essential prepaid billing.
   "billing_balance_get",
-  "billing_statements_list",
-  "billing_statement_download_create",
-  "billing_auto_topup_policy_get",
-  "billing_auto_topup_policy_put",
+  "billing_payment_method_delete",
+  "billing_payment_method_session_create",
+  "billing_payment_methods_list",
   "billing_top_up_checkout_create",
-  "billing_portal_session_create",
-  // Session conversation and live files.
-  "sessions_list",
-  "session_get",
-  "session_messages_list",
-  "session_files_live_list",
-  // Workspace resources.
-  "provider_credentials_list",
-  "provider_credential_register",
-  "provider_credential_revoke",
-  "registry_files_list",
+  "billing_transactions_list",
+  "billing_usage_get",
+  // Latest workspace files.
+  "registry_files_delete",
   "registry_files_download_create",
-  "workspace_limits_list",
-  // Usage.
-  "usage_query",
+  "registry_files_get",
+  "registry_files_list",
+  "registry_files_put",
+  "upload_create",
+  "upload_complete",
+  // Session lifecycle, conversation and retained/live observability.
+  "sessions_list",
+  "session_create",
+  "session_get",
+  "session_cancel",
+  "session_delete",
+  "session_message_send",
+  "session_messages_list",
+  "session_messages_stream",
+  "session_telemetry_download_create",
+  "session_telemetry_replay",
+  "session_telemetry_stream",
+  "session_terminate",
 ] as const satisfies readonly RouteId[];
 
 export type DashboardRouteId = (typeof DASHBOARD_ROUTES)[number];

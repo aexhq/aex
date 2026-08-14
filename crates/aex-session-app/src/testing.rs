@@ -557,6 +557,29 @@ impl RegistryReader for ScriptedPorts {
 
 #[async_trait::async_trait]
 impl ProviderCredentialReader for ScriptedPorts {
+    async fn bind_session_api_key(
+        &self,
+        _workspace: WorkspaceId,
+        _organization: aex_wire::ids::OrganizationId,
+        _credential: aex_wire::ids::ProviderCredentialId,
+        provider: aex_wire::provider::ProviderId,
+        api_key: &str,
+        _identity: &aex_session_domain::IdempotencyIdentity,
+        _now: Timestamp,
+    ) -> Result<crate::ports::ProviderCredentialBinding, PortError> {
+        self.log.record(PortCall::Read("bind_session_api_key"));
+        if api_key.is_empty() {
+            return Err(PortError::NotFound {
+                kind: "provider api key",
+            });
+        }
+        let mut binding = self.credential.clone().ok_or(PortError::NotFound {
+            kind: "provider api key",
+        })?;
+        binding.provider = provider;
+        Ok(binding)
+    }
+
     async fn read_provider_credential(
         &self,
         _workspace: WorkspaceId,
@@ -587,8 +610,6 @@ impl LimitsReader for ScriptedPorts {
             revision: self.limits_revision,
             limits: self.limits.clone(),
             agent_execution: crate::ports::AgentExecutionLimits {
-                max_turns: 32,
-                max_steps_per_turn: 16,
                 turn_deadline_ms: 600_000,
                 max_depth: 4,
                 max_fanout: 32,
@@ -744,7 +765,10 @@ pub fn root_agent_of(session: &Session) -> aex_session_domain::AgentControl {
         open_effects: aex_session_domain::OpenEffectSet::default(),
         pending_approval: None,
         queue_reason: None,
-        generation: Some(session.pinned_runtime.generation()),
+        generation: session
+            .pinned_runtime
+            .as_ref()
+            .map(aex_session_domain::PinnedRuntime::generation),
         terminal: None,
         created_at: session.created_at,
     }

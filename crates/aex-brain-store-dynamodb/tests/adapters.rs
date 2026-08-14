@@ -233,11 +233,15 @@ fn captured_requests(replay: &StaticReplayClient) -> Vec<serde_json::Value> {
 fn head() -> AgentHead {
     AgentHead {
         key: key(),
-        generation: GenerationId::from_uuid7(Uuid7::compose(1_767_225_600_000, [9; 10])),
+        generation: Some(GenerationId::from_uuid7(Uuid7::compose(
+            1_767_225_600_000,
+            [9; 10],
+        ))),
         revision: AgentRevision(1),
         fence: Fence(3),
         journal_tail: Some(JournalSeq(4)),
         journal_tail_hash: Some(ContentHash::of(b"tail")),
+        checkpoint: None,
         cancel_epoch: CancelEpoch(0),
         finish: None,
         phase: "awaiting_model".to_owned(),
@@ -581,7 +585,7 @@ async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
                 external_operation: None,
                 detached_tool: Some(DetachedOperationRef {
                     id: DetachedOperationId("op-1".to_owned()),
-                    executor: ExecutorRoute::Mcp,
+                    executor: ExecutorRoute::ToolMux,
                 }),
                 receipt: Some(receipt),
                 detail: None,
@@ -605,7 +609,7 @@ async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
     assert!(update.contains("receiptHash = :receipt"), "{update}");
     let values = &body["ExpressionAttributeValues"];
     assert_eq!(values[":detachedOperation"]["S"], "op-1");
-    assert_eq!(values[":detachedExecutor"]["S"], "Mcp");
+    assert_eq!(values[":detachedExecutor"]["S"], "ToolMux");
     assert_eq!(values[":providerRequestId"]["S"], "req-1");
     assert_eq!(values[":receipt"]["S"], receipt.to_hex());
 }
@@ -647,7 +651,7 @@ async fn a_response_start_refuses_two_operation_authorities_before_aws() {
                 external_operation: Some(DetachedOperationId("external".to_owned())),
                 detached_tool: Some(DetachedOperationRef {
                     id: DetachedOperationId("tool".to_owned()),
-                    executor: ExecutorRoute::Mcp,
+                    executor: ExecutorRoute::ToolMux,
                 }),
                 receipt: None,
                 detail: None,

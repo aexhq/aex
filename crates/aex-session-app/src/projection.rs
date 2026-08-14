@@ -11,12 +11,9 @@
 //! So: `session_get` and `sessions_list` consume this. They must not grow their
 //! own.
 
-use aex_session_domain::{
-    Message, MessagePart, MessageRole, MessageState, Session, SessionStatus, TerminationReason,
-};
+use aex_session_domain::{Message, MessagePart, MessageRole, MessageState, Session, SessionStatus};
 use aex_wire::canonical::CanonicalError;
 use aex_wire::models;
-use aex_wire::types::Cents;
 
 /// The public status of a session head.
 ///
@@ -25,23 +22,30 @@ pub const fn public_status(status: SessionStatus) -> models::SessionStatus {
     match status {
         SessionStatus::Idle => models::SessionStatus::Idle,
         SessionStatus::Running => models::SessionStatus::Running,
-        SessionStatus::Suspending => models::SessionStatus::Suspending,
-        SessionStatus::Suspended => models::SessionStatus::Suspended,
-        SessionStatus::Resuming => models::SessionStatus::Resuming,
+        SessionStatus::Suspending | SessionStatus::Suspended | SessionStatus::Resuming => {
+            models::SessionStatus::Idle
+        }
         SessionStatus::Terminating => models::SessionStatus::Terminating,
         SessionStatus::Terminated => models::SessionStatus::Terminated,
         SessionStatus::Deleting => models::SessionStatus::Deleting,
     }
 }
 
-const fn public_termination_reason(reason: TerminationReason) -> models::SessionTerminationReason {
-    match reason {
-        TerminationReason::User => models::SessionTerminationReason::User,
-        TerminationReason::LifetimeExpired => models::SessionTerminationReason::LifetimeExpired,
-        TerminationReason::ProviderCredentialRevoked => {
-            models::SessionTerminationReason::ProviderCredentialRevoked
+fn sandbox_status(session: &Session) -> models::SandboxStatus {
+    let enabled =
+        serde_json::from_value::<models::ResolvedConfig>(session.resolved.document().to_value())
+            .map_or(true, |resolved| resolved.sandbox_enabled);
+    if !enabled {
+        return models::SandboxStatus::Disabled;
+    }
+    match session.lifecycle.status {
+        SessionStatus::Suspending => models::SandboxStatus::Suspending,
+        SessionStatus::Suspended => models::SandboxStatus::Suspended,
+        SessionStatus::Resuming => models::SandboxStatus::Resuming,
+        SessionStatus::Terminating | SessionStatus::Terminated | SessionStatus::Deleting => {
+            models::SandboxStatus::Lost
         }
-        TerminationReason::RuntimeLost => models::SessionTerminationReason::RuntimeLost,
+        SessionStatus::Idle | SessionStatus::Running => models::SandboxStatus::Ready,
     }
 }
 
@@ -55,11 +59,11 @@ pub fn public_session_list_item(session: &Session) -> models::SessionListItem {
         id: session.id,
         workspace_id: session.workspace,
         status: public_status(session.lifecycle.status),
-        revision: session.revision.0,
         active_message_id: session.lifecycle.active.map(|active| active.message),
         expires_at: session.lifecycle.expires_at,
         provider: session.resolved.provider(),
         model: session.resolved.model().to_owned(),
+        sandbox_status: sandbox_status(session),
         created_at: session.created_at,
         updated_at: session.updated_at,
     }
@@ -86,24 +90,9 @@ pub fn public_session(session: &Session) -> Result<models::Session, CanonicalErr
         status: public_status(session.lifecycle.status),
         revision: session.revision.0,
         active_message_id: session.lifecycle.active.map(|active| active.message),
-        active_max_spend_cents: session
-            .lifecycle
-            .active
-            .map(|active| Cents::new(active.bounds.max_spend_cents.get())),
-        active_deadline: session
-            .lifecycle
-            .active
-            .map(|active| active.bounds.deadline),
-        launched_at: session.lifecycle.launched_at,
         expires_at: session.lifecycle.expires_at,
-        idle_since: session.lifecycle.idle_since,
-        suspend_at: session.lifecycle.suspend_at,
-        suspended_at: session.lifecycle.suspended_at,
         terminated_at: session.lifecycle.terminated_at,
-        termination_reason: session
-            .lifecycle
-            .termination_reason
-            .map(public_termination_reason),
+        sandbox_status: sandbox_status(session),
         resolved_config: resolved,
         metadata: session
             .metadata
@@ -152,13 +141,20 @@ pub fn public_message(message: &Message) -> Result<models::Message, CanonicalErr
             MessagePart::ToolCall { id, arguments } => {
                 models::MessagePart::ToolCall(models::MessagePartToolCall {
                     id: *id,
-                    arguments_digest: *arguments,
+                    name: "tool".to_owned(),
+                    arguments: aex_wire::CanonicalJson::from_value(
+                        &serde_json::json!({"sha256": arguments.to_string()}),
+                    )?,
                 })
             }
             MessagePart::ToolResult { id, result } => {
                 models::MessagePart::ToolResult(models::MessagePartToolResult {
                     id: *id,
-                    result_digest: *result,
+                    preview: result.to_string(),
+                    sandbox_path: None,
+                    sha256: None,
+                    size_bytes: None,
+                    truncated: false,
                 })
             }
             MessagePart::File { .. } => {
@@ -205,7 +201,7 @@ mod tests {
         assert_eq!(item.status, aex_wire::models::SessionStatus::Deleting);
         assert_eq!(item.active_message_id, None);
         assert_eq!(item.expires_at, session.lifecycle.expires_at);
-        assert_eq!(item.revision, session.revision.0);
+        assert_eq!(item.sandbox_status, aex_wire::models::SandboxStatus::Lost);
         assert_eq!(item.provider, session.resolved.provider());
         assert_eq!(item.model, session.resolved.model());
         assert_eq!(item.created_at, session.created_at);

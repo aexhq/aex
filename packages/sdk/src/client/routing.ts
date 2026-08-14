@@ -1,4 +1,4 @@
-import { AccountToken, type ParsedCredential, WorkspaceApiKey } from "./credentials.js";
+import { type ParsedCredential, WorkspaceApiKey } from "./credentials.js";
 import { AexConfigError } from "../transport/errors.js";
 
 export interface RegionalRoutingOptions {
@@ -22,17 +22,10 @@ function validateBaseUrl(value: string): string {
 export function resolveRegionalBaseUrl(
   credential: ParsedCredential,
   options: RegionalRoutingOptions,
-): string {
+): string | undefined {
   if (options.regionalBaseUrl) return validateBaseUrl(options.regionalBaseUrl);
   if (credential instanceof WorkspaceApiKey) return credential.regionalBaseUrl();
-  if (credential instanceof AccountToken && options.workspaceId) {
-    throw new AexConfigError(
-      "an account token with workspaceId must resolve placement through workspace_get before regional I/O",
-    );
-  }
-  throw new AexConfigError(
-    "an account token requires regionalBaseUrl or workspaceId for regional routes",
-  );
+  return undefined;
 }
 
 export function resolveCentralBaseUrl(value = "https://api.aex.dev"): string {

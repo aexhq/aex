@@ -395,7 +395,8 @@ fn route_obligations_are_internally_consistent() {
             );
         }
 
-        // Every authenticated route names a scope; only the device flow does not.
+        // Every authenticated route names a scope. A route without one must
+        // explicitly name the alternative principal it admits.
         if descriptor.required_scope.is_none() {
             assert!(
                 descriptor.alt_principal.is_some(),
@@ -442,7 +443,6 @@ fn pause_exempt_routes_are_exactly_the_declared_exemptions() {
             || operation.contains("account")
             || operation.contains("workspace")
             || operation.contains("usage")
-            || operation.contains("device")
             || operation.contains("bootstrap");
         assert!(
             exempt,

@@ -59,7 +59,7 @@
     },
     "packages/sdk": {
       "name": "@aexhq/sdk",
-      "version": "0.52.0",
+      "version": "0.53.0",
       "devDependencies": {
         "@types/bun": "1.3.14",
       },
@@ -72,18 +72,6 @@
       },
       "devDependencies": {
         "@types/bun": "1.3.14",
-      },
-    },
-    "services/stripe-command-edge": {
-      "name": "@aexhq/stripe-command-edge",
-      "version": "0.1.0",
-      "dependencies": {
-        "@aws-sdk/client-secrets-manager": "3.1101.0",
-        "stripe": "22.4.0",
-      },
-      "devDependencies": {
-        "@types/bun": "1.3.14",
-        "typescript": "5.8.3",
       },
     },
     "services/stripe-webhook-edge": {
@@ -113,8 +101,6 @@
     "@aexhq/sdk": ["@aexhq/sdk@workspace:packages/sdk"],
 
     "@aexhq/site": ["@aexhq/site@workspace:apps/site"],
-
-    "@aexhq/stripe-command-edge": ["@aexhq/stripe-command-edge@workspace:services/stripe-command-edge"],
 
     "@aexhq/stripe-webhook-edge": ["@aexhq/stripe-webhook-edge@workspace:services/stripe-webhook-edge"],
 

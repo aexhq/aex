@@ -1,7 +1,7 @@
 //! The port traits every Brain peer stream implements.
 //!
 //! These signatures are the cross-stream contract. `aex-brain-provider-gateway`,
-//! `aex-model-catalog`, `aex-brain-tool-catalog`, `aex-brain-managed-web`, `aex-brain-mcp`,
+//! `aex-model-catalog`, `aex-brain-tool-catalog`, Tool Mux, `aex-brain-mcp`,
 //! `aex-brain-hands` and `aex-brain-store-dynamodb` each implement one or more of them; nothing
 //! in this crate knows a vendor.
 //!
@@ -25,7 +25,10 @@
 //!   does not compile.
 
 pub mod catalog;
+pub mod checkpoint;
 pub mod hands;
+pub mod model_usage;
+pub mod preview;
 pub mod proof;
 pub mod provider;
 pub mod store;
@@ -35,9 +38,18 @@ pub mod tool;
 pub type BoxFuture<'a, T> = core::pin::Pin<Box<dyn core::future::Future<Output = T> + Send + 'a>>;
 
 pub use catalog::{CatalogError, CatalogPort, ClockPort, IdPort, SteadyInstant};
+pub use checkpoint::{CheckpointError, ContextCheckpointStore};
 pub use hands::{
     HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart, HandsOperationStatus, HandsPort,
-    HandsResult, ResultBounds,
+    HandsResult, HandsSandboxFile, ResultBounds,
+};
+#[cfg(any(test, feature = "testing"))]
+pub use model_usage::NullModelUsagePort;
+pub use model_usage::{
+    ModelUsageError, ModelUsageObservation, ModelUsagePort, ModelUsagePublication,
+};
+pub use preview::{
+    AssistantPreview, NullPreviewPort, PreviewEvent, PreviewPort, PreviewScope, ScopedPreviewSink,
 };
 pub use proof::{
     CancelToken, DispatchTicket, FenceGuard, NullPreviewSink, PreviewSink, TicketMismatch,

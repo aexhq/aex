@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/ApiKey.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Workspace API key metadata. There is no public last-used timestamp.",
+  "description": "Workspace API key metadata. Secret material is never returned by reads.",
   "properties": {
     "createdAt": {
       "description": "When it was minted.",
@@ -34,11 +34,11 @@
         "type": "string",
         "x-aex-registry": "scopes"
       },
-      "maxItems": 64,
+      "maxItems": 16,
       "type": "array"
     },
     "workspaceId": {
-      "description": "The workspace it authorizes.",
+      "description": "The fixed workspace it authorizes.",
       "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "workspace"

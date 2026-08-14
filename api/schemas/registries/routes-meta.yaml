@@ -1,117 +1,47 @@
-# Route-table metadata.
-#
-# `expected` pins each plane's operation count. The generator fails if either
-# drifts, so a route cannot be added or lost without the change being visible in
-# this file's diff.
-#
-# `pathParams` is the one place a path parameter's type is declared. A fragment
-# names the parameter in its template and nothing else, so two routes can never
-# disagree about what `{sessionId}` is.
+# The launch route allowlist and exact serving ownership.
 contractVersion: v1
 expected:
-  central: 31
-  regional: 43
+  central: 13
+  regional: 19
 pathParams:
-  organizationId: { type: id, of: organization, doc: "The organization the request is scoped to." }
-  workspaceId: { type: id, of: workspace, doc: "The workspace the request is scoped to." }
-  apiKeyId: { type: id, of: api_key, doc: "The API key metadata record." }
-  statementId: { type: id, of: statement, doc: "The issued statement." }
-  operationId: { type: id, of: operation, doc: "The durable operation record." }
-  sessionId: { type: id, of: session, doc: "The session the request is scoped to." }
-  segmentId: { type: string, min: 85, max: 85, pattern: "^[0-9]{20}-[0-9a-f]{64}$", doc: "The immutable session-telemetry segment." }
-  fileUploadId: { type: id, of: file_upload, doc: "The ephemeral live-file upload." }
-  fileDownloadId: { type: id, of: file_download, doc: "The ephemeral live-file download." }
-  partNumber: { type: integer, min: 1, max: 1280, doc: "The one-based live transfer part." }
-  uploadId: { type: id, of: upload, doc: "The staged upload." }
-  limitId: { type: limit_id, doc: "The effective workspace limit." }
-  name: { type: resource_name, doc: "The registered workspace-file name." }
+  apiKeyId: { type: id, of: api_key, doc: "API key metadata." }
+  paymentMethodId: { type: id, of: payment_method, doc: "Display-only card reference." }
+  sessionId: { type: id, of: session, doc: "Owning session." }
+  uploadId: { type: id, of: upload, doc: "Staged direct upload." }
+  name: { type: resource_name, doc: "Current logical workspace-file name." }
 
-# Closed delivery vocabulary. Planned ownership and actual mount claims below
-# must name an artifact on the operation's own API plane.
 servingArtifacts:
-  central-control-api: central
-  central-identity-api: central
-  finance-api: central
-  session-stream-api: regional
+  control-api: central
+  session-api: regional
 
-# Planned delivery/test selection defaults. Most fragments are intended for one
-# release unit and one scenario family. The per-operation table below is
-# authoritative for split fragments and the long-lived NDJSON transport. These
-# declarations assign work; only `servedOperations` proves an actual mount.
 scenarioOwners:
-  central.api-keys: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
-  central.auth: { servingArtifact: central-identity-api, scenarios: [SC-IDENTITY-ACCOUNT] }
-  central.billing: { servingArtifact: finance-api, scenarios: [SC-FINANCE-INVOICE] }
-  central.bootstrap: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
-  central.identity: { servingArtifact: central-identity-api, scenarios: [SC-IDENTITY-ACCOUNT] }
-  central.operations: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
-  central.organizations: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
-  central.workspaces: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
-  regional.files: { servingArtifact: session-stream-api, scenarios: [SC-CONTENT-LIFECYCLE] }
-  regional.operations: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-TERMINAL] }
-  regional.registry: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT] }
-  regional.sessions: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT, SC-SESSION-TERMINAL] }
-  regional.uploads: { servingArtifact: session-stream-api, scenarios: [SC-CONTENT-LIFECYCLE] }
-  regional.usage: { servingArtifact: session-stream-api, scenarios: [SC-USAGE-SETTLE] }
-  regional.workspace: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT] }
+  central.auth: { servingArtifact: control-api, scenarios: [SC-IDENTITY-ACCOUNT] }
+  central.bootstrap: { servingArtifact: control-api, scenarios: [SC-IDENTITY-ACCOUNT] }
+  central.api-keys: { servingArtifact: control-api, scenarios: [SC-CONTROL-WORKSPACE] }
+  central.billing: { servingArtifact: control-api, scenarios: [SC-BILLING-ESSENTIAL] }
+  regional.sessions: { servingArtifact: session-api, scenarios: [SC-SESSION-ADMIT, SC-SESSION-STREAM, SC-SESSION-TERMINAL, SC-TELEMETRY-LIVE-RETAINED] }
+  regional.registry: { servingArtifact: session-api, scenarios: [SC-FILES-CURRENT] }
+  regional.uploads: { servingArtifact: session-api, scenarios: [SC-FILES-UPLOAD] }
 
-# Exceptions are keyed by operationId, never by path. The generator resolves
-# these into the runtime RouteDescriptor and the delivery registry together.
-# NDJSON is a distinct long-lived service even when its unary peer is authored
-# in the same OpenAPI fragment.
 operationOwners: {}
-
-# Explicit architecture debt. Every entry names one exact operation whose
-# production handler is intentionally absent and why. The generator rejects an
-# unknown operation, an empty reason, or overlap with `servedOperations`.
-# Deferral is not mount evidence and is emitted only into the delivery registry.
 deferredOperations: {}
 
-# Actual public mount authority. `scenarioOwners` and `operationOwners` plan
-# where a route belongs; this table says which complete handlers are mounted
-# today. An absent route must have an exact `deferredOperations` entry or
-# `graph verify` reports `aex-route-unserved`. Never add a route here to make
-# the graph green: its production composition must consume or assert this
-# generated projection, and served+deferred is rejected.
 servedOperations:
-  central-control-api:
+  control-api:
     - api_key_create
     - api_key_revoke
     - api_keys_list
-    - central_operation_cancel
-    - central_operation_get
-    - central_operations_list
+    - billing_balance_get
+    - billing_payment_method_delete
+    - billing_payment_method_session_create
+    - billing_payment_methods_list
+    - billing_top_up_checkout_create
+    - billing_transactions_list
+    - billing_usage_get
     - dashboard_bootstrap_get
-    - invitation_accept
-    - invitation_create
-    - memberships_list
-    - organization_create
-    - organization_get
-    - organizations_list
-    - workspace_create
-    - workspace_delete
-    - workspace_get
-    - workspaces_list
-  central-identity-api:
-    - account_get
     - dashboard_session_create
     - dashboard_session_delete
-    - device_authorization_create
-    - device_decision_create
-    - device_token_create
-  finance-api:
-    - billing_auto_topup_policy_get
-    - billing_auto_topup_policy_put
-    - billing_balance_get
-    - billing_portal_session_create
-    - billing_statement_download_create
-    - billing_statement_get
-    - billing_statements_list
-    - billing_top_up_checkout_create
-  session-stream-api:
-    - regional_operation_cancel
-    - regional_operation_get
-    - regional_operations_list
+  session-api:
     - registry_files_delete
     - registry_files_download_create
     - registry_files_get
@@ -120,31 +50,14 @@ servedOperations:
     - session_cancel
     - session_create
     - session_delete
-    - session_files_live_download_complete
-    - session_files_live_download_create
-    - session_files_live_download_delete
-    - session_files_live_download_part_get
-    - session_files_live_list
-    - session_files_live_stat
-    - session_files_live_upload_complete
-    - session_files_live_upload_create
-    - session_files_live_upload_delete
-    - session_files_live_upload_get
-    - session_files_live_upload_part_put
     - session_get
     - session_message_send
     - session_messages_list
-    - session_telemetry_segment_download_create
-    - session_telemetry_segments_list
-    - session_resume
-    - session_suspend
+    - session_messages_stream
+    - session_telemetry_download_create
+    - session_telemetry_replay
+    - session_telemetry_stream
     - session_terminate
     - sessions_list
-    - upload_abort
     - upload_complete
     - upload_create
-    - upload_parts_grant
-    - usage_query
-    - workspace_current_get
-    - workspace_limit_get
-    - workspace_limits_list

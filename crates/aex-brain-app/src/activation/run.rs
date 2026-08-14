@@ -25,12 +25,15 @@ use crate::kernel::{ActivationRegistry, DrainGate, FoldCache, RenewalOutcome, Re
 use crate::ports::{
     BoxFuture, CancelToken, Claim, ClaimError, CommitError, ConditionFailure, ControlStateView,
     DecisionContext, DetachedStatus, DueRowIsolation, DueScanCursor, FenceGuard,
-    MAX_DUE_ROW_ISOLATIONS, NullPreviewSink, PreparedToolCall, ReleaseDisposition,
-    SessionAuthority, StoreError, ToolAdvertisement, ToolOutcome, ToolRoutingError, WakeDelivery,
+    MAX_DUE_ROW_ISOLATIONS, ModelUsageObservation, PreparedToolCall, PreviewScope,
+    ReleaseDisposition, ScopedPreviewSink, SessionAuthority, StoreError, ToolAdvertisement,
+    ToolDispatchError, ToolOutcome, ToolResultBody, ToolRoute, ToolRoutingError, WakeDelivery,
     WakeOrigin, WakeState,
 };
+use aex_brain_domain::budget::{Dimension, DimensionVector};
 use aex_brain_domain::canonical::canonicalize_value;
-use aex_brain_domain::child::QueuedReason;
+use aex_brain_domain::child::{CancelCause, ChildOutcome, QueuedReason};
+use aex_brain_domain::commit::{ChildBootstrap, ChildWrite, JoinWrite};
 use aex_brain_domain::context;
 use aex_brain_domain::effect::{
     DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
@@ -38,7 +41,8 @@ use aex_brain_domain::effect::{
 };
 use aex_brain_domain::fold::{FoldState, PendingCall, Phase, apply};
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, ContentHash, EffectId, JournalSeq, Timestamp, ToolCallId, WaitId,
+    AgentId, AgentKey, ContentHash, EffectId, JoinId, JournalSeq, Timestamp, ToolCallId, WaitId,
+    WakeId, child_agent_id,
 };
 use aex_brain_domain::journal::ExecutorRoute;
 use aex_brain_domain::journal::{
@@ -46,16 +50,17 @@ use aex_brain_domain::journal::{
 };
 use aex_brain_domain::planner::{OwedStep, PlanPolicy, model_effect_id, plan};
 use aex_brain_domain::wire_pending::{
-    CanonicalMessage, CanonicalModelRequest, ContentBlockRef, DurableOperationSupport,
-    ResolvedAgentConfig, Role,
+    CanonicalBlock, CanonicalMessage, CanonicalModelRequest, ContentBlockRef,
+    DurableOperationSupport, JoinMode, ResolvedAgentConfig, Role,
 };
 use aex_model_catalog::canonical::{
     CanonicalToolDef, CorrelationId, ReasoningRequest, ToolChoice, ToolResultPart,
 };
 use aex_model_catalog::document::Capability;
 use aex_model_catalog::{BoundedString, QualifiedModel};
+use aex_wire::ids::{AgentId as PublicAgentId, PrefixedId as _, Uuid7};
 use futures::stream::{self, StreamExt as _};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -241,7 +246,8 @@ impl Activation {
             state: FoldState::empty(),
             steps: 0,
             attempts: 1,
-            resume: None,
+            resume: VecDeque::new(),
+            checkpoint: claim.head.checkpoint.clone(),
             fold_cache: self.fold_cache.as_deref(),
             dispatch: self.dispatch.as_deref(),
             retained_bytes: 0,
@@ -886,7 +892,8 @@ struct Session<'a> {
     state: FoldState,
     steps: u32,
     attempts: u16,
-    resume: Option<Box<DurableEffect>>,
+    resume: VecDeque<Box<DurableEffect>>,
+    checkpoint: Option<aex_brain_domain::checkpoint::CheckpointMetadata>,
     fold_cache: Option<&'a dyn FoldCache>,
     dispatch: Option<&'a dyn DispatchControl>,
     retained_bytes: usize,
@@ -912,6 +919,7 @@ impl Session<'_> {
         };
         let (restored, open) = futures::try_join!(restore, open)?;
         self.install_fold(restored);
+        self.publish_pending_model_usage().await?;
         if let Some(stop) = self.recover_open(open).await? {
             return Ok(Outcome::Progressed {
                 steps: self.steps,
@@ -975,7 +983,9 @@ impl Session<'_> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .head
             .revision;
-        if let Some(cache) = self.fold_cache {
+        if self.checkpoint.is_none()
+            && let Some(cache) = self.fold_cache
+        {
             let tick = self.ports.clock.steady().0;
             if let Some(entry) = cache.load(&self.key, revision, tick) {
                 let folded_hash = entry.state.hashes.last().copied();
@@ -991,15 +1001,28 @@ impl Session<'_> {
                 cache.remove(&self.key, revision);
             }
         }
-        let restored = super::restore::restore(
-            self.ports.journal.as_ref(),
-            self.key,
-            claimed_seq,
-            claimed_hash,
-            self.policy.read,
-            self.policy.restore,
-        )
-        .await?;
+        let restored = if let Some(metadata) = &self.checkpoint {
+            let checkpoint = self.ports.checkpoints.load(self.key, metadata).await?;
+            super::restore::restore_from_checkpoint(
+                self.ports.journal.as_ref(),
+                checkpoint,
+                claimed_seq,
+                claimed_hash,
+                self.policy.read,
+                self.policy.restore,
+            )
+            .await?
+        } else {
+            super::restore::restore(
+                self.ports.journal.as_ref(),
+                self.key,
+                claimed_seq,
+                claimed_hash,
+                self.policy.read,
+                self.policy.restore,
+            )
+            .await?
+        };
         Ok(restored)
     }
 
@@ -1028,97 +1051,160 @@ impl Session<'_> {
     /// ever gets the chance to treat it as retryable.
     async fn recover_open(
         &mut self,
-        open: Vec<DurableEffect>,
+        mut open: Vec<DurableEffect>,
     ) -> Result<Option<Stop>, ActivationError> {
-        let Some(effect) = open.into_iter().find(|effect| !effect.state.is_settled()) else {
+        open.retain(|effect| !effect.state.is_settled());
+        open.sort_by_key(|effect| {
+            let order = self
+                .pending_for_effect(effect.id)
+                .map_or(u32::MAX, |call| call.order);
+            (order, effect.id.0)
+        });
+        if open.is_empty() {
             return Ok(None);
-        };
+        }
         if self.stop_requested && self.state.active_run.is_some() {
             // A session cancellation has already advanced both the session and root-agent
             // epochs. The predecessor was allowed to observe that fence and drop its
             // provider future before this successor claimed the root. Recovery must still
-            // settle the exact open effect honestly, but the customer's requested terminal
-            // result is cancellation rather than an infrastructure interruption.
+            // settle every open batch member honestly, but the customer's requested
+            // terminal result is cancellation rather than an infrastructure interruption.
             let mut draft = self.draft("effecting");
-            match &effect.state {
-                EffectState::Prepared { .. } => {
-                    // The dispatch marker never committed, so the upstream provably saw
-                    // nothing. Closing the prepared effect prevents the ordinary resume
-                    // path from dispatching it after cancellation.
-                    decide::settle_known_failure(
-                        &mut draft,
-                        effect.id,
-                        DispatchStage::PreDispatch,
-                        DispatchProof::NotSent,
-                    );
-                }
-                EffectState::DispatchStarted { attempt } => {
-                    decide::settle_root_unknown(
-                        &mut draft,
-                        effect.id,
-                        effect.evidence.clone().unwrap_or_else(|| {
+            for effect in open {
+                let pending = self.pending_for_effect(effect.id);
+                match &effect.state {
+                    EffectState::Prepared { .. } => {
+                        // The dispatch marker never committed, so the upstream provably saw
+                        // nothing. Closing it prevents dispatch after cancellation.
+                        decide::settle_known_failure(
+                            &mut draft,
+                            effect.id,
+                            DispatchStage::PreDispatch,
+                            DispatchProof::NotSent,
+                        );
+                    }
+                    EffectState::DispatchStarted { attempt } => {
+                        let evidence = effect.evidence.clone().unwrap_or_else(|| {
                             DispatchEvidence::ambiguous(*attempt, DispatchStage::Dispatched)
-                        }),
-                    );
+                        });
+                        if pending.is_some() {
+                            decide::settle_tool_unknown(&mut draft, effect.id, evidence);
+                        } else {
+                            decide::settle_root_unknown(&mut draft, effect.id, evidence);
+                        }
+                    }
+                    EffectState::ResponseStarted {
+                        attempt,
+                        provider_request_id,
+                    } => {
+                        let evidence =
+                            effect.evidence.clone().unwrap_or_else(|| DispatchEvidence {
+                                stage: DispatchStage::Streaming,
+                                proof: DispatchProof::ResponseStarted,
+                                attempt: *attempt,
+                                provider_request_id: provider_request_id.clone(),
+                                external_operation: None,
+                                detached_tool: None,
+                                receipt: None,
+                                detail: None,
+                            });
+                        if pending.is_some() {
+                            decide::settle_tool_unknown(&mut draft, effect.id, evidence);
+                        } else {
+                            decide::settle_root_unknown(&mut draft, effect.id, evidence);
+                        }
+                    }
+                    EffectState::Complete { .. }
+                    | EffectState::KnownFailure { .. }
+                    | EffectState::OutcomeUnknown { .. } => {
+                        unreachable!("load_open excludes settled effects")
+                    }
                 }
-                EffectState::ResponseStarted {
-                    attempt,
-                    provider_request_id,
-                } => {
-                    decide::settle_root_unknown(
+                if let Some(call) = pending {
+                    let executed_on = self.tool_executor(&call)?;
+                    self.append_tool_error(
                         &mut draft,
                         effect.id,
-                        effect.evidence.clone().unwrap_or_else(|| DispatchEvidence {
-                            stage: DispatchStage::Streaming,
-                            proof: DispatchProof::ResponseStarted,
-                            attempt: *attempt,
-                            provider_request_id: provider_request_id.clone(),
-                            external_operation: None,
-                            detached_tool: None,
-                            receipt: None,
-                            detail: None,
-                        }),
+                        &call,
+                        executed_on,
+                        "tool execution was cancelled",
                     );
-                }
-                EffectState::Complete { .. }
-                | EffectState::KnownFailure { .. }
-                | EffectState::OutcomeUnknown { .. } => {
-                    unreachable!("load_open excludes settled effects")
                 }
             }
             self.finish_current(&mut draft, self.stop_reason, None, None)?;
             self.commit(draft).await?;
             return Ok(Some(Stop::Finished(self.stop_reason)));
         }
-        if matches!(effect.state, EffectState::Prepared { .. }) {
-            // Intent committed, nothing sent: the one unambiguous case. The step loop
-            // re-dispatches it under this fence rather than opening a second effect.
-            self.resume = Some(Box::new(effect));
-            return Ok(None);
-        }
-        match recover(&effect, Self::support()) {
-            RecoveryDecision::Interrupt { evidence } => {
-                let mut draft = self.draft("effecting");
-                self.settle_unknown_current(&mut draft, effect.id, evidence)?;
-                self.commit(draft).await?;
-                Ok(Some(Stop::Finished(FinishReason::Interrupted)))
+        let mut recovered = self.draft("effecting");
+        for effect in open {
+            if matches!(effect.state, EffectState::Prepared { .. }) {
+                // Intent committed, nothing sent: queue every unambiguous member. Their
+                // durable call links retain exact model order and prevent a second identity.
+                self.resume.push_back(Box::new(effect));
+                continue;
             }
-            RecoveryDecision::QueryDurableOperation { .. } => Err(ActivationError::Unsupported {
-                step: "query_non_tool_durable_operation",
-                owed_by: "the provider or Hands recovery adapter selected by the effect kind; a tool executor route cannot safely answer this identity",
-            }),
-            RecoveryDecision::QueryDetachedTool { operation } => {
-                self.resolve_detached(&effect, &operation).await.map(Some)
+            match recover(&effect, Self::support()) {
+                RecoveryDecision::Interrupt { evidence } => {
+                    if let Some(call) = self.pending_for_effect(effect.id) {
+                        let executed_on = self.tool_executor(&call)?;
+                        decide::settle_tool_unknown(&mut recovered, effect.id, evidence);
+                        self.append_tool_error(
+                            &mut recovered,
+                            effect.id,
+                            &call,
+                            executed_on,
+                            "tool outcome is unknown after worker recovery",
+                        );
+                    } else {
+                        self.settle_unknown_current(&mut recovered, effect.id, evidence)?;
+                        self.commit(recovered).await?;
+                        return Ok(Some(Stop::Finished(FinishReason::Interrupted)));
+                    }
+                }
+                RecoveryDecision::QueryDurableOperation { .. } => {
+                    return Err(ActivationError::Unsupported {
+                        step: "query_non_tool_durable_operation",
+                        owed_by: "the provider or Hands recovery adapter selected by the effect kind; a tool executor route cannot safely answer this identity",
+                    });
+                }
+                RecoveryDecision::QueryDetachedTool { operation } => {
+                    self.commit(recovered).await?;
+                    return self.resolve_detached(&effect, &operation).await.map(Some);
+                }
+                RecoveryDecision::ReconstructFromReceipt { .. } => {
+                    return Err(ActivationError::Unsupported {
+                        step: "reconstruct_from_receipt",
+                        owed_by: "aex-content-aws, which holds the committed response body Brain would rebuild the outcome from",
+                    });
+                }
+                RecoveryDecision::RetrySameEffect { .. } => {
+                    return Err(ActivationError::Unsupported {
+                        step: "retry_dispatched_effect",
+                        owed_by: "the effect driver's recovery controller (plan 07 S-5.3), which is what moves a dispatched effect back to prepared",
+                    });
+                }
             }
-            RecoveryDecision::ReconstructFromReceipt { .. } => Err(ActivationError::Unsupported {
-                step: "reconstruct_from_receipt",
-                owed_by: "aex-content-aws, which holds the committed response body Brain would rebuild the outcome from",
-            }),
-            RecoveryDecision::RetrySameEffect { .. } => Err(ActivationError::Unsupported {
-                step: "retry_dispatched_effect",
-                owed_by: "the effect driver's recovery controller (plan 07 S-5.3), which is what moves a dispatched effect back to prepared",
-            }),
         }
+        self.commit(recovered).await?;
+        Ok(None)
+    }
+
+    fn pending_for_effect(&self, effect: EffectId) -> Option<PendingCall> {
+        let call = self
+            .state
+            .tool_effects
+            .iter()
+            .find_map(|(call, linked)| (*linked == effect).then(|| call.clone()))?;
+        self.state.pending_calls.get(&call).cloned()
+    }
+
+    fn tool_executor(&self, call: &PendingCall) -> Result<ExecutorRoute, ActivationError> {
+        let config = self.config()?;
+        Ok(self
+            .ports
+            .tools
+            .route(&config.catalog_pin, &call.name)?
+            .executor)
     }
 
     const fn support() -> DurableOperationSupport {
@@ -1129,7 +1215,7 @@ impl Session<'_> {
 
     /// One plan-and-act cycle.
     async fn step(&mut self) -> Result<Step, ActivationError> {
-        if let Some(effect) = self.resume.take() {
+        if let Some(effect) = self.resume.pop_front() {
             return match effect.kind {
                 EffectKind::ModelCall => self.model_call(Some(&effect)).await,
                 EffectKind::ToolCall => self.tool_call(Some(&effect)).await,
@@ -1143,6 +1229,11 @@ impl Session<'_> {
         // one: the session authority does, and until it has there is nothing to plan.
         if self.state.config.is_none() {
             return Ok(Step::Nothing);
+        }
+        if let Phase::Parked { reason } = &self.state.phase
+            && let ParkReason::AwaitingChildren { join, deadline } = reason.as_ref()
+        {
+            return self.resume_subagent_wait(*join, *deadline).await;
         }
         let owed = plan(&self.state, &self.plan_policy());
         match owed {
@@ -1164,7 +1255,16 @@ impl Session<'_> {
                 if calls.is_empty() {
                     return Ok(Step::Nothing);
                 }
-                self.tool_call(None).await
+                if calls
+                    .iter()
+                    .any(|call| !is_native_subagent_tool(call.name.as_str()))
+                {
+                    return self.tool_batch(calls).await;
+                }
+                if let Some(call) = first_pending(&self.state) {
+                    return self.native_subagent_tool(call).await;
+                }
+                Ok(Step::Nothing)
             }
             OwedStep::SpawnChildren { .. } => Err(ActivationError::Unsupported {
                 step: "spawn_children",
@@ -1271,6 +1371,45 @@ impl Session<'_> {
         Draft::new(&self.guard, self.ports.clock.now(), phase)
     }
 
+    /// Drains journal-authoritative provider usage through the idempotent FIFO handoff.
+    ///
+    /// The assistant record always commits first. The publication marker always commits
+    /// second. A crash on either side of FIFO acceptance therefore republishes the same
+    /// deterministic fact ids and never loses or double-counts a message.
+    async fn publish_pending_model_usage(&mut self) -> Result<(), ActivationError> {
+        while let Some((effect, pending)) = self
+            .state
+            .pending_model_usage
+            .first_key_value()
+            .map(|(effect, pending)| (*effect, pending.clone()))
+        {
+            let publication = self
+                .ports
+                .model_usage
+                .publish(&ModelUsageObservation {
+                    organization: self.authority.organization,
+                    workspace: self.authority.workspace,
+                    session: self.key.session,
+                    effect,
+                    provider: pending.message.provider,
+                    model: pending.message.model,
+                    usage: pending.usage,
+                    observed_at: pending.observed_at,
+                })
+                .await?;
+            #[cfg(any(test, feature = "testing"))]
+            if publication == crate::ports::ModelUsagePublication::Disabled {
+                self.state.pending_model_usage.remove(&effect);
+                continue;
+            }
+            let _ = publication;
+            let mut draft = self.draft(phase_tag(&self.state.phase));
+            draft.append(JournalRecord::ModelUsagePublished { effect });
+            self.commit(draft).await?;
+        }
+        Ok(())
+    }
+
     fn finish_current(
         &self,
         draft: &mut Draft,
@@ -1280,6 +1419,22 @@ impl Session<'_> {
     ) -> Result<(), ActivationError> {
         let Some(run) = self.state.active_run else {
             decide::finish(draft, reason, failure);
+            if let Some(parent) = self.state.parent {
+                // The child's absorbing terminal and the parent's runnable fact are one
+                // decision. The wake reason itself is only scheduling metadata: once the
+                // parent is claimed, its folded `AwaitingChildren` wait remains authority
+                // for which join (and deadline) is open. A stable per-child dedup key makes
+                // an ambiguous transaction replay collapse rather than wake twice.
+                draft.wake_agent(
+                    AgentKey::new(self.key.session, parent),
+                    self.ports.ids.wake_id(),
+                    ParkReason::AwaitingUserMessage,
+                    self.ports.clock.now(),
+                    self.authority.workspace.to_string(),
+                    self.policy.shard_for(parent),
+                    format!("child:{}:terminal", self.agent().0.as_hyphenated()),
+                );
+            }
             return Ok(());
         };
         let message = self
@@ -1438,6 +1593,55 @@ impl Session<'_> {
         )
     }
 
+    async fn checkpoint_context_if_owed(
+        &mut self,
+        capability: &QualifiedModel,
+    ) -> Result<(), ActivationError> {
+        let decision = context::decide(
+            &self.state,
+            capability,
+            &self.policy.context,
+            self.retained_bytes,
+        );
+        if !decision.compaction_owed {
+            return Ok(());
+        }
+        let created_at = self
+            .state
+            .turn_started_at
+            .unwrap_or_else(|| self.ports.clock.now());
+        let Some(candidate) = context::build_checkpoint(
+            self.key,
+            &self.state,
+            self.checkpoint.as_ref(),
+            decision.target_tokens,
+            created_at,
+        ) else {
+            return Ok(());
+        };
+        let saved = self
+            .ports
+            .checkpoints
+            .save(&self.guard, &self.authority, &candidate)
+            .await;
+        let metadata = match saved {
+            Ok(metadata) => metadata,
+            Err(_) if !decision.compaction_mandatory => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        self.retained_bytes = serde_json::to_vec(&candidate)
+            .map_err(|_| crate::ports::CheckpointError::Corrupt)?
+            .len();
+        self.state = candidate.state;
+        self.checkpoint = Some(metadata.clone());
+        self.claim
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .head
+            .checkpoint = Some(metadata);
+        Ok(())
+    }
+
     /// The effect whose intent this agent has already committed, if any.
     ///
     /// The planner cannot answer this: it reports `ModelCall` for a prepared effect and for
@@ -1491,7 +1695,8 @@ impl Session<'_> {
         {
             return Err(ActivationError::UnhydratedContent);
         }
-        let mut messages = context::view(&self.state, &self.policy.context, 0);
+        self.checkpoint_context_if_owed(&capability).await?;
+        let mut messages = context::render(&self.state, &self.policy.context);
         let open_user = self
             .state
             .open_user
@@ -1551,6 +1756,7 @@ impl Session<'_> {
             decide::prepare(
                 &mut draft,
                 id,
+                None,
                 EffectKind::ModelCall,
                 EffectClass::NonReplayable,
                 request_hash,
@@ -1591,6 +1797,21 @@ impl Session<'_> {
                 self.ports.clock.now(),
             )
             .await?;
+        let preview_port = Arc::clone(&self.ports.previews);
+        let public_message = self
+            .state
+            .active_run
+            .map(|run| decide::public_message_id(run, effect, 0x01));
+        let preview = ScopedPreviewSink::new(
+            preview_port.as_ref(),
+            PreviewScope {
+                session: self.key.session,
+                agent: self.agent(),
+                effect,
+                attempt,
+                message: public_message,
+            },
+        );
         let outcome = self
             .ports
             .provider
@@ -1598,7 +1819,7 @@ impl Session<'_> {
                 &ticket,
                 config.credential,
                 &request,
-                &NullPreviewSink,
+                &preview,
                 self.guard.cancel(),
             )
             .await;
@@ -1609,12 +1830,19 @@ impl Session<'_> {
                 if !produced.is_consistent() {
                     return Err(ActivationError::InvalidProviderOutcome);
                 }
-                if let Some(run) = self.state.active_run {
+                let committed_journal_sequence = if let Some(run) = self.state.active_run {
+                    let sequence = draft.next_seq().get().saturating_add(1);
                     decide::settle_root_model_call(&mut draft, run, effect, &produced);
+                    Some(sequence)
                 } else {
                     decide::settle_model_call(&mut draft, effect, &produced);
-                }
+                    None
+                };
                 self.commit(draft).await?;
+                if let Some(sequence) = committed_journal_sequence {
+                    let _ = preview.committed(sequence);
+                }
+                self.publish_pending_model_usage().await?;
                 Ok(Step::Continue)
             }
             Err(error) => match classify_provider_failure(&error, attempt) {
@@ -1635,6 +1863,7 @@ impl Session<'_> {
                         decide::prepare(
                             &mut draft,
                             next,
+                            None,
                             EffectKind::ModelCall,
                             EffectClass::NonReplayable,
                             next_request_hash,
@@ -1688,6 +1917,314 @@ impl Session<'_> {
         }
     }
 
+    /// Starts one bounded slice of the immutable pending-call batch concurrently.
+    ///
+    /// Every intent is committed before any start, each start still crosses its
+    /// own durable pre-send fence, and every terminal result is appended in the
+    /// assistant's original call order. The fold withholds the model-visible
+    /// tool-result turn until all pending calls (including later slices and
+    /// native children) are terminal.
+    async fn tool_batch(&mut self, calls: Vec<PendingCall>) -> Result<Step, ActivationError> {
+        let config = self.config()?;
+        let mut jobs = Vec::new();
+        let mut draft = self.draft(phase_tag(&self.state.phase));
+
+        for call in calls
+            .into_iter()
+            .filter(|call| !is_native_subagent_tool(call.name.as_str()))
+            .take(MAX_CONCURRENT_TOOL_STARTS)
+        {
+            // A successor routes from the immutable catalog pin again, but it
+            // must reuse the call-linked prepared effect rather than opening a
+            // second identity.
+            if self.state.tool_effects.contains_key(&call.call) {
+                return self.tool_call(None).await;
+            }
+            let route = self.ports.tools.route(&config.catalog_pin, &call.name)?;
+            let permit = match route.executor {
+                ExecutorRoute::ToolMux => {
+                    if route.concurrency_weight == 0 {
+                        return Err(ToolRoutingError::InvalidConcurrencyWeight {
+                            name: route.name.as_str().to_owned(),
+                        }
+                        .into());
+                    }
+                    match self.dispatch_admission(DispatchLane::Network, route.concurrency_weight) {
+                        DispatchDecision::Admitted(permit) => permit,
+                        DispatchDecision::Deferred(reason) => {
+                            drop(jobs);
+                            self.hand_back_for(reason).await?;
+                            return Ok(Step::Stop(Stop::HandedBack));
+                        }
+                    }
+                }
+                ExecutorRoute::BrainInline => None,
+            };
+            let request_hash = ContentHash::of(&canonicalize_value(&call.input)?);
+            let now = self.ports.clock.now();
+            let deadline =
+                self.bounded_effect_deadline(now.plus_millis(i64::from(route.timeout_ms)));
+            let effect =
+                self.ports
+                    .ids
+                    .effect_id(&self.agent(), draft.next_seq(), EffectKind::ToolCall);
+            decide::prepare(
+                &mut draft,
+                effect,
+                Some(call.call.clone()),
+                EffectKind::ToolCall,
+                route.class,
+                request_hash,
+                1,
+                deadline,
+                Vec::new(),
+            );
+            jobs.push(ToolBatchJob {
+                call,
+                route,
+                effect,
+                attempt: 1,
+                deadline,
+                _permit: permit,
+            });
+        }
+
+        if jobs.is_empty() {
+            return Ok(Step::Nothing);
+        }
+        self.commit(draft).await?;
+        if self.cancellation_requested() {
+            self.hand_back().await?;
+            return Ok(Step::Stop(Stop::HandedBack));
+        }
+
+        let control = ControlStateView {
+            todo_state: self.state.todo_state.clone(),
+            assistant_turns: self.state.assistant_turns,
+            depth: self.state.budget.depth,
+        };
+        let max_result_bytes = self.policy.context.tool_result_bytes;
+        let hands_generation = config.hands_generation;
+        let mcp_servers = config.mcp_servers;
+        let effects = Arc::clone(&self.ports.effects);
+        let tools = Arc::clone(&self.ports.tools);
+        let clock = Arc::clone(&self.ports.clock);
+        let guard = &self.guard;
+        let authority = &self.authority;
+        let cancel = self.guard.cancel();
+        let invocations = stream::iter(jobs.into_iter().map(|job| {
+            let effects = Arc::clone(&effects);
+            let tools = Arc::clone(&tools);
+            let clock = Arc::clone(&clock);
+            let control = control.clone();
+            let mcp_servers = mcp_servers.clone();
+            async move {
+                let ticket = effects
+                    .mark_dispatch_started(guard, authority, &job.effect, job.attempt, clock.now())
+                    .await?;
+                let prepared = PreparedToolCall {
+                    call: job.call.call.clone(),
+                    route: job.route.clone(),
+                    input: job.call.input.clone(),
+                    max_result_bytes,
+                    hands_generation,
+                    mcp_servers,
+                    control,
+                };
+                let outcome = tools.invoke(&ticket, &prepared, cancel).await;
+                if let Ok(ToolOutcome::Detached { operation, .. }) = &outcome {
+                    let evidence = DispatchEvidence {
+                        stage: DispatchStage::Streaming,
+                        proof: DispatchProof::ResponseStarted,
+                        attempt: job.attempt,
+                        provider_request_id: None,
+                        external_operation: None,
+                        detached_tool: Some(DetachedOperationRef {
+                            id: operation.clone(),
+                            executor: job.route.executor,
+                        }),
+                        receipt: None,
+                        detail: None,
+                    };
+                    effects.mark_response_started(&ticket, &evidence).await?;
+                }
+                Ok::<_, ActivationError>(ToolBatchInvocation { job, outcome })
+            }
+        }))
+        .buffer_unordered(MAX_CONCURRENT_TOOL_STARTS)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+
+        let mut invocations = invocations;
+        invocations.sort_by_key(|invocation| invocation.job.call.order);
+        let now = self.ports.clock.now();
+        let mut draft = self.draft("effecting");
+        let mut parked = false;
+        for invocation in invocations {
+            let ToolBatchInvocation { job, outcome } = invocation;
+            match outcome {
+                Ok(ToolOutcome::Completed(body)) if body.executed_on == job.route.executor => {
+                    self.append_completed_tool(&mut draft, job.effect, &job.call, body);
+                }
+                Ok(ToolOutcome::Completed(_)) => {
+                    let evidence = DispatchEvidence {
+                        stage: DispatchStage::Terminal,
+                        proof: DispatchProof::ResponseStarted,
+                        attempt: job.attempt,
+                        provider_request_id: None,
+                        external_operation: None,
+                        detached_tool: None,
+                        receipt: None,
+                        detail: Some(
+                            "tool executor receipt route does not match the pinned route"
+                                .to_owned(),
+                        ),
+                    };
+                    decide::settle_tool_unknown(&mut draft, job.effect, evidence);
+                    self.append_tool_error(
+                        &mut draft,
+                        job.effect,
+                        &job.call,
+                        job.route.executor,
+                        "tool result route mismatch",
+                    );
+                }
+                Ok(ToolOutcome::Detached {
+                    operation,
+                    poll_after,
+                }) => {
+                    let operation = DetachedOperationRef {
+                        id: operation,
+                        executor: job.route.executor,
+                    };
+                    let due = detached_poll_due(now, job.deadline, poll_after);
+                    let wait = wait_id(self.agent(), draft.next_seq());
+                    let reason = ParkReason::AwaitingToolResult {
+                        call: job.call.call,
+                        operation,
+                    };
+                    draft.append(JournalRecord::WaitOpened {
+                        wait,
+                        reason: reason.clone(),
+                        due: Some(due),
+                    });
+                    draft.wake(
+                        self.ports.ids.wake_id(),
+                        reason,
+                        due,
+                        self.authority.workspace.to_string(),
+                        self.policy.shard_for(self.agent()),
+                    );
+                    parked = true;
+                }
+                Err(error) => {
+                    match classify_tool_failure(&error, job.attempt) {
+                        FailureSettlement::NotSent { stage, .. } => {
+                            decide::settle_known_failure(
+                                &mut draft,
+                                job.effect,
+                                stage,
+                                DispatchProof::NotSent,
+                            );
+                        }
+                        FailureSettlement::KnownFailure { stage, proof } => {
+                            decide::settle_known_failure(&mut draft, job.effect, stage, proof);
+                        }
+                        FailureSettlement::Unknown(evidence) => {
+                            decide::settle_tool_unknown(&mut draft, job.effect, *evidence);
+                        }
+                    }
+                    self.append_tool_error(
+                        &mut draft,
+                        job.effect,
+                        &job.call,
+                        job.route.executor,
+                        error.detail.as_str(),
+                    );
+                }
+            }
+        }
+        if parked {
+            draft.phase("parked");
+        }
+        self.commit(draft).await?;
+        Ok(if parked {
+            Step::Stop(Stop::Parked)
+        } else {
+            Step::Continue
+        })
+    }
+
+    fn append_completed_tool(
+        &self,
+        draft: &mut Draft,
+        effect: EffectId,
+        call: &PendingCall,
+        body: ToolResultBody,
+    ) {
+        if let Some(run) = self.state.active_run {
+            decide::settle_root_tool_call(
+                draft,
+                run,
+                effect,
+                call.call.clone(),
+                body.content,
+                body.is_error,
+                body.executed_on,
+                body.duration_ms,
+                body.checksum,
+            );
+        } else {
+            decide::settle_tool_call(
+                draft,
+                effect,
+                call.call.clone(),
+                body.content,
+                body.is_error,
+                body.executed_on,
+                body.duration_ms,
+                body.checksum,
+            );
+        }
+    }
+
+    fn append_tool_error(
+        &self,
+        draft: &mut Draft,
+        effect: EffectId,
+        call: &PendingCall,
+        executed_on: ExecutorRoute,
+        detail: &str,
+    ) {
+        let content = vec![ToolResultPart::Text {
+            text: BoundedString::truncating(detail),
+        }];
+        if let Some(run) = self.state.active_run {
+            decide::append_root_tool_result(
+                draft,
+                run,
+                effect,
+                call.call.clone(),
+                content,
+                true,
+                executed_on,
+                0,
+            );
+        } else {
+            draft.append(JournalRecord::ToolResult {
+                public_message: None,
+                call: call.call.clone(),
+                content,
+                is_error: true,
+                executed_on,
+                duration_ms: 0,
+                effect,
+            });
+        }
+    }
+
     /// Prepares, dispatches and settles the first outstanding tool call.
     #[allow(
         clippy::too_many_lines,
@@ -1698,7 +2235,16 @@ impl Session<'_> {
         resumed: Option<&DurableEffect>,
     ) -> Result<Step, ActivationError> {
         let config = self.config()?;
-        let Some(call) = first_pending(&self.state) else {
+        let call = resumed
+            .and_then(|effect| {
+                self.state
+                    .tool_effects
+                    .iter()
+                    .find_map(|(call, linked)| (*linked == effect.id).then(|| call.clone()))
+            })
+            .and_then(|call| self.state.pending_calls.get(&call).cloned())
+            .or_else(|| first_pending(&self.state));
+        let Some(call) = call else {
             return Ok(Step::Nothing);
         };
         let route = self.ports.tools.route(&config.catalog_pin, &call.name)?;
@@ -1706,7 +2252,18 @@ impl Session<'_> {
         let now = self.ports.clock.now();
         let deadline = self.bounded_effect_deadline(now.plus_millis(i64::from(route.timeout_ms)));
 
-        let existing = resumed.map(Prepared::from).or_else(|| self.open_prepared());
+        let existing = resumed.map(Prepared::from).or_else(|| {
+            self.state.tool_effects.get(&call.call).and_then(|effect| {
+                match self.state.open_effects.get(effect) {
+                    Some(EffectState::Prepared { attempt }) => Some(Prepared {
+                        id: *effect,
+                        attempt: *attempt,
+                        request_hash: None,
+                    }),
+                    _ => None,
+                }
+            })
+        });
         let (effect, attempt) = if let Some(open) = existing {
             if open
                 .request_hash
@@ -1725,6 +2282,7 @@ impl Session<'_> {
             decide::prepare(
                 &mut draft,
                 id,
+                Some(call.call.clone()),
                 EffectKind::ToolCall,
                 route.class,
                 request_hash,
@@ -1742,10 +2300,7 @@ impl Session<'_> {
         }
 
         let dispatch_lane = match route.executor {
-            ExecutorRoute::Hands => Some(DispatchLane::Hands),
-            ExecutorRoute::ManagedWeb | ExecutorRoute::ToolExec | ExecutorRoute::Mcp => {
-                Some(DispatchLane::Network)
-            }
+            ExecutorRoute::ToolMux => Some(DispatchLane::Network),
             ExecutorRoute::BrainInline => None,
         };
         let _dispatch_permits = if let Some(lane) = dispatch_lane {
@@ -1783,6 +2338,7 @@ impl Session<'_> {
             input: call.input.clone(),
             max_result_bytes: self.policy.context.tool_result_bytes,
             hands_generation: config.hands_generation,
+            mcp_servers: config.mcp_servers.clone(),
             control: ControlStateView {
                 todo_state: self.state.todo_state.clone(),
                 assistant_turns: self.state.assistant_turns,
@@ -1903,6 +2459,7 @@ impl Session<'_> {
                         decide::prepare(
                             &mut draft,
                             next,
+                            Some(call.call.clone()),
                             EffectKind::ToolCall,
                             route.class,
                             request_hash,
@@ -1982,6 +2539,456 @@ impl Session<'_> {
                 }
             },
         }
+    }
+
+    /// Executes Brain-owned structured-concurrency tools inside the same
+    /// fenced decision as their journal result. No generic executor is called,
+    /// so a retry cannot duplicate a child or stop request after ambiguity.
+    async fn native_subagent_tool(&mut self, call: PendingCall) -> Result<Step, ActivationError> {
+        match call.name.as_str() {
+            "create_subagent" => self.create_subagent(call).await,
+            "stop_subagent" => self.stop_subagent(call).await,
+            "wait_subagents" => self.wait_subagents(call).await,
+            _ => unreachable!("native tool predicate is a closed set"),
+        }
+    }
+
+    async fn create_subagent(&mut self, call: PendingCall) -> Result<Step, ActivationError> {
+        let arguments = call.input.to_value();
+        let Some(prompt) = arguments.get("prompt").and_then(serde_json::Value::as_str) else {
+            return self
+                .native_refusal(call, "create_subagent requires a prompt")
+                .await;
+        };
+        let depth = self.state.budget.depth.saturating_add(1);
+        if depth > aex_brain_domain::budget::MAX_SUBAGENT_DEPTH {
+            return self
+                .native_refusal(call, "subagent depth limit (3) reached")
+                .await;
+        }
+
+        let ordinal = self.state.spawn_ordinal;
+        let child = child_agent_id(self.agent(), ordinal);
+        let join = native_join_id(self.agent(), self.state.expected_seq(), 0x31);
+        let config = self.config()?;
+        let mut budget = self.state.budget.limit;
+        budget.set(
+            Dimension::TotalChildrenCreated,
+            u64::from(aex_brain_domain::budget::MAX_SUBAGENTS_PER_SESSION),
+        );
+        let grant = DimensionVector::ZERO;
+        let input = vec![ContentBlockRef::Inline {
+            block: CanonicalBlock::Text {
+                text: BoundedString::truncating(prompt),
+                annotations: Vec::new(),
+            },
+        }];
+
+        let mut draft = self.draft("awaiting_tools");
+        draft.append(JournalRecord::JoinOpened {
+            join,
+            mode: JoinMode::All,
+            members: vec![child],
+            shards: 1,
+        });
+        draft.append(JournalRecord::ChildSpawned {
+            child,
+            ordinal,
+            grant,
+            join,
+            queued_reason: None,
+        });
+        draft.child(ChildWrite::Spawn {
+            child,
+            ordinal,
+            grant,
+            join,
+            queued_reason: None,
+            bootstrap: Box::new(ChildBootstrap {
+                config: Box::new(config),
+                input,
+                depth,
+                budget,
+            }),
+        });
+        draft.join(JoinWrite::Open {
+            join,
+            mode: JoinMode::All,
+            members: vec![child],
+            shards: 1,
+        });
+        draft.charge_session(Dimension::TotalChildrenCreated, 1);
+        draft.wake_agent(
+            AgentKey::new(self.key.session, child),
+            self.ports.ids.wake_id(),
+            ParkReason::AwaitingUserMessage,
+            self.ports.clock.now(),
+            self.authority.workspace.to_string(),
+            self.policy.shard_for(child),
+            format!("child:{}:start", child.0.as_hyphenated()),
+        );
+        let public = PublicAgentId::from_uuid7(
+            Uuid7::from_bytes(*child.0.as_bytes())
+                .expect("child_agent_id always constructs UUIDv7"),
+        );
+        self.append_native_result(
+            &mut draft,
+            &call,
+            serde_json::json!({
+                "agentId": public.to_string(),
+                "state": "starting",
+                "depth": depth,
+                "ordinal": ordinal,
+            }),
+            false,
+        )?;
+        self.commit(draft).await?;
+        Ok(Step::Continue)
+    }
+
+    async fn stop_subagent(&mut self, call: PendingCall) -> Result<Step, ActivationError> {
+        let arguments = call.input.to_value();
+        let Some(raw) = arguments.get("agentId").and_then(serde_json::Value::as_str) else {
+            return self
+                .native_refusal(call, "stop_subagent requires agentId")
+                .await;
+        };
+        let Ok(public) = raw.parse::<PublicAgentId>() else {
+            return self.native_refusal(call, "agentId is malformed").await;
+        };
+        let child = AgentId(Uuid::from_bytes(*public.uuid7().as_bytes()));
+        let Some(record) = self.state.children.get(&child) else {
+            return self
+                .native_refusal(call, "agentId is not a direct child")
+                .await;
+        };
+        if record.state.is_terminal() {
+            return self
+                .native_refusal(call, "subagent is already terminal")
+                .await;
+        }
+        let mut draft = self.draft("awaiting_tools");
+        draft.child(ChildWrite::RequestStop { child });
+        draft.wake_agent(
+            AgentKey::new(self.key.session, child),
+            self.ports.ids.wake_id(),
+            ParkReason::AwaitingUserMessage,
+            self.ports.clock.now(),
+            self.authority.workspace.to_string(),
+            self.policy.shard_for(child),
+            format!("child:{}:stop", child.0.as_hyphenated()),
+        );
+        self.append_native_result(
+            &mut draft,
+            &call,
+            serde_json::json!({"requested": true, "state": "stopping"}),
+            false,
+        )?;
+        self.commit(draft).await?;
+        Ok(Step::Continue)
+    }
+
+    async fn wait_subagents(&mut self, call: PendingCall) -> Result<Step, ActivationError> {
+        let arguments = call.input.to_value();
+        let mode = match arguments.get("mode").and_then(serde_json::Value::as_str) {
+            Some("any") => JoinMode::Any,
+            Some("all") => JoinMode::All,
+            _ => return self.native_refusal(call, "mode must be any or all").await,
+        };
+        let Some(ids) = arguments
+            .get("agentIds")
+            .and_then(serde_json::Value::as_array)
+        else {
+            return self.native_refusal(call, "agentIds is required").await;
+        };
+        if ids.is_empty()
+            || ids.len()
+                > usize::try_from(aex_brain_domain::budget::MAX_SUBAGENTS_PER_SESSION)
+                    .expect("the subagent limit fits usize")
+        {
+            return self
+                .native_refusal(call, "agentIds must contain 1 to 12 direct children")
+                .await;
+        }
+        let mut members = Vec::with_capacity(ids.len());
+        for value in ids {
+            let Some(raw) = value.as_str() else {
+                return self
+                    .native_refusal(call, "agentIds must contain strings")
+                    .await;
+            };
+            let Ok(public) = raw.parse::<PublicAgentId>() else {
+                return self
+                    .native_refusal(call, "agentIds contains a malformed id")
+                    .await;
+            };
+            let child = AgentId(Uuid::from_bytes(*public.uuid7().as_bytes()));
+            if !self.state.children.contains_key(&child) || members.contains(&child) {
+                return self
+                    .native_refusal(call, "agentIds must be unique direct children")
+                    .await;
+            }
+            members.push(child);
+        }
+        let mut draft = self.draft("awaiting_tools");
+        let terminal = self.observe_terminal_children(&members, &mut draft).await?;
+        if join_satisfied(mode, terminal.len(), members.len()) {
+            self.append_wait_result(&mut draft, &call, mode, &members, &terminal, false)?;
+            self.commit(draft).await?;
+            return Ok(Step::Continue);
+        }
+
+        let join = native_join_id(self.agent(), self.state.expected_seq(), 0x32);
+        let shards = aex_brain_domain::wire_pending::join_shards(members.len());
+        draft.append(JournalRecord::JoinOpened {
+            join,
+            mode,
+            members: members.clone(),
+            shards,
+        });
+        draft.join(JoinWrite::Open {
+            join,
+            mode,
+            members,
+            shards,
+        });
+        let timeout_seconds = arguments
+            .get("timeoutSeconds")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(3_600);
+        let deadline =
+            self.ports.clock.now().plus_millis(
+                i64::try_from(timeout_seconds.saturating_mul(1_000)).unwrap_or(i64::MAX),
+            );
+        let wait = wait_id(self.agent(), draft.next_seq());
+        let reason = ParkReason::AwaitingChildren { join, deadline };
+        draft.append(JournalRecord::WaitOpened {
+            wait,
+            reason: reason.clone(),
+            due: Some(deadline),
+        });
+        draft.phase("parked");
+        draft.wake(
+            WakeId(wait.0),
+            reason,
+            deadline,
+            self.authority.workspace.to_string(),
+            self.policy.shard_for(self.agent()),
+        );
+        self.commit(draft).await?;
+        Ok(Step::Stop(Stop::Parked))
+    }
+
+    async fn resume_subagent_wait(
+        &mut self,
+        join: JoinId,
+        deadline: Timestamp,
+    ) -> Result<Step, ActivationError> {
+        let Some(group) = self.state.joins.get(&join).cloned() else {
+            return Err(ActivationError::Unsupported {
+                step: "resume_subagent_wait",
+                owed_by: "the JoinOpened record paired with every AwaitingChildren wait",
+            });
+        };
+        let Some((wait, _)) = self.state.waits.iter().find(|(_, reason)| {
+            matches!(reason, ParkReason::AwaitingChildren { join: open, .. } if *open == join)
+        }) else {
+            return Err(ActivationError::Unsupported {
+                step: "resume_subagent_wait",
+                owed_by: "the open durable child wait",
+            });
+        };
+        let Some(call) =
+            first_pending(&self.state).filter(|call| call.name.as_str() == "wait_subagents")
+        else {
+            return Err(ActivationError::Unsupported {
+                step: "resume_subagent_wait",
+                owed_by: "the unresolved wait_subagents tool call",
+            });
+        };
+        let mut draft = self.draft("parked");
+        let terminal = self
+            .observe_terminal_children(&group.members, &mut draft)
+            .await?;
+        let timed_out = self.ports.clock.now() >= deadline;
+        if join_satisfied(group.mode, terminal.len(), group.members.len()) || timed_out {
+            draft.append(JournalRecord::WaitResolved {
+                wait: *wait,
+                resolution: if timed_out {
+                    WaitResolution::Expired
+                } else {
+                    WaitResolution::Delivered
+                },
+            });
+            // `wait` also deterministically names its one deadline wake. Retiring it in
+            // the resolution transaction prevents an early child completion from leaving
+            // a future timeout row behind. When the deadline wake is itself the source,
+            // outer source retirement observes this already-retired row idempotently.
+            draft.retire_wake(format!("wrk_{}", wait.0.as_simple()));
+            self.append_wait_result(
+                &mut draft,
+                &call,
+                group.mode,
+                &group.members,
+                &terminal,
+                timed_out,
+            )?;
+            self.commit(draft).await?;
+            return Ok(Step::Continue);
+        }
+
+        // A child-terminal wake can arrive before every member is done. The parent remains
+        // parked without manufacturing a polling wake: later child terminals each carry
+        // their own durable wake, while the single deadline wake created with `WaitOpened`
+        // remains the timeout backstop.
+        if !draft.is_empty() {
+            self.commit(draft).await?;
+        }
+        Ok(Step::Stop(Stop::Parked))
+    }
+
+    async fn observe_terminal_children(
+        &self,
+        members: &[AgentId],
+        draft: &mut Draft,
+    ) -> Result<Vec<(AgentId, ChildOutcome)>, ActivationError> {
+        let keys = members
+            .iter()
+            .map(|child| AgentKey::new(self.key.session, *child))
+            .collect::<Vec<_>>();
+        let heads = self.ports.journal.load_heads(&keys).await?;
+        let mut terminal = Vec::new();
+        for (child, head) in members.iter().zip(heads) {
+            let Some(head) = head else {
+                return Err(ActivationError::Unsupported {
+                    step: "observe_subagent",
+                    owed_by: "the child control created atomically with ChildSpawned",
+                });
+            };
+            let Some(reason) = head.finish else {
+                continue;
+            };
+            let outcome = match reason {
+                FinishReason::Completed => ChildOutcome::Completed,
+                FinishReason::Cancelled => ChildOutcome::Cancelled {
+                    cause: CancelCause::Stopped,
+                },
+                _ => ChildOutcome::Failed,
+            };
+            terminal.push((*child, outcome));
+            if self
+                .state
+                .children
+                .get(child)
+                .is_some_and(|record| !record.state.is_terminal())
+            {
+                draft.append(JournalRecord::ChildTerminal {
+                    child: *child,
+                    outcome,
+                    rolled_up: Vec::new(),
+                    result: None,
+                });
+                draft.child(ChildWrite::Terminal {
+                    child: *child,
+                    outcome,
+                });
+            }
+        }
+        Ok(terminal)
+    }
+
+    fn append_wait_result(
+        &self,
+        draft: &mut Draft,
+        call: &PendingCall,
+        mode: JoinMode,
+        members: &[AgentId],
+        terminal: &[(AgentId, ChildOutcome)],
+        timed_out: bool,
+    ) -> Result<(), ActivationError> {
+        let terminal_ids = terminal
+            .iter()
+            .map(|(child, outcome)| {
+                serde_json::json!({
+                    "agentId": public_agent(*child),
+                    "state": match outcome {
+                        ChildOutcome::Completed => "completed",
+                        ChildOutcome::Failed => "failed",
+                        ChildOutcome::Cancelled { .. } => "cancelled",
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let pending = members
+            .iter()
+            .filter(|member| !terminal.iter().any(|(child, _)| child == *member))
+            .map(|child| public_agent(*child))
+            .collect::<Vec<_>>();
+        self.append_native_result(
+            draft,
+            call,
+            serde_json::json!({
+                "mode": match mode { JoinMode::Any => "any", JoinMode::All => "all" },
+                "satisfied": join_satisfied(mode, terminal.len(), members.len()),
+                "terminal": terminal_ids,
+                "pending": pending,
+                "timedOut": timed_out,
+            }),
+            false,
+        )
+    }
+
+    async fn native_refusal(
+        &mut self,
+        call: PendingCall,
+        message: &'static str,
+    ) -> Result<Step, ActivationError> {
+        let mut draft = self.draft("awaiting_tools");
+        self.append_native_result(
+            &mut draft,
+            &call,
+            serde_json::json!({"error": message}),
+            true,
+        )?;
+        self.commit(draft).await?;
+        Ok(Step::Continue)
+    }
+
+    fn append_native_result(
+        &self,
+        draft: &mut Draft,
+        call: &PendingCall,
+        value: serde_json::Value,
+        is_error: bool,
+    ) -> Result<(), ActivationError> {
+        let effect = EffectId::derive(self.agent(), draft.next_seq(), 0x7f);
+        let content = vec![ToolResultPart::Json {
+            value: aex_wire::CanonicalJson::from_value(&value)
+                .expect("the closed native subagent result is canonical JSON"),
+        }];
+        if let Some(run) = self.state.active_run {
+            decide::append_root_tool_result(
+                draft,
+                run,
+                effect,
+                call.call.clone(),
+                content,
+                is_error,
+                ExecutorRoute::BrainInline,
+                0,
+            );
+        } else {
+            draft.append(JournalRecord::ToolResult {
+                public_message: None,
+                call: call.call.clone(),
+                content,
+                is_error,
+                executed_on: ExecutorRoute::BrainInline,
+                duration_ms: 0,
+                effect,
+            });
+        }
+        Ok(())
     }
 
     /// Asks about a detached operation and settles whatever it says.
@@ -2269,6 +3276,22 @@ impl Session<'_> {
 
 const DETACHED_POLL_FLOOR: core::time::Duration = core::time::Duration::from_millis(250);
 const DETACHED_QUERY_RETRY_AFTER: core::time::Duration = core::time::Duration::from_secs(5);
+/// Local fan-out quantum. Global/tenant/target admission can be tighter.
+const MAX_CONCURRENT_TOOL_STARTS: usize = 8;
+
+struct ToolBatchJob {
+    call: PendingCall,
+    route: ToolRoute,
+    effect: EffectId,
+    attempt: u16,
+    deadline: Timestamp,
+    _permit: Option<crate::kernel::Reservation>,
+}
+
+struct ToolBatchInvocation {
+    job: ToolBatchJob,
+    outcome: Result<ToolOutcome, ToolDispatchError>,
+}
 
 fn detached_poll_due(
     now: Timestamp,
@@ -2326,8 +3349,6 @@ enum Step {
 /// exists so the policy is total rather than optional at every call site.
 const DEFAULT_LIMITS: aex_brain_domain::wire_pending::AgentLimits =
     aex_brain_domain::wire_pending::AgentLimits {
-        max_turns: 1,
-        max_steps_per_turn: 1,
         turn_deadline_ms: 1,
         max_run_duration_ms: 1,
         max_depth: 0,
@@ -2353,6 +3374,31 @@ fn wait_id(agent: AgentId, seq: JournalSeq) -> WaitId {
     WaitId(Uuid::from_bytes(
         EffectId::derive(agent, seq, EffectKind::DurableWait.tag()).0,
     ))
+}
+
+fn is_native_subagent_tool(name: &str) -> bool {
+    matches!(name, "create_subagent" | "stop_subagent" | "wait_subagents")
+}
+
+fn native_join_id(agent: AgentId, seq: JournalSeq, tag: u8) -> JoinId {
+    let mut bytes = EffectId::derive(agent, seq, tag).0;
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    JoinId(Uuid::from_bytes(bytes))
+}
+
+fn public_agent(agent: AgentId) -> String {
+    PublicAgentId::from_uuid7(
+        Uuid7::from_bytes(*agent.0.as_bytes()).expect("subagent identities are UUIDv7"),
+    )
+    .to_string()
+}
+
+const fn join_satisfied(mode: JoinMode, terminal: usize, members: usize) -> bool {
+    match mode {
+        JoinMode::Any => terminal > 0,
+        JoinMode::All => terminal == members,
+    }
 }
 
 const fn kind_name(kind: EffectKind) -> &'static str {

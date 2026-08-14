@@ -1,0 +1,32 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BillingUsagePage.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One bounded page of rated usage and its explicit completeness boundary.",
+  "properties": {
+    "coverage": {
+      "$ref": "aex:schema:BillingUsageCoverage",
+      "description": "How complete this answer is."
+    },
+    "items": {
+      "description": "The page.",
+      "items": {
+        "$ref": "aex:schema:BillingUsageItem"
+      },
+      "maxItems": 100,
+      "type": "array"
+    },
+    "nextCursor": {
+      "description": "Continuation token.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-cursor": true
+    }
+  },
+  "required": [
+    "coverage",
+    "items"
+  ],
+  "title": "BillingUsagePage",
+  "type": "object"
+}

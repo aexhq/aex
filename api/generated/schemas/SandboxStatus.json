@@ -1,0 +1,20 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SandboxStatus.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Observable preparation state of the session's single default-on sandbox.",
+  "enum": [
+    "disabled",
+    "requested",
+    "provisioning",
+    "booting",
+    "materializing_workspace",
+    "qualifying_mcp",
+    "ready",
+    "suspending",
+    "suspended",
+    "resuming",
+    "lost"
+  ],
+  "title": "SandboxStatus",
+  "type": "string"
+}

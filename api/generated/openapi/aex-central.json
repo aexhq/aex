@@ -54,27 +54,15 @@
             "type": "string",
             "x-aex-time": "rfc3339-ms"
           },
-          "deletionScheduledAt": {
-            "description": "When unfunded content is scheduled for deletion. Published and permanently absent: this is the regional content lifecycle's fact and that authority does not exist yet.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
           "minimumRestoreCents": {
-            "description": "Smallest top-up that restores service. Present exactly when `reason` is `top_up_required`; the other three holds have no paying remedy, and naming an amount for them would be a false one.",
+            "description": "Smallest restoring top-up, only for top_up_required.",
             "pattern": "^(0|[1-9]\\d*)$",
             "type": "string",
             "x-aex-money": "cents"
           },
           "reason": {
             "$ref": "aex:schema:AccountPauseReason",
-            "description": "Why the account is paused."
-          },
-          "retentionFundedUntil": {
-            "description": "How long retained content stays funded. Published and permanently absent: storage is billed monthly and unfunded storage is enforced through the account pause, so no authority owns this instant yet.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
+            "description": "Why it is paused."
           },
           "revision": {
             "description": "Monotonic state revision.",
@@ -179,11 +167,11 @@
               "type": "string",
               "x-aex-registry": "scopes"
             },
-            "maxItems": 64,
+            "maxItems": 16,
             "type": "array"
           },
           "workspaceId": {
-            "description": "The workspace it authorizes.",
+            "description": "The fixed workspace it authorizes.",
             "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
             "x-aex-id": "workspace"
@@ -208,16 +196,16 @@
             "type": "string"
           },
           "scopes": {
-            "description": "The scopes to grant.",
+            "description": "Launch scopes to grant.",
             "items": {
               "type": "string",
               "x-aex-registry": "scopes"
             },
-            "maxItems": 64,
+            "maxItems": 16,
             "type": "array"
           },
           "workspaceId": {
-            "description": "The workspace to authorize.",
+            "description": "Must name the fixed workspace.",
             "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
             "x-aex-id": "workspace"
@@ -238,7 +226,7 @@
             "items": {
               "$ref": "aex:schema:ApiKey"
             },
-            "maxItems": 1000,
+            "maxItems": 100,
             "type": "array"
           },
           "nextCursor": {
@@ -253,160 +241,311 @@
         ],
         "type": "object"
       },
-      "AutoTopupPolicy": {
-        "additionalProperties": false,
-        "properties": {
-          "amountCents": {
-            "description": "How much each automatic top-up adds.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string",
-            "x-aex-money": "cents"
-          },
-          "enabled": {
-            "description": "Whether automatic top-up runs.",
-            "type": "boolean"
-          },
-          "organizationId": {
-            "description": "The organization.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "organization"
-          },
-          "revision": {
-            "description": "Monotonic policy revision.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "thresholdCents": {
-            "description": "Balance at or below which a top-up is attempted.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string",
-            "x-aex-money": "cents"
-          },
-          "updatedAt": {
-            "description": "When the policy last changed.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          }
-        },
-        "required": [
-          "amountCents",
-          "enabled",
-          "organizationId",
-          "revision",
-          "thresholdCents",
-          "updatedAt"
-        ],
-        "type": "object"
-      },
-      "AutoTopupPolicyRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "amountCents": {
-            "description": "How much each automatic top-up adds.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string",
-            "x-aex-money": "cents"
-          },
-          "enabled": {
-            "description": "Whether automatic top-up runs.",
-            "type": "boolean"
-          },
-          "thresholdCents": {
-            "description": "Balance at or below which a top-up is attempted.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string",
-            "x-aex-money": "cents"
-          }
-        },
-        "required": [
-          "amountCents",
-          "enabled",
-          "thresholdCents"
-        ],
-        "type": "object"
-      },
       "BillingBalance": {
         "additionalProperties": false,
         "properties": {
+          "accountId": {
+            "description": "The personal account.",
+            "pattern": "^acc_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "account"
+          },
           "availableCents": {
-            "description": "Spendable now.",
+            "description": "Credit available for new reservations.",
             "pattern": "^(0|[1-9]\\d*)$",
             "type": "string",
             "x-aex-money": "cents"
           },
           "currency": {
             "$ref": "aex:schema:Currency",
-            "description": "Always USD."
-          },
-          "operationalState": {
-            "$ref": "aex:schema:AccountOperationalState",
-            "description": "What the balance implies."
-          },
-          "organizationId": {
-            "description": "The organization.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "organization"
+            "description": "Always USD at launch."
           },
           "pendingCents": {
-            "description": "Recorded but not yet settled.",
+            "description": "Rated usage not yet settled to the ledger.",
             "pattern": "^(0|[1-9]\\d*)$",
             "type": "string",
             "x-aex-money": "cents"
           },
           "reservedCents": {
-            "description": "Held against admitted work.",
+            "description": "Credit held for admitted sessions.",
             "pattern": "^(0|[1-9]\\d*)$",
             "type": "string",
             "x-aex-money": "cents"
           },
-          "revision": {
-            "description": "Monotonic balance revision.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
           "updatedAt": {
-            "description": "When the balance last changed.",
+            "description": "When this projection last changed.",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
             "type": "string",
             "x-aex-time": "rfc3339-ms"
           }
         },
         "required": [
+          "accountId",
           "availableCents",
           "currency",
-          "operationalState",
-          "organizationId",
           "pendingCents",
           "reservedCents",
-          "revision",
           "updatedAt"
         ],
         "type": "object"
       },
-      "ByteRange": {
+      "BillingTransaction": {
         "additionalProperties": false,
         "properties": {
-          "endInclusive": {
-            "description": "Last byte, inclusive.",
+          "amountCents": {
+            "description": "Absolute amount in whole cents.",
+            "pattern": "^(0|[1-9]\\d*)$",
+            "type": "string",
+            "x-aex-money": "cents"
+          },
+          "balanceAfterCents": {
+            "description": "Available balance after this transaction.",
+            "pattern": "^(0|[1-9]\\d*)$",
+            "type": "string",
+            "x-aex-money": "cents"
+          },
+          "currency": {
+            "$ref": "aex:schema:Currency",
+            "description": "Always USD at launch."
+          },
+          "direction": {
+            "$ref": "aex:schema:BillingTransactionDirection",
+            "description": "Its effect on prepaid value."
+          },
+          "id": {
+            "description": "Transaction identity.",
+            "pattern": "^txn_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "billing_transaction"
+          },
+          "kind": {
+            "$ref": "aex:schema:BillingTransactionKind",
+            "description": "Why it was posted."
+          },
+          "occurredAt": {
+            "description": "Authoritative ledger time.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          },
+          "reversesTransactionId": {
+            "description": "The compensated transaction, for reversals.",
+            "pattern": "^txn_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "billing_transaction"
+          },
+          "sessionId": {
+            "description": "Session attribution when applicable.",
+            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "session"
+          }
+        },
+        "required": [
+          "amountCents",
+          "balanceAfterCents",
+          "currency",
+          "direction",
+          "id",
+          "kind",
+          "occurredAt"
+        ],
+        "type": "object"
+      },
+      "BillingTransactionDirection": {
+        "enum": [
+          "credit",
+          "debit"
+        ],
+        "type": "string"
+      },
+      "BillingTransactionKind": {
+        "enum": [
+          "top_up",
+          "usage",
+          "refund",
+          "reversal",
+          "reservation",
+          "reservation_release"
+        ],
+        "type": "string"
+      },
+      "BillingTransactionPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "description": "The page.",
+            "items": {
+              "$ref": "aex:schema:BillingTransaction"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "nextCursor": {
+            "description": "Continuation token.",
+            "maxLength": 4096,
+            "type": "string",
+            "x-aex-cursor": true
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "BillingUsageCategory": {
+        "enum": [
+          "model",
+          "runtime",
+          "storage",
+          "transfer"
+        ],
+        "type": "string"
+      },
+      "BillingUsageCoverage": {
+        "additionalProperties": false,
+        "properties": {
+          "completeThrough": {
+            "description": "All accepted facts at or before this instant are represented.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          },
+          "hasGap": {
+            "description": "Whether a poisoned or missing fact prevents complete settlement.",
+            "type": "boolean"
+          },
+          "includesThrough": {
+            "description": "No fact after this instant is represented.",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+            "type": "string",
+            "x-aex-time": "rfc3339-ms"
+          }
+        },
+        "required": [
+          "completeThrough",
+          "hasGap",
+          "includesThrough"
+        ],
+        "type": "object"
+      },
+      "BillingUsageItem": {
+        "additionalProperties": false,
+        "properties": {
+          "amountCents": {
+            "description": "Exact rated amount in whole cents.",
+            "pattern": "^(0|[1-9]\\d*)$",
+            "type": "string",
+            "x-aex-money": "cents"
+          },
+          "category": {
+            "$ref": "aex:schema:BillingUsageCategory",
+            "description": "What was measured."
+          },
+          "chargedQuantity": {
+            "description": "Quantity actually charged after policy.",
             "pattern": "^(0|[1-9]\\d*)$",
             "type": "string"
           },
-          "start": {
-            "description": "First byte, inclusive.",
+          "currency": {
+            "$ref": "aex:schema:Currency",
+            "description": "Always USD at launch."
+          },
+          "model": {
+            "description": "Provider model identifier for model usage.",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "aex:schema:ProviderId",
+            "description": "Official provider for model usage."
+          },
+          "quantity": {
+            "description": "Measured quantity before rating.",
             "pattern": "^(0|[1-9]\\d*)$",
+            "type": "string"
+          },
+          "serviceTime": {
+            "$ref": "aex:schema:TimeRange",
+            "description": "Half-open service-time range."
+          },
+          "sessionId": {
+            "description": "Session attribution when present.",
+            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "session"
+          },
+          "settlement": {
+            "$ref": "aex:schema:BillingUsageSettlement",
+            "description": "Ledger coverage."
+          },
+          "unit": {
+            "description": "Stable unit such as input_tokens or byte_minutes.",
+            "maxLength": 64,
+            "minLength": 1,
             "type": "string"
           }
         },
         "required": [
-          "endInclusive",
-          "start"
+          "amountCents",
+          "category",
+          "chargedQuantity",
+          "currency",
+          "quantity",
+          "serviceTime",
+          "settlement",
+          "unit"
         ],
         "type": "object"
+      },
+      "BillingUsagePage": {
+        "additionalProperties": false,
+        "properties": {
+          "coverage": {
+            "$ref": "aex:schema:BillingUsageCoverage",
+            "description": "How complete this answer is."
+          },
+          "items": {
+            "description": "The page.",
+            "items": {
+              "$ref": "aex:schema:BillingUsageItem"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "nextCursor": {
+            "description": "Continuation token.",
+            "maxLength": 4096,
+            "type": "string",
+            "x-aex-cursor": true
+          }
+        },
+        "required": [
+          "coverage",
+          "items"
+        ],
+        "type": "object"
+      },
+      "BillingUsageSettlement": {
+        "enum": [
+          "pending",
+          "settled"
+        ],
+        "type": "string"
+      },
+      "CardBrand": {
+        "enum": [
+          "visa",
+          "mastercard",
+          "amex",
+          "discover",
+          "diners",
+          "jcb",
+          "unionpay",
+          "unknown"
+        ],
+        "type": "string"
       },
       "Currency": {
         "enum": [
@@ -417,33 +556,27 @@
       "DashboardBootstrap": {
         "additionalProperties": false,
         "properties": {
-          "accounts": {
-            "description": "Current operational state for each organization in this snapshot.",
-            "items": {
-              "$ref": "aex:schema:OrganizationAccount"
-            },
-            "maxItems": 100,
-            "type": "array"
+          "accountId": {
+            "description": "Their personal prepaid account.",
+            "pattern": "^acc_[0-9a-hjkmnp-tv-z]{26}$",
+            "type": "string",
+            "x-aex-id": "account"
+          },
+          "accountState": {
+            "$ref": "aex:schema:AccountOperationalState",
+            "description": "Current paid-capacity state."
           },
           "email": {
-            "description": "Their email address.",
+            "description": "Their verified GitHub email.",
             "maxLength": 320,
             "minLength": 3,
             "type": "string"
           },
           "generatedAt": {
-            "description": "When this snapshot was taken.",
+            "description": "When this snapshot was assembled.",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
             "type": "string",
             "x-aex-time": "rfc3339-ms"
-          },
-          "organizations": {
-            "description": "Organizations they belong to.",
-            "items": {
-              "$ref": "aex:schema:Organization"
-            },
-            "maxItems": 100,
-            "type": "array"
           },
           "userId": {
             "description": "The signed-in person.",
@@ -451,22 +584,18 @@
             "type": "string",
             "x-aex-id": "user"
           },
-          "workspaces": {
-            "description": "Workspaces they can reach.",
-            "items": {
-              "$ref": "aex:schema:Workspace"
-            },
-            "maxItems": 500,
-            "type": "array"
+          "workspace": {
+            "$ref": "aex:schema:Workspace",
+            "description": "The fixed eu-west-1 workspace."
           }
         },
         "required": [
-          "accounts",
+          "accountId",
+          "accountState",
           "email",
           "generatedAt",
-          "organizations",
           "userId",
-          "workspaces"
+          "workspace"
         ],
         "type": "object"
       },
@@ -480,13 +609,13 @@
             "x-aex-time": "rfc3339-ms"
           },
           "session": {
-            "description": "The bearer credential; hold it in a cookie the browser will not hand to script.",
+            "description": "Bearer credential for an HttpOnly cookie.",
             "maxLength": 4096,
             "minLength": 16,
             "type": "string"
           },
           "userId": {
-            "description": "The person it authenticates.",
+            "description": "The GitHub-linked person.",
             "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
             "x-aex-id": "user"
@@ -503,23 +632,19 @@
         "additionalProperties": false,
         "properties": {
           "code": {
-            "description": "The single-use authorization code the redirect returned. It is redeemed exactly once and never retried: a code the provider may already have consumed cannot be re-presented.",
+            "description": "Single-use GitHub authorization code.",
             "maxLength": 2048,
             "minLength": 1,
             "type": "string"
           },
           "codeVerifier": {
-            "description": "The RFC 7636 PKCE verifier the browser held in its own cookie for this plane's origin. Possessing it is what proves the redirect belongs to the browser that started this sign-in: a cross-site forgery carries somebody else's `state` and cannot present a verifier that hashes to it.",
+            "description": "The browser-held PKCE verifier.",
             "maxLength": 128,
             "minLength": 43,
             "type": "string"
           },
-          "provider": {
-            "$ref": "aex:schema:IdentityProvider",
-            "description": "Which provider issued the code."
-          },
           "state": {
-            "description": "The `state` the provider echoed back. It is the RFC 7636 S256 challenge of `codeVerifier`, and the exchange refuses any request where it is not.",
+            "description": "The echoed S256 challenge.",
             "maxLength": 128,
             "minLength": 43,
             "type": "string"
@@ -528,252 +653,8 @@
         "required": [
           "code",
           "codeVerifier",
-          "provider",
           "state"
         ],
-        "type": "object"
-      },
-      "DeviceAuthorization": {
-        "additionalProperties": false,
-        "properties": {
-          "deviceCode": {
-            "description": "The polling secret.",
-            "maxLength": 256,
-            "minLength": 32,
-            "type": "string"
-          },
-          "expiresAt": {
-            "description": "When the device code stops working.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "intervalSeconds": {
-            "description": "Minimum polling interval.",
-            "maximum": 60,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "userCode": {
-            "description": "The short code the user types.",
-            "maxLength": 16,
-            "minLength": 6,
-            "type": "string"
-          },
-          "verificationUri": {
-            "description": "Where the user approves.",
-            "format": "uri",
-            "maxLength": 2048,
-            "type": "string"
-          },
-          "verificationUriComplete": {
-            "description": "The same page with the code prefilled.",
-            "format": "uri",
-            "maxLength": 2048,
-            "type": "string"
-          }
-        },
-        "required": [
-          "deviceCode",
-          "expiresAt",
-          "intervalSeconds",
-          "userCode",
-          "verificationUri",
-          "verificationUriComplete"
-        ],
-        "type": "object"
-      },
-      "DeviceAuthorizationRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "clientId": {
-            "description": "The public client identifier.",
-            "maxLength": 128,
-            "minLength": 1,
-            "type": "string"
-          },
-          "scopes": {
-            "description": "The scopes requested.",
-            "items": {
-              "type": "string",
-              "x-aex-registry": "scopes"
-            },
-            "maxItems": 64,
-            "type": "array"
-          }
-        },
-        "required": [
-          "clientId",
-          "scopes"
-        ],
-        "type": "object"
-      },
-      "DeviceDecision": {
-        "enum": [
-          "approve",
-          "deny"
-        ],
-        "type": "string"
-      },
-      "DeviceDecisionRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "decision": {
-            "$ref": "aex:schema:DeviceDecision",
-            "description": "What the person chose."
-          },
-          "userCode": {
-            "description": "The short code the device displayed.",
-            "maxLength": 16,
-            "minLength": 6,
-            "type": "string"
-          }
-        },
-        "required": [
-          "decision",
-          "userCode"
-        ],
-        "type": "object"
-      },
-      "DeviceDecisionResult": {
-        "additionalProperties": false,
-        "properties": {
-          "decidedAt": {
-            "description": "When the decision was written.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "decision": {
-            "$ref": "aex:schema:DeviceDecision",
-            "description": "What was recorded; never differs from the request."
-          },
-          "scopes": {
-            "description": "The scopes the device asked for, so the page can name what it granted.",
-            "items": {
-              "type": "string",
-              "x-aex-registry": "scopes"
-            },
-            "maxItems": 64,
-            "type": "array"
-          }
-        },
-        "required": [
-          "decidedAt",
-          "decision",
-          "scopes"
-        ],
-        "type": "object"
-      },
-      "DeviceToken": {
-        "additionalProperties": false,
-        "properties": {
-          "accountToken": {
-            "description": "The bearer token; store it, never log it.",
-            "maxLength": 4096,
-            "minLength": 16,
-            "type": "string"
-          },
-          "expiresAt": {
-            "description": "When the token stops verifying.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "scopes": {
-            "description": "The scopes it carries.",
-            "items": {
-              "type": "string",
-              "x-aex-registry": "scopes"
-            },
-            "maxItems": 64,
-            "type": "array"
-          }
-        },
-        "required": [
-          "accountToken",
-          "expiresAt",
-          "scopes"
-        ],
-        "type": "object"
-      },
-      "DeviceTokenRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "clientId": {
-            "description": "The public client identifier.",
-            "maxLength": 128,
-            "minLength": 1,
-            "type": "string"
-          },
-          "deviceCode": {
-            "description": "The polling secret.",
-            "maxLength": 256,
-            "minLength": 32,
-            "type": "string"
-          }
-        },
-        "required": [
-          "clientId",
-          "deviceCode"
-        ],
-        "type": "object"
-      },
-      "DownloadGrant": {
-        "additionalProperties": false,
-        "properties": {
-          "authorizedBytes": {
-            "description": "Bytes this grant authorizes.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string"
-          },
-          "expiresAt": {
-            "description": "When the signature stops verifying.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "measurementId": {
-            "description": "The metered download measurement.",
-            "pattern": "^msr_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "measurement"
-          },
-          "range": {
-            "$ref": "aex:schema:ByteRange",
-            "description": "The signed range, when the grant is partial."
-          },
-          "sha256": {
-            "description": "The immutable whole-object hash.",
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
-          },
-          "sizeBytes": {
-            "description": "The whole object size.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string"
-          },
-          "url": {
-            "description": "The signed URL; never printed by the CLI.",
-            "format": "uri",
-            "maxLength": 2048,
-            "type": "string"
-          }
-        },
-        "required": [
-          "authorizedBytes",
-          "expiresAt",
-          "measurementId",
-          "sha256",
-          "sizeBytes",
-          "url"
-        ],
-        "type": "object"
-      },
-      "EmptyRequest": {
-        "additionalProperties": false,
-        "properties": {},
-        "required": [],
         "type": "object"
       },
       "ErrorDetails": {
@@ -975,207 +856,6 @@
         ],
         "type": "object"
       },
-      "IdentityProvider": {
-        "enum": [
-          "github",
-          "google"
-        ],
-        "type": "string"
-      },
-      "Invitation": {
-        "additionalProperties": false,
-        "properties": {
-          "createdAt": {
-            "description": "When it was sent.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "email": {
-            "description": "Who was invited.",
-            "maxLength": 320,
-            "minLength": 3,
-            "type": "string"
-          },
-          "expiresAt": {
-            "description": "When it stops being redeemable.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "id": {
-            "description": "Identity.",
-            "pattern": "^inv_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "invitation"
-          },
-          "organizationId": {
-            "description": "The organization.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "organization"
-          },
-          "resolvedAt": {
-            "description": "When it was accepted, revoked or expired.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "role": {
-            "$ref": "aex:schema:InvitationRole",
-            "description": "The role it grants."
-          },
-          "status": {
-            "$ref": "aex:schema:InvitationStatus",
-            "description": "Lifecycle position."
-          }
-        },
-        "required": [
-          "createdAt",
-          "email",
-          "expiresAt",
-          "id",
-          "organizationId",
-          "role",
-          "status"
-        ],
-        "type": "object"
-      },
-      "InvitationAcceptResult": {
-        "additionalProperties": false,
-        "properties": {
-          "memberships": {
-            "description": "One membership per invitation redeemed by this call, created or raised to the invited role. Bounded by the same 100 the acceptance transaction reads.",
-            "items": {
-              "$ref": "aex:schema:Membership"
-            },
-            "maxItems": 100,
-            "type": "array"
-          }
-        },
-        "required": [
-          "memberships"
-        ],
-        "type": "object"
-      },
-      "InvitationCreateRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "email": {
-            "description": "Who to invite.",
-            "maxLength": 320,
-            "minLength": 3,
-            "type": "string"
-          },
-          "role": {
-            "$ref": "aex:schema:InvitationRole",
-            "description": "The role to grant."
-          }
-        },
-        "required": [
-          "email",
-          "role"
-        ],
-        "type": "object"
-      },
-      "InvitationRole": {
-        "enum": [
-          "admin",
-          "member"
-        ],
-        "type": "string"
-      },
-      "InvitationStatus": {
-        "enum": [
-          "pending",
-          "accepted",
-          "revoked",
-          "expired"
-        ],
-        "type": "string"
-      },
-      "Membership": {
-        "additionalProperties": false,
-        "properties": {
-          "createdAt": {
-            "description": "When it was created.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "email": {
-            "description": "The person's email address.",
-            "maxLength": 320,
-            "minLength": 3,
-            "type": "string"
-          },
-          "id": {
-            "description": "Identity.",
-            "pattern": "^mem_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "membership"
-          },
-          "organizationId": {
-            "description": "The organization.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "organization"
-          },
-          "role": {
-            "$ref": "aex:schema:OrganizationRole",
-            "description": "The role."
-          },
-          "status": {
-            "$ref": "aex:schema:MembershipStatus",
-            "description": "Whether the membership is usable."
-          },
-          "userId": {
-            "description": "The person.",
-            "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "user"
-          }
-        },
-        "required": [
-          "createdAt",
-          "email",
-          "id",
-          "organizationId",
-          "role",
-          "status",
-          "userId"
-        ],
-        "type": "object"
-      },
-      "MembershipPage": {
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "description": "The page.",
-            "items": {
-              "$ref": "aex:schema:Membership"
-            },
-            "maxItems": 1000,
-            "type": "array"
-          },
-          "nextCursor": {
-            "description": "Continuation token.",
-            "maxLength": 4096,
-            "type": "string",
-            "x-aex-cursor": true
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
-      "MembershipStatus": {
-        "enum": [
-          "active"
-        ],
-        "type": "string"
-      },
       "NewApiKey": {
         "additionalProperties": false,
         "properties": {
@@ -1203,7 +883,7 @@
               "type": "string",
               "x-aex-registry": "scopes"
             },
-            "maxItems": 64,
+            "maxItems": 16,
             "type": "array"
           },
           "value": {
@@ -1213,7 +893,7 @@
             "type": "string"
           },
           "workspaceId": {
-            "description": "The workspace it authorizes.",
+            "description": "The fixed workspace.",
             "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
             "x-aex-id": "workspace"
@@ -1229,143 +909,70 @@
         ],
         "type": "object"
       },
-      "Operation": {
+      "PaymentMethod": {
         "additionalProperties": false,
         "properties": {
-          "cancelable": {
-            "description": "Whether cancellation is still possible.",
-            "type": "boolean"
-          },
-          "committedAt": {
-            "description": "When the effect became durable.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
+          "brand": {
+            "$ref": "aex:schema:CardBrand",
+            "description": "Card network."
           },
           "createdAt": {
-            "description": "When the operation was admitted.",
+            "description": "When verified webhook state registered it.",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
             "type": "string",
             "x-aex-time": "rfc3339-ms"
           },
-          "error": {
-            "$ref": "aex:schema:OperationFailure",
-            "description": "The terminal failure."
+          "expiryMonth": {
+            "description": "Expiry month.",
+            "maximum": 12,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "expiryYear": {
+            "description": "Four-digit expiry year.",
+            "maximum": 9999,
+            "minimum": 2020,
+            "type": "integer"
           },
           "id": {
-            "description": "The operation identity minted by the caller.",
-            "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
+            "description": "Aex's opaque card reference.",
+            "pattern": "^pmt_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
-            "x-aex-id": "operation"
+            "x-aex-id": "payment_method"
           },
-          "kind": {
-            "$ref": "aex:schema:OperationKind",
-            "description": "What the operation does."
-          },
-          "progress": {
-            "$ref": "aex:schema:OperationProgress",
-            "description": "Coarse progress."
-          },
-          "result": {
-            "$ref": "aex:schema:OperationResult",
-            "description": "The typed successful result."
-          },
-          "sessionId": {
-            "description": "The owning session, when there is one.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          },
-          "startedAt": {
-            "description": "When work began.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "status": {
-            "$ref": "aex:schema:OperationStatus",
-            "description": "Lifecycle position."
-          },
-          "terminalAt": {
-            "description": "When the record reached a terminal status.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "updatedAt": {
-            "description": "Last change to this record.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "workspaceId": {
-            "description": "The owning workspace.",
-            "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "workspace"
-          }
-        },
-        "required": [
-          "cancelable",
-          "createdAt",
-          "id",
-          "kind",
-          "status",
-          "updatedAt",
-          "workspaceId"
-        ],
-        "type": "object"
-      },
-      "OperationFailure": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "description": "The stable public failure code.",
-            "type": "string",
-            "x-aex-registry": "errors"
-          },
-          "detail": {
-            "description": "Customer-safe detail, when the domain produced it.",
-            "x-aex-canonical-json": true
-          },
-          "retryable": {
-            "description": "Whether the same operation step may be retried.",
+          "isDefault": {
+            "description": "Whether Stripe reports this as the default card.",
             "type": "boolean"
+          },
+          "last4": {
+            "description": "Last four digits for display.",
+            "maxLength": 4,
+            "minLength": 4,
+            "pattern": "^[0-9]{4}$",
+            "type": "string"
           }
         },
         "required": [
-          "code",
-          "retryable"
+          "brand",
+          "createdAt",
+          "expiryMonth",
+          "expiryYear",
+          "id",
+          "isDefault",
+          "last4"
         ],
         "type": "object"
       },
-      "OperationKind": {
-        "enum": [
-          "session_cancel",
-          "session_suspend",
-          "session_resume",
-          "session_terminate",
-          "session_delete",
-          "workspace_delete"
-        ],
-        "type": "string"
-      },
-      "OperationPage": {
+      "PaymentMethodPage": {
         "additionalProperties": false,
         "properties": {
           "items": {
-            "description": "The page.",
+            "description": "Cards, newest first.",
             "items": {
-              "$ref": "aex:schema:Operation"
+              "$ref": "aex:schema:PaymentMethod"
             },
-            "maxItems": 1000,
+            "maxItems": 32,
             "type": "array"
-          },
-          "nextCursor": {
-            "description": "Continuation token; absent on the last page.",
-            "maxLength": 4096,
-            "type": "string",
-            "x-aex-cursor": true
           }
         },
         "required": [
@@ -1373,535 +980,42 @@
         ],
         "type": "object"
       },
-      "OperationProgress": {
+      "PaymentMethodSessionRequest": {
         "additionalProperties": false,
         "properties": {
-          "completed": {
-            "description": "Units done.",
-            "pattern": "^(0|[1-9]\\d*)$",
+          "cancelUrl": {
+            "description": "Browser return after cancellation.",
+            "format": "uri",
+            "maxLength": 2048,
             "type": "string"
           },
-          "phase": {
-            "description": "The named phase.",
-            "maxLength": 64,
-            "minLength": 0,
-            "type": "string"
+          "consent": {
+            "description": "Must be true: the caller explicitly consents to saving this card for future prepaid payments.",
+            "type": "boolean"
           },
-          "total": {
-            "description": "Units expected.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "phase"
-        ],
-        "type": "object"
-      },
-      "OperationResult": {
-        "oneOf": [
-          {
-            "$ref": "aex:schema:SessionCancelResult",
-            "x-aex-discriminator-value": "session_cancel"
-          },
-          {
-            "$ref": "aex:schema:SessionSuspendResult",
-            "x-aex-discriminator-value": "session_suspend"
-          },
-          {
-            "$ref": "aex:schema:SessionResumeResult",
-            "x-aex-discriminator-value": "session_resume"
-          },
-          {
-            "$ref": "aex:schema:SessionTerminateResult",
-            "x-aex-discriminator-value": "session_terminate"
-          },
-          {
-            "$ref": "aex:schema:SessionTombstone",
-            "x-aex-discriminator-value": "session_delete"
-          },
-          {
-            "$ref": "aex:schema:WorkspaceTombstone",
-            "x-aex-discriminator-value": "workspace_delete"
-          }
-        ],
-        "x-aex-discriminator": "kind"
-      },
-      "OperationStatus": {
-        "enum": [
-          "queued",
-          "running",
-          "succeeded",
-          "failed",
-          "cancelled"
-        ],
-        "type": "string"
-      },
-      "OperationalStateSource": {
-        "enum": [
-          "account"
-        ],
-        "type": "string"
-      },
-      "Organization": {
-        "additionalProperties": false,
-        "properties": {
-          "callerRole": {
-            "$ref": "aex:schema:OrganizationRole",
-            "description": "What the calling principal may do here."
-          },
-          "createdAt": {
-            "description": "When it was created.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "id": {
-            "description": "Identity.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "organization"
-          },
-          "name": {
-            "description": "Display name.",
-            "maxLength": 128,
-            "minLength": 1,
-            "type": "string"
-          },
-          "slug": {
-            "description": "URL-safe name.",
-            "maxLength": 64,
-            "minLength": 1,
-            "pattern": "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "callerRole",
-          "createdAt",
-          "id",
-          "name",
-          "slug"
-        ],
-        "type": "object"
-      },
-      "OrganizationAccount": {
-        "additionalProperties": false,
-        "properties": {
-          "organizationId": {
-            "description": "The organization this state governs.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "organization"
-          },
-          "state": {
-            "$ref": "aex:schema:AccountOperationalState",
-            "description": "The organization's current operational state."
-          }
-        },
-        "required": [
-          "organizationId",
-          "state"
-        ],
-        "type": "object"
-      },
-      "OrganizationCreateRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "description": "Display name.",
-            "maxLength": 128,
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "type": "object"
-      },
-      "OrganizationPage": {
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "description": "The page.",
-            "items": {
-              "$ref": "aex:schema:Organization"
-            },
-            "maxItems": 1000,
-            "type": "array"
-          },
-          "nextCursor": {
-            "description": "Continuation token.",
-            "maxLength": 4096,
-            "type": "string",
-            "x-aex-cursor": true
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
-      "OrganizationRole": {
-        "enum": [
-          "owner",
-          "admin",
-          "member"
-        ],
-        "type": "string"
-      },
-      "PortalSessionRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "returnUrl": {
-            "description": "Where to return when the user is done.",
+          "successUrl": {
+            "description": "Browser return after successful setup.",
             "format": "uri",
             "maxLength": 2048,
             "type": "string"
           }
         },
-        "required": [],
-        "type": "object"
-      },
-      "SessionCancelResult": {
-        "additionalProperties": false,
-        "properties": {
-          "changed": {
-            "description": "Whether work was active and got cancelled.",
-            "type": "boolean"
-          },
-          "sessionId": {
-            "description": "The session.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          },
-          "sessionRevision": {
-            "description": "The revision after cancellation.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
         "required": [
-          "changed",
-          "sessionId",
-          "sessionRevision"
+          "consent"
         ],
         "type": "object"
       },
-      "SessionResumeResult": {
-        "additionalProperties": false,
-        "properties": {
-          "changed": {
-            "description": "Whether the retained generation was resumed.",
-            "type": "boolean"
-          },
-          "resumedAt": {
-            "description": "When the retained generation resumed.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "sessionId": {
-            "description": "The session.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          },
-          "sessionRevision": {
-            "description": "The revision after resumption.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "status": {
-            "$ref": "aex:schema:SessionStatus",
-            "description": "Always `idle` after a successful resume."
-          }
-        },
-        "required": [
-          "changed",
-          "resumedAt",
-          "sessionId",
-          "sessionRevision",
-          "status"
-        ],
-        "type": "object"
-      },
-      "SessionStatus": {
+      "ProviderId": {
         "enum": [
-          "idle",
-          "running",
-          "suspending",
-          "suspended",
-          "resuming",
-          "terminating",
-          "terminated",
-          "deleting"
+          "openai",
+          "anthropic",
+          "deepseek",
+          "xai",
+          "meta",
+          "moonshotai",
+          "alibaba"
         ],
         "type": "string"
-      },
-      "SessionSuspendResult": {
-        "additionalProperties": false,
-        "properties": {
-          "changed": {
-            "description": "Whether the session transitioned to suspended.",
-            "type": "boolean"
-          },
-          "sessionId": {
-            "description": "The session.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          },
-          "sessionRevision": {
-            "description": "The revision after suspension.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "suspendedAt": {
-            "description": "When the generation suspended.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          }
-        },
-        "required": [
-          "changed",
-          "sessionId",
-          "sessionRevision",
-          "suspendedAt"
-        ],
-        "type": "object"
-      },
-      "SessionTerminateResult": {
-        "additionalProperties": false,
-        "properties": {
-          "changed": {
-            "description": "Whether live compute or files existed and were destroyed.",
-            "type": "boolean"
-          },
-          "sessionId": {
-            "description": "The session.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          },
-          "sessionRevision": {
-            "description": "The revision after termination.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "terminatedAt": {
-            "description": "When permanent termination committed.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          }
-        },
-        "required": [
-          "changed",
-          "sessionId",
-          "sessionRevision",
-          "terminatedAt"
-        ],
-        "type": "object"
-      },
-      "SessionTombstone": {
-        "additionalProperties": false,
-        "properties": {
-          "deletedAt": {
-            "description": "When deletion committed.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "id": {
-            "description": "The deleted session.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          },
-          "operationId": {
-            "description": "The operation that deleted it.",
-            "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "operation"
-          },
-          "workspaceId": {
-            "description": "The owning workspace.",
-            "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "workspace"
-          }
-        },
-        "required": [
-          "deletedAt",
-          "id",
-          "operationId",
-          "workspaceId"
-        ],
-        "type": "object"
-      },
-      "Statement": {
-        "additionalProperties": false,
-        "properties": {
-          "artifactHash": {
-            "description": "Hash of the issued artifact.",
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
-          },
-          "currency": {
-            "$ref": "aex:schema:Currency",
-            "description": "Always USD."
-          },
-          "id": {
-            "description": "Identity.",
-            "pattern": "^stm_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "statement"
-          },
-          "issuedAt": {
-            "description": "When it was issued.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "lines": {
-            "description": "The priced lines.",
-            "items": {
-              "$ref": "aex:schema:StatementLine"
-            },
-            "maxItems": 64,
-            "type": "array"
-          },
-          "organizationId": {
-            "description": "The organization.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "organization"
-          },
-          "period": {
-            "$ref": "aex:schema:TimeRange",
-            "description": "The billed period."
-          },
-          "totalCents": {
-            "description": "The issued total.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string",
-            "x-aex-money": "cents"
-          }
-        },
-        "required": [
-          "artifactHash",
-          "currency",
-          "id",
-          "issuedAt",
-          "lines",
-          "organizationId",
-          "period",
-          "totalCents"
-        ],
-        "type": "object"
-      },
-      "StatementLine": {
-        "additionalProperties": false,
-        "properties": {
-          "category": {
-            "$ref": "aex:schema:UsageCategory",
-            "description": "The priced category."
-          },
-          "totalCents": {
-            "description": "The line total.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string",
-            "x-aex-money": "cents"
-          }
-        },
-        "required": [
-          "category",
-          "totalCents"
-        ],
-        "type": "object"
-      },
-      "StatementSummary": {
-        "additionalProperties": false,
-        "properties": {
-          "artifactHash": {
-            "description": "Hash of the issued artifact.",
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
-          },
-          "currency": {
-            "$ref": "aex:schema:Currency",
-            "description": "Always USD."
-          },
-          "id": {
-            "description": "Identity.",
-            "pattern": "^stm_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "statement"
-          },
-          "issuedAt": {
-            "description": "When it was issued.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "organizationId": {
-            "description": "The organization.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "organization"
-          },
-          "period": {
-            "$ref": "aex:schema:TimeRange",
-            "description": "The billed period."
-          },
-          "totalCents": {
-            "description": "The issued total.",
-            "pattern": "^(0|[1-9]\\d*)$",
-            "type": "string",
-            "x-aex-money": "cents"
-          }
-        },
-        "required": [
-          "artifactHash",
-          "currency",
-          "id",
-          "issuedAt",
-          "organizationId",
-          "period",
-          "totalCents"
-        ],
-        "type": "object"
-      },
-      "StatementSummaryPage": {
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "description": "The page.",
-            "items": {
-              "$ref": "aex:schema:StatementSummary"
-            },
-            "maxItems": 1000,
-            "type": "array"
-          },
-          "nextCursor": {
-            "description": "Continuation token.",
-            "maxLength": 4096,
-            "type": "string",
-            "x-aex-cursor": true
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
       },
       "TimeRange": {
         "additionalProperties": false,
@@ -1929,19 +1043,19 @@
         "additionalProperties": false,
         "properties": {
           "amountCents": {
-            "description": "The amount to add, in whole cents.",
+            "description": "Credit to buy in whole cents, within configured bounds.",
             "pattern": "^(0|[1-9]\\d*)$",
             "type": "string",
             "x-aex-money": "cents"
           },
           "cancelUrl": {
-            "description": "Where to return after cancellation.",
+            "description": "Browser return after cancellation.",
             "format": "uri",
             "maxLength": 2048,
             "type": "string"
           },
           "successUrl": {
-            "description": "Where to return after success.",
+            "description": "Browser return after provider success; not money authority.",
             "format": "uri",
             "maxLength": 2048,
             "type": "string"
@@ -1952,35 +1066,20 @@
         ],
         "type": "object"
       },
-      "UsageCategory": {
-        "enum": [
-          "storage",
-          "compute",
-          "memory",
-          "data_transfer"
-        ],
-        "type": "string"
-      },
       "Workspace": {
         "additionalProperties": false,
         "properties": {
           "apiUrl": {
-            "description": "The regional host this workspace answers on.",
+            "description": "Regional session endpoint.",
             "format": "uri",
             "maxLength": 2048,
             "type": "string"
           },
           "createdAt": {
-            "description": "When it was created.",
+            "description": "When first login provisioned it.",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
             "type": "string",
             "x-aex-time": "rfc3339-ms"
-          },
-          "deletionOperationId": {
-            "description": "The running deletion operation.",
-            "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "operation"
           },
           "id": {
             "description": "Identity.",
@@ -1998,14 +1097,8 @@
             "$ref": "aex:schema:WorkspaceOperationalState",
             "description": "Inherited account state."
           },
-          "organizationId": {
-            "description": "The owning organization.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "organization"
-          },
           "region": {
-            "description": "Immutable placement.",
+            "description": "Immutable placement; eu-west-1 at launch.",
             "enum": [
               "us-east-1",
               "us-east-2",
@@ -2014,17 +1107,6 @@
               "eu-west-1"
             ],
             "type": "string"
-          },
-          "slug": {
-            "description": "URL-safe name.",
-            "maxLength": 64,
-            "minLength": 1,
-            "pattern": "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$",
-            "type": "string"
-          },
-          "status": {
-            "$ref": "aex:schema:WorkspaceStatus",
-            "description": "Whether it admits work."
           }
         },
         "required": [
@@ -2033,74 +1115,18 @@
           "id",
           "name",
           "operationalState",
-          "organizationId",
-          "region",
-          "slug",
-          "status"
-        ],
-        "type": "object"
-      },
-      "WorkspaceCreateRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "description": "Display name.",
-            "maxLength": 128,
-            "minLength": 1,
-            "type": "string"
-          },
-          "organizationId": {
-            "description": "The owning organization.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "organization"
-          },
-          "region": {
-            "description": "Where the workspace lives, forever.",
-            "enum": [
-              "us-east-1",
-              "us-east-2",
-              "us-west-2",
-              "ap-northeast-1",
-              "eu-west-1"
-            ],
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "organizationId",
           "region"
-        ],
-        "type": "object"
-      },
-      "WorkspaceDeleteRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "confirmation": {
-            "description": "The workspace id, restated.",
-            "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "workspace"
-          }
-        },
-        "required": [
-          "confirmation"
         ],
         "type": "object"
       },
       "WorkspaceOperationalState": {
         "additionalProperties": false,
         "properties": {
-          "inheritedFrom": {
-            "$ref": "aex:schema:OperationalStateSource",
-            "description": "Always the account."
-          },
-          "organizationId": {
-            "description": "The organization the state comes from.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
+          "accountId": {
+            "description": "The personal account.",
+            "pattern": "^acc_[0-9a-hjkmnp-tv-z]{26}$",
             "type": "string",
-            "x-aex-id": "organization"
+            "x-aex-id": "account"
           },
           "state": {
             "$ref": "aex:schema:AccountOperationalState",
@@ -2108,81 +1134,14 @@
           }
         },
         "required": [
-          "inheritedFrom",
-          "organizationId",
+          "accountId",
           "state"
-        ],
-        "type": "object"
-      },
-      "WorkspacePage": {
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "description": "The page.",
-            "items": {
-              "$ref": "aex:schema:Workspace"
-            },
-            "maxItems": 1000,
-            "type": "array"
-          },
-          "nextCursor": {
-            "description": "Continuation token.",
-            "maxLength": 4096,
-            "type": "string",
-            "x-aex-cursor": true
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
-      "WorkspaceStatus": {
-        "enum": [
-          "active",
-          "deleting"
-        ],
-        "type": "string"
-      },
-      "WorkspaceTombstone": {
-        "additionalProperties": false,
-        "properties": {
-          "deletedAt": {
-            "description": "When deletion committed.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "operationId": {
-            "description": "The operation that deleted it.",
-            "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "operation"
-          },
-          "organizationId": {
-            "description": "The owning organization.",
-            "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "organization"
-          },
-          "workspaceId": {
-            "description": "The deleted workspace.",
-            "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "workspace"
-          }
-        },
-        "required": [
-          "deletedAt",
-          "operationId",
-          "organizationId",
-          "workspaceId"
         ],
         "type": "object"
       }
     },
     "securitySchemes": {
-      "accountToken": {
+      "dashboardSession": {
         "scheme": "bearer",
         "type": "http"
       }
@@ -2195,85 +1154,6 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/api/account": {
-      "get": {
-        "operationId": "account_get",
-        "parameters": [
-          {
-            "description": "Which organization's account to read. Required: a user can belong to many organizations, so a rule that derived it from the credential would silently change meaning the day a user joins a second one.",
-            "in": "query",
-            "name": "organizationId",
-            "required": true,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          }
-        ],
-        "requestBody": null,
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:AccountOperationalState"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Read the account and its operational state.",
-        "tags": [
-          "identity"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "none",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "account_state_unavailable"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "account:read",
-        "x-aex-transport": "unary"
-      }
-    },
     "/api/api-keys": {
       "get": {
         "operationId": "api_keys_list",
@@ -2548,7 +1428,7 @@
         "operationId": "api_key_revoke",
         "parameters": [
           {
-            "description": "The API key metadata record.",
+            "description": "API key metadata.",
             "in": "path",
             "name": "apiKeyId",
             "required": true,
@@ -2645,279 +1525,6 @@
         "x-aex-pause-exempt": true,
         "x-aex-safe-retry": false,
         "x-aex-scope": "api_keys:write",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/auth/device/authorizations": {
-      "post": {
-        "operationId": "device_authorization_create",
-        "parameters": [],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:DeviceAuthorizationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:DeviceAuthorization"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Begin the CLI device-authorization flow.",
-        "tags": [
-          "auth"
-        ],
-        "x-aex-alt-principal": "anonymous",
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "invalid_request",
-          "rate_limited",
-          "internal_error"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "idempotency_key",
-        "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": null,
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/auth/device/decisions": {
-      "post": {
-        "operationId": "device_decision_create",
-        "parameters": [],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:DeviceDecisionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:DeviceDecisionResult"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Approve or deny a pending device authorization.",
-        "tags": [
-          "auth"
-        ],
-        "x-aex-alt-principal": "user_session",
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "token_expired",
-          "not_found",
-          "invalid_request",
-          "rate_limited",
-          "internal_error"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": "account:write",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/auth/device/tokens": {
-      "post": {
-        "operationId": "device_token_create",
-        "parameters": [],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:DeviceTokenRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:DeviceToken"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Exchange an approved device code for an account token.",
-        "tags": [
-          "auth"
-        ],
-        "x-aex-alt-principal": "anonymous",
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "token_expired",
-          "authorization_pending",
-          "slow_down",
-          "invalid_request",
-          "rate_limited",
-          "internal_error"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": null,
         "x-aex-transport": "unary"
       }
     },
@@ -3092,19 +1699,7 @@
     "/api/billing/balance": {
       "get": {
         "operationId": "billing_balance_get",
-        "parameters": [
-          {
-            "description": "Required unless the credential derives one organization.",
-            "in": "query",
-            "name": "organizationId",
-            "required": false,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          }
-        ],
+        "parameters": [],
         "requestBody": null,
         "responses": {
           "200": {
@@ -3117,16 +1712,6 @@
             },
             "description": "Success."
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "401": {
             "content": {
               "application/json": {
@@ -3158,18 +1743,17 @@
             "description": "Error."
           }
         },
-        "summary": "Read the prepaid balance of an organization.",
+        "summary": "Read the caller's prepaid balance and active reservations.",
         "tags": [
           "billing"
         ],
-        "x-aex-alt-principal": "workspace_key",
+        "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",
           "forbidden",
           "insufficient_scope",
-          "not_found",
-          "invalid_request"
+          "not_found"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
@@ -3179,998 +1763,15 @@
         "x-aex-transport": "unary"
       }
     },
-    "/api/bootstrap": {
-      "get": {
-        "operationId": "dashboard_bootstrap_get",
-        "parameters": [],
-        "requestBody": null,
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:DashboardBootstrap"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "One bounded read that fills the dashboard shell.",
-        "tags": [
-          "bootstrap"
-        ],
-        "x-aex-alt-principal": "user_session",
-        "x-aex-body-class": "none",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "account_state_unavailable"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "account:read",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/invitations/acceptances": {
+    "/api/billing/payment-method-sessions": {
       "post": {
-        "operationId": "invitation_accept",
+        "operationId": "billing_payment_method_session_create",
         "parameters": [],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "aex:schema:EmptyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:InvitationAcceptResult"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "502": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Redeem every pending invitation addressed to the caller's verified email.",
-        "tags": [
-          "organizations"
-        ],
-        "x-aex-alt-principal": "user_session",
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "resource_conflict",
-          "upstream_error",
-          "commit_outcome_unknown"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "memberships:accept",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/operations": {
-      "get": {
-        "operationId": "central_operations_list",
-        "parameters": [
-          {
-            "description": "Opaque continuation token.",
-            "in": "query",
-            "name": "cursor",
-            "required": false,
-            "schema": {
-              "maxLength": 4096,
-              "type": "string",
-              "x-aex-cursor": true
-            }
-          },
-          {
-            "description": "Restrict to one operation kind.",
-            "in": "query",
-            "name": "kind",
-            "required": false,
-            "schema": {
-              "$ref": "aex:schema:OperationKind"
-            }
-          },
-          {
-            "description": "Page size.",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "maximum": 1000,
-              "minimum": 1,
-              "type": "integer"
-            }
-          },
-          {
-            "description": "The organization whose operations are listed.",
-            "in": "query",
-            "name": "organizationId",
-            "required": true,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          },
-          {
-            "description": "Restrict to one status.",
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "$ref": "aex:schema:OperationStatus"
-            }
-          }
-        ],
-        "requestBody": null,
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:OperationPage"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "402": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "List central durable operations for one organization.",
-        "tags": [
-          "operations"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "none",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "invalid_request",
-          "invalid_cursor",
-          "account_paused",
-          "account_state_unavailable"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "operations:read",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/operations/{operationId}": {
-      "get": {
-        "operationId": "central_operation_get",
-        "parameters": [
-          {
-            "description": "The durable operation record.",
-            "in": "path",
-            "name": "operationId",
-            "required": true,
-            "schema": {
-              "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "operation"
-            }
-          }
-        ],
-        "requestBody": null,
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Operation"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Read one central durable operation.",
-        "tags": [
-          "operations"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "none",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "not_found"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "operations:read",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/operations/{operationId}/cancellations": {
-      "post": {
-        "operationId": "central_operation_cancel",
-        "parameters": [
-          {
-            "description": "The durable operation record.",
-            "in": "path",
-            "name": "operationId",
-            "required": true,
-            "schema": {
-              "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "operation"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:EmptyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Operation"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Request cancellation of a central operation.",
-        "tags": [
-          "operations"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "not_found",
-          "operation_not_cancelable"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": "operations:write",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/organizations": {
-      "get": {
-        "operationId": "organizations_list",
-        "parameters": [
-          {
-            "description": "Opaque continuation token.",
-            "in": "query",
-            "name": "cursor",
-            "required": false,
-            "schema": {
-              "maxLength": 4096,
-              "type": "string",
-              "x-aex-cursor": true
-            }
-          },
-          {
-            "description": "Page size.",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "maximum": 1000,
-              "minimum": 1,
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": null,
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:OrganizationPage"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "List organizations the caller belongs to.",
-        "tags": [
-          "organizations"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "none",
-        "x-aex-errors": [
-          "unauthenticated",
-          "insufficient_scope",
-          "invalid_cursor"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "organizations:read",
-        "x-aex-transport": "unary"
-      },
-      "post": {
-        "operationId": "organization_create",
-        "parameters": [],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:OrganizationCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Organization"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Create an organization whose creator becomes owner.",
-        "tags": [
-          "organizations"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "unauthenticated",
-          "insufficient_scope",
-          "idempotency_conflict",
-          "idempotency_in_flight",
-          "invalid_request",
-          "limit_exceeded",
-          "resource_conflict",
-          "commit_outcome_unknown"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "idempotency_key",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": "organizations:write",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/organizations/{organizationId}": {
-      "get": {
-        "operationId": "organization_get",
-        "parameters": [
-          {
-            "description": "The organization the request is scoped to.",
-            "in": "path",
-            "name": "organizationId",
-            "required": true,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          }
-        ],
-        "requestBody": null,
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Organization"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Read one organization.",
-        "tags": [
-          "organizations"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "none",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "not_found"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "organizations:read",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/organizations/{organizationId}/billing/auto-topup-policy": {
-      "get": {
-        "operationId": "billing_auto_topup_policy_get",
-        "parameters": [
-          {
-            "description": "The organization the request is scoped to.",
-            "in": "path",
-            "name": "organizationId",
-            "required": true,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          }
-        ],
-        "requestBody": null,
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:AutoTopupPolicy"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Read the automatic top-up policy.",
-        "tags": [
-          "billing"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "none",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "not_found"
-        ],
-        "x-aex-etag": "returns",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "billing:read",
-        "x-aex-transport": "unary"
-      },
-      "put": {
-        "operationId": "billing_auto_topup_policy_put",
-        "parameters": [
-          {
-            "description": "The organization the request is scoped to.",
-            "in": "path",
-            "name": "organizationId",
-            "required": true,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:AutoTopupPolicyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:AutoTopupPolicy"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "402": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "412": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Replace the automatic top-up policy.",
-        "tags": [
-          "billing"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "not_found",
-          "idempotency_conflict",
-          "invalid_request",
-          "invalid_auto_topup_policy",
-          "payment_method_required",
-          "precondition_failed"
-        ],
-        "x-aex-etag": "required_if_match",
-        "x-aex-idempotency": "idempotency_key",
-        "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": "billing:write",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/organizations/{organizationId}/billing/portal-sessions": {
-      "post": {
-        "operationId": "billing_portal_session_create",
-        "parameters": [
-          {
-            "description": "The organization the request is scoped to.",
-            "in": "path",
-            "name": "organizationId",
-            "required": true,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:PortalSessionRequest"
+                "$ref": "aex:schema:PaymentMethodSessionRequest"
               }
             }
           },
@@ -4248,7 +1849,7 @@
             "description": "Error."
           }
         },
-        "summary": "Create a hosted billing portal session.",
+        "summary": "Create a Stripe-hosted card setup session with explicit consent.",
         "tags": [
           "billing"
         ],
@@ -4271,65 +1872,21 @@
         "x-aex-transport": "unary"
       }
     },
-    "/api/organizations/{organizationId}/billing/statements": {
+    "/api/billing/payment-methods": {
       "get": {
-        "operationId": "billing_statements_list",
-        "parameters": [
-          {
-            "description": "The organization the request is scoped to.",
-            "in": "path",
-            "name": "organizationId",
-            "required": true,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          },
-          {
-            "description": "Opaque continuation token.",
-            "in": "query",
-            "name": "cursor",
-            "required": false,
-            "schema": {
-              "maxLength": 4096,
-              "type": "string",
-              "x-aex-cursor": true
-            }
-          },
-          {
-            "description": "Page size.",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "maximum": 1000,
-              "minimum": 1,
-              "type": "integer"
-            }
-          }
-        ],
+        "operationId": "billing_payment_methods_list",
+        "parameters": [],
         "requestBody": null,
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "aex:schema:StatementSummaryPage"
+                  "$ref": "aex:schema:PaymentMethodPage"
                 }
               }
             },
             "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
           },
           "401": {
             "content": {
@@ -4360,9 +1917,19 @@
               }
             },
             "description": "Error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
           }
         },
-        "summary": "List issued statements, newest first.",
+        "summary": "List card display metadata for the caller's account.",
         "tags": [
           "billing"
         ],
@@ -4373,7 +1940,7 @@
           "forbidden",
           "insufficient_scope",
           "not_found",
-          "invalid_cursor"
+          "upstream_error"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
@@ -4383,143 +1950,26 @@
         "x-aex-transport": "unary"
       }
     },
-    "/api/organizations/{organizationId}/billing/statements/{statementId}": {
-      "get": {
-        "operationId": "billing_statement_get",
+    "/api/billing/payment-methods/{paymentMethodId}": {
+      "delete": {
+        "operationId": "billing_payment_method_delete",
         "parameters": [
           {
-            "description": "The organization the request is scoped to.",
+            "description": "Display-only card reference.",
             "in": "path",
-            "name": "organizationId",
+            "name": "paymentMethodId",
             "required": true,
             "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
+              "pattern": "^pmt_[0-9a-hjkmnp-tv-z]{26}$",
               "type": "string",
-              "x-aex-id": "organization"
-            }
-          },
-          {
-            "description": "The issued statement.",
-            "in": "path",
-            "name": "statementId",
-            "required": true,
-            "schema": {
-              "pattern": "^stm_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "statement"
+              "x-aex-id": "payment_method"
             }
           }
         ],
         "requestBody": null,
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Statement"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Read one immutable issued statement.",
-        "tags": [
-          "billing"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "none",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "not_found"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "billing:read",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/organizations/{organizationId}/billing/statements/{statementId}/downloads": {
-      "post": {
-        "operationId": "billing_statement_download_create",
-        "parameters": [
-          {
-            "description": "The organization the request is scoped to.",
-            "in": "path",
-            "name": "organizationId",
-            "required": true,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          },
-          {
-            "description": "The issued statement.",
-            "in": "path",
-            "name": "statementId",
-            "required": true,
-            "schema": {
-              "pattern": "^stm_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "statement"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:EmptyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:DownloadGrant"
-                }
-              }
-            },
-            "description": "Success."
+          "204": {
+            "description": "Success with no body."
           },
           "401": {
             "content": {
@@ -4560,45 +2010,45 @@
               }
             },
             "description": "Error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
           }
         },
-        "summary": "Mint a download grant for an issued statement.",
+        "summary": "Detach a card owned by the caller's account.",
         "tags": [
           "billing"
         ],
         "x-aex-alt-principal": null,
-        "x-aex-body-class": "aex_json",
+        "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",
           "forbidden",
           "insufficient_scope",
           "not_found",
-          "idempotency_conflict"
+          "idempotency_conflict",
+          "resource_conflict",
+          "upstream_error"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
         "x-aex-pause-exempt": true,
         "x-aex-safe-retry": false,
-        "x-aex-scope": "billing:read",
+        "x-aex-scope": "billing:write",
         "x-aex-transport": "unary"
       }
     },
-    "/api/organizations/{organizationId}/billing/top-up-checkouts": {
+    "/api/billing/top-up-checkouts": {
       "post": {
         "operationId": "billing_top_up_checkout_create",
-        "parameters": [
-          {
-            "description": "The organization the request is scoped to.",
-            "in": "path",
-            "name": "organizationId",
-            "required": true,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          }
-        ],
+        "parameters": [],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4681,7 +2131,7 @@
             "description": "Error."
           }
         },
-        "summary": "Create a hosted top-up checkout.",
+        "summary": "Create a one-time Stripe-hosted prepaid top-up checkout.",
         "tags": [
           "billing"
         ],
@@ -4704,255 +2154,9 @@
         "x-aex-transport": "unary"
       }
     },
-    "/api/organizations/{organizationId}/invitations": {
-      "post": {
-        "operationId": "invitation_create",
-        "parameters": [
-          {
-            "description": "The organization the request is scoped to.",
-            "in": "path",
-            "name": "organizationId",
-            "required": true,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:InvitationCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Invitation"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Invite a person to the organization.",
-        "tags": [
-          "organizations"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "not_found",
-          "idempotency_conflict",
-          "idempotency_in_flight",
-          "invalid_request",
-          "limit_exceeded",
-          "resource_conflict",
-          "commit_outcome_unknown"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "idempotency_key",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": "memberships:write",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/organizations/{organizationId}/memberships": {
+    "/api/billing/transactions": {
       "get": {
-        "operationId": "memberships_list",
-        "parameters": [
-          {
-            "description": "The organization the request is scoped to.",
-            "in": "path",
-            "name": "organizationId",
-            "required": true,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
-            }
-          },
-          {
-            "description": "Opaque continuation token.",
-            "in": "query",
-            "name": "cursor",
-            "required": false,
-            "schema": {
-              "maxLength": 4096,
-              "type": "string",
-              "x-aex-cursor": true
-            }
-          },
-          {
-            "description": "Page size.",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "maximum": 1000,
-              "minimum": 1,
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": null,
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:MembershipPage"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "List the memberships of an organization.",
-        "tags": [
-          "organizations"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "none",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "not_found",
-          "invalid_cursor"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "memberships:read",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/workspaces": {
-      "get": {
-        "operationId": "workspaces_list",
+        "operationId": "billing_transactions_list",
         "parameters": [
           {
             "description": "Opaque continuation token.",
@@ -4966,25 +2170,14 @@
             }
           },
           {
-            "description": "Page size.",
+            "description": "Page size; defaults to 25.",
             "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
-              "maximum": 1000,
+              "maximum": 100,
               "minimum": 1,
               "type": "integer"
-            }
-          },
-          {
-            "description": "Restrict to one organization.",
-            "in": "query",
-            "name": "organizationId",
-            "required": false,
-            "schema": {
-              "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "organization"
             }
           }
         ],
@@ -4994,7 +2187,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "aex:schema:WorkspacePage"
+                  "$ref": "aex:schema:BillingTransactionPage"
                 }
               }
             },
@@ -5031,375 +2224,241 @@
             "description": "Error."
           }
         },
-        "summary": "List workspaces the caller can reach.",
+        "summary": "List immutable prepaid ledger transactions, newest first.",
         "tags": [
-          "workspaces"
+          "billing"
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",
+          "forbidden",
           "insufficient_scope",
           "invalid_cursor"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "workspaces:read",
-        "x-aex-transport": "unary"
-      },
-      "post": {
-        "operationId": "workspace_create",
-        "parameters": [],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:WorkspaceCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Workspace"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "502": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Create a region-pinned workspace.",
-        "tags": [
-          "workspaces"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "idempotency_conflict",
-          "idempotency_in_flight",
-          "invalid_request",
-          "limit_exceeded",
-          "resource_conflict",
-          "upstream_error",
-          "workspace_provision_pending",
-          "commit_outcome_unknown"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "idempotency_key",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": "workspaces:write",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/workspaces/{workspaceId}": {
-      "get": {
-        "operationId": "workspace_get",
-        "parameters": [
-          {
-            "description": "The workspace the request is scoped to.",
-            "in": "path",
-            "name": "workspaceId",
-            "required": true,
-            "schema": {
-              "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "workspace"
-            }
-          }
-        ],
-        "requestBody": null,
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Workspace"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "410": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Read one workspace.",
-        "tags": [
-          "workspaces"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "none",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "not_found",
-          "gone"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": true,
-        "x-aex-scope": "workspaces:read",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/workspaces/{workspaceId}/deletions": {
-      "post": {
-        "operationId": "workspace_delete",
-        "parameters": [
-          {
-            "description": "The workspace the request is scoped to.",
-            "in": "path",
-            "name": "workspaceId",
-            "required": true,
-            "schema": {
-              "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "workspace"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:WorkspaceDeleteRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Operation"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "410": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Admit the global workspace-deletion operation.",
-        "tags": [
-          "workspaces"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "aex_json",
-        "x-aex-errors": [
-          "unauthenticated",
-          "forbidden",
-          "insufficient_scope",
-          "not_found",
-          "gone",
-          "idempotency_in_flight",
-          "operation_idempotency_conflict",
-          "invalid_request",
-          "deletion_in_progress",
-          "resource_conflict",
-          "commit_outcome_unknown"
-        ],
-        "x-aex-etag": "none",
-        "x-aex-idempotency": "operation_id",
         "x-aex-pause-exempt": true,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": "workspaces:delete",
+        "x-aex-safe-retry": true,
+        "x-aex-scope": "billing:read",
+        "x-aex-transport": "unary"
+      }
+    },
+    "/api/billing/usage": {
+      "get": {
+        "operationId": "billing_usage_get",
+        "parameters": [
+          {
+            "description": "Restrict to one rated category.",
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "$ref": "aex:schema:BillingUsageCategory"
+            }
+          },
+          {
+            "description": "Opaque continuation token.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "maxLength": 4096,
+              "type": "string",
+              "x-aex-cursor": true
+            }
+          },
+          {
+            "description": "Inclusive service-time lower bound.",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+              "type": "string",
+              "x-aex-time": "rfc3339-ms"
+            }
+          },
+          {
+            "description": "Page size; defaults to 25.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Restrict to one session.",
+            "in": "query",
+            "name": "sessionId",
+            "required": false,
+            "schema": {
+              "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+              "type": "string",
+              "x-aex-id": "session"
+            }
+          },
+          {
+            "description": "Exclusive service-time upper bound.",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+              "type": "string",
+              "x-aex-time": "rfc3339-ms"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:BillingUsagePage"
+                }
+              }
+            },
+            "description": "Success."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          }
+        },
+        "summary": "Read bounded rated usage and its settlement coverage.",
+        "tags": [
+          "billing"
+        ],
+        "x-aex-alt-principal": null,
+        "x-aex-body-class": "none",
+        "x-aex-errors": [
+          "unauthenticated",
+          "forbidden",
+          "insufficient_scope",
+          "invalid_request",
+          "invalid_cursor",
+          "usage_coverage_gap"
+        ],
+        "x-aex-etag": "none",
+        "x-aex-idempotency": "none",
+        "x-aex-pause-exempt": true,
+        "x-aex-safe-retry": true,
+        "x-aex-scope": "billing:read",
+        "x-aex-transport": "unary"
+      }
+    },
+    "/api/bootstrap": {
+      "get": {
+        "operationId": "dashboard_bootstrap_get",
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:DashboardBootstrap"
+                }
+              }
+            },
+            "description": "Success."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          }
+        },
+        "summary": "One bounded read that fills the dashboard shell.",
+        "tags": [
+          "bootstrap"
+        ],
+        "x-aex-alt-principal": "user_session",
+        "x-aex-body-class": "none",
+        "x-aex-errors": [
+          "unauthenticated",
+          "forbidden",
+          "insufficient_scope",
+          "account_state_unavailable"
+        ],
+        "x-aex-etag": "none",
+        "x-aex-idempotency": "none",
+        "x-aex-pause-exempt": true,
+        "x-aex-safe-retry": true,
+        "x-aex-scope": "account:read",
         "x-aex-transport": "unary"
       }
     }
   },
   "security": [
     {
-      "accountToken": []
+      "dashboardSession": []
     }
   ],
   "servers": [

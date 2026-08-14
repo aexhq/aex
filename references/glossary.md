@@ -9,7 +9,7 @@ keywords:
   - telemetry
 audience: contributors and implementation agents
 status: accepted
-last_verified: 2026-08-11
+last_verified: 2026-08-14
 related:
   - references/architecture.md
   - references/repo.md
@@ -26,8 +26,8 @@ page explains their terms without creating a second contract.
 ### session
 
 The customer-facing conversation and execution resource. A session accepts one
-user message at a time, may accept later messages, and owns at most one retained
-provider generation. There is no public run or turn resource.
+user message at a time, may accept later messages, and may own one retained
+sandbox generation. There is no public run or turn resource.
 
 ### message
 
@@ -43,20 +43,19 @@ a separate public run identity.
 
 ### operation
 
-A durable record for a long-running mutation such as cancellation, manual
-suspend/resume, termination, session deletion, telemetry export, or workspace
-deletion. The caller mints its `op_` UUIDv7 replay identity with
-`newId("operation")`.
+A caller-minted `op_` UUIDv7 correlation and replay identity for asynchronous
+session cancellation, termination, or deletion. There is no generic operations
+resource or operation list/get API.
 
 ### generation
 
-The exact provider MicroVM retained by a session. It has a hard eight-hour
-lifetime from launch, may suspend and resume without changing identity, and is
-never reconstructed after loss.
+The exact sandbox MicroVM incarnation retained by a session when sandboxing is
+enabled. It shares the session's hard eight-hour lifetime, may suspend and
+resume without changing identity, and is never reconstructed after loss.
 
 ### termination
 
-Permanent destruction of the session's compute and generation-local live files.
+Permanent destruction of the session's sandbox compute and sandbox-local files.
 Session metadata, sealed messages, accounting, and telemetry remain until a
 separate deletion.
 
@@ -69,20 +68,37 @@ restore, or recovery window.
 ### subagent
 
 An agent orchestrated recursively inside one customer session. It shares the
-session generation and lifetime and is not an independent public session or run.
+session lifetime and is not an independent public session or run. The root is
+depth 0, children may reach depth 3, and at most 12 non-root identities may be
+allocated over the session lifetime.
+
+### checkpoint
+
+An internal immutable S3 context snapshot used to hydrate durable Brain state
+after activation. Checkpoints are session-scoped correctness data, not public
+versions or a sandbox snapshot, and session deletion removes them.
 
 ## Workspace and content terms
 
 ### workspace
 
-The tenancy and regional boundary for sessions, provider credentials, registered
-files, operations, limits, telemetry, and usage.
+The fixed tenancy and regional boundary for sessions, registered files,
+telemetry, and usage.
 
 ### workspace key
 
 An API key scoped to one workspace. Its value carries the workspace's compact
 region code and indexed key identity alongside the secret; the SDK uses the
-region code to route without a discovery request.
+region code to route without a discovery request. Workspace keys authorize only
+the 19 regional session and file routes.
+
+### dashboard session
+
+The browser credential returned by the central OAuth exchange. It authorizes
+authenticated central bootstrap, API-key, and essential billing calls and is
+distinct from a workspace API key; the SDK never substitutes one credential for
+the other. The OAuth exchange that creates it is the central unauthenticated
+exception.
 
 ### region code
 
@@ -90,16 +106,19 @@ The workspace-key routing value: `use1`, `use2`, `usw2`, `apne1`, or `euw1`.
 
 ### registered workspace file
 
-One durable opaque value addressed by an exact, case-sensitive name. A session
-selects exact revisions at creation and receives copies in its MicroVM. Guidance,
-skills, tool material, instructions, or MCP configuration may be ordinary files;
-they are not separate typed registries.
+One latest-only durable opaque value addressed by an exact, case-sensitive name.
+Inline bytes, an HTTPS URL, or a direct upload may replace its current value; no
+prior value can be listed, selected, or restored. A session resolves selected
+names at creation and freezes their current content into its sandbox mount.
+Guidance, skills, tool material, instructions, images, PDFs, video, or other
+arbitrary bytes may be ordinary files; they are not separate typed registries.
 
-### live file
+### sandbox file
 
-A file in the session's exact retained generation. Live list, stat, upload, and
-download may resume a suspended generation. The file is not persisted or
-snapshotted and is lost with termination, expiry, or runtime loss.
+A file inside the session's optional sandbox. There is no public live-file CRUD
+API. The model reaches sandbox files through built-in tools or Bash; a large tool
+result is also written to a stable call-scoped path. `storage.persist` can
+overwrite a named registered workspace file through trusted Tool Mux code.
 
 ### content hash
 
@@ -114,17 +133,18 @@ Possession authorizes access until expiry, so callers must not log or forward it
 
 ## Configuration terms
 
-### provider credential
+### provider API key
 
-A dedicated encrypted, write-only BYOK binding. Session creation pins one exact
-credential; the platform neither supplies a managed model key nor guesses among
-bindings.
+A write-only BYOK value supplied during session creation, encrypted for that
+session, and never returned. There is no reusable provider-credential resource;
+the platform neither supplies a managed model key nor guesses among bindings.
 
 ### provider and model
 
 The explicit direct BYOK provider and exact provider-native model id admitted
-by the compiled models.dev catalog. Arbitrary provider base URLs are not
-accepted.
+by the current compiled models.dev catalog through Rig. Candidate official
+families are OpenAI, Anthropic, DeepSeek, xAI, Meta, Moonshot AI, and Alibaba;
+arbitrary provider base URLs are not accepted.
 
 ### compute size
 
@@ -133,33 +153,39 @@ CPU, peak memory, disk, bandwidth, and connection limits are observable facts.
 
 ### Hands
 
-The untrusted tool-execution side of a session MicroVM. Its raw network policy
-is `none` or `public_internet`. The launch built-in model tools are exactly
-`read_file`, `edit_file`, `write_file`, and Bash.
+The one optional untrusted tool-execution sandbox for a session. It is enabled
+by default, prepared eagerly, and suspended when ready and unused. Its raw
+network policy is `none` or `public_internet`. The launch built-in model tools
+are `read_file`, `edit_file`, `write_file`, Bash, and `storage.persist` (wire
+name `storage_persist`); Tool Mux also exposes qualified remote and sandbox MCP
+tools.
 
 ### resolved configuration
 
-The immutable provider/model/credential binding, qualified catalog revision,
-compute and network policy, selected registered files, packages, and lifecycle
-policy returned for a session. It contains no public approval policy or generic
-secret binding.
+The immutable provider/model binding, sandbox compute and network policy,
+selected registered-file names, packages, MCP server names, and lifecycle and
+subagent bounds returned for a session. It omits plaintext credentials, private
+content hashes, and any public catalog revision.
 
 ## Observation terms
 
 ### telemetry
 
-The durable typed observation surface for events, logs, spans, metrics, traces,
-and combined queries. It is independent of ephemeral session execution state.
+The typed per-session observation path shared by assistant previews, tool and
+runtime events, OpenTelemetry logs and traces, usage, gaps, and heartbeats. It is
+streamed live and retained as compressed immutable S3 segments for bounded
+replay and download.
 
 ### gap
 
 An explicit record that admitted telemetry is incomplete. Callers can require
 completeness rather than silently accepting missing observations.
 
-### export
+### telemetry download
 
-A durable operation that prepares a bounded telemetry extract. Export creation
-and its short-lived download grant are separate actions.
+A short-lived integrity-bound grant for retained telemetry bytes. Live stream,
+bounded replay, and download are separate session routes; there is no generic
+export or operations resource.
 
 ## Deployment and release terms
 

@@ -3,11 +3,9 @@
 //! # What this is
 //!
 //! One ECS Fargate service behind an Application Load Balancer, serving the
-//! twenty-six mounted central operations that `central-control-api`,
-//! `central-identity-api` and `finance-api` served as three Lambda deployables
-//! behind an API Gateway. It is a **composition root only**: every handler, every
-//! port and every adapter it uses belongs to one of those three crates, which is
-//! why they now have library targets.
+//! the finite identity, personal-workspace control, and essential prepaid
+//! billing operations. Their handlers live here as narrow modules rather than
+//! surviving as dormant deployable-shaped packages.
 //!
 //! # The one thing that is genuinely new
 //!
@@ -43,24 +41,27 @@
 //! issuer — the half the five regional edges invoke — is untouched; only its
 //! gateway-authorizer half becomes unnecessary.
 
+pub mod billing;
 pub mod config;
+pub mod control;
+pub mod identity;
+pub mod identity_oauth;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use aex_central_http::capability::{
     AuthorizationRead, Capability as _, CapabilityBinding, CompositionError, CompositionManifest,
-    ControlWrite, Declares, FinanceRead, IdentityWrite, PaymentCommandInvoke,
-    RegionalControlInvoke, SignInHandshake, StatementRead,
+    ControlWrite, Declares, FinanceRead, IdentityWrite, PaymentCommandInvoke, SignInHandshake,
 };
 use aex_central_http::health::{Dependency, Readiness};
 use aex_central_http::router::{
     EdgeStack, mount_api_keys_api, mount_auth_api, mount_billing_api, mount_bootstrap_api,
-    mount_central_operations_api, mount_identity_api, mount_organizations_api,
-    mount_workspaces_api,
 };
 use aex_wire::server::{AuthApi, BillingApi};
-use central_control_api::ControlApi;
+/// The complete launch control API authority.
+pub trait ControlApi: aex_wire::server::ApiKeysApi + aex_wire::server::BootstrapApi {}
+impl<T> ControlApi for T where T: aex_wire::server::ApiKeysApi + aex_wire::server::BootstrapApi {}
 
 pub use config::{Config, DEPLOYABLE};
 
@@ -86,9 +87,7 @@ impl Declares<ControlWrite> for Composition {}
 impl Declares<FinanceRead> for Composition {}
 impl Declares<IdentityWrite> for Composition {}
 impl Declares<PaymentCommandInvoke> for Composition {}
-impl Declares<RegionalControlInvoke> for Composition {}
 impl Declares<SignInHandshake> for Composition {}
-impl Declares<StatementRead> for Composition {}
 
 /// The manifest the start-up check runs against.
 #[must_use]
@@ -101,9 +100,7 @@ pub fn manifest() -> CompositionManifest {
             FinanceRead::ID,
             IdentityWrite::ID,
             PaymentCommandInvoke::ID,
-            RegionalControlInvoke::ID,
             SignInHandshake::ID,
-            StatementRead::ID,
         ]),
         bindings: vec![
             // The cluster is the address and the secret is the login, and one
@@ -123,11 +120,8 @@ pub fn manifest() -> CompositionManifest {
             // `SignInHandshake` rather than to `IdentityWrite`, because holding a
             // credential that speaks as AEX at somebody else's authority is a
             // different right from writing this platform's own identity rows.
-            CapabilityBinding::resource(config::GOOGLE_OAUTH_SECRET_ID, SignInHandshake::ID),
             CapabilityBinding::resource(config::GITHUB_OAUTH_SECRET_ID, SignInHandshake::ID),
-            CapabilityBinding::resource(config::REGIONAL_FUNCTION_ARNS, RegionalControlInvoke::ID),
             CapabilityBinding::arn(config::STRIPE_COMMAND_EDGE_ARN, PaymentCommandInvoke::ID),
-            CapabilityBinding::resource(config::STATEMENT_BUCKET, StatementRead::ID),
         ],
     }
 }
@@ -144,7 +138,6 @@ pub const PERMISSIONS: &[&str] = &[
     "rds-data:RollbackTransaction",
     "secretsmanager:GetSecretValue",
     "lambda:InvokeFunction",
-    "s3:GetObject",
 ];
 
 /// What each start-up probe answered.
@@ -247,11 +240,10 @@ pub enum CentralApiRunError {
 /// bound, because they are genuinely three authorities over three schemas: a
 /// single bound would let a composition satisfy the billing half with the
 /// control store.
-pub fn app<C, A, B, I>(
+pub fn app<C, A, B>(
     control: Arc<C>,
     auth: Arc<A>,
     billing: Arc<B>,
-    account: Arc<I>,
     edge: EdgeStack,
     readiness: Readiness,
 ) -> axum::Router
@@ -259,19 +251,11 @@ where
     C: ControlApi,
     A: AuthApi,
     B: BillingApi,
-    I: aex_wire::server::IdentityApi,
 {
     aex_central_http::health::router(readiness)
         .merge(mount_api_keys_api(Arc::clone(&control), edge.clone()))
-        .merge(mount_bootstrap_api(Arc::clone(&control), edge.clone()))
-        .merge(mount_central_operations_api(
-            Arc::clone(&control),
-            edge.clone(),
-        ))
-        .merge(mount_organizations_api(Arc::clone(&control), edge.clone()))
-        .merge(mount_workspaces_api(control, edge.clone()))
+        .merge(mount_bootstrap_api(control, edge.clone()))
         .merge(mount_auth_api(auth, edge.clone()))
-        .merge(mount_identity_api(account, edge.clone()))
         .merge(mount_billing_api(billing, edge))
         .merge(aex_central_http::mount_deferred(DEPLOYABLE))
 }
@@ -287,8 +271,8 @@ mod tests {
     #[test]
     fn the_merged_deployable_declares_every_group_it_must_serve() {
         assert_eq!(DEPLOYABLE, CentralServiceId::CentralApi);
-        assert_eq!(DEPLOYABLE.groups().len(), 8);
-        assert_eq!(DEPLOYABLE.routes().len(), 31);
+        assert_eq!(DEPLOYABLE.groups().len(), 4);
+        assert_eq!(DEPLOYABLE.routes().len(), 13);
     }
 
     #[test]

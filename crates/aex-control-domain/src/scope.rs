@@ -1,15 +1,10 @@
 //! The one scope vocabulary.
 //!
-//! [`Scope`] is `aex_wire::scopes::ScopeId` — the generated 25-entry registry —
+//! [`Scope`] is `aex_wire::scopes::ScopeId` — the generated launch registry —
 //! re-exported rather than redefined. This module adds the *set* algebra the
 //! authorization decision needs: a `u64` bitset whose bit `n` is
 //! `ScopeId::ALL[n]`, which makes an intersection one instruction and makes the
-//! assertion envelope's `scopes` field a fixed eight bytes.
-//!
-//! The system this replaces carried three disjoint scope vocabularies — 17
-//! workspace scopes, 8 account scopes and 28 route-descriptor scopes — that
-//! overlapped only on `billing:read`. That is why a dashboard-minted account
-//! token `403`s on organizations, memberships and API keys today. There is one
+//! assertion envelope's `scopes` field a fixed eight bytes. There is one
 //! vocabulary here and the compiler enforces it.
 
 use aex_wire::scopes::ScopeId;
@@ -18,13 +13,13 @@ use aex_wire::scopes::ScopeId;
 pub type Scope = ScopeId;
 
 /// How many scopes the registry holds, as a shift width.
-const REGISTRY_LEN: u32 = 25;
+const REGISTRY_LEN: u32 = 11;
 
 /// The registry is a `u64` bitset, so it can never exceed 64 entries.
 const _: () = assert!(ScopeId::ALL.len() <= 64);
 const _: () = assert!(ScopeId::ALL.len() == REGISTRY_LEN as usize);
 /// The launch registry size, asserted so an added scope is a visible diff.
-const _: () = assert!(ScopeId::ALL.len() == 25);
+const _: () = assert!(ScopeId::ALL.len() == 11);
 
 /// Why a scope list was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -78,58 +73,33 @@ impl ScopeSet {
     pub const CENTRAL: Self = Self::of(&[
         Scope::AccountRead,
         Scope::AccountWrite,
-        Scope::OrganizationsRead,
-        Scope::OrganizationsWrite,
-        Scope::MembershipsRead,
-        Scope::MembershipsWrite,
-        Scope::MembershipsAccept,
-        Scope::WorkspacesRead,
-        Scope::WorkspacesWrite,
-        Scope::WorkspacesDelete,
         Scope::ApiKeysRead,
         Scope::ApiKeysWrite,
         Scope::BillingRead,
         Scope::BillingWrite,
-        Scope::OperationsRead,
-        Scope::OperationsWrite,
     ]);
 
     /// Every scope a regional edge can be asked for.
     pub const REGIONAL: Self = Self::of(&[
-        Scope::WorkspaceRead,
         Scope::SessionsRead,
         Scope::SessionsWrite,
         Scope::SessionsDelete,
-        Scope::FilesLive,
         Scope::ResourcesRead,
         Scope::ResourcesWrite,
-        Scope::ProviderCredentialsRead,
-        Scope::ProviderCredentialsWrite,
     ]);
 
     /// The ceiling on what a workspace API key may ever carry.
     ///
     /// The regional set plus the four central scopes a workspace-scoped
-    /// credential legitimately needs. A key can never hold `organizations:*`,
-    /// `memberships:*`, `api_keys:*`, `workspaces:write`, `workspaces:delete` or
-    /// `billing:write`, no matter what a request asks for.
-    pub const WORKSPACE_KEY_MINTABLE: Self = Self(
-        Self::REGIONAL.0
-            | Self::of(&[
-                Scope::AccountRead,
-                Scope::BillingRead,
-                Scope::OperationsRead,
-                Scope::OperationsWrite,
-                Scope::WorkspacesRead,
-            ])
-            .0,
-    );
+    /// credential legitimately needs. A key can never hold account, API-key or
+    /// billing scopes, no matter what a request asks for.
+    pub const WORKSPACE_KEY_MINTABLE: Self = Self::REGIONAL;
 
     /// Every central scope: an organization owner.
     pub const OWNER: Self = Self::CENTRAL;
 
     /// An owner minus the irreversible one.
-    pub const ADMIN: Self = Self(Self::CENTRAL.0 & !bit(Scope::WorkspacesDelete));
+    pub const ADMIN: Self = Self::CENTRAL;
 
     /// The read-mostly member role.
     ///
@@ -137,21 +107,8 @@ impl ScopeSet {
     /// only on invitations already addressed to the caller's own verified
     /// email, so the weakest role must carry it — the person redeeming an
     /// invitation is not yet a member of the inviting organization at all.
-    pub const MEMBER: Self = Self::of(&[
-        Scope::AccountRead,
-        // Deciding your own device login and closing your own browser session
-        // are personal acts, not organization ones. The weakest role holds them
-        // for the same reason it holds `account:read`: withholding them would
-        // mean a member could sign in and never finish signing in.
-        Scope::AccountWrite,
-        Scope::OrganizationsRead,
-        Scope::MembershipsRead,
-        Scope::MembershipsAccept,
-        Scope::WorkspacesRead,
-        Scope::BillingRead,
-        Scope::OperationsRead,
-        Scope::OperationsWrite,
-    ]);
+    pub const MEMBER: Self =
+        Self::of(&[Scope::AccountRead, Scope::AccountWrite, Scope::BillingRead]);
 
     /// Every scope a browser session may exercise, **derived from the
     /// contract**.
@@ -353,17 +310,13 @@ mod tests {
     }
 
     #[test]
-    fn the_mintable_ceiling_excludes_every_organization_scope() {
+    fn the_mintable_ceiling_is_exactly_the_regional_scope_set() {
         for scope in [
-            Scope::OrganizationsRead,
-            Scope::OrganizationsWrite,
-            Scope::MembershipsRead,
-            Scope::MembershipsWrite,
-            Scope::MembershipsAccept,
+            Scope::AccountRead,
+            Scope::AccountWrite,
             Scope::ApiKeysRead,
             Scope::ApiKeysWrite,
-            Scope::WorkspacesWrite,
-            Scope::WorkspacesDelete,
+            Scope::BillingRead,
             Scope::BillingWrite,
         ] {
             assert!(
@@ -371,39 +324,22 @@ mod tests {
                 "a workspace key may never carry {scope}"
             );
         }
-        assert!(ScopeSet::WORKSPACE_KEY_MINTABLE.contains_all(ScopeSet::REGIONAL));
-        for scope in [
-            Scope::AccountRead,
-            Scope::BillingRead,
-            Scope::OperationsRead,
-            Scope::OperationsWrite,
-            Scope::WorkspacesRead,
-        ] {
+        assert_eq!(ScopeSet::WORKSPACE_KEY_MINTABLE, ScopeSet::REGIONAL);
+        for scope in ScopeSet::REGIONAL.iter() {
             assert!(ScopeSet::WORKSPACE_KEY_MINTABLE.contains(scope), "{scope}");
         }
     }
 
     #[test]
-    fn admin_is_owner_minus_exactly_one_scope() {
-        assert_eq!(
-            ScopeSet::OWNER.difference(ScopeSet::ADMIN),
-            ScopeSet::of(&[Scope::WorkspacesDelete])
-        );
-        assert!(ScopeSet::OWNER.contains_all(ScopeSet::ADMIN));
+    fn owner_and_admin_share_the_current_central_ceiling() {
+        assert_eq!(ScopeSet::OWNER, ScopeSet::CENTRAL);
+        assert_eq!(ScopeSet::ADMIN, ScopeSet::CENTRAL);
         assert!(ScopeSet::ADMIN.contains_all(ScopeSet::MEMBER));
     }
 
     #[test]
-    fn a_member_can_never_write_an_organization_or_a_key() {
-        for scope in [
-            Scope::OrganizationsWrite,
-            Scope::MembershipsWrite,
-            Scope::WorkspacesWrite,
-            Scope::WorkspacesDelete,
-            Scope::ApiKeysRead,
-            Scope::ApiKeysWrite,
-            Scope::BillingWrite,
-        ] {
+    fn a_member_can_never_manage_keys_or_billing() {
+        for scope in [Scope::ApiKeysRead, Scope::ApiKeysWrite, Scope::BillingWrite] {
             assert!(!ScopeSet::MEMBER.contains(scope), "{scope}");
         }
     }
@@ -461,10 +397,10 @@ mod tests {
 
     #[test]
     fn the_wire_set_carries_the_same_scopes() {
-        let set = ScopeSet::of(&[Scope::FilesLive, Scope::AccountRead]);
+        let set = ScopeSet::of(&[Scope::ResourcesRead, Scope::AccountRead]);
         let wire = set.to_wire();
         assert_eq!(wire.len(), 2);
-        assert!(wire.contains(Scope::FilesLive));
+        assert!(wire.contains(Scope::ResourcesRead));
         assert!(wire.contains(Scope::AccountRead));
     }
 }

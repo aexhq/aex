@@ -25,7 +25,6 @@ scenarios = []
 
 [package.metadata.aex.targets]
 properties = "unit"
-authorization = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
@@ -48,7 +47,3 @@ proptest.workspace = true
 [[test]]
 name = "properties"
 path = "tests/properties.rs"
-
-[[test]]
-name = "authorization"
-path = "tests/authorization.rs"

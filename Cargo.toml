@@ -64,40 +64,21 @@ members = [
     "crates/aex-session-telemetry-aws",
     "crates/aex-tool-mux",
     "crates/aex-usage-app",
-    "crates/aex-usage-authority-dynamodb",
-    "crates/aex-usage-compute-dynamodb",
     "crates/aex-usage-domain",
     "crates/aex-usage-query-dynamodb",
     "crates/aex-usage-rating",
-    "crates/aex-usage-storage-dynamodb",
-    "crates/aex-usage-transfer-dynamodb",
     "crates/aex-wire",
     "crates/aex-work-dynamodb",
     "crates/aex-workspace-domain",
     "services/central-api",
-    "services/central-authz",
-    "services/central-control-api",
-    "services/central-identity-api",
-    "services/finance-api",
     "services/finance-ingest",
     "services/session-stream-api",
-    "services/tool-executor",
     "services/tool-mux",
     "workers/central-control-worker",
     "workers/central-schema-admin",
-    "workers/content-lifecycle-worker",
-    "workers/finance-reconcile",
-    "workers/finance-settlement-worker",
-    "workers/provider-cost-reconciler",
-    "workers/regional-capacity-controller",
-    "workers/regional-control",
-    "workers/regional-secret-key-admin",
+    "workers/file-ingest-worker",
     "workers/runtime-control-worker",
     "workers/session-operation-worker",
-    "workers/usage-compute-worker",
-    "workers/usage-receipt-dispatcher",
-    "workers/usage-storage-worker",
-    "workers/usage-transfer-worker",
     "runtimes/brain-mux",
     "runtimes/hands-agent",
     "runtimes/hands-image",
@@ -106,35 +87,18 @@ members = [
     "tools/aex-release-tool",
     "tools/aex-workspace-check",
     "tests/live/aex-live-brain-mux",
-    "tests/live/aex-live-central-api",
-    "tests/live/aex-live-central-authz",
-    "tests/live/aex-live-central-control-api",
-    "tests/live/aex-live-central-control-worker",
-    "tests/live/aex-live-central-identity-api",
-    "tests/live/aex-live-central-schema-admin",
-    "tests/live/aex-live-content-lifecycle-worker",
+    "tests/live/aex-live-control-api",
+    "tests/live/aex-live-control-projection-worker",
     "tests/live/aex-live-dashboard",
-    "tests/live/aex-live-finance-api",
-    "tests/live/aex-live-finance-ingest",
-    "tests/live/aex-live-finance-reconcile",
-    "tests/live/aex-live-finance-settlement-worker",
+    "tests/live/aex-live-billing-worker",
     "tests/live/aex-live-hands-agent",
     "tests/live/aex-live-hands-image",
-    "tests/live/aex-live-provider-cost-reconciler",
-    "tests/live/aex-live-regional-capacity-controller",
-    "tests/live/aex-live-regional-control",
-    "tests/live/aex-live-regional-secret-key-admin",
-    "tests/live/aex-live-session-stream-api",
+    "tests/live/aex-live-session-api",
     "tests/live/aex-live-runtime-control-worker",
     "tests/live/aex-live-tool-mux",
-    "tests/live/aex-live-session-operation-worker",
+    "tests/live/aex-live-session-maintenance-worker",
     "tests/live/aex-live-site",
-    "tests/live/aex-live-stripe-command-edge",
     "tests/live/aex-live-stripe-webhook-edge",
-    "tests/live/aex-live-usage-compute-worker",
-    "tests/live/aex-live-usage-receipt-dispatcher",
-    "tests/live/aex-live-usage-storage-worker",
-    "tests/live/aex-live-usage-transfer-worker",
     "tests/support/aex-scenarios",
     "tests/support/aex-test-harness",
     "tests/load/aex-load-harness",
@@ -232,13 +196,14 @@ aws-smithy-http-client = { version = "1.2.0", features = ["test-util"] }
 # --- serialization and schema ------------------------------------------------
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+serde_dynamo = "4.3.0"
 serde_norway = "0.9.42"
 jsonschema = { version = "0.49.2", default-features = false, features = ["resolve-file"] }
 html5ever = "0.39.0"
 encoding_rs = "0.8.35"
 prost = "0.14.4"
 prost-types = "0.14.4"
-opentelemetry-proto = { version = "0.32.0", default-features = false, features = ["gen-tonic-messages", "logs"] }
+opentelemetry-proto = { version = "0.32.0", default-features = false, features = ["gen-tonic-messages", "logs", "trace"] }
 toml = "1.1.4"
 
 # --- PostgreSQL (schema admin only; runtime Lambdas use aex-rds-data) --------
@@ -284,7 +249,7 @@ secrecy = { version = "0.10.3", features = ["serde"] }
 rustix = { version = "1.1.4", default-features = false, features = ["std", "time", "process", "thread"] }
 
 # --- protocol adapters -------------------------------------------------------
-rmcp = { version = "=3.1.0", default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
+rmcp = { version = "=3.1.0", default-features = false, features = ["client"] }
 
 # --- deterministic archive packaging (aex-release-tool only) -----------------
 # The release tool writes ZIP and tar.gz archives itself rather than delegating
@@ -292,6 +257,7 @@ rmcp = { version = "=3.1.0", default-features = false, features = ["client", "tr
 # metadata that `cargo lambda --output-format zip` does not guarantee. Only the
 # DEFLATE stream is borrowed; every header field is written explicitly.
 flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
+zstd = "0.13.3"
 brotli = "8.0.4"
 
 # --- general utilities -------------------------------------------------------

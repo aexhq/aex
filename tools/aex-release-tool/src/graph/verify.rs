@@ -321,16 +321,10 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         }
     }
 
-    let expected_microvms: BTreeSet<(String, u32, bool)> = [
-        ("512mb", 512, false),
-        ("1gb", 1_024, false),
-        ("2gb", 2_048, false),
-        ("4gb", 4_096, false),
-        ("8gb", 8_192, false),
-    ]
-    .into_iter()
-    .map(|(variant, memory, browser)| (variant.to_owned(), memory, browser))
-    .collect();
+    let expected_microvms: BTreeSet<(String, u32, bool)> = [("2gb", 2_048, false)]
+        .into_iter()
+        .map(|(variant, memory, browser)| (variant.to_owned(), memory, browser))
+        .collect();
     let actual_microvms: BTreeSet<(String, u32, bool)> = inputs
         .units
         .units
@@ -350,7 +344,7 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         violations.push(Violation::new(
             "microvm-variant-set",
             format!(
-                "MicroVM artifacts must declare exactly the five published non-browser variants; found {actual_microvms:?}"
+                "the session MVP publishes exactly one 2 GiB general-purpose MicroVM image; found {actual_microvms:?}"
             ),
         ));
     }
@@ -1016,12 +1010,12 @@ fn verify_resource_shape(unit: &super::inputs::Unit) -> Vec<Violation> {
                 ),
             )),
             Some(shape) => {
-                if unit.id != format!("hands-image-{}", shape.variant) {
+                if unit.id != "hands-image" {
                     violations.push(Violation::new(
                         "microvm-variant-identity",
                         format!(
-                            "unit `{}` must be named `hands-image-{}` so its artifact identity cannot be relabelled",
-                            unit.id, shape.variant
+                            "unit `{}` must be named `hands-image`; the MVP exposes no size/image selector",
+                            unit.id
                         ),
                     ));
                 }

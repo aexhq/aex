@@ -932,7 +932,7 @@ fn rust_scopes(ir: &ContractIr, digest: &str) -> String {
     source.blank();
     source.doc(
         0,
-        "Every scope a workspace API key or account token can carry. The set is derived from \
+        "Every scope a workspace API key or dashboard session can carry. The set is derived from \
          the route table: a scope this enum lacks is a route change, not a registry change.",
     );
     source.line(

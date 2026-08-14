@@ -4,8 +4,8 @@
 fn the_manifest_declares_its_artifact_and_live_evidence_owner() {
     let manifest = include_str!("../Cargo.toml");
     assert!(manifest.contains("artifact = \"lambda_zip\""));
-    assert!(manifest.contains("deployable = \"central-control-worker\""));
-    assert!(manifest.contains("live_suite = \"aex-live-central-control-worker\""));
+    assert!(manifest.contains("deployable = \"control-projection-worker\""));
+    assert!(manifest.contains("live_suite = \"aex-live-control-projection-worker\""));
 }
 
 #[test]
@@ -13,8 +13,8 @@ fn the_release_registry_declares_this_unit_and_its_lambda_shape() {
     let units = include_str!("../../../release/units.toml");
     let row = units
         .split("[[unit]]")
-        .find(|row| row.contains("id = \"central-control-worker\""))
-        .expect("`central-control-worker` has a unit row");
+        .find(|row| row.contains("id = \"control-projection-worker\""))
+        .expect("`control-projection-worker` has a unit row");
     assert!(
         row.contains("[unit.lambda]"),
         "the Lambda shape is declared"

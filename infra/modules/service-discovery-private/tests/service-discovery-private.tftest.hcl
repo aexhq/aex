@@ -3,7 +3,7 @@ mock_provider "aws" {}
 variables {
   namespace = "aex-dev.internal"
   vpc_id    = "vpc-0123456789abcdef0"
-  services  = ["tool-executor"]
+  services  = ["private-service"]
 }
 
 run "the_namespace_is_private_to_one_vpc" {
@@ -19,12 +19,12 @@ run "every_service_resolves_to_the_addresses_of_its_own_tasks" {
   command = plan
 
   assert {
-    condition     = aws_service_discovery_service.this["tool-executor"].dns_config[0].dns_records[0].type == "A"
+    condition     = aws_service_discovery_service.this["private-service"].dns_config[0].dns_records[0].type == "A"
     error_message = "An `awsvpc` task has its own address, so the record is an A record. An alias would point at a load balancer this service does not have."
   }
 
   assert {
-    condition     = aws_service_discovery_service.this["tool-executor"].dns_config[0].routing_policy == "MULTIVALUE"
+    condition     = aws_service_discovery_service.this["private-service"].dns_config[0].routing_policy == "MULTIVALUE"
     error_message = "A weighted policy hands out one task at a time and pins a long-lived connection pool to whichever answered first."
   }
 }
@@ -63,7 +63,7 @@ run "rejects_two_services_claiming_one_name" {
   command = plan
 
   variables {
-    services = ["tool-executor", "tool-executor"]
+    services = ["private-service", "private-service"]
   }
 
   expect_failures = [var.services]

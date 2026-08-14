@@ -2,40 +2,6 @@
   "routes": [
     {
       "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "account_state_unavailable"
-      ],
-      "etag": "none",
-      "fragment": "identity",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "account_get",
-      "path": "/api/account",
-      "pathParams": [],
-      "pauseExempt": true,
-      "plane": "central",
-      "queryParams": [
-        "organizationId"
-      ],
-      "requestSchema": null,
-      "requiredScope": "account:read",
-      "responseSchema": "AccountOperationalState",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-IDENTITY-ACCOUNT"
-      ],
-      "servedArtifact": "central-identity-api",
-      "servingArtifact": "central-identity-api",
-      "successStatus": 200,
-      "summary": "Read the account and its operational state.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
       "bodyClass": "aex_json",
       "errors": [
         "unauthenticated",
@@ -70,8 +36,8 @@
       "scenarios": [
         "SC-CONTROL-WORKSPACE"
       ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 201,
       "summary": "Mint a workspace API key whose value is returned once.",
       "transport": "unary"
@@ -107,8 +73,8 @@
       "scenarios": [
         "SC-CONTROL-WORKSPACE"
       ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 204,
       "summary": "Revoke a workspace API key.",
       "transport": "unary"
@@ -147,8 +113,8 @@
       "scenarios": [
         "SC-CONTROL-WORKSPACE"
       ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 200,
       "summary": "List workspace API key metadata.",
       "transport": "unary"
@@ -162,80 +128,6 @@
         "insufficient_scope",
         "not_found"
       ],
-      "etag": "returns",
-      "fragment": "billing",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "billing_auto_topup_policy_get",
-      "path": "/api/organizations/{organizationId}/billing/auto-topup-policy",
-      "pathParams": [
-        "organizationId"
-      ],
-      "pauseExempt": true,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "billing:read",
-      "responseSchema": "AutoTopupPolicy",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
-      "successStatus": 200,
-      "summary": "Read the automatic top-up policy.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "not_found",
-        "idempotency_conflict",
-        "invalid_request",
-        "invalid_auto_topup_policy",
-        "payment_method_required",
-        "precondition_failed"
-      ],
-      "etag": "required_if_match",
-      "fragment": "billing",
-      "idempotency": "idempotency_key",
-      "method": "PUT",
-      "operationId": "billing_auto_topup_policy_put",
-      "path": "/api/organizations/{organizationId}/billing/auto-topup-policy",
-      "pathParams": [
-        "organizationId"
-      ],
-      "pauseExempt": true,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": "AutoTopupPolicyRequest",
-      "requiredScope": "billing:write",
-      "responseSchema": "AutoTopupPolicy",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
-      "successStatus": 200,
-      "summary": "Replace the automatic top-up policy.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": "workspace_key",
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "not_found",
-        "invalid_request"
-      ],
       "etag": "none",
       "fragment": "billing",
       "idempotency": "none",
@@ -245,20 +137,55 @@
       "pathParams": [],
       "pauseExempt": true,
       "plane": "central",
-      "queryParams": [
-        "organizationId"
-      ],
+      "queryParams": [],
       "requestSchema": null,
       "requiredScope": "billing:read",
       "responseSchema": "BillingBalance",
       "safeRetry": true,
       "scenarios": [
-        "SC-FINANCE-INVOICE"
+        "SC-BILLING-ESSENTIAL"
       ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 200,
-      "summary": "Read the prepaid balance of an organization.",
+      "summary": "Read the caller's prepaid balance and active reservations.",
+      "transport": "unary"
+    },
+    {
+      "altPrincipal": null,
+      "bodyClass": "none",
+      "errors": [
+        "unauthenticated",
+        "forbidden",
+        "insufficient_scope",
+        "not_found",
+        "idempotency_conflict",
+        "resource_conflict",
+        "upstream_error"
+      ],
+      "etag": "none",
+      "fragment": "billing",
+      "idempotency": "idempotency_key",
+      "method": "DELETE",
+      "operationId": "billing_payment_method_delete",
+      "path": "/api/billing/payment-methods/{paymentMethodId}",
+      "pathParams": [
+        "paymentMethodId"
+      ],
+      "pauseExempt": true,
+      "plane": "central",
+      "queryParams": [],
+      "requestSchema": null,
+      "requiredScope": "billing:write",
+      "responseSchema": null,
+      "safeRetry": false,
+      "scenarios": [
+        "SC-BILLING-ESSENTIAL"
+      ],
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
+      "successStatus": 204,
+      "summary": "Detach a card owned by the caller's account.",
       "transport": "unary"
     },
     {
@@ -277,96 +204,23 @@
       "fragment": "billing",
       "idempotency": "idempotency_key",
       "method": "POST",
-      "operationId": "billing_portal_session_create",
-      "path": "/api/organizations/{organizationId}/billing/portal-sessions",
-      "pathParams": [
-        "organizationId"
-      ],
+      "operationId": "billing_payment_method_session_create",
+      "path": "/api/billing/payment-method-sessions",
+      "pathParams": [],
       "pauseExempt": true,
       "plane": "central",
       "queryParams": [],
-      "requestSchema": "PortalSessionRequest",
+      "requestSchema": "PaymentMethodSessionRequest",
       "requiredScope": "billing:write",
       "responseSchema": "HostedSession",
       "safeRetry": false,
       "scenarios": [
-        "SC-FINANCE-INVOICE"
+        "SC-BILLING-ESSENTIAL"
       ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 201,
-      "summary": "Create a hosted billing portal session.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "not_found",
-        "idempotency_conflict"
-      ],
-      "etag": "none",
-      "fragment": "billing",
-      "idempotency": "idempotency_key",
-      "method": "POST",
-      "operationId": "billing_statement_download_create",
-      "path": "/api/organizations/{organizationId}/billing/statements/{statementId}/downloads",
-      "pathParams": [
-        "organizationId",
-        "statementId"
-      ],
-      "pauseExempt": true,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": "EmptyRequest",
-      "requiredScope": "billing:read",
-      "responseSchema": "DownloadGrant",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
-      "successStatus": 201,
-      "summary": "Mint a download grant for an issued statement.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "not_found"
-      ],
-      "etag": "none",
-      "fragment": "billing",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "billing_statement_get",
-      "path": "/api/organizations/{organizationId}/billing/statements/{statementId}",
-      "pathParams": [
-        "organizationId",
-        "statementId"
-      ],
-      "pauseExempt": true,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "billing:read",
-      "responseSchema": "Statement",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
-      "successStatus": 200,
-      "summary": "Read one immutable issued statement.",
+      "summary": "Create a Stripe-hosted card setup session with explicit consent.",
       "transport": "unary"
     },
     {
@@ -377,34 +231,29 @@
         "forbidden",
         "insufficient_scope",
         "not_found",
-        "invalid_cursor"
+        "upstream_error"
       ],
       "etag": "none",
       "fragment": "billing",
       "idempotency": "none",
       "method": "GET",
-      "operationId": "billing_statements_list",
-      "path": "/api/organizations/{organizationId}/billing/statements",
-      "pathParams": [
-        "organizationId"
-      ],
+      "operationId": "billing_payment_methods_list",
+      "path": "/api/billing/payment-methods",
+      "pathParams": [],
       "pauseExempt": true,
       "plane": "central",
-      "queryParams": [
-        "cursor",
-        "limit"
-      ],
+      "queryParams": [],
       "requestSchema": null,
       "requiredScope": "billing:read",
-      "responseSchema": "StatementSummaryPage",
+      "responseSchema": "PaymentMethodPage",
       "safeRetry": true,
       "scenarios": [
-        "SC-FINANCE-INVOICE"
+        "SC-BILLING-ESSENTIAL"
       ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 200,
-      "summary": "List issued statements, newest first.",
+      "summary": "List card display metadata for the caller's account.",
       "transport": "unary"
     },
     {
@@ -424,10 +273,8 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "billing_top_up_checkout_create",
-      "path": "/api/organizations/{organizationId}/billing/top-up-checkouts",
-      "pathParams": [
-        "organizationId"
-      ],
+      "path": "/api/billing/top-up-checkouts",
+      "pathParams": [],
       "pauseExempt": true,
       "plane": "central",
       "queryParams": [],
@@ -436,47 +283,12 @@
       "responseSchema": "HostedSession",
       "safeRetry": false,
       "scenarios": [
-        "SC-FINANCE-INVOICE"
+        "SC-BILLING-ESSENTIAL"
       ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 201,
-      "summary": "Create a hosted top-up checkout.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "not_found",
-        "operation_not_cancelable"
-      ],
-      "etag": "none",
-      "fragment": "operations",
-      "idempotency": "none",
-      "method": "POST",
-      "operationId": "central_operation_cancel",
-      "path": "/api/operations/{operationId}/cancellations",
-      "pathParams": [
-        "operationId"
-      ],
-      "pauseExempt": true,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": "EmptyRequest",
-      "requiredScope": "operations:write",
-      "responseSchema": "Operation",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
-      "successStatus": 200,
-      "summary": "Request cancellation of a central operation.",
+      "summary": "Create a one-time Stripe-hosted prepaid top-up checkout.",
       "transport": "unary"
     },
     {
@@ -486,31 +298,32 @@
         "unauthenticated",
         "forbidden",
         "insufficient_scope",
-        "not_found"
+        "invalid_cursor"
       ],
       "etag": "none",
-      "fragment": "operations",
+      "fragment": "billing",
       "idempotency": "none",
       "method": "GET",
-      "operationId": "central_operation_get",
-      "path": "/api/operations/{operationId}",
-      "pathParams": [
-        "operationId"
-      ],
+      "operationId": "billing_transactions_list",
+      "path": "/api/billing/transactions",
+      "pathParams": [],
       "pauseExempt": true,
       "plane": "central",
-      "queryParams": [],
+      "queryParams": [
+        "cursor",
+        "limit"
+      ],
       "requestSchema": null,
-      "requiredScope": "operations:read",
-      "responseSchema": "Operation",
+      "requiredScope": "billing:read",
+      "responseSchema": "BillingTransactionPage",
       "safeRetry": true,
       "scenarios": [
-        "SC-CONTROL-WORKSPACE"
+        "SC-BILLING-ESSENTIAL"
       ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 200,
-      "summary": "Read one central durable operation.",
+      "summary": "List immutable prepaid ledger transactions, newest first.",
       "transport": "unary"
     },
     {
@@ -522,36 +335,36 @@
         "insufficient_scope",
         "invalid_request",
         "invalid_cursor",
-        "account_paused",
-        "account_state_unavailable"
+        "usage_coverage_gap"
       ],
       "etag": "none",
-      "fragment": "operations",
+      "fragment": "billing",
       "idempotency": "none",
       "method": "GET",
-      "operationId": "central_operations_list",
-      "path": "/api/operations",
+      "operationId": "billing_usage_get",
+      "path": "/api/billing/usage",
       "pathParams": [],
-      "pauseExempt": false,
+      "pauseExempt": true,
       "plane": "central",
       "queryParams": [
+        "category",
         "cursor",
-        "kind",
+        "from",
         "limit",
-        "organizationId",
-        "status"
+        "sessionId",
+        "to"
       ],
       "requestSchema": null,
-      "requiredScope": "operations:read",
-      "responseSchema": "OperationPage",
+      "requiredScope": "billing:read",
+      "responseSchema": "BillingUsagePage",
       "safeRetry": true,
       "scenarios": [
-        "SC-CONTROL-WORKSPACE"
+        "SC-BILLING-ESSENTIAL"
       ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 200,
-      "summary": "List central durable operations for one organization.",
+      "summary": "Read bounded rated usage and its settlement coverage.",
       "transport": "unary"
     },
     {
@@ -578,10 +391,10 @@
       "responseSchema": "DashboardBootstrap",
       "safeRetry": true,
       "scenarios": [
-        "SC-CONTROL-WORKSPACE"
+        "SC-IDENTITY-ACCOUNT"
       ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 200,
       "summary": "One bounded read that fills the dashboard shell.",
       "transport": "unary"
@@ -613,8 +426,8 @@
       "scenarios": [
         "SC-IDENTITY-ACCOUNT"
       ],
-      "servedArtifact": "central-identity-api",
-      "servingArtifact": "central-identity-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 201,
       "summary": "Exchange a provider authorization code for a browser session.",
       "transport": "unary"
@@ -646,578 +459,10 @@
       "scenarios": [
         "SC-IDENTITY-ACCOUNT"
       ],
-      "servedArtifact": "central-identity-api",
-      "servingArtifact": "central-identity-api",
+      "servedArtifact": "control-api",
+      "servingArtifact": "control-api",
       "successStatus": 204,
       "summary": "Close the browser session the caller presented.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": "anonymous",
-      "bodyClass": "aex_json",
-      "errors": [
-        "invalid_request",
-        "rate_limited",
-        "internal_error"
-      ],
-      "etag": "none",
-      "fragment": "auth",
-      "idempotency": "idempotency_key",
-      "method": "POST",
-      "operationId": "device_authorization_create",
-      "path": "/api/auth/device/authorizations",
-      "pathParams": [],
-      "pauseExempt": true,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": "DeviceAuthorizationRequest",
-      "requiredScope": null,
-      "responseSchema": "DeviceAuthorization",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-IDENTITY-ACCOUNT"
-      ],
-      "servedArtifact": "central-identity-api",
-      "servingArtifact": "central-identity-api",
-      "successStatus": 201,
-      "summary": "Begin the CLI device-authorization flow.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": "user_session",
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "token_expired",
-        "not_found",
-        "invalid_request",
-        "rate_limited",
-        "internal_error"
-      ],
-      "etag": "none",
-      "fragment": "auth",
-      "idempotency": "none",
-      "method": "POST",
-      "operationId": "device_decision_create",
-      "path": "/api/auth/device/decisions",
-      "pathParams": [],
-      "pauseExempt": true,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": "DeviceDecisionRequest",
-      "requiredScope": "account:write",
-      "responseSchema": "DeviceDecisionResult",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-IDENTITY-ACCOUNT"
-      ],
-      "servedArtifact": "central-identity-api",
-      "servingArtifact": "central-identity-api",
-      "successStatus": 200,
-      "summary": "Approve or deny a pending device authorization.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": "anonymous",
-      "bodyClass": "aex_json",
-      "errors": [
-        "token_expired",
-        "authorization_pending",
-        "slow_down",
-        "invalid_request",
-        "rate_limited",
-        "internal_error"
-      ],
-      "etag": "none",
-      "fragment": "auth",
-      "idempotency": "none",
-      "method": "POST",
-      "operationId": "device_token_create",
-      "path": "/api/auth/device/tokens",
-      "pathParams": [],
-      "pauseExempt": true,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": "DeviceTokenRequest",
-      "requiredScope": null,
-      "responseSchema": "DeviceToken",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-IDENTITY-ACCOUNT"
-      ],
-      "servedArtifact": "central-identity-api",
-      "servingArtifact": "central-identity-api",
-      "successStatus": 200,
-      "summary": "Exchange an approved device code for an account token.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": "user_session",
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "resource_conflict",
-        "upstream_error",
-        "commit_outcome_unknown"
-      ],
-      "etag": "none",
-      "fragment": "organizations",
-      "idempotency": "none",
-      "method": "POST",
-      "operationId": "invitation_accept",
-      "path": "/api/invitations/acceptances",
-      "pathParams": [],
-      "pauseExempt": false,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": "EmptyRequest",
-      "requiredScope": "memberships:accept",
-      "responseSchema": "InvitationAcceptResult",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
-      "successStatus": 200,
-      "summary": "Redeem every pending invitation addressed to the caller's verified email.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "not_found",
-        "idempotency_conflict",
-        "idempotency_in_flight",
-        "invalid_request",
-        "limit_exceeded",
-        "resource_conflict",
-        "commit_outcome_unknown"
-      ],
-      "etag": "none",
-      "fragment": "organizations",
-      "idempotency": "idempotency_key",
-      "method": "POST",
-      "operationId": "invitation_create",
-      "path": "/api/organizations/{organizationId}/invitations",
-      "pathParams": [
-        "organizationId"
-      ],
-      "pauseExempt": false,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": "InvitationCreateRequest",
-      "requiredScope": "memberships:write",
-      "responseSchema": "Invitation",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
-      "successStatus": 201,
-      "summary": "Invite a person to the organization.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "not_found",
-        "invalid_cursor"
-      ],
-      "etag": "none",
-      "fragment": "organizations",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "memberships_list",
-      "path": "/api/organizations/{organizationId}/memberships",
-      "pathParams": [
-        "organizationId"
-      ],
-      "pauseExempt": false,
-      "plane": "central",
-      "queryParams": [
-        "cursor",
-        "limit"
-      ],
-      "requestSchema": null,
-      "requiredScope": "memberships:read",
-      "responseSchema": "MembershipPage",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
-      "successStatus": 200,
-      "summary": "List the memberships of an organization.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "idempotency_conflict",
-        "idempotency_in_flight",
-        "invalid_request",
-        "limit_exceeded",
-        "resource_conflict",
-        "commit_outcome_unknown"
-      ],
-      "etag": "none",
-      "fragment": "organizations",
-      "idempotency": "idempotency_key",
-      "method": "POST",
-      "operationId": "organization_create",
-      "path": "/api/organizations",
-      "pathParams": [],
-      "pauseExempt": false,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": "OrganizationCreateRequest",
-      "requiredScope": "organizations:write",
-      "responseSchema": "Organization",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
-      "successStatus": 201,
-      "summary": "Create an organization whose creator becomes owner.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "not_found"
-      ],
-      "etag": "none",
-      "fragment": "organizations",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "organization_get",
-      "path": "/api/organizations/{organizationId}",
-      "pathParams": [
-        "organizationId"
-      ],
-      "pauseExempt": false,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "organizations:read",
-      "responseSchema": "Organization",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
-      "successStatus": 200,
-      "summary": "Read one organization.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "invalid_cursor"
-      ],
-      "etag": "none",
-      "fragment": "organizations",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "organizations_list",
-      "path": "/api/organizations",
-      "pathParams": [],
-      "pauseExempt": false,
-      "plane": "central",
-      "queryParams": [
-        "cursor",
-        "limit"
-      ],
-      "requestSchema": null,
-      "requiredScope": "organizations:read",
-      "responseSchema": "OrganizationPage",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
-      "successStatus": 200,
-      "summary": "List organizations the caller belongs to.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "provider_credential_not_found",
-        "account_paused",
-        "wrong_workspace_region"
-      ],
-      "etag": "returns",
-      "fragment": "provider-credentials",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "provider_credential_get",
-      "path": "/api/workspace/provider-credentials/{providerCredentialId}",
-      "pathParams": [
-        "providerCredentialId"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "provider_credentials:read",
-      "responseSchema": "ProviderCredential",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-BYOK-CUSTODY"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Read one BYOK provider-credential binding.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "idempotency_conflict",
-        "invalid_request",
-        "limit_exceeded",
-        "unknown_provider",
-        "account_paused",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "provider-credentials",
-      "idempotency": "idempotency_key",
-      "method": "POST",
-      "operationId": "provider_credential_register",
-      "path": "/api/workspace/provider-credentials",
-      "pathParams": [],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "ProviderCredentialRegisterRequest",
-      "requiredScope": "provider_credentials:write",
-      "responseSchema": "ProviderCredential",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-BYOK-CUSTODY"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 201,
-      "summary": "Register a dedicated BYOK provider credential; carries plaintext once.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "idempotency_conflict",
-        "provider_credential_not_found",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "provider-credentials",
-      "idempotency": "idempotency_key",
-      "method": "POST",
-      "operationId": "provider_credential_revoke",
-      "path": "/api/workspace/provider-credentials/{providerCredentialId}/revocations",
-      "pathParams": [
-        "providerCredentialId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "EmptyRequest",
-      "requiredScope": "provider_credentials:write",
-      "responseSchema": "ProviderCredential",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-BYOK-CUSTODY"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Revoke a BYOK provider-credential binding.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "invalid_cursor",
-        "account_paused",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "provider-credentials",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "provider_credentials_list",
-      "path": "/api/workspace/provider-credentials",
-      "pathParams": [],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [
-        "cursor",
-        "limit",
-        "provider"
-      ],
-      "requestSchema": null,
-      "requiredScope": "provider_credentials:read",
-      "responseSchema": "ProviderCredentialPage",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-BYOK-CUSTODY"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "List BYOK provider-credential binding metadata.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "operation_not_cancelable",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "operations",
-      "idempotency": "none",
-      "method": "POST",
-      "operationId": "regional_operation_cancel",
-      "path": "/api/operations/{operationId}/cancellations",
-      "pathParams": [
-        "operationId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "EmptyRequest",
-      "requiredScope": "operations:write",
-      "responseSchema": "Operation",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-TERMINAL"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Request cancellation of a regional operation.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "operations",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "regional_operation_get",
-      "path": "/api/operations/{operationId}",
-      "pathParams": [
-        "operationId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "operations:read",
-      "responseSchema": "Operation",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-TERMINAL"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Read one regional durable operation.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "invalid_request",
-        "invalid_cursor",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "operations",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "regional_operations_list",
-      "path": "/api/operations",
-      "pathParams": [],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [
-        "cursor",
-        "kind",
-        "limit",
-        "sessionId",
-        "status"
-      ],
-      "requestSchema": null,
-      "requiredScope": "operations:read",
-      "responseSchema": "OperationPage",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-TERMINAL"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "List regional durable operations.",
       "transport": "unary"
     },
     {
@@ -1234,7 +479,7 @@
       "idempotency": "none",
       "method": "DELETE",
       "operationId": "registry_files_delete",
-      "path": "/api/workspace/files/{name}",
+      "path": "/api/files/{name}",
       "pathParams": [
         "name"
       ],
@@ -1246,12 +491,12 @@
       "responseSchema": null,
       "safeRetry": false,
       "scenarios": [
-        "SC-SESSION-ADMIT"
+        "SC-FILES-CURRENT"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 204,
-      "summary": "Delete one registered workspace file.",
+      "summary": "Delete one current workspace file.",
       "transport": "unary"
     },
     {
@@ -1273,7 +518,7 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "registry_files_download_create",
-      "path": "/api/workspace/files/{name}/downloads",
+      "path": "/api/files/{name}/downloads",
       "pathParams": [
         "name"
       ],
@@ -1285,12 +530,12 @@
       "responseSchema": "DownloadGrant",
       "safeRetry": false,
       "scenarios": [
-        "SC-SESSION-ADMIT"
+        "SC-FILES-CURRENT"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 201,
-      "summary": "Mint a download grant for a registered workspace file.",
+      "summary": "Mint a download grant for a ready current workspace file.",
       "transport": "unary"
     },
     {
@@ -1308,7 +553,7 @@
       "idempotency": "none",
       "method": "GET",
       "operationId": "registry_files_get",
-      "path": "/api/workspace/files/{name}",
+      "path": "/api/files/{name}",
       "pathParams": [
         "name"
       ],
@@ -1320,12 +565,12 @@
       "responseSchema": "RegisteredFile",
       "safeRetry": true,
       "scenarios": [
-        "SC-SESSION-ADMIT"
+        "SC-FILES-CURRENT"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 200,
-      "summary": "Read one registered workspace file.",
+      "summary": "Read one current workspace file.",
       "transport": "unary"
     },
     {
@@ -1343,7 +588,7 @@
       "idempotency": "none",
       "method": "GET",
       "operationId": "registry_files_list",
-      "path": "/api/workspace/files",
+      "path": "/api/files",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1356,12 +601,12 @@
       "responseSchema": "RegisteredFilePage",
       "safeRetry": true,
       "scenarios": [
-        "SC-SESSION-ADMIT"
+        "SC-FILES-CURRENT"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 200,
-      "summary": "List registered workspace files.",
+      "summary": "List current workspace files.",
       "transport": "unary"
     },
     {
@@ -1383,7 +628,7 @@
       "idempotency": "idempotency_key",
       "method": "PUT",
       "operationId": "registry_files_put",
-      "path": "/api/workspace/files/{name}",
+      "path": "/api/files/{name}",
       "pathParams": [
         "name"
       ],
@@ -1395,12 +640,12 @@
       "responseSchema": "RegisteredFile",
       "safeRetry": false,
       "scenarios": [
-        "SC-SESSION-ADMIT"
+        "SC-FILES-CURRENT"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 200,
-      "summary": "Replace one registered workspace file.",
+      "summary": "Replace one current workspace file from inline bytes or an HTTPS URL.",
       "transport": "unary"
     },
     {
@@ -1430,14 +675,16 @@
       "queryParams": [],
       "requestSchema": "EmptyRequest",
       "requiredScope": "sessions:write",
-      "responseSchema": "Operation",
+      "responseSchema": "SessionCommandReceipt",
       "safeRetry": false,
       "scenarios": [
         "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 202,
       "summary": "Cancel current work and return the session to idle.",
       "transport": "unary"
@@ -1454,11 +701,8 @@
         "limit_exceeded",
         "workspace_activation_required",
         "invalid_network_policy",
-        "unsupported_package_ecosystem",
         "unknown_provider",
         "unknown_model",
-        "provider_credential_not_found",
-        "provider_credential_revoked",
         "account_paused",
         "wrong_workspace_region",
         "commit_outcome_unknown"
@@ -1479,12 +723,14 @@
       "safeRetry": false,
       "scenarios": [
         "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 201,
-      "summary": "Create an eight-hour multi-turn session.",
+      "summary": "Create a durable session and eagerly prepare its default-on sandbox in the background.",
       "transport": "unary"
     },
     {
@@ -1514,509 +760,18 @@
       "queryParams": [],
       "requestSchema": "EmptyRequest",
       "requiredScope": "sessions:delete",
-      "responseSchema": "Operation",
+      "responseSchema": "SessionCommandReceipt",
       "safeRetry": false,
       "scenarios": [
         "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 202,
-      "summary": "Irreversibly delete the session and session-scoped user content. Independent registered workspace files remain.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "idempotency_conflict",
-        "invalid_request",
-        "session_terminated",
-        "workspace_activation_required",
-        "session_deleting",
-        "session_deleted",
-        "resource_conflict",
-        "precondition_failed",
-        "wrong_workspace_region",
-        "upstream_error",
-        "commit_outcome_unknown"
-      ],
-      "etag": "none",
-      "fragment": "files",
-      "idempotency": "idempotency_key",
-      "method": "POST",
-      "operationId": "session_files_live_download_complete",
-      "path": "/api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}/completion",
-      "pathParams": [
-        "sessionId",
-        "fileDownloadId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "LiveFileDownloadCompleteRequest",
-      "requiredScope": "files:live",
-      "responseSchema": "LiveFileDownload",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Re-stat, re-hash, and close an exact live-file download after SDK verification.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "idempotency_conflict",
-        "invalid_request",
-        "limit_exceeded",
-        "session_terminated",
-        "workspace_activation_required",
-        "session_deleting",
-        "session_deleted",
-        "resource_conflict",
-        "file_not_found",
-        "precondition_failed",
-        "wrong_workspace_region",
-        "upstream_error",
-        "commit_outcome_unknown"
-      ],
-      "etag": "none",
-      "fragment": "files",
-      "idempotency": "idempotency_key",
-      "method": "POST",
-      "operationId": "session_files_live_download_create",
-      "path": "/api/sessions/{sessionId}/files/live/downloads",
-      "pathParams": [
-        "sessionId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "LiveFileDownloadRequest",
-      "requiredScope": "files:live",
-      "responseSchema": "LiveFileDownload",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 201,
-      "summary": "Open one exact-version live file directly from the retained generation, auto-resuming it.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "session_terminated",
-        "workspace_activation_required",
-        "session_deleting",
-        "session_deleted",
-        "resource_conflict",
-        "wrong_workspace_region",
-        "upstream_error"
-      ],
-      "etag": "none",
-      "fragment": "files",
-      "idempotency": "none",
-      "method": "DELETE",
-      "operationId": "session_files_live_download_delete",
-      "path": "/api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}",
-      "pathParams": [
-        "sessionId",
-        "fileDownloadId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "files:live",
-      "responseSchema": null,
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 204,
-      "summary": "Close an abandoned live-file descriptor, auto-resuming the same generation.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "invalid_request",
-        "session_terminated",
-        "workspace_activation_required",
-        "session_deleting",
-        "session_deleted",
-        "resource_conflict",
-        "file_not_found",
-        "precondition_failed",
-        "wrong_workspace_region",
-        "upstream_error"
-      ],
-      "etag": "none",
-      "fragment": "files",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "session_files_live_download_part_get",
-      "path": "/api/sessions/{sessionId}/files/live/downloads/{fileDownloadId}/parts/{partNumber}",
-      "pathParams": [
-        "sessionId",
-        "fileDownloadId",
-        "partNumber"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [
-        "version"
-      ],
-      "requestSchema": null,
-      "requiredScope": "files:live",
-      "responseSchema": null,
-      "safeRetry": true,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Read one raw exact-version range directly from the retained generation.",
-      "transport": "binary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "invalid_request",
-        "invalid_cursor",
-        "limit_exceeded",
-        "session_terminated",
-        "workspace_activation_required",
-        "session_deleting",
-        "session_deleted",
-        "resource_conflict",
-        "precondition_failed",
-        "wrong_workspace_region",
-        "upstream_error"
-      ],
-      "etag": "none",
-      "fragment": "files",
-      "idempotency": "none",
-      "method": "POST",
-      "operationId": "session_files_live_list",
-      "path": "/api/sessions/{sessionId}/files/live/list",
-      "pathParams": [
-        "sessionId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "LiveFileListRequest",
-      "requiredScope": "files:live",
-      "responseSchema": "LiveFileEntryPage",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "List the exact live generation, auto-resuming that same generation when suspended.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "invalid_request",
-        "session_terminated",
-        "workspace_activation_required",
-        "session_deleting",
-        "session_deleted",
-        "resource_conflict",
-        "file_not_found",
-        "precondition_failed",
-        "wrong_workspace_region",
-        "upstream_error"
-      ],
-      "etag": "none",
-      "fragment": "files",
-      "idempotency": "none",
-      "method": "POST",
-      "operationId": "session_files_live_stat",
-      "path": "/api/sessions/{sessionId}/files/live/stat",
-      "pathParams": [
-        "sessionId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "LiveFileStatRequest",
-      "requiredScope": "files:live",
-      "responseSchema": "LiveFileEntry",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Stat one live path without following a symlink, auto-resuming the same generation.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "idempotency_conflict",
-        "invalid_request",
-        "session_terminated",
-        "workspace_activation_required",
-        "session_deleting",
-        "session_deleted",
-        "resource_conflict",
-        "content_missing",
-        "account_paused",
-        "precondition_failed",
-        "wrong_workspace_region",
-        "upstream_error",
-        "commit_outcome_unknown"
-      ],
-      "etag": "none",
-      "fragment": "files",
-      "idempotency": "idempotency_key",
-      "method": "POST",
-      "operationId": "session_files_live_upload_complete",
-      "path": "/api/sessions/{sessionId}/files/live/uploads/{fileUploadId}/completion",
-      "pathParams": [
-        "sessionId",
-        "fileUploadId"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "files:live",
-      "responseSchema": "LiveFileUpload",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Verify every part and atomically publish one live file in the same generation.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "idempotency_conflict",
-        "invalid_request",
-        "limit_exceeded",
-        "session_terminated",
-        "workspace_activation_required",
-        "session_deleting",
-        "session_deleted",
-        "resource_conflict",
-        "account_paused",
-        "precondition_failed",
-        "wrong_workspace_region",
-        "upstream_error",
-        "commit_outcome_unknown"
-      ],
-      "etag": "none",
-      "fragment": "files",
-      "idempotency": "idempotency_key",
-      "method": "POST",
-      "operationId": "session_files_live_upload_create",
-      "path": "/api/sessions/{sessionId}/files/live/uploads",
-      "pathParams": [
-        "sessionId"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "LiveFileUploadCreateRequest",
-      "requiredScope": "files:live",
-      "responseSchema": "LiveFileUpload",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 201,
-      "summary": "Create a resumable upload in the exact live generation, auto-resuming it when suspended.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "session_terminated",
-        "workspace_activation_required",
-        "session_deleting",
-        "session_deleted",
-        "resource_conflict",
-        "wrong_workspace_region",
-        "upstream_error"
-      ],
-      "etag": "none",
-      "fragment": "files",
-      "idempotency": "none",
-      "method": "DELETE",
-      "operationId": "session_files_live_upload_delete",
-      "path": "/api/sessions/{sessionId}/files/live/uploads/{fileUploadId}",
-      "pathParams": [
-        "sessionId",
-        "fileUploadId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "files:live",
-      "responseSchema": null,
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 204,
-      "summary": "Abort a partial upload, auto-resuming the same generation to remove its temporary bytes.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "session_terminated",
-        "workspace_activation_required",
-        "session_deleting",
-        "session_deleted",
-        "resource_conflict",
-        "account_paused",
-        "precondition_failed",
-        "wrong_workspace_region",
-        "upstream_error"
-      ],
-      "etag": "none",
-      "fragment": "files",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "session_files_live_upload_get",
-      "path": "/api/sessions/{sessionId}/files/live/uploads/{fileUploadId}",
-      "pathParams": [
-        "sessionId",
-        "fileUploadId"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "files:live",
-      "responseSchema": "LiveFileUpload",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Read resumable live-upload state, auto-resuming the same generation.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "binary",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "invalid_request",
-        "unsupported_media_type",
-        "payload_too_large",
-        "limit_exceeded",
-        "session_terminated",
-        "workspace_activation_required",
-        "session_deleting",
-        "session_deleted",
-        "resource_conflict",
-        "account_paused",
-        "precondition_failed",
-        "wrong_workspace_region",
-        "upstream_error"
-      ],
-      "etag": "none",
-      "fragment": "files",
-      "idempotency": "none",
-      "method": "PUT",
-      "operationId": "session_files_live_upload_part_put",
-      "path": "/api/sessions/{sessionId}/files/live/uploads/{fileUploadId}/parts/{partNumber}",
-      "pathParams": [
-        "sessionId",
-        "fileUploadId",
-        "partNumber"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [
-        "sha256"
-      ],
-      "requestSchema": null,
-      "requiredScope": "files:live",
-      "responseSchema": "LiveFileUpload",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Put one exact logical part directly into the retained generation.",
+      "summary": "Irreversibly delete session-scoped user content; independent workspace files remain.",
       "transport": "unary"
     },
     {
@@ -2048,12 +803,14 @@
       "safeRetry": true,
       "scenarios": [
         "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 200,
-      "summary": "Read session metadata, including automatic lifecycle state, or its minimal deletion tombstone.",
+      "summary": "Read durable session metadata and sandbox preparation state.",
       "transport": "unary"
     },
     {
@@ -2070,7 +827,6 @@
         "session_terminated",
         "session_deleting",
         "session_deleted",
-        "provider_credential_revoked",
         "account_paused",
         "wrong_workspace_region",
         "commit_outcome_unknown"
@@ -2093,12 +849,14 @@
       "safeRetry": false,
       "scenarios": [
         "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 201,
-      "summary": "Send text and start the session's next work, automatically resuming the same suspended generation.",
+      "summary": "Admit one text message; file paths are referenced in text, never attached.",
       "transport": "unary"
     },
     {
@@ -2134,94 +892,14 @@
       "safeRetry": true,
       "scenarios": [
         "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 200,
-      "summary": "List complete sealed messages in immutable seal-visibility order.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "operation_idempotency_conflict",
-        "session_terminated",
-        "session_deleting",
-        "session_deleted",
-        "account_paused",
-        "wrong_workspace_region",
-        "commit_outcome_unknown"
-      ],
-      "etag": "none",
-      "fragment": "sessions",
-      "idempotency": "operation_id",
-      "method": "POST",
-      "operationId": "session_resume",
-      "path": "/api/sessions/{sessionId}/resumptions",
-      "pathParams": [
-        "sessionId"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "EmptyRequest",
-      "requiredScope": "sessions:write",
-      "responseSchema": "Operation",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 202,
-      "summary": "Resume the same retained generation to idle.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "operation_idempotency_conflict",
-        "session_not_idle",
-        "session_terminated",
-        "session_deleting",
-        "session_deleted",
-        "wrong_workspace_region",
-        "commit_outcome_unknown"
-      ],
-      "etag": "none",
-      "fragment": "sessions",
-      "idempotency": "operation_id",
-      "method": "POST",
-      "operationId": "session_suspend",
-      "path": "/api/sessions/{sessionId}/suspensions",
-      "pathParams": [
-        "sessionId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "EmptyRequest",
-      "requiredScope": "sessions:write",
-      "responseSchema": "Operation",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 202,
-      "summary": "Suspend an idle session while retaining its exact generation; cancel active work first.",
+      "summary": "List complete committed messages in immutable seal order.",
       "transport": "unary"
     },
     {
@@ -2231,6 +909,49 @@
         "unauthenticated",
         "insufficient_scope",
         "not_found",
+        "invalid_cursor",
+        "session_deleted",
+        "wrong_workspace_region",
+        "upstream_error"
+      ],
+      "etag": "none",
+      "fragment": "sessions",
+      "idempotency": "none",
+      "method": "GET",
+      "operationId": "session_messages_stream",
+      "path": "/api/sessions/{sessionId}/messages/stream",
+      "pathParams": [
+        "sessionId"
+      ],
+      "pauseExempt": true,
+      "plane": "regional",
+      "queryParams": [
+        "after"
+      ],
+      "requestSchema": null,
+      "requiredScope": "sessions:read",
+      "responseSchema": "MessageStreamFrame",
+      "safeRetry": true,
+      "scenarios": [
+        "SC-SESSION-ADMIT",
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
+      ],
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
+      "successStatus": 200,
+      "summary": "Stream bounded assistant previews plus commit/reconcile/gap frames.",
+      "transport": "ndjson"
+    },
+    {
+      "altPrincipal": null,
+      "bodyClass": "aex_json",
+      "errors": [
+        "unauthenticated",
+        "insufficient_scope",
+        "not_found",
+        "idempotency_conflict",
         "invalid_request",
         "session_deleted",
         "account_paused",
@@ -2239,29 +960,30 @@
       ],
       "etag": "none",
       "fragment": "sessions",
-      "idempotency": "none",
+      "idempotency": "idempotency_key",
       "method": "POST",
-      "operationId": "session_telemetry_segment_download_create",
-      "path": "/api/sessions/{sessionId}/telemetry/segments/{segmentId}/downloads",
+      "operationId": "session_telemetry_download_create",
+      "path": "/api/sessions/{sessionId}/telemetry/downloads",
       "pathParams": [
-        "sessionId",
-        "segmentId"
+        "sessionId"
       ],
       "pauseExempt": false,
       "plane": "regional",
       "queryParams": [],
-      "requestSchema": null,
+      "requestSchema": "TelemetryDownloadRequest",
       "requiredScope": "sessions:read",
-      "responseSchema": "SessionTelemetryDownloadGrant",
+      "responseSchema": "TelemetryDownloadGrant",
       "safeRetry": false,
       "scenarios": [
         "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 201,
-      "summary": "Mint a five-minute download grant for one immutable OTLP protobuf segment.",
+      "summary": "Mint a short-lived download for a bounded retained telemetry export.",
       "transport": "unary"
     },
     {
@@ -2281,30 +1003,74 @@
       "fragment": "sessions",
       "idempotency": "none",
       "method": "GET",
-      "operationId": "session_telemetry_segments_list",
-      "path": "/api/sessions/{sessionId}/telemetry/segments",
+      "operationId": "session_telemetry_replay",
+      "path": "/api/sessions/{sessionId}/telemetry/replay",
       "pathParams": [
         "sessionId"
       ],
       "pauseExempt": false,
       "plane": "regional",
       "queryParams": [
-        "cursor",
+        "after",
         "limit"
       ],
       "requestSchema": null,
       "requiredScope": "sessions:read",
-      "responseSchema": "SessionTelemetrySegmentPage",
+      "responseSchema": "TelemetryFrame",
       "safeRetry": true,
       "scenarios": [
         "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 200,
-      "summary": "List immutable AEX-generated OTLP protobuf segments for a session.",
-      "transport": "unary"
+      "summary": "Replay retained telemetry from compressed immutable S3 segments.",
+      "transport": "ndjson"
+    },
+    {
+      "altPrincipal": null,
+      "bodyClass": "none",
+      "errors": [
+        "unauthenticated",
+        "insufficient_scope",
+        "not_found",
+        "invalid_cursor",
+        "session_deleted",
+        "wrong_workspace_region",
+        "upstream_error"
+      ],
+      "etag": "none",
+      "fragment": "sessions",
+      "idempotency": "none",
+      "method": "GET",
+      "operationId": "session_telemetry_stream",
+      "path": "/api/sessions/{sessionId}/telemetry/stream",
+      "pathParams": [
+        "sessionId"
+      ],
+      "pauseExempt": true,
+      "plane": "regional",
+      "queryParams": [
+        "after"
+      ],
+      "requestSchema": null,
+      "requiredScope": "sessions:read",
+      "responseSchema": "TelemetryFrame",
+      "safeRetry": true,
+      "scenarios": [
+        "SC-SESSION-ADMIT",
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
+      ],
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
+      "successStatus": 200,
+      "summary": "Stream live trusted assistant, tool, runtime, Logs and Traces telemetry with bounded previews.",
+      "transport": "ndjson"
     },
     {
       "altPrincipal": null,
@@ -2333,16 +1099,18 @@
       "queryParams": [],
       "requestSchema": "EmptyRequest",
       "requiredScope": "sessions:write",
-      "responseSchema": "Operation",
+      "responseSchema": "SessionCommandReceipt",
       "safeRetry": false,
       "scenarios": [
         "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 202,
-      "summary": "Permanently destroy compute and live files while retaining metadata and sealed messages.",
+      "summary": "Destroy sandbox compute while retaining session metadata and messages.",
       "transport": "unary"
     },
     {
@@ -2375,47 +1143,14 @@
       "safeRetry": true,
       "scenarios": [
         "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
+        "SC-SESSION-STREAM",
+        "SC-SESSION-TERMINAL",
+        "SC-TELEMETRY-LIVE-RETAINED"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 200,
       "summary": "List sessions in the workspace.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "gone",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "uploads",
-      "idempotency": "none",
-      "method": "DELETE",
-      "operationId": "upload_abort",
-      "path": "/api/workspace/uploads/{uploadId}",
-      "pathParams": [
-        "uploadId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "resources:write",
-      "responseSchema": null,
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 204,
-      "summary": "Abort a staged upload.",
       "transport": "unary"
     },
     {
@@ -2437,7 +1172,7 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "upload_complete",
-      "path": "/api/workspace/uploads/{uploadId}/completion",
+      "path": "/api/uploads/{uploadId}/completions",
       "pathParams": [
         "uploadId"
       ],
@@ -2446,15 +1181,15 @@
       "queryParams": [],
       "requestSchema": "UploadCompleteRequest",
       "requiredScope": "resources:write",
-      "responseSchema": "Upload",
+      "responseSchema": "RegisteredFile",
       "safeRetry": false,
       "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
+        "SC-FILES-UPLOAD"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 200,
-      "summary": "Complete a staged upload.",
+      "summary": "Verify an admitted upload and publish it only if its private overwrite intent is still current.",
       "transport": "unary"
     },
     {
@@ -2474,349 +1209,22 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "upload_create",
-      "path": "/api/workspace/uploads",
+      "path": "/api/uploads",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
       "queryParams": [],
       "requestSchema": "UploadCreateRequest",
       "requiredScope": "resources:write",
-      "responseSchema": "Upload",
+      "responseSchema": "UploadAdmission",
       "safeRetry": false,
       "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
+        "SC-FILES-UPLOAD"
       ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
+      "servedArtifact": "session-api",
+      "servingArtifact": "session-api",
       "successStatus": 201,
-      "summary": "Stage a large registered-resource value.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "gone",
-        "invalid_request",
-        "limit_exceeded",
-        "account_paused",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "uploads",
-      "idempotency": "none",
-      "method": "POST",
-      "operationId": "upload_parts_grant",
-      "path": "/api/workspace/uploads/{uploadId}/parts",
-      "pathParams": [
-        "uploadId"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "UploadPartsRequest",
-      "requiredScope": "resources:write",
-      "responseSchema": "UploadPartGrants",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Mint presigned PUT grants for the named parts.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": "account",
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "invalid_request",
-        "invalid_cursor",
-        "invalid_query",
-        "wrong_workspace_region",
-        "usage_unavailable"
-      ],
-      "etag": "none",
-      "fragment": "usage",
-      "idempotency": "none",
-      "method": "POST",
-      "operationId": "usage_query",
-      "path": "/api/billing/usage/query",
-      "pathParams": [],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [
-        "workspaceId"
-      ],
-      "requestSchema": "UsageQuery",
-      "requiredScope": "billing:read",
-      "responseSchema": "UsagePage",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-USAGE-SETTLE"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Query rated usage for this workspace.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "idempotency_conflict",
-        "idempotency_in_flight",
-        "invalid_request",
-        "limit_exceeded",
-        "resource_conflict",
-        "upstream_error",
-        "workspace_provision_pending",
-        "commit_outcome_unknown"
-      ],
-      "etag": "none",
-      "fragment": "workspaces",
-      "idempotency": "idempotency_key",
-      "method": "POST",
-      "operationId": "workspace_create",
-      "path": "/api/workspaces",
-      "pathParams": [],
-      "pauseExempt": false,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": "WorkspaceCreateRequest",
-      "requiredScope": "workspaces:write",
-      "responseSchema": "Workspace",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
-      "successStatus": 201,
-      "summary": "Create a region-pinned workspace.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "workspace_activation_required",
-        "workspace_not_live",
-        "account_state_unavailable",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "workspace",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "workspace_current_get",
-      "path": "/api/workspace",
-      "pathParams": [],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "workspace:read",
-      "responseSchema": "Workspace",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Read the workspace this credential is pinned to.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "not_found",
-        "gone",
-        "idempotency_in_flight",
-        "operation_idempotency_conflict",
-        "invalid_request",
-        "deletion_in_progress",
-        "resource_conflict",
-        "commit_outcome_unknown"
-      ],
-      "etag": "none",
-      "fragment": "workspaces",
-      "idempotency": "operation_id",
-      "method": "POST",
-      "operationId": "workspace_delete",
-      "path": "/api/workspaces/{workspaceId}/deletions",
-      "pathParams": [
-        "workspaceId"
-      ],
-      "pauseExempt": true,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": "WorkspaceDeleteRequest",
-      "requiredScope": "workspaces:delete",
-      "responseSchema": "Operation",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
-      "successStatus": 202,
-      "summary": "Admit the global workspace-deletion operation.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "forbidden",
-        "insufficient_scope",
-        "not_found",
-        "gone"
-      ],
-      "etag": "none",
-      "fragment": "workspaces",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "workspace_get",
-      "path": "/api/workspaces/{workspaceId}",
-      "pathParams": [
-        "workspaceId"
-      ],
-      "pauseExempt": false,
-      "plane": "central",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "workspaces:read",
-      "responseSchema": "Workspace",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
-      "successStatus": 200,
-      "summary": "Read one workspace.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "workspace_activation_required",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "workspace",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "workspace_limit_get",
-      "path": "/api/workspace/limits/{limitId}",
-      "pathParams": [
-        "limitId"
-      ],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "workspace:read",
-      "responseSchema": "EffectiveWorkspaceLimit",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "Read one effective workspace safety limit.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "workspace_activation_required",
-        "wrong_workspace_region"
-      ],
-      "etag": "none",
-      "fragment": "workspace",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "workspace_limits_list",
-      "path": "/api/workspace/limits",
-      "pathParams": [],
-      "pauseExempt": true,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": null,
-      "requiredScope": "workspace:read",
-      "responseSchema": "EffectiveWorkspaceLimitPage",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servedArtifact": "session-stream-api",
-      "servingArtifact": "session-stream-api",
-      "successStatus": 200,
-      "summary": "List the effective workspace safety limits. The registry is closed and complete, so the whole set is one page and no continuation is ever minted.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "none",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "invalid_cursor"
-      ],
-      "etag": "none",
-      "fragment": "workspaces",
-      "idempotency": "none",
-      "method": "GET",
-      "operationId": "workspaces_list",
-      "path": "/api/workspaces",
-      "pathParams": [],
-      "pauseExempt": false,
-      "plane": "central",
-      "queryParams": [
-        "cursor",
-        "limit",
-        "organizationId"
-      ],
-      "requestSchema": null,
-      "requiredScope": "workspaces:read",
-      "responseSchema": "WorkspacePage",
-      "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
-      "successStatus": 200,
-      "summary": "List workspaces the caller can reach.",
+      "summary": "Admit a direct upload for one current workspace-file name and return every bounded part grant.",
       "transport": "unary"
     }
   ],

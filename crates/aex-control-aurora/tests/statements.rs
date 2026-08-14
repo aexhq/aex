@@ -182,101 +182,22 @@ async fn resolving_a_session_for_a_workspace_is_also_one_statement() {
 }
 
 #[tokio::test]
-async fn the_two_workspace_actor_statements_bind_the_same_parameters() {
-    for (name, expected) in [
-        ("token", sql::RESOLVE_ACCOUNT_TOKEN_FOR_WORKSPACE),
-        ("session", sql::RESOLVE_SESSION_FOR_WORKSPACE),
-    ] {
-        let transport = Counting::with(Vec::new());
-        let reader = AuroraAuthorizationReader::new(client(&transport));
-        if name == "token" {
-            reader
-                .resolve_account_token_for_workspace(
-                    Uuid::from_u128(1),
-                    Uuid::from_u128(2),
-                    OffsetDateTime::UNIX_EPOCH,
-                )
-                .await
-                .expect("the read succeeds");
-        } else {
-            reader
-                .resolve_session_for_workspace(
-                    Uuid::from_u128(1),
-                    Uuid::from_u128(2),
-                    OffsetDateTime::UNIX_EPOCH,
-                )
-                .await
-                .expect("the read succeeds");
-        }
-        let Some(Call::Execute { sql, parameters }) = transport.calls().first().cloned() else {
-            panic!("{name} issued no statement");
-        };
-        assert_eq!(sql, expected, "{name}");
-        assert_eq!(
-            parameters,
-            vec![
-                "credential_id".to_owned(),
-                "workspace_id".to_owned(),
-                "now_ms".to_owned()
-            ],
-            "{name} binds the same three parameters"
-        );
-    }
-}
-
-#[tokio::test]
-async fn both_central_actor_reads_are_one_statement_and_a_session_gets_only_its_route_scopes() {
-    // A token carries what its row says. A browser session carries what the
-    // *contract* says: exactly the scopes of the routes declaring
-    // `altPrincipal: user_session`, assigned by the adapter because
-    // `RESOLVE_SESSION_CENTRAL` projects an empty array on purpose. That set is
-    // derived from the route table, so this asserts the derivation rather than
-    // a copy of it — and asserts the property that makes the derivation worth
-    // having: a session is strictly narrower than a central token.
-    for (session, expected) in [
-        (false, sql::RESOLVE_ACCOUNT_TOKEN_CENTRAL),
-        (true, sql::RESOLVE_SESSION_CENTRAL),
-    ] {
-        let scopes = if session {
-            Vec::new()
-        } else {
-            vec![Some("account:read".to_owned())]
-        };
-        let transport = Counting::with(vec![central_actor_record(scopes)]);
-        let reader = AuroraAuthorizationReader::new(client(&transport));
-        let resolved = if session {
-            reader
-                .resolve_dashboard_session_central(Uuid::from_u128(1), OffsetDateTime::UNIX_EPOCH)
-                .await
-        } else {
-            reader
-                .resolve_account_token_central(Uuid::from_u128(1), OffsetDateTime::UNIX_EPOCH)
-                .await
-        }
+async fn a_central_session_read_is_one_statement_and_gets_only_its_route_scopes() {
+    let transport = Counting::with(vec![central_actor_record(Vec::new())]);
+    let reader = AuroraAuthorizationReader::new(client(&transport));
+    let resolved = reader
+        .resolve_dashboard_session_central(Uuid::from_u128(1), OffsetDateTime::UNIX_EPOCH)
+        .await
         .expect("the read succeeds")
         .expect("the actor exists");
-        if session {
-            assert_eq!(resolved.scopes, ScopeSet::dashboard_session());
-            assert!(
-                !resolved.scopes.is_empty(),
-                "a session that carries nothing can reach no route at all"
-            );
-            assert!(
-                ScopeSet::CENTRAL.contains_all(resolved.scopes)
-                    && resolved.scopes != ScopeSet::CENTRAL,
-                "a browser session is strictly narrower than a central token"
-            );
-        } else {
-            assert_eq!(resolved.scopes.to_strings(), ["account:read"]);
-        }
-        assert_eq!(transport.statements(), 1);
-        assert_eq!(transport.transactions(), 0);
-        let Some(Call::Execute { sql, parameters }) = transport.calls().first().cloned() else {
-            panic!("the central actor read issued no statement");
-        };
-        assert_eq!(sql, expected);
-        assert_eq!(parameters, ["credential_id", "now_ms"]);
-    }
+    assert_eq!(resolved.scopes, ScopeSet::dashboard_session());
+    assert_eq!(transport.statements(), 1);
+    assert_eq!(transport.transactions(), 0);
+    let Some(Call::Execute { sql, parameters }) = transport.calls().first().cloned() else {
+        panic!("the central actor read issued no statement");
+    };
+    assert_eq!(sql, sql::RESOLVE_SESSION_CENTRAL);
+    assert_eq!(parameters, ["credential_id", "now_ms"]);
 }
 
 #[test]

@@ -1,0 +1,13 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BillingUsageCategory.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The independently measured and rated launch categories.",
+  "enum": [
+    "model",
+    "runtime",
+    "storage",
+    "transfer"
+  ],
+  "title": "BillingUsageCategory",
+  "type": "string"
+}

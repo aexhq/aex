@@ -16,7 +16,7 @@ workspace = true
 owner = "central-identity"
 role = "adapter"
 artifact = "none"
-live_suite = "aex-live-central-identity-api"
+live_suite = "aex-live-control-api"
 layers = ["unit", "integration"]
 concerns = ["contract", "property", "fault", "security"]
 seams = ["aws.rds_data.transaction"]
@@ -29,7 +29,7 @@ transport = "unit"
 properties = "unit"
 
 [package.metadata.aex.not_applicable]
-integration = "the Data API has no local emulator; the transport's real-endpoint evidence is claimed by aex-live-central-identity-api, and the repository crates carry the PostgreSQL container suites"
+integration = "the Data API has no local emulator; the transport's real-endpoint evidence is claimed by aex-live-control-api, and the repository crates carry the PostgreSQL container suites"
 
 [dependencies]
 async-trait.workspace = true

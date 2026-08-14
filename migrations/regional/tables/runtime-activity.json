@@ -78,7 +78,12 @@
       "resources": ["table", "index/*"]
     },
     {
-      "role": "session-operation-worker",
+      "role": "tool-mux",
+      "actions": ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:TransactWriteItems"],
+      "resources": ["table"]
+    },
+    {
+      "role": "session-maintenance-worker",
       "actions": ["dynamodb:GetItem"],
       "resources": ["table"],
       "condition": {
@@ -100,7 +105,7 @@
       "resources": ["table"]
     },
     {
-      "role": "regional-session-api",
+      "role": "session-api",
       "actions": [
         "dynamodb:GetItem",
         "dynamodb:Query",
@@ -111,7 +116,7 @@
       "resources": ["table"]
     },
     {
-      "role": "session-operation-worker",
+      "role": "session-maintenance-worker",
       "actions": [
         "dynamodb:GetItem",
         "dynamodb:Query",

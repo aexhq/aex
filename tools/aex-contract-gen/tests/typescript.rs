@@ -56,7 +56,7 @@ fn every_schema_has_one_dependency_free_sdk_type() {
         );
     }
     assert!(source.contains("export function newId<K extends IdKind>"));
-    assert!(source.contains("readonly id: Id<\"operation\">;"));
+    assert!(source.contains("readonly operationId: Id<\"operation\">;"));
     assert!(
         !source.contains("from \""),
         "SDK models must stay dependency-free"
@@ -138,12 +138,10 @@ fn the_sdk_publishes_a_resource_method_for_every_served_operation_and_no_other()
     let source = generated("packages/sdk/src/generated/resources.ts");
 
     for operation in ir.operations() {
-        let method = format!("  async {}(", camel(&operation.id));
-        let published = source.contains(&method);
-        // The frame streams are absent for the other half of the same reason:
-        // the SDK transport decodes one JSON body, so a generated method over a
-        // frame stream could not return one.
-        let expected = operation.deferred_reason.is_none() && operation.transport != "ndjson";
+        let finite_method = format!("  async {}(", camel(&operation.id));
+        let stream_method = format!("  {}(", camel(&operation.id));
+        let published = source.contains(&finite_method) || source.contains(&stream_method);
+        let expected = operation.deferred_reason.is_none();
         assert_eq!(
             published,
             expected,
@@ -167,6 +165,12 @@ fn the_sdk_resource_surface_uses_authored_request_and_success_types() {
         "async sessionMessageSend(params: {\n    readonly sessionId: Models.Id<\"session\">;\n    readonly body: Models.MessageSendRequest;"
     ));
     assert!(source.contains("readonly operationId: Models.Id<\"operation\">;"));
+    assert!(source.contains(
+        "sessionTelemetryStream(params: {\n    readonly sessionId: Models.Id<\"session\">;"
+    ));
+    assert!(source.contains(
+        "): AsyncIterable<Models.TelemetryFrame> {\n    return this.#executor.stream<Models.TelemetryFrame>"
+    ));
     assert!(!source.contains("<T = unknown>"));
 }
 

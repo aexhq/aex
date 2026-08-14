@@ -3,12 +3,12 @@
 //! What this proves. The drafts the worker actually derives — not hand-built
 //! stand-ins — survive the producer/consumer wire end to end: `derive_facts`
 //! produces the compute and storage drafts one closed lifecycle interval owes,
-//! [`SqsFactDraftSink`] encodes each one, a real queue accepts and returns the
-//! body byte for byte, and the strict `deny_unknown_fields` envelope decode on
-//! the consumer side yields back exactly the draft that was emitted. It also
-//! proves the two category fences are real: a sink bound to one category writes
-//! only to its own queue, and a sibling category is refused *before* anything
-//! reaches the wire, which the queue itself is the witness for. Finally it
+//! [`SqsFactDraftSink`] validates and converts each one to the central rating
+//! contract, a real FIFO accepts and returns every body, and the strict
+//! `deny_unknown_fields` consumer type decodes it. It also proves the two
+//! category fences are real although both sinks share one organization-ordered
+//! queue: a sibling category is refused *before* anything reaches the wire.
+//! Finally it
 //! proves the send path classifies a service refusal as a typed
 //! [`SinkError`] rather than panicking or losing the draft.
 //!
@@ -17,13 +17,9 @@
 //! - `moto` is an emulator. It does not reproduce SQS's at-least-once
 //!   redelivery, its visibility-timeout timing, or its retention window, so
 //!   nothing here is evidence about redrive behaviour.
-//! - Standard queues promise no order, so every assertion below is set-based.
-//!   `moto` happens to return messages in insertion order; real SQS does not,
-//!   and a test that leaned on that would pass for the wrong reason.
-//! - There is no FIFO shape to prove. The adapter sends no `MessageGroupId` and
-//!   no `MessageDeduplicationId`, because both usage ingresses are standard
-//!   queues. If either ingress ever became a `.fifo` queue, `SendMessage` would
-//!   fail at runtime and nothing here would catch it — that is a live concern.
+//! - The queue is FIFO and every send carries producer-derived group and dedupe
+//!   identities. `moto` does not prove real SQS redelivery timing, so assertions
+//!   remain set-based.
 //! - `moto` enforces no queue policy, so scoping `sqs:SendMessage` to exactly
 //!   one queue per worker role stays a live concern too.
 //! - The 256 KiB body ceiling the adapter checks locally is unit evidence. No
@@ -34,6 +30,7 @@
 
 use aex_hands_protocol::lifecycle::RuntimeReceipt;
 use aex_internal_contracts::PricingVersion;
+use aex_internal_contracts::usage::RatingRequest;
 use aex_runtime_control::lifecycle::{LifecycleIntentId, MicrovmId, snapshot_lifecycle_id};
 use aex_runtime_control::usage::{
     FactContext, SinkError, SnapshotIo, SnapshotResidence, UsageFactSink as _, derive_facts,
@@ -41,7 +38,6 @@ use aex_runtime_control::usage::{
 use aex_runtime_control_aws::usage_ingress::SqsFactDraftSink;
 use aex_test_harness::MotoContainer;
 use aex_usage_domain::fact::FactDraft;
-use aex_usage_domain::ingress::FactDraftEnvelope;
 use aex_usage_domain::meter::Category;
 use aex_wire::ids::{GenerationId, OrganizationId, PrefixedId as _, SessionId, Uuid7, WorkspaceId};
 use aex_wire::types::{ComputeSize, Region, Timestamp};
@@ -79,7 +75,8 @@ fn client(engine: &MotoContainer) -> Client {
 async fn queue(client: &Client, name: &str) -> String {
     client
         .create_queue()
-        .queue_name(name)
+        .queue_name(format!("{name}.fifo"))
+        .attributes(aws_sdk_sqs::types::QueueAttributeName::FifoQueue, "true")
         .send()
         .await
         .expect("the queue is created")
@@ -163,26 +160,22 @@ async fn drain(client: &Client, queue_url: &str, expected: usize, attempts: u32)
     bodies
 }
 
-/// What the adapter must have put on the wire, derived independently of it.
-fn encoded(category: Category, draft: FactDraft) -> String {
-    serde_json::to_string(&FactDraftEnvelope::new(category, draft).expect("the fences agree"))
-        .expect("the envelope serializes")
-}
-
 #[tokio::test(flavor = "multi_thread")]
-async fn every_draft_one_closed_interval_owes_round_trips_through_its_own_category_queue() {
+async fn every_draft_one_closed_interval_owes_reaches_the_shared_billing_fifo() {
     let engine = MotoContainer::start().await.expect("moto starts");
     let client = client(&engine);
-    let compute_url = queue(&client, "aex-integration-usage-compute").await;
-    let storage_url = queue(&client, "aex-integration-usage-storage").await;
+    let rating_url = queue(&client, "aex-integration-usage-rating").await;
 
-    let compute = SqsFactDraftSink::new(client.clone(), &compute_url, Category::Compute);
-    let storage = SqsFactDraftSink::new(client.clone(), &storage_url, Category::Storage);
-    assert_eq!(compute.queue_url(), compute_url);
+    let compute = SqsFactDraftSink::new(client.clone(), &rating_url, Category::Compute);
+    let storage = SqsFactDraftSink::new(client.clone(), &rating_url, Category::Storage);
+    assert_eq!(compute.queue_url(), rating_url);
 
     let derived = drafts();
-    let mut expected_compute = Vec::new();
-    let mut expected_storage = Vec::new();
+    let expected_ids = derived
+        .iter()
+        .map(FactDraft::fact_id)
+        .map(|id| id.to_string().trim_start_matches("usage_").to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
     for draft in derived {
         let category = draft.authority.category;
         let sink = match category {
@@ -190,54 +183,35 @@ async fn every_draft_one_closed_interval_owes_round_trips_through_its_own_catego
             Category::Storage => &storage,
             Category::Transfer => panic!("this worker holds no transfer binding"),
         };
-        let wire = encoded(category, draft.clone());
         sink.emit(category, draft).await.expect("the draft is sent");
-        match category {
-            Category::Compute => expected_compute.push(wire),
-            Category::Storage => expected_storage.push(wire),
-            Category::Transfer => unreachable!("refused above"),
-        }
     }
-    expected_compute.sort();
-    expected_storage.sort();
-    assert_eq!(
-        expected_compute.len(),
-        2,
-        "one closed interval owes compute millicpu and compute memory"
-    );
-    assert_eq!(expected_storage.len(), 1, "and one storage residence");
 
-    let received_compute = drain(&client, &compute_url, 2, RECEIVE_ATTEMPTS).await;
-    let received_storage = drain(&client, &storage_url, 1, RECEIVE_ATTEMPTS).await;
+    let received = drain(&client, &rating_url, 3, RECEIVE_ATTEMPTS).await;
+    assert_eq!(received.len(), 3);
+    let decoded = received
+        .iter()
+        .map(|body| serde_json::from_str::<RatingRequest>(body).expect("strict rating request"))
+        .collect::<Vec<_>>();
     assert_eq!(
-        received_compute, expected_compute,
-        "the queue returned a body the adapter did not encode"
+        decoded
+            .iter()
+            .map(|request| request.fact.fact_id.to_string())
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected_ids
     );
-    assert_eq!(received_storage, expected_storage);
-
-    // The consumer end of the contract: strict decode, then the worker-side
-    // category fence, then the draft itself.
-    for body in received_compute {
-        let envelope: FactDraftEnvelope =
-            serde_json::from_str(&body).expect("the body the queue returned decodes strictly");
-        assert_eq!(envelope.category, Category::Compute);
-        let draft = envelope
-            .into_draft(Category::Compute)
-            .expect("a compute envelope reaches the compute worker");
-        assert_eq!(draft.authority.category, Category::Compute);
-        assert_eq!(draft.service.as_str(), "runtime-control-worker");
-    }
-    let storage_draft: FactDraftEnvelope =
-        serde_json::from_str(&received_storage[0]).expect("the storage body decodes strictly");
     assert_eq!(
-        storage_draft
-            .into_draft(Category::Storage)
-            .expect("a storage envelope reaches the storage worker"),
-        drafts()
-            .into_iter()
-            .find(|draft| draft.authority.category == Category::Storage)
-            .expect("a storage draft"),
-        "the draft came back off a real queue exactly as it went on"
+        decoded
+            .iter()
+            .filter(|request| request.fact.meter.category() == "compute")
+            .count(),
+        2
+    );
+    assert_eq!(
+        decoded
+            .iter()
+            .filter(|request| request.fact.meter.category() == "storage")
+            .count(),
+        1
     );
 }
 
@@ -245,8 +219,8 @@ async fn every_draft_one_closed_interval_owes_round_trips_through_its_own_catego
 async fn a_sibling_categorys_draft_is_refused_before_anything_reaches_the_queue() {
     let engine = MotoContainer::start().await.expect("moto starts");
     let client = client(&engine);
-    let compute_url = queue(&client, "aex-integration-usage-compute-fence").await;
-    let sink = SqsFactDraftSink::new(client.clone(), &compute_url, Category::Compute);
+    let rating_url = queue(&client, "aex-integration-usage-rating-fence").await;
+    let sink = SqsFactDraftSink::new(client.clone(), &rating_url, Category::Compute);
 
     let storage_draft = drafts()
         .into_iter()
@@ -272,7 +246,7 @@ async fn a_sibling_categorys_draft_is_refused_before_anything_reaches_the_queue(
     assert!(matches!(smuggled, SinkError::Refused { .. }), "{smuggled}");
 
     assert!(
-        drain(&client, &compute_url, 1, 1).await.is_empty(),
+        drain(&client, &rating_url, 1, 1).await.is_empty(),
         "a refused draft must never reach the queue; the fence is not server-side"
     );
 }
@@ -282,9 +256,9 @@ async fn a_queue_the_service_does_not_hold_is_a_typed_sink_error_and_never_a_pan
     let engine = MotoContainer::start().await.expect("moto starts");
     let client = client(&engine);
     // A well-formed URL on a live endpoint naming a queue nobody created: the
-    // shape a mistyped `AEX_USAGE_COMPUTE_QUEUE_URL` takes.
+    // shape a mistyped `AEX_USAGE_RATING_QUEUE_URL` takes.
     let absent = format!(
-        "{}/123456789012/aex-integration-usage-compute-never-created",
+        "{}/123456789012/aex-integration-usage-rating-never-created.fifo",
         engine.endpoint_url()
     );
     let compute = drafts()

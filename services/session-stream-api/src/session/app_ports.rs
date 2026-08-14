@@ -219,8 +219,6 @@ fn project_limit_bundle(
         revision,
         limits: scalars,
         agent_execution: AgentExecutionLimits {
-            max_turns: exact_u32(dimension(execution, "max_turns")?)?,
-            max_steps_per_turn: exact_u32(dimension(execution, "max_steps_per_turn")?)?,
             turn_deadline_ms: exact_u32(dimension(execution, "turn_deadline_ms")?)?,
             max_depth: exact_u16(dimension(execution, "max_depth")?)?,
             max_fanout: exact_u32(dimension(execution, "max_fanout")?)?,
@@ -339,8 +337,6 @@ mod tests {
         let effective_value = match id {
             LimitId::SessionAgentExecution => LimitValue::Map(LimitMapValue {
                 values: [
-                    ("max_turns", 32),
-                    ("max_steps_per_turn", 16),
                     ("turn_deadline_ms", 600_000),
                     ("max_depth", 4),
                     ("max_fanout", 32),
@@ -392,8 +388,6 @@ mod tests {
             .collect::<Vec<_>>();
         let projected = project_limit_bundle(revision, &rows).expect("complete bundle");
         assert_eq!(projected.revision, revision);
-        assert_eq!(projected.agent_execution.max_turns, 32);
-        assert_eq!(projected.agent_execution.max_steps_per_turn, 16);
         assert_eq!(projected.agent_execution.turn_deadline_ms, 600_000);
         assert_eq!(projected.agent_execution.max_depth, 4);
         assert_eq!(projected.agent_execution.max_fanout, 32);

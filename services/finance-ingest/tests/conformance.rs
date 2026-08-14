@@ -1,17 +1,21 @@
 //! The event contract this deployable accepts, and what it refuses.
 
 use aex_payment_contracts::{
-    PinnedApiVersion, ProviderEventEnvelope, ProviderEventFacts, ProviderEventId,
-    ProviderEventKind, ProviderObjectRef,
+    PinnedApiVersion, ProviderCustomerRef, ProviderEventEnvelope, ProviderEventFacts,
+    ProviderEventId, ProviderEventKind, ProviderMethodRef, ProviderObjectRef,
 };
 use aex_wire::PrefixedId as _;
 use aex_wire::ids::{ContentHash, OrganizationId};
+use aex_wire::models::CardBrand;
 use aex_wire::types::{Cents, Timestamp};
 use finance_ingest::handler::IngestRequest;
 use finance_ingest::inbox::AppliedState;
 
 /// The exact event set the webhook edge is configured to forward.
-const FORWARDED: [ProviderEventKind; 5] = [
+const FORWARDED: [ProviderEventKind; 8] = [
+    ProviderEventKind::PaymentMethodAttached,
+    ProviderEventKind::PaymentMethodUpdated,
+    ProviderEventKind::PaymentMethodDetached,
     ProviderEventKind::PaymentIntentSucceeded,
     ProviderEventKind::PaymentIntentPaymentFailed,
     ProviderEventKind::ChargeDisputeCreated,
@@ -42,6 +46,29 @@ fn envelope(facts: ProviderEventFacts) -> ProviderEventEnvelope {
 fn every_forwarded_event_kind_round_trips_through_the_invoke_payload() {
     for kind in FORWARDED {
         let facts = match kind {
+            ProviderEventKind::PaymentMethodAttached => ProviderEventFacts::PaymentMethodAttached {
+                customer: ProviderCustomerRef("cus_abcdefghij".to_owned()),
+                method: ProviderMethodRef("pm_abcdefghij".to_owned()),
+                brand: CardBrand::Visa,
+                last4: "4242".to_owned(),
+                expiry_month: 12,
+                expiry_year: 2032,
+                provider_created_at: Timestamp::from_unix_millis(1_799_999_000_000)
+                    .expect("an instant"),
+            },
+            ProviderEventKind::PaymentMethodUpdated => ProviderEventFacts::PaymentMethodUpdated {
+                customer: ProviderCustomerRef("cus_abcdefghij".to_owned()),
+                method: ProviderMethodRef("pm_abcdefghij".to_owned()),
+                brand: CardBrand::Mastercard,
+                last4: "4444".to_owned(),
+                expiry_month: 11,
+                expiry_year: 2034,
+                provider_created_at: Timestamp::from_unix_millis(1_799_999_000_000)
+                    .expect("an instant"),
+            },
+            ProviderEventKind::PaymentMethodDetached => ProviderEventFacts::PaymentMethodDetached {
+                method: ProviderMethodRef("pm_abcdefghij".to_owned()),
+            },
             ProviderEventKind::PaymentIntentSucceeded => {
                 ProviderEventFacts::PaymentIntentSucceeded {
                     organization: organization(),
@@ -90,6 +117,56 @@ fn every_forwarded_event_kind_round_trips_through_the_invoke_payload() {
 }
 
 #[test]
+fn provider_endpoint_policy_is_the_same_exact_closed_event_set() {
+    let policy: serde_json::Value =
+        serde_json::from_str(include_str!("../../../release/stripe-endpoint.json"))
+            .expect("the endpoint policy decodes");
+    let actual: Vec<&str> = policy["enabledEvents"]
+        .as_array()
+        .expect("enabledEvents is an array")
+        .iter()
+        .map(|value| value.as_str().expect("an event type"))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            "payment_method.attached",
+            "payment_method.updated",
+            "payment_method.detached",
+            "payment_intent.succeeded",
+            "payment_intent.payment_failed",
+            "charge.dispute.created",
+            "refund.created",
+            "refund.failed",
+        ]
+    );
+    assert_eq!(actual.len(), FORWARDED.len());
+}
+
+#[test]
+fn the_typescript_edge_fixture_decodes_as_the_exact_rust_invoke_request() {
+    let raw =
+        include_str!("../../stripe-webhook-edge/test/fixtures/payment-method-attached-ingest.json");
+    let request: IngestRequest = serde_json::from_str(raw).expect("the edge fixture decodes");
+    let IngestRequest::ProviderEvent { event } = request else {
+        panic!("the fixture must invoke a provider event")
+    };
+    assert_eq!(event.kind, ProviderEventKind::PaymentMethodAttached);
+    assert_eq!(event.facts.kind(), event.kind);
+    assert_eq!(event.facts.organization(), None);
+
+    let money_raw = include_str!(
+        "../../stripe-webhook-edge/test/fixtures/payment-intent-succeeded-ingest.json"
+    );
+    let money: IngestRequest = serde_json::from_str(money_raw).expect("the money fixture decodes");
+    let IngestRequest::ProviderEvent { event } = money else {
+        panic!("the fixture must invoke a provider event")
+    };
+    assert_eq!(event.kind, ProviderEventKind::PaymentIntentSucceeded);
+    assert_eq!(event.facts.organization(), Some(organization()));
+}
+
+#[test]
 fn an_unmodelled_event_type_cannot_be_expressed_at_all() {
     let raw = r#"{"request":"provider_event","event":{"schemaVersion":1,
         "providerEventId":"evt_1","object":"ch_1","kind":"invoice_paid",
@@ -98,7 +175,7 @@ fn an_unmodelled_event_type_cannot_be_expressed_at_all() {
         "providerApiVersion":"2026-06-24.dahlia","receivedAt":"2026-08-01T00:00:00.000Z"}}"#;
     assert!(
         serde_json::from_str::<IngestRequest>(raw).is_err(),
-        "the closed event union admits no sixth type"
+        "the closed event union admits no ninth type"
     );
 }
 

@@ -2,16 +2,16 @@
   "$id": "https://schemas.aex.dev/v1/DeletingSession.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A session whose irreversible deletion is running; rendered at 410.",
+  "description": "Minimal deletion marker returned while content cleanup runs.",
   "properties": {
     "id": {
-      "description": "Identity.",
+      "description": "Session.",
       "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "session"
     },
     "operationId": {
-      "description": "The deletion operation.",
+      "description": "Diagnostic deletion identity.",
       "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "operation"
@@ -21,19 +21,12 @@
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
-    },
-    "workspaceId": {
-      "description": "The owning workspace.",
-      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
-      "type": "string",
-      "x-aex-id": "workspace"
     }
   },
   "required": [
     "id",
     "operationId",
-    "startedAt",
-    "workspaceId"
+    "startedAt"
   ],
   "title": "DeletingSession",
   "type": "object"

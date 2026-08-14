@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/NewApiKey.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A freshly minted key. The value never appears in a later read.",
+  "description": "A freshly minted key; its value is returned once and never stored.",
   "properties": {
     "createdAt": {
       "description": "When it was minted.",
@@ -28,7 +28,7 @@
         "type": "string",
         "x-aex-registry": "scopes"
       },
-      "maxItems": 64,
+      "maxItems": 16,
       "type": "array"
     },
     "value": {
@@ -38,7 +38,7 @@
       "type": "string"
     },
     "workspaceId": {
-      "description": "The workspace it authorizes.",
+      "description": "The fixed workspace.",
       "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "workspace"

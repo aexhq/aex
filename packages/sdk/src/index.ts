@@ -1,7 +1,7 @@
 export { Aex } from "./client/aex.js";
 export type { AexOptions } from "./client/aex.js";
 export {
-  AccountToken,
+  DashboardSession,
   WorkspaceApiKey,
   parseCredential,
   regionalHost,
@@ -30,7 +30,7 @@ export {
 export type { AexErrorCode } from "./transport/errors.js";
 export { RETRY_POLICY, executeWithRetry } from "./transport/retry.js";
 export { FetchTransport } from "./transport/transport.js";
-export type { AexTransport, WireRequest, WireResponse } from "./transport/transport.js";
+export type { AexTransport, WireRequest, WireResponse, WireStreamResponse } from "./transport/transport.js";
 export { Page } from "./transport/pagination.js";
 export { WorkspaceFiles } from "./files/workspace-files.js";
 export type {

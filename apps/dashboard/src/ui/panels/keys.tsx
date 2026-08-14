@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import type { ApiKeyPage, NewApiKey } from "@aexhq/sdk";
 
 import { DEADLINE_MS, submit, useResource } from "../client";
 import { Badge, Card, Empty, Notice, Resolved } from "../components";
 import { instant } from "../status";
-import type { ApiKey, NewApiKey, Page } from "../wire";
 
 /**
  * Scopes offered when minting a key.
@@ -18,12 +18,13 @@ import type { ApiKey, NewApiKey, Page } from "../wire";
 const COMMON_SCOPES = [
   "sessions:read",
   "sessions:write",
-  "files:live",
-  "provider_credentials:read",
-  "provider_credentials:write",
+  "sessions:delete",
   "resources:read",
   "resources:write",
   "billing:read",
+  "billing:write",
+  "api_keys:read",
+  "api_keys:write",
 ] as const;
 
 export function ApiKeysPanel({
@@ -33,7 +34,7 @@ export function ApiKeysPanel({
   workspaceId: string;
   billingHref?: string | undefined;
 }) {
-  const { state, reload } = useResource<Page<ApiKey>>("api_keys_list", {
+  const { state, reload } = useResource<ApiKeyPage>("api_keys_list", {
     parameters: { workspaceId, limit: "100" },
     deadlineMs: DEADLINE_MS.control,
   });

@@ -8,7 +8,7 @@ const SECRET = "([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])";
 const WORKSPACE_KEY = new RegExp(
   `^aex_wk_(use1|use2|usw2|apne1|euw1)_${BODY}_${BODY}_${SECRET}$`,
 );
-const ACCOUNT_TOKEN = new RegExp(`^aex_at_${BODY}_${SECRET}$`);
+const DASHBOARD_SESSION = new RegExp(`^aex_ds_${BODY}_${SECRET}$`);
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 
 export type RegionCode = "use1" | "use2" | "usw2" | "apne1" | "euw1";
@@ -75,26 +75,26 @@ export class WorkspaceApiKey extends Credential {
   }
 }
 
-export class AccountToken extends Credential {
+export class DashboardSession extends Credential {
   private constructor(value: string) {
     super(value);
   }
 
-  static parse(value: string): AccountToken {
-    const match = ACCOUNT_TOKEN.exec(value);
+  static parse(value: string): DashboardSession {
+    const match = DASHBOARD_SESSION.exec(value);
     if (!match || !isUuid7Body(match[1] ?? "")) {
-      throw new AexConfigError("invalid credential: expected an aex_at_ account token");
+      throw new AexConfigError("invalid credential: expected an aex_ds_ dashboard session");
     }
-    return new AccountToken(value);
+    return new DashboardSession(value);
   }
 }
 
-export type ParsedCredential = WorkspaceApiKey | AccountToken;
+export type ParsedCredential = WorkspaceApiKey | DashboardSession;
 
 export function parseCredential(value: string): ParsedCredential {
   if (value.startsWith("aex_wk_")) return WorkspaceApiKey.parse(value);
-  if (value.startsWith("aex_at_")) return AccountToken.parse(value);
-  throw new AexConfigError("invalid credential: expected prefix aex_wk_ or aex_at_");
+  if (value.startsWith("aex_ds_")) return DashboardSession.parse(value);
+  throw new AexConfigError("invalid credential: expected prefix aex_wk_ or aex_ds_");
 }
 
 export function regionalHost(region: RegionCode): string {

@@ -1,5 +1,5 @@
 # One personal account, one fixed workspace, GitHub browser sessions and API
-# keys. Organization/member/device-flow product types intentionally do not
+# keys. Organization and membership product types intentionally do not
 # exist in the launch contract.
 module: central
 schemas:

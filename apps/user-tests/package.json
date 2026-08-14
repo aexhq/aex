@@ -22,10 +22,23 @@
     "risk": [
       "generated_code"
     ],
-    "scenarios": ["packed.sdk-install-node", "local.site-determinism", "live.session-round-trip"],
+    "scenarios": [
+      "packed.sdk-install-node",
+      "local.site-determinism",
+      "live.session-round-trip",
+      "SC-BILLING-ESSENTIAL",
+      "SC-SESSION-STREAM",
+      "SC-SESSION-TERMINAL",
+      "SC-TELEMETRY-LIVE-RETAINED",
+      "SC-PROVIDER-MATRIX",
+      "SC-MCP",
+      "SC-TOOL-STORAGE",
+      "SC-LONG-CONTEXT"
+    ],
     "targets": {
       "registry": "unit",
-      "public_user": "user"
+      "public_user": "user",
+      "live": "e2e"
     },
     "not_applicable": {
       "live_suite": "the public user-test authority observes deployed planes through published artifacts only; it owns no companion"

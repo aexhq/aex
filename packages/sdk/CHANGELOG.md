@@ -8,96 +8,39 @@ follows semantic versioning.
 
 ### Changed (BREAKING)
 
-- The session is now the only customer-facing execution unit. Public run/turn
-  resources, identifiers, route families, result handles, and terminology are
-  removed. Send one text message at a time to a session and send the next after
-  the current activity finishes or is cancelled.
-- Session creation now requires an explicit `provider`, exact provider-native
-  `model`, and `providerCredentialId`. Managed model keys are not a launch
-  feature; provider credentials use their own encrypted, write-only BYOK
-  resource.
-- Session and Brain persistence, snapshots, crash recovery, clone/fork,
-  persisted-session files, workspace discard, trash, and restore are removed.
-  Runtime loss terminates the session rather than reconstructing partial work.
-- Generic secrets and typed skill, tool, instruction, and MCP registries are
-  removed. Those materials can be opaque registered workspace files. Dedicated
-  provider credentials remain.
-- Interactive approval policy and approval resources are removed. The launch
-  tool catalog is exactly `read_file`, `edit_file`, `write_file`, and Bash,
-  executed inside the session MicroVM.
-- Session messages are text-only and bounded to 24,576 UTF-8 bytes. Attachments
-  are not silently converted or dropped.
+- The public API is session-centered: no run, generic operation, organization,
+  workspace CRUD, approval, reusable provider-credential, limit, observation,
+  device-flow, or account-token resource clients remain.
+- Session creation takes an exact official provider/model pair and a
+  write-only `providerApiKey`. The key is session-scoped and never returned.
+- Central routes authenticate with `dashboardSession`; regional session and
+  file routes authenticate with a workspace `apiKey`. A client may hold both.
+- Workspace files expose only their current value. Public revisions, version
+  selectors, restore, and generation-local live-file APIs are removed.
+- Session messages remain text-only. Images, PDFs, video, and other arbitrary
+  bytes are uploaded as workspace files and referenced by their sandbox path.
 
 ### Added
 
-- Eight-hour multi-message sessions backed by one exact retained generation.
-  The provider suspends it after 180 idle seconds and automatically resumes it
-  for the next message or live-file call. Suspension never extends the lifetime.
-- Manual suspend, resume, terminate, and irreversible delete operations.
-- Durable opaque workspace files selected by exact revision at session creation,
-  plus exact-generation live list/stat and resumable, digest-verified upload and
-  download for generation-local files.
-- Dedicated provider-credential registration, metadata reads, listing, and
-  revocation.
-- Durable observations, OpenTelemetry admission, streams, and telemetry exports
-  independent of ephemeral session execution state.
+- Latest-only file helpers for inline text/bytes, HTTPS URL admission, direct
+  multipart upload, verified download, and delete.
+- Session configuration for a default-on eager sandbox, frozen file mounts,
+  structured response formats, and qualified remote or sandbox-process MCP.
+- Live assistant preview/gap/reconciliation frames and live/retained telemetry
+  stream, replay, and compressed download resources.
+- Essential billing resources for balance, saved-card display metadata,
+  Stripe-hosted card setup/top-up, transactions, and provider/model usage.
+- The seven candidate official provider families: OpenAI, Anthropic, DeepSeek,
+  xAI, Meta, Moonshot AI, and Alibaba. A family is shipped only when its
+  official endpoint passes the launch qualification suite.
 
 ### Migration
 
-Replace run-oriented flows with `sessions.sessionCreate(...)`,
-`sessions.sessionMessageSend(...)`, `sessions.sessionGet(...)`, and
-`sessions.sessionMessagesList(...)`. Register a provider credential first and
-pass its exact id with `provider` and `model` when creating the session. Move
-durable inputs to registered workspace files; use the live-file helpers only for
-files that may be lost with the retained generation. Remove approval, generic
-secret, typed registry, persist, fork, restore, and run-result calls rather than
-wrapping them: the prelaunch release has no compatibility surface for them.
-
-## 1.0.0
-
-Managed Vercel AI Gateway model access. Customers no longer supply provider API
-keys — the platform routes every model through one managed gateway key.
-
-### Changed (BREAKING)
-
-- **`model` is now a Vercel AI Gateway `creator/model` slug string** (e.g.
-  `"anthropic/claude-haiku-4-5"`, `"deepseek/deepseek-v4-flash"`), validated at
-  the boundary by `parseModelSlug` against `^[a-z0-9-]+/[A-Za-z0-9._:-]+$`. The
-  catalog is open — a well-formed slug the gateway serves works with no code
-  change, and an unknown-but-well-formed slug is arbitrated by the gateway at
-  submit time.
-- **Streaming is allowed for ALL models.** `outputMode: "stream"` is no longer
-  capability-gated; there is no per-model/provider streaming gate.
-
-### Removed (BREAKING)
-
-- **`provider`** option/field — routing is the managed gateway's job; there is
-  no provider selector on `SessionCreateOptions` or the wire.
-- **`apiKeys`** option and `secrets.apiKeys` — a run needs no provider API key.
-- **`Models` / `SUPPORTED_MODELS` / `SUPPORTED_MODELS_BY_PROVIDER` /
-  `MODEL_PROVIDER_IDS`** and the model→provider resolvers
-  (`resolveModelProvider`, `resolveProviderModelId`, `providerForModel`,
-  `providersForModel`, `assertModelNameMatchesProvider`, `isModelName`,
-  `parseModelName`).
-- **`Providers` / `PROVIDERS` / `DEFAULT_PROVIDER`** — the closed provider set.
-- **`STREAMABLE_SHAPES` / `StreamableShape` / `isStreamableProvider` /
-  `assertStreamableOutputMode`** — the streaming-capability machinery.
-- **`PROVIDER_PUBLIC_SUPPORT`** and the provider capability matrix (the generated
-  provider/runtime doc is now a model-access doc).
-- **OpenRouter and Doubao** are dropped from the supported set.
-
-### Added
-
-- **`parseModelSlug` / `isModelSlug` / `MODEL_SLUG_PATTERN`** — the gateway
-  model-slug validators. `ModelName` is now a `string` alias; `ProviderName` is a
-  thin `string` alias retained only for serving-provider telemetry.
-
-### Migration
-
-Replace `model: Models.CLAUDE_HAIKU_4_5, provider: Providers.ANTHROPIC,
-apiKeys: { anthropic: … }` with `model: "anthropic/claude-haiku-4-5"`. Drop every
-`provider` / `apiKeys` argument and every `--provider` / `--<provider>-api-key`
-CLI flag. Models are open gateway slugs — no key setup required.
+Construct `Aex` with a workspace `apiKey` for regional calls and a
+`dashboardSession` for central calls. Create sessions with `provider`, `model`,
+and `providerApiKey`; use `workspaceFiles` for durable inputs and outputs. Move
+off every removed resource rather than wrapping it: this prelaunch release has
+no compatibility layer.
 
 ## 0.45.0
 

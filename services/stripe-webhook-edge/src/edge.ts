@@ -1,4 +1,4 @@
-import { HANDLED_EVENT_TYPES, STRIPE_API_VERSION } from "../../stripe-command-edge/src/protocol.js";
+import { HANDLED_EVENT_TYPES, STRIPE_API_VERSION } from "./protocol.js";
 
 export { HANDLED_EVENT_TYPES };
 

@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/ResolvedCompute.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The complete provider-derived capacity of the selected shape.",
+  "description": "Complete provider-derived capacity of the frozen shape.",
   "properties": {
     "baseline": {
       "$ref": "aex:schema:ComputeShape",
@@ -15,7 +15,7 @@
       "type": "integer"
     },
     "maxConcurrentConnections": {
-      "description": "Concurrent connection ceiling.",
+      "description": "Connection ceiling.",
       "maximum": 4096,
       "minimum": 1,
       "type": "integer"
@@ -31,7 +31,7 @@
       "description": "Burst ceiling."
     },
     "size": {
-      "description": "The selected baseline token.",
+      "description": "Selected token.",
       "enum": [
         "512mb",
         "1gb",

@@ -17,3 +17,8 @@ output "deregistration_delay" {
   value       = var.deregistration_delay
   description = "Drain window the caller must configure on the target group in front of this service."
 }
+
+output "public_https_egress_enabled" {
+  value       = var.public_https_egress
+  description = "Whether the service security group admits outbound public HTTPS."
+}

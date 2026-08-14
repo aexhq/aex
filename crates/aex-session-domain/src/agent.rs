@@ -1,10 +1,9 @@
 //! Agent control records.
 //!
-//! The ceiling counts **concurrently materialized** agents (D-22): a terminal
-//! agent never consumes budget and there is no finalized-agent TTL, so semantic
-//! history is kept without paying for it. `Parked` is internal and projects to
-//! the public `running` (D-12); `Idle` is the root at rest and has no public
-//! child projection at all.
+//! A session may admit at most twelve distinct non-root agent identities over
+//! its lifetime, and lineage stops at depth three. Terminal children continue
+//! to count. `Parked` is internal and projects to the public `running` (D-12);
+//! `Idle` is the root at rest and has no public child projection at all.
 
 use std::collections::BTreeSet;
 
@@ -396,6 +395,14 @@ pub enum AgentError {
         /// Its effective value.
         effective: u64,
     },
+    /// The requested lineage is deeper than the runtime permits.
+    #[error("subagent depth {depth} exceeds the maximum {maximum}")]
+    DepthExceeded {
+        /// Requested depth, with the root at zero.
+        depth: u16,
+        /// The hard runtime maximum.
+        maximum: u16,
+    },
     /// The session is not admitting work.
     #[error("session admission is {0:?}")]
     AdmissionClosed(WorkAdmission),
@@ -456,15 +463,15 @@ pub fn create_root(
 
 /// Spawns a subagent.
 ///
-/// The ceiling counts the root plus every non-terminal subagent in
-/// `materialized`, so a completed child frees its slot and a session's semantic
-/// history costs nothing.
+/// The ceiling counts every distinct subagent in `materialized`, including
+/// terminal history. A caller retrying an existing `id` receives that existing
+/// control record without consuming another slot.
 ///
 /// # Errors
 ///
 /// Returns [`AgentError`] when the parent is not active or in another session,
-/// when the materialized-agent ceiling is reached, when admission is closed, or
-/// when the required limit is unresolved.
+/// when the lifetime-agent or depth ceiling is reached, when admission is
+/// closed, or when the required limit is unresolved.
 pub fn spawn(
     id: AgentId,
     parent: &AgentControl,
@@ -484,21 +491,34 @@ pub fn spawn(
         return Err(AgentError::ParentNotActive(parent.status));
     }
 
-    let depth = parent.depth.saturating_add(1);
-
-    let ceiling = limits.require(LimitId::SessionMaterializedAgents)?;
-    let live_subagents = materialized
+    if let Some(existing) = materialized
         .iter()
-        .filter(|agent| {
-            agent.session == session.id
-                && agent.kind == AgentKind::Subagent
-                && agent.status.is_materialized()
-        })
+        .find(|agent| agent.session == session.id && agent.id == id)
+    {
+        return Ok(AgentCommit {
+            agent: existing.clone(),
+            changed: false,
+        });
+    }
+
+    let depth = parent.depth.saturating_add(1);
+    if depth > aex_wire::limits::MAX_SUBAGENT_DEPTH {
+        return Err(AgentError::DepthExceeded {
+            depth,
+            maximum: aex_wire::limits::MAX_SUBAGENT_DEPTH,
+        });
+    }
+
+    let configured_agents = limits.require(LimitId::SessionMaterializedAgents)?;
+    let ceiling = configured_agents
+        .saturating_sub(1)
+        .min(aex_wire::limits::MAX_SUBAGENTS_PER_SESSION);
+    let lifetime_subagents = materialized
+        .iter()
+        .filter(|agent| agent.session == session.id && agent.kind == AgentKind::Subagent)
         .count();
-    let materialized_agents = u64::try_from(live_subagents)
-        .unwrap_or(u64::MAX)
-        .saturating_add(1);
-    if materialized_agents >= ceiling {
+    let admitted = u64::try_from(lifetime_subagents).unwrap_or(u64::MAX);
+    if admitted >= ceiling {
         return Err(AgentError::CeilingExceeded {
             limit: LimitId::SessionMaterializedAgents,
             effective: ceiling,
@@ -724,7 +744,7 @@ mod tests {
     }
 
     #[test]
-    fn the_ceiling_counts_the_root_and_non_terminal_subagents() {
+    fn the_ceiling_counts_distinct_subagents_for_the_session_lifetime() {
         let session = session_fixture();
         let root = create_root(agent_id(1), &session, materialized_state(), moment(0)).agent;
 
@@ -755,11 +775,11 @@ mod tests {
             ),
             Err(AgentError::CeilingExceeded {
                 limit: LimitId::SessionMaterializedAgents,
-                effective: 3
+                effective: 2
             })
         );
 
-        // Settling one frees its slot; terminal history never consumes budget.
+        // Settling one does not free its identity slot.
         live[0] = complete_agent(
             &live[0],
             AgentTerminal::Completed,
@@ -768,7 +788,7 @@ mod tests {
         )
         .expect("completes")
         .agent;
-        assert!(
+        assert_eq!(
             spawn(
                 agent_id(9),
                 &root,
@@ -777,8 +797,50 @@ mod tests {
                 &live,
                 materialized_state(),
                 moment(4)
-            )
-            .is_ok()
+            ),
+            Err(AgentError::CeilingExceeded {
+                limit: LimitId::SessionMaterializedAgents,
+                effective: 2
+            })
+        );
+
+        // Retrying an existing identity is idempotent and consumes no slot.
+        let retried = spawn(
+            live[0].id,
+            &root,
+            &session,
+            &limits(3),
+            &live,
+            materialized_state(),
+            moment(5),
+        )
+        .expect("same-id retry returns the existing child");
+        assert!(!retried.changed);
+        assert_eq!(retried.agent, live[0]);
+    }
+
+    #[test]
+    fn depth_three_is_terminal_even_when_configured_limits_are_looser() {
+        let session = session_fixture();
+        let mut parent = create_root(agent_id(1), &session, materialized_state(), moment(0)).agent;
+        parent.kind = AgentKind::Subagent;
+        parent.depth = 3;
+        parent.status = AgentStatus::Running;
+
+        assert_eq!(
+            spawn(
+                agent_id(2),
+                &parent,
+                &session,
+                &limits(100),
+                &[parent.clone()],
+                materialized_state(),
+                moment(1),
+            ),
+            Err(AgentError::DepthExceeded {
+                depth: 4,
+                maximum: 3,
+            })
         );
     }
 

@@ -3,7 +3,7 @@
 //! The authorization scope registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
+//! `sha256:2714e625c3ed159b08bf3f97a27b9d088369acc429073957508115af3b1f7238`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -12,89 +12,44 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Every scope a workspace API key or account token can carry. The set is derived from the route
-/// table: a scope this enum lacks is a route change, not a registry change.
+/// Every scope a workspace API key or dashboard session can carry. The set is derived from the
+/// route table: a scope this enum lacks is a route change, not a registry change.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeId {
-    /// `account:read` — Read the caller's account and operational state.
+    /// `account:read` — Read bootstrap and personal-account state.
     #[serde(rename = "account:read")]
     AccountRead,
-    /// `account:write` — Decide the caller's own device authorizations and close their own browser
-    /// session.
+    /// `account:write` — Close the caller's own browser session.
     #[serde(rename = "account:write")]
     AccountWrite,
-    /// `organizations:read` — List and read organizations the caller belongs to.
-    #[serde(rename = "organizations:read")]
-    OrganizationsRead,
-    /// `organizations:write` — Create organizations.
-    #[serde(rename = "organizations:write")]
-    OrganizationsWrite,
-    /// `memberships:read` — List memberships of an organization.
-    #[serde(rename = "memberships:read")]
-    MembershipsRead,
-    /// `memberships:write` — Invite people to an organization.
-    #[serde(rename = "memberships:write")]
-    MembershipsWrite,
-    /// `memberships:accept` — Redeem invitations addressed to the caller's own verified email.
-    #[serde(rename = "memberships:accept")]
-    MembershipsAccept,
-    /// `workspaces:read` — List and read workspaces.
-    #[serde(rename = "workspaces:read")]
-    WorkspacesRead,
-    /// `workspaces:write` — Create workspaces.
-    #[serde(rename = "workspaces:write")]
-    WorkspacesWrite,
-    /// `workspaces:delete` — Admit the global workspace-deletion operation.
-    #[serde(rename = "workspaces:delete")]
-    WorkspacesDelete,
-    /// `api_keys:read` — List workspace API key metadata.
+    /// `api_keys:read` — List fixed-workspace API key metadata.
     #[serde(rename = "api_keys:read")]
     ApiKeysRead,
-    /// `api_keys:write` — Mint and revoke workspace API keys.
+    /// `api_keys:write` — Mint and revoke fixed-workspace API keys.
     #[serde(rename = "api_keys:write")]
     ApiKeysWrite,
-    /// `billing:read` — Read balances, statements and usage.
+    /// `billing:read` — Read prepaid balance, card metadata, transactions and rated usage.
     #[serde(rename = "billing:read")]
     BillingRead,
-    /// `billing:write` — Create checkouts, portal sessions and top-up policy.
+    /// `billing:write` — Set up or remove cards and create manual top-up checkouts.
     #[serde(rename = "billing:write")]
     BillingWrite,
-    /// `operations:read` — Read durable operation records.
-    #[serde(rename = "operations:read")]
-    OperationsRead,
-    /// `operations:write` — Request cancellation of a durable operation.
-    #[serde(rename = "operations:write")]
-    OperationsWrite,
-    /// `workspace:read` — Read the current workspace and its effective limits.
-    #[serde(rename = "workspace:read")]
-    WorkspaceRead,
-    /// `sessions:read` — Read sessions and sealed messages.
+    /// `sessions:read` — Read sessions, messages and telemetry.
     #[serde(rename = "sessions:read")]
     SessionsRead,
-    /// `sessions:write` — Create sessions, send messages, and cancel, suspend, resume or terminate
-    /// a session.
+    /// `sessions:write` — Create sessions, send messages, cancel and terminate.
     #[serde(rename = "sessions:write")]
     SessionsWrite,
     /// `sessions:delete` — Admit irreversible session deletion.
     #[serde(rename = "sessions:delete")]
     SessionsDelete,
-    /// `files:live` — Access live session files, automatically resuming the same suspended
-    /// generation.
-    #[serde(rename = "files:live")]
-    FilesLive,
-    /// `resources:read` — Read registered opaque workspace files and mint their download grants.
+    /// `resources:read` — Read current workspace files and mint downloads.
     #[serde(rename = "resources:read")]
     ResourcesRead,
-    /// `resources:write` — Replace and delete registered opaque workspace files and stage uploads.
+    /// `resources:write` — Overwrite/delete current workspace files and upload bytes.
     #[serde(rename = "resources:write")]
     ResourcesWrite,
-    /// `provider_credentials:read` — Read dedicated BYOK provider-credential binding metadata.
-    #[serde(rename = "provider_credentials:read")]
-    ProviderCredentialsRead,
-    /// `provider_credentials:write` — Register and revoke dedicated BYOK provider credentials.
-    #[serde(rename = "provider_credentials:write")]
-    ProviderCredentialsWrite,
 }
 
 impl ScopeId {
@@ -102,29 +57,15 @@ impl ScopeId {
     pub const ALL: &'static [ScopeId] = &[
         ScopeId::AccountRead,
         ScopeId::AccountWrite,
-        ScopeId::OrganizationsRead,
-        ScopeId::OrganizationsWrite,
-        ScopeId::MembershipsRead,
-        ScopeId::MembershipsWrite,
-        ScopeId::MembershipsAccept,
-        ScopeId::WorkspacesRead,
-        ScopeId::WorkspacesWrite,
-        ScopeId::WorkspacesDelete,
         ScopeId::ApiKeysRead,
         ScopeId::ApiKeysWrite,
         ScopeId::BillingRead,
         ScopeId::BillingWrite,
-        ScopeId::OperationsRead,
-        ScopeId::OperationsWrite,
-        ScopeId::WorkspaceRead,
         ScopeId::SessionsRead,
         ScopeId::SessionsWrite,
         ScopeId::SessionsDelete,
-        ScopeId::FilesLive,
         ScopeId::ResourcesRead,
         ScopeId::ResourcesWrite,
-        ScopeId::ProviderCredentialsRead,
-        ScopeId::ProviderCredentialsWrite,
     ];
 
     /// The wire spelling.
@@ -133,29 +74,15 @@ impl ScopeId {
         match self {
             Self::AccountRead => "account:read",
             Self::AccountWrite => "account:write",
-            Self::OrganizationsRead => "organizations:read",
-            Self::OrganizationsWrite => "organizations:write",
-            Self::MembershipsRead => "memberships:read",
-            Self::MembershipsWrite => "memberships:write",
-            Self::MembershipsAccept => "memberships:accept",
-            Self::WorkspacesRead => "workspaces:read",
-            Self::WorkspacesWrite => "workspaces:write",
-            Self::WorkspacesDelete => "workspaces:delete",
             Self::ApiKeysRead => "api_keys:read",
             Self::ApiKeysWrite => "api_keys:write",
             Self::BillingRead => "billing:read",
             Self::BillingWrite => "billing:write",
-            Self::OperationsRead => "operations:read",
-            Self::OperationsWrite => "operations:write",
-            Self::WorkspaceRead => "workspace:read",
             Self::SessionsRead => "sessions:read",
             Self::SessionsWrite => "sessions:write",
             Self::SessionsDelete => "sessions:delete",
-            Self::FilesLive => "files:live",
             Self::ResourcesRead => "resources:read",
             Self::ResourcesWrite => "resources:write",
-            Self::ProviderCredentialsRead => "provider_credentials:read",
-            Self::ProviderCredentialsWrite => "provider_credentials:write",
         }
     }
 

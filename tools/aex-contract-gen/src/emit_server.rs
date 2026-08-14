@@ -390,9 +390,6 @@ fn record_response_imports(shape: &ResponseShape, imports: &mut BTreeSet<String>
         ResponseShape::NoContent => {
             imports.insert("crate::server::NoContent".to_owned());
         }
-        ResponseShape::Accepted => {
-            imports.insert("crate::server::Accepted".to_owned());
-        }
         ResponseShape::Created(schema) => {
             imports.insert("crate::server::Created".to_owned());
             imports.insert(format!("crate::models::{schema}"));
@@ -571,9 +568,6 @@ fn emit_arm(
     ));
     let rendered = match &shape {
         ResponseShape::NoContent => "DispatchOutcome::Unary(RawResponse::no_content())".to_owned(),
-        ResponseShape::Accepted => {
-            "DispatchOutcome::Unary(RawResponse::accepted(&answer)?)".to_owned()
-        }
         ResponseShape::Created(_) => format!(
             "DispatchOutcome::Unary(RawResponse::json({}, &answer.0)?)",
             operation.success_status

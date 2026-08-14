@@ -48,8 +48,8 @@ pub use edge::{
 };
 pub use idempotency::IdempotencyIdentity;
 pub use mount::{
-    AdmissionRequest, EdgeAdmission, MountError, Mounted, UnaryDispatch, mount_unary, not_served,
-    render, render_error,
+    AdmissionRequest, DispatchResponse, EdgeAdmission, MountError, Mounted, ResponseStream,
+    UnaryDispatch, mount_unary, not_served, render, render_error, render_ndjson,
 };
 pub use projection::ProjectionError as WireProjectionError;
 pub use router::{EdgeStack, RouteOwner, route_owner};

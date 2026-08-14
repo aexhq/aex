@@ -207,8 +207,11 @@ impl Routes {
             projection::registered_file(&pointer).map_err(|error| StoreError::Invalid {
                 detail: format!("a registered file pointer is malformed: {error}"),
             })?;
-        let digest = registered.value.content.sha256;
-        let size_bytes = u64::try_from(registered.value.content.size_bytes.get())
+        let value = registered
+            .value
+            .ok_or_else(|| missing(Participant::REGISTRY_POINTER))?;
+        let digest = value.content.sha256;
+        let size_bytes = u64::try_from(value.content.size_bytes.get())
             .map_err(|_| missing(Participant::CONTENT_DESCRIPTOR))?;
         let descriptor = self
             .shared()

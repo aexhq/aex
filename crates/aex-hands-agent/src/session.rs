@@ -514,6 +514,7 @@ pub fn interrupted_terminal(meta: &OperationMeta, now: Timestamp) -> TerminalMet
         body_len: 0,
         digest: empty_digest(),
         truncated: false,
+        result_file: None,
         failure: Some(OperationFailure {
             reason: "guest_interrupted".to_owned(),
             detail: Some("the supervisor restarted with no live process group".to_owned()),
@@ -671,6 +672,7 @@ mod tests {
             body_len: 0,
             digest: empty_digest(),
             truncated: false,
+            result_file: None,
             failure: None,
         }
     }

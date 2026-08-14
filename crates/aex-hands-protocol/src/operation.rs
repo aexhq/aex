@@ -8,6 +8,45 @@
 use aex_wire::ids::ContentHash;
 use aex_wire::types::{DecimalU128, HttpsUrl, Timestamp};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+/// Environment slot carrying one bounded sandbox-process MCP invocation to
+/// the guest's maintained rmcp helper. It exists only inside the exact Hand.
+pub const SANDBOX_MCP_REQUEST_VAR: &str = "AEX_SANDBOX_MCP_REQUEST";
+/// Environment slot carrying one sandbox MCP startup qualification request.
+pub const SANDBOX_MCP_QUALIFY_VAR: &str = "AEX_SANDBOX_MCP_QUALIFY";
+
+/// One sandbox-process MCP server handshake executed during session admission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SandboxMcpQualification {
+    /// MCP server executable.
+    pub command: String,
+    /// Server arguments.
+    pub args: Vec<String>,
+    /// Complete explicit server environment. Values redact in diagnostics.
+    pub environment: BTreeMap<String, EnvValue>,
+    /// Working directory inside `/workspace`.
+    pub working_directory: GuestPath,
+}
+
+/// One sandbox-process MCP call executed inside the exact guest generation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SandboxMcpCall {
+    /// MCP server executable.
+    pub command: String,
+    /// Server arguments.
+    pub args: Vec<String>,
+    /// Complete explicit server environment. Values redact in diagnostics.
+    pub environment: BTreeMap<String, EnvValue>,
+    /// Working directory inside `/workspace`.
+    pub working_directory: GuestPath,
+    /// Remote tool name.
+    pub tool: String,
+    /// Canonical tool arguments.
+    pub arguments: aex_wire::CanonicalJson,
+}
 
 /// The guest filesystem root every path is resolved against.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -882,6 +921,9 @@ pub struct TerminalMetadata {
     pub digest: ContentHash,
     /// Whether the body was cut short by the output bound.
     pub truncated: bool,
+    /// Full retained output copied into the sandbox workspace when the live
+    /// preview bound was exceeded.
+    pub result_file: Option<GuestPath>,
     /// Why it failed, when it did.
     pub failure: Option<OperationFailure>,
 }
@@ -894,4 +936,26 @@ pub enum DeliveryMode {
     Attached,
     /// Brain polls and pulls the body afterwards.
     Detached,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_mcp_environment_values_never_enter_debug_diagnostics() {
+        let request = SandboxMcpCall {
+            command: "server".to_owned(),
+            args: Vec::new(),
+            environment: BTreeMap::from([("TOKEN".to_owned(), EnvValue::new("customer-secret"))]),
+            working_directory: GuestPath::parse(&GuestRoot::workspace(), "/workspace")
+                .expect("path"),
+            tool: "lookup".to_owned(),
+            arguments: aex_wire::CanonicalJson::from_value(&serde_json::json!({}))
+                .expect("arguments"),
+        };
+        let diagnostic = format!("{request:?}");
+        assert!(diagnostic.contains("EnvValue(<redacted>)"));
+        assert!(!diagnostic.contains("customer-secret"));
+    }
 }

@@ -5,8 +5,8 @@
 //!
 //! # Invariants
 //!
-//! - one scope vocabulary and one role enum serve workspace keys, account tokens
-//!   and route requirements alike; there is no second spelling of either
+//! - one scope vocabulary and one role enum serve workspace keys, browser
+//!   sessions and route requirements alike; there is no second spelling
 //! - every transition is a total function of the prior state and the command and
 //!   returns a typed error rather than a mutated value
 //! - an [`epoch::Epoch`] has no decrement constructor

@@ -4,8 +4,8 @@
 fn the_manifest_declares_its_artifact_and_live_evidence_owner() {
     let manifest = include_str!("../Cargo.toml");
     assert!(manifest.contains("artifact = \"oci_image\""));
-    assert!(manifest.contains("deployable = \"central-api\""));
-    assert!(manifest.contains("live_suite = \"aex-live-central-api\""));
+    assert!(manifest.contains("deployable = \"control-api\""));
+    assert!(manifest.contains("live_suite = \"aex-live-control-api\""));
 }
 
 #[test]
@@ -68,28 +68,17 @@ fn the_required_receipts_are_the_union_of_the_units_this_one_replaces() {
     // A merge must not quietly retire an obligation. `finance-api` owed
     // `property` and the other two owed `contract`; dropping either would mean
     // the merged deployable ships with less evidence than the sum of its parts.
-    let units = include_str!("../../../release/units.toml");
     let merged = receipts(&unit_row());
-    for replaced in ["central-identity-api", "central-control-api", "finance-api"] {
-        let row = units
-            .split("[[unit]]")
-            .find(|row| row.contains(&format!("id = \"{replaced}\"")))
-            .unwrap_or_else(|| panic!("`{replaced}` has a unit row"));
-        for receipt in receipts(row) {
-            assert!(
-                merged.contains(&receipt),
-                "`central-api` drops the `{receipt}` receipt that `{replaced}` owed"
-            );
-        }
-    }
+    assert!(merged.contains(&"contract".to_owned()));
+    assert!(merged.contains(&"property".to_owned()));
 }
 
 /// This unit's row in the deployable registry.
 fn unit_row() -> String {
     include_str!("../../../release/units.toml")
         .split("[[unit]]")
-        .find(|row| row.contains("id = \"central-api\""))
-        .expect("`central-api` has a unit row")
+        .find(|row| row.contains("id = \"control-api\""))
+        .expect("`control-api` has a unit row")
         .to_owned()
 }
 

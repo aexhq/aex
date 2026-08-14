@@ -52,13 +52,12 @@ pub fn manifest() -> Result<CompositionManifest, CompositionError> {
             // "which resource is the write" answerable without reading handlers.
             CapabilityBinding::resource(config::WORK_TABLE, WorkClaim::ID),
             CapabilityBinding::arn(
-                config::SESSION_OPERATION_WORKER_FUNCTION_ARN,
+                config::SESSION_MAINTENANCE_WORKER_FUNCTION_ARN,
                 SessionOperationInvoke::ID,
             ),
             CapabilityBinding::arn(config::CONTENT_KMS_KEY_ARN, ContentEncrypt::ID),
-            CapabilityBinding::resource(config::SECRET_CUSTODY_TABLE, SecretPlaintextAdmission::ID),
             CapabilityBinding::resource(
-                config::SECRET_KEYSTORE_TABLE,
+                config::SESSION_AUTHORITY_TABLE,
                 SecretPlaintextAdmission::ID,
             ),
             CapabilityBinding::arn(config::SECRET_KMS_KEY_ARN, SecretPlaintextAdmission::ID),
@@ -82,20 +81,16 @@ pub fn resolved(config: &Config) -> ResolvedConfig {
         values: BTreeMap::from([
             (config::WORK_TABLE.to_owned(), config.work_table.clone()),
             (
-                config::SESSION_OPERATION_WORKER_FUNCTION_ARN.to_owned(),
-                config.session_operation_worker.value.clone(),
+                config::SESSION_MAINTENANCE_WORKER_FUNCTION_ARN.to_owned(),
+                config.session_maintenance_worker.value.clone(),
             ),
             (
                 config::CONTENT_KMS_KEY_ARN.to_owned(),
                 config.content_kms_key.value.clone(),
             ),
             (
-                config::SECRET_CUSTODY_TABLE.to_owned(),
-                config.secret_custody_table.clone(),
-            ),
-            (
-                config::SECRET_KEYSTORE_TABLE.to_owned(),
-                config.secret_keystore_table.clone(),
+                config::SESSION_AUTHORITY_TABLE.to_owned(),
+                config.session_table.clone(),
             ),
             (
                 config::SECRET_KMS_KEY_ARN.to_owned(),

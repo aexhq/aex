@@ -856,24 +856,11 @@ async fn every_authorization_statement_is_valid_sql_against_the_real_schema() {
             aex_control_aurora::sql::RESOLVE_WORKSPACE_KEY.replace(":key_id", "$1"),
         ),
         (
-            "account_token",
-            aex_control_aurora::sql::RESOLVE_ACCOUNT_TOKEN_FOR_WORKSPACE
-                .replace(":credential_id", "$1")
-                .replace(":workspace_id", "$2")
-                .replace(":now_ms", "$3"),
-        ),
-        (
             "session",
             aex_control_aurora::sql::RESOLVE_SESSION_FOR_WORKSPACE
                 .replace(":credential_id", "$1")
                 .replace(":workspace_id", "$2")
                 .replace(":now_ms", "$3"),
-        ),
-        (
-            "central_account_token",
-            aex_control_aurora::sql::RESOLVE_ACCOUNT_TOKEN_CENTRAL
-                .replace(":credential_id", "$1")
-                .replace(":now_ms", "$2"),
         ),
         (
             "central_session",
@@ -1490,5 +1477,153 @@ async fn localhost_installs_the_statement_wake_without_requiring_aws_lambda() {
             .to_string()
             .contains("central control wake target is not configured"),
         "the producer transaction failed for the wrong reason: {rejected}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn first_login_commits_one_uuid7_personal_account_workspace_and_balance_authority() {
+    let fixture = Fixture::start().await;
+    let user = uuid::Uuid::now_v7();
+    let mut superuser = fixture.superuser().await;
+    sqlx::query(
+        "INSERT INTO identity.user (id, email, status, created_at, updated_at) \
+         VALUES ($1, 'first-login@b.test', 'active', now(), now())",
+    )
+    .bind(user)
+    .execute(&mut superuser)
+    .await
+    .expect("the provider subject exists before control provisioning");
+
+    let ids: Vec<uuid::Uuid> = (0..7).map(|_| uuid::Uuid::now_v7()).collect();
+    let [
+        account,
+        membership,
+        workspace,
+        operation,
+        available,
+        reserved,
+        _audit,
+    ]: [uuid::Uuid; 7] = ids.clone().try_into().expect("seven ids");
+    let mut control = fixture.as_role("aex_control_api_login").await;
+    let mut tx = control
+        .begin()
+        .await
+        .expect("first-login transaction opens");
+    sqlx::query(
+        "INSERT INTO control.organization \
+           (id, name, slug, created_at, updated_at, created_by_user_id) \
+         VALUES ($1, 'Personal', $2, now(), now(), $3)",
+    )
+    .bind(account)
+    .bind(format!("personal-{}", account.simple()))
+    .bind(user)
+    .execute(&mut *tx)
+    .await
+    .expect("the personal account key inserts");
+    sqlx::query(
+        "INSERT INTO control.membership \
+           (id, organization_id, user_id, role, status, created_at, updated_at) \
+         VALUES ($1, $2, $3, 'owner', 'active', now(), now())",
+    )
+    .bind(membership)
+    .bind(account)
+    .bind(user)
+    .execute(&mut *tx)
+    .await
+    .expect("the fixed owner membership inserts");
+    sqlx::query("SELECT finance.ensure_personal_ledger_accounts($1, $2, $3)")
+        .bind(account)
+        .bind(available)
+        .bind(reserved)
+        .execute(&mut *tx)
+        .await
+        .expect("the UUIDv7 balance authority inserts through its narrow function");
+    sqlx::query(
+        "INSERT INTO control.workspace \
+           (id, organization_id, name, slug, region, status, provision_operation_id, \
+            provision_fence, created_at, updated_at, created_by_user_id) \
+         VALUES ($1, $2, 'Workspace', 'workspace', 'eu-west-1', 'provisioning', $3, 1, \
+                 now(), now(), $4)",
+    )
+    .bind(workspace)
+    .bind(account)
+    .bind(operation)
+    .bind(user)
+    .execute(&mut *tx)
+    .await
+    .expect("the fixed workspace inserts");
+    sqlx::query(
+        "INSERT INTO control.personal_account \
+           (account_id, user_id, membership_id, workspace_id, created_at) \
+         VALUES ($1, $2, $3, $4, now())",
+    )
+    .bind(account)
+    .bind(user)
+    .bind(membership)
+    .bind(workspace)
+    .execute(&mut *tx)
+    .await
+    .expect("the one-to-one aggregate link inserts");
+    tx.commit()
+        .await
+        .expect("the entire aggregate commits together");
+
+    let ledger: (uuid::Uuid, uuid::Uuid) = sqlx::query_as(
+        "SELECT available_account_id, reserved_account_id \
+           FROM finance.personal_ledger_accounts WHERE account_id = $1",
+    )
+    .bind(account)
+    .fetch_one(&mut control)
+    .await
+    .expect("the control role reconciles through the narrow ledger projection");
+    assert_eq!(ledger, (available, reserved));
+
+    let row: (uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid) = sqlx::query_as(
+        "SELECT p.account_id, p.membership_id, p.workspace_id, \
+                available.account_id, reserved.account_id \
+           FROM control.personal_account p \
+           JOIN finance.account available ON available.org_id = p.account_id \
+                                         AND available.kind = 'customer_available' \
+           JOIN finance.account reserved ON reserved.org_id = p.account_id \
+                                        AND reserved.kind = 'customer_reserved' \
+          WHERE p.user_id = $1",
+    )
+    .bind(user)
+    .fetch_one(&mut superuser)
+    .await
+    .expect("the committed aggregate is complete");
+    assert_eq!(row, (account, membership, workspace, available, reserved));
+    for id in [row.0, row.1, row.2, row.3, row.4] {
+        assert_eq!(id.get_version_num(), 7, "{id} must be UUIDv7");
+    }
+
+    let user_unique: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_indexes \
+          WHERE schemaname = 'control' AND tablename = 'personal_account' \
+            AND indexdef LIKE 'CREATE UNIQUE INDEX% (user_id)'",
+    )
+    .fetch_one(&mut superuser)
+    .await
+    .expect("the personal-account uniqueness proof is readable");
+    assert_eq!(
+        user_unique, 1,
+        "exactly one account is enforceable per user"
+    );
+
+    let duplicate = sqlx::query(
+        "INSERT INTO control.personal_account \
+           (account_id, user_id, membership_id, workspace_id, created_at) \
+         VALUES ($1, $2, $3, $4, now())",
+    )
+    .bind(account)
+    .bind(user)
+    .bind(membership)
+    .bind(workspace)
+    .execute(&mut superuser)
+    .await
+    .expect_err("the aggregate link cannot be inserted twice");
+    assert!(
+        duplicate.to_string().contains("personal_account"),
+        "the uniqueness refusal was unexpected: {duplicate}"
     );
 }

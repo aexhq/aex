@@ -22,16 +22,17 @@ integration-engines = []
 
 [package.metadata.aex]
 owner = "central-finance"
-role = "deployable"
-artifact = "oci_task"
-deployable = "central-schema-admin"
-live_suite = "aex-live-central-schema-admin"
+role = "tool"
+artifact = "none"
 layers = ["unit", "integration", "smoke", "e2e"]
-concerns = ["contract", "fault", "security", "performance"]
+concerns = ["contract", "property", "fault", "security", "performance"]
 seams = ["aws.aurora.serverless_v2", "aws.iam.denial"]
 security_tier = "authority"
 risk = ["sql", "iam"]
 scenarios = []
+
+[package.metadata.aex.not_applicable]
+live_suite = "the migration runner is an owner-invoked release tool, not a placed service; container-backed integration tests own its database boundary"
 
 [package.metadata.aex.targets]
 conformance = "unit"

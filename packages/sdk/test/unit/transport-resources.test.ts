@@ -7,17 +7,30 @@ import {
   type RouteId,
   type WireRequest,
   type WireResponse,
+  type WireStreamResponse,
 } from "../../src/index.js";
 import packageManifest from "../../package.json" with { type: "json" };
 
 const KEY = `aex_wk_euw1_0100000000e008000000000001_0100000000e008000000000000_${"A".repeat(42)}A`;
+const DASHBOARD_SESSION = `aex_ds_0100000000e008000000000000_${"A".repeat(42)}A`;
 
 class ScriptedTransport implements AexTransport {
   readonly requests: WireRequest[] = [];
+  readonly streamFrames: unknown[] = [];
 
   async execute<T>(request: WireRequest): Promise<WireResponse<T>> {
     this.requests.push(request);
     return { status: 200, headers: new Headers(), body: { id: "fixture" } as T };
+  }
+
+  async stream<T>(request: WireRequest): Promise<WireStreamResponse<T>> {
+    this.requests.push(request);
+    const frames = this.streamFrames as T[];
+    return {
+      status: 200,
+      headers: new Headers(),
+      frames: (async function* () { yield* frames; })(),
+    };
   }
 }
 
@@ -26,7 +39,7 @@ describe("resource routing", () => {
     const transport = new ScriptedTransport();
     const aex = new Aex({ apiKey: KEY, transport });
 
-    await aex.organizations.organizationsList();
+    await aex.sessions.sessionsList();
 
     expect(Aex.buildInfo().packageVersion).toBe(packageManifest.version);
     expect(transport.requests[0]?.headers.get("Aex-Client")).toBe(
@@ -36,11 +49,11 @@ describe("resource routing", () => {
 
   test("maps generated resource methods to route ids, paths, headers, and canonical body bytes", async () => {
     const transport = new ScriptedTransport();
-    const aex = new Aex({ apiKey: KEY, transport });
+    const aex = new Aex({ apiKey: KEY, dashboardSession: DASHBOARD_SESSION, transport });
 
     await aex.sessions.sessionGet({ sessionId: "ses_1" });
-    await aex.workspaces.workspaceGet({ workspaceId: "wsp_1" });
-    await aex.organizations.organizationsList({ query: { limit: "2" } });
+    await aex.registry.registryFilesGet({ name: "instructions" });
+    await aex.billing.billingTransactionsList({ query: { limit: "2" } });
     await aex.apiKeys.apiKeyCreate({
       body: { scopes: ["sessions:write"], name: "ci", workspaceId: "wsp_1" },
       idempotencyKey: "idk_1",
@@ -48,13 +61,13 @@ describe("resource routing", () => {
 
     expect(transport.requests.map((request) => request.routeId)).toEqual([
       "session_get",
-      "workspace_get",
-      "organizations_list",
+      "registry_files_get",
+      "billing_transactions_list",
       "api_key_create",
     ]);
     expect(transport.requests[0]?.path).toBe("/api/sessions/ses_1");
-    expect(transport.requests[1]?.path).toBe("/api/workspaces/wsp_1");
-    expect(transport.requests[2]?.path).toBe("/api/organizations?limit=2");
+    expect(transport.requests[1]?.path).toBe("/api/files/instructions");
+    expect(transport.requests[2]?.path).toBe("/api/billing/transactions?limit=2");
     expect(transport.requests[3]?.headers.get("Idempotency-Key")).toBe("idk_1");
     expect(new TextDecoder().decode(transport.requests[3]?.body)).toBe(
       '{"name":"ci","scopes":["sessions:write"],"workspaceId":"wsp_1"}',
@@ -80,9 +93,37 @@ describe("resource routing", () => {
     }
   });
 
+  test("publishes typed NDJSON methods as async iterables", async () => {
+    const transport = new ScriptedTransport();
+    transport.streamFrames.push({
+      sequence: "1",
+      kind: "heartbeat",
+      occurredAt: "2026-08-14T00:00:00.000Z",
+      truncated: false,
+    });
+    const aex = new Aex({ apiKey: KEY, dashboardSession: DASHBOARD_SESSION, transport });
+    const frames = [];
+    for await (const frame of aex.sessions.sessionTelemetryStream({
+      sessionId: "ses_1",
+      query: { after: "0" },
+    })) {
+      frames.push(frame);
+    }
+    expect(frames).toEqual([
+      {
+        sequence: "1",
+        kind: "heartbeat",
+        occurredAt: "2026-08-14T00:00:00.000Z",
+        truncated: false,
+      },
+    ]);
+    expect(transport.requests[0]?.headers.get("accept")).toBe("application/x-ndjson");
+    expect(transport.requests[0]?.path).toBe("/api/sessions/ses_1/telemetry/stream?after=0");
+  });
+
   test("execute stays total over every route id", async () => {
     const transport = new ScriptedTransport();
-    const aex = new Aex({ apiKey: KEY, transport });
+    const aex = new Aex({ apiKey: KEY, dashboardSession: DASHBOARD_SESSION, transport });
     const routeIds = Object.keys(ROUTES) as RouteId[];
     for (const id of routeIds) {
       const bindings = Object.fromEntries(ROUTES[id].pathParams.map((name) => [name, "fixture"]));

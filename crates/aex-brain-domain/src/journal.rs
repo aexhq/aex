@@ -15,8 +15,8 @@ use crate::ids::{
     AgentId, ContentHash, EffectId, JoinId, JournalSeq, Timestamp, ToolCallId, WaitId,
 };
 use crate::wire_pending::{
-    CanonicalBlock, CompleteAssistantMessage, ContentBlockRef, ContentRef, JoinMode,
-    JournalEnvelope, NormalizedUsage, ResolvedAgentConfig, ToolResultPart,
+    CompleteAssistantMessage, ContentBlockRef, ContentRef, JoinMode, JournalEnvelope,
+    NormalizedUsage, ResolvedAgentConfig, ToolResultPart,
 };
 use aex_internal_contracts::RunId;
 use aex_model_catalog::canonical::ProviderReceipt;
@@ -34,10 +34,6 @@ pub const INLINE_BODY_BYTES: usize = 32_768;
 pub enum FinishReason {
     /// The model finished the work.
     Completed,
-    /// The per-agent turn limit was reached.
-    MaxTurns,
-    /// The per-turn step limit was reached.
-    MaxSteps,
     /// A budget dimension was exhausted.
     Budget,
     /// The turn deadline passed.
@@ -105,6 +101,8 @@ pub enum ParkReason {
     AwaitingChildren {
         /// The join group.
         join: JoinId,
+        /// Overall model-requested timeout, independent of retry polling.
+        deadline: Timestamp,
     },
     /// Waiting for a durable timer.
     AwaitingTimer {
@@ -132,31 +130,14 @@ pub enum WaitResolution {
     Cancelled,
 }
 
-/// Counters a compaction must carry forward exactly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct PreservedCounters {
-    /// Cumulative usage across the whole replaced prefix.
-    pub usage: NormalizedUsage,
-    /// How many assistant turns the replaced prefix contained.
-    pub assistant_turns: u32,
-    /// The parent's spawn counter at the compaction point.
-    pub spawn_ordinal: u32,
-}
-
 /// Which executor actually ran a tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutorRoute {
     /// Ran inside the mux process.
     BrainInline,
-    /// Ran through the managed web adapter.
-    ManagedWeb,
-    /// Ran through the private platform-paid tool executor.
-    ToolExec,
-    /// Ran through an MCP server.
-    Mcp,
-    /// Ran inside the session's Hands `MicroVM`.
-    Hands,
+    /// Ran through Tool Mux, the sole broker for every non-native tool.
+    ToolMux,
 }
 
 /// One semantic fact in an agent's journal.
@@ -219,6 +200,14 @@ pub enum JournalRecord {
         /// The effect that produced it.
         effect: EffectId,
     },
+    /// The deterministic model-token facts for one assistant record reached the FIFO.
+    ///
+    /// A crash after FIFO acceptance but before this marker simply republishes the
+    /// same fact identities; central inbox conflict handling absorbs the replay.
+    ModelUsagePublished {
+        /// The assistant effect whose usage was published.
+        effect: EffectId,
+    },
     /// The result of one tool call.
     ToolResult {
         /// The sealed public message projection, for a root session run only.
@@ -257,6 +246,12 @@ pub enum JournalRecord {
     EffectPrepared {
         /// Deterministic identity.
         effect: EffectId,
+        /// Provider-minted call identity for a tool-batch member.
+        ///
+        /// `None` for model and non-tool effects. Persisting this link means a
+        /// successor can recover several open tool effects without inferring
+        /// ownership from completion order.
+        tool_call: Option<ToolCallId>,
         /// What kind of work.
         kind: EffectKind,
         /// Its recovery contract.
@@ -319,15 +314,6 @@ pub enum JournalRecord {
         /// How it ended.
         resolution: WaitResolution,
     },
-    /// The model-visible prefix was replaced by a summary.
-    Compaction {
-        /// The last sequence the summary replaces, inclusive.
-        replaces_through: JournalSeq,
-        /// The summary that stands in for the replaced prefix.
-        summary: Vec<CanonicalBlock>,
-        /// Counters carried forward exactly.
-        preserved: PreservedCounters,
-    },
     /// The absorbing terminal.
     AgentFinished {
         /// Why the agent stopped.
@@ -364,6 +350,7 @@ impl JournalRecord {
             Self::RunAdmitted { .. } => "run_admitted",
             Self::UserMessage { .. } => "user_message",
             Self::AssistantMessage { .. } => "assistant_message",
+            Self::ModelUsagePublished { .. } => "model_usage_published",
             Self::ToolResult { .. } => "tool_result",
             Self::RunFinished { .. } => "run_finished",
             Self::EffectPrepared { .. } => "effect_prepared",
@@ -372,7 +359,6 @@ impl JournalRecord {
             Self::ChildTerminal { .. } => "child_terminal",
             Self::WaitOpened { .. } => "wait_opened",
             Self::WaitResolved { .. } => "wait_resolved",
-            Self::Compaction { .. } => "compaction",
             Self::AgentFinished { .. } => "agent_finished",
             Self::JoinOpened { .. } => "join_opened",
             Self::ChildStateChanged { .. } => "child_state_changed",
@@ -649,8 +635,6 @@ mod tests {
     fn only_completed_reports_success() {
         assert!(FinishReason::Completed.is_success());
         for reason in [
-            FinishReason::MaxTurns,
-            FinishReason::MaxSteps,
             FinishReason::Budget,
             FinishReason::Timeout,
             FinishReason::Cancelled,

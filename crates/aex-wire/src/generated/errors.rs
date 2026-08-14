@@ -3,7 +3,7 @@
 //! The closed v1 public error vocabulary.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
+//! `sha256:2714e625c3ed159b08bf3f97a27b9d088369acc429073957508115af3b1f7238`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -33,8 +33,6 @@ pub enum ErrorCode {
     TokenExpired,
     /// `malformed_token` — the credential is not a well-formed AEX credential
     MalformedToken,
-    /// `authorization_pending` — the device authorization has not been approved yet
-    AuthorizationPending,
     /// `slow_down` — poll less often
     SlowDown,
     /// `not_found` — no such resource
@@ -117,10 +115,6 @@ pub enum ErrorCode {
     UnknownProvider,
     /// `unknown_model` — no such model for that provider
     UnknownModel,
-    /// `provider_credential_not_found` — no such provider credential binding
-    ProviderCredentialNotFound,
-    /// `provider_credential_revoked` — the provider credential binding was revoked
-    ProviderCredentialRevoked,
     /// `invalid_auto_topup_policy` — the auto top-up policy is not internally consistent
     InvalidAutoTopupPolicy,
     /// `payment_method_required` — the organization has no usable saved payment method
@@ -137,6 +131,8 @@ pub enum ErrorCode {
     WrongWorkspaceRegion,
     /// `usage_unavailable` — the usage projection could not be read
     UsageUnavailable,
+    /// `usage_coverage_gap` — trusted usage has a coverage gap and cannot be presented as complete
+    UsageCoverageGap,
     /// `rate_limited` — too many requests
     RateLimited,
     /// `upstream_error` — a dependency failed
@@ -161,7 +157,6 @@ impl ErrorCode {
         ErrorCode::TokenRevoked,
         ErrorCode::TokenExpired,
         ErrorCode::MalformedToken,
-        ErrorCode::AuthorizationPending,
         ErrorCode::SlowDown,
         ErrorCode::NotFound,
         ErrorCode::Gone,
@@ -201,8 +196,6 @@ impl ErrorCode {
         ErrorCode::PackageIntegrityMismatch,
         ErrorCode::UnknownProvider,
         ErrorCode::UnknownModel,
-        ErrorCode::ProviderCredentialNotFound,
-        ErrorCode::ProviderCredentialRevoked,
         ErrorCode::InvalidAutoTopupPolicy,
         ErrorCode::PaymentMethodRequired,
         ErrorCode::AuthenticationUnavailable,
@@ -211,6 +204,7 @@ impl ErrorCode {
         ErrorCode::PreconditionFailed,
         ErrorCode::WrongWorkspaceRegion,
         ErrorCode::UsageUnavailable,
+        ErrorCode::UsageCoverageGap,
         ErrorCode::RateLimited,
         ErrorCode::UpstreamError,
         ErrorCode::WorkspaceProvisionPending,
@@ -230,7 +224,6 @@ impl ErrorCode {
             Self::TokenRevoked => "token_revoked",
             Self::TokenExpired => "token_expired",
             Self::MalformedToken => "malformed_token",
-            Self::AuthorizationPending => "authorization_pending",
             Self::SlowDown => "slow_down",
             Self::NotFound => "not_found",
             Self::Gone => "gone",
@@ -270,8 +263,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => "package_integrity_mismatch",
             Self::UnknownProvider => "unknown_provider",
             Self::UnknownModel => "unknown_model",
-            Self::ProviderCredentialNotFound => "provider_credential_not_found",
-            Self::ProviderCredentialRevoked => "provider_credential_revoked",
             Self::InvalidAutoTopupPolicy => "invalid_auto_topup_policy",
             Self::PaymentMethodRequired => "payment_method_required",
             Self::AuthenticationUnavailable => "authentication_unavailable",
@@ -280,6 +271,7 @@ impl ErrorCode {
             Self::PreconditionFailed => "precondition_failed",
             Self::WrongWorkspaceRegion => "wrong_workspace_region",
             Self::UsageUnavailable => "usage_unavailable",
+            Self::UsageCoverageGap => "usage_coverage_gap",
             Self::RateLimited => "rate_limited",
             Self::UpstreamError => "upstream_error",
             Self::WorkspaceProvisionPending => "workspace_provision_pending",
@@ -300,7 +292,6 @@ impl ErrorCode {
             Self::TokenRevoked => 401,
             Self::TokenExpired => 401,
             Self::MalformedToken => 401,
-            Self::AuthorizationPending => 400,
             Self::SlowDown => 429,
             Self::NotFound => 404,
             Self::Gone => 410,
@@ -340,8 +331,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => 409,
             Self::UnknownProvider => 400,
             Self::UnknownModel => 400,
-            Self::ProviderCredentialNotFound => 404,
-            Self::ProviderCredentialRevoked => 409,
             Self::InvalidAutoTopupPolicy => 400,
             Self::PaymentMethodRequired => 402,
             Self::AuthenticationUnavailable => 503,
@@ -350,6 +339,7 @@ impl ErrorCode {
             Self::PreconditionFailed => 412,
             Self::WrongWorkspaceRegion => 409,
             Self::UsageUnavailable => 503,
+            Self::UsageCoverageGap => 409,
             Self::RateLimited => 429,
             Self::UpstreamError => 502,
             Self::WorkspaceProvisionPending => 503,
@@ -370,7 +360,6 @@ impl ErrorCode {
             Self::TokenRevoked => false,
             Self::TokenExpired => false,
             Self::MalformedToken => false,
-            Self::AuthorizationPending => true,
             Self::SlowDown => true,
             Self::NotFound => false,
             Self::Gone => false,
@@ -410,8 +399,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => false,
             Self::UnknownProvider => false,
             Self::UnknownModel => false,
-            Self::ProviderCredentialNotFound => false,
-            Self::ProviderCredentialRevoked => false,
             Self::InvalidAutoTopupPolicy => false,
             Self::PaymentMethodRequired => false,
             Self::AuthenticationUnavailable => true,
@@ -420,6 +407,7 @@ impl ErrorCode {
             Self::PreconditionFailed => false,
             Self::WrongWorkspaceRegion => false,
             Self::UsageUnavailable => true,
+            Self::UsageCoverageGap => true,
             Self::RateLimited => true,
             Self::UpstreamError => true,
             Self::WorkspaceProvisionPending => true,
@@ -440,7 +428,6 @@ impl ErrorCode {
             Self::TokenRevoked => ErrorClass::Auth,
             Self::TokenExpired => ErrorClass::Auth,
             Self::MalformedToken => ErrorClass::Auth,
-            Self::AuthorizationPending => ErrorClass::State,
             Self::SlowDown => ErrorClass::Quota,
             Self::NotFound => ErrorClass::NotFound,
             Self::Gone => ErrorClass::NotFound,
@@ -480,8 +467,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => ErrorClass::State,
             Self::UnknownProvider => ErrorClass::Validation,
             Self::UnknownModel => ErrorClass::Validation,
-            Self::ProviderCredentialNotFound => ErrorClass::NotFound,
-            Self::ProviderCredentialRevoked => ErrorClass::State,
             Self::InvalidAutoTopupPolicy => ErrorClass::Validation,
             Self::PaymentMethodRequired => ErrorClass::State,
             Self::AuthenticationUnavailable => ErrorClass::Unavailable,
@@ -490,6 +475,7 @@ impl ErrorCode {
             Self::PreconditionFailed => ErrorClass::Precondition,
             Self::WrongWorkspaceRegion => ErrorClass::Conflict,
             Self::UsageUnavailable => ErrorClass::Unavailable,
+            Self::UsageCoverageGap => ErrorClass::State,
             Self::RateLimited => ErrorClass::Quota,
             Self::UpstreamError => ErrorClass::Unavailable,
             Self::WorkspaceProvisionPending => ErrorClass::Unavailable,
@@ -510,7 +496,6 @@ impl ErrorCode {
             Self::TokenRevoked => PrecedenceStage::Authentication,
             Self::TokenExpired => PrecedenceStage::Authentication,
             Self::MalformedToken => PrecedenceStage::Authentication,
-            Self::AuthorizationPending => PrecedenceStage::DomainState,
             Self::SlowDown => PrecedenceStage::DomainState,
             Self::NotFound => PrecedenceStage::TombstoneAndParent,
             Self::Gone => PrecedenceStage::TombstoneAndParent,
@@ -550,8 +535,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => PrecedenceStage::DomainState,
             Self::UnknownProvider => PrecedenceStage::BodyLimitAndParse,
             Self::UnknownModel => PrecedenceStage::BodyLimitAndParse,
-            Self::ProviderCredentialNotFound => PrecedenceStage::TombstoneAndParent,
-            Self::ProviderCredentialRevoked => PrecedenceStage::DomainState,
             Self::InvalidAutoTopupPolicy => PrecedenceStage::BodyLimitAndParse,
             Self::PaymentMethodRequired => PrecedenceStage::DomainState,
             Self::AuthenticationUnavailable => PrecedenceStage::Authentication,
@@ -560,6 +543,7 @@ impl ErrorCode {
             Self::PreconditionFailed => PrecedenceStage::Precondition,
             Self::WrongWorkspaceRegion => PrecedenceStage::Placement,
             Self::UsageUnavailable => PrecedenceStage::DomainState,
+            Self::UsageCoverageGap => PrecedenceStage::DomainState,
             Self::RateLimited => PrecedenceStage::DomainState,
             Self::UpstreamError => PrecedenceStage::Commit,
             Self::WorkspaceProvisionPending => PrecedenceStage::Commit,
@@ -580,7 +564,6 @@ impl ErrorCode {
             Self::TokenRevoked => "the credential has been revoked",
             Self::TokenExpired => "the credential has expired",
             Self::MalformedToken => "the credential is not a well-formed AEX credential",
-            Self::AuthorizationPending => "the device authorization has not been approved yet",
             Self::SlowDown => "poll less often",
             Self::NotFound => "no such resource",
             Self::Gone => "the resource was deleted",
@@ -640,8 +623,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => "a package artifact failed its integrity check",
             Self::UnknownProvider => "no such provider",
             Self::UnknownModel => "no such model for that provider",
-            Self::ProviderCredentialNotFound => "no such provider credential binding",
-            Self::ProviderCredentialRevoked => "the provider credential binding was revoked",
             Self::InvalidAutoTopupPolicy => "the auto top-up policy is not internally consistent",
             Self::PaymentMethodRequired => "the organization has no usable saved payment method",
             Self::AuthenticationUnavailable => "the authorization authority could not be reached",
@@ -650,6 +631,9 @@ impl ErrorCode {
             Self::PreconditionFailed => "the `If-Match` or generation precondition did not hold",
             Self::WrongWorkspaceRegion => "the workspace is placed in a different region",
             Self::UsageUnavailable => "the usage projection could not be read",
+            Self::UsageCoverageGap => {
+                "trusted usage has a coverage gap and cannot be presented as complete"
+            }
             Self::RateLimited => "too many requests",
             Self::UpstreamError => "a dependency failed",
             Self::WorkspaceProvisionPending => "workspace provisioning may still be completing",
@@ -665,14 +649,13 @@ impl ErrorCode {
     #[must_use]
     pub const fn remedy(self) -> Option<&'static str> {
         match self {
-            Self::Unauthenticated => Some("present a valid account token or workspace API key"),
+            Self::Unauthenticated => Some("present a valid dashboard session or workspace API key"),
             Self::Forbidden => None,
             Self::InsufficientScope => Some("mint a key that carries the scope named in `details`"),
             Self::TokenInvalid => None,
             Self::TokenRevoked => None,
             Self::TokenExpired => None,
             Self::MalformedToken => None,
-            Self::AuthorizationPending => None,
             Self::SlowDown => None,
             Self::NotFound => None,
             Self::Gone => None,
@@ -716,8 +699,6 @@ impl ErrorCode {
             Self::PackageIntegrityMismatch => None,
             Self::UnknownProvider => None,
             Self::UnknownModel => None,
-            Self::ProviderCredentialNotFound => None,
-            Self::ProviderCredentialRevoked => None,
             Self::InvalidAutoTopupPolicy => None,
             Self::PaymentMethodRequired => None,
             Self::AuthenticationUnavailable => None,
@@ -728,6 +709,9 @@ impl ErrorCode {
                 Some("reissue the request against the `apiUrl` in `details`")
             }
             Self::UsageUnavailable => Some("retry the identical query"),
+            Self::UsageCoverageGap => {
+                Some("retry after billing reconciliation advances the coverage frontier")
+            }
             Self::RateLimited => None,
             Self::UpstreamError => None,
             Self::WorkspaceProvisionPending => {

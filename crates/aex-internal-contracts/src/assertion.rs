@@ -55,7 +55,7 @@ pub const MAX_ASSERTION_TEXT_LEN: usize = 1_024;
 pub enum AssertionAudience {
     /// `regional-session-api`.
     RegionalSession,
-    /// `tool-executor`.
+    /// `tool-mux`.
     ///
     /// The one audience no customer credential ever reaches. Every audience
     /// above answers a request a customer made with a credential they hold, and
@@ -64,12 +64,12 @@ pub enum AssertionAudience {
     /// for a service whose only caller is `brain-mux`, so there is no presented
     /// credential and no customer on the path at all.
     ///
-    ToolExec,
+    ToolMux,
 }
 
 impl AssertionAudience {
     /// Every audience, in wire order.
-    pub const ALL: [Self; 2] = [Self::RegionalSession, Self::ToolExec];
+    pub const ALL: [Self; 2] = [Self::RegionalSession, Self::ToolMux];
 
     /// Every audience a **customer credential** may be presented to.
     ///
@@ -84,7 +84,7 @@ impl AssertionAudience {
     pub const fn is_customer_presentable(self) -> bool {
         match self {
             Self::RegionalSession => true,
-            Self::ToolExec => false,
+            Self::ToolMux => false,
         }
     }
 
@@ -93,7 +93,7 @@ impl AssertionAudience {
     pub const fn deployable(self) -> &'static str {
         match self {
             Self::RegionalSession => "regional-session-api",
-            Self::ToolExec => "tool-executor",
+            Self::ToolMux => "tool-mux",
         }
     }
 
@@ -106,7 +106,7 @@ impl AssertionAudience {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::RegionalSession => "regional_session",
-            Self::ToolExec => "tool_exec",
+            Self::ToolMux => "tool_mux",
         }
     }
 
@@ -138,7 +138,7 @@ impl AudienceSet {
     ///
     /// This — not [`AudienceSet::ALL`] — is what a projected workspace-key row
     /// carries. The difference is one bit and it is a tenant-resolution
-    /// property: the tool executor derives the tenant from the envelope alone,
+    /// property: Tool Mux derives the tenant from the envelope alone,
     /// so an envelope minted over a credential the customer chose to present
     /// must never be one the executor would look at.
     pub const CUSTOMER_PRESENTABLE: Self = {

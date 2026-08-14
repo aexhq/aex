@@ -77,8 +77,6 @@ fn no_statement_projects_a_bare_timestamptz() {
             "expires_at",
             "revoked_at",
             "consumed_at",
-            "approved_at",
-            "last_polled_at",
             "email_verified_at",
         ] {
             assert!(
@@ -139,62 +137,6 @@ fn every_time_bounded_consumption_checks_expiry_in_the_predicate() {
     }
 }
 
-/// Both halves of the device decision, for the scans that cover the pair.
-const DECISIONS: [(&str, &str); 2] = [
-    (
-        "APPROVE_DEVICE_AUTHORIZATION",
-        sql::APPROVE_DEVICE_AUTHORIZATION,
-    ),
-    ("DENY_DEVICE_AUTHORIZATION", sql::DENY_DEVICE_AUTHORIZATION),
-];
-
-/// Deciding a grant is a cross-principal effect, so the actor is part of the
-/// write rather than a prior read.
-///
-/// Approve carried this from the start and deny did not, which meant anyone who
-/// learned a user code could refuse a stranger's sign-in without holding a
-/// session at all. The scan runs over the pair so the next decision added
-/// cannot repeat it.
-#[test]
-fn every_device_decision_requires_a_current_dashboard_actor_in_the_predicate() {
-    for (name, statement) in DECISIONS {
-        for clause in [
-            "EXISTS (SELECT 1 FROM identity.dashboard_session",
-            "s.id = :actor_session_id",
-            "s.user_id = :actor_user_id",
-            "s.revoked_at IS NULL",
-            "u.status = 'active'",
-        ] {
-            assert!(
-                statement.contains(clause),
-                "`{name}` decides a grant without `{clause}`; \
-                 `decide_device` binds the actor for both paths and a statement \
-                 that ignores it lets a stranger decide"
-            );
-        }
-    }
-}
-
-/// A decision lands on a pending grant and on nothing else.
-///
-/// Retraction is not a capability this platform offers, and `dev_approved_ck`
-/// means it never was: writing `denied` over an approved row without clearing
-/// `approved_by_user_id` raises 23514, so the wider status set could only ever
-/// have produced a check violation.
-#[test]
-fn a_device_decision_only_ever_lands_on_a_pending_grant() {
-    for (name, statement) in DECISIONS {
-        assert!(
-            statement.contains("d.status = 'pending'"),
-            "`{name}` decides a grant that is not pending"
-        );
-        assert!(
-            !statement.contains("d.status IN "),
-            "`{name}` admits a status set rather than the one state a decision applies to"
-        );
-    }
-}
-
 #[test]
 fn a_credential_is_looked_up_by_its_primary_key_and_never_by_its_verifier() {
     for (name, statement) in sql::ALL {
@@ -216,23 +158,5 @@ fn the_statement_inventory_is_sorted_by_name_within_its_groups() {
         deduped.len(),
         names.len(),
         "no statement is listed twice: {names:?}"
-    );
-}
-
-#[test]
-fn account_token_scopes_expand_from_a_data_api_json_scalar() {
-    assert!(
-        sql::INSERT_ACCOUNT_TOKEN
-            .contains("ARRAY(SELECT jsonb_array_elements_text(CAST(:scopes AS jsonb)))"),
-        "account-token creation passes an unsupported Data API array parameter"
-    );
-}
-
-#[test]
-fn device_authorization_scopes_expand_from_a_data_api_json_scalar() {
-    assert!(
-        sql::INSERT_DEVICE_AUTHORIZATION
-            .contains("ARRAY(SELECT jsonb_array_elements_text(CAST(:requested_scopes AS jsonb)))"),
-        "device-authorization creation passes an unsupported Data API array parameter"
     );
 }

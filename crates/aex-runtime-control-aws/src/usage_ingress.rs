@@ -1,11 +1,13 @@
-//! Category-scoped SQS producers for canonical usage drafts.
+//! Category-fenced producers for the one central billing FIFO.
 
 use std::future::Future;
 use std::pin::Pin;
 
 use aex_runtime_control::usage::{SinkError, UsageCategory, UsageFactSink};
+use aex_usage_app::outbox::OutboxMessage;
 use aex_usage_domain::fact::FactDraft;
-use aex_usage_domain::ingress::FactDraftEnvelope;
+use aex_usage_domain::frontier::AcceptedSequence;
+use aex_usage_domain::wire_pending::Timestamp;
 use aws_sdk_sqs::Client;
 use aws_sdk_sqs::error::{ProvideErrorMetadata, SdkError};
 
@@ -25,9 +27,8 @@ const SQS_BODY_MAX_BYTES: usize = 256 * 1024;
 /// `AWS.SimpleQueueService.NonExistentQueue`, and a producer that only knows one
 /// of them silently reclassifies the other as retryable.
 ///
-/// `MissingParameter` is here for a specific trap: neither ingress queue is
-/// FIFO today and this producer sends no `MessageGroupId`. If either queue is
-/// ever recreated as `.fifo`, every send fails with that code forever.
+/// `MissingParameter` catches a malformed FIFO binding where the queue rejects
+/// the producer-derived organization group or fact deduplication identity.
 const TERMINAL_SQS_CODES: [&str; 8] = [
     "QueueDoesNotExist",
     "AWS.SimpleQueueService.NonExistentQueue",
@@ -63,11 +64,12 @@ where
     }
 }
 
-/// One category's queue producer.
+/// One category-fenced producer for the shared billing FIFO.
 ///
 /// The linked category and queue URL cannot change after construction. A caller
-/// must also supply the category on every emission, giving three category fences:
-/// sink binding, envelope, and draft authority key.
+/// must also supply the category on every emission. The queue is shared because
+/// billing orders by organization, while the sink and draft retain the category
+/// fence that prevents a producer from relabelling a meter.
 #[derive(Debug, Clone)]
 pub struct SqsFactDraftSink {
     client: Client,
@@ -91,7 +93,11 @@ impl SqsFactDraftSink {
         &self.queue_url
     }
 
-    fn body(&self, category: UsageCategory, draft: FactDraft) -> Result<String, SinkError> {
+    fn message(
+        &self,
+        category: UsageCategory,
+        draft: FactDraft,
+    ) -> Result<OutboxMessage, SinkError> {
         if category != self.category {
             return Err(SinkError::Refused {
                 category,
@@ -101,18 +107,42 @@ impl SqsFactDraftSink {
                 ),
             });
         }
-        let envelope =
-            FactDraftEnvelope::new(category, draft).map_err(|error| SinkError::Refused {
+        let accepted_position = draft
+            .authority
+            .segment_ordinal
+            .get()
+            .checked_add(1)
+            .ok_or_else(|| SinkError::Refused {
+                category,
+                reason: "usage segment ordinal exhausted".to_owned(),
+            })?;
+        let accepted_sequence =
+            AcceptedSequence::new(accepted_position).map_err(|error| SinkError::Refused {
                 category,
                 reason: error.to_string(),
             })?;
-        let body = serde_json::to_string(&envelope).map_err(|error| SinkError::Refused {
+        let accepted_at =
+            system_timestamp().map_err(|reason| SinkError::Refused { category, reason })?;
+        let fact = draft
+            .admit(accepted_sequence, accepted_at)
+            .map_err(|error| SinkError::Refused {
+                category,
+                reason: error.to_string(),
+            })?;
+        OutboxMessage::for_fact(&fact).map_err(|error| SinkError::Refused {
             category,
-            reason: format!("draft is not serializable: {error}"),
+            reason: error.to_string(),
+        })
+    }
+
+    fn body(&self, message: &OutboxMessage) -> Result<String, SinkError> {
+        let body = serde_json::to_string(&message.body).map_err(|error| SinkError::Refused {
+            category: self.category,
+            reason: format!("billing fact is not serializable: {error}"),
         })?;
         if body.len() > SQS_BODY_MAX_BYTES {
             return Err(SinkError::Refused {
-                category,
+                category: self.category,
                 reason: format!(
                     "encoded draft is {} bytes, over the {SQS_BODY_MAX_BYTES}-byte SQS ceiling",
                     body.len()
@@ -130,17 +160,29 @@ impl UsageFactSink for SqsFactDraftSink {
         draft: FactDraft,
     ) -> Pin<Box<dyn Future<Output = Result<(), SinkError>> + Send + 'a>> {
         Box::pin(async move {
-            let body = self.body(category, draft)?;
+            let message = self.message(category, draft)?;
+            let body = self.body(&message)?;
             self.client
                 .send_message()
                 .queue_url(&self.queue_url)
                 .message_body(body)
+                .message_group_id(message.message_group_id)
+                .message_deduplication_id(message.message_deduplication_id)
                 .send()
                 .await
                 .map_err(|error| classify(category, &error))?;
             Ok(())
         })
     }
+}
+
+fn system_timestamp() -> Result<Timestamp, String> {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("system clock precedes the Unix epoch: {error}"))?
+        .as_millis();
+    let millis = i64::try_from(millis).map_err(|_| "system clock exceeds i64 milliseconds")?;
+    Timestamp::from_unix_millis(millis).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -157,13 +199,20 @@ mod tests {
     use aex_usage_domain::wire_pending::{
         OrganizationId, PricingVersion, RegionId, ServiceId, Timestamp, WorkspaceId,
     };
+    use aex_wire::ids::PrefixedId as _;
 
     fn draft(category: Category) -> FactDraft {
         let at = Timestamp::from_unix_millis(0).expect("time");
+        let organization =
+            aex_wire::ids::OrganizationId::from_uuid7(aex_wire::ids::Uuid7::compose(1, [1; 10]))
+                .encode();
+        let workspace =
+            aex_wire::ids::WorkspaceId::from_uuid7(aex_wire::ids::Uuid7::compose(2, [2; 10]))
+                .encode();
         FactDraft {
             schema_version: SCHEMA_VERSION,
-            organization: OrganizationId::parse("org-1").expect("org"),
-            workspace: WorkspaceId::parse("ws-1").expect("workspace"),
+            organization: OrganizationId::parse(organization.as_str()).expect("org"),
+            workspace: WorkspaceId::parse(workspace.as_str()).expect("workspace"),
             region: RegionId::parse("eu-west-1").expect("region"),
             attribution: Attribution::default(),
             service: ServiceId::parse("runtime-control-worker").expect("service"),
@@ -202,21 +251,25 @@ mod tests {
     }
 
     #[test]
-    fn encoded_body_is_the_strict_canonical_envelope() {
+    fn encoded_body_is_the_central_rating_contract() {
         let config = aws_sdk_sqs::Config::builder()
             .behavior_version_latest()
             .build();
         let sink = SqsFactDraftSink::new(
             Client::from_conf(config),
             "https://sqs.eu-west-1.amazonaws.com/1/compute",
-            Category::Compute,
+            Category::Transfer,
         );
-        let mut compute = draft(Category::Compute);
-        compute.authority.kind = AuthorityKind::HandsGeneration;
-        let body = sink.body(Category::Compute, compute).expect("body");
-        let value: serde_json::Value = serde_json::from_str(&body).expect("json");
-        assert_eq!(value["type"], "usage_fact_draft.v1");
-        assert_eq!(value["category"], "compute");
+        let transfer = draft(Category::Transfer);
+        let message = sink.message(Category::Transfer, transfer).expect("message");
+        let body = sink.body(&message).expect("body");
+        let decoded: aex_internal_contracts::usage::RatingRequest =
+            serde_json::from_str(&body).expect("rating request");
+        assert_eq!(decoded.fact.meter.category(), "transfer");
+        assert_eq!(
+            message.message_group_id,
+            decoded.fact.organization.encode().as_str()
+        );
     }
 
     #[test]
@@ -226,7 +279,7 @@ mod tests {
             .build();
         let sink = SqsFactDraftSink::new(Client::from_conf(config), "unused", Category::Compute);
         assert!(matches!(
-            sink.body(Category::Storage, draft(Category::Storage)),
+            sink.message(Category::Storage, draft(Category::Transfer)),
             Err(SinkError::Refused { .. })
         ));
     }

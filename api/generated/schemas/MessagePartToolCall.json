@@ -2,23 +2,29 @@
   "$id": "https://schemas.aex.dev/v1/MessagePartToolCall.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A built-in tool call emitted by the model.",
+  "description": "Canonical provider-independent tool call.",
   "properties": {
-    "argumentsDigest": {
-      "description": "The canonical tool-argument digest.",
-      "pattern": "^sha256:[0-9a-f]{64}$",
-      "type": "string"
+    "arguments": {
+      "description": "Validated arguments.",
+      "x-aex-canonical-json": true
     },
     "id": {
-      "description": "The call identity.",
+      "description": "Call identity.",
       "pattern": "^tcl_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "tool_call"
+    },
+    "name": {
+      "description": "Official or namespaced MCP tool name.",
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string"
     }
   },
   "required": [
-    "argumentsDigest",
-    "id"
+    "arguments",
+    "id",
+    "name"
   ],
   "title": "MessagePartToolCall",
   "type": "object"

@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BillingTransactionDirection.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Whether the transaction increases or decreases available prepaid value.",
+  "enum": [
+    "credit",
+    "debit"
+  ],
+  "title": "BillingTransactionDirection",
+  "type": "string"
+}

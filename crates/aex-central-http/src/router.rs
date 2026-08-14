@@ -23,10 +23,8 @@ use aex_wire::idempotency::PrincipalScope;
 use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId, UserId, Uuid7, WorkspaceId};
 use aex_wire::routes::{Plane, RouteId, match_route, route};
 use aex_wire::server::{
-    ApiKeysApi, AuthApi, BillingApi, BootstrapApi, CentralOperationsApi, IdentityApi,
-    OrganizationsApi, RequestContext, RouteGroup, WorkspacesApi, dispatch_api_keys, dispatch_auth,
-    dispatch_billing, dispatch_bootstrap, dispatch_central_operations, dispatch_identity,
-    dispatch_organizations, dispatch_workspaces,
+    ApiKeysApi, AuthApi, BillingApi, BootstrapApi, RequestContext, RouteGroup, dispatch_api_keys,
+    dispatch_auth, dispatch_billing, dispatch_bootstrap,
 };
 use aex_wire::types::HttpMethod;
 use aex_wire::types::RequestId;
@@ -284,15 +282,14 @@ fn admits_anonymous(id: RouteId) -> bool {
     })
 }
 
-/// The credential-free context the three anonymous ceremony routes run under.
+/// A credential-free context for any explicitly anonymous route.
 ///
 /// The window is one millisecond wide because there is nothing to cache: no
 /// credential was resolved, so nothing about it can go stale. `[now, now+1)`
 /// therefore admits exactly the instant it was minted for, which is why
 /// [`admit_edge`] reads the clock **once** and verifies against that same
 /// reading. A second reading would lapse the window whenever the millisecond
-/// happened to tick between the two, refusing every anonymous request — which
-/// is to say both public device-flow routes, intermittently.
+/// happened to tick between the two, refusing the request intermittently.
 fn anonymous_context(request_id: RequestId, now_ms: i64) -> CentralAuthorizerContext {
     CentralAuthorizerContext {
         request_id,
@@ -315,7 +312,7 @@ fn anonymous_context(request_id: RequestId, now_ms: i64) -> CentralAuthorizerCon
 /// Every credential-free caller shares it, so two anonymous callers presenting
 /// the same `Idempotency-Key` for the same intent share one grant.
 /// TODO(cross-stream): the accepted design puts a per-IP API Gateway usage-plan
-/// throttle in front of the two device-flow routes for exactly this reason;
+/// throttle in front of anonymous routes for exactly this reason;
 /// infrastructure owns that rule.
 fn anonymous_principal() -> Uuid7 {
     Uuid7::compose(0, [0; 10])
@@ -357,8 +354,8 @@ async fn admit_edge(
     // resolved. In process it *is* the authorizer: the bearer is parsed, the row
     // is read, the peppered MAC is verified, and only then is a context minted.
     //
-    // The two device-flow routes admit no credential at all, so "nothing was
-    // presented" is their normal case rather than a failure. Every other route
+    // Routes that explicitly admit anonymous callers treat "nothing was
+    // presented" as their normal case. Every other route
     // refuses it: nothing presented is exactly what an unauthenticated request
     // looks like. A credential that *was* presented and not admitted never
     // reaches that branch — it is already a refusal.
@@ -478,11 +475,6 @@ fn request_authorizer_context(
 }
 
 /// The browser session the actor presented, when they presented one.
-///
-/// Deliberately narrow: only a `DashboardSession` credential yields an id here.
-/// An account token also authenticates a person, but it is not a session and
-/// naming it as one would let `approve_device_authorization` record an approver
-/// currency it never proved.
 fn actor_session_id(
     context: &CentralAuthorizerContext,
 ) -> Result<Option<aex_wire::ids::Uuid7>, EdgeError> {
@@ -494,9 +486,7 @@ fn actor_session_id(
                     .map_err(|_| EdgeError::Internal("a stored identifier is not a UUIDv7"))
             })
             .transpose(),
-        ContextPrincipalKind::Account
-        | ContextPrincipalKind::WorkspaceKey
-        | ContextPrincipalKind::Anonymous => Ok(None),
+        ContextPrincipalKind::WorkspaceKey | ContextPrincipalKind::Anonymous => Ok(None),
     }
 }
 
@@ -515,15 +505,13 @@ fn principal_scope(
             user: UserId::from_uuid7(anonymous_principal()),
             organization: None,
         }),
-        ContextPrincipalKind::Account | ContextPrincipalKind::UserSession => {
-            Ok(PrincipalScope::Account {
-                user: wire_id::<UserId>(context.principal_id)?,
-                organization: granted
-                    .organization_id
-                    .map(wire_id::<OrganizationId>)
-                    .transpose()?,
-            })
-        }
+        ContextPrincipalKind::UserSession => Ok(PrincipalScope::Account {
+            user: wire_id::<UserId>(context.principal_id)?,
+            organization: granted
+                .organization_id
+                .map(wire_id::<OrganizationId>)
+                .transpose()?,
+        }),
     }
 }
 
@@ -722,7 +710,7 @@ mount_group!(
     BillingApi,
     dispatch_billing,
     RouteGroup::Billing,
-    "Mounts `central:billing`: eight routes, served by `finance-api`."
+    "Mounts `central:billing`: the seven essential prepaid routes."
 );
 mount_group!(
     mount_bootstrap_api,
@@ -731,38 +719,6 @@ mount_group!(
     dispatch_bootstrap,
     RouteGroup::Bootstrap,
     "Mounts `central:bootstrap`: the one-request dashboard shell read."
-);
-mount_group!(
-    mount_central_operations_api,
-    handle_central_operations,
-    CentralOperationsApi,
-    dispatch_central_operations,
-    RouteGroup::CentralOperations,
-    "Mounts `central:operations`: three routes."
-);
-mount_group!(
-    mount_identity_api,
-    handle_identity,
-    IdentityApi,
-    dispatch_identity,
-    RouteGroup::Identity,
-    "Mounts `central:identity`: the account read."
-);
-mount_group!(
-    mount_organizations_api,
-    handle_organizations,
-    OrganizationsApi,
-    dispatch_organizations,
-    RouteGroup::Organizations,
-    "Mounts `central:organizations`: six routes."
-);
-mount_group!(
-    mount_workspaces_api,
-    handle_workspaces,
-    WorkspacesApi,
-    dispatch_workspaces,
-    RouteGroup::Workspaces,
-    "Mounts `central:workspaces`: four routes."
 );
 
 #[cfg(test)]

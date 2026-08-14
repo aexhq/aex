@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/AccountPausedState.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A paused account and what it takes to restore it.",
+  "description": "A paused account and its customer-visible remedy.",
   "properties": {
     "changedAt": {
       "description": "When the state last changed.",
@@ -10,27 +10,15 @@
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     },
-    "deletionScheduledAt": {
-      "description": "When unfunded content is scheduled for deletion. Published and permanently absent: this is the regional content lifecycle's fact and that authority does not exist yet.",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-      "type": "string",
-      "x-aex-time": "rfc3339-ms"
-    },
     "minimumRestoreCents": {
-      "description": "Smallest top-up that restores service. Present exactly when `reason` is `top_up_required`; the other three holds have no paying remedy, and naming an amount for them would be a false one.",
+      "description": "Smallest restoring top-up, only for top_up_required.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string",
       "x-aex-money": "cents"
     },
     "reason": {
       "$ref": "aex:schema:AccountPauseReason",
-      "description": "Why the account is paused."
-    },
-    "retentionFundedUntil": {
-      "description": "How long retained content stays funded. Published and permanently absent: storage is billed monthly and unfunded storage is enforced through the account pause, so no authority owns this instant yet.",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-      "type": "string",
-      "x-aex-time": "rfc3339-ms"
+      "description": "Why it is paused."
     },
     "revision": {
       "description": "Monotonic state revision.",

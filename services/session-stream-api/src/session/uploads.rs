@@ -47,9 +47,10 @@ use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{ContentHash, PrefixedId as _, UploadId, WorkspaceId};
 use aex_wire::models;
 use aex_wire::types::{DecimalU128, HttpsUrl, Timestamp};
+use aex_workspace_domain::registry::{RegisteredValueRef, RegistryState};
 use aex_workspace_domain::upload::{
-    self, AmbiguityResolution, CompletionEvidence, HeadOracle, PART_GRANT_MAX_PER_CALL, PartPlan,
-    PartReceipt, UPLOAD_GRACE, Upload, UploadError, UploadState,
+    self, AmbiguityResolution, CompletionEvidence, HeadOracle, PartPlan, PartReceipt, UPLOAD_GRACE,
+    Upload, UploadError, UploadState,
 };
 
 use crate::session::handlers::{Routes, Shared};
@@ -359,6 +360,99 @@ impl Routes {
         Ok(outcome.into_inner().0)
     }
 
+    /// Publishes the upload as the one current pending overwrite before any
+    /// grant is returned. A retry replays both the upload admission and this
+    /// pointer commit; a crash can therefore leave an unreturned staged upload,
+    /// never a client-visible grant whose logical file still names old bytes.
+    async fn publish_upload_pending(&self, upload: &Upload) -> WireResult<()> {
+        let document = serde_json::json!({
+            "source": {
+                "type": "upload",
+                "uploadId": upload.id.to_string(),
+            },
+            "mediaType": upload.content_type.as_deref().unwrap_or("application/octet-stream"),
+            "mode": "0644",
+        });
+        self.registry_put(
+            aex_content_domain::identity::RegistryKind::File,
+            &upload.target_name,
+            &document,
+            None,
+            RegistryState::Pending,
+            None,
+            None,
+            aex_regional_http::projection::registered_file,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Loads and binds the exact pending pointer this upload is permitted to
+    /// complete. The returned ETag is a private publication fence: a newer URL,
+    /// inline value or upload can move the current name while S3 completion is
+    /// in flight, but this older completion can then no longer publish.
+    async fn current_upload_fence(&self, upload: &Upload) -> WireResult<aex_wire::types::ETag> {
+        let pointer = self
+            .shared()
+            .registry
+            .load_pointer(
+                upload.workspace,
+                aex_content_domain::identity::RegistryKind::File,
+                upload.target_name.as_str(),
+            )
+            .await
+            .map_err(|error| store_failure(&error))?
+            .ok_or_else(|| {
+                WireError::new(ErrorCode::InvalidRequest)
+                    .with_message("the upload is no longer the current file overwrite".to_owned())
+            })?;
+        if pointer.row.state != RegistryState::Pending {
+            return Err(WireError::new(ErrorCode::InvalidRequest)
+                .with_message("the upload is no longer pending publication".to_owned()));
+        }
+        let source = serde_json::from_str::<serde_json::Value>(pointer.value_doc.as_str())
+            .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+        let upload_id = upload.id.to_string();
+        let bound = source
+            .get("source")
+            .and_then(|value| value.get("uploadId"))
+            .and_then(serde_json::Value::as_str);
+        if bound != Some(upload_id.as_str()) {
+            return Err(WireError::new(ErrorCode::InvalidRequest)
+                .with_message("a newer file overwrite superseded this upload".to_owned()));
+        }
+        Ok(pointer.row.etag)
+    }
+
+    /// Returns the exact file response already committed for this completion
+    /// request, or refuses a reused key carrying a different request intent.
+    async fn replay_upload_publication(&self) -> WireResult<Option<models::RegisteredFile>> {
+        let identity = self.context().idempotency.as_ref().ok_or_else(|| {
+            WireError::new(ErrorCode::InvalidRequest).with_message("no replay key")
+        })?;
+        let scope = IdempotencyScope::new("registry.set", Some("file")).map_err(|error| {
+            WireError::new(ErrorCode::InternalError).with_message(error.to_string())
+        })?;
+        let Some(receipt) = self
+            .upload_ports()
+            .receipts
+            .read_receipt(self.workspace(), &scope, &identity.key, self.upload_now()?)
+            .await
+            .map_err(|error| store_failure(&error))?
+        else {
+            return Ok(None);
+        };
+        if receipt.intent != IntentDigest::from_bytes(identity.intent) {
+            return Err(WireError::new(ErrorCode::IdempotencyConflict));
+        }
+        let stored = aex_registry_dynamodb::store::SetReceipt::decode_receipt(&receipt)
+            .map_err(|error| store_failure(&error))?;
+        let pointer = stored.pointer(self.workspace());
+        aex_regional_http::projection::registered_file(&pointer)
+            .map(Some)
+            .map_err(WireError::from)
+    }
+
     /// The admission itself: S3 first, then one transaction (E D-2, D-19).
     #[allow(clippy::too_many_arguments, reason = "one argument per durable fact")]
     async fn admit_upload(
@@ -396,6 +490,7 @@ impl Routes {
 
         let staged = Upload {
             id: UploadId::from_uuid7(new_uuid7()),
+            target_name: body.name.clone(),
             workspace,
             state: UploadState::Created,
             provider_upload_id: handle.upload_id.clone(),
@@ -410,6 +505,27 @@ impl Routes {
             created_at: now,
             expires_at,
         };
+
+        let requests = body
+            .parts
+            .iter()
+            .map(|part| {
+                Ok(upload::PartGrantRequest {
+                    number: part.part_number,
+                    sha256: part.sha256,
+                    size_bytes: u64::try_from(part.size_bytes.get()).map_err(|_| {
+                        StoreError::Invalid {
+                            detail: "part size is outside the durable range".to_owned(),
+                        }
+                    })?,
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        let staged = upload::admit_all_parts(&staged, &requests, now)
+            .map_err(|error| StoreError::Invalid {
+                detail: error.to_string(),
+            })?
+            .upload;
 
         let rendered = wire_upload(&staged).map_err(|_| StoreError::Invalid {
             detail: "a freshly staged upload always has a wire state".to_owned(),
@@ -470,87 +586,39 @@ impl Routes {
         Ok(UploadResponse(rendered))
     }
 
-    /// `POST /api/workspace/uploads/{uploadId}/parts`
-    async fn grant_parts(
-        &self,
-        id: UploadId,
-        body: models::UploadPartsRequest,
-    ) -> WireResult<models::UploadPartGrants> {
-        if body.parts.len() > PART_GRANT_MAX_PER_CALL {
-            return Err(WireError::new(ErrorCode::LimitExceeded)
-                .with_message("a grant call covers at most 1000 parts"));
-        }
-        let now = self.upload_now()?;
-        let stored = self.load_upload(id).await?;
-        if stored.state.is_terminal() || stored.state == UploadState::Ready {
-            return Err(WireError::new(ErrorCode::Gone));
-        }
-
-        let requests: Vec<upload::PartGrantRequest> = body
-            .parts
-            .iter()
-            .map(|part| {
-                Ok(upload::PartGrantRequest {
-                    number: part.part_number,
-                    sha256: part.sha256,
-                    size_bytes: u64::try_from(part.size_bytes.get()).map_err(|_| {
-                        WireError::new(ErrorCode::InvalidRequest).with_message("part size")
-                    })?,
-                })
-            })
-            .collect::<WireResult<Vec<_>>>()?;
-
-        let commit =
-            upload::grant_parts(&stored, &requests, now).map_err(|error| refuse(&error))?;
-        let ports = self.upload_ports();
-        ports
-            .registry
-            .record_part_declarations(&commit.upload)
-            .await
-            .map_err(|error| store_failure(&error))?;
-
+    async fn presign_all_parts(&self, upload: &Upload) -> WireResult<Vec<models::UploadPartGrant>> {
         let handle = MultipartHandle {
-            key: ObjectKey::parse(&commit.upload.object_key).map_err(|_| {
+            key: ObjectKey::parse(&upload.object_key).map_err(|_| {
                 WireError::new(ErrorCode::InternalError).with_message("stored object key")
             })?,
-            upload_id: commit.upload.provider_upload_id.clone(),
+            upload_id: upload.provider_upload_id.clone(),
         };
+        let now = self.upload_now()?;
         let expires_at = Timestamp::from_unix_millis(
             now.unix_millis()
                 .saturating_add(i64::try_from(PRESIGN_EXPIRY.as_millis()).unwrap_or(0)),
         )
         .map_err(|_| WireError::new(ErrorCode::InternalError).with_message("expiry"))?;
-
-        let mut grants = Vec::with_capacity(commit.granted.len());
-        for number in &commit.granted {
-            let planned = commit
-                .upload
-                .parts
-                .part(*number)
-                .ok_or_else(|| WireError::new(ErrorCode::InvalidRequest))?;
-            let digest = planned.sha256.ok_or_else(|| {
-                WireError::new(ErrorCode::InvalidRequest).with_message("no part digest")
-            })?;
-            let signed = ports
+        let mut grants = Vec::with_capacity(upload.parts.parts.len());
+        for (number, bytes, digest) in upload.declared_parts().map_err(|error| refuse(&error))? {
+            let signed = self
+                .upload_ports()
                 .objects
                 .presign_part(
                     &handle,
-                    i32::try_from(*number).unwrap_or(i32::MAX),
+                    i32::try_from(number).unwrap_or(i32::MAX),
                     &checksum_base64(&digest),
-                    planned.bytes,
+                    bytes,
                 )
                 .await
                 .map_err(|error| {
                     WireError::new(ErrorCode::InternalError).with_message(error.to_string())
                 })?;
             grants.push(models::UploadPartGrant {
-                part_number: *number,
+                part_number: number,
                 url: HttpsUrl::parse(signed.url.expose()).map_err(|_| {
                     WireError::new(ErrorCode::InternalError).with_message("signed url")
                 })?,
-                // The headers are the difference between a grant and a URL that
-                // S3 rejects: they carry the checksum and the length the
-                // signature covers.
                 headers: signed
                     .headers
                     .into_iter()
@@ -559,11 +627,7 @@ impl Routes {
                 expires_at,
             });
         }
-
-        Ok(models::UploadPartGrants {
-            upload_id: commit.upload.id,
-            grants,
-        })
+        Ok(grants)
     }
 
     /// `POST /api/workspace/uploads/{uploadId}/completion`
@@ -571,13 +635,13 @@ impl Routes {
         &self,
         id: UploadId,
         body: models::UploadCompleteRequest,
-    ) -> WireResult<models::Upload> {
+    ) -> WireResult<Upload> {
         let now = self.upload_now()?;
         let stored = self.load_upload(id).await?;
         // `Ready` replays: the bytes the caller asked for are committed, which is
         // the upload's entire purpose.
         if stored.state == UploadState::Ready {
-            return wire_upload(&stored);
+            return Ok(stored);
         }
         if stored.state.is_terminal() {
             return Err(WireError::new(ErrorCode::Gone));
@@ -630,7 +694,7 @@ impl Routes {
         )
         .map_err(|error| refuse(&error))?;
         self.settle_ready(&settled.upload).await?;
-        wire_upload(&settled.upload)
+        Ok(settled.upload)
     }
 
     /// Resolves a completion whose outcome the provider left unknown (E D-3).
@@ -639,7 +703,7 @@ impl Routes {
         stored: &Upload,
         error: &aex_content_aws::ContentObjectError,
         now: Timestamp,
-    ) -> WireResult<models::Upload> {
+    ) -> WireResult<Upload> {
         // Only an ambiguous commit is resolvable by heading the key. An integrity
         // refusal is the provider telling us the manifest is wrong, and that is
         // the client's answer, not a reason to look for the object.
@@ -650,7 +714,7 @@ impl Routes {
         match upload::resolve_completing(stored, &oracle, now) {
             AmbiguityResolution::Committed(settled) => {
                 self.settle_ready(&settled.upload).await?;
-                wire_upload(&settled.upload)
+                Ok(settled.upload)
             }
             // The object is not there. The row stays `Completing` and the sweep
             // owns the abort; the client retries.
@@ -662,90 +726,8 @@ impl Routes {
             }
             AmbiguityResolution::Retry => Err(WireError::new(ErrorCode::InternalError)
                 .with_message("the completion outcome is not yet established")),
-            AmbiguityResolution::AlreadySettled => wire_upload(stored),
+            AmbiguityResolution::AlreadySettled => Ok(stored.clone()),
         }
-    }
-
-    /// `DELETE /api/workspace/uploads/{uploadId}`
-    async fn abort_upload(&self, id: UploadId) -> WireResult<()> {
-        let now = self.upload_now()?;
-        let stored = self.load_upload(id).await?;
-        let ports = self.upload_ports();
-
-        if stored.state.can_abort() {
-            let handle = MultipartHandle {
-                key: ObjectKey::parse(&stored.object_key).map_err(|_| {
-                    WireError::new(ErrorCode::InternalError).with_message("stored object key")
-                })?,
-                upload_id: stored.provider_upload_id.clone(),
-            };
-            // S3 first, then the conditional write that records it.
-            ports
-                .objects
-                .abort_multipart(&handle)
-                .await
-                .map_err(|error| {
-                    WireError::new(ErrorCode::InternalError).with_message(error.to_string())
-                })?;
-            let aborted = upload::abort(&stored, now).map_err(|error| refuse(&error))?;
-            return ports
-                .registry
-                .transition_upload_fenced(
-                    stored.id,
-                    stored.state,
-                    aborted.upload.state,
-                    &stored.provider_upload_id,
-                )
-                .await
-                .map_err(|error| store_failure(&error));
-        }
-
-        if stored.state == UploadState::Completing {
-            // An upload that may already be assembled is never aborted on a
-            // guess. The oracle decides, and only "the object is absent" makes
-            // the abort safe.
-            let oracle = self.head_oracle(&stored).await;
-            return match upload::resolve_completing(&stored, &oracle, now) {
-                AmbiguityResolution::Committed(settled) => {
-                    self.settle_ready(&settled.upload).await?;
-                    Err(WireError::new(ErrorCode::Gone))
-                }
-                AmbiguityResolution::NotCommitted => {
-                    let handle = MultipartHandle {
-                        key: ObjectKey::parse(&stored.object_key).map_err(|_| {
-                            WireError::new(ErrorCode::InternalError).with_message("object key")
-                        })?,
-                        upload_id: stored.provider_upload_id.clone(),
-                    };
-                    ports
-                        .objects
-                        .abort_multipart(&handle)
-                        .await
-                        .map_err(|error| {
-                            WireError::new(ErrorCode::InternalError).with_message(error.to_string())
-                        })?;
-                    ports
-                        .registry
-                        .transition_upload_fenced(
-                            stored.id,
-                            UploadState::Completing,
-                            UploadState::Expired,
-                            &stored.provider_upload_id,
-                        )
-                        .await
-                        .map_err(|error| store_failure(&error))
-                }
-                AmbiguityResolution::Integrity { detail } => {
-                    Err(WireError::new(ErrorCode::InternalError).with_message(detail))
-                }
-                AmbiguityResolution::Retry => Err(WireError::new(ErrorCode::InternalError)
-                    .with_message("the completion outcome is not yet established")),
-                AmbiguityResolution::AlreadySettled => Err(WireError::new(ErrorCode::Gone)),
-            };
-        }
-
-        // `Ready` and every terminal state.
-        Err(WireError::new(ErrorCode::Gone))
     }
 }
 
@@ -864,17 +846,15 @@ impl aex_wire::server::UploadsApi for Routes {
         &self,
         _cx: &aex_wire::server::RequestContext,
         body: models::UploadCreateRequest,
-    ) -> WireResult<aex_wire::server::Created<models::Upload>> {
-        self.stage_upload(body).await.map(aex_wire::server::Created)
-    }
-
-    async fn upload_parts_grant(
-        &self,
-        _cx: &aex_wire::server::RequestContext,
-        upload_id: UploadId,
-        body: models::UploadPartsRequest,
-    ) -> WireResult<models::UploadPartGrants> {
-        self.grant_parts(upload_id, body).await
+    ) -> WireResult<aex_wire::server::Created<models::UploadAdmission>> {
+        let public = self.stage_upload(body).await?;
+        let stored = self.load_upload(public.id).await?;
+        self.publish_upload_pending(&stored).await?;
+        let grants = self.presign_all_parts(&stored).await?;
+        Ok(aex_wire::server::Created(models::UploadAdmission {
+            grants,
+            upload: public,
+        }))
     }
 
     async fn upload_complete(
@@ -882,18 +862,44 @@ impl aex_wire::server::UploadsApi for Routes {
         _cx: &aex_wire::server::RequestContext,
         upload_id: UploadId,
         body: models::UploadCompleteRequest,
-    ) -> WireResult<models::Upload> {
-        self.complete_upload(upload_id, body).await
-    }
-
-    async fn upload_abort(
-        &self,
-        _cx: &aex_wire::server::RequestContext,
-        upload_id: UploadId,
-    ) -> WireResult<aex_wire::server::NoContent> {
-        self.abort_upload(upload_id)
-            .await
-            .map(|()| aex_wire::server::NoContent)
+    ) -> WireResult<models::RegisteredFile> {
+        if let Some(replayed) = self.replay_upload_publication().await? {
+            return Ok(replayed);
+        }
+        let staged = self.load_upload(upload_id).await?;
+        let fence = self.current_upload_fence(&staged).await?;
+        let ready = self.complete_upload(upload_id, body).await?;
+        let read = models::RegisteredFileRead {
+            content: models::ContentRef {
+                sha256: ready.declared_sha256,
+                size_bytes: DecimalU128::new(u128::from(ready.declared_size)),
+            },
+            media_type: ready
+                .content_type
+                .clone()
+                .unwrap_or_else(|| "application/octet-stream".to_owned()),
+            mode: models::RegisteredFileMode::V0644,
+        };
+        self.registry_put(
+            aex_content_domain::identity::RegistryKind::File,
+            &ready.target_name,
+            &read,
+            Some(RegisteredValueRef::Upload { upload: ready.id }),
+            RegistryState::Ready,
+            None,
+            Some(&fence),
+            aex_regional_http::projection::registered_file,
+        )
+        .await
+        .map_err(|error| {
+            if error.code == ErrorCode::PreconditionFailed {
+                WireError::new(ErrorCode::InvalidRequest)
+                    .with_message("a newer file overwrite superseded this completion".to_owned())
+            } else {
+                error
+            }
+        })
+        .map(|published| published.value)
     }
 }
 
@@ -908,6 +914,8 @@ mod tests {
     fn upload(state: UploadState) -> Upload {
         Upload {
             id: UploadId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            target_name: aex_wire::ids::ResourceName::parse("artifact")
+                .expect("valid resource name"),
             workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [2; 10])),
             state,
             provider_upload_id: "provider-mpu-1".to_owned(),

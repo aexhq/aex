@@ -1,0 +1,45 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SandboxMcpServer.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "An MCP process launched inside the sandbox after workspace materialization.",
+  "properties": {
+    "args": {
+      "description": "Bounded arguments.",
+      "items": {
+        "maxLength": 4096,
+        "minLength": 0,
+        "type": "string"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "command": {
+      "description": "Executable inside the sandbox.",
+      "maxLength": 1024,
+      "minLength": 1,
+      "type": "string"
+    },
+    "environment": {
+      "additionalProperties": {
+        "maxLength": 8192,
+        "minLength": 0,
+        "type": "string"
+      },
+      "description": "Write-only session-encrypted environment.",
+      "maxProperties": 64,
+      "type": "object"
+    },
+    "workingDirectory": {
+      "description": "Normalized sandbox working directory.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-path": "posix"
+    }
+  },
+  "required": [
+    "command"
+  ],
+  "title": "SandboxMcpServer",
+  "type": "object"
+}

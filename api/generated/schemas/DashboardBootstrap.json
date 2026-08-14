@@ -2,35 +2,29 @@
   "$id": "https://schemas.aex.dev/v1/DashboardBootstrap.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The one bounded read that fills the dashboard shell.",
+  "description": "The single bounded read that fills the launch dashboard shell.",
   "properties": {
-    "accounts": {
-      "description": "Current operational state for each organization in this snapshot.",
-      "items": {
-        "$ref": "aex:schema:OrganizationAccount"
-      },
-      "maxItems": 100,
-      "type": "array"
+    "accountId": {
+      "description": "Their personal prepaid account.",
+      "pattern": "^acc_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "account"
+    },
+    "accountState": {
+      "$ref": "aex:schema:AccountOperationalState",
+      "description": "Current paid-capacity state."
     },
     "email": {
-      "description": "Their email address.",
+      "description": "Their verified GitHub email.",
       "maxLength": 320,
       "minLength": 3,
       "type": "string"
     },
     "generatedAt": {
-      "description": "When this snapshot was taken.",
+      "description": "When this snapshot was assembled.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
-    },
-    "organizations": {
-      "description": "Organizations they belong to.",
-      "items": {
-        "$ref": "aex:schema:Organization"
-      },
-      "maxItems": 100,
-      "type": "array"
     },
     "userId": {
       "description": "The signed-in person.",
@@ -38,22 +32,18 @@
       "type": "string",
       "x-aex-id": "user"
     },
-    "workspaces": {
-      "description": "Workspaces they can reach.",
-      "items": {
-        "$ref": "aex:schema:Workspace"
-      },
-      "maxItems": 500,
-      "type": "array"
+    "workspace": {
+      "$ref": "aex:schema:Workspace",
+      "description": "The fixed eu-west-1 workspace."
     }
   },
   "required": [
-    "accounts",
+    "accountId",
+    "accountState",
     "email",
     "generatedAt",
-    "organizations",
     "userId",
-    "workspaces"
+    "workspace"
   ],
   "title": "DashboardBootstrap",
   "type": "object"

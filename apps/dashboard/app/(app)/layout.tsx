@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 
 import { currentBootstrap, signInDestination } from "../../src/server/context";
 import { AccountBanner } from "../../src/ui/account";
+import { AccountMenu } from "../../src/ui/account-menu";
 import { Notice } from "../../src/ui/components";
-import { ContextSwitcher } from "../../src/ui/switcher";
 
 export const dynamic = "force-dynamic";
 
@@ -15,9 +15,8 @@ export const dynamic = "force-dynamic";
  * below this layout is a panel with its own request, its own deadline and its own
  * abort, so a slow analytics query can never hold up the control surfaces.
  *
- * A failed shell is a failed page — there is no honest way to render an
- * organization switcher without knowing the organizations — so the two shell
- * failures are rendered as the whole page rather than as a panel.
+ * A failed shell is a failed page: there is no honest way to render the fixed
+ * personal workspace without its bootstrap authority.
  */
 export default async function AppLayout({ children }: Readonly<{ children: ReactNode }>) {
   const result = await currentBootstrap();
@@ -30,8 +29,8 @@ export default async function AppLayout({ children }: Readonly<{ children: React
         <main id="main" className="frame">
           <Notice status="serious" title="The account service is not answering" live>
             <p className="small">
-              {result.message} Your data is unaffected; the dashboard simply cannot read your
-              organizations right now and will not guess at them.
+              {result.message} Your data is unaffected; the dashboard cannot read your personal
+              workspace right now and will not guess at it.
             </p>
             <p className="small muted">
               <code className="mono">{result.code}</code>
@@ -49,10 +48,13 @@ export default async function AppLayout({ children }: Readonly<{ children: React
       <header className="banner">
         <div className="frame banner-inner">
           <a className="brand" href="/">AEX</a>
-          <ContextSwitcher bootstrap={bootstrap} />
+          <span className="crumb">/</span>
+          <a href={`/w/${bootstrap.workspace.id}/sessions`}>{bootstrap.workspace.name}</a>
+          <span className="spacer" />
+          <AccountMenu email={bootstrap.email} userId={bootstrap.userId} />
         </div>
       </header>
-      <AccountBanner accounts={bootstrap.accounts} organizations={bootstrap.organizations} />
+      <AccountBanner account={bootstrap.accountState} />
       {children}
       <footer className="frame small muted" style={{ paddingBlock: "var(--aex-space-6)" }}>
         <a href="https://aex.dev/docs">Documentation</a>

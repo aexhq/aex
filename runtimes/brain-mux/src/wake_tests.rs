@@ -11,8 +11,8 @@ use crate::drain::Stage;
 use crate::measure::Measurement;
 use crate::wake::{BindingState, Bindings, MuxAdmission};
 use aex_brain_app::activation::memory::{
-    AbsentHands, CountingIds, FixedCatalog, FixedClock, MemoryQueue, MemoryStore, ProviderScript,
-    Recorder, ScriptedProvider, ScriptedTools, wake_for,
+    CountingIds, FixedCatalog, FixedClock, MemoryQueue, MemoryStore, ProviderScript, Recorder,
+    ScriptedProvider, ScriptedTools, wake_for,
 };
 use aex_brain_app::activation::{Activation, ActivationPolicy, Outcome, Ports, Stop, WakeLoop};
 use aex_brain_app::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
@@ -75,11 +75,10 @@ fn config() -> ResolvedAgentConfig {
         model: model(),
         system: None,
         tool_manifest_digests: Vec::new(),
-        hands_generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
+        mcp_servers: Vec::new(),
+        hands_generation: Some(GenerationId::from_uuid7(Uuid7::compose(1, [9; 10]))),
         limits_revision: 1,
         limits: AgentLimits {
-            max_turns: 4,
-            max_steps_per_turn: 8,
             turn_deadline_ms: 600_000,
             max_run_duration_ms: 3_600_000,
             max_depth: 4,
@@ -173,7 +172,6 @@ fn bound() -> Bindings {
         store: BindingState::Ready,
         provider: BindingState::Ready,
         tools: BindingState::Ready,
-        hands: BindingState::Ready,
     }
 }
 
@@ -225,12 +223,14 @@ fn compose_loop(provider: Arc<dyn ProviderPort>) -> Composed {
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
+        checkpoints: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
         provider,
+        model_usage: Arc::new(aex_brain_app::ports::NullModelUsagePort),
+        previews: Arc::new(aex_brain_app::ports::NullPreviewPort),
         tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())),
-        hands: Arc::new(AbsentHands),
         catalog: Arc::new(FixedCatalog::with_model(capability())),
         clock,
         ids: Arc::new(CountingIds::new()),
@@ -351,12 +351,14 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
+        checkpoints: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
         provider: Arc::clone(&provider) as Arc<_>,
+        model_usage: Arc::new(aex_brain_app::ports::NullModelUsagePort),
+        previews: Arc::new(aex_brain_app::ports::NullPreviewPort),
         tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())),
-        hands: Arc::new(AbsentHands),
         catalog: Arc::new(FixedCatalog::with_model(capability())),
         clock,
         ids: Arc::new(CountingIds::new()),
@@ -520,12 +522,14 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
+        checkpoints: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
         provider: Arc::clone(&provider) as Arc<_>,
+        model_usage: Arc::new(aex_brain_app::ports::NullModelUsagePort),
+        previews: Arc::new(aex_brain_app::ports::NullPreviewPort),
         tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())),
-        hands: Arc::new(AbsentHands),
         catalog: Arc::new(FixedCatalog::with_model(capability())),
         clock: Arc::new(ReactorClock::new()),
         ids: Arc::new(CountingIds::new()),
@@ -647,13 +651,14 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
             session_telemetry_bucket: "telemetry".to_owned(),
             session_telemetry_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/telemetry"
                 .to_owned(),
+            content_bucket: "content-bucket".to_owned(),
+            content_bucket_owner: "123456789012".to_owned(),
+            content_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/content".to_owned(),
             wake_queue_url: "https://sqs.invalid/queue".to_owned(),
             work_table: "work".to_owned(),
-            secret_custody_table: "secret-custody".to_owned(),
             secret_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/fixture".to_owned(),
             runtime_activity_table: "runtime-activity".to_owned(),
-            usage_compute_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/compute".to_owned(),
-            usage_storage_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/storage".to_owned(),
+            usage_rating_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/rating.fifo".to_owned(),
             runtime_due_shards: 8,
             runtime_due_page: aex_runtime_control::store::PageBudget {
                 max_items: 32,
@@ -661,6 +666,12 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
             },
             pricing_version: "synthetic-zero-v1".to_owned(),
             budget: 4,
+            tool_mux_url: "https://tool-mux.internal".to_owned(),
+            tool_mux_assertion_trust_anchors: vec![(
+                uuid::Uuid::from_u128(0x018f_47a2_65ee_7c61_a1d2_6509_7d0d_8b11),
+                [7; 32],
+            )],
+            tool_mux_assertion_signing_key_ref: "aex/dev/central/assertion-signing-key".to_owned(),
         })
         .expect("the candidate shape composes"),
     );

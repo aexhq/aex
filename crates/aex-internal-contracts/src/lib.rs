@@ -28,7 +28,6 @@ pub mod money;
 pub mod operation;
 pub mod outbox;
 pub mod release;
-pub mod tool_exec;
 pub mod usage;
 pub mod wake;
 

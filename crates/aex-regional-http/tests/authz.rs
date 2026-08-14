@@ -475,7 +475,7 @@ fn a_credential_that_is_not_a_workspace_key_is_refused_before_anything_reads_it(
     // A regional host accepts one credential. Refusing at construction means the
     // places that need the key id cannot each re-parse and disagree.
     for value in [
-        b"aex_at_not_a_workspace_key".to_vec(),
+        b"unsupported_not_a_workspace_key".to_vec(),
         b"Bearer something".to_vec(),
         Vec::new(),
         vec![b'a'; 8_192],
@@ -691,7 +691,7 @@ async fn a_key_presented_to_the_wrong_audience_is_refused() {
     // admitted at the other with the same MAC.
     let (token, _) = workspace_key(Region::EuWest1, 5);
     let id = plain_route();
-    for other in [AssertionAudience::ToolExec] {
+    for other in [AssertionAudience::ToolMux] {
         let mut state = projected(AccountState::Active, Region::EuWest1);
         state.audiences = AudienceSet::EMPTY.insert(other);
         assert_eq!(
@@ -969,7 +969,7 @@ async fn a_long_lived_lease_observes_revocation_pause_audience_and_placement_cha
 
     // A key narrowed to no longer authorize this edge loses its open socket too.
     let mut narrowed = projected(AccountState::Active, Region::EuWest1);
-    narrowed.audiences = AudienceSet::EMPTY.insert(AssertionAudience::ToolExec);
+    narrowed.audiences = AudienceSet::EMPTY.insert(AssertionAudience::ToolMux);
     *snapshot.lock().expect("an uncontended fixture") = Ok(narrowed);
     assert_eq!(
         edge.revalidate(&authorization)

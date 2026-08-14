@@ -39,8 +39,9 @@ pub mod memory;
 mod tests;
 
 use crate::ports::{
-    CatalogError, CatalogPort, ClaimError, ClockPort, CommitError, EffectStore, HandsError,
-    HandsPort, IdPort, JournalStore, LeaseStore, ProviderPort, ReadBudget, StoreError, ToolPort,
+    CatalogError, CatalogPort, CheckpointError, ClaimError, ClockPort, CommitError,
+    ContextCheckpointStore, EffectStore, HandsError, IdPort, JournalStore, LeaseStore,
+    ModelUsageError, ModelUsagePort, PreviewPort, ProviderPort, ReadBudget, StoreError, ToolPort,
     ToolRoutingError, WakeQueue,
 };
 use aex_brain_domain::child::QueuedReason;
@@ -80,6 +81,8 @@ pub struct RestoreBudget {
 pub struct Ports {
     /// The agent's journal: head, pages and the one decision transaction.
     pub journal: Arc<dyn JournalStore>,
+    /// Immutable context objects plus their fenced committed head pointer.
+    pub checkpoints: Arc<dyn ContextCheckpointStore>,
     /// The durable effect record's two pre-settlement transitions.
     pub effects: Arc<dyn EffectStore>,
     /// Activation ownership.
@@ -88,10 +91,12 @@ pub struct Ports {
     pub wakes: Arc<dyn WakeQueue>,
     /// Model dispatch.
     pub provider: Arc<dyn ProviderPort>,
+    /// Zero-dollar provider usage handoff.
+    pub model_usage: Arc<dyn ModelUsagePort>,
+    /// Bounded provisional provider frames, scoped to one session/agent/effect.
+    pub previews: Arc<dyn PreviewPort>,
     /// Tool invocation.
     pub tools: Arc<dyn ToolPort>,
-    /// The session's Hands `MicroVM`.
-    pub hands: Arc<dyn HandsPort>,
     /// The signed immutable catalog every capability lookup resolves against.
     pub catalog: Arc<dyn CatalogPort>,
     /// The only two clock readings the Brain takes.
@@ -357,6 +362,9 @@ pub enum ActivationError {
     /// The store failed.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// Checkpoint object or pointer authority failed.
+    #[error(transparent)]
+    Checkpoint(#[from] CheckpointError),
     /// A conditional write was refused.
     #[error(transparent)]
     Commit(#[from] CommitError),
@@ -375,6 +383,9 @@ pub enum ActivationError {
     /// The Hands adapter refused.
     #[error(transparent)]
     Hands(#[from] HandsError),
+    /// A committed assistant usage observation has not reached the central queue yet.
+    #[error(transparent)]
+    ModelUsage(#[from] ModelUsageError),
     /// A record or a request could not be canonicalized, so its identity is unknown.
     #[error(transparent)]
     Canonical(#[from] aex_brain_domain::canonical::CanonicalizeError),

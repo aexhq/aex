@@ -2,10 +2,10 @@
   "$id": "https://schemas.aex.dev/v1/SessionComputeRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The only customer compute selector.",
+  "description": "The single sandbox's bounded compute selector.",
   "properties": {
     "size": {
-      "description": "The baseline shape; defaults to `1gb`.",
+      "description": "Defaults to the launch baseline.",
       "enum": [
         "512mb",
         "1gb",

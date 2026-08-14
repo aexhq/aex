@@ -1,9 +1,11 @@
 {
   "$id": "https://schemas.aex.dev/v1/RegisteredState.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The only state a registered entry has; there is no version history.",
+  "description": "State of the single current value; prior values are never addressable.",
   "enum": [
-    "current"
+    "pending",
+    "ready",
+    "failed"
   ],
   "title": "RegisteredState",
   "type": "string"

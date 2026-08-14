@@ -16,6 +16,22 @@ use aex_wire::types::{ETag, Timestamp};
 
 use crate::upload::UploadState;
 
+/// Private lifecycle carried by the single current registry pointer.
+///
+/// Only files use asynchronous admission in the launch surface, but keeping the
+/// state beside the pointer (rather than inferring it from a value document)
+/// lets list reads remain one projected DynamoDB query. The revision remains a
+/// private stale-completion fence and is never a public file version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RegistryState {
+    /// An asynchronous source was admitted and prior bytes are no longer current.
+    Pending,
+    /// The current value has verified immutable bytes.
+    Ready,
+    /// The current asynchronous source failed under a stable bounded code.
+    Failed,
+}
+
 /// Where a registered value's payload bytes come from on the way **in**.
 ///
 /// This is an input vocabulary only. A durable pointer never stores it: a set
@@ -107,6 +123,10 @@ pub struct RegistryRow {
     pub sha256: ContentDigest,
     /// `len(JCS(valueDoc))`.
     pub size_bytes: u64,
+    /// Lifecycle of this one current overwrite.
+    pub state: RegistryState,
+    /// Stable bounded failure code, present only in [`RegistryState::Failed`].
+    pub failure_code: Option<String>,
     /// When the pointer was created.
     pub created_at: Timestamp,
     /// When it last changed.
@@ -137,6 +157,10 @@ pub struct ProposedValue {
     pub payload: Option<RegisteredValueRef>,
     /// The state of the upload being consumed, when one is.
     pub upload_state: Option<UploadState>,
+    /// Lifecycle the new current pointer publishes.
+    pub state: RegistryState,
+    /// Stable bounded failure code, present only for a failed proposal.
+    pub failure_code: Option<String>,
 }
 
 impl ProposedValue {
@@ -304,6 +328,8 @@ pub fn set(
                         etag: etag_of(proposed.kind, revision, &sha256),
                         sha256,
                         size_bytes,
+                        state: proposed.state,
+                        failure_code: proposed.failure_code.clone(),
                         created_at: now,
                         updated_at: now,
                     },
@@ -345,6 +371,8 @@ pub fn set(
                     etag: etag_of(proposed.kind, revision, &sha256),
                     sha256,
                     size_bytes,
+                    state: proposed.state,
+                    failure_code: proposed.failure_code.clone(),
                     updated_at: now,
                     ..existing.row.clone()
                 },
@@ -381,8 +409,8 @@ mod tests {
     use aex_wire::types::Timestamp;
 
     use super::{
-        ProposedValue, RegisteredValueRef, RegistryRejection, SetOutcome, ValueDocument, delete,
-        etag_of, set,
+        ProposedValue, RegisteredValueRef, RegistryRejection, RegistryState, SetOutcome,
+        ValueDocument, delete, etag_of, set,
     };
 
     fn workspace() -> WorkspaceId {
@@ -420,6 +448,8 @@ mod tests {
                 digest: ContentDigest::of(body),
             }),
             upload_state: None,
+            state: RegistryState::Ready,
+            failure_code: None,
         }
     }
 

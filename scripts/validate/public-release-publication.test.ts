@@ -404,9 +404,9 @@ describe("public main-push publication", () => {
     );
 
     expect(bindToolCatalog?.if).toContain("matrix.name == 'brain-mux'");
-    expect(bindToolCatalog?.if).toContain("matrix.name == 'session-stream-api'");
+    expect(bindToolCatalog?.if).toContain("matrix.name == 'session-api'");
     expect(verifySnapshot?.if).toContain("matrix.name == 'brain-mux'");
-    expect(verifySnapshot?.if).toContain("matrix.name == 'session-stream-api'");
+    expect(verifySnapshot?.if).toContain("matrix.name == 'session-api'");
     expect(verifySnapshot?.run).toContain("sha256sum --check scripts/models.digest");
     expect(verifySnapshot?.run).toContain("bun scripts/gen-models.ts");
     expect(verifySnapshot?.run).toContain(

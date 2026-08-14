@@ -93,7 +93,7 @@ pub fn route_owner(id: RouteId) -> Option<RouteOwner> {
         return None;
     }
     match descriptor.serving_artifact {
-        "session-stream-api" => Some(RouteOwner::SessionApi),
+        "session-api" => Some(RouteOwner::SessionApi),
         _ => None,
     }
 }

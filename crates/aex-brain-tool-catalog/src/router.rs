@@ -17,7 +17,7 @@ use aex_brain_domain::journal::ExecutorRoute as DomainExecutorRoute;
 use aex_model_catalog::BoundedString;
 use aex_model_catalog::canonical::CanonicalToolDef;
 
-use crate::manifest::{Determinism, EntryState, ToolManifestEntry};
+use crate::manifest::{EntryState, ToolManifestEntry};
 use crate::readiness::AdvertisedCatalog;
 use crate::wire_pending::ExecutorRoute;
 
@@ -68,7 +68,7 @@ struct InstalledCatalog {
 /// Runtime dispatch never discovers or re-routes a tool.
 pub struct CompositeToolRouter {
     catalogs: BTreeMap<CatalogPin, InstalledCatalog>,
-    executors: [Option<Arc<dyn ToolExecutor>>; 5],
+    executors: [Option<Arc<dyn ToolExecutor>>; 2],
 }
 
 impl Default for CompositeToolRouter {
@@ -183,25 +183,11 @@ impl CompositeToolRouter {
             })
             .collect::<Result<Vec<_>, RouterBuildError>>()?;
         definitions.sort_by(|left, right| left.name.cmp(&right.name));
-        // Answers one question only: may *we* run two of these calls at once?
-        // What the model is told it may emit is derived from its own declared
-        // capability instead — `ToolAdvertisement::allows_parallel_emission` —
-        // because a dialect that cannot encode "one tool at a time" refuses the
-        // whole request, and one non-pure row in the advertised surface must not
-        // be able to cause that.
-        let parallel_safe = advertised.entries.iter().all(|entry| {
-            entry.descriptor.effect == aex_brain_domain::effect::EffectClass::Pure
-                && entry.descriptor.determinism == Determinism::Deterministic
-                && entry.descriptor.bounds.concurrency_weight == 0
-        });
         self.catalogs.insert(
             pin,
             InstalledCatalog {
                 routes: candidates,
-                advertisement: ToolAdvertisement {
-                    definitions,
-                    parallel_safe,
-                },
+                advertisement: ToolAdvertisement { definitions },
             },
         );
         Ok(())
@@ -319,10 +305,7 @@ impl ToolPort for CompositeToolRouter {
 const fn executor_slot(route: DomainExecutorRoute) -> usize {
     match route {
         DomainExecutorRoute::BrainInline => 0,
-        DomainExecutorRoute::ManagedWeb => 1,
-        DomainExecutorRoute::ToolExec => 2,
-        DomainExecutorRoute::Mcp => 3,
-        DomainExecutorRoute::Hands => 4,
+        DomainExecutorRoute::ToolMux => 1,
     }
 }
 
@@ -346,13 +329,13 @@ const fn coarse_route(route: ExecutorRoute) -> DomainExecutorRoute {
         ExecutorRoute::Control | ExecutorRoute::Park | ExecutorRoute::SubagentScheduler => {
             DomainExecutorRoute::BrainInline
         }
-        ExecutorRoute::ManagedWeb => DomainExecutorRoute::ManagedWeb,
-        ExecutorRoute::ToolExec => DomainExecutorRoute::ToolExec,
-        ExecutorRoute::Mcp => DomainExecutorRoute::Mcp,
-        ExecutorRoute::HandsFilesystem
+        ExecutorRoute::ManagedWeb
+        | ExecutorRoute::PlatformStorage
+        | ExecutorRoute::Mcp
+        | ExecutorRoute::HandsFilesystem
         | ExecutorRoute::HandsDevelopment
         | ExecutorRoute::HandsBrowser
-        | ExecutorRoute::RegisteredCustom => DomainExecutorRoute::Hands,
+        | ExecutorRoute::RegisteredCustom => DomainExecutorRoute::ToolMux,
     }
 }
 
@@ -521,13 +504,7 @@ mod tests {
         let digest = ContentHash([7; 32]);
         let pin = CatalogPin(Blake3Digest::of(b"model catalog"));
         let mut router = CompositeToolRouter::new();
-        for route in [
-            ExecutorRoute::BrainInline,
-            ExecutorRoute::ManagedWeb,
-            ExecutorRoute::ToolExec,
-            ExecutorRoute::Mcp,
-            ExecutorRoute::Hands,
-        ] {
+        for route in [ExecutorRoute::BrainInline, ExecutorRoute::ToolMux] {
             router
                 .register_executor(route, Arc::new(RecordingExecutor::new(route)))
                 .expect("one executor per route");
@@ -587,14 +564,9 @@ mod tests {
 
         let mut router = CompositeToolRouter::new();
         router
-            .register_executor(ExecutorRoute::Hands, Arc::new(MissingReadFile))
-            .expect("Hands executor");
-        for route in [
-            ExecutorRoute::BrainInline,
-            ExecutorRoute::ManagedWeb,
-            ExecutorRoute::ToolExec,
-            ExecutorRoute::Mcp,
-        ] {
+            .register_executor(ExecutorRoute::ToolMux, Arc::new(MissingReadFile))
+            .expect("Tool Mux executor");
+        for route in [ExecutorRoute::BrainInline] {
             router
                 .register_executor(route, Arc::new(RecordingExecutor::new(route)))
                 .expect("one executor per route");
@@ -609,20 +581,20 @@ mod tests {
                 &advertised,
             ),
             Err(super::RouterBuildError::UnsupportedTool { name, route })
-                if name == "read_file" && route == ExecutorRoute::Hands
+                if name == "read_file" && route == ExecutorRoute::ToolMux
         ));
     }
 
     #[test]
     fn a_fresh_router_queries_and_cancels_directly_from_the_durable_ref() {
-        let executor = Arc::new(RecordingExecutor::new(ExecutorRoute::Mcp));
+        let executor = Arc::new(RecordingExecutor::new(ExecutorRoute::ToolMux));
         let mut restarted = CompositeToolRouter::new();
         restarted
-            .register_executor(ExecutorRoute::Mcp, executor.clone())
+            .register_executor(ExecutorRoute::ToolMux, executor.clone())
             .expect("one exact executor");
         let operation = DetachedOperationRef {
             id: DetachedOperationId("operation-after-restart".to_owned()),
-            executor: ExecutorRoute::Mcp,
+            executor: ExecutorRoute::ToolMux,
         };
 
         assert!(matches!(
@@ -641,31 +613,29 @@ mod tests {
     }
 
     #[test]
-    fn equal_raw_ids_on_different_executors_never_collide_or_broadcast() {
-        let web = Arc::new(RecordingExecutor::new(ExecutorRoute::ManagedWeb));
-        let mcp = Arc::new(RecordingExecutor::new(ExecutorRoute::Mcp));
+    fn one_tool_mux_owns_every_non_native_durable_id() {
+        let tool_mux = Arc::new(RecordingExecutor::new(ExecutorRoute::ToolMux));
         let mut router = CompositeToolRouter::new();
         router
-            .register_executor(ExecutorRoute::ManagedWeb, web.clone())
-            .expect("web executor");
-        router
-            .register_executor(ExecutorRoute::Mcp, mcp.clone())
-            .expect("mcp executor");
+            .register_executor(ExecutorRoute::ToolMux, tool_mux.clone())
+            .expect("Tool Mux executor");
         let id = DetachedOperationId("same-raw-id".to_owned());
 
         block_on(router.query(&DetachedOperationRef {
             id: id.clone(),
-            executor: ExecutorRoute::ManagedWeb,
+            executor: ExecutorRoute::ToolMux,
         }))
-        .expect("web query");
+        .expect("first query");
         block_on(router.query(&DetachedOperationRef {
             id: id.clone(),
-            executor: ExecutorRoute::Mcp,
+            executor: ExecutorRoute::ToolMux,
         }))
-        .expect("mcp query");
+        .expect("replay query");
 
-        assert_eq!(*web.queried.lock().expect("not poisoned"), vec![id.clone()]);
-        assert_eq!(*mcp.queried.lock().expect("not poisoned"), vec![id]);
+        assert_eq!(
+            *tool_mux.queried.lock().expect("not poisoned"),
+            vec![id.clone(), id]
+        );
     }
 
     #[test]
@@ -673,7 +643,7 @@ mod tests {
         let empty = CompositeToolRouter::new();
         let operation = DetachedOperationRef {
             id: DetachedOperationId("op".to_owned()),
-            executor: ExecutorRoute::Hands,
+            executor: ExecutorRoute::ToolMux,
         };
         assert!(block_on(empty.query(&operation)).is_err());
         assert!(block_on(empty.cancel(&operation, Fence(1))).is_err());
@@ -681,16 +651,16 @@ mod tests {
         let mut router = CompositeToolRouter::new();
         router
             .register_executor(
-                ExecutorRoute::Mcp,
+                ExecutorRoute::ToolMux,
                 Arc::new(RecordingExecutor::with_mismatched_receipt(
-                    ExecutorRoute::Mcp,
+                    ExecutorRoute::ToolMux,
                 )),
             )
             .expect("mcp executor");
         assert!(
             block_on(router.query(&DetachedOperationRef {
                 id: DetachedOperationId("op".to_owned()),
-                executor: ExecutorRoute::Mcp,
+                executor: ExecutorRoute::ToolMux,
             }))
             .is_err(),
             "an executor may not attribute its result to another route"

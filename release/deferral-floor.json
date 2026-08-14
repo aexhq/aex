@@ -63,28 +63,43 @@
     ]
   },
   "scenarios": {
-    "floor": 17,
-    "floorNote": "SC-REGIONAL-ADMISSION and SC-REGISTRY-RESOURCES remain the runnable release scenarios. SC-SESSION-LIVE-FILES was deferred on 2026-08-13: its live target needs a registered provider credential in the evidence workspace and a live provider-credential register, neither of which exists, and no evidence environment supplies AEX_LIVE_PROVIDER/AEX_LIVE_MODEL/AEX_LIVE_PROVIDER_CREDENTIAL_ID. Re-enable it with the live-evidence expansion.",
+    "floor": 7,
+    "floorNote": "Eight deployed public user journeys plus the hosted files companion now own billing, message streaming, terminal retention, telemetry, provider matrix, MCP, storage, long-context, and file evidence. Seven broader lifecycle/fault journeys remain explicit gaps.",
     "deleting": {},
     "deferred": [
+      "SC-AMBIGUITY-SAFETY",
+      "SC-CONTROL-WORKSPACE",
+      "SC-EAGER-SANDBOX",
+      "SC-IDENTITY-ACCOUNT",
+      "SC-PARALLEL-SUBAGENT",
+      "SC-SANDBOX-DISABLED-RESUME",
+      "SC-SESSION-ADMIT"
+    ],
+    "retired": [
       "SC-AUTHZ-ASSERTION",
+      "SC-BILLING-ESSENTIAL",
       "SC-BRAIN-TURN",
       "SC-BYOK-CUSTODY",
       "SC-CONTENT-LIFECYCLE",
-      "SC-CONTROL-WORKSPACE",
       "SC-FINANCE-INVOICE",
       "SC-FINANCE-PAYMENT",
       "SC-FINANCE-RECONCILE",
       "SC-HANDS-HOSTILE",
-      "SC-IDENTITY-ACCOUNT",
+      "SC-LONG-CONTEXT",
+      "SC-MCP",
+      "SC-PROVIDER-MATRIX",
+      "SC-REGIONAL-ADMISSION",
+      "SC-REGISTRY-RESOURCES",
       "SC-RUNTIME-CONTROL",
       "SC-SCHEMA-MIGRATE",
       "SC-SDK-INSTALL",
-      "SC-SESSION-ADMIT",
-      "SC-SESSION-LIVE-FILES",
+      "SC-SESSION-STREAM",
       "SC-SESSION-TERMINAL",
+      "SC-TELEMETRY-LIVE-RETAINED",
+      "SC-SESSION-LIVE-FILES",
+      "SC-TOOL-MUX",
+      "SC-TOOL-STORAGE",
       "SC-USAGE-SETTLE"
-    ],
-    "retired": []
+    ]
   }
 }

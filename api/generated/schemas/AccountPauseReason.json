@@ -1,7 +1,7 @@
 {
   "$id": "https://schemas.aex.dev/v1/AccountPauseReason.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Why an account is paused, and therefore which remedy exists. One value per durable `finance.billing_account.state` hold: collapsing all four onto `top_up_required` told a customer under a dispute hold to make a payment that would not restore service.",
+  "description": "Why the personal prepaid account cannot admit paid work.",
   "enum": [
     "top_up_required",
     "payment_hold",

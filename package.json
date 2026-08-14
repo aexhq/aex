@@ -9,7 +9,6 @@
   "workspaces": [
     "packages/*",
     "apps/*",
-    "services/stripe-command-edge",
     "services/stripe-webhook-edge"
   ],
   "scripts": {

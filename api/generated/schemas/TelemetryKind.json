@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/TelemetryKind.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Trusted live and retained session signals.",
+  "enum": [
+    "assistant",
+    "tool",
+    "runtime",
+    "log",
+    "span",
+    "usage",
+    "gap",
+    "heartbeat"
+  ],
+  "title": "TelemetryKind",
+  "type": "string"
+}

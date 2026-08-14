@@ -10,7 +10,7 @@
 //!
 //! # Not this crate's job
 //!
-//! - executing tools (`aex-brain-managed-web`, `aex-brain-mcp`, `aex-brain-hands`)
+//! - executing tools (Tool Mux and its MCP/Hands adapters)
 //! - model policy (`aex-model-catalog`)
 //! - session or approval storage
 

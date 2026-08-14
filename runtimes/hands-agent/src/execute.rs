@@ -29,6 +29,7 @@ use crate::host::{HostFs, OutputSink, Reap, Runner};
 
 /// How deep a recursive listing descends.
 pub const LIST_DEPTH: u32 = 2;
+const LIVE_TOOL_PREVIEW_BYTES: usize = 65_536;
 
 /// The operation a background-process identity names.
 ///
@@ -59,6 +60,7 @@ pub enum Dispatch {
 /// operation's sink outlives the request that started it.
 struct JournalSink {
     journal: Journal,
+    fs: HostFs,
     operation: HandsOperationId,
     capture: Capture,
     truncated: bool,
@@ -227,6 +229,7 @@ impl Executor {
                 journal.record_process(meta.operation, record)?;
                 let mut sink = JournalSink {
                     journal: journal.clone(),
+                    fs: self.fs.clone(),
                     operation: meta.operation,
                     capture: Capture::new(&meta.bounds, delivery == DeliveryMode::Attached),
                     truncated: false,
@@ -250,6 +253,7 @@ impl Executor {
                 let exit = (started.reap)(&mut sink);
                 Ok(Dispatch::Terminal(Box::new(Self::terminal(
                     journal,
+                    &self.fs,
                     meta,
                     now,
                     exit,
@@ -286,7 +290,7 @@ impl Executor {
                 match self.runner.signal(group, *signal) {
                     Ok(()) => {
                         let extinct = self.runner.alive(group).is_ok_and(|alive| !alive);
-                        Self::text_terminal(
+                        self.text_terminal(
                             journal,
                             meta,
                             now,
@@ -316,7 +320,7 @@ impl Executor {
                 };
                 let window = journal.read_output(operation, *from_offset, u64::from(*max_bytes))?;
                 let text = String::from_utf8_lossy(&window).into_owned();
-                Self::text_terminal(journal, meta, now, &text)
+                self.text_terminal(journal, meta, now, &text)
             }
             _ => unreachable!("dispatch routes only the process arms here"),
         }
@@ -346,7 +350,7 @@ impl Executor {
                     ))));
                 }
                 match filesystem::read_file(&self.fs, path, None) {
-                    Ok(outcome) => Self::text_terminal(journal, meta, now, &outcome.text),
+                    Ok(outcome) => self.text_terminal(journal, meta, now, &outcome.text),
                     Err(error) => Ok(Dispatch::Terminal(Box::new(failed(
                         meta,
                         now,
@@ -356,7 +360,7 @@ impl Executor {
                 }
             }
             OperationRequest::StatPath { path } => match filesystem::stat_path(&self.fs, path) {
-                Ok(entry) => Self::text_terminal(journal, meta, now, &entry.render()),
+                Ok(entry) => self.text_terminal(journal, meta, now, &entry.render()),
                 Err(error) => Ok(Dispatch::Terminal(Box::new(failed(
                     meta,
                     now,
@@ -381,7 +385,7 @@ impl Executor {
                 // One rendered entry per line, in the same field order a stat
                 // answer uses. Nothing here reads a file: a directory listing
                 // is answered from `lstat` and never from content.
-                Ok(outcome) => Self::text_terminal(journal, meta, now, &outcome.lines().join("\n")),
+                Ok(outcome) => self.text_terminal(journal, meta, now, &outcome.lines().join("\n")),
                 Err(error) => Ok(Dispatch::Terminal(Box::new(failed(
                     meta,
                     now,
@@ -428,7 +432,7 @@ impl Executor {
                             text.push('\n');
                             text.push_str(&notice);
                         }
-                        Self::text_terminal(journal, meta, now, &text)
+                        self.text_terminal(journal, meta, now, &text)
                     }
                     Err(error) => Ok(Dispatch::Terminal(Box::new(failed(
                         meta,
@@ -467,7 +471,7 @@ impl Executor {
                             "path": path.as_str(),
                             "revision": digest(content).to_string(),
                         });
-                        Self::text_terminal(journal, meta, now, &result.to_string())
+                        self.text_terminal(journal, meta, now, &result.to_string())
                     }
                     Err(error) => Ok(Dispatch::Terminal(Box::new(failed(
                         meta,
@@ -482,7 +486,7 @@ impl Executor {
                 expected,
                 patch,
             } => match filesystem::edit_file(&self.fs, path, *expected, patch) {
-                Ok(outcome) => Self::text_terminal(
+                Ok(outcome) => self.text_terminal(
                     journal,
                     meta,
                     now,
@@ -542,6 +546,7 @@ impl Executor {
 
     /// Writes a text body into the journal and returns its terminal record.
     fn text_terminal(
+        &self,
         journal: &Journal,
         meta: &OperationMeta,
         now: Timestamp,
@@ -549,6 +554,7 @@ impl Executor {
     ) -> Result<Dispatch, aex_hands_agent::journal::JournalError> {
         let mut sink = JournalSink {
             journal: journal.clone(),
+            fs: self.fs.clone(),
             operation: meta.operation,
             capture: Capture::new(&meta.bounds, false),
             truncated: false,
@@ -562,6 +568,7 @@ impl Executor {
         };
         Ok(Dispatch::Terminal(Box::new(Self::terminal(
             journal,
+            &self.fs,
             meta,
             now,
             exit,
@@ -575,6 +582,7 @@ impl Executor {
     /// than a digest failure.
     fn terminal(
         journal: &Journal,
+        fs: &HostFs,
         meta: &OperationMeta,
         now: Timestamp,
         exit: Result<OperationExit, aex_hands_tools::port::ProcError>,
@@ -586,7 +594,7 @@ impl Executor {
         } else {
             ContentHash::from_bytes(*blake3::hash(&retained).as_bytes())
         };
-        let (state, exit, failure) = match exit {
+        let (mut state, mut exit, mut failure) = match exit {
             Ok(OperationExit::Ok) => (TerminalState::Succeeded, OperationExit::Ok, None),
             Ok(other) => (
                 TerminalState::Failed,
@@ -607,6 +615,30 @@ impl Executor {
                 }),
             ),
         };
+        let needs_result_file = !truncated && retained.len() > LIVE_TOOL_PREVIEW_BYTES;
+        let result_file = if needs_result_file {
+            let root = GuestRoot::workspace();
+            let path = GuestPath::parse(
+                &root,
+                &format!("/workspace/.aex/tool-results/{}.out", meta.operation.0),
+            )
+            .ok();
+            path.filter(|path| fs.place_tool_result(path, &retained).is_ok())
+        } else {
+            None
+        };
+        let placement_failed = needs_result_file && result_file.is_none();
+        if placement_failed {
+            state = TerminalState::Failed;
+            exit = OperationExit::NonZero { code: -1 };
+            failure = Some(OperationFailure {
+                reason: "guest_exhausted".to_owned(),
+                detail: Some(
+                    "the guest could not retain the complete large tool result".to_owned(),
+                ),
+                retryable: false,
+            });
+        }
         Ok(TerminalMetadata {
             state,
             exit,
@@ -614,7 +646,8 @@ impl Executor {
             ended_at: now,
             body_len: retained.len() as u64,
             digest,
-            truncated,
+            truncated: truncated || placement_failed,
+            result_file,
             failure,
         })
     }
@@ -655,7 +688,7 @@ fn spawn_detached_reap(
                     sink.truncated,
                     None,
                 ),
-                _ => Executor::terminal(&journal, &meta, ended_at, exit, sink.truncated),
+                _ => Executor::terminal(&journal, &sink.fs, &meta, ended_at, exit, sink.truncated),
             };
             let recorded =
                 terminal.and_then(|terminal| journal.record_terminal(meta.operation, &terminal));
@@ -705,6 +738,7 @@ fn failed(meta: &OperationMeta, now: Timestamp, reason: &str, detail: &str) -> T
         body_len: 0,
         digest: empty_digest(),
         truncated: false,
+        result_file: None,
         failure: Some(OperationFailure {
             reason: reason.to_owned(),
             detail: Some(detail.to_owned()),
@@ -718,8 +752,8 @@ mod tests {
     use super::{Dispatch, Executor};
     use aex_hands_agent::journal::{Journal, OperationMeta};
     use aex_hands_protocol::operation::{
-        DeliveryMode, FileMode, GuestPath, GuestRoot, OperationBounds, OperationRequest,
-        TerminalState,
+        DeliveryMode, FileMode, GuestPath, GuestRoot, OperationBounds, OperationExit,
+        OperationRequest, TerminalState,
     };
     use aex_hands_protocol::rpc::{CallHash, HandsOperationId};
     use aex_wire::ids::{ContentHash, Uuid7};
@@ -796,6 +830,44 @@ mod tests {
         assert_eq!(
             std::fs::read(workspace.join("out.txt")).expect("the file exists"),
             b"second"
+        );
+    }
+
+    #[test]
+    fn a_large_complete_result_is_retained_in_the_workspace_with_a_full_reference() {
+        let root = tempfile::tempdir().expect("a temporary guest root");
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("the workspace exists");
+        let journal = Journal::open(root.path().join("journal")).expect("the journal opens");
+        let guest_root = GuestRoot::workspace();
+        let executor = Executor {
+            fs: crate::host::HostFs::new(guest_root.clone(), &workspace),
+            runner: Arc::new(crate::host::HostRunner),
+            root: guest_root,
+        };
+        let mut meta = write_meta(3, b"ignored");
+        meta.bounds.max_output_bytes = 1_048_576;
+        let body = vec![b'x'; 65_537];
+        journal.record_start(&meta).expect("the start is durable");
+        journal
+            .append_output(meta.operation, &body)
+            .expect("the complete result is retained");
+
+        let terminal = Executor::terminal(
+            &journal,
+            &executor.fs,
+            &meta,
+            at(1),
+            Ok(OperationExit::Ok),
+            false,
+        )
+        .expect("the terminal is formed");
+
+        assert!(!terminal.truncated);
+        let path = terminal.result_file.expect("large output has a full path");
+        assert_eq!(
+            std::fs::read(executor.fs.host_path(&path)).expect("the full result file exists"),
+            body
         );
     }
 }

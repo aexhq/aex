@@ -51,6 +51,24 @@ pub struct PutImmutable<'a> {
     pub encryption_context: &'a [u8],
 }
 
+/// One immutable create whose already-verified bytes live in a bounded local
+/// staging file. This keeps multi-gigabyte sandbox results out of trusted
+/// process memory while preserving the same conditional content-addressed
+/// publication contract as [`PutImmutable`].
+#[derive(Debug, Clone)]
+pub struct PutImmutablePath<'a> {
+    /// The owning workspace.
+    pub workspace: WorkspaceId,
+    /// The verified plaintext digest.
+    pub digest: &'a ContentHash,
+    /// The verified plaintext size.
+    pub plaintext_bytes: u64,
+    /// Exact local staging path.
+    pub path: &'a std::path::Path,
+    /// Canonical SSE-KMS encryption context.
+    pub encryption_context: &'a [u8],
+}
+
 /// What a committed object looks like afterwards.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectCommit {
@@ -270,6 +288,90 @@ impl S3ContentObjects {
         PresigningConfig::expires_in(PRESIGN_EXPIRY).map_err(|error| ContentObjectError::Invalid {
             detail: error.to_string(),
         })
+    }
+
+    /// Streams an already-verified local staging file into the immutable
+    /// content namespace without collecting it into memory.
+    ///
+    /// # Errors
+    ///
+    /// Applies the same conditional-create, collision and provider error
+    /// contract as [`ContentObjectStore::put_immutable`].
+    pub async fn put_immutable_path(
+        &self,
+        request: PutImmutablePath<'_>,
+    ) -> Result<ObjectCommit, ContentObjectError> {
+        let key = ObjectKey::new(request.workspace, request.digest);
+        let digest_hex = hex::encode(request.digest.as_bytes());
+        let length =
+            i64::try_from(request.plaintext_bytes).map_err(|_| ContentObjectError::Invalid {
+                detail: "a body longer than i64::MAX cannot be described".to_owned(),
+            })?;
+        let body = ByteStream::read_from()
+            .path(request.path)
+            .build()
+            .await
+            .map_err(|_| ContentObjectError::Unavailable {
+                detail: "the verified staging file could not be opened".to_owned(),
+            })?;
+        let outcome = self
+            .client
+            .put_object()
+            .bucket(&self.binding.bucket)
+            .key(key.as_str())
+            .if_none_match("*")
+            .checksum_algorithm(ChecksumAlgorithm::Sha256)
+            .checksum_sha256(object_key::checksum_base64(request.digest))
+            .content_length(length)
+            .server_side_encryption(ServerSideEncryption::AwsKms)
+            .ssekms_key_id(&self.binding.kms_key_id)
+            .ssekms_encryption_context(object_key::encryption_context_base64(
+                request.encryption_context,
+            ))
+            .bucket_key_enabled(true)
+            .expected_bucket_owner(&self.binding.expected_owner)
+            .metadata(METADATA_WORKSPACE, request.workspace.to_string())
+            .metadata(METADATA_DIGEST, &digest_hex)
+            .metadata(
+                METADATA_PLAINTEXT_BYTES,
+                request.plaintext_bytes.to_string(),
+            )
+            .body(body)
+            .send()
+            .await;
+        match outcome {
+            Ok(response) => Ok(ObjectCommit {
+                key,
+                etag: response.e_tag.unwrap_or_default(),
+                checksum_sha256: response.checksum_sha256,
+                checksum_crc64_nvme: response.checksum_crc64_nvme,
+                part_count: None,
+            }),
+            Err(error) => {
+                if code_of(&error).as_deref() != Some(PRECONDITION_FAILED) {
+                    return Err(classify(
+                        &error,
+                        ObjectIdempotence::Write(Resolution::ObjectHead),
+                    ));
+                }
+                let head = self.head(&key).await?;
+                let same = head.content_length == request.plaintext_bytes
+                    && head.declared_digest.as_deref() == Some(digest_hex.as_str());
+                if same {
+                    Ok(ObjectCommit {
+                        key,
+                        etag: head.etag,
+                        checksum_sha256: None,
+                        checksum_crc64_nvme: None,
+                        part_count: None,
+                    })
+                } else {
+                    Err(ContentObjectError::DigestCollision {
+                        key: key.as_str().to_owned(),
+                    })
+                }
+            }
+        }
     }
 }
 

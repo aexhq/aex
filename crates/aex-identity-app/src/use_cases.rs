@@ -8,20 +8,15 @@
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use aex_control_domain::ScopeSet;
 use aex_identity_domain::{
-    ACCOUNT_TOKEN_TTL, CredentialKind, DASHBOARD_SESSION_TTL, DEVICE_POLL_INTERVAL, DEVICE_TTL,
-    DashboardSession, DeviceAuthorization, EMAIL_CHALLENGE_TTL, EmailChallenge, NormalizedEmail,
-    PollDecision, PresentedDigest, Provider, ProviderAccountId, SecretRng, User, UserCode, mint,
-    verifier,
+    CredentialKind, DASHBOARD_SESSION_TTL, DashboardSession, EMAIL_CHALLENGE_TTL, EmailChallenge,
+    NormalizedEmail, PresentedDigest, Provider, ProviderAccountId, SecretRng, User, mint, verifier,
 };
 
 use crate::ports::{
-    Clock, ConsumeDeviceAuthorizationCommand, ConsumeEmailChallengeCommand,
-    CreateDashboardSessionCommand, CreateDeviceAuthorizationCommand,
-    DecideDeviceAuthorizationCommand, DeviceConsumeOutcome, IdFactory, IdentityStore, Minted,
-    PepperKeystore, PepperPurpose, ReconcileIdentity, RequestContext, ResolveDashboardSessionQuery,
-    ResolveExternalIdentity, ResolvedUser, RevokeAccountTokenCommand,
+    Clock, ConsumeEmailChallengeCommand, CreateDashboardSessionCommand, IdFactory, IdentityStore,
+    Minted, PepperKeystore, PepperPurpose, ReconcileIdentity, RequestContext,
+    ResolveDashboardSessionQuery, ResolveExternalIdentity, ResolvedUser,
     RevokeDashboardSessionCommand, SetUserStatusCommand, StoreError, TxOutcome,
     UnlinkExternalIdentityCommand,
 };
@@ -41,18 +36,6 @@ pub enum IdentityError {
     /// The person may not authenticate.
     #[error("the person is disabled")]
     UserDisabled,
-    /// The device authorization has not been approved yet.
-    #[error("the device authorization is pending")]
-    AuthorizationPending,
-    /// The device is polling too fast.
-    #[error("poll no more often than every {interval_ms} ms")]
-    SlowDown {
-        /// The interval to obey.
-        interval_ms: i64,
-    },
-    /// A person refused the device authorization.
-    #[error("the device authorization was denied")]
-    AccessDenied,
     /// A uniqueness or state guard refused the write.
     #[error("conflict on `{constraint}`")]
     Conflict {
@@ -136,10 +119,6 @@ pub mod ceremony {
     pub const CONSUME_EMAIL_LINK: &str = "identity.consume_email_link";
     /// `POST /internal/v1/identity/sessions`.
     pub const OPEN_DASHBOARD_SESSION: &str = "identity.open_dashboard_session";
-    /// `POST /api/auth/device/authorizations`.
-    pub const START_DEVICE_AUTHORIZATION: &str = "identity.start_device_authorization";
-    /// `POST /api/auth/device/tokens`.
-    pub const CONSUME_DEVICE_AUTHORIZATION: &str = "identity.consume_device_authorization";
 }
 
 /// The dependencies every identity use case shares.
@@ -420,215 +399,6 @@ impl UnlinkProvider {
             now: context.now,
         };
         let outcome = deps.store.unlink_external_identity(&command).await?;
-        settle(outcome).map(|((), _)| ())
-    }
-}
-
-/// Start a device authorization.
-pub struct StartDeviceAuthorization;
-
-/// What starting a device authorization produced.
-#[derive(Debug, Clone)]
-pub struct StartedDeviceAuthorization {
-    /// The recorded grant.
-    pub grant: DeviceAuthorization,
-    /// The device code, returned exactly once.
-    pub device_code: aex_identity_domain::MintedSecret,
-    /// The human-typed user code.
-    pub user_code: UserCode,
-}
-
-impl StartDeviceAuthorization {
-    /// Runs the ceremony.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`IdentityError`] naming the failure.
-    pub async fn run(
-        deps: &IdentityDeps<'_>,
-        context: &RequestContext,
-        requested_scopes: ScopeSet,
-    ) -> Result<StartedDeviceAuthorization, IdentityError> {
-        let id = deps.ids.next();
-        let (version, pepper) = deps
-            .keystore
-            .active(PepperPurpose::Identity)
-            .await
-            .map_err(|_| IdentityError::PepperUnavailable)?;
-        let (device_code, digest) = mint(CredentialKind::DeviceCode, None, id, deps.rng);
-        let user_code = UserCode::mint(deps.rng);
-        let user_code_digest = PresentedDigest::of(user_code.as_str());
-        let command = CreateDeviceAuthorizationCommand {
-            preassigned_id: id,
-            device_verifier: verifier(&pepper, &digest),
-            user_code_hash: *verifier(&pepper, &user_code_digest).as_bytes(),
-            pepper_version: version,
-            requested_scopes,
-            issued_at: context.now,
-            expires_at: context.now + DEVICE_TTL,
-            poll_interval_ms: i32::try_from(DEVICE_POLL_INTERVAL.whole_milliseconds())
-                .unwrap_or(5_000),
-        };
-        let outcome = deps.store.create_device_authorization(&command).await?;
-        let (grant, _) = settle(outcome)?;
-        Ok(StartedDeviceAuthorization {
-            grant,
-            device_code,
-            user_code,
-        })
-    }
-}
-
-/// Approve a device authorization.
-pub struct ApproveDevice;
-
-/// Deny a device authorization.
-pub struct DenyDevice;
-
-/// Builds the keyed user-code digest a decision looks a grant up by.
-async fn user_code_hash(
-    deps: &IdentityDeps<'_>,
-    code: &UserCode,
-) -> Result<[u8; 32], IdentityError> {
-    let (_, pepper) = deps
-        .keystore
-        .active(PepperPurpose::Identity)
-        .await
-        .map_err(|_| IdentityError::PepperUnavailable)?;
-    Ok(*verifier(&pepper, &PresentedDigest::of(code.as_str())).as_bytes())
-}
-
-impl ApproveDevice {
-    /// Runs the ceremony.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`IdentityError::NotFound`] for an unknown user code, plus every
-    /// store failure.
-    pub async fn run(
-        deps: &IdentityDeps<'_>,
-        context: &RequestContext,
-        code: &UserCode,
-        actor_user_id: Uuid,
-        actor_session_id: Uuid,
-    ) -> Result<DeviceAuthorization, IdentityError> {
-        let command = DecideDeviceAuthorizationCommand {
-            user_code_hash: user_code_hash(deps, code).await?,
-            actor_user_id,
-            actor_session_id,
-            now: context.now,
-        };
-        let outcome = deps.store.approve_device_authorization(&command).await?;
-        settle(outcome).map(|(grant, _)| grant)
-    }
-}
-
-impl DenyDevice {
-    /// Runs the ceremony.
-    ///
-    /// # Errors
-    ///
-    /// Identical to [`ApproveDevice::run`].
-    pub async fn run(
-        deps: &IdentityDeps<'_>,
-        context: &RequestContext,
-        code: &UserCode,
-        actor_user_id: Uuid,
-        actor_session_id: Uuid,
-    ) -> Result<DeviceAuthorization, IdentityError> {
-        let command = DecideDeviceAuthorizationCommand {
-            user_code_hash: user_code_hash(deps, code).await?,
-            actor_user_id,
-            actor_session_id,
-            now: context.now,
-        };
-        let outcome = deps.store.deny_device_authorization(&command).await?;
-        settle(outcome).map(|(grant, _)| grant)
-    }
-}
-
-/// Poll a device authorization, redeeming it once approved.
-pub struct PollDevice;
-
-impl PollDevice {
-    /// Runs the poll, minting an account token when the grant is approved.
-    ///
-    /// # Errors
-    ///
-    /// Returns the RFC 8628 result codes as typed errors:
-    /// [`IdentityError::AuthorizationPending`], [`IdentityError::SlowDown`],
-    /// [`IdentityError::Expired`] and [`IdentityError::AccessDenied`].
-    pub async fn run(
-        deps: &IdentityDeps<'_>,
-        context: &RequestContext,
-        device_id: Uuid,
-        digest: PresentedDigest,
-    ) -> Result<Minted<DeviceConsumeOutcome>, IdentityError> {
-        let Some(grant) = deps
-            .store
-            .poll_device_authorization(device_id, &digest, context.now)
-            .await?
-        else {
-            return Err(IdentityError::Unauthenticated);
-        };
-        let (_, decision) = grant.poll(context.now);
-        match decision {
-            PollDecision::Pending => return Err(IdentityError::AuthorizationPending),
-            PollDecision::SlowDown { interval } => {
-                return Err(IdentityError::SlowDown {
-                    interval_ms: i64::try_from(interval.whole_milliseconds()).unwrap_or(i64::MAX),
-                });
-            }
-            PollDecision::Denied => return Err(IdentityError::AccessDenied),
-            PollDecision::Expired => return Err(IdentityError::Expired),
-            PollDecision::AlreadyConsumed => return Err(IdentityError::Unauthenticated),
-            PollDecision::Ready => {}
-        }
-
-        let token_id = deps.ids.next();
-        let (version, pepper) = deps
-            .keystore
-            .active(PepperPurpose::Identity)
-            .await
-            .map_err(|_| IdentityError::PepperUnavailable)?;
-        let (secret, token_digest) = mint(CredentialKind::AccountToken, None, token_id, deps.rng);
-        let command = ConsumeDeviceAuthorizationCommand {
-            device_id,
-            digest,
-            preassigned_token_id: token_id,
-            token_verifier: verifier(&pepper, &token_digest),
-            token_pepper_version: version,
-            token_name: "device".to_owned(),
-            token_expires_at: context.now + ACCOUNT_TOKEN_TTL,
-            now: context.now,
-        };
-        let outcome = deps.store.consume_device_authorization(&command).await?;
-        let (record, _) = settle(outcome)?;
-        Ok(Minted { record, secret })
-    }
-}
-
-/// Revoke an account token.
-pub struct RevokeAccountToken;
-
-impl RevokeAccountToken {
-    /// Runs the ceremony.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`IdentityError`] naming the failure.
-    pub async fn run(
-        deps: &IdentityDeps<'_>,
-        context: &RequestContext,
-        token_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<(), IdentityError> {
-        let command = RevokeAccountTokenCommand {
-            token_id,
-            user_id,
-            now: context.now,
-        };
-        let outcome = deps.store.revoke_account_token(&command).await?;
         settle(outcome).map(|((), _)| ())
     }
 }

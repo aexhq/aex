@@ -1,0 +1,112 @@
+[package]
+name = "tool-mux"
+version = "0.1.0"
+description = "Private distributed Tool Mux service."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "tools-mcp"
+role = "deployable"
+artifact = "oci_image"
+deployable = "tool-mux"
+live_suite = "aex-live-tool-mux"
+layers = ["unit", "integration", "e2e", "smoke"]
+concerns = ["contract", "fault", "security", "performance"]
+seams = ["aws.dynamodb.condition", "aws.dynamodb.transact_write", "aws.iam.denial", "aws.kms.branch_key_rotation", "aws.kms.encryption_context", "aws.lambda.microvm", "aws.s3.conditional_put", "aws.s3.sse_kms", "aws.sqs.fifo", "hands.guest.lifecycle", "mcp.streamable_http", "net.public_egress"]
+security_tier = "internal"
+risk = ["concurrency", "untrusted_input"]
+scenarios = ["SC-TOOL-MUX"]
+
+[package.metadata.aex.targets]
+conformance = "unit"
+faults = "unit"
+http = "integration"
+performance_contract = "e2e"
+security = "unit"
+
+[[bin]]
+name = "tool-mux"
+path = "src/main.rs"
+
+[dependencies]
+aex-brain-mcp = { path = "../../crates/aex-brain-mcp" }
+aex-brain-app = { path = "../../crates/aex-brain-app" }
+aex-brain-domain = { path = "../../crates/aex-brain-domain" }
+aex-brain-managed-web = { path = "../../crates/aex-brain-managed-web" }
+aex-brain-hands = { path = "../../crates/aex-brain-hands" }
+aex-content-aws = { path = "../../crates/aex-content-aws" }
+aex-content-domain = { path = "../../crates/aex-content-domain" }
+aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }
+aex-control-domain = { path = "../../crates/aex-control-domain" }
+aex-hands-protocol = { path = "../../crates/aex-hands-protocol" }
+aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
+aex-runtime-control = { path = "../../crates/aex-runtime-control" }
+aex-runtime-control-aws = { path = "../../crates/aex-runtime-control-aws" }
+aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
+aex-registry-dynamodb = { path = "../../crates/aex-registry-dynamodb" }
+aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false }
+aex-session-telemetry-aws = { path = "../../crates/aex-session-telemetry-aws" }
+aex-secret-aws = { path = "../../crates/aex-secret-aws" }
+aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb" }
+aex-secret-domain = { path = "../../crates/aex-secret-domain" }
+aex-tool-mux = { path = "../../crates/aex-tool-mux" }
+aex-usage-domain = { path = "../../crates/aex-usage-domain" }
+aex-wire = { path = "../../crates/aex-wire" }
+aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
+axum.workspace = true
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-kms.workspace = true
+aws-sdk-lambdamicrovms.workspace = true
+aws-sdk-s3.workspace = true
+aws-sdk-sqs.workspace = true
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+time.workspace = true
+tokio.workspace = true
+hex.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+aex-hands-protocol = { path = "../../crates/aex-hands-protocol" }
+aex-runtime-control = { path = "../../crates/aex-runtime-control" }
+aex-wire = { path = "../../crates/aex-wire" }
+http-body-util.workspace = true
+tower.workspace = true
+
+[[test]]
+name = "http"
+path = "tests/http.rs"
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "faults"
+path = "tests/faults.rs"
+
+[[test]]
+name = "performance_contract"
+path = "tests/performance_contract.rs"
+
+[[test]]
+name = "security"
+path = "tests/security.rs"

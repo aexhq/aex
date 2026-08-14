@@ -1,14 +1,12 @@
 //! The credential codec and verifier.
 //!
-//! Five AEX-minted credentials share one primitive. There is no invitation
+//! Three AEX-minted credentials share one primitive. There is no invitation
 //! credential: invitations carry no secret at all.
 //!
 //! ```text
 //! workspace key      aex_wk_<region>_<26 workspace>_<26 key>_<43 base64url>
-//! account token      aex_at_<26>_<43>
 //! dashboard session  aex_ds_<26>_<43>
 //! email challenge    aex_ec_<26>_<43>
-//! device code        aex_dc_<26>_<43>
 //! ```
 //!
 //! # Why it is shaped this way
@@ -54,24 +52,18 @@ use zeroize::Zeroizing;
 pub enum CredentialKind {
     /// A workspace API key, region-pinned.
     WorkspaceKey,
-    /// An account token minted by the device flow.
-    AccountToken,
     /// A browser session.
     DashboardSession,
     /// A single-use email sign-in link.
     EmailChallenge,
-    /// A device-flow device code.
-    DeviceCode,
 }
 
 impl CredentialKind {
     /// Every kind.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 3] = [
         Self::WorkspaceKey,
-        Self::AccountToken,
         Self::DashboardSession,
         Self::EmailChallenge,
-        Self::DeviceCode,
     ];
 
     /// The literal prefix, including the trailing underscore.
@@ -79,10 +71,8 @@ impl CredentialKind {
     pub const fn prefix(self) -> &'static str {
         match self {
             Self::WorkspaceKey => "aex_wk_",
-            Self::AccountToken => "aex_at_",
             Self::DashboardSession => "aex_ds_",
             Self::EmailChallenge => "aex_ec_",
-            Self::DeviceCode => "aex_dc_",
         }
     }
 
@@ -619,10 +609,8 @@ mod tests {
         );
 
         for kind in [
-            CredentialKind::AccountToken,
             CredentialKind::DashboardSession,
             CredentialKind::EmailChallenge,
-            CredentialKind::DeviceCode,
         ] {
             let (secret, _) = mint(kind, None, id(), &Fixed(0));
             let token = secret.expose();
@@ -671,9 +659,9 @@ mod tests {
 
     #[test]
     fn a_token_of_one_kind_never_parses_as_another() {
-        let (secret, _) = mint(CredentialKind::AccountToken, None, id(), &Fixed(1));
+        let (secret, _) = mint(CredentialKind::DashboardSession, None, id(), &Fixed(1));
         for kind in CredentialKind::ALL {
-            if kind == CredentialKind::AccountToken {
+            if kind == CredentialKind::DashboardSession {
                 continue;
             }
             assert_eq!(
@@ -756,14 +744,14 @@ mod tests {
 
     #[test]
     fn a_separator_moved_inside_the_id_is_refused() {
-        let (secret, _) = mint(CredentialKind::AccountToken, None, id(), &Fixed(2));
+        let (secret, _) = mint(CredentialKind::DashboardSession, None, id(), &Fixed(2));
         let token = secret.expose().to_owned();
         // Move the separator one character earlier: the id segment is then 25
         // characters, which no credential has.
         let mut mutated = token.clone();
         mutated.replace_range((7 + ID_LEN - 1)..=(7 + ID_LEN), "_0");
         assert_eq!(
-            parse(CredentialKind::AccountToken, &mutated),
+            parse(CredentialKind::DashboardSession, &mutated),
             Err(CredentialError::BadLength)
         );
     }
@@ -772,11 +760,11 @@ mod tests {
     fn a_secret_containing_a_separator_still_parses() {
         // Canonical base64url uses `-` and `_`; a secret that happens to render
         // one must not be mistaken for a segment boundary.
-        let (secret, digest) = mint(CredentialKind::AccountToken, None, id(), &Fixed(0xff));
+        let (secret, digest) = mint(CredentialKind::DashboardSession, None, id(), &Fixed(0xff));
         let token = secret.expose();
         let tail = &token[7 + ID_LEN + 1..];
         assert!(tail.contains('_') || tail.contains('-'), "{tail}");
-        let parsed = parse(CredentialKind::AccountToken, token).expect("parses");
+        let parsed = parse(CredentialKind::DashboardSession, token).expect("parses");
         assert_eq!(parsed.digest, digest);
     }
 
@@ -799,7 +787,7 @@ mod tests {
 
     #[test]
     fn a_wrong_pepper_never_verifies() {
-        let (_, digest) = mint(CredentialKind::DeviceCode, None, id(), &Fixed(4));
+        let (_, digest) = mint(CredentialKind::EmailChallenge, None, id(), &Fixed(4));
         let stored = verifier(&Pepper::new([1_u8; 32]), &digest);
         assert!(!verify(&Pepper::new([2_u8; 32]), &digest, &stored));
         assert!(verify(&Pepper::new([1_u8; 32]), &digest, &stored));
@@ -808,9 +796,9 @@ mod tests {
     #[test]
     fn a_wrong_digest_never_verifies() {
         let pepper = Pepper::new([1_u8; 32]);
-        let (_, digest) = mint(CredentialKind::DeviceCode, None, id(), &Fixed(4));
+        let (_, digest) = mint(CredentialKind::EmailChallenge, None, id(), &Fixed(4));
         let stored = verifier(&pepper, &digest);
-        let other = PresentedDigest::of("aex_dc_something_else");
+        let other = PresentedDigest::of("aex_ec_something_else");
         assert!(!verify(&pepper, &other, &stored));
     }
 
@@ -856,7 +844,7 @@ mod tests {
 
     #[test]
     fn no_secret_type_renders_its_bytes() {
-        let (secret, digest) = mint(CredentialKind::AccountToken, None, id(), &Fixed(8));
+        let (secret, digest) = mint(CredentialKind::DashboardSession, None, id(), &Fixed(8));
         let pepper = Pepper::new([1_u8; 32]);
         let stored = verifier(&pepper, &digest);
         for rendered in [
@@ -866,7 +854,7 @@ mod tests {
             format!("{stored:?}"),
         ] {
             assert!(rendered.starts_with("<redacted:"), "{rendered}");
-            assert!(!rendered.contains("aex_at_"), "{rendered}");
+            assert!(!rendered.contains("aex_ds_"), "{rendered}");
         }
     }
 

@@ -37,6 +37,8 @@ impl<'a> IdempotencyScope<'a> {
     /// constructed.
     pub const BASES: &'static [&'static str] = &[
         "session.create",
+        "session.provider_key",
+        "session.mcp_secret",
         "session.message",
         "provider_credential.register",
         "registry.set",
@@ -46,7 +48,7 @@ impl<'a> IdempotencyScope<'a> {
     ];
 
     /// The bases that take no subject.
-    const SUBJECTLESS: &'static [&'static str] = &["session.create"];
+    const SUBJECTLESS: &'static [&'static str] = &["session.create", "session.provider_key"];
 
     /// Builds a scope.
     ///
@@ -793,6 +795,20 @@ mod tests {
                 .render(),
             "session.message:ses_x"
         );
+        assert!(matches!(
+            IdempotencyScope::new("session.mcp_secret", None),
+            Err(ScopeError::SubjectRequired { .. })
+        ));
+        assert_eq!(
+            IdempotencyScope::new("session.mcp_secret", Some("mcp-deadbeef"))
+                .expect("a derived secret-name subject")
+                .render(),
+            "session.mcp_secret:mcp-deadbeef"
+        );
+        assert!(matches!(
+            IdempotencyScope::new("session.mcp_config", None),
+            Err(ScopeError::UnknownBase { .. })
+        ));
         assert_eq!(
             IdempotencyScope::new("provider_credential.register", Some("openai"))
                 .expect("a provider subject")

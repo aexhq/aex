@@ -23,7 +23,7 @@ fn the_deployable_declares_its_artifact_and_live_evidence_owner() {
     let manifest = include_str!("../Cargo.toml");
     assert!(manifest.contains("artifact = \"lambda_zip\""));
     assert!(manifest.contains("deployable = \"finance-ingest\""));
-    assert!(manifest.contains("live_suite = \"aex-live-finance-ingest\""));
+    assert!(manifest.contains("live_suite = \"aex-live-billing-worker\""));
 }
 
 #[test]

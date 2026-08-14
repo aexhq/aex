@@ -1,50 +1,36 @@
 //! `central-control-worker`: the trigger, the drain and the order of a provision.
 //!
-//! Three shipped routes — `api_key_create`, `workspace_delete` and
-//! `invitation_create` — commit a row **and** an outbox message in one
-//! transaction and then answer success. Nothing they do is finished until this
-//! worker runs, and until this suite existed nothing proved that anything ever
-//! makes it run. That is what these tests are: evidence that both trigger
-//! shapes reach the drain, that the drain claims and dispatches, and that a
-//! failure is left claimable rather than swallowed.
+//! The personal workspace and API-key routes commit authority rows and an
+//! outbox message in one transaction. These tests prove both trigger shapes
+//! reach the one launch-region projection, and that failures remain claimable.
 //!
 //! # The shared harness
 //!
-//! [`Harness`] records every regional effect in call order, which is what makes
-//! the capacity-bootstrap ordering constraint assertable at all:
-//! [`the_regional_writes_of_one_provision_are_bootstrap_then_profile_then_placement`]
-//! is the one test that says a placement is never published for a workspace
-//! whose effective-limit set may not exist. There is deliberately one such test
-//! and one such journal — a second harness recording a second order would let
-//! the two disagree about which order production takes.
+//! [`Harness`] records every projection effect in call order so publication-
+//! before-central-activation remains an executable fact.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
 use aex_control_app::ports::{
-    AcceptInvitationsTx, AccountProjection, ApplyAccountPauseRequest, ApplyAccountPauseResponse,
-    BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx, ClaimDueOperations, ClaimOutbox,
-    CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore, CreateApiKeyTx,
-    CreateInvitationTx, CreateOrganizationTx, DeleteWorkspaceRequest, DeleteWorkspaceResponse,
-    EffectError, FinishWorkspaceProvisionTx, GcExpired, GcReport, KeyMaterialReader, ListApiKeys,
-    ListOperations, ListOrganizations, ListWorkspaces, MembershipView, OperationView,
-    OrganizationView, Page, PageRequest, ProvisionWorkspaceRequest, ProvisionWorkspaceResponse,
-    RegionalControlPort, RevokeApiKeyTx, StoreError, TxOutcome, UserIdentity, WorkspaceKeyMaterial,
-    WorkspaceView,
+    AcceptInvitationsTx, AccountProjection, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
+    ClaimDueOperations, ClaimOutbox, CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore,
+    CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx, FinishWorkspaceProvisionTx,
+    GcExpired, GcReport, KeyMaterialReader, ListApiKeys, ListOperations, ListOrganizations,
+    ListWorkspaces, MembershipView, OperationView, OrganizationView, Page, PageRequest,
+    RevokeApiKeyTx, StoreError, TxOutcome, UserIdentity, WorkspaceKeyMaterial, WorkspaceView,
 };
 use aex_control_domain::{
     AccountProfile, AccountState, ApiKey, Fence, IntentHash, Invitation, Membership, Operation,
     OperationKind, OperationStatus, OperationVisibility, Organization, OutboxMessage, Revision,
     ScopeSet, Slug, Topic, Workspace, WorkspaceStatus,
 };
-use aex_session_dynamodb::projection_write::{KeyAuthorizationWrite, PlacementWrite, ProfileWrite};
-use aex_wire::ids::PrefixedId as _;
+use aex_session_dynamodb::projection_write::{KeyAuthorizationWrite, PlacementWrite};
 use aex_wire::types::{Region, Timestamp};
 use async_trait::async_trait;
 use central_control_worker::runtime::{
-    Mail, OutboxWake, RegionalCapacity, RegionalProjection, SigningAdmin, WakeDelay, WakeInvoker,
-    Worker,
+    OutboxWake, RegionalProjection, WakeDelay, WakeInvoker, Worker,
 };
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -198,34 +184,6 @@ fn api_key_created() -> OutboxMessage {
     )
 }
 
-/// `workspace_delete`'s message: the operation stays open until this runs.
-fn workspace_delete_requested() -> OutboxMessage {
-    message(
-        11,
-        Topic::WorkspaceDeleteRequested,
-        serde_json::json!({
-            "workspaceId": workspace_id(),
-            "organizationId": organization_id(),
-            "region": REGION.as_str(),
-            "operationId": operation_id(),
-        }),
-    )
-}
-
-/// `invitation_create`'s message: the row exists and the mail is unsent.
-fn invitation_email_requested() -> OutboxMessage {
-    message(
-        12,
-        Topic::InvitationEmailRequested,
-        serde_json::json!({
-            "invitationId": id(13),
-            "organizationId": organization_id(),
-            "email": "invitee@example.test",
-            "role": "member",
-        }),
-    )
-}
-
 fn account_state_changed() -> OutboxMessage {
     message(
         13,
@@ -277,7 +235,6 @@ impl Journal {
 struct FakeStore {
     journal: Arc<Journal>,
     outbox: Mutex<Vec<OutboxMessage>>,
-    due: Mutex<Vec<Operation>>,
     /// Whether the authority answers at all. `false` makes the very first claim
     /// refuse, which is how an undrainable invocation is produced.
     reachable: bool,
@@ -290,6 +247,14 @@ struct FakeStore {
 
 impl FakeStore {
     fn new(journal: Arc<Journal>, outbox: Vec<OutboxMessage>, reachable: bool) -> Self {
+        let workspace_status = if outbox
+            .iter()
+            .any(|message| message.topic == Topic::WorkspaceProvisionRequested)
+        {
+            WorkspaceStatus::Provisioning
+        } else {
+            WorkspaceStatus::Active
+        };
         let account_state = if outbox
             .iter()
             .any(|message| message.topic == Topic::AccountStateChanged)
@@ -301,9 +266,8 @@ impl FakeStore {
         Self {
             journal,
             outbox: Mutex::new(outbox),
-            due: Mutex::new(Vec::new()),
             reachable,
-            workspace_status: WorkspaceStatus::Active,
+            workspace_status,
             operation_status: OperationStatus::Running,
             account_state,
             key_material: Some(WorkspaceKeyMaterial {
@@ -327,17 +291,15 @@ impl ControlStore for FakeStore {
         command: &ClaimDueOperations,
     ) -> Result<Vec<Operation>, StoreError> {
         self.journal.record(format!("claim_due:{}", command.batch));
-        if !self.reachable {
-            return Err(StoreError::Unavailable);
-        }
-        Ok(std::mem::take(
-            &mut *self.due.lock().expect("the due lock is never poisoned"),
-        ))
+        Ok(Vec::new())
     }
 
     async fn claim_outbox(&self, command: &ClaimOutbox) -> Result<Vec<OutboxMessage>, StoreError> {
         self.journal
             .record(format!("claim_outbox:{}", command.batch));
+        if !self.reachable {
+            return Err(StoreError::Unavailable);
+        }
         let mut outbox = self
             .outbox
             .lock()
@@ -380,7 +342,7 @@ impl ControlStore for FakeStore {
     async fn get_operation(&self, id: Uuid) -> Result<Option<Operation>, StoreError> {
         assert_eq!(id, operation_id(), "the worker read a foreign operation");
         Ok(Some(operation(
-            OperationKind::WorkspaceDelete,
+            OperationKind::WorkspaceProvision,
             self.operation_status,
         )))
     }
@@ -429,7 +391,7 @@ impl ControlStore for FakeStore {
         &self,
         _command: &CreateInvitationTx,
     ) -> Result<TxOutcome<Invitation>, StoreError> {
-        unreachable!("the worker sends the invitation; the route writes it")
+        unreachable!("the launch projection worker has no invitation duty")
     }
     async fn accept_invitations_for_email(
         &self,
@@ -534,7 +496,7 @@ impl ControlViewStore for FakeStore {
         unreachable!("view listings belong to the public boundary")
     }
     async fn user_identity(&self, _user_id: Uuid) -> Result<Option<UserIdentity>, StoreError> {
-        unreachable!("the invitation payload carries the address")
+        unreachable!("the launch projection worker reads no user identity")
     }
     async fn account_profile(
         &self,
@@ -604,87 +566,6 @@ impl WakeDelay for FakeWakeDelay {
     }
 }
 
-/// The regional control authority, reached by direct invoke.
-struct FakeRegional {
-    journal: Arc<Journal>,
-    available: bool,
-    pause_complete: bool,
-}
-
-#[async_trait]
-impl RegionalControlPort for FakeRegional {
-    async fn provision_workspace(
-        &self,
-        request: &ProvisionWorkspaceRequest,
-    ) -> Result<ProvisionWorkspaceResponse, EffectError> {
-        self.journal
-            .record(format!("regional_provision:{}", request.workspace_id));
-        if self.available {
-            Ok(ProvisionWorkspaceResponse {
-                workspace_id: request.workspace_id,
-                created: true,
-            })
-        } else {
-            Err(EffectError::Unavailable)
-        }
-    }
-
-    async fn delete_workspace(
-        &self,
-        request: &DeleteWorkspaceRequest,
-    ) -> Result<DeleteWorkspaceResponse, EffectError> {
-        self.journal
-            .record(format!("regional_delete:{}", request.workspace_id));
-        if self.available {
-            Ok(DeleteWorkspaceResponse { removed: true })
-        } else {
-            Err(EffectError::Unavailable)
-        }
-    }
-
-    async fn apply_account_pause(
-        &self,
-        request: &ApplyAccountPauseRequest,
-    ) -> Result<ApplyAccountPauseResponse, EffectError> {
-        self.journal
-            .record(format!("regional_pause:{}", request.workspace_id));
-        if self.available {
-            Ok(ApplyAccountPauseResponse {
-                complete: self.pause_complete,
-                interrupted: 1,
-            })
-        } else {
-            Err(EffectError::Unavailable)
-        }
-    }
-}
-
-/// The regional capacity authority.
-///
-/// Records the trigger in the same journal as the two projection writes, so the
-/// relative order of all three is one sequence rather than three separate facts
-/// a reader has to reconcile.
-struct FakeCapacity {
-    journal: Arc<Journal>,
-    available: bool,
-}
-
-#[async_trait]
-impl RegionalCapacity for FakeCapacity {
-    async fn bootstrap(
-        &self,
-        _region: Region,
-        workspace: aex_wire::ids::WorkspaceId,
-    ) -> Result<(), String> {
-        self.journal.record(format!("bootstrap:{workspace}"));
-        if self.available {
-            Ok(())
-        } else {
-            Err("regional_capacity_unavailable".to_owned())
-        }
-    }
-}
-
 /// The regional authorization projection.
 struct FakeProjection {
     journal: Arc<Journal>,
@@ -692,11 +573,6 @@ struct FakeProjection {
 
 #[async_trait]
 impl RegionalProjection for FakeProjection {
-    async fn put_profile(&self, write: &ProfileWrite) -> Result<(), String> {
-        self.journal.record(format!("put_profile:{}", write.slug));
-        Ok(())
-    }
-
     async fn put_placement(&self, write: &PlacementWrite) -> Result<(), String> {
         self.journal
             .record(format!("put_placement:{}", write.status));
@@ -706,37 +582,6 @@ impl RegionalProjection for FakeProjection {
     async fn put_key_authorization(&self, write: &KeyAuthorizationWrite) -> Result<(), String> {
         self.journal
             .record(format!("put_key_authorization:{}", write.api_key));
-        Ok(())
-    }
-}
-
-/// The invitation mailer.
-struct FakeMail {
-    journal: Arc<Journal>,
-    available: bool,
-}
-
-#[async_trait]
-impl Mail for FakeMail {
-    async fn send(&self, to: &str, _subject: &str, _text: &str) -> Result<(), String> {
-        self.journal.record(format!("mail:{to}"));
-        if self.available {
-            Ok(())
-        } else {
-            Err("ses_delivery_unavailable".to_owned())
-        }
-    }
-}
-
-/// The signing-key administrator.
-struct FakeSigning {
-    journal: Arc<Journal>,
-}
-
-#[async_trait]
-impl SigningAdmin for FakeSigning {
-    async fn confirm_published(&self, secret_ref: &str) -> Result<(), String> {
-        self.journal.record(format!("signing:{secret_ref}"));
         Ok(())
     }
 }
@@ -754,10 +599,6 @@ impl aex_identity_app::ports::Clock for FixedClock {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Authority {
     Store,
-    Mail,
-    Regional,
-    RegionalPauseIncomplete,
-    Capacity,
 }
 
 /// One composed worker and the journal of everything it did.
@@ -811,33 +652,15 @@ impl Harness {
             "a wake needs at least one transaction status"
         );
         let store = Arc::new(store);
-        let projections: BTreeMap<Region, Arc<dyn RegionalProjection>> = BTreeMap::from([(
-            REGION,
-            Arc::new(FakeProjection {
-                journal: Arc::clone(&journal),
-            }) as Arc<dyn RegionalProjection>,
-        )]);
+        let projection = Arc::new(FakeProjection {
+            journal: Arc::clone(&journal),
+        }) as Arc<dyn RegionalProjection>;
         let worker = Worker::new(
             store as Arc<dyn central_control_worker::runtime::Store>,
             Arc::new(FakeWakeInvoker(Arc::clone(&journal))),
             Arc::new(FakeWakeDelay(Arc::clone(&journal))),
-            Arc::new(FakeRegional {
-                journal: Arc::clone(&journal),
-                available: answers(Authority::Regional),
-                pause_complete: answers(Authority::RegionalPauseIncomplete),
-            }),
-            Arc::new(FakeCapacity {
-                journal: Arc::clone(&journal),
-                available: answers(Authority::Capacity),
-            }),
-            projections,
-            Arc::new(FakeMail {
-                journal: Arc::clone(&journal),
-                available: answers(Authority::Mail),
-            }),
-            Arc::new(FakeSigning {
-                journal: Arc::clone(&journal),
-            }),
+            projection,
+            REGION,
             Arc::new(FixedClock),
             "central-control-worker:eu-west-1".to_owned(),
             10,
@@ -847,18 +670,14 @@ impl Harness {
     }
 }
 
-/// The three rows the three shipped routes commit.
-fn the_three_routes_outbox() -> Vec<OutboxMessage> {
-    vec![
-        api_key_created(),
-        workspace_delete_requested(),
-        invitation_email_requested(),
-    ]
+/// The continuously projected launch facts.
+fn launch_outbox() -> Vec<OutboxMessage> {
+    vec![api_key_created(), account_state_changed()]
 }
 
 #[tokio::test]
-async fn a_transaction_wake_drains_every_row_the_three_shipped_routes_commit() {
-    let harness = Harness::with(the_three_routes_outbox());
+async fn a_transaction_wake_drains_every_launch_projection_row() {
+    let harness = Harness::with(launch_outbox());
     central_control_worker::handle_event(
         &harness.worker,
         serde_json::json!({
@@ -871,29 +690,26 @@ async fn a_transaction_wake_drains_every_row_the_three_shipped_routes_commit() {
     .expect("the drain runs");
 
     let journal = harness.journal.entries();
-    for (route, message) in [
-        ("api_key_create", api_key_created()),
-        ("workspace_delete", workspace_delete_requested()),
-        ("invitation_create", invitation_email_requested()),
+    for (fact, message) in [
+        ("api_key", api_key_created()),
+        ("account_state", account_state_changed()),
     ] {
         assert!(
             journal.contains(&format!("dispatched:{}", message.id)),
-            "{route}'s outbox row was never dispatched: {journal:?}"
+            "{fact}'s outbox row was never dispatched: {journal:?}"
         );
     }
-    // The three effects the routes promised and could not perform themselves.
     assert!(
         journal
             .iter()
             .any(|it| it.starts_with("put_key_authorization:"))
     );
-    assert!(journal.iter().any(|it| it.starts_with("regional_delete:")));
-    assert!(journal.contains(&"mail:invitee@example.test".to_owned()));
+    assert!(journal.contains(&"put_placement:paused".to_owned()));
 }
 
 #[tokio::test]
 async fn an_aurora_wake_carries_the_exact_anchor_and_transaction() {
-    let harness = Harness::with(the_three_routes_outbox());
+    let harness = Harness::with(launch_outbox());
     let answer = central_control_worker::handle_event(
         &harness.worker,
         serde_json::json!({
@@ -906,7 +722,7 @@ async fn an_aurora_wake_carries_the_exact_anchor_and_transaction() {
     .expect("an Aurora wake succeeds");
 
     assert_eq!(answer, serde_json::json!({}));
-    assert_eq!(harness.journal.count("dispatched:"), 3);
+    assert_eq!(harness.journal.count("dispatched:"), 2);
     assert_eq!(
         harness.journal.count("gc"),
         1,
@@ -918,16 +734,10 @@ async fn an_aurora_wake_carries_the_exact_anchor_and_transaction() {
 async fn a_statement_larger_than_one_batch_always_accepts_a_continuation() {
     let rows = (30_u8..41)
         .map(|n| {
-            message(
-                n,
-                Topic::InvitationEmailRequested,
-                serde_json::json!({
-                    "invitationId": id(n + 50),
-                    "organizationId": organization_id(),
-                    "email": "invitee@example.test",
-                    "role": "member",
-                }),
-            )
+            let mut row = api_key_created();
+            row.id = id(n);
+            row.dedupe_key = format!("dedupe-{n}");
+            row
         })
         .collect::<Vec<_>>();
     let anchor = rows[0].id;
@@ -954,7 +764,7 @@ async fn a_statement_larger_than_one_batch_always_accepts_a_continuation() {
 
 #[tokio::test]
 async fn an_unknown_queue_envelope_is_rejected() {
-    let harness = Harness::with(the_three_routes_outbox());
+    let harness = Harness::with(launch_outbox());
     let error = central_control_worker::handle_event(
         &harness.worker,
         serde_json::json!({
@@ -978,7 +788,7 @@ async fn an_unknown_queue_envelope_is_rejected() {
 
 #[tokio::test]
 async fn the_recovery_schedule_drains_rows_whose_direct_wake_was_lost() {
-    let harness = Harness::with(the_three_routes_outbox());
+    let harness = Harness::with(launch_outbox());
 
     central_control_worker::handle_event(
         &harness.worker,
@@ -991,53 +801,25 @@ async fn the_recovery_schedule_drains_rows_whose_direct_wake_was_lost() {
     .await
     .expect("the recovery sweep runs");
 
-    assert_eq!(harness.journal.count("dispatched:"), 3);
+    assert_eq!(harness.journal.count("dispatched:"), 2);
 }
 
 #[tokio::test]
-async fn a_pause_becomes_the_admission_fence_before_active_sessions_are_interrupted() {
+async fn a_pause_becomes_the_launch_region_admission_fence() {
     let harness = Harness::with(vec![account_state_changed()]);
 
     harness.worker.tick().await.expect("the pause is projected");
 
     let journal = harness.journal.entries();
-    let placement = journal
-        .iter()
-        .position(|entry| entry == "put_placement:paused")
-        .expect("the paused placement was written");
-    let interruption = journal
-        .iter()
-        .position(|entry| entry.starts_with("regional_pause:"))
-        .expect("the regional interruption was requested");
-    assert!(placement < interruption, "{journal:?}");
+    assert!(journal.contains(&"put_placement:paused".to_owned()));
+    assert!(!journal.iter().any(|entry| entry.starts_with("regional_")));
     assert_eq!(harness.journal.count("dispatched:"), 1);
-}
-
-#[tokio::test]
-async fn an_incomplete_pause_page_releases_the_outbox_for_the_recovery_schedule() {
-    let message = account_state_changed();
-    let harness = Harness::build(vec![message.clone()], &[Authority::RegionalPauseIncomplete]);
-
-    assert_eq!(
-        harness.worker.tick().await,
-        Err("outbox_dispatch_failed".to_owned())
-    );
-
-    let journal = harness.journal.entries();
-    assert!(
-        journal.contains(&format!(
-            "released:{}:regional_account_pause_incomplete",
-            message.id
-        )),
-        "{journal:?}"
-    );
-    assert_eq!(harness.journal.count("dispatched:"), 0);
 }
 
 #[tokio::test]
 async fn an_aborted_transaction_wake_is_a_safe_no_op() {
     let harness = Harness::build_with_transaction(
-        the_three_routes_outbox(),
+        launch_outbox(),
         &[],
         aex_control_aurora::OutboxWakeTransactionStatus::Aborted,
     );
@@ -1058,7 +840,7 @@ async fn an_aborted_transaction_wake_is_a_safe_no_op() {
 #[tokio::test]
 async fn a_normal_precommit_race_drains_during_the_bounded_wait() {
     let harness = Harness::build_with_transactions(
-        the_three_routes_outbox(),
+        launch_outbox(),
         &[],
         [
             aex_control_aurora::OutboxWakeTransactionStatus::InProgress,
@@ -1077,13 +859,13 @@ async fn a_normal_precommit_race_drains_during_the_bounded_wait() {
     .await
     .expect("the producer committed inside the bounded wait");
     assert_eq!(harness.journal.count("wake_wait:"), 2);
-    assert_eq!(harness.journal.count("dispatched:"), 3);
+    assert_eq!(harness.journal.count("dispatched:"), 2);
 }
 
 #[tokio::test]
 async fn a_precommit_race_returns_an_error_for_lambda_retry() {
     let harness = Harness::build_with_transaction(
-        the_three_routes_outbox(),
+        launch_outbox(),
         &[],
         aex_control_aurora::OutboxWakeTransactionStatus::InProgress,
     );
@@ -1130,87 +912,35 @@ fn provision_outbox() -> Vec<OutboxMessage> {
     )]
 }
 
-/// Everything this worker writes into a region, in the order it wrote it.
-fn bootstrapped() -> String {
-    let workspace = aex_wire::ids::WorkspaceId::from_uuid7(
-        aex_wire::ids::Uuid7::from_bytes(*workspace_id().as_bytes()).expect("a UUIDv7 fixture"),
-    );
-    format!("bootstrap:{workspace}")
-}
-
-fn regional_effects(harness: &Harness) -> Vec<String> {
+fn projection_effects(harness: &Harness) -> Vec<String> {
     harness
         .journal
         .entries()
         .into_iter()
-        .filter(|entry| entry.starts_with("put_") || entry.starts_with("bootstrap:"))
+        .filter(|entry| entry.starts_with("put_") || entry.starts_with("finish_provision:"))
         .collect()
 }
 
 #[tokio::test]
-async fn the_regional_writes_of_one_provision_are_bootstrap_then_profile_then_placement() {
-    // The ordering seam, and the one place this worker takes strong ordering
-    // against the plane's eventual-consistency default.
-    //
-    // Placement is what makes a workspace visible to the regional edge, and the
-    // edge's admission snapshot reads the effective-limit row on every request
-    // and treats its absence as a self-contradiction. So a placement published
-    // ahead of a bootstrap does not serve stale limits — it answers `401` to
-    // every request the workspace ever makes, with its own API key, for as long
-    // as the gap lasts.
-    //
-    // Profile stays before placement for the same shape of reason it always
-    // did. The sequence below is therefore not a preference; each step is a
-    // precondition of the one after it.
+async fn a_personal_workspace_is_projected_before_central_activation() {
     let harness = Harness::with(provision_outbox());
     harness.worker.tick().await.expect("the drain runs");
 
     assert_eq!(
-        regional_effects(&harness),
+        projection_effects(&harness),
         vec![
-            bootstrapped(),
-            "put_profile:fixture".to_owned(),
             "put_placement:active".to_owned(),
+            format!("finish_provision:{}", workspace_id()),
         ],
-        "the regional write order changed"
+        "central activation must not outrun the admission projection"
     );
 }
 
 #[tokio::test]
-async fn a_placement_is_never_written_when_the_capacity_bootstrap_did_not_apply() {
-    // The half the order alone does not prove. A bootstrap that ran first and
-    // failed, followed by a placement written anyway, is byte-for-byte the same
-    // outage as no bootstrap at all — so the refusal has to stop the sequence,
-    // not merely precede it.
-    let harness = Harness::build(provision_outbox(), &[Authority::Capacity]);
-    harness
-        .worker
-        .tick()
-        .await
-        .expect_err("a failed effect must reach Lambda's async retry");
-
-    assert_eq!(
-        regional_effects(&harness),
-        vec![bootstrapped()],
-        "a projection row was published behind a bootstrap that did not apply"
-    );
-    let journal = harness.journal.entries();
-    assert!(
-        journal.iter().any(|entry| entry
-            .starts_with(&format!("released:{}:", provision_outbox()[0].id))
-            && entry.ends_with("regional_capacity_unavailable")),
-        "the failure was not recorded on the row that owns the retry: {journal:?}"
-    );
-    assert_eq!(
-        harness.journal.count("dispatched:"),
-        0,
-        "an incomplete provision was reported as delivered"
-    );
-}
-
-#[tokio::test]
-async fn a_duty_that_fails_is_released_with_a_backoff_and_never_marked_dispatched() {
-    let harness = Harness::build(vec![invitation_email_requested()], &[Authority::Mail]);
+async fn an_outbox_row_for_another_region_is_released_and_never_dispatched() {
+    let mut row = api_key_created();
+    row.payload["region"] = serde_json::json!("us-east-1");
+    let harness = Harness::with(vec![row.clone()]);
     harness
         .worker
         .tick()
@@ -1219,10 +949,7 @@ async fn a_duty_that_fails_is_released_with_a_backoff_and_never_marked_dispatche
 
     let journal = harness.journal.entries();
     assert!(
-        journal.contains(&format!(
-            "released:{}:ses_delivery_unavailable",
-            invitation_email_requested().id
-        )),
+        journal.contains(&format!("released:{}:outbox_region_mismatch", row.id)),
         "the failure is recorded on the row it belongs to: {journal:?}"
     );
     assert_eq!(
@@ -1234,7 +961,7 @@ async fn a_duty_that_fails_is_released_with_a_backoff_and_never_marked_dispatche
 
 #[tokio::test]
 async fn an_aurora_wake_that_cannot_drain_fails_loudly_rather_than_answering_success() {
-    let harness = Harness::build(the_three_routes_outbox(), &[Authority::Store]);
+    let harness = Harness::build(launch_outbox(), &[Authority::Store]);
     let error = central_control_worker::handle_event(
         &harness.worker,
         serde_json::json!({

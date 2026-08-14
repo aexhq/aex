@@ -27,7 +27,8 @@ use aex_wire::server::{NoContent, WithETag};
 use aex_wire::types::{DecimalU128, Timestamp};
 use aex_workspace_domain::registry::RegistryRejection;
 use aex_workspace_domain::registry::{
-    ProposedValue, RegisteredValueRef, RegistryPointer, SetOutcome, ValueDocument, set,
+    ProposedValue, RegisteredValueRef, RegistryPointer, RegistryState, SetOutcome, ValueDocument,
+    set,
 };
 use aex_workspace_domain::upload::UploadState;
 use serde::Serialize;
@@ -89,6 +90,9 @@ impl Routes {
         name: &ResourceName,
         read: &V,
         payload: Option<RegisteredValueRef>,
+        state: RegistryState,
+        failure_code: Option<String>,
+        exact_current: Option<&aex_wire::types::ETag>,
         project: fn(&RegistryPointer) -> Result<T, ProjectionError>,
     ) -> WireResult<WithETag<T>>
     where
@@ -134,6 +138,8 @@ impl Routes {
             value_doc,
             payload,
             upload_state,
+            state,
+            failure_code,
         };
 
         let current = self
@@ -142,8 +148,9 @@ impl Routes {
             .load_pointer(workspace, kind, name.as_str())
             .await
             .map_err(|error| authority_failure(&error))?;
+        let precondition = exact_current.or(self.cx.if_match.as_ref());
         let (outcome, commit) =
-            set(current.as_ref(), &proposed, self.cx.if_match.as_ref(), now).map_err(rejection)?;
+            set(current.as_ref(), &proposed, precondition, now).map_err(rejection)?;
 
         // `Unchanged` writes nothing at all, so a concurrent editor's `If-Match`
         // survives an idempotent retry (D-08). There is nothing to make
@@ -233,6 +240,10 @@ impl Routes {
         match input {
             models::BlobInput::Inline(inline) => self.admit_inline(kind, name, inline).await,
             models::BlobInput::Upload(staged) => self.admit_staged(kind, name, staged).await,
+            models::BlobInput::Url(_) => Err(WireError::new(ErrorCode::InvalidRequest)
+                .with_message(
+                    "URL sources are admitted through the asynchronous file-ingest path".to_owned(),
+                )),
         }
     }
 

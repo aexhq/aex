@@ -36,6 +36,6 @@ pub use multipart::{CompletionManifest, MultipartHandle, PartPlan, ProviderPart}
 pub use object_key::{MAX_SIGNATURE_AGE_MILLIS, ObjectKey, PRESIGN_EXPIRY};
 pub use object_store::{
     BoundedObject, BucketBinding, ContentObjectStore, FencedDeleteOutcome, ObjectCommit,
-    S3ContentObjects,
+    PutImmutablePath, S3ContentObjects,
 };
 pub use redacted::RedactedUrl;

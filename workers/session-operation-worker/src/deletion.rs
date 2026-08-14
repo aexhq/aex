@@ -37,6 +37,7 @@ pub(crate) struct DynamoDeletionCoordinator {
     operations: aex_session_dynamodb::store::OperationStore,
     runtime: aex_runtime_activity_dynamodb::RuntimeActivityDynamoStore,
     telemetry: aex_session_telemetry_aws::SessionTelemetryDeleter,
+    checkpoints: crate::checkpoint_objects::S3CheckpointObjects,
 }
 
 impl DynamoDeletionCoordinator {
@@ -47,7 +48,11 @@ impl DynamoDeletionCoordinator {
         tables: RegionalTables,
         runtime_queue_url: impl Into<String>,
         session_telemetry_bucket: impl Into<String>,
+        content_bucket: impl Into<String>,
+        content_bucket_owner: impl Into<String>,
     ) -> Self {
+        let content_bucket = content_bucket.into();
+        let content_bucket_owner = content_bucket_owner.into();
         Self {
             sessions: SessionDeletionStore::new(dynamodb.clone(), tables.session_authority.clone()),
             operations: aex_session_dynamodb::store::OperationStore::new(
@@ -59,8 +64,13 @@ impl DynamoDeletionCoordinator {
                 tables.runtime_activity.clone(),
             ),
             telemetry: aex_session_telemetry_aws::SessionTelemetryDeleter::new(
-                s3,
+                s3.clone(),
                 session_telemetry_bucket,
+            ),
+            checkpoints: crate::checkpoint_objects::S3CheckpointObjects::new(
+                s3,
+                content_bucket,
+                content_bucket_owner,
             ),
             dynamodb,
             sqs,
@@ -268,26 +278,37 @@ impl DynamoDeletionCoordinator {
         snapshot: &SessionDeletionSnapshot,
         now: Timestamp,
     ) -> Result<LifecycleReadiness, StoreError> {
+        let Some(generation) = head.generation else {
+            return if !snapshot
+                .evidence
+                .contains_key(&DeletionOwner::BillingAggregate)
+            {
+                self.record(snapshot, DeletionOwner::BillingAggregate, now)
+                    .await
+            } else {
+                self.record(snapshot, DeletionOwner::GenerationTerminated, now)
+                    .await
+            };
+        };
         let view = self
             .runtime
-            .load_generation_view(head.generation, ReadConsistency::Strong)
+            .load_generation_view(generation, ReadConsistency::Strong)
             .await
             .map_err(runtime_error)?;
         if let Some(view) = view.as_ref() {
-            if view.session != head.session || view.head.generation != head.generation {
+            if view.session != head.session || view.head.generation != generation {
                 return Err(StoreError::Invalid {
                     detail: "runtime deletion observed a cross-session generation".to_owned(),
                 });
             }
             if !view.head.state.is_terminal() {
-                self.dispatch_terminate(head.session, head.generation)
-                    .await?;
+                self.dispatch_terminate(head.session, generation).await?;
                 return Ok(LifecycleReadiness::Deferred);
             }
         }
         let usage = self
             .runtime
-            .load_usage_outbox(head.generation)
+            .load_usage_outbox(generation)
             .await
             .map_err(runtime_error)?;
         if !usage.is_empty() {
@@ -303,7 +324,7 @@ impl DynamoDeletionCoordinator {
         }
 
         let partition =
-            aex_runtime_activity_dynamodb::keys::generation_partition_for_id(head.generation);
+            aex_runtime_activity_dynamodb::keys::generation_partition_for_id(generation);
         let rows = self
             .query(&self.tables.runtime_activity, &partition, None, DELETE_PAGE)
             .await?;
@@ -335,7 +356,7 @@ impl DynamoDeletionCoordinator {
             return Ok(LifecycleReadiness::Deferred);
         }
         if let Some(current) = self.runtime.load_current(head.session).await? {
-            if current.generation != head.generation {
+            if current.generation != generation {
                 return Err(StoreError::Invalid {
                     detail: "runtime current pointer changed generation behind deletion".to_owned(),
                 });
@@ -494,6 +515,19 @@ impl DynamoDeletionCoordinator {
         snapshot: &SessionDeletionSnapshot,
         now: Timestamp,
     ) -> Result<LifecycleReadiness, StoreError> {
+        if self
+            .checkpoints
+            .delete_page(
+                snapshot.progress.session,
+                crate::checkpoint_objects::CHECKPOINT_DELETE_PAGE_MAX,
+            )
+            .await
+            .map_err(|error| StoreError::Unavailable {
+                detail: format!("session checkpoint deletion failed: {error}"),
+            })?
+        {
+            return Ok(LifecycleReadiness::Deferred);
+        }
         if self
             .telemetry
             .delete_page(snapshot.progress.session, DELETE_PAGE)

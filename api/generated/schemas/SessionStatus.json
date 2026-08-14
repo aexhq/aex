@@ -1,13 +1,10 @@
 {
   "$id": "https://schemas.aex.dev/v1/SessionStatus.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "What a session is doing right now.",
+  "description": "Customer-visible session lifecycle, independent of sandbox suspension.",
   "enum": [
     "idle",
     "running",
-    "suspending",
-    "suspended",
-    "resuming",
     "terminating",
     "terminated",
     "deleting"

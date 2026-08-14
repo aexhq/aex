@@ -1,7 +1,7 @@
 {
   "$id": "https://schemas.aex.dev/v1/PackageEcosystem.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The package ecosystems a session may pre-install from.",
+  "description": "Supported setup package ecosystems.",
   "enum": [
     "apt",
     "pip",

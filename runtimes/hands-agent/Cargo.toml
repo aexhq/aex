@@ -41,11 +41,12 @@ aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
 aex-wire = { path = "../../crates/aex-wire" }
 axum.workspace = true
 blake3.workspace = true
+rmcp = { workspace = true, features = ["transport-child-process"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time", "process", "io-util"] }
 tracing.workspace = true
 
 [target.'cfg(unix)'.dependencies]
@@ -60,6 +61,5 @@ rustix = { workspace = true, features = ["fs", "process"] }
 blake3 = { workspace = true, features = ["no_neon"] }
 
 [dev-dependencies]
-cargo_metadata.workspace = true
 tempfile.workspace = true
 tower.workspace = true

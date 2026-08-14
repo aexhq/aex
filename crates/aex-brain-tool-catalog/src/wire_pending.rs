@@ -13,11 +13,10 @@ pub use aex_brain_domain::EffectClass;
 
 /// The executor selected before any tool I/O.
 // TODO(cross-stream): `aex-brain-domain` has no `tool` module. It publishes
-// `aex_brain_domain::journal::ExecutorRoute`, which records where a call *ran*
-// with four arms — `BrainInline`, `ManagedWeb`, `Mcp`, `Hands` — where routing
-// needs nine to select one. Journal granularity and routing granularity are
-// different questions; adopting the peer enum would lose the distinction
-// between the three Hands surfaces, the park and the subagent scheduler.
+// `aex_brain_domain::journal::ExecutorRoute`, which records only the coarse
+// execution authority (`BrainInline` or `ToolMux`). Routing still needs the
+// fine target to select native control, storage, remote MCP, or one of the
+// exact-generation guest surfaces behind that authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutorRoute {
@@ -27,19 +26,19 @@ pub enum ExecutorRoute {
     Park,
     /// The Brain child scheduler.
     SubagentScheduler,
-    /// Brain-managed web egress.
+    /// Brain-managed web target selected inside Tool Mux.
     ManagedWeb,
-    /// The private platform-paid tool executor.
-    ToolExec,
-    /// A pinned remote MCP server.
+    /// Latest-only file persistence target selected inside Tool Mux.
+    PlatformStorage,
+    /// A pinned remote MCP target selected inside Tool Mux.
     Mcp,
-    /// Hands filesystem operations.
+    /// Sandbox filesystem target selected inside Tool Mux.
     HandsFilesystem,
-    /// Hands development operations.
+    /// Sandbox development target selected inside Tool Mux.
     HandsDevelopment,
-    /// Hands browser operations.
+    /// Sandbox browser target selected inside Tool Mux.
     HandsBrowser,
-    /// A registered custom Hands executor.
+    /// Registered sandbox-process MCP target selected inside Tool Mux.
     RegisteredCustom,
 }
 

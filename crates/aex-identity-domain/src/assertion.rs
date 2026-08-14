@@ -123,7 +123,7 @@ impl Plane {
 pub const fn audience_code(audience: AssertionAudience) -> u8 {
     match audience {
         AssertionAudience::RegionalSession => 1,
-        AssertionAudience::ToolExec => 2,
+        AssertionAudience::ToolMux => 2,
     }
 }
 
@@ -132,25 +132,23 @@ pub const fn audience_code(audience: AssertionAudience) -> u8 {
 pub const fn audience_from_code(byte: u8) -> Option<AssertionAudience> {
     match byte {
         1 => Some(AssertionAudience::RegionalSession),
-        2 => Some(AssertionAudience::ToolExec),
+        2 => Some(AssertionAudience::ToolMux),
         _ => None,
     }
 }
 
 /// Which kind of principal an assertion speaks for.
 ///
-/// `UserSession` exists so a regional dashboard panel is implementable: a
-/// browser session resolves through the *same* 30-second assertion as an account
-/// token rather than a second credential mechanism.
+/// `UserSession` exists so a regional dashboard panel can use the same
+/// 30-second assertion envelope as API clients without sharing credential
+/// semantics with a workspace key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum PrincipalKind {
     /// A workspace API key.
     WorkspaceKey = 1,
-    /// A person, through an account token.
-    AccountActor = 2,
     /// A person, through a browser session.
-    UserSession = 3,
+    UserSession = 2,
     /// An agent session, through an activation the Brain already owns.
     ///
     /// The one kind with **no presented credential behind it**. The other three
@@ -164,26 +162,20 @@ pub enum PrincipalKind {
     /// principal slot could also have been filled by a credential a customer
     /// presented. Two things that are verified differently must not be spelled
     /// the same.
-    AgentSession = 4,
+    AgentSession = 3,
 }
 
 impl PrincipalKind {
     /// Every kind, in wire order.
-    pub const ALL: [Self; 4] = [
-        Self::WorkspaceKey,
-        Self::AccountActor,
-        Self::UserSession,
-        Self::AgentSession,
-    ];
+    pub const ALL: [Self; 3] = [Self::WorkspaceKey, Self::UserSession, Self::AgentSession];
 
     /// Resolves a wire discriminant.
     #[must_use]
     pub const fn from_wire(byte: u8) -> Option<Self> {
         match byte {
             1 => Some(Self::WorkspaceKey),
-            2 => Some(Self::AccountActor),
-            3 => Some(Self::UserSession),
-            4 => Some(Self::AgentSession),
+            2 => Some(Self::UserSession),
+            3 => Some(Self::AgentSession),
             _ => None,
         }
     }
@@ -193,7 +185,6 @@ impl PrincipalKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::WorkspaceKey => "workspace_key",
-            Self::AccountActor => "account_actor",
             Self::UserSession => "user_session",
             Self::AgentSession => "agent_session",
         }
@@ -202,12 +193,12 @@ impl PrincipalKind {
     /// Whether a customer presents a credential to obtain this principal.
     ///
     /// The pairing rule the executor enforces: a presented-credential principal
-    /// never reaches [`AssertionAudience::ToolExec`], and
+    /// never reaches [`AssertionAudience::ToolMux`], and
     /// [`Self::AgentSession`] never reaches any other audience.
     #[must_use]
     pub const fn is_presented_credential(self) -> bool {
         match self {
-            Self::WorkspaceKey | Self::AccountActor | Self::UserSession => true,
+            Self::WorkspaceKey | Self::UserSession => true,
             Self::AgentSession => false,
         }
     }
@@ -554,7 +545,7 @@ pub enum VerifyError {
     ///
     /// The tool executor accepts [`PrincipalKind::AgentSession`] and nothing
     /// else, and every other audience refuses it. Without this, a customer
-    /// credential admitted to `tool_exec` on a projected key row would be one
+    /// credential admitted to `tool_mux` on a projected key row would be one
     /// `central-authz` call away from an envelope the executor would resolve a
     /// tenant from.
     #[error("this principal kind cannot speak to this audience")]
@@ -596,7 +587,7 @@ const fn region_code(region: aex_wire::types::Region) -> u8 {
 
 /// Whether a principal kind may speak to an audience.
 ///
-/// One rule, stated once, checked at both ends: the tool executor's audience
+/// One rule, stated once, checked at both ends: Tool Mux's audience
 /// pairs with [`PrincipalKind::AgentSession`] and with nothing else, and that
 /// kind pairs with no other audience. Checked at issue so an issuer bug cannot
 /// mint the pair, and again at verify so a verifier does not have to trust that
@@ -606,7 +597,7 @@ pub const fn principal_pairs_with_audience(
     principal_kind: PrincipalKind,
     audience: AssertionAudience,
 ) -> bool {
-    matches!(audience, AssertionAudience::ToolExec)
+    matches!(audience, AssertionAudience::ToolMux)
         == matches!(principal_kind, PrincipalKind::AgentSession)
 }
 
@@ -921,12 +912,6 @@ fn decode_body(body: &[u8]) -> Result<AssertionClaims, VerifyError> {
 #[must_use]
 pub fn workspace_key_binding(key_id: Uuid, digest: &PresentedDigest) -> [u8; 32] {
     crate::credential::credential_binding(PrincipalKind::WorkspaceKey as u8, key_id, digest)
-}
-
-/// The binding for an account-token principal.
-#[must_use]
-pub fn account_token_binding(token_id: Uuid, digest: &PresentedDigest) -> [u8; 32] {
-    crate::credential::credential_binding(PrincipalKind::AccountActor as u8, token_id, digest)
 }
 
 /// The binding for a browser-session principal.

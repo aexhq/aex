@@ -14,16 +14,16 @@
 
 use aex_brain_domain::budget::{BudgetDelta, Dimension};
 use aex_brain_domain::commit::{
-    ControlUpdate, DecisionCommit, EffectWrite, FenceGuardRef, PublicMessageAppend,
-    PublicMessagePart, PublicMessageRole, PublicSessionEvent, RunTransition, SessionHeadTransition,
-    WakeCreate, WakeRetirement, event_seq,
+    ChildWrite, ControlUpdate, DecisionCommit, EffectWrite, FenceGuardRef, JoinWrite,
+    PublicMessageAppend, PublicMessagePart, PublicMessageRole, PublicSessionEvent, RunTransition,
+    SessionHeadTransition, WakeCreate, WakeRetirement, event_seq,
 };
 use aex_brain_domain::effect::{
     DispatchEvidence, DispatchProof, DispatchStage, EffectClass, EffectKind, SettledOutcome,
 };
 use aex_brain_domain::fold::{FoldState, Phase};
 use aex_brain_domain::ids::{
-    AgentKey, ContentHash, EffectId, JournalSeq, Timestamp, WakeId, WorkShard,
+    AgentKey, ContentHash, EffectId, JournalSeq, Timestamp, ToolCallId, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{
     ExecutorRoute, FinishReason, JournalRecord, ParkReason, TypedFailure,
@@ -67,6 +67,9 @@ pub struct Draft {
     appends: Vec<JournalRecord>,
     effects: Vec<EffectWrite>,
     budget: Vec<BudgetDelta>,
+    session_budget: Vec<BudgetDelta>,
+    children: Vec<ChildWrite>,
+    joins: Vec<JoinWrite>,
     wakes: Vec<WakeCreate>,
     retired_wake: Option<WakeRetirement>,
     messages: Vec<PublicMessageAppend>,
@@ -89,6 +92,9 @@ impl Draft {
             appends: Vec::new(),
             effects: Vec::new(),
             budget: Vec::new(),
+            session_budget: Vec::new(),
+            children: Vec::new(),
+            joins: Vec::new(),
             wakes: Vec::new(),
             retired_wake: None,
             messages: Vec::new(),
@@ -130,6 +136,24 @@ impl Draft {
         }
     }
 
+    /// Charges one shared session budget dimension in the same authority change.
+    pub fn charge_session(&mut self, dimension: Dimension, quantity: u64) {
+        if quantity > 0 {
+            self.session_budget
+                .push(BudgetDelta::new(dimension, quantity));
+        }
+    }
+
+    /// Adds one child authority mutation.
+    pub fn child(&mut self, write: ChildWrite) {
+        self.children.push(write);
+    }
+
+    /// Adds one join-ledger mutation.
+    pub fn join(&mut self, write: JoinWrite) {
+        self.joins.push(write);
+    }
+
     /// Sets the phase the control update writes.
     pub const fn phase(&mut self, phase: &'static str) {
         self.phase = phase;
@@ -153,11 +177,33 @@ impl Draft {
         tenant: String,
         shard: WorkShard,
     ) {
-        let key = self.guard.key;
+        self.wake_agent(
+            self.guard.key,
+            id,
+            reason,
+            due,
+            tenant,
+            shard,
+            continuation_key(self.guard.key, self.next_seq),
+        );
+    }
+
+    /// Creates a wake for a child or parent agent inside this same decision.
+    #[allow(clippy::too_many_arguments)]
+    pub fn wake_agent(
+        &mut self,
+        key: AgentKey,
+        id: WakeId,
+        reason: ParkReason,
+        due: Timestamp,
+        tenant: String,
+        shard: WorkShard,
+        dedup_key: String,
+    ) {
         self.wakes.push(WakeCreate {
             id,
             key,
-            dedup_key: continuation_key(key, self.next_seq),
+            dedup_key,
             reason,
             due: Some(due),
             priority: 1,
@@ -184,6 +230,9 @@ impl Draft {
         self.appends.is_empty()
             && self.effects.is_empty()
             && self.budget.is_empty()
+            && self.session_budget.is_empty()
+            && self.children.is_empty()
+            && self.joins.is_empty()
             && self.wakes.is_empty()
             && self.retired_wake.is_none()
             && self.messages.is_empty()
@@ -205,6 +254,9 @@ impl Draft {
         let retirement_only = self.appends.is_empty()
             && self.effects.is_empty()
             && self.budget.is_empty()
+            && self.session_budget.is_empty()
+            && self.children.is_empty()
+            && self.joins.is_empty()
             && self.wakes.is_empty()
             && self.retired_wake.is_some()
             && self.finish.is_none();
@@ -223,9 +275,9 @@ impl Draft {
             appends: self.appends,
             effects: self.effects,
             budget: self.budget,
-            session_budget: Vec::new(),
-            children: Vec::new(),
-            joins: Vec::new(),
+            session_budget: self.session_budget,
+            children: self.children,
+            joins: self.joins,
             wakes: self.wakes,
             retired_wake: self.retired_wake,
             events: Vec::new(),
@@ -277,6 +329,7 @@ pub fn provider_call_reservation(state: &FoldState) -> Vec<BudgetDelta> {
 pub fn prepare(
     draft: &mut Draft,
     effect: EffectId,
+    tool_call: Option<ToolCallId>,
     kind: EffectKind,
     class: EffectClass,
     request_hash: ContentHash,
@@ -289,6 +342,7 @@ pub fn prepare(
     }
     draft.append(JournalRecord::EffectPrepared {
         effect,
+        tool_call,
         kind,
         class,
         request_hash,
@@ -563,11 +617,11 @@ const fn finish_outcome(reason: FinishReason) -> &'static str {
         FinishReason::Interrupted | FinishReason::Budget | FinishReason::AccountPaused => {
             "interrupted"
         }
-        FinishReason::MaxTurns | FinishReason::MaxSteps | FinishReason::Failed => "failed",
+        FinishReason::Failed => "failed",
     }
 }
 
-fn public_message_id(run: RunId, effect: EffectId, tag: u8) -> MessageId {
+pub(super) fn public_message_id(run: RunId, effect: EffectId, tag: u8) -> MessageId {
     MessageId::from_uuid7(derived_uuid(run, &[tag], &effect.0))
 }
 
@@ -640,6 +694,25 @@ pub fn settle_root_unknown(draft: &mut Draft, effect: EffectId, evidence: Dispat
         outcome,
     });
     draft.phase("awaiting_finish");
+}
+
+/// Settles an ambiguous tool-batch member without terminalizing its siblings.
+///
+/// The matching error result is appended by the caller in the same decision.
+/// The fold recognizes the durable call-to-effect link and keeps the batch
+/// pending until every member is terminal.
+pub fn settle_tool_unknown(draft: &mut Draft, effect: EffectId, evidence: DispatchEvidence) {
+    let outcome = SettledOutcome::OutcomeUnknown { evidence };
+    draft.append(JournalRecord::EffectSettled {
+        effect,
+        outcome: outcome.clone(),
+        charged: Vec::new(),
+    });
+    draft.effect(EffectWrite::Settle {
+        id: effect,
+        outcome,
+    });
+    draft.phase("awaiting_tools");
 }
 
 /// Settles an effect the upstream definitively refused.

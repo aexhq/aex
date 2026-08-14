@@ -169,7 +169,7 @@ fn neither_request_can_carry_a_credential() {
                 .expect("workspace id"),
             presented_digest: CredentialDigest::new([3_u8; 32]),
             region: Region::EuWest1,
-            audience: AssertionAudience::ToolExec,
+            audience: AssertionAudience::ToolMux,
         })
         .expect("a request encodes"),
     ] {
@@ -252,7 +252,7 @@ fn every_audience_names_exactly_one_deployable() {
 }
 
 #[test]
-fn only_the_tool_executor_is_outside_what_a_customer_credential_may_name() {
+fn only_tool_mux_is_outside_what_a_customer_credential_may_name() {
     // The set a projected workspace-key row carries is the customer-presentable
     // one, and the single bit between it and the whole vocabulary is the tool
     // executor. Pinning the difference rather than the membership is what makes
@@ -262,7 +262,7 @@ fn only_the_tool_executor_is_outside_what_a_customer_credential_may_name() {
         .into_iter()
         .filter(|audience| !AudienceSet::CUSTOMER_PRESENTABLE.contains(*audience))
         .collect();
-    assert_eq!(outside, vec![AssertionAudience::ToolExec]);
+    assert_eq!(outside, vec![AssertionAudience::ToolMux]);
 
     for audience in AssertionAudience::ALL {
         assert_eq!(

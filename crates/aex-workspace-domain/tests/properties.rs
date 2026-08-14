@@ -10,14 +10,15 @@ use aex_workspace_domain::{
     ByteRange, CompletionEvidence, ContentObjectLocation, DownloadGrant, ExpiryOutcome,
     GrantPlacement, GrantRejection, GrantSubject, MAX_SIGNED_RANGE_BYTES, PART_MAX_BYTES,
     PART_MAX_COUNT, PART_MIN_BYTES, PartGrantRequest, PartReceipt, ProposedValue,
-    RegisteredValueRef, RegistryPointer, RegistryRejection, RegistrySelector, SetOutcome, Upload,
-    UploadError, UploadState, ValueDocument, VerifiedObject, abort, begin_complete, consume,
-    delete, etag_of, expire, finish_complete, grant_parts, mint_grant, plan_parts, set,
+    RegisteredValueRef, RegistryPointer, RegistryRejection, RegistrySelector, RegistryState,
+    SetOutcome, Upload, UploadError, UploadState, ValueDocument, VerifiedObject, abort,
+    begin_complete, consume, delete, etag_of, expire, finish_complete, grant_parts, mint_grant,
+    plan_parts, set,
 };
 use proptest::prelude::*;
 
 use aex_workspace_domain::{
-    FilePublish, FileSource, ReadyFile, admit_pending, publish_ready,
+    FileIntent, FilePublish, FileSource, ReadyFile, admit_pending, publish_ready,
 };
 
 fn workspace() -> WorkspaceId {
@@ -51,6 +52,8 @@ fn proposed(body: &[u8]) -> ProposedValue {
             digest: ContentDigest::of(body),
         }),
         upload_state: None,
+        state: RegistryState::Ready,
+        failure_code: None,
     }
 }
 
@@ -59,6 +62,8 @@ fn proposed(body: &[u8]) -> ProposedValue {
 // ---------------------------------------------------------------------------
 
 proptest! {
+    #![proptest_config(ProptestConfig { cases: 192, ..ProptestConfig::default() })]
+
     #[test]
     fn an_older_async_file_intent_never_publishes_over_a_newer_one(
         older in any::<Vec<u8>>(),
@@ -73,6 +78,7 @@ proptest! {
             name.clone(),
             FileSource::Url,
             at(1),
+            FileIntent::from_private_counter(1),
         );
         let newer_admission = admit_pending(
             Some(&older_admission.current),
@@ -80,6 +86,7 @@ proptest! {
             name,
             FileSource::Upload,
             at(2),
+            FileIntent::from_private_counter(2),
         );
         let older_ready = ReadyFile {
             digest: aex_content_domain::ContentDigest::of(&older),
@@ -87,7 +94,7 @@ proptest! {
             media_type: "application/octet-stream".to_owned(),
             object_key: "property/older".to_owned(),
         };
-        prop_assert!(matches!(
+        let older_was_stale = matches!(
             publish_ready(
                 &newer_admission.current,
                 older_admission.current.intent(),
@@ -95,7 +102,8 @@ proptest! {
                 at(3),
             ),
             FilePublish::Stale { .. }
-        ));
+        );
+        prop_assert!(older_was_stale);
         let newer_ready = ReadyFile {
             digest: aex_content_domain::ContentDigest::of(&newer),
             size_bytes: newer.len() as u64,
@@ -116,8 +124,6 @@ proptest! {
             aex_content_domain::ContentDigest::of(&newer)
         );
     }
-
-    #![proptest_config(ProptestConfig { cases: 192, ..ProptestConfig::default() })]
 
     /// 56 `registry_overwrite_semantics`.
     #[test]
@@ -258,6 +264,7 @@ fn evidence() -> CompletionEvidence {
 fn upload(size: u64) -> Upload {
     Upload {
         id: UploadId::from_uuid7(Uuid7::compose(1, [1; 10])),
+        target_name: aex_wire::ids::ResourceName::parse("artifact").expect("valid resource name"),
         workspace: workspace(),
         state: UploadState::Created,
         provider_upload_id: "provider-mpu-1".to_owned(),

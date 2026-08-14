@@ -38,16 +38,15 @@ fn minimal_request() -> models::SessionCreateRequest {
     let session = session_fixture();
     let _ = &session;
     models::SessionCreateRequest {
-        compute: None,
+        expires_at: None,
+        max_spend_cents: None,
+        mcp_servers: None,
         metadata: None,
         model: "gpt-test".to_owned(),
-        network: None,
-        packages: None,
         provider: ProviderId::Openai,
-        provider_credential_id: aex_wire::ids::PrefixedId::from_uuid7(
-            aex_wire::ids::Uuid7::compose(1, [11; 10]),
-        ),
+        provider_api_key: "test-provider-key".to_owned(),
         registered: None,
+        sandbox: None,
     }
 }
 
@@ -79,15 +78,13 @@ async fn root_start_uses_only_the_revisioned_launch_limit_maps() {
     };
 
     assert_eq!(config.limits_revision, 4);
-    assert_eq!(config.limits.max_turns, 32);
-    assert_eq!(config.limits.max_steps_per_turn, 16);
     assert_eq!(config.limits.turn_deadline_ms, 600_000);
     assert_eq!(config.limits.max_run_duration_ms, 28_800_000);
-    assert_eq!(config.limits.max_depth, 4);
-    assert_eq!(config.limits.max_fanout, 32);
+    assert_eq!(config.limits.max_depth, 3);
+    assert_eq!(config.limits.max_fanout, 12);
     assert_eq!(
         budget.get(aex_brain_domain::budget::Dimension::TotalChildrenCreated),
-        128
+        12
     );
     assert_eq!(
         budget.get(aex_brain_domain::budget::Dimension::ProviderCalls),
@@ -99,7 +96,7 @@ async fn root_start_uses_only_the_revisioned_launch_limit_maps() {
     );
     assert_eq!(
         budget.get(aex_brain_domain::budget::Dimension::QueuedChildren),
-        32
+        12
     );
     assert_eq!(
         budget.get(aex_brain_domain::budget::Dimension::RetainedResultBytes),
@@ -198,9 +195,10 @@ async fn a_create_carries_exactly_the_two_read_only_readiness_checks() {
 async fn a_selection_is_validated_without_copying_or_pinning_session_content() {
     let mut request = minimal_request();
     request.registered = Some(models::SessionRegisteredSelection {
-        files: Some(vec![
-            aex_wire::ids::ResourceName::parse("readme").expect("within the grammar"),
-        ]),
+        mounts: vec![models::WorkspaceFileMount {
+            name: aex_wire::ids::ResourceName::parse("readme").expect("within the grammar"),
+            path: aex_wire::ids::FilePath::parse("/workspace/readme").expect("normalized"),
+        }],
     });
     let ports = ScriptedPorts::idle().with_registry_pointers(pointers_for(&request));
     let plan = plan_of(&ports, &command(request))
@@ -229,9 +227,22 @@ async fn the_ready_head_publishes_the_exact_elected_generation() {
 
     assert_eq!(
         planned.projected.generation,
-        Some(planned.projected.pinned_runtime.definition().generation)
+        Some(
+            planned
+                .projected
+                .pinned_runtime
+                .as_ref()
+                .expect("sandbox runtime")
+                .definition()
+                .generation,
+        )
     );
-    let pinned = planned.projected.pinned_runtime.definition();
+    let pinned = planned
+        .projected
+        .pinned_runtime
+        .as_ref()
+        .expect("sandbox runtime")
+        .definition();
     assert_eq!(pinned.session, planned.projected.id);
     assert_eq!(pinned.workspace, planned.projected.workspace);
     assert_eq!(pinned.organization, planned.projected.organization);
@@ -250,6 +261,53 @@ async fn the_ready_head_publishes_the_exact_elected_generation() {
 }
 
 #[tokio::test]
+async fn explicit_sandbox_opt_out_allocates_no_generation_or_runtime_pin() {
+    let mut request = minimal_request();
+    request.sandbox = Some(models::SessionSandboxRequest {
+        compute: None,
+        enabled: Some(false),
+        network: None,
+        packages: None,
+    });
+    let ports = ScriptedPorts::idle();
+    let clock = clock();
+    let ids = CountingIds::default();
+    let outcome = prepare_session_create(&ports.context(&clock, &ids), &command(request))
+        .await
+        .expect("a model-only session remains admissible");
+    let PrepareSessionCreateOutcome::Prepared(prepared) = outcome else {
+        panic!("fresh create prepares")
+    };
+
+    assert_eq!(prepared.generation, None);
+    assert!(prepared.pinned_runtime.is_none());
+    let aex_brain_domain::JournalRecord::AgentStarted { config, .. } =
+        initial_root_record(&prepared).expect("root start")
+    else {
+        panic!("root start has the expected shape")
+    };
+    assert_eq!(config.hands_generation, None);
+
+    let readiness = ReadySessionLaunch {
+        generation: None,
+        launched_at: moment(1_001),
+        materialized_files: Vec::new(),
+        root_started: RootStartedEvidence {
+            agent: prepared.root_agent,
+            session: prepared.session,
+            generation: None,
+            occurred_at: moment(1_001),
+            revision: aex_session_domain::AgentRevision(1),
+            journal_tail: aex_session_domain::JournalSeq::INITIAL,
+            journal_tail_hash: [7; 32],
+        },
+    };
+    let planned = publish_ready_session(&prepared, &readiness).expect("publishes");
+    assert_eq!(planned.projected.lifecycle.generation, None);
+    assert!(planned.projected.pinned_runtime.is_none());
+}
+
+#[tokio::test]
 async fn the_pinned_limits_revision_is_the_one_the_create_read() {
     let ports = ScriptedPorts::idle();
     let planned = ready_create(&ports, &command(minimal_request()))
@@ -259,6 +317,8 @@ async fn the_pinned_limits_revision_is_the_one_the_create_read() {
         planned
             .projected
             .pinned_runtime
+            .as_ref()
+            .expect("sandbox runtime")
             .definition()
             .limits_revision,
         aex_runtime_control::generation::LimitsRevision(4),
@@ -377,24 +437,12 @@ async fn a_paused_account_is_refused_before_any_other_read() {
 }
 
 #[tokio::test]
-async fn an_absent_provider_credential_is_not_a_revoked_one() {
+async fn a_missing_session_key_custody_authority_is_reported_as_a_port_failure() {
     let ports = ScriptedPorts::idle().without_provider_credential();
-    assert_eq!(
-        plan_of(&ports, &command(minimal_request()))
-            .await
-            .expect_err("no binding")
-            .code(),
-        ErrorCode::ProviderCredentialNotFound
-    );
-
-    let ports = ScriptedPorts::idle().with_revoked_provider_credential();
-    assert_eq!(
-        plan_of(&ports, &command(minimal_request()))
-            .await
-            .expect_err("revoked binding")
-            .code(),
-        ErrorCode::ProviderCredentialRevoked
-    );
+    assert!(matches!(
+        plan_of(&ports, &command(minimal_request())).await,
+        Err(AppError::Port(_))
+    ));
 }
 
 #[tokio::test]
@@ -421,10 +469,15 @@ async fn each_catalog_refusal_keeps_its_own_code() {
 async fn egress_this_plane_cannot_supply_is_refused_rather_than_silently_dropped() {
     let ports = ScriptedPorts::idle().without_public_internet_egress();
     let mut request = minimal_request();
-    request.network = Some(models::SessionNetworkRequest {
-        hands: models::HandsNetworkRequest {
-            mode: models::NetworkMode::PublicInternet,
-        },
+    request.sandbox = Some(models::SessionSandboxRequest {
+        compute: None,
+        enabled: Some(true),
+        network: Some(models::SessionNetworkRequest {
+            hands: models::HandsNetworkRequest {
+                mode: models::NetworkMode::PublicInternet,
+            },
+        }),
+        packages: None,
     });
     assert_eq!(
         plan_of(&ports, &command(request))
@@ -446,11 +499,16 @@ async fn an_ecosystem_no_published_image_carries_is_refused() {
     // from the plane's own asserted facts, not from a per-request read.
     let ports = ScriptedPorts::idle().with_deployment(deployment);
     let mut request = minimal_request();
-    request.packages = Some(vec![models::PackageRequest {
-        ecosystem: models::PackageEcosystem::Npm,
-        name: "left-pad".to_owned(),
-        version: "1.0.0".to_owned(),
-    }]);
+    request.sandbox = Some(models::SessionSandboxRequest {
+        compute: None,
+        enabled: Some(true),
+        network: None,
+        packages: Some(vec![models::PackageRequest {
+            ecosystem: models::PackageEcosystem::Npm,
+            name: "left-pad".to_owned(),
+            version: "1.0.0".to_owned(),
+        }]),
+    });
     assert_eq!(
         plan_of(&ports, &command(request))
             .await
@@ -545,29 +603,37 @@ async fn the_257th_initial_file_is_refused() {
 
 /// A request at every schema ceiling the create can reach.
 fn maximal_request(files: usize, packages: usize, metadata: usize) -> models::SessionCreateRequest {
-    let names = |count: usize, prefix: &str| -> Option<Vec<aex_wire::ids::ResourceName>> {
-        (count > 0).then(|| {
-            (0..count)
-                .map(|index| {
-                    aex_wire::ids::ResourceName::parse(&format!("{prefix}-{index}"))
-                        .expect("a generated fixture name is within the grammar")
-                })
-                .collect()
-        })
+    let mounts = |count: usize, prefix: &str| -> Vec<models::WorkspaceFileMount> {
+        (0..count)
+            .map(|index| {
+                let name = aex_wire::ids::ResourceName::parse(&format!("{prefix}-{index}"))
+                    .expect("a generated fixture name is within the grammar");
+                models::WorkspaceFileMount {
+                    path: aex_wire::ids::FilePath::parse(&format!("/workspace/{name}"))
+                        .expect("fixture paths are normalized"),
+                    name,
+                }
+            })
+            .collect()
     };
     let mut request = minimal_request();
     request.registered = Some(models::SessionRegisteredSelection {
-        files: names(files, "file"),
+        mounts: mounts(files, "file"),
     });
-    request.packages = Some(
-        (0..packages)
-            .map(|index| models::PackageRequest {
-                ecosystem: models::PackageEcosystem::Apt,
-                name: format!("pkg-{index}"),
-                version: "1.0.0".to_owned(),
-            })
-            .collect(),
-    );
+    request.sandbox = Some(models::SessionSandboxRequest {
+        compute: None,
+        enabled: Some(true),
+        network: None,
+        packages: Some(
+            (0..packages)
+                .map(|index| models::PackageRequest {
+                    ecosystem: models::PackageEcosystem::Apt,
+                    name: format!("pkg-{index}"),
+                    version: "1.0.0".to_owned(),
+                })
+                .collect(),
+        ),
+    });
     request.metadata = Some(
         (0..metadata)
             .map(|index| {
@@ -588,8 +654,7 @@ fn pointers_for(
     let count = request
         .registered
         .as_ref()
-        .and_then(|registered| registered.files.as_ref())
-        .map_or(0, Vec::len);
+        .map_or(0, |registered| registered.mounts.len());
     pointers_for_sizes(request, &vec![1; count])
 }
 
@@ -602,11 +667,11 @@ fn pointers_for_sizes(
         return Vec::new();
     };
     registered
-        .files
+        .mounts
         .iter()
-        .flatten()
         .zip(sizes)
-        .map(|(name, size_bytes)| {
+        .map(|(mount, size_bytes)| {
+            let name = &mount.name;
             let value = models::RegisteredFileRead {
                 content: models::ContentRef {
                     sha256: aex_wire::ids::ContentHash::of(name.as_str().as_bytes()),
@@ -614,8 +679,6 @@ fn pointers_for_sizes(
                 },
                 media_type: "application/octet-stream".to_owned(),
                 mode: models::RegisteredFileMode::V0644,
-                mount_path: aex_wire::ids::FilePath::parse(&format!("/workspace/{name}"))
-                    .expect("fixture paths are normalized"),
             };
             let canonical = aex_wire::canonical::CanonicalJson::parse(
                 &aex_wire::canonical::to_jcs_string(&value)
@@ -627,6 +690,8 @@ fn pointers_for_sizes(
             let revision = aex_content_domain::identity::Revision::FIRST;
             aex_workspace_domain::RegistryPointer {
                 row: aex_workspace_domain::RegistryRow {
+                    state: aex_workspace_domain::RegistryState::Ready,
+                    failure_code: None,
                     workspace: session.workspace,
                     kind: aex_content_domain::RegistryKind::File,
                     name: name.clone(),
@@ -655,16 +720,19 @@ fn request_and_file_pointers(
 ) {
     let mut request = minimal_request();
     request.registered = Some(models::SessionRegisteredSelection {
-        files: Some(
-            sizes
-                .iter()
-                .enumerate()
-                .map(|(index, _)| {
-                    aex_wire::ids::ResourceName::parse(&format!("file-{index}"))
-                        .expect("fixture names are valid")
-                })
-                .collect(),
-        ),
+        mounts: sizes
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let name = aex_wire::ids::ResourceName::parse(&format!("file-{index}"))
+                    .expect("fixture names are valid");
+                models::WorkspaceFileMount {
+                    path: aex_wire::ids::FilePath::parse(&format!("/workspace/{name}"))
+                        .expect("fixture paths are valid"),
+                    name,
+                }
+            })
+            .collect(),
     });
     let pointers = pointers_for_sizes(&request, sizes);
     (request, pointers)
@@ -708,7 +776,7 @@ proptest! {
 #[tokio::test]
 async fn a_selection_object_that_names_nothing_writes_no_session_content() {
     let mut request = minimal_request();
-    request.registered = Some(models::SessionRegisteredSelection { files: None });
+    request.registered = Some(models::SessionRegisteredSelection { mounts: Vec::new() });
     let ports = ScriptedPorts::idle();
     let plan = plan_of(&ports, &command(request))
         .await

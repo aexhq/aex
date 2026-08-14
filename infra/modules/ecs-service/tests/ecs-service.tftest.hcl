@@ -998,8 +998,8 @@ run "a_named_service_registers_with_cloud_map_and_no_load_balancer" {
   command = plan
 
   variables {
-    name                      = "tool-executor"
-    task_definition_family    = "aex-dev-eu-west-1-tool-executor"
+    name                      = "private-worker"
+    task_definition_family    = "aex-dev-eu-west-1-private-worker"
     service_discovery_arn     = "arn:aws:servicediscovery:eu-west-1:000000000000:service/srv-0123456789abcdef"
     client_security_group_ids = ["sg-0123456789abcdef3"]
     autoscaling_metrics       = []
@@ -1024,8 +1024,8 @@ run "a_named_service_admits_its_declared_client_and_nothing_else" {
   command = plan
 
   variables {
-    name                      = "tool-executor"
-    task_definition_family    = "aex-dev-eu-west-1-tool-executor"
+    name                      = "private-worker"
+    task_definition_family    = "aex-dev-eu-west-1-private-worker"
     service_discovery_arn     = "arn:aws:servicediscovery:eu-west-1:000000000000:service/srv-0123456789abcdef"
     client_security_group_ids = ["sg-0123456789abcdef3"]
     autoscaling_metrics       = []
@@ -1060,8 +1060,8 @@ run "a_named_service_with_no_declared_client_admits_nothing" {
   command = plan
 
   variables {
-    name                      = "tool-executor"
-    task_definition_family    = "aex-dev-eu-west-1-tool-executor"
+    name                      = "private-worker"
+    task_definition_family    = "aex-dev-eu-west-1-private-worker"
     service_discovery_arn     = "arn:aws:servicediscovery:eu-west-1:000000000000:service/srv-0123456789abcdef"
     client_security_group_ids = []
     autoscaling_metrics       = []

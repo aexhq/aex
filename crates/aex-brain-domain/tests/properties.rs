@@ -104,39 +104,9 @@ proptest! {
             .iter()
             .filter(|turn| turn.role == Role::Assistant)
             .count();
-        // A compaction replaces the prefix, so history can hold fewer — never more.
+        // Root run closure may clear prior conversational state, so history can hold fewer
+        // assistant turns than the append-only journal, never more.
         prop_assert!(in_history <= proved, "{in_history} assistant turns from {proved} messages");
-    }
-
-    /// F6 — a compacted fold agrees with an uncompacted one on every counter.
-    #[test]
-    fn f6_compaction_preserves_every_counter(history in arb_any_history()) {
-        let Ok(state) = fold(&history) else { return Ok(()) };
-        let compacted = aex_brain_test_support::journal_gen::compaction(
-            state.tail.unwrap_or(JournalSeq::ZERO),
-            aex_brain_domain::journal::PreservedCounters {
-                usage: state.usage,
-                assistant_turns: state.assistant_turns,
-                spawn_ordinal: state.spawn_ordinal,
-            },
-        );
-        if state.is_finished() {
-            return Ok(());
-        }
-        let mut after = state.clone();
-        let entry = JournalEntry::seal(
-            after.expected_seq(),
-            aex_brain_domain::ids::Timestamp(0),
-            compacted,
-        )
-        .expect("the compaction canonicalizes");
-        prop_assume!(apply(&mut after, &entry).is_ok());
-        prop_assert_eq!(after.budget, state.budget);
-        prop_assert_eq!(after.usage, state.usage);
-        prop_assert_eq!(after.children, state.children);
-        prop_assert_eq!(after.joins, state.joins);
-        prop_assert_eq!(after.pending_calls, state.pending_calls);
-        prop_assert_eq!(after.assistant_turns, state.assistant_turns);
     }
 
     /// F7 — conserved dimensions never decrease; concurrent dimensions never exceed the

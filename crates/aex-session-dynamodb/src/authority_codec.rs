@@ -131,7 +131,7 @@ impl ActiveMessageV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct SessionLifecycleV1 {
-    generation: GenerationId,
+    generation: Option<GenerationId>,
     revision: u64,
     status: String,
     active: Option<ActiveMessageV1>,
@@ -303,7 +303,7 @@ struct SessionV1 {
     /// The whole `HandsGeneration` tuple is retained rather than a projection:
     /// create has already materialized this exact generation before publishing
     /// the head, and later activity must never reconstruct missing launch facts.
-    pinned_runtime: aex_runtime_control::generation::HandsGeneration,
+    pinned_runtime: Option<aex_runtime_control::generation::HandsGeneration>,
     provider_credential: ProviderCredentialPinV1,
     origin: Option<OriginV1>,
     resolved: ResolvedV1,
@@ -328,7 +328,10 @@ impl From<&Session> for SessionV1 {
             mutation_guard: session.mutation_guard.map(Into::into),
             root_agent: session.root_agent,
             generation: session.generation,
-            pinned_runtime: session.pinned_runtime.definition().clone(),
+            pinned_runtime: session
+                .pinned_runtime
+                .as_ref()
+                .map(|runtime| runtime.definition().clone()),
             provider_credential: session.provider_credential.into(),
             origin: session.lineage.origin.map(Into::into),
             resolved: (&session.resolved).into(),
@@ -349,7 +352,8 @@ impl SessionV1 {
         let lifecycle = self.lifecycle.decode()?;
         if status != lifecycle.status
             || self.active_run != lifecycle.active.map(|active| active.run)
-            || self.generation != Some(lifecycle.generation)
+            || self.generation != lifecycle.generation
+            || self.generation.is_some() != self.pinned_runtime.is_some()
         {
             return Err(malformed(
                 AUTHORITY_DOCUMENT,
@@ -358,11 +362,7 @@ impl SessionV1 {
         }
         let provider_credential: ProviderCredentialPin = self.provider_credential.into();
         let resolved = self.resolved.decode()?;
-        let resolved_wire: aex_wire::models::ResolvedConfig =
-            serde_json::from_value(resolved.document().to_value())
-                .map_err(|error| malformed(AUTHORITY_DOCUMENT, error.to_string()))?;
         if provider_credential.provider != resolved.provider()
-            || provider_credential.credential != resolved_wire.provider_credential_id
             || provider_credential.revision == 0
             || provider_credential.source_generation == 0
         {
@@ -392,13 +392,18 @@ impl SessionV1 {
             // is re-asserted against the head's own, so a row whose pinned
             // definition names another tenant is a decode failure rather than a
             // generation another session could launch.
-            pinned_runtime: aex_session_domain::PinnedRuntime::new(
-                id,
-                self.workspace,
-                self.organization,
-                self.pinned_runtime,
-            )
-            .map_err(|error| malformed(AUTHORITY_DOCUMENT, error.to_string()))?,
+            pinned_runtime: self
+                .pinned_runtime
+                .map(|definition| {
+                    aex_session_domain::PinnedRuntime::new(
+                        id,
+                        self.workspace,
+                        self.organization,
+                        definition,
+                    )
+                })
+                .transpose()
+                .map_err(|error| malformed(AUTHORITY_DOCUMENT, error.to_string()))?,
             provider_credential,
             lineage: Lineage {
                 origin: self.origin.map(OriginV1::decode),
@@ -814,7 +819,10 @@ pub fn encode_session_deletion_head(head: &SessionDeletionHead) -> Item {
         .set("mutationGuardOperationId", s(head.operation.to_string()))
         .set("deletionEpoch", n(head.epoch.0))
         .set("revision", n(head.revision.0))
-        .set("generationId", s(head.generation.to_string()))
+        .set_opt(
+            "generationId",
+            head.generation.map(|generation| s(generation.to_string())),
+        )
         .set("status", s("deleting"))
         .set("lifecycle", s("deleting"))
         .set("startedAt", crate::attr::stamp(head.started_at))
@@ -840,7 +848,7 @@ pub fn decode_session_deletion_head(
         operation: row.id::<OperationId>("operationId")?,
         epoch: DeletionEpoch(row.u64("deletionEpoch")?),
         revision: SessionRevision(row.u64("revision")?),
-        generation: row.id::<GenerationId>("generationId")?,
+        generation: row.opt_id::<GenerationId>("generationId")?,
         started_at: row.timestamp("startedAt")?,
     };
     let expected = keys::head(session);

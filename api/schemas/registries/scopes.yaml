@@ -1,28 +1,14 @@
-# The authorization scope registry.
-#
-# The set is derived mechanically from the route table: a scope this file lacks
-# is a route change, not a registry change.
+# The launch authorization vocabulary. Personal-account browser sessions use
+# account/control/billing scopes; workspace keys use only session/file scopes.
 scopes:
-  - { scope: "account:read", doc: "Read the caller's account and operational state." }
-  - { scope: "account:write", doc: "Decide the caller's own device authorizations and close their own browser session." }
-  - { scope: "organizations:read", doc: "List and read organizations the caller belongs to." }
-  - { scope: "organizations:write", doc: "Create organizations." }
-  - { scope: "memberships:read", doc: "List memberships of an organization." }
-  - { scope: "memberships:write", doc: "Invite people to an organization." }
-  - { scope: "memberships:accept", doc: "Redeem invitations addressed to the caller's own verified email." }
-  - { scope: "workspaces:read", doc: "List and read workspaces." }
-  - { scope: "workspaces:write", doc: "Create workspaces." }
-  - { scope: "workspaces:delete", doc: "Admit the global workspace-deletion operation." }
-  - { scope: "api_keys:read", doc: "List workspace API key metadata." }
-  - { scope: "api_keys:write", doc: "Mint and revoke workspace API keys." }
+  - { scope: "account:read", doc: "Read bootstrap and personal-account state." }
+  - { scope: "account:write", doc: "Close the caller's own browser session." }
+  - { scope: "api_keys:read", doc: "List fixed-workspace API key metadata." }
+  - { scope: "api_keys:write", doc: "Mint and revoke fixed-workspace API keys." }
   - { scope: "billing:read", doc: "Read prepaid balance, card metadata, transactions and rated usage." }
   - { scope: "billing:write", doc: "Set up or remove cards and create manual top-up checkouts." }
-  - { scope: "operations:read", doc: "Read durable operation records." }
-  - { scope: "operations:write", doc: "Request cancellation of a durable operation." }
-  - { scope: "workspace:read", doc: "Read the current workspace and its effective limits." }
-  - { scope: "sessions:read", doc: "Read sessions and sealed messages." }
-  - { scope: "sessions:write", doc: "Create sessions, send messages, and cancel, suspend, resume or terminate a session." }
+  - { scope: "sessions:read", doc: "Read sessions, messages and telemetry." }
+  - { scope: "sessions:write", doc: "Create sessions, send messages, cancel and terminate." }
   - { scope: "sessions:delete", doc: "Admit irreversible session deletion." }
-  - { scope: "files:live", doc: "Access live session files, automatically resuming the same suspended generation." }
-  - { scope: "resources:read", doc: "Read registered opaque workspace files and mint their download grants." }
-  - { scope: "resources:write", doc: "Replace and delete registered opaque workspace files and stage uploads." }
+  - { scope: "resources:read", doc: "Read current workspace files and mint downloads." }
+  - { scope: "resources:write", doc: "Overwrite/delete current workspace files and upload bytes." }

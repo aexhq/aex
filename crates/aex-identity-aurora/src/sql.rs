@@ -135,158 +135,6 @@ DELETE FROM identity.external_identity e \
         OR EXISTS (SELECT 1 FROM identity.user u \
                     WHERE u.id = e.user_id AND u.email_verified_at IS NOT NULL))";
 
-/// Inserts a device authorization.
-pub const INSERT_DEVICE_AUTHORIZATION: &str = "\
-INSERT INTO identity.device_authorization \
-  (id, device_verifier, user_code_hash, pepper_version, status, requested_scopes, \
-   issued_at, expires_at, poll_interval_ms) \
-VALUES (:id, :device_verifier, :user_code_hash, :pepper_version, 'pending', \
-        ARRAY(SELECT jsonb_array_elements_text(CAST(:requested_scopes AS jsonb))), \
-        TIMESTAMPTZ 'epoch' + :issued_at_ms * INTERVAL '1 millisecond', \
-        TIMESTAMPTZ 'epoch' + :expires_at_ms * INTERVAL '1 millisecond', :poll_interval_ms)";
-
-/// Persists the next poll instant and any slow-down interval.
-pub const UPDATE_DEVICE_POLL: &str = "\
-UPDATE identity.device_authorization \
-   SET poll_interval_ms = :poll_interval_ms, \
-       last_polled_at = TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond' \
- WHERE id = :device_id AND status IN ('pending','approved')";
-
-/// Reads one account token after a mutation or replay.
-pub const RESOLVE_ACCOUNT_TOKEN: &str = "\
-SELECT t.id, t.user_id, t.name, t.scopes, t.origin, t.pepper_version, \
-       (EXTRACT(EPOCH FROM t.issued_at)*1000)::bigint AS issued_at_ms, \
-       (EXTRACT(EPOCH FROM t.expires_at)*1000)::bigint AS expires_at_ms, \
-       (EXTRACT(EPOCH FROM t.revoked_at)*1000)::bigint AS revoked_at_ms \
-  FROM identity.account_token t WHERE t.id = :token_id";
-
-/// Resolve a device authorization by its device-code id.
-pub const RESOLVE_DEVICE_AUTHORIZATION: &str = "\
-SELECT d.id, d.device_verifier, d.pepper_version, d.status, d.requested_scopes, \
-       d.approved_by_user_id, \
-       (EXTRACT(EPOCH FROM d.approved_at)*1000)::bigint AS approved_at_ms, \
-       (EXTRACT(EPOCH FROM d.consumed_at)*1000)::bigint AS consumed_at_ms, \
-       d.account_token_id, \
-       (EXTRACT(EPOCH FROM d.issued_at)*1000)::bigint AS issued_at_ms, \
-       (EXTRACT(EPOCH FROM d.expires_at)*1000)::bigint AS expires_at_ms, \
-       d.poll_interval_ms, \
-       (EXTRACT(EPOCH FROM d.last_polled_at)*1000)::bigint AS last_polled_at_ms \
-  FROM identity.device_authorization d \
- WHERE d.id = :device_id";
-
-/// Resolves a device authorization by the keyed human-code digest.
-pub const RESOLVE_DEVICE_BY_USER_CODE: &str = "\
-SELECT d.id, d.device_verifier, d.pepper_version, d.status, d.requested_scopes, \
-       d.approved_by_user_id, \
-       (EXTRACT(EPOCH FROM d.approved_at)*1000)::bigint AS approved_at_ms, \
-       (EXTRACT(EPOCH FROM d.consumed_at)*1000)::bigint AS consumed_at_ms, \
-       d.account_token_id, \
-       (EXTRACT(EPOCH FROM d.issued_at)*1000)::bigint AS issued_at_ms, \
-       (EXTRACT(EPOCH FROM d.expires_at)*1000)::bigint AS expires_at_ms, \
-       d.poll_interval_ms, \
-       (EXTRACT(EPOCH FROM d.last_polled_at)*1000)::bigint AS last_polled_at_ms \
-  FROM identity.device_authorization d \
- WHERE d.user_code_hash = :user_code_hash";
-
-/// Approve a device authorization, conditionally, by its keyed user-code digest.
-///
-/// The approver's currency is part of the predicate rather than a prior read:
-/// an `EXISTS` over a live session belonging to an active person makes
-/// "only a current dashboard actor may approve" a property of the write.
-pub const APPROVE_DEVICE_AUTHORIZATION: &str = "\
-UPDATE identity.device_authorization d \
-   SET status = 'approved', \
-       approved_by_user_id = :actor_user_id, \
-       approved_at = (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
- WHERE d.user_code_hash = :user_code_hash \
-   AND d.status = 'pending' \
-   AND d.expires_at > (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
-   AND EXISTS (SELECT 1 FROM identity.dashboard_session s \
-                JOIN identity.user u ON u.id = s.user_id \
-               WHERE s.id = :actor_session_id \
-                 AND s.user_id = :actor_user_id \
-                 AND s.revoked_at IS NULL \
-                 AND s.expires_at > (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
-                 AND u.status = 'active')";
-
-/// Refuse a device authorization, conditionally, by its keyed user-code digest.
-///
-/// Carries the same actor `EXISTS` as [`APPROVE_DEVICE_AUTHORIZATION`], for the
-/// same reason. `decide_device` binds `:actor_user_id` and `:actor_session_id`
-/// for both paths; this statement referenced neither, so a caller who learned a
-/// user code could refuse a sign-in they had no relationship to, and could do
-/// it without holding any session at all. Refusal is a cross-principal effect —
-/// it ends somebody else's sign-in — which the priority order counts as
-/// correctness, not preference.
-///
-/// It admits **only** `pending`. Retracting an approved grant is not a
-/// capability this platform offers, and it never was one: `dev_approved_ck`
-/// asserts `(status IN ('approved','consumed')) = (approved_by_user_id IS NOT
-/// NULL)`, so writing `denied` over an approved row while leaving
-/// `approved_by_user_id` set raises 23514. The old `IN ('pending','approved')`
-/// could therefore only ever produce a check violation, never a retraction.
-/// The way to undo a grant that was already redeemed is
-/// [`REVOKE_ACCOUNT_TOKEN`], which names the token and matches `user_id`.
-pub const DENY_DEVICE_AUTHORIZATION: &str = "\
-UPDATE identity.device_authorization d \
-   SET status = 'denied' \
- WHERE d.user_code_hash = :user_code_hash \
-   AND d.status = 'pending' \
-   AND d.expires_at > (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
-   AND EXISTS (SELECT 1 FROM identity.dashboard_session s \
-                JOIN identity.user u ON u.id = s.user_id \
-               WHERE s.id = :actor_session_id \
-                 AND s.user_id = :actor_user_id \
-                 AND s.revoked_at IS NULL \
-                 AND s.expires_at > (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
-                 AND u.status = 'active')";
-
-/// Redeem an approved device grant, conditionally.
-///
-/// Runs in the same transaction as the account-token insert. A grant consumed
-/// without a token is a credential the caller can never obtain; a token without
-/// a consumed grant is one they could obtain twice.
-///
-/// It runs **after** [`INSERT_ACCOUNT_TOKEN`], never before. `:token_id` lands
-/// in `account_token_id`, whose foreign key is not `DEFERRABLE`, so the row it
-/// names has to exist by the time this statement runs or `PostgreSQL` answers
-/// 23503. `store::consume_device_authorization` owns that order and
-/// `a_redemption_inserts_the_token_before_the_grant_points_at_it` pins it.
-pub const CONSUME_DEVICE_AUTHORIZATION: &str = "\
-UPDATE identity.device_authorization \
-   SET status = 'consumed', \
-       account_token_id = :token_id, \
-       consumed_at = (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
- WHERE id = :device_id \
-   AND status = 'approved' \
-   AND expires_at > (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')";
-
-/// Insert the account token a redeemed grant mints.
-pub const INSERT_ACCOUNT_TOKEN: &str = "\
-INSERT INTO identity.account_token \
-  (id, user_id, verifier, pepper_version, name, scopes, origin, issued_at, expires_at) \
-VALUES (:id, :user_id, :verifier, :pepper_version, :name, \
-        ARRAY(SELECT jsonb_array_elements_text(CAST(:scopes AS jsonb))), 'device_flow', \
-        (TIMESTAMPTZ 'epoch' + :issued_at_ms * INTERVAL '1 millisecond'), \
-        (TIMESTAMPTZ 'epoch' + :expires_at_ms * INTERVAL '1 millisecond'))";
-
-/// Revoke an account token, conditionally.
-pub const REVOKE_ACCOUNT_TOKEN: &str = "\
-UPDATE identity.account_token \
-   SET revoked_at = (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
- WHERE id = :token_id AND user_id = :user_id AND revoked_at IS NULL \
-   AND expires_at > (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')";
-
-/// How many live tokens a person still holds.
-///
-/// Read in the same transaction as a revocation, so the `user` epoch advances
-/// exactly when the last one goes.
-pub const COUNT_LIVE_ACCOUNT_TOKENS: &str = "\
-SELECT count(*) AS live \
-  FROM identity.account_token \
- WHERE user_id = :user_id AND revoked_at IS NULL \
-   AND expires_at > (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')";
-
 /// Set a person's status, conditionally on it actually changing.
 pub const SET_USER_STATUS: &str = "\
 UPDATE identity.user \
@@ -358,17 +206,6 @@ pub const ALL: &[(&str, &str)] = &[
     ("INSERT_DASHBOARD_SESSION", INSERT_DASHBOARD_SESSION),
     ("REVOKE_DASHBOARD_SESSION", REVOKE_DASHBOARD_SESSION),
     ("UNLINK_EXTERNAL_IDENTITY", UNLINK_EXTERNAL_IDENTITY),
-    ("INSERT_DEVICE_AUTHORIZATION", INSERT_DEVICE_AUTHORIZATION),
-    ("UPDATE_DEVICE_POLL", UPDATE_DEVICE_POLL),
-    ("RESOLVE_DEVICE_AUTHORIZATION", RESOLVE_DEVICE_AUTHORIZATION),
-    ("RESOLVE_DEVICE_BY_USER_CODE", RESOLVE_DEVICE_BY_USER_CODE),
-    ("APPROVE_DEVICE_AUTHORIZATION", APPROVE_DEVICE_AUTHORIZATION),
-    ("DENY_DEVICE_AUTHORIZATION", DENY_DEVICE_AUTHORIZATION),
-    ("CONSUME_DEVICE_AUTHORIZATION", CONSUME_DEVICE_AUTHORIZATION),
-    ("INSERT_ACCOUNT_TOKEN", INSERT_ACCOUNT_TOKEN),
-    ("RESOLVE_ACCOUNT_TOKEN", RESOLVE_ACCOUNT_TOKEN),
-    ("REVOKE_ACCOUNT_TOKEN", REVOKE_ACCOUNT_TOKEN),
-    ("COUNT_LIVE_ACCOUNT_TOKENS", COUNT_LIVE_ACCOUNT_TOKENS),
     ("SET_USER_STATUS", SET_USER_STATUS),
     ("BUMP_USER_EPOCH", BUMP_USER_EPOCH),
     ("ACTIVE_IDENTITY_PEPPER", ACTIVE_IDENTITY_PEPPER),
@@ -387,9 +224,5 @@ pub const ALL: &[(&str, &str)] = &[
 /// `statements.rs` asserts.
 pub const SINGLE_USE: &[(&str, &str)] = &[
     ("CONSUME_EMAIL_CHALLENGE", CONSUME_EMAIL_CHALLENGE),
-    ("APPROVE_DEVICE_AUTHORIZATION", APPROVE_DEVICE_AUTHORIZATION),
-    ("DENY_DEVICE_AUTHORIZATION", DENY_DEVICE_AUTHORIZATION),
-    ("CONSUME_DEVICE_AUTHORIZATION", CONSUME_DEVICE_AUTHORIZATION),
     ("REVOKE_DASHBOARD_SESSION", REVOKE_DASHBOARD_SESSION),
-    ("REVOKE_ACCOUNT_TOKEN", REVOKE_ACCOUNT_TOKEN),
 ];

@@ -24,6 +24,7 @@
 
 pub mod budget;
 pub mod canonical;
+pub mod checkpoint;
 pub mod child;
 pub mod commit;
 pub mod context;
@@ -31,6 +32,7 @@ pub mod effect;
 pub mod fold;
 pub mod ids;
 pub mod journal;
+pub mod mcp;
 pub mod planner;
 pub mod wire_pending;
 

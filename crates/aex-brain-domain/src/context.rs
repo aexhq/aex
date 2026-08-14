@@ -1,23 +1,19 @@
-//! Context policy: a pure view layer over the fold.
+//! Context policy and non-destructive rolling checkpoint construction.
 //!
-//! The journal is never mutated. Everything here produces a *view* of the model-visible
-//! history for one request, so a retry of the same request produces byte-identical input
-//! and the provider's prompt cache is not invalidated by our own non-determinism.
+//! The journal is never mutated. A checkpoint replaces only the model-visible history in
+//! an immutable fold baseline, while request rendering applies deterministic result bounds.
 
 use serde::{Deserialize, Serialize};
 
+use crate::checkpoint::{CHECKPOINT_SCHEMA_VERSION, CheckpointMetadata, ContextCheckpoint};
 use crate::fold::FoldState;
+use crate::ids::{AgentKey, ContentHash, Timestamp};
 use aex_model_catalog::primitives::BoundedString;
 
-use crate::wire_pending::{
-    CanonicalBlock, CanonicalMessage, NormalizedUsage, QualifiedModel, Role, ToolResultPart,
-};
+use crate::wire_pending::{CanonicalBlock, CanonicalMessage, QualifiedModel, Role, ToolResultPart};
 
-/// The text a cleared block is replaced by.
-///
-/// Deterministic on purpose: a retry that re-clears the same block produces the same
-/// bytes, so clearing is idempotent and a re-request is a cache hit rather than a miss.
-pub const CLEARED_PLACEHOLDER: &str = "[cleared by context policy]";
+/// The marker charged against the byte budget of a truncated tool result.
+pub const TRUNCATED_PLACEHOLDER: &str = "[tool result truncated]";
 
 /// How many trailing turns are never cleared.
 pub const PROTECTED_TAIL_TURNS: usize = 3;
@@ -118,43 +114,105 @@ fn stable_prefix_tokens(state: &FoldState, prompt_tokens: u64) -> u64 {
     prompt_tokens.saturating_mul(stable) / total
 }
 
-/// Produces the model-visible turns for one request.
+/// Produces the current checkpoint-or-journal model history without any
+/// semantic prefix clearing.
 ///
-/// The result is a *view*: the journal is untouched, and calling this twice on the same
-/// fold produces identical bytes.
+/// Old history is reduced only when a verified checkpoint baseline is built;
+/// this request-time view merely enforces per-result byte bounds.
 #[must_use]
-pub fn view(
+pub fn render(state: &FoldState, policy: &ContextPolicy) -> Vec<CanonicalMessage> {
+    state
+        .model_history
+        .iter()
+        .map(|turn| capped(turn, policy.tool_result_bytes))
+        .collect()
+}
+
+/// Builds one deterministic rolling checkpoint at a clean model boundary.
+///
+/// The compacted baseline retains a bounded extractive representation of the
+/// complete prefix plus the protected recent tail. Every non-context execution
+/// field is preserved exactly, and the original journal is untouched.
+#[must_use]
+pub fn build_checkpoint(
+    key: AgentKey,
     state: &FoldState,
-    policy: &ContextPolicy,
-    clear_before: usize,
-) -> Vec<CanonicalMessage> {
+    previous: Option<&CheckpointMetadata>,
+    target_tokens: u64,
+    created_at: Timestamp,
+) -> Option<ContextCheckpoint> {
+    if !state.pending_calls.is_empty()
+        || !state.resolved_calls.is_empty()
+        || !state.open_effects.is_empty()
+        || !state.waits.is_empty()
+    {
+        return None;
+    }
+    let tail = state.tail?;
+    let covers_hash = state.hashes.last().copied()?;
     let protected_from = state
         .model_history
         .len()
         .saturating_sub(PROTECTED_TAIL_TURNS);
-    let clear_before = clear_before.min(protected_from);
-    state
-        .model_history
-        .iter()
-        .enumerate()
-        .map(|(index, turn)| {
-            if index < clear_before {
-                cleared(turn)
-            } else {
-                capped(turn, policy.tool_result_bytes)
-            }
-        })
-        .collect()
-}
+    // A rolling baseline already has one summary turn. Wait for at least one
+    // additional complete prefix turn before producing the next object.
+    if protected_from == 0 || (previous.is_some() && protected_from == 1) {
+        return None;
+    }
+    let source = serde_json::to_vec(state).ok()?;
+    let source_hash = ContentHash::of(&source);
+    let previous_id = previous.map(|metadata| metadata.id);
+    let prefix = serde_json::to_vec(&state.model_history[..protected_from]).ok()?;
+    let target_bytes = usize::try_from(target_tokens.saturating_mul(4))
+        .unwrap_or(usize::MAX)
+        .max(1_024)
+        .min(aex_model_catalog::canonical::TEXT_MAX);
+    let mut summary = String::from("[checkpoint summary; source journal remains authoritative]\n");
+    let available = target_bytes.saturating_sub(summary.len());
+    summary.push_str(&String::from_utf8_lossy(
+        &prefix[..prefix.len().min(available)],
+    ));
 
-fn cleared(turn: &CanonicalMessage) -> CanonicalMessage {
-    CanonicalMessage {
-        role: turn.role,
+    let mut compacted = state.clone();
+    compacted.model_history = vec![CanonicalMessage {
+        role: Role::User,
         blocks: vec![CanonicalBlock::Text {
-            text: BoundedString::truncating(CLEARED_PLACEHOLDER),
+            text: BoundedString::truncating(&summary),
             annotations: Vec::new(),
         }],
+    }];
+    compacted
+        .model_history
+        .extend_from_slice(&state.model_history[protected_from..]);
+    // The baseline itself proves the covered prefix. Future duplicate journal
+    // rows at or before the boundary are ignored, while new entries append from
+    // `covers_through + 1` and retain only their hashes.
+    compacted.hashes.clear();
+    compacted.base_seq = tail.next();
+
+    let history_bytes = serde_json::to_vec(&compacted.model_history).ok()?;
+    let approximate_tokens = u64::try_from(history_bytes.len().div_ceil(4)).unwrap_or(u64::MAX);
+    let mut identity = Vec::with_capacity(96);
+    identity.extend_from_slice(&source_hash.0);
+    if let Some(previous) = previous_id {
+        identity.extend_from_slice(&previous.0);
     }
+    identity.extend_from_slice(&tail.get().to_be_bytes());
+    identity.extend_from_slice(&created_at.millis().to_be_bytes());
+    let id = ContentHash::of(&identity);
+    Some(ContextCheckpoint {
+        schema_version: CHECKPOINT_SCHEMA_VERSION,
+        key,
+        id,
+        previous: previous_id,
+        covers_through: tail,
+        covers_hash,
+        source_hash,
+        approximate_tokens,
+        compactor: "aex-extractive-v1".to_owned(),
+        created_at,
+        state: compacted,
+    })
 }
 
 fn capped(turn: &CanonicalMessage, tool_result_bytes: usize) -> CanonicalMessage {
@@ -204,7 +262,7 @@ fn cap_block(block: &CanonicalBlock, limit: usize) -> CanonicalBlock {
                     }
                 } else {
                     ToolResultPart::Text {
-                        text: BoundedString::truncating(CLEARED_PLACEHOLDER),
+                        text: BoundedString::truncating(TRUNCATED_PLACEHOLDER),
                     }
                 }
             }
@@ -230,38 +288,35 @@ fn truncate_on_char_boundary(
     if text.len() <= limit {
         return BoundedString::truncating(text);
     }
-    // `CLEARED_PLACEHOLDER` is ASCII, so every byte index inside it is a character
+    // `TRUNCATED_PLACEHOLDER` is ASCII, so every byte index inside it is a character
     // boundary and the final clamp can never split a character.
-    let keep = limit.saturating_sub(CLEARED_PLACEHOLDER.len());
+    let keep = limit.saturating_sub(TRUNCATED_PLACEHOLDER.len());
     let mut end = keep;
     while end > 0 && !text.is_char_boundary(end) {
         end -= 1;
     }
     let mut truncated = text[..end].to_owned();
-    truncated.push_str(CLEARED_PLACEHOLDER);
+    truncated.push_str(TRUNCATED_PLACEHOLDER);
     truncated.truncate(limit);
     BoundedString::truncating(&truncated)
-}
-
-/// The usage a compaction must carry forward.
-#[must_use]
-pub const fn preserved_usage(state: &FoldState) -> NormalizedUsage {
-    state.usage
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CLEARED_PLACEHOLDER, ContextPolicy, MAX_HYDRATED_CONTEXT_BYTES, PROTECTED_TAIL_TURNS,
-        decide, view,
+        ContextPolicy, MAX_HYDRATED_CONTEXT_BYTES, PROTECTED_TAIL_TURNS, TRUNCATED_PLACEHOLDER,
+        build_checkpoint, decide, render,
     };
     use crate::fold::FoldState;
-    use crate::ids::ToolCallId;
+    use crate::ids::{
+        AgentId, AgentKey, ContentHash, JournalSeq, SessionId, Timestamp, ToolCallId,
+    };
     use crate::wire_pending::{
         CanonicalBlock, CanonicalMessage, NormalizedUsage, ProviderId, Role, ToolResultPart,
     };
     use aex_model_catalog::document::CapabilitySet;
     use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
+    use uuid::Uuid;
 
     fn capability(window: u64) -> QualifiedModel {
         fixture::qualified_entry_sized(
@@ -373,27 +428,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_last_three_turns_are_never_cleared() {
-        let state = state_with(10, NormalizedUsage::default());
-        let rendered = view(&state, &ContextPolicy::default(), 10);
-        let tail = &rendered[rendered.len() - PROTECTED_TAIL_TURNS..];
-        for turn in tail {
-            assert!(
-                !matches!(&turn.blocks[0], CanonicalBlock::Text { text, .. } if text.as_str() == CLEARED_PLACEHOLDER),
-                "{turn:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn clearing_is_idempotent_so_a_retry_is_byte_identical() {
-        let state = state_with(8, NormalizedUsage::default());
-        let once = view(&state, &ContextPolicy::default(), 4);
-        let twice = view(&state, &ContextPolicy::default(), 4);
-        assert_eq!(once, twice);
-    }
-
     fn only_text(turns: &[CanonicalMessage]) -> &str {
         assert_eq!(turns[0].role, Role::User);
         let CanonicalBlock::ToolResult { content, .. } = &turns[0].blocks[0] else {
@@ -407,7 +441,7 @@ mod tests {
 
     #[test]
     fn a_tool_result_is_capped_at_the_effective_limit_and_capping_is_idempotent() {
-        let limit = CLEARED_PLACEHOLDER.len() + 16;
+        let limit = TRUNCATED_PLACEHOLDER.len() + 16;
         let mut state = FoldState::empty();
         state.model_history.push(CanonicalMessage {
             role: Role::User,
@@ -424,7 +458,7 @@ mod tests {
             ..ContextPolicy::default()
         };
 
-        let once = view(&state, &policy, 0);
+        let once = render(&state, &policy);
         let text = only_text(&once);
         // The marker is charged against the budget, so the capped result is at or below the
         // declared limit. A marker appended past the limit would make the limit a lie and
@@ -435,12 +469,12 @@ mod tests {
             text.len()
         );
         assert!(text.starts_with(&"x".repeat(16)));
-        assert!(text.ends_with(CLEARED_PLACEHOLDER));
+        assert!(text.ends_with(TRUNCATED_PLACEHOLDER));
 
         // Real idempotence: feed the capped result back in, not the original.
         let mut recapped = FoldState::empty();
         recapped.model_history.clone_from(&once);
-        assert_eq!(once, view(&recapped, &policy, 0));
+        assert_eq!(once, render(&recapped, &policy));
     }
 
     #[test]
@@ -456,15 +490,53 @@ mod tests {
                 is_error: false,
             }],
         });
-        let viewed = view(&state, &ContextPolicy::default(), 0);
+        let viewed = render(&state, &ContextPolicy::default());
         assert_eq!(only_text(&viewed), "small");
     }
 
     #[test]
-    fn the_journal_is_never_mutated_by_producing_a_view() {
+    fn rendering_never_mutates_the_fold() {
         let state = state_with(6, NormalizedUsage::default());
         let before = state.clone();
-        let _ = view(&state, &ContextPolicy::default(), 3);
+        let _ = render(&state, &ContextPolicy::default());
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn a_long_context_becomes_one_bounded_rolling_baseline_without_mutating_source() {
+        let mut state = state_with(40, NormalizedUsage::default());
+        for (index, turn) in state.model_history.iter_mut().enumerate() {
+            turn.blocks = vec![text(&format!("turn {index}: {}", "x".repeat(2_048)))];
+        }
+        state.tail = Some(JournalSeq(11));
+        state.hashes = (0_u64..=11)
+            .map(|index| ContentHash::of(&index.to_be_bytes()))
+            .collect();
+        let before = serde_json::to_vec(&state).expect("fixture serializes");
+        let key = AgentKey::new(SessionId(Uuid::from_u128(1)), AgentId(Uuid::from_u128(2)));
+
+        let checkpoint = build_checkpoint(key, &state, None, 256, Timestamp(7))
+            .expect("a clean long prefix is checkpointable");
+
+        assert_eq!(
+            serde_json::to_vec(&state).expect("fixture serializes"),
+            before,
+            "checkpoint construction is a non-destructive view of the source fold"
+        );
+        assert_eq!(checkpoint.state.tail, state.tail);
+        assert_eq!(checkpoint.state.base_seq, JournalSeq(12));
+        assert!(checkpoint.state.hashes.is_empty());
+        assert_eq!(
+            &checkpoint.state.model_history
+                [checkpoint.state.model_history.len() - PROTECTED_TAIL_TURNS..],
+            &state.model_history[state.model_history.len() - PROTECTED_TAIL_TURNS..]
+        );
+        let compacted_bytes = serde_json::to_vec(&checkpoint.state.model_history)
+            .expect("checkpoint history serializes")
+            .len();
+        assert!(
+            compacted_bytes < before.len() / 2,
+            "the retained baseline must stay bounded for a long context"
+        );
     }
 }

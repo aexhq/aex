@@ -27,8 +27,6 @@ pub fn map_commit_failure(failure: CommitFailure) -> StoreError {
 /// Listing them is what makes "map by constraint name" checkable: a constraint
 /// the DDL declares and this list omits is a conflict nobody handles.
 pub const CONFLICT_CONSTRAINTS: &[&str] = &[
-    "at_scopes_ck",
-    "dev_user_code_uk",
     "ec_lower_ck",
     "ext_provider_uk",
     "user_email_lower_ck",

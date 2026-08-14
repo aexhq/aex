@@ -406,15 +406,16 @@ mod tests {
     }
 
     #[test]
-    fn the_six_direct_provider_seams_are_declared_and_no_gateway_seam_is() {
+    fn the_seven_direct_provider_seams_are_declared_and_no_gateway_seam_is() {
         let policy = Policy::embedded();
         for provider in [
             "openai",
             "anthropic",
             "deepseek",
-            "zai",
+            "xai",
+            "meta",
             "moonshotai",
-            "google",
+            "alibaba",
         ] {
             assert!(
                 policy

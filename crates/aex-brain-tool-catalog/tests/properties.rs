@@ -19,13 +19,17 @@ fn builtin_catalog_has_one_stable_row_per_launch_tool() {
         names,
         BTreeSet::from([
             "bash",
+            "create_subagent",
             "edit_file",
+            "mcp_call",
             "read_file",
+            "stop_subagent",
             "storage_persist",
+            "wait_subagents",
             "write_file",
         ])
     );
-    assert_eq!(entries.len(), 5);
+    assert_eq!(entries.len(), 9);
 
     let digest = Sha256::digest(builtin_catalog_bytes().expect("catalog must canonicalize"));
     let mut actual = "sha256:".to_owned();

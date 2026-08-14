@@ -12,16 +12,16 @@ use aex_brain_domain::child::{CancelCause, ChildOutcome};
 use aex_brain_domain::effect::{EffectClass, EffectKind};
 use aex_brain_domain::ids::{ContentHash, JournalSeq, Timestamp, child_agent_id};
 use aex_brain_domain::journal::{
-    FinishReason, JournalEntry, JournalRecord, ParkReason, PreservedCounters, WaitResolution,
+    FinishReason, JournalEntry, JournalRecord, ParkReason, WaitResolution,
 };
 use aex_brain_domain::wire_pending::{CanonicalBlock, JoinMode, StopReason};
 use aex_model_catalog::BoundedString;
 
 use crate::journal_gen::{
-    HistoryBuilder, TURN_USAGE, agent, assistant, assistant_text, assistant_tool_use,
-    child_spawned, child_terminal, compaction, effect_complete, effect_known_failure,
-    effect_prepared, effect_unknown, finished, grant, join, join_opened, model_effect, started,
-    tool_effect, tool_result, user_text, wait, wait_opened, wait_resolved,
+    HistoryBuilder, agent, assistant, assistant_text, assistant_tool_use, child_spawned,
+    child_terminal, effect_complete, effect_known_failure, effect_prepared, effect_unknown,
+    finished, grant, join, join_opened, model_effect, started, tool_effect, tool_result, user_text,
+    wait, wait_opened, wait_resolved,
 };
 
 /// What a golden history is expected to do when folded.
@@ -62,8 +62,6 @@ pub enum Rejection {
     AlreadyStarted,
     /// A budget dimension had no headroom.
     Budget,
-    /// A compaction claimed a prefix past the tail.
-    CompactionOutOfRange,
     /// The envelope hash did not cover the record it carried.
     EnvelopeHashMismatch,
     /// A wait resolved that was never opened.
@@ -95,7 +93,6 @@ impl Rejection {
                 | (Self::DuplicateEffect, E::DuplicateEffect { .. })
                 | (Self::AlreadyStarted, E::AlreadyStarted)
                 | (Self::Budget, E::Budget(_))
-                | (Self::CompactionOutOfRange, E::CompactionOutOfRange { .. })
                 | (Self::EnvelopeHashMismatch, E::EnvelopeHashMismatch { .. })
                 | (Self::UnknownWait, E::UnknownWait { .. })
                 | (Self::UnknownChild, E::UnknownChild { .. })
@@ -367,30 +364,6 @@ pub fn all() -> Vec<Golden> {
     });
 
     cases.push(Golden {
-        name: "a compaction carries every counter forward exactly",
-        history: HistoryBuilder::new()
-            .push(started(grant(1_000)))
-            .push(user_text("go"))
-            .push(effect_prepared(
-                call(2),
-                EffectKind::ModelCall,
-                EffectClass::NonReplayable,
-            ))
-            .push(assistant_text("done", call(2)))
-            .push(effect_complete(call(2)))
-            .push(compaction(
-                JournalSeq(4),
-                PreservedCounters {
-                    usage: TURN_USAGE,
-                    assistant_turns: 1,
-                    spawn_ordinal: 0,
-                },
-            ))
-            .build(),
-        expectation: Expectation::FoldsOpen,
-    });
-
-    cases.push(Golden {
         name: "every terminal reason is absorbing",
         history: HistoryBuilder::new()
             .push(started(grant(1_000)))
@@ -534,15 +507,6 @@ pub fn all() -> Vec<Golden> {
                 .build()
         },
         expectation: Expectation::Rejected(Rejection::Budget),
-    });
-
-    cases.push(Golden {
-        name: "a compaction past the tail is rejected",
-        history: HistoryBuilder::new()
-            .push(started(grant(1_000)))
-            .push(compaction(JournalSeq(99), PreservedCounters::default()))
-            .build(),
-        expectation: Expectation::Rejected(Rejection::CompactionOutOfRange),
     });
 
     cases.push(Golden {

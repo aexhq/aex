@@ -29,7 +29,6 @@ scenarios = []
 [package.metadata.aex.targets]
 properties = "unit"
 control_workspace = "integration"
-identity_account = "integration"
 
 [package.metadata.aex.not_applicable]
 live_suite = "test-only crate; must be absent from every production link graph"
@@ -84,9 +83,4 @@ path = "tests/properties.rs"
 [[test]]
 name = "control_workspace"
 path = "tests/control_workspace.rs"
-required-features = ["integration-engines"]
-
-[[test]]
-name = "identity_account"
-path = "tests/identity_account.rs"
 required-features = ["integration-engines"]

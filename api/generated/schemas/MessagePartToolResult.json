@@ -2,23 +2,45 @@
   "$id": "https://schemas.aex.dev/v1/MessagePartToolResult.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The canonical result of a built-in tool call.",
+  "description": "Bounded tool result; large/full bytes live at its sandbox path and in retained telemetry.",
   "properties": {
     "id": {
-      "description": "The call identity.",
+      "description": "Call identity.",
       "pattern": "^tcl_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "tool_call"
     },
-    "resultDigest": {
-      "description": "The canonical tool-result digest.",
+    "preview": {
+      "description": "Bounded live/model preview.",
+      "maxLength": 65536,
+      "minLength": 0,
+      "type": "string"
+    },
+    "sandboxPath": {
+      "description": "Stable call-scoped full-result path.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-path": "posix"
+    },
+    "sha256": {
+      "description": "Full-result digest.",
       "pattern": "^sha256:[0-9a-f]{64}$",
       "type": "string"
+    },
+    "sizeBytes": {
+      "description": "Full-result length.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "truncated": {
+      "description": "Whether full output exceeded the preview.",
+      "type": "boolean"
     }
   },
   "required": [
     "id",
-    "resultDigest"
+    "preview",
+    "truncated"
   ],
   "title": "MessagePartToolResult",
   "type": "object"

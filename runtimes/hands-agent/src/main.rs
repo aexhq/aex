@@ -23,6 +23,7 @@ mod execute;
 mod file;
 mod host;
 mod image;
+mod mcp_guest;
 mod serve;
 
 use std::sync::Arc;
@@ -186,6 +187,12 @@ pub async fn run(config: &Config) -> Result<(), HandsAgentRunError> {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> std::process::ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("mcp-call") {
+        return mcp_guest::run().await;
+    }
+    if std::env::args().nth(1).as_deref() == Some("mcp-qualify") {
+        return mcp_guest::qualify().await;
+    }
     // Agent diagnostics use the process's own stdout. The Hands protocol is
     // HTTP on the configured listener, and supervised child stdout/stderr are
     // separate pipes, so JSON log lines cannot enter either protocol stream.
@@ -339,49 +346,32 @@ mod boundary {
 
     /// The normal-and-build dependency closure of the shipped binary, by package name.
     fn closure() -> BTreeSet<String> {
-        let metadata = cargo_metadata::MetadataCommand::new()
-            .manifest_path(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
-            .exec()
-            .expect("cargo metadata resolves the graph");
-        let resolve = metadata
-            .resolve
-            .as_ref()
-            .expect("a resolved graph is present");
-        let root = metadata
-            .packages
-            .iter()
-            .find(|package| package.name.as_str() == "hands-agent")
-            .expect("this package is in the graph");
-
-        let mut seen = BTreeSet::new();
-        let mut frontier = vec![root.id.clone()];
-        while let Some(id) = frontier.pop() {
-            let Some(node) = resolve.nodes.iter().find(|node| node.id == id) else {
-                continue;
-            };
-            for dependency in &node.deps {
-                let is_normal = dependency.dep_kinds.iter().any(|kind| {
-                    matches!(
-                        kind.kind,
-                        cargo_metadata::DependencyKind::Normal
-                            | cargo_metadata::DependencyKind::Build
-                    )
-                });
-                if !is_normal {
-                    continue;
-                }
-                let name = metadata
-                    .packages
-                    .iter()
-                    .find(|package| package.id == dependency.pkg)
-                    .map(|package| package.name.to_string())
-                    .unwrap_or_default();
-                if seen.insert(name) {
-                    frontier.push(dependency.pkg.clone());
-                }
-            }
-        }
-        seen
+        // `cargo metadata` resolves features for the whole workspace, which
+        // falsely attributes Brain's remote-MCP HTTP features to this guest's
+        // child-process-only rmcp edge. `cargo tree -p` resolves the artifact
+        // Cargo actually ships and still includes normal/build dependencies.
+        let output = std::process::Command::new(env!("CARGO"))
+            .args([
+                "tree",
+                "-p",
+                "hands-agent",
+                "--edges",
+                "normal,build",
+                "--prefix",
+                "none",
+                "--format",
+                "{p}",
+            ])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("cargo tree resolves the shipped artifact");
+        assert!(output.status.success(), "cargo tree must succeed");
+        String::from_utf8(output.stdout)
+            .expect("cargo tree is UTF-8")
+            .lines()
+            .filter_map(|line| line.split_whitespace().next())
+            .map(ToOwned::to_owned)
+            .collect()
     }
 
     #[test]

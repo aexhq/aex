@@ -8,8 +8,8 @@ use aex_brain_provider_custody::credential::{
 };
 use aex_model_catalog::QualifiedModel;
 use aex_model_catalog::canonical::{
-    CanonicalMessage, CanonicalModelRequest, CorrelationId, ReasoningRequest, Role, SystemBlock,
-    StructuredOutputRequest, ToolChoice,
+    CanonicalMessage, CanonicalModelRequest, CorrelationId, ReasoningRequest, Role,
+    StructuredOutputRequest, SystemBlock, ToolChoice,
 };
 use aex_model_catalog::document::{Capability, CapabilitySet, StructuredOutputLevel};
 use aex_model_catalog::fixture;
@@ -198,26 +198,24 @@ fn the_canonical_corpus_still_round_trips_through_the_vocabulary() {
 #[test]
 fn unsupported_tools_and_structured_output_fail_before_transport() {
     let mut request = request();
-    request.tools.push(aex_model_catalog::canonical::CanonicalToolDef {
-        name: ResourceName::parse("read_file").expect("name"),
-        description: BoundedString::truncating("read a file"),
-        input_schema: CanonicalJson::parse(r#"{"type":"object"}"#).expect("schema"),
-        strict: true,
-    });
+    request
+        .tools
+        .push(aex_model_catalog::canonical::CanonicalToolDef {
+            name: ResourceName::parse("read_file").expect("name"),
+            description: BoundedString::truncating("read a file"),
+            input_schema: CanonicalJson::parse(r#"{"type":"object"}"#).expect("schema"),
+            strict: true,
+        });
     assert!(matches!(
         aex_brain_provider::translate_request(&request),
-        Err(aex_brain_provider::RequestBuildError::UnsupportedCapability(
-            "tool calling"
-        ))
+        Err(aex_brain_provider::RequestBuildError::UnsupportedCapability("tool calling"))
     ));
 
     request.tools.clear();
     request.structured_output = Some(StructuredOutputRequest::JsonObject);
     assert!(matches!(
         aex_brain_provider::translate_request(&request),
-        Err(aex_brain_provider::RequestBuildError::UnsupportedCapability(
-            "structured JSON output"
-        ))
+        Err(aex_brain_provider::RequestBuildError::UnsupportedCapability("structured JSON output"))
     ));
 }
 
@@ -239,7 +237,10 @@ fn json_schema_is_carried_by_a_certified_rig_request() {
     });
     let rig = aex_brain_provider::translate_request(&request).expect("certified schema translates");
     let schema = rig.output_schema.expect("schema reaches Rig");
-    assert_eq!(schema.as_object().and_then(|value| value.get("title")), Some(&serde_json::json!("answer")));
+    assert_eq!(
+        schema.as_object().and_then(|value| value.get("title")),
+        Some(&serde_json::json!("answer"))
+    );
 }
 
 #[test]
@@ -256,7 +257,9 @@ fn json_object_only_is_distinct_from_json_schema() {
     request.structured_output = Some(StructuredOutputRequest::JsonObject);
     let rig = aex_brain_provider::translate_request(&request).expect("json object translates");
     assert_eq!(
-        rig.additional_params.as_ref().and_then(|value| value.get("response_format")),
+        rig.additional_params
+            .as_ref()
+            .and_then(|value| value.get("response_format")),
         Some(&serde_json::json!({ "type": "json_object" }))
     );
 
@@ -267,8 +270,10 @@ fn json_object_only_is_distinct_from_json_schema() {
     });
     assert!(matches!(
         aex_brain_provider::translate_request(&request),
-        Err(aex_brain_provider::RequestBuildError::UnsupportedCapability(
-            "native JSON Schema output"
-        ))
+        Err(
+            aex_brain_provider::RequestBuildError::UnsupportedCapability(
+                "native JSON Schema output"
+            )
+        )
     ));
 }

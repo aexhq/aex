@@ -1,0 +1,71 @@
+[package]
+name = "file-ingest-worker"
+version = "0.1.0"
+description = "Bounded SSRF-safe URL ingestion for latest-only workspace files."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+autotests = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "regional-services"
+role = "deployable"
+artifact = "lambda_zip"
+deployable = "file-ingest-worker"
+live_suite = "aex-live-session-api"
+layers = ["unit", "smoke", "e2e"]
+concerns = ["contract", "fault", "security", "performance"]
+seams = ["net.public_egress", "aws.s3.conditional_put", "aws.dynamodb.streams"]
+security_tier = "internal"
+risk = ["untrusted_input", "iam"]
+scenarios = ["SC-FILES-CURRENT"]
+
+[package.metadata.aex.targets]
+ingest = "unit"
+performance = "e2e"
+
+[[bin]]
+name = "file-ingest-worker"
+path = "src/main.rs"
+
+[dependencies]
+aex-brain-managed-web = { path = "../../crates/aex-brain-managed-web" }
+aex-content-aws = { path = "../../crates/aex-content-aws" }
+aex-content-domain = { path = "../../crates/aex-content-domain" }
+aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }
+aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
+aex-registry-dynamodb = { path = "../../crates/aex-registry-dynamodb" }
+aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false }
+aex-wire = { path = "../../crates/aex-wire" }
+aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
+async-trait.workspace = true
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-s3.workspace = true
+aws_lambda_events.workspace = true
+bytes.workspace = true
+futures.workspace = true
+lambda_runtime.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_dynamo.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[[test]]
+name = "ingest"
+path = "tests/ingest.rs"
+
+[[test]]
+name = "performance"
+path = "tests/performance.rs"

@@ -3,7 +3,7 @@
 //! The effective-limit registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
+//! `sha256:2714e625c3ed159b08bf3f97a27b9d088369acc429073957508115af3b1f7238`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]

@@ -72,14 +72,6 @@ dependencies = [
 name = "aex-brain-managed-web"
 version = "0.1.0"
 dependencies = [
- "aex-brain-app",
- "aex-brain-domain",
- "aex-brain-tool-catalog",
- "aex-model-catalog",
- "aex-secret-aws",
- "aex-secret-custody-dynamodb",
- "aex-secret-domain",
- "aex-session-dynamodb",
  "aex-wire",
  "async-trait",
  "brotli",
@@ -95,7 +87,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -108,6 +99,7 @@ dependencies = [
  "aex-wire",
  "async-trait",
  "base64 0.23.0",
+ "http 1.5.0",
  "proptest",
  "reqwest",
  "rmcp",
@@ -328,12 +320,19 @@ version = "0.50.0"
 dependencies = [
  "aex-wire",
  "anyhow",
+ "base64 0.23.0",
  "clap",
  "clap_complete",
+ "futures",
+ "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -421,6 +420,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror 2.0.19",
  "time",
  "tokio",
@@ -628,6 +628,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aex-live-billing-worker"
+version = "0.1.0"
+dependencies = [
+ "aex-test-harness",
+ "aws-config",
+ "aws-sdk-lambda",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "aex-live-brain-mux"
 version = "0.1.0"
 dependencies = [
@@ -638,31 +651,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-live-central-api"
+name = "aex-live-control-api"
 version = "0.1.0"
 
 [[package]]
-name = "aex-live-central-authz"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-central-control-api"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-central-control-worker"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-central-identity-api"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-central-schema-admin"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-content-lifecycle-worker"
+name = "aex-live-control-projection-worker"
 version = "0.1.0"
 
 [[package]]
@@ -675,22 +668,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-live-finance-api"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-finance-ingest"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-finance-reconcile"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-finance-settlement-worker"
-version = "0.1.0"
-
-[[package]]
 name = "aex-live-hands-agent"
 version = "0.1.0"
 
@@ -699,31 +676,11 @@ name = "aex-live-hands-image"
 version = "0.1.0"
 
 [[package]]
-name = "aex-live-provider-cost-reconciler"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-regional-capacity-controller"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-regional-control"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-regional-secret-key-admin"
-version = "0.1.0"
-
-[[package]]
 name = "aex-live-runtime-control-worker"
 version = "0.1.0"
 
 [[package]]
-name = "aex-live-session-operation-worker"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-session-stream-api"
+name = "aex-live-session-api"
 version = "0.1.0"
 dependencies = [
  "aex-load-harness",
@@ -737,6 +694,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aex-live-session-maintenance-worker"
+version = "0.1.0"
+
+[[package]]
 name = "aex-live-site"
 version = "0.1.0"
 dependencies = [
@@ -746,10 +707,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-live-stripe-command-edge"
-version = "0.1.0"
-
-[[package]]
 name = "aex-live-stripe-webhook-edge"
 version = "0.1.0"
 
@@ -757,26 +714,13 @@ version = "0.1.0"
 name = "aex-live-tool-mux"
 version = "0.1.0"
 dependencies = [
+ "aex-tool-mux",
+ "aex-wire",
  "reqwest",
+ "serde",
  "serde_json",
  "tokio",
 ]
-
-[[package]]
-name = "aex-live-usage-compute-worker"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-usage-receipt-dispatcher"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-usage-storage-worker"
-version = "0.1.0"
-
-[[package]]
-name = "aex-live-usage-transfer-worker"
-version = "0.1.0"
 
 [[package]]
 name = "aex-load-harness"
@@ -893,6 +837,7 @@ dependencies = [
  "axum",
  "base64 0.23.0",
  "bytes",
+ "futures",
  "hmac 0.13.0",
  "http 1.5.0",
  "http-body-util",
@@ -1020,6 +965,7 @@ dependencies = [
  "aex-hands-protocol",
  "aex-internal-contracts",
  "aex-runtime-control",
+ "aex-usage-app",
  "aex-usage-domain",
  "aex-wire",
  "aws-sdk-sqs",
@@ -1222,9 +1168,12 @@ dependencies = [
  "hex",
  "opentelemetry-proto",
  "prost",
+ "serde",
+ "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.19",
  "tokio",
+ "zstd",
 ]
 
 [[package]]
@@ -1253,11 +1202,14 @@ dependencies = [
  "aex-runtime-control",
  "aex-wire",
  "async-trait",
+ "base64 0.23.0",
  "blake3",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror 2.0.19",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -1282,38 +1234,6 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "aex-usage-authority-dynamodb"
-version = "0.1.0"
-dependencies = [
- "aex-usage-app",
- "aex-usage-domain",
- "async-trait",
- "aws-sdk-dynamodb",
- "aws-sdk-sqs",
- "aws-smithy-runtime-api",
- "aws-smithy-types",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "xxhash-rust",
-]
-
-[[package]]
-name = "aex-usage-compute-dynamodb"
-version = "0.1.0"
-dependencies = [
- "aex-test-harness",
- "aex-usage-app",
- "aex-usage-authority-dynamodb",
- "aex-usage-domain",
- "aex-wire",
- "aws-sdk-dynamodb",
- "aws-sdk-sqs",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -1369,36 +1289,6 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror 2.0.19",
  "time",
-]
-
-[[package]]
-name = "aex-usage-storage-dynamodb"
-version = "0.1.0"
-dependencies = [
- "aex-test-harness",
- "aex-usage-app",
- "aex-usage-authority-dynamodb",
- "aex-usage-domain",
- "aex-wire",
- "aws-sdk-dynamodb",
- "aws-sdk-sqs",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "aex-usage-transfer-dynamodb"
-version = "0.1.0"
-dependencies = [
- "aex-test-harness",
- "aex-usage-app",
- "aex-usage-authority-dynamodb",
- "aex-usage-domain",
- "aex-wire",
- "aws-sdk-dynamodb",
- "aws-sdk-sqs",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -1945,32 +1835,6 @@ name = "aws-sdk-secretsmanager"
 version = "1.111.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d77f840fd8a79900661ca05e9af1f4e2b3c74386e9fc1b4a9dd58745faf689f0"
-dependencies = [
- "arc-swap",
- "aws-credential-types",
- "aws-runtime",
- "aws-smithy-async",
- "aws-smithy-http",
- "aws-smithy-json",
- "aws-smithy-observability",
- "aws-smithy-runtime",
- "aws-smithy-runtime-api",
- "aws-smithy-schema",
- "aws-smithy-types",
- "aws-types",
- "bytes",
- "fastrand",
- "http 0.2.12",
- "http 1.5.0",
- "regex-lite",
- "tracing",
-]
-
-[[package]]
-name = "aws-sdk-sesv2"
-version = "1.128.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9bec8be9758c5541f77dc99371a8c32a501b9ea9859740a7cf2e0895c27ed09"
 dependencies = [
  "arc-swap",
  "aws-credential-types",
@@ -2714,45 +2578,46 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-app",
  "aex-brain-domain",
- "aex-brain-hands",
- "aex-brain-managed-web",
  "aex-brain-provider",
  "aex-brain-provider-custody",
  "aex-brain-store-dynamodb",
  "aex-brain-tool-catalog",
+ "aex-content-aws",
  "aex-control-domain",
- "aex-hands-control-aws",
+ "aex-hands-protocol",
  "aex-identity-domain",
  "aex-internal-contracts",
  "aex-model-catalog",
  "aex-platform-diagnostics",
- "aex-runtime-activity-dynamodb",
  "aex-runtime-control",
- "aex-runtime-control-aws",
  "aex-secret-aws",
  "aex-secret-custody-dynamodb",
  "aex-secret-domain",
  "aex-session-dynamodb",
  "aex-session-telemetry-aws",
+ "aex-tool-mux",
  "aex-usage-app",
  "aex-usage-domain",
  "aex-wire",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-kms",
- "aws-sdk-lambdamicrovms",
  "aws-sdk-s3",
  "aws-sdk-secretsmanager",
  "aws-sdk-sqs",
+ "axum",
  "base64 0.23.0",
  "futures",
+ "hex",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror 2.0.19",
  "time",
  "tokio",
  "toml",
+ "tool-mux",
  "tracing",
  "uuid",
  "zeroize",
@@ -2909,9 +2774,12 @@ dependencies = [
  "aex-control-app",
  "aex-control-aurora",
  "aex-control-domain",
+ "aex-finance-domain",
  "aex-identity-app",
  "aex-identity-aurora",
  "aex-identity-domain",
+ "aex-internal-contracts",
+ "aex-payment-contracts",
  "aex-platform-diagnostics",
  "aex-rds-data",
  "aex-regional-http",
@@ -2920,80 +2788,23 @@ dependencies = [
  "aws-config",
  "aws-sdk-lambda",
  "aws-sdk-rdsdata",
- "aws-sdk-s3",
  "aws-sdk-secretsmanager",
  "axum",
- "central-control-api",
- "central-identity-api",
- "finance-api",
+ "base64 0.23.0",
+ "blake3",
+ "futures",
  "http 1.5.0",
  "http-body-util",
+ "oauth2",
+ "parking_lot",
+ "reqwest",
+ "serde",
  "serde_json",
+ "subtle",
  "thiserror 2.0.19",
  "time",
  "tokio",
  "toml",
- "tower",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "central-authz"
-version = "0.1.0"
-dependencies = [
- "aex-central-http",
- "aex-control-app",
- "aex-control-aurora",
- "aex-control-domain",
- "aex-identity-domain",
- "aex-internal-contracts",
- "aex-platform-diagnostics",
- "aex-rds-data",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-rdsdata",
- "aws-sdk-secretsmanager",
- "aws_lambda_events",
- "http 1.5.0",
- "lambda_runtime",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "time",
- "tokio",
- "tracing",
- "uuid",
- "zeroize",
-]
-
-[[package]]
-name = "central-control-api"
-version = "0.1.0"
-dependencies = [
- "aex-central-aws",
- "aex-central-http",
- "aex-control-app",
- "aex-control-aurora",
- "aex-control-domain",
- "aex-identity-app",
- "aex-identity-domain",
- "aex-platform-diagnostics",
- "aex-rds-data",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-lambda",
- "aws-sdk-rdsdata",
- "aws-sdk-secretsmanager",
- "axum",
- "lambda_http",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "time",
- "tokio",
  "tower",
  "tracing",
  "uuid",
@@ -3019,47 +2830,11 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws-sdk-lambda",
  "aws-sdk-rdsdata",
- "aws-sdk-secretsmanager",
- "aws-sdk-sesv2",
  "aws-smithy-types",
  "axum",
  "lambda_runtime",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
- "time",
- "tokio",
- "tower",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "central-identity-api"
-version = "0.1.0"
-dependencies = [
- "aex-central-aws",
- "aex-central-http",
- "aex-control-app",
- "aex-control-domain",
- "aex-identity-app",
- "aex-identity-aurora",
- "aex-identity-domain",
- "aex-platform-diagnostics",
- "aex-rds-data",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-rdsdata",
- "aws-sdk-secretsmanager",
- "axum",
- "base64 0.23.0",
- "lambda_http",
- "oauth2",
- "reqwest",
- "serde",
- "serde_json",
- "subtle",
  "thiserror 2.0.19",
  "time",
  "tokio",
@@ -3264,33 +3039,6 @@ name = "constant_time_eq"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
-
-[[package]]
-name = "content-lifecycle-worker"
-version = "0.1.0"
-dependencies = [
- "aex-content-aws",
- "aex-content-dynamodb",
- "aex-identity-domain",
- "aex-platform-diagnostics",
- "aex-regional-http",
- "aex-registry-dynamodb",
- "aex-session-dynamodb",
- "aex-wire",
- "aex-work-dynamodb",
- "aex-workspace-domain",
- "async-trait",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-s3",
- "aws_lambda_events",
- "lambda_runtime",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
 
 [[package]]
 name = "core-foundation"
@@ -3851,98 +3599,45 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
-name = "finance-api"
+name = "file-ingest-worker"
 version = "0.1.0"
 dependencies = [
- "aex-control-domain",
- "aex-finance-domain",
- "aex-internal-contracts",
- "aex-payment-contracts",
+ "aex-brain-managed-web",
+ "aex-content-aws",
+ "aex-content-domain",
+ "aex-content-dynamodb",
  "aex-platform-diagnostics",
- "aex-rds-data",
+ "aex-registry-dynamodb",
+ "aex-session-dynamodb",
  "aex-wire",
+ "aex-workspace-domain",
  "async-trait",
  "aws-config",
- "aws-sdk-lambda",
- "aws-sdk-rdsdata",
+ "aws-sdk-dynamodb",
  "aws-sdk-s3",
- "axum",
- "base64 0.23.0",
- "blake3",
+ "aws_lambda_events",
+ "bytes",
  "futures",
- "http 1.5.0",
- "lambda_http",
- "parking_lot",
+ "lambda_runtime",
+ "reqwest",
  "serde",
+ "serde_dynamo",
  "serde_json",
  "thiserror 2.0.19",
  "time",
  "tokio",
- "toml",
- "tower",
  "tracing",
- "uuid",
+ "url",
 ]
 
 [[package]]
 name = "finance-ingest"
 version = "0.1.0"
 dependencies = [
- "aex-finance-domain",
- "aex-internal-contracts",
- "aex-payment-contracts",
- "aex-platform-diagnostics",
- "aex-rds-data",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-rdsdata",
- "blake3",
- "lambda_runtime",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "time",
- "tokio",
- "toml",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "finance-reconcile"
-version = "0.1.0"
-dependencies = [
- "aex-finance-domain",
- "aex-internal-contracts",
- "aex-payment-contracts",
- "aex-platform-diagnostics",
- "aex-rds-data",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-lambda",
- "aws-sdk-rdsdata",
- "aws-sdk-sns",
- "lambda_runtime",
- "parking_lot",
- "proptest",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "time",
- "tokio",
- "toml",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "finance-settlement-worker"
-version = "0.1.0"
-dependencies = [
  "aex-finance-app",
+ "aex-finance-domain",
  "aex-internal-contracts",
+ "aex-payment-contracts",
  "aex-platform-diagnostics",
  "aex-rds-data",
  "aex-usage-app",
@@ -3951,16 +3646,23 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-rdsdata",
+ "aws-sdk-secretsmanager",
+ "aws-sdk-sns",
  "aws_lambda_events",
+ "blake3",
  "lambda_runtime",
+ "parking_lot",
  "proptest",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
+ "time",
  "tokio",
  "toml",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -4296,7 +3998,7 @@ dependencies = [
  "aex-wire",
  "axum",
  "blake3",
- "cargo_metadata",
+ "rmcp",
  "rustix",
  "serde",
  "serde_json",
@@ -4586,7 +4288,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -5173,6 +4875,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5283,7 +4997,7 @@ version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
 dependencies = [
- "base64 0.21.7",
+ "base64 0.22.1",
  "chrono",
  "getrandom 0.2.17",
  "http 1.5.0",
@@ -5320,7 +5034,11 @@ version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0142c63252a9e054e68a4c61a5778f7b14f576274d593f8ce883d191a099682"
 dependencies = [
+ "futures-core",
+ "futures-sink",
  "js-sys",
+ "pin-project-lite",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -5344,7 +5062,9 @@ dependencies = [
  "futures-executor",
  "futures-util",
  "opentelemetry",
+ "percent-encoding",
  "portable-atomic",
+ "rand 0.9.5",
  "thiserror 2.0.19",
 ]
 
@@ -5688,6 +5408,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "process-wrap"
+version = "9.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e842efad9119158434d193c6682e2ebee4b44d6ad801d7b349623b3f57cdf55"
+dependencies = [
+ "futures",
+ "indexmap 2.14.0",
+ "nix",
+ "tokio",
+ "tracing",
+ "windows",
+]
+
+[[package]]
 name = "proptest"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5739,28 +5473,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "provider-cost-reconciler"
-version = "0.1.0"
-dependencies = [
- "aex-platform-diagnostics",
- "aex-rds-data",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-rdsdata",
- "aws-sdk-s3",
- "lambda_runtime",
- "parking_lot",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "time",
- "tokio",
- "toml",
- "tracing",
-]
-
-[[package]]
 name = "query_map"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5790,7 +5502,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
@@ -5829,7 +5541,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -6031,64 +5743,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
-name = "regional-capacity-controller"
-version = "0.1.0"
-dependencies = [
- "aex-capacity-dynamodb",
- "aex-internal-contracts",
- "aex-session-dynamodb",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-dynamodb",
- "lambda_runtime",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "time",
- "tokio",
-]
-
-[[package]]
-name = "regional-control"
-version = "0.1.0"
-dependencies = [
- "aex-internal-contracts",
- "aex-platform-diagnostics",
- "aex-session-dynamodb",
- "aex-wire",
- "aws-config",
- "aws-sdk-dynamodb",
- "lambda_runtime",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "regional-secret-key-admin"
-version = "0.1.0"
-dependencies = [
- "aex-identity-domain",
- "aex-platform-diagnostics",
- "aex-regional-http",
- "aex-secret-keystore-dynamodb",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-kms",
- "aws-smithy-types",
- "clap",
- "sha2 0.11.0",
- "thiserror 2.0.19",
- "time",
- "tokio",
- "tracing",
- "zeroize",
-]
-
-[[package]]
 name = "reqwest"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6213,6 +5867,7 @@ dependencies = [
  "futures",
  "http 1.5.0",
  "pin-project-lite",
+ "process-wrap",
  "reqwest",
  "serde",
  "serde_json",
@@ -6728,6 +6383,7 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws-sdk-s3",
  "aws-sdk-sqs",
+ "aws-smithy-http-client",
  "aws_lambda_events",
  "futures",
  "lambda_runtime",
@@ -6737,6 +6393,7 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "uuid",
  "xxhash-rust",
 ]
 
@@ -6747,6 +6404,8 @@ dependencies = [
  "aex-brain-app",
  "aex-brain-domain",
  "aex-brain-hands",
+ "aex-brain-managed-web",
+ "aex-brain-mcp",
  "aex-capacity-dynamodb",
  "aex-content-aws",
  "aex-content-domain",
@@ -6773,7 +6432,6 @@ dependencies = [
  "aex-session-dynamodb",
  "aex-session-telemetry-aws",
  "aex-usage-domain",
- "aex-usage-query-dynamodb",
  "aex-wire",
  "aex-work-dynamodb",
  "aex-workspace-domain",
@@ -6805,6 +6463,7 @@ dependencies = [
  "tower",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -7381,7 +7040,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -7700,45 +7359,57 @@ dependencies = [
 ]
 
 [[package]]
-name = "tool-executor"
-version = "0.1.0"
-dependencies = [
- "aex-brain-managed-web",
- "aex-control-domain",
- "aex-identity-domain",
- "aex-internal-contracts",
- "aex-platform-diagnostics",
- "aex-wire",
- "async-trait",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-secretsmanager",
- "axum",
- "base64 0.23.0",
- "blake3",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
- "zeroize",
-]
-
-[[package]]
 name = "tool-mux"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-app",
+ "aex-brain-domain",
+ "aex-brain-hands",
+ "aex-brain-managed-web",
+ "aex-brain-mcp",
+ "aex-content-aws",
+ "aex-content-domain",
+ "aex-content-dynamodb",
+ "aex-control-domain",
+ "aex-hands-control-aws",
  "aex-hands-protocol",
+ "aex-identity-domain",
+ "aex-internal-contracts",
+ "aex-platform-diagnostics",
+ "aex-registry-dynamodb",
+ "aex-runtime-activity-dynamodb",
  "aex-runtime-control",
+ "aex-runtime-control-aws",
+ "aex-secret-aws",
+ "aex-secret-custody-dynamodb",
+ "aex-secret-domain",
+ "aex-session-dynamodb",
+ "aex-session-telemetry-aws",
  "aex-tool-mux",
+ "aex-usage-domain",
  "aex-wire",
+ "aex-workspace-domain",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-kms",
+ "aws-sdk-lambdamicrovms",
+ "aws-sdk-s3",
+ "aws-sdk-sqs",
  "axum",
+ "base64 0.23.0",
+ "hex",
  "http-body-util",
+ "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.19",
+ "time",
  "tokio",
  "tower",
+ "tracing",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -8030,81 +7701,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
-name = "usage-compute-worker"
-version = "0.1.0"
-dependencies = [
- "aex-platform-diagnostics",
- "aex-usage-app",
- "aex-usage-compute-dynamodb",
- "aex-usage-domain",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-sqs",
- "lambda_runtime",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "usage-receipt-dispatcher"
-version = "0.1.0"
-dependencies = [
- "aex-platform-diagnostics",
- "aex-rds-data",
- "async-trait",
- "aws-config",
- "aws-sdk-rdsdata",
- "aws-sdk-sqs",
- "lambda_runtime",
- "parking_lot",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "toml",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "usage-storage-worker"
-version = "0.1.0"
-dependencies = [
- "aex-platform-diagnostics",
- "aex-usage-app",
- "aex-usage-domain",
- "aex-usage-storage-dynamodb",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-sqs",
- "lambda_runtime",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "usage-transfer-worker"
-version = "0.1.0"
-dependencies = [
- "aex-platform-diagnostics",
- "aex-usage-app",
- "aex-usage-domain",
- "aex-usage-transfer-dynamodb",
- "aws-config",
- "aws-sdk-dynamodb",
- "aws-sdk-sqs",
- "lambda_runtime",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "utf-8"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8382,6 +7978,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
+name = "windows"
+version = "0.62.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "527fadee13e0c05939a6a05d5bd6eec6cd2e3dbd648b9f8e447c6518133d8580"
+dependencies = [
+ "windows-collections",
+ "windows-core",
+ "windows-future",
+ "windows-numerics",
+]
+
+[[package]]
+name = "windows-collections"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b2d95af1a8a14a3c7367e1ed4fc9c20e0a26e79551b1454d72583c97cc6610"
+dependencies = [
+ "windows-core",
+]
+
+[[package]]
 name = "windows-core"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8392,6 +8009,17 @@ dependencies = [
  "windows-link",
  "windows-result",
  "windows-strings",
+]
+
+[[package]]
+name = "windows-future"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1d6f90251fe18a279739e78025bd6ddc52a7e22f921070ccdc67dde84c605cb"
+dependencies = [
+ "windows-core",
+ "windows-link",
+ "windows-threading",
 ]
 
 [[package]]
@@ -8421,6 +8049,16 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+
+[[package]]
+name = "windows-numerics"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
+dependencies = [
+ "windows-core",
+ "windows-link",
+]
 
 [[package]]
 name = "windows-registry"
@@ -8483,6 +8121,15 @@ dependencies = [
  "windows_x86_64_gnu",
  "windows_x86_64_gnullvm",
  "windows_x86_64_msvc",
+]
+
+[[package]]
+name = "windows-threading"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3949bd5b99cafdf1c7ca86b43ca564028dfe27d66958f2470940f73d86d75b37"
+dependencies = [
+ "windows-link",
 ]
 
 [[package]]
@@ -8712,3 +8359,31 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zstd"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "7.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f49c4d5f0abb602a93fb8736af2a4f4dd9512e36f7f570d66e65ff867ed3b9d"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.0.16+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
+dependencies = [
+ "cc",
+ "pkg-config",
+]

@@ -12,7 +12,6 @@ use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{MeasurementId, OperationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
-use aex_wire::{ObservedErrorCode, models};
 
 use crate::cursor::ContinuationCursor;
 
@@ -108,36 +107,6 @@ impl OperationKind {
         !matches!(self, Self::ContentGc)
     }
 
-    /// The generated customer vocabulary, or `None` for internal maintenance.
-    #[must_use]
-    pub const fn public(self) -> Option<models::OperationKind> {
-        Some(match self {
-            Self::SessionCancel => models::OperationKind::SessionCancel,
-            Self::SessionSuspend => models::OperationKind::SessionSuspend,
-            Self::SessionResume => models::OperationKind::SessionResume,
-            Self::SessionTerminate => models::OperationKind::SessionTerminate,
-            Self::SessionDelete => models::OperationKind::SessionDelete,
-            Self::WorkspaceDelete => models::OperationKind::WorkspaceDelete,
-            Self::ContentGc => return None,
-        })
-    }
-
-    /// Resolves one generated customer kind to the authority vocabulary.
-    ///
-    /// Internal `ContentGc` has no generated arm, so this direction is total
-    /// without making the maintenance kind customer-addressable.
-    #[must_use]
-    pub const fn from_public(kind: models::OperationKind) -> Self {
-        match kind {
-            models::OperationKind::SessionCancel => Self::SessionCancel,
-            models::OperationKind::SessionSuspend => Self::SessionSuspend,
-            models::OperationKind::SessionResume => Self::SessionResume,
-            models::OperationKind::SessionTerminate => Self::SessionTerminate,
-            models::OperationKind::SessionDelete => Self::SessionDelete,
-            models::OperationKind::WorkspaceDelete => Self::WorkspaceDelete,
-        }
-    }
-
     /// Whether the kind claims the session's deletion guard.
     #[must_use]
     pub const fn claims_session_deletion(self) -> bool {
@@ -199,30 +168,6 @@ impl OperationStatus {
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|status| status.as_str() == text)
-    }
-
-    /// The generated customer vocabulary.
-    #[must_use]
-    pub const fn public(self) -> models::OperationStatus {
-        match self {
-            Self::Queued => models::OperationStatus::Queued,
-            Self::Running => models::OperationStatus::Running,
-            Self::Succeeded => models::OperationStatus::Succeeded,
-            Self::Failed => models::OperationStatus::Failed,
-            Self::Cancelled => models::OperationStatus::Cancelled,
-        }
-    }
-
-    /// Resolves one generated customer status to the authority vocabulary.
-    #[must_use]
-    pub const fn from_public(status: models::OperationStatus) -> Self {
-        match status {
-            models::OperationStatus::Queued => Self::Queued,
-            models::OperationStatus::Running => Self::Running,
-            models::OperationStatus::Succeeded => Self::Succeeded,
-            models::OperationStatus::Failed => Self::Failed,
-            models::OperationStatus::Cancelled => Self::Cancelled,
-        }
     }
 }
 
@@ -374,61 +319,6 @@ impl OperationResult {
     pub const fn is_content_bearing(&self) -> bool {
         self.content.is_some()
     }
-
-    /// Decodes the stored canonical payload under the operation's own kind.
-    ///
-    /// The payload is stored without a second discriminant, so the envelope kind
-    /// is the authority. A payload for another result shape is corruption, not
-    /// an untyped value that can poison a whole public page.
-    ///
-    /// # Errors
-    ///
-    /// [`PublicProjectionError::Result`] when the canonical body does not match
-    /// the exact generated result type for `kind`.
-    pub fn public(
-        &self,
-        kind: OperationKind,
-    ) -> Result<Option<models::OperationResult>, PublicProjectionError> {
-        let Some(content) = self.content.as_ref() else {
-            return Ok(None);
-        };
-        if !kind.is_public() {
-            return Ok(None);
-        }
-        let value = content.to_value();
-        macro_rules! payload {
-            ($type:ty, $variant:ident) => {
-                serde_json::from_value::<$type>(value)
-                    .map(models::OperationResult::$variant)
-                    .map_err(|error| PublicProjectionError::Result {
-                        kind,
-                        reason: error.to_string(),
-                    })
-                    .map(Some)
-            };
-        }
-        match kind {
-            OperationKind::SessionCancel => {
-                payload!(models::SessionCancelResult, SessionCancel)
-            }
-            OperationKind::SessionSuspend => {
-                payload!(models::SessionSuspendResult, SessionSuspend)
-            }
-            OperationKind::SessionResume => {
-                payload!(models::SessionResumeResult, SessionResume)
-            }
-            OperationKind::SessionTerminate => {
-                payload!(models::SessionTerminateResult, SessionTerminate)
-            }
-            OperationKind::SessionDelete => {
-                payload!(models::SessionTombstone, SessionDelete)
-            }
-            OperationKind::WorkspaceDelete => {
-                payload!(models::WorkspaceTombstone, WorkspaceDelete)
-            }
-            OperationKind::ContentGc => Ok(None),
-        }
-    }
 }
 
 /// Why an operation failed.
@@ -452,29 +342,6 @@ impl OperationFailure {
             detail: None,
         }
     }
-
-    /// The durable public failure, without inventing a request identity.
-    #[must_use]
-    pub fn public(&self) -> models::OperationFailure {
-        models::OperationFailure {
-            code: ObservedErrorCode::Known(self.code),
-            retryable: self.class == FailureClass::Retryable,
-            detail: self.detail.clone(),
-        }
-    }
-}
-
-/// Why a durable operation could not be projected to the generated wire.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum PublicProjectionError {
-    /// A canonical result body did not match the envelope kind.
-    #[error("operation result for {kind:?} is malformed: {reason}")]
-    Result {
-        /// The authoritative envelope kind.
-        kind: OperationKind,
-        /// The bounded serde diagnostic.
-        reason: String,
-    },
 }
 
 /// The optimistic version of one stored operation row.
@@ -575,55 +442,6 @@ impl Operation {
         self.kind.cancelable_on_accept()
             && self.committed_at.is_none()
             && !self.status.is_terminal()
-    }
-
-    /// Projects one customer-visible operation through generated types.
-    ///
-    /// `ContentGc` returns `Ok(None)`: it is an internal continuation and must
-    /// be excluded by the sparse public index as well as by point reads.
-    ///
-    /// # Errors
-    ///
-    /// [`PublicProjectionError`] when a persisted result body disagrees with
-    /// the authoritative operation kind.
-    pub fn public(&self) -> Result<Option<models::Operation>, PublicProjectionError> {
-        let Some(kind) = self.kind.public() else {
-            return Ok(None);
-        };
-        let result = self
-            .result
-            .as_ref()
-            .map(|value| value.public(self.kind))
-            .transpose()?
-            .flatten();
-        let progress = self
-            .progress
-            .as_ref()
-            .map(|value| models::OperationProgress {
-                phase: value.phase.clone(),
-                completed: Some(aex_wire::types::DecimalU128::new(u128::from(
-                    value.processed,
-                ))),
-                total: value
-                    .total_hint
-                    .map(|total| aex_wire::types::DecimalU128::new(u128::from(total))),
-            });
-        Ok(Some(models::Operation {
-            cancelable: self.cancelable(),
-            committed_at: self.committed_at,
-            created_at: self.created_at,
-            error: self.error.as_ref().map(OperationFailure::public),
-            id: self.id,
-            kind,
-            progress,
-            result,
-            session_id: self.session,
-            started_at: self.started_at,
-            status: self.status.public(),
-            terminal_at: self.terminal_at,
-            updated_at: self.updated_at,
-            workspace_id: self.workspace,
-        }))
     }
 }
 

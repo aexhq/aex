@@ -91,7 +91,7 @@ pub struct ActiveMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionLifecycle {
     /// The one immutable provider generation this lifecycle controls.
-    pub generation: GenerationId,
+    pub generation: Option<GenerationId>,
     /// Monotonic token that invalidates every older delayed event.
     pub revision: LifecycleRevision,
     /// Current public state.
@@ -160,7 +160,7 @@ impl SessionLifecycle {
         let expires_at = add_millis(launched_at, MAXIMUM_LIFETIME_MILLIS)?;
         let suspend_at = add_millis(launched_at, IDLE_SUSPEND_AFTER_MILLIS)?;
         Ok(Self {
-            generation,
+            generation: Some(generation),
             revision: LifecycleRevision(0),
             status: LifecycleStatus::Idle,
             active: None,
@@ -168,6 +168,26 @@ impl SessionLifecycle {
             expires_at,
             idle_since: Some(launched_at),
             suspend_at: Some(suspend_at),
+            suspended_at: None,
+            terminated_at: None,
+            termination_reason: None,
+        })
+    }
+
+    /// Starts the same bounded session lifecycle without allocating a runtime.
+    /// Message admission remains available, but sandbox lifecycle commands have
+    /// no generation to target.
+    pub fn sandbox_disabled(created_at: Timestamp) -> Result<Self, LifecycleError> {
+        let expires_at = add_millis(created_at, MAXIMUM_LIFETIME_MILLIS)?;
+        Ok(Self {
+            generation: None,
+            revision: LifecycleRevision(0),
+            status: LifecycleStatus::Idle,
+            active: None,
+            launched_at: created_at,
+            expires_at,
+            idle_since: Some(created_at),
+            suspend_at: None,
             suspended_at: None,
             terminated_at: None,
             termination_reason: None,

@@ -478,7 +478,7 @@ mod tests {
             )],
             listing(&[
                 ("crates", &["aex-a"]),
-                ("services", &["stripe-command-edge"]),
+                ("services", &["stripe-webhook-edge"]),
             ]),
         );
         assert!(members_match_the_tree(&workspace).is_empty());
@@ -758,14 +758,7 @@ mod tests {
 /// the list cannot silently outlive the debt it records. There is no `--write`
 /// and no number in it — the only legal edit is deleting a row, which is what
 /// keeps two branches from merge-summing their way back to green.
-pub const MAIN_ONLY_DEPLOYABLES: &[&str] = &[
-    "central-authz",
-    "regional-control",
-    "runtime-control-worker",
-    "usage-compute-worker",
-    "usage-storage-worker",
-    "usage-transfer-worker",
-];
+pub const MAIN_ONLY_DEPLOYABLES: &[&str] = &["runtime-control-worker"];
 
 /// No member name ends `-application`; the application layer suffix is `-app`.
 ///

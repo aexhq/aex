@@ -2,6 +2,8 @@
 
 use aex_brain_app::ports::{BoxFuture, HandsError};
 use aex_hands_protocol::files::{FileRequest, FileResponse};
+use aex_hands_protocol::operation::SandboxMcpQualification;
+use aex_hands_protocol::rpc::Fence;
 use aex_hands_protocol::rpc::HandsOperationId;
 use aex_wire::ids::{GenerationId, SessionId};
 use aex_wire::types::Timestamp;
@@ -54,6 +56,87 @@ pub trait LiveFileBackend: Send + Sync + 'static {
         session: SessionId,
         generation: GenerationId,
     ) -> BoxFuture<'_, Result<LiveGenerationReady, HandsError>>;
+
+    /// Durably admits the exact tool operation as a runtime waiter and proves
+    /// the guest is reachable. The waiter remains open until
+    /// [`Self::settle_tool_waiter`], preventing eager suspension in the
+    /// readiness-to-dispatch gap.
+    fn hold_tool_waiter(
+        &self,
+        _session: SessionId,
+        _generation: GenerationId,
+        _operation: HandsOperationId,
+    ) -> BoxFuture<'_, Result<Fence, HandsError>> {
+        Box::pin(async {
+            Err(HandsError::Transport {
+                stage: aex_brain_domain::effect::DispatchStage::PreDispatch,
+                proof: aex_brain_domain::effect::DispatchProof::NotSent,
+                detail: aex_brain_app::ports::RedactedDetail::internal(
+                    aex_brain_app::ports::ProviderFailureKind::ServerError,
+                    "durable Tool Mux waiter admission is not composed",
+                ),
+            })
+        })
+    }
+
+    /// Settles one previously admitted exact tool waiter idempotently.
+    fn settle_tool_waiter(
+        &self,
+        _generation: GenerationId,
+        _operation: HandsOperationId,
+    ) -> BoxFuture<'_, Result<(), HandsError>> {
+        Box::pin(async {
+            Err(HandsError::Transport {
+                stage: aex_brain_domain::effect::DispatchStage::PreDispatch,
+                proof: aex_brain_domain::effect::DispatchProof::NotSent,
+                detail: aex_brain_app::ports::RedactedDetail::internal(
+                    aex_brain_app::ports::ProviderFailureKind::ServerError,
+                    "durable Tool Mux waiter settlement is not composed",
+                ),
+            })
+        })
+    }
+
+    /// Suspends a fully prepared exact generation when no durable tool waiter
+    /// exists. Session admission invokes this only after workspace setup and
+    /// MCP qualification have completed.
+    fn suspend_ready(
+        &self,
+        _session: SessionId,
+        _generation: GenerationId,
+    ) -> BoxFuture<'_, Result<(), HandsError>> {
+        Box::pin(async {
+            Err(HandsError::Transport {
+                stage: aex_brain_domain::effect::DispatchStage::PreDispatch,
+                proof: aex_brain_domain::effect::DispatchProof::NotSent,
+                detail: aex_brain_app::ports::RedactedDetail::internal(
+                    aex_brain_app::ports::ProviderFailureKind::ServerError,
+                    "eager sandbox suspension is not composed",
+                ),
+            })
+        })
+    }
+
+    /// Starts one sandbox-process MCP server inside the exact generation,
+    /// completes the pinned handshake, and returns its bounded tool names.
+    fn qualify_sandbox_mcp<'a>(
+        &'a self,
+        _session: SessionId,
+        _generation: GenerationId,
+        _activity: HandsOperationId,
+        _request: &'a SandboxMcpQualification,
+    ) -> BoxFuture<'a, Result<Vec<String>, HandsError>> {
+        Box::pin(async {
+            Err(HandsError::Transport {
+                stage: aex_brain_domain::effect::DispatchStage::PreDispatch,
+                proof: aex_brain_domain::effect::DispatchProof::NotSent,
+                detail: aex_brain_app::ports::RedactedDetail::internal(
+                    aex_brain_app::ports::ProviderFailureKind::ServerError,
+                    "sandbox MCP qualification is not composed",
+                ),
+            })
+        })
+    }
 
     /// Sends one bounded batch under one durable activity admission.
     fn call<'a>(

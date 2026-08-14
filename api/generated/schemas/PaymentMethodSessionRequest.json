@@ -1,0 +1,29 @@
+{
+  "$id": "https://schemas.aex.dev/v1/PaymentMethodSessionRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Request a Stripe-hosted card setup session.",
+  "properties": {
+    "cancelUrl": {
+      "description": "Browser return after cancellation.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    },
+    "consent": {
+      "description": "Must be true: the caller explicitly consents to saving this card for future prepaid payments.",
+      "type": "boolean"
+    },
+    "successUrl": {
+      "description": "Browser return after successful setup.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "consent"
+  ],
+  "title": "PaymentMethodSessionRequest",
+  "type": "object"
+}

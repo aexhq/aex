@@ -1,6 +1,6 @@
 ---
 title: Rust-native rewrite — implementation handoffs
-description: Index of the per-stream implementation handoffs recording what each area of the Rust-native rewrite landed, deliberately deferred, published for peers, and owes to other streams.
+description: Index of the point-in-time implementation handoffs recording what each Rust-native rewrite stream landed before later clean cuts.
 keywords:
   - rust
   - rewrite
@@ -8,7 +8,7 @@ keywords:
   - implementation
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-04
+last_verified: 2026-08-14
 related:
   - references/README.md
   - references/architecture.md
@@ -16,24 +16,27 @@ related:
 
 # Implementation handoffs
 
-One document per implementation stream of the Rust-native rewrite. Each records
-what the stream landed, what it deliberately deferred and why, the exact types
-it publishes for peers, what it needs from other streams, and the decisions it
-took. They sit beside the code they describe; the accepted design and the plans
-compiled from it live in the parent workspace under
-`references/rust-native-rewrite-2026-07-31/`.
+One point-in-time document per implementation stream of the Rust-native rewrite.
+Each records what that stream landed, deliberately deferred, published for peers,
+and decided at the time. Later clean cuts supersede several of these handoffs;
+their frontmatter and opening banner say so while retaining the old body for
+provenance. The current session-centered launch contract is
+[`../architecture.md`](../architecture.md), with exactly 32 served routes and 14
+release units in the authored registries.
 
-Read the handoff for an area before changing its code — several record a
-decision that deviates from the original plan, with the evidence for it.
+Use these handoffs as historical decision evidence, not as a current inventory.
+For a changed area, read its current accepted architecture and executable
+registry first; a handoff's explicit superseded banner wins over statements in
+its retained body.
 
 | Handoff | Area |
 | --- | --- |
 | [`contracts.md`](contracts.md) | OpenAPI authoring, the generator, generated wire, server traits and client |
 | [`central-identity.md`](central-identity.md) | Identity, control, authorization assertion, Data API transport, central HTTP |
-| [`central-finance.md`](central-finance.md) | Balanced ledger, exact rating, Stripe edges, schema administration |
+| [`central-finance.md`](central-finance.md) | Historical: former ledger, rating, Stripe-edge, and schema-administration slice (superseded) |
 | [`regional-domains.md`](regional-domains.md) | Session, operation, workspace, content and secret pure domains |
-| [`regional-stores.md`](regional-stores.md) | DynamoDB authority adapters, S3 content, KMS secret custody |
-| [`regional-services.md`](regional-services.md) | Regional HTTP composition, finite APIs, stream service, lifecycle workers |
+| [`regional-stores.md`](regional-stores.md) | Historical: former DynamoDB, S3, and KMS store slice (superseded) |
+| [`regional-services.md`](regional-services.md) | Historical: former regional HTTP and worker slice (superseded) |
 | [`brain.md`](brain.md) | Journal fold, lease and fence, split-phase effects, subagents, the mux |
 | [`architecture-performance-v1.md`](architecture-performance-v1.md) | ARM64-only, performance-first runtime placement, Brain critical path, tool lanes, scheduling, and release qualification |
 | [`implementation/brain-activation.md`](implementation/brain-activation.md) | Test-first activation/cache/admission implementation slice |
@@ -44,6 +47,6 @@ decision that deviates from the original plan, with the evidence for it.
 | [`hands.md`](hands.md) | Hands protocol, guest agent and tools, trusted control, true idle |
 | [`observations.md`](observations.md) | Observation authority, OTLP admission, bounded query, export |
 | [`usage.md`](usage.md) | Usage fact authorities, the four meters, the measurement probe API |
-| [`clients.md`](clients.md) | TypeScript SDK, native CLI, dashboard, site, user tests |
+| [`clients.md`](clients.md) | Historical: former SDK, CLI, dashboard, site, and user-test slice (superseded) |
 | [`delivery.md`](delivery.md) | Release tool, CI lanes, artifact envelope, Terraform modules, evidence |
 | [`test-architecture.md`](test-architecture.md) | Test-ownership metadata, derived registry, flake enforcement, fault model |

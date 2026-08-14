@@ -17,6 +17,7 @@
 
 pub mod authz;
 pub mod error;
+mod personal_account;
 pub mod rows;
 pub mod sql;
 pub mod store;

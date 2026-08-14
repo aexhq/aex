@@ -267,21 +267,18 @@ pub fn typescript_sdk_routes(ir: &ContractIr, digest: &str) -> String {
 
 /// Renders `packages/sdk/src/generated/resources.ts`.
 ///
-/// One method per **served finite** operation, and nothing else. A method the
+/// One method per **served** operation, and nothing else. A method the
 /// contract declares and no deployable serves would be a method that can only
 /// fail, and publishing one puts the platform's answer in the client, where it
-/// goes stale the day the route lands. The long-lived NDJSON reads are absent
-/// for the same reason from the other side: the SDK transport decodes one JSON
-/// body, so a generated method over a frame stream could not return one.
-/// `Aex.execute` stays total over `RouteId`, so every operation — deferred or
-/// streaming — is still callable by anyone who wants the real answer.
+/// goes stale the day the route lands. NDJSON operations return typed async
+/// iterables through the executor's independent streaming transport.
 #[must_use]
 pub fn typescript_sdk_resources(ir: &ContractIr, digest: &str) -> String {
     let operations = ir.operations();
     let mut groups: BTreeMap<&str, Vec<&OperationIr>> = BTreeMap::new();
     for operation in operations
         .iter()
-        .filter(|operation| operation.deferred_reason.is_none() && operation.transport != "ndjson")
+        .filter(|operation| operation.deferred_reason.is_none())
     {
         groups
             .entry(operation.fragment.as_str())
@@ -310,6 +307,11 @@ pub fn typescript_sdk_resources(ir: &ContractIr, digest: &str) -> String {
     out.push_str("    bindings?: Readonly<Record<string, string>>,\n");
     out.push_str("    options?: ExecuteOptions,\n");
     out.push_str("  ): Promise<T>;\n");
+    out.push_str("  stream<T>(\n");
+    out.push_str("    routeId: RouteId,\n");
+    out.push_str("    bindings?: Readonly<Record<string, string>>,\n");
+    out.push_str("    options?: ExecuteOptions,\n");
+    out.push_str("  ): AsyncIterable<T>;\n");
     out.push_str("}\n\n");
 
     out.push_str("/** Everything beyond the path a single call can carry. */\n");
@@ -351,6 +353,11 @@ pub fn typescript_sdk_resources(ir: &ContractIr, digest: &str) -> String {
     out.push_str("    bindings?: Readonly<Record<string, string>>,\n");
     out.push_str("    options?: ExecuteOptions,\n");
     out.push_str("  ): Promise<T>;\n");
+    out.push_str("  abstract stream<T>(\n");
+    out.push_str("    routeId: RouteId,\n");
+    out.push_str("    bindings?: Readonly<Record<string, string>>,\n");
+    out.push_str("    options?: ExecuteOptions,\n");
+    out.push_str("  ): AsyncIterable<T>;\n");
     for fragment in groups.keys() {
         out.push_str(&format!(
             "\n  /** The `{fragment}` operations. */\n  readonly {}: {} = new {}(this);\n",
@@ -391,6 +398,13 @@ fn resource_method(out: &mut String, ir: &ContractIr, operation: &OperationIr) {
         || idempotency_key
         || operation_id;
     let has_field = required_field || !operation.query_params.is_empty();
+    let streaming = operation.transport == "ndjson";
+    let return_wrapper = if streaming {
+        format!("AsyncIterable<{return_type}>")
+    } else {
+        format!("Promise<{return_type}>")
+    };
+    let async_prefix = if streaming { "" } else { "async " };
 
     out.push_str(&format!(
         "  /** `{} {}` — {} */\n",
@@ -399,7 +413,7 @@ fn resource_method(out: &mut String, ir: &ContractIr, operation: &OperationIr) {
         comment_safe(&operation.summary)
     ));
     if has_field {
-        out.push_str(&format!("  async {name}(params: {{\n"));
+        out.push_str(&format!("  {async_prefix}{name}(params: {{\n"));
         for param in &operation.path_params {
             out.push_str(&format!(
                 "    readonly {}: {};\n",
@@ -441,11 +455,11 @@ fn resource_method(out: &mut String, ir: &ContractIr, operation: &OperationIr) {
             out.push_str("    readonly operationId: Models.Id<\"operation\">;\n");
         }
         out.push_str(&format!(
-            "  }}{}): Promise<{return_type}> {{\n",
+            "  }}{}): {return_wrapper} {{\n",
             if required_field { "" } else { " = {}" }
         ));
     } else {
-        out.push_str(&format!("  async {name}(): Promise<{return_type}> {{\n"));
+        out.push_str(&format!("  {async_prefix}{name}(): {return_wrapper} {{\n"));
     }
 
     let bindings = operation
@@ -481,7 +495,8 @@ fn resource_method(out: &mut String, ir: &ContractIr, operation: &OperationIr) {
         options.push("operationId: params.operationId".to_owned());
     }
     let mut call = format!(
-        "    return this.#executor.execute<{}>({}",
+        "    return this.#executor.{}<{}>({}",
+        if streaming { "stream" } else { "execute" },
         return_type,
         quoted(&operation.id)
     );

@@ -1,9 +1,9 @@
 //! Finite regional session API.
 //!
 //! The package serves session, run, operation, registry, upload,
-//! content-metadata, approval, secret-metadata, and usage routes. Provider
-//! credential plaintext admission stays isolated behind the narrow
-//! [`session::secret_registration::ProviderCredentialRegistration`] port.
+//! content-metadata, approval, and usage routes. Session provider-key
+//! plaintext admission stays isolated behind the narrow
+//! [`session::provider_key::SessionProviderKeys`] adapter.
 
 pub mod capability;
 pub mod config;

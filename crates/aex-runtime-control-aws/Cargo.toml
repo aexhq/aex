@@ -35,6 +35,7 @@ aex-hands-control-aws = { path = "../aex-hands-control-aws" }
 aex-hands-protocol = { path = "../aex-hands-protocol" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-runtime-control = { path = "../aex-runtime-control" }
+aex-usage-app = { path = "../aex-usage-app" }
 aex-usage-domain = { path = "../aex-usage-domain" }
 aex-wire = { path = "../aex-wire" }
 aws-sdk-sqs.workspace = true

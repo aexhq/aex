@@ -44,7 +44,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "services/session-stream-api/src/session/admission.rs",
         ],
     ),
-    ("AuthorityError", &["services/finance-api/src/authority.rs"]),
     (
         "BudgetError",
         &[
@@ -89,29 +88,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "crates/aex-operation-domain/src/cursor.rs",
             "crates/aex-regional-http/src/cursor.rs",
             "crates/aex-session-dynamodb/src/paging.rs",
-        ],
-    ),
-    (
-        "DecodeError",
-        &[
-            "crates/aex-rds-data/src/error.rs",
-            "crates/aex-usage-authority-dynamodb/src/codec.rs",
-        ],
-    ),
-    (
-        "DispatchError",
-        &[
-            "workers/usage-compute-worker/src/main.rs",
-            "workers/usage-receipt-dispatcher/src/outbox.rs",
-            "workers/usage-storage-worker/src/main.rs",
-            "workers/usage-transfer-worker/src/main.rs",
-        ],
-    ),
-    (
-        "DownloadError",
-        &[
-            "services/finance-api/src/download.rs",
-            "tools/aex-cli/src/download.rs",
         ],
     ),
     (
@@ -257,13 +233,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         &["crates/aex-regional-http/src/health.rs"],
     ),
     (
-        "ReceiptError",
-        &[
-            "crates/aex-hands-protocol/src/lifecycle.rs",
-            "crates/aex-usage-authority-dynamodb/src/stream.rs",
-        ],
-    ),
-    (
         "ScopeError",
         &[
             "crates/aex-control-domain/src/scope.rs",
@@ -283,7 +252,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "crates/aex-brain-app/src/ports/store.rs",
             "crates/aex-identity-app/src/ports.rs",
             "crates/aex-session-dynamodb/src/error.rs",
-            "crates/aex-usage-authority-dynamodb/src/expressions.rs",
         ],
     ),
     (

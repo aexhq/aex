@@ -16,26 +16,43 @@ test("every allowlist entry is a real operation and the list has no duplicates",
   }
 });
 
-test("the allowlist carries no operator, no session mutation and no ingest route", () => {
+test("the allowlist is exactly the essential personal dashboard surface", () => {
   for (const routeId of DASHBOARD_ROUTES as readonly string[]) {
     expect(routeId.startsWith("admin_")).toBe(false);
     expect(routeId.startsWith("operator_")).toBe(false);
     expect(routeId.startsWith("otlp_")).toBe(false);
   }
-  // Session lifecycle is driven from the SDK and CLI; the dashboard is a
-  // read-only view of the public session surface.
-  for (const excluded of [
+  expect(DASHBOARD_ROUTES).toEqual([
+    "api_keys_list",
+    "api_key_create",
+    "api_key_revoke",
+    "billing_balance_get",
+    "billing_payment_method_delete",
+    "billing_payment_method_session_create",
+    "billing_payment_methods_list",
+    "billing_top_up_checkout_create",
+    "billing_transactions_list",
+    "billing_usage_get",
+    "registry_files_delete",
+    "registry_files_download_create",
+    "registry_files_get",
+    "registry_files_list",
+    "registry_files_put",
+    "upload_create",
+    "upload_complete",
+    "sessions_list",
     "session_create",
-    "session_message_send",
+    "session_get",
     "session_cancel",
-    "session_suspend",
-    "session_resume",
-    "session_terminate",
     "session_delete",
-    "workspace_delete",
-  ]) {
-    expect((DASHBOARD_ROUTES as readonly string[]).includes(excluded)).toBe(false);
-  }
+    "session_message_send",
+    "session_messages_list",
+    "session_messages_stream",
+    "session_telemetry_download_create",
+    "session_telemetry_replay",
+    "session_telemetry_stream",
+    "session_terminate",
+  ]);
 });
 
 test("the bootstrap operation is not reachable through the generic passthrough", () => {

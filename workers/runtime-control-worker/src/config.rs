@@ -30,10 +30,8 @@ pub const RUNTIME_ACTIVITY_TABLE_VAR: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
 pub const SESSION_AUTHORITY_TABLE_VAR: &str = "AEX_SESSION_AUTHORITY_TABLE";
 /// Environment variable naming the lifecycle queue this worker consumes.
 pub const LIFECYCLE_QUEUE_VAR: &str = "AEX_RUNTIME_LIFECYCLE_QUEUE_URL";
-/// Environment variable naming the compute-authority usage ingress.
-pub const COMPUTE_QUEUE_VAR: &str = "AEX_USAGE_COMPUTE_QUEUE_URL";
-/// Environment variable naming the storage-authority usage ingress.
-pub const STORAGE_QUEUE_VAR: &str = "AEX_USAGE_STORAGE_QUEUE_URL";
+/// Environment variable naming the central usage-rating FIFO.
+pub const RATING_QUEUE_VAR: &str = "AEX_USAGE_RATING_QUEUE_URL";
 /// Environment variable naming the `MicroVM` control-plane endpoint.
 pub const PROVIDER_ENDPOINT_VAR: &str = "AEX_MICROVM_CONTROL_ENDPOINT";
 /// Environment variable containing the eight immutable Hands image identities.
@@ -48,15 +46,14 @@ pub const DUE_PAGE_READS_VAR: &str = "AEX_RUNTIME_DUE_PAGE_READS";
 pub const PRICING_VERSION_VAR: &str = "AEX_PRICING_VERSION";
 
 /// Every variable this worker requires, in the order it validates them.
-pub const REQUIRED_VARS: [&str; 13] = [
+pub const REQUIRED_VARS: [&str; 12] = [
     PLANE_VAR,
     REGION_VAR,
     ACCOUNT_ID_VAR,
     RUNTIME_ACTIVITY_TABLE_VAR,
     SESSION_AUTHORITY_TABLE_VAR,
     LIFECYCLE_QUEUE_VAR,
-    COMPUTE_QUEUE_VAR,
-    STORAGE_QUEUE_VAR,
+    RATING_QUEUE_VAR,
     IMAGE_CATALOG_VAR,
     DUE_SHARDS_VAR,
     DUE_PAGE_ITEMS_VAR,
@@ -125,10 +122,8 @@ pub struct Config {
     pub session_authority_table: String,
     /// The lifecycle queue this worker consumes.
     pub lifecycle_queue_url: String,
-    /// The compute-authority usage ingress.
-    pub compute_queue_url: String,
-    /// The storage-authority usage ingress.
-    pub storage_queue_url: String,
+    /// The central usage-rating FIFO.
+    pub rating_queue_url: String,
     /// The `MicroVM` control-plane endpoint.
     /// Optional endpoint override for an explicit test or compatibility endpoint.
     /// Production normally uses the official SDK region endpoint.
@@ -211,8 +206,7 @@ impl Config {
             runtime_activity_table: required(&lookup, RUNTIME_ACTIVITY_TABLE_VAR)?,
             session_authority_table: required(&lookup, SESSION_AUTHORITY_TABLE_VAR)?,
             lifecycle_queue_url: endpoint(&lookup, LIFECYCLE_QUEUE_VAR, region)?,
-            compute_queue_url: endpoint(&lookup, COMPUTE_QUEUE_VAR, region)?,
-            storage_queue_url: endpoint(&lookup, STORAGE_QUEUE_VAR, region)?,
+            rating_queue_url: endpoint(&lookup, RATING_QUEUE_VAR, region)?,
             provider_endpoint: lookup(PROVIDER_ENDPOINT_VAR)
                 .map(|_| endpoint(&lookup, PROVIDER_ENDPOINT_VAR, region))
                 .transpose()?,
@@ -224,11 +218,10 @@ impl Config {
             },
             pricing_version: required(&lookup, PRICING_VERSION_VAR)?,
         };
-        if config.compute_queue_url == config.storage_queue_url {
+        if !config.rating_queue_url.ends_with(".fifo") {
             return Err(RuntimeControlWorkerConfigError::Invalid {
-                name: STORAGE_QUEUE_VAR,
-                reason: "the compute and storage ingresses are two authorities and cannot be one \
-                         queue"
+                name: RATING_QUEUE_VAR,
+                reason: "trusted usage must target the organization-ordered billing FIFO"
                     .to_owned(),
             });
         }
@@ -330,9 +323,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        ACCOUNT_ID_VAR, COMPUTE_QUEUE_VAR, Config, DUE_PAGE_ITEMS_VAR, DUE_SHARDS_VAR,
-        FORBIDDEN_VARS, IMAGE_CATALOG_VAR, LIFECYCLE_QUEUE_VAR, PLANE_VAR, PROVIDER_ENDPOINT_VAR,
-        REGION_VAR, REQUIRED_VARS, RuntimeControlWorkerConfigError, STORAGE_QUEUE_VAR,
+        ACCOUNT_ID_VAR, Config, DUE_PAGE_ITEMS_VAR, DUE_SHARDS_VAR, FORBIDDEN_VARS,
+        IMAGE_CATALOG_VAR, LIFECYCLE_QUEUE_VAR, PLANE_VAR, PROVIDER_ENDPOINT_VAR, RATING_QUEUE_VAR,
+        REGION_VAR, REQUIRED_VARS, RuntimeControlWorkerConfigError,
     };
     use aex_wire::types::Region;
     use std::collections::BTreeMap;
@@ -355,12 +348,8 @@ mod tests {
                 "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-runtime-lifecycle".to_owned(),
             ),
             (
-                COMPUTE_QUEUE_VAR,
-                "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-usage-compute".to_owned(),
-            ),
-            (
-                STORAGE_QUEUE_VAR,
-                "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-usage-storage".to_owned(),
+                RATING_QUEUE_VAR,
+                "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-usage-rating.fifo".to_owned(),
             ),
             (
                 PROVIDER_ENDPOINT_VAR,
@@ -524,12 +513,7 @@ mod tests {
 
     #[test]
     fn a_queue_or_endpoint_outside_the_configured_region_is_refused() {
-        for name in [
-            LIFECYCLE_QUEUE_VAR,
-            COMPUTE_QUEUE_VAR,
-            STORAGE_QUEUE_VAR,
-            PROVIDER_ENDPOINT_VAR,
-        ] {
+        for name in [LIFECYCLE_QUEUE_VAR, RATING_QUEUE_VAR, PROVIDER_ENDPOINT_VAR] {
             let mut vars = complete();
             vars.insert(
                 name,
@@ -586,14 +570,16 @@ mod tests {
     }
 
     #[test]
-    fn the_two_usage_ingresses_cannot_be_the_same_queue() {
+    fn the_usage_ingress_must_be_the_billing_fifo() {
         let mut vars = complete();
-        let compute = vars[COMPUTE_QUEUE_VAR].clone();
-        vars.insert(STORAGE_QUEUE_VAR, compute);
+        vars.insert(
+            RATING_QUEUE_VAR,
+            "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-usage-rating".to_owned(),
+        );
         assert!(matches!(
             read(&vars),
             Err(RuntimeControlWorkerConfigError::Invalid {
-                name: STORAGE_QUEUE_VAR,
+                name: RATING_QUEUE_VAR,
                 ..
             })
         ));

@@ -34,7 +34,7 @@ fn a_complete_environment_is_accepted() {
     let config = read(&complete()).expect("a complete environment");
     assert_eq!(config.http.service, config::DEPLOYABLE);
     assert_eq!(config.port, 8080);
-    assert_eq!(config.regional_functions.len(), config.api_urls.len());
+    assert_eq!(config.api_urls.len(), 1);
 }
 
 #[test]
@@ -93,32 +93,6 @@ fn a_context_window_wider_than_the_shared_ceiling_is_refused() {
     assert!(read(&vars).is_err());
 }
 
-#[test]
-fn a_download_grant_that_outlives_its_signature_is_refused() {
-    let mut vars = complete();
-    vars.insert(
-        config::DOWNLOAD_GRANT_TTL_MS,
-        (config::MAX_DOWNLOAD_GRANT_TTL_MS + 1).to_string(),
-    );
-    assert!(read(&vars).is_err());
-}
-
-#[test]
-fn the_function_and_public_url_maps_must_cover_the_same_regions() {
-    let mut vars = complete();
-    vars.insert(
-        config::REGIONAL_FUNCTION_ARNS,
-        "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-regional-control,\
-         us-east-1=arn:aws:lambda:us-east-1:000000000000:function:aex-regional-control"
-            .to_owned(),
-    );
-    assert!(
-        read(&vars).is_err(),
-        "a region with a function ARN and no public URL is a region this plane \
-         claims is reachable and cannot address"
-    );
-}
-
 fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, CentralApiConfigError> {
     Config::from_lookup(|name| vars.get(name).cloned())
 }
@@ -149,11 +123,6 @@ fn complete() -> BTreeMap<&'static str, String> {
             "aex/dev/cursor-secret/current".to_owned(),
         ),
         (config::DATABASE, "aex".to_owned()),
-        (
-            config::DEVICE_VERIFICATION_URI,
-            "https://aex.dev/device".to_owned(),
-        ),
-        (config::DOWNLOAD_GRANT_TTL_MS, "300000".to_owned()),
         (config::DRAIN_DEADLINE_MS, "20000".to_owned()),
         (
             config::IDENTITY_PEPPER_SECRET_ID,
@@ -176,13 +145,7 @@ fn complete() -> BTreeMap<&'static str, String> {
         (config::PLANE, "dev".to_owned()),
         (config::PORT, "8080".to_owned()),
         (config::REGION, "eu-west-1".to_owned()),
-        (
-            config::REGIONAL_FUNCTION_ARNS,
-            "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-regional-control"
-                .to_owned(),
-        ),
         (config::REQUEST_DEADLINE_MS, "10000".to_owned()),
-        (config::STATEMENT_BUCKET, "aex-dev-statements".to_owned()),
         (
             config::STRIPE_COMMAND_EDGE_ARN,
             "arn:aws:lambda:eu-west-1:000000000000:function:aex-stripe-command-edge".to_owned(),

@@ -1,5 +1,5 @@
 //! `ToolPort` — implemented by the composed router over `aex-brain-tool-catalog`,
-//! `aex-brain-managed-web` and `aex-brain-mcp`.
+//! the in-process Tool Mux and its MCP adapter.
 
 use super::BoxFuture;
 use super::proof::{CancelToken, DispatchTicket};
@@ -94,17 +94,6 @@ pub struct ToolRoute {
 pub struct ToolAdvertisement {
     /// Definitions in canonical tool-name order.
     pub definitions: Vec<CanonicalToolDef>,
-    /// Whether every definition explicitly declares the pure, deterministic,
-    /// zero-external-weight contract required before *we* may run two calls
-    /// concurrently.
-    ///
-    /// This is not the provider-facing `parallel_tools` field. What the model
-    /// is told it may emit is [`ToolAdvertisement::allows_parallel_emission`],
-    /// which asks a different question and gets a different answer. This flag
-    /// gates our own execution, and the driver runs one call at a time in
-    /// emission order behind its own durable prepare/commit until a per-batch
-    /// execution policy consumes it.
-    pub parallel_safe: bool,
 }
 
 impl ToolAdvertisement {
@@ -115,10 +104,8 @@ impl ToolAdvertisement {
     /// dialects have no field that expresses "one tool at a time" and refuse to
     /// build a tool-bearing request rather than silently send something else, so
     /// asking for `false` here is not a restriction — it is a request they
-    /// cannot encode. Whether *we* may then run two of those calls at once is
-    /// [`ToolAdvertisement::parallel_safe`], which this deliberately does not
-    /// consult: advertising one non-pure tool must not take four providers out
-    /// of service.
+    /// cannot encode. Runtime concurrency is governed independently by durable
+    /// batch dependencies and target-scoped admission.
     #[must_use]
     pub fn allows_parallel_emission(&self, capabilities: CapabilitySet) -> bool {
         !self.definitions.is_empty() && capabilities.has(Capability::ParallelTools)
@@ -170,7 +157,9 @@ pub struct PreparedToolCall {
     /// Non-Hands executors ignore this value. Carrying it on the prepared call keeps the
     /// tenant-scoped generation out of the process-global router and gives detached Hands
     /// recovery an exact generation to persist in its operation reference.
-    pub hands_generation: GenerationId,
+    pub hands_generation: Option<GenerationId>,
+    /// Frozen session MCP transports and custody references.
+    pub mcp_servers: Vec<aex_brain_domain::mcp::FrozenMcpServer>,
     /// A read-only view of the agent's control state.
     ///
     /// Carried on the call so a control-reading tool such as `todo_read` stays a pure

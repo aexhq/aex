@@ -11,6 +11,8 @@ module "network" {
   az_count           = var.vpc.az_count
   availability_zones = var.vpc.availability_zones
   endpoints          = var.vpc.endpoints
+  allow_nat          = var.vpc.allow_nat
+  nat_justification  = var.vpc.nat_justification
   tags               = var.tags
 }
 

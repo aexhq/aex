@@ -1,0 +1,23 @@
+{
+  "$id": "https://schemas.aex.dev/v1/McpServer.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One frozen MCP definition and its bounded tool namespace.",
+  "properties": {
+    "name": {
+      "description": "Unique server/tool namespace.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
+    "transport": {
+      "$ref": "aex:schema:McpTransport",
+      "description": "How Tool Mux reaches it."
+    }
+  },
+  "required": [
+    "name",
+    "transport"
+  ],
+  "title": "McpServer",
+  "type": "object"
+}

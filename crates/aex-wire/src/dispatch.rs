@@ -22,7 +22,7 @@ use crate::ids::{ContentHash, FilePath, ResourceName, SpanId, TraceId};
 use crate::limits::LimitId;
 use crate::models::{ErrorDetailsValidation, ProviderId};
 use crate::routes::{PathBinding, RouteId, route};
-use crate::server::{Accepted, NdjsonStream, RequestContext};
+use crate::server::{NdjsonStream, RequestContext};
 use crate::types::{Cents, DecimalU128, ETag, JsonPointer, Region, Timestamp};
 
 /// The raw pieces of a matched request, before any typed decoding.
@@ -141,19 +141,6 @@ impl RawResponse {
             location: None,
             body: Vec::new(),
         }
-    }
-
-    /// A `202 Accepted` admission, with its `Location`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ErrorCode::InternalError`] when the operation will not
-    /// serialize.
-    pub fn accepted(accepted: &Accepted) -> WireResult<Self> {
-        let location = accepted.location();
-        let mut rendered = Self::json(202, &accepted.0)?;
-        rendered.location = Some(location);
-        Ok(rendered)
     }
 
     /// Attaches a strong entity tag.

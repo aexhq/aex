@@ -77,15 +77,11 @@ impl OrgRole {
 
 /// Which credential a person presented.
 ///
-/// Both arms are the same principal with the same scopes and the same role. The
-/// distinction exists for audit and revocation, not for admission: one credential
-/// path, not two.
+/// The credential is kept explicit for audit and revocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActorCredential {
     /// A browser session minted by the dashboard sign-in ceremony.
     DashboardSession(Uuid),
-    /// An account token minted by the device flow.
-    AccountToken(Uuid),
 }
 
 impl ActorCredential {
@@ -93,7 +89,7 @@ impl ActorCredential {
     #[must_use]
     pub const fn id(self) -> Uuid {
         match self {
-            Self::DashboardSession(id) | Self::AccountToken(id) => id,
+            Self::DashboardSession(id) => id,
         }
     }
 }
@@ -385,27 +381,6 @@ struct Rule {
 /// What lives here is the one fact the wire contract does not carry — the role
 /// floor — plus the resource class the floor is evaluated against.
 const RULES: &[Rule] = &[
-    // --- identity and account ------------------------------------------------
-    Rule {
-        route: RouteId::DeviceAuthorizationCreate,
-        class: ResourceClass::None,
-        min_role: None,
-    },
-    Rule {
-        route: RouteId::DeviceTokenCreate,
-        class: ResourceClass::None,
-        min_role: None,
-    },
-    // The three credential-ceremony routes are account-shaped, not
-    // organization-shaped: a person decides their own device authorization and
-    // closes their own browser session before any organization has been
-    // selected, so there is no resource to classify and no membership role a
-    // floor could require.
-    Rule {
-        route: RouteId::DeviceDecisionCreate,
-        class: ResourceClass::None,
-        min_role: None,
-    },
     Rule {
         route: RouteId::DashboardSessionCreate,
         class: ResourceClass::None,
@@ -422,71 +397,6 @@ const RULES: &[Rule] = &[
         min_role: None,
     },
     Rule {
-        route: RouteId::AccountGet,
-        class: ResourceClass::None,
-        min_role: None,
-    },
-    // --- organizations and memberships --------------------------------------
-    Rule {
-        route: RouteId::OrganizationsList,
-        class: ResourceClass::None,
-        min_role: None,
-    },
-    Rule {
-        route: RouteId::OrganizationCreate,
-        class: ResourceClass::None,
-        min_role: None,
-    },
-    Rule {
-        route: RouteId::OrganizationGet,
-        class: ResourceClass::Organization,
-        min_role: Some(OrgRole::Member),
-    },
-    Rule {
-        route: RouteId::MembershipsList,
-        class: ResourceClass::Organization,
-        min_role: Some(OrgRole::Member),
-    },
-    Rule {
-        route: RouteId::InvitationCreate,
-        class: ResourceClass::Organization,
-        min_role: Some(OrgRole::Admin),
-    },
-    // Acceptance resolves no organization and therefore carries no role floor.
-    // It could not carry one: the caller is not yet a member of the
-    // organization that invited them, so any floor at all would refuse every
-    // legitimate request. What keeps this inside the tenant boundary is not a
-    // role but the selection — the transaction reads only invitation rows whose
-    // `email` equals the caller's own verified address, and takes the
-    // organization from the row rather than from the request.
-    Rule {
-        route: RouteId::InvitationAccept,
-        class: ResourceClass::None,
-        min_role: None,
-    },
-    // --- workspaces ----------------------------------------------------------
-    Rule {
-        route: RouteId::WorkspacesList,
-        class: ResourceClass::None,
-        min_role: None,
-    },
-    Rule {
-        route: RouteId::WorkspaceCreate,
-        class: ResourceClass::None,
-        min_role: None,
-    },
-    Rule {
-        route: RouteId::WorkspaceGet,
-        class: ResourceClass::Workspace,
-        min_role: Some(OrgRole::Member),
-    },
-    Rule {
-        route: RouteId::WorkspaceDelete,
-        class: ResourceClass::Workspace,
-        min_role: Some(OrgRole::Owner),
-    },
-    // --- API keys ------------------------------------------------------------
-    Rule {
         route: RouteId::ApiKeysList,
         class: ResourceClass::None,
         min_role: None,
@@ -501,62 +411,40 @@ const RULES: &[Rule] = &[
         class: ResourceClass::ApiKey,
         min_role: Some(OrgRole::Admin),
     },
-    // --- durable operations --------------------------------------------------
-    Rule {
-        route: RouteId::CentralOperationsList,
-        class: ResourceClass::None,
-        min_role: None,
-    },
-    Rule {
-        route: RouteId::CentralOperationGet,
-        class: ResourceClass::Operation,
-        min_role: Some(OrgRole::Member),
-    },
-    Rule {
-        route: RouteId::CentralOperationCancel,
-        class: ResourceClass::Operation,
-        min_role: Some(OrgRole::Member),
-    },
-    // --- billing (finance stream's handlers, this plane's admission) ---------
     Rule {
         route: RouteId::BillingBalanceGet,
         class: ResourceClass::None,
         min_role: None,
     },
     Rule {
-        route: RouteId::BillingStatementsList,
-        class: ResourceClass::Organization,
-        min_role: Some(OrgRole::Member),
-    },
-    Rule {
-        route: RouteId::BillingStatementGet,
-        class: ResourceClass::Organization,
-        min_role: Some(OrgRole::Member),
-    },
-    Rule {
-        route: RouteId::BillingStatementDownloadCreate,
-        class: ResourceClass::Organization,
-        min_role: Some(OrgRole::Member),
-    },
-    Rule {
-        route: RouteId::BillingAutoTopupPolicyGet,
-        class: ResourceClass::Organization,
-        min_role: Some(OrgRole::Member),
-    },
-    Rule {
-        route: RouteId::BillingAutoTopupPolicyPut,
-        class: ResourceClass::Organization,
-        min_role: Some(OrgRole::Admin),
-    },
-    Rule {
-        route: RouteId::BillingPortalSessionCreate,
-        class: ResourceClass::Organization,
-        min_role: Some(OrgRole::Admin),
-    },
-    Rule {
         route: RouteId::BillingTopUpCheckoutCreate,
-        class: ResourceClass::Organization,
-        min_role: Some(OrgRole::Admin),
+        class: ResourceClass::None,
+        min_role: None,
+    },
+    Rule {
+        route: RouteId::BillingPaymentMethodsList,
+        class: ResourceClass::None,
+        min_role: None,
+    },
+    Rule {
+        route: RouteId::BillingPaymentMethodSessionCreate,
+        class: ResourceClass::None,
+        min_role: None,
+    },
+    Rule {
+        route: RouteId::BillingPaymentMethodDelete,
+        class: ResourceClass::None,
+        min_role: None,
+    },
+    Rule {
+        route: RouteId::BillingTransactionsList,
+        class: ResourceClass::None,
+        min_role: None,
+    },
+    Rule {
+        route: RouteId::BillingUsageGet,
+        class: ResourceClass::None,
+        min_role: None,
     },
 ];
 
@@ -857,27 +745,8 @@ pub fn admit(
 #[cfg(test)]
 mod tests {
     use super::{Action, OrgRole, PrincipalKindTag, RULES, ResourceClass, requirement};
-    use aex_wire::routes::{Plane, ROUTES, RouteId};
+    use aex_wire::routes::{Plane, ROUTES};
     use std::collections::BTreeSet;
-
-    const fn handler_owns_non_path_target(route: RouteId) -> bool {
-        matches!(
-            route,
-            RouteId::OrganizationsList
-                | RouteId::OrganizationCreate
-                | RouteId::WorkspacesList
-                | RouteId::WorkspaceCreate
-                | RouteId::ApiKeysList
-                | RouteId::ApiKeyCreate
-                | RouteId::CentralOperationsList
-                // Acceptance's target is the caller's own verified address,
-                // which no path or query carries and the edge cannot resolve.
-                // The handler reads it from `identity.user` and the acceptance
-                // transaction selects on it, so the target is owned exactly
-                // where the other seven above own theirs.
-                | RouteId::InvitationAccept
-        )
-    }
 
     #[test]
     fn the_rule_table_covers_exactly_the_central_route_table() {
@@ -898,21 +767,6 @@ mod tests {
     }
 
     #[test]
-    fn every_non_exempt_route_resolves_an_organization_or_names_a_handler_owned_target() {
-        for action in Action::all() {
-            let requirement = requirement(action);
-            let descriptor = aex_wire::routes::route(action.route());
-            assert!(
-                descriptor.pause_exempt
-                    || requirement.resource_class != ResourceClass::None
-                    || handler_owns_non_path_target(action.route()),
-                "{:?} is not pause-exempt, resolves no organization at the edge, and names no handler-owned non-path target",
-                action.route()
-            );
-        }
-    }
-
-    #[test]
     fn a_role_floor_exists_exactly_where_an_organization_is_resolved() {
         for action in Action::all() {
             let requirement = requirement(action);
@@ -921,27 +775,6 @@ mod tests {
                 requirement.resource_class != ResourceClass::None,
                 "{:?} pairs a role floor with a resolved organization",
                 action.route()
-            );
-        }
-    }
-
-    #[test]
-    fn non_path_targets_defer_their_organization_gate_to_the_handler() {
-        for route_id in [
-            RouteId::WorkspaceCreate,
-            RouteId::ApiKeysList,
-            RouteId::ApiKeyCreate,
-        ] {
-            let requirement = requirement(Action::central(route_id).expect("central"));
-            assert_eq!(
-                requirement.resource_class,
-                ResourceClass::None,
-                "{route_id:?}"
-            );
-            assert_eq!(requirement.min_role, None, "{route_id:?}");
-            assert!(
-                !aex_wire::routes::route(route_id).pause_exempt,
-                "{route_id:?} must gate account state after its target is decoded"
             );
         }
     }

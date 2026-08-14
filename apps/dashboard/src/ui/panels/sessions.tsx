@@ -1,18 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
+import type { Session, SessionListPage } from "@aexhq/sdk";
 
-import { DEADLINE_MS, useResource } from "../client";
-import { Badge, Card, Empty, Resolved } from "../components";
+import { DEADLINE_MS, submit, useResource } from "../client";
+import { Badge, Card, Empty, Notice, Resolved } from "../components";
 import { instant, label, sessionStatus } from "../status";
-import type { Page, SessionListItem } from "../wire";
 
 const STATUSES = [
   "idle",
   "running",
-  "suspending",
-  "suspended",
-  "resuming",
   "terminating",
   "terminated",
   "deleting",
@@ -28,11 +25,29 @@ export function SessionsPanel({
   billingHref?: string;
 }) {
   const [status, setStatus] = useState("");
-  const { state, reload } = useResource<Page<SessionListItem>>("sessions_list", {
+  const [problem, setProblem] = useState<string | null>(null);
+  const { state, reload } = useResource<SessionListPage>("sessions_list", {
     region,
     parameters: { limit: "50", ...(status ? { status } : {}) },
     deadlineMs: DEADLINE_MS.control,
   });
+
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const result = await submit<Session>("session_create", {
+      region,
+      body: {
+        provider: String(data.get("provider") ?? "openai"),
+        model: String(data.get("model") ?? ""),
+        providerApiKey: String(data.get("providerApiKey") ?? ""),
+        sandbox: { enabled: data.get("sandbox") === "on" },
+      },
+    });
+    if (result.kind === "ready") globalThis.location.assign(`/w/${slug}/sessions/${result.data.id}`);
+    else setProblem("failure" in result ? result.failure.message : "The session was not created.");
+  }
 
   return (
     <Card
@@ -51,6 +66,16 @@ export function SessionsPanel({
       }
       flush
     >
+      <div className="stack" style={{ padding: "var(--aex-space-4)" }}>
+        {problem ? <Notice status="warning" title="Session creation failed" live><p>{problem}</p></Notice> : null}
+        <form className="row" onSubmit={(event) => void create(event)}>
+          <label className="field"><span>Provider</span><select name="provider"><option>openai</option><option>anthropic</option><option>deepseek</option><option>xai</option><option>meta</option><option>moonshotai</option><option>alibaba</option></select></label>
+          <label className="field"><span>Model</span><input name="model" required /></label>
+          <label className="field"><span>API key (write-only)</span><input name="providerApiKey" type="password" autoComplete="off" required /></label>
+          <label className="row small"><input name="sandbox" type="checkbox" defaultChecked />Sandbox</label>
+          <button className="button" data-variant="primary">Create</button>
+        </form>
+      </div>
       <Resolved state={state} reload={reload} {...(billingHref ? { billingHref } : {})}>
         {(page) =>
           page.items.length === 0 ? (

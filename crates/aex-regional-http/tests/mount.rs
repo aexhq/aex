@@ -11,7 +11,8 @@ use aex_regional_http::context::{
 };
 use aex_regional_http::envelope::ENVELOPE_BYTES;
 use aex_regional_http::mount::{
-    AdmissionRequest, EdgeAdmission, MountError, UnaryDispatch, mount_unary, not_served,
+    AdmissionRequest, DispatchResponse, EdgeAdmission, MountError, UnaryDispatch, mount_unary,
+    not_served,
 };
 use aex_regional_http::router::{RouteOwner, route_owner};
 use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
@@ -52,9 +53,9 @@ impl UnaryDispatch for EchoDispatch {
         _accept: AcceptKind,
         raw: RawRequest<'_>,
         _limits: RequestLimits,
-    ) -> WireResult<RawResponse> {
+    ) -> WireResult<DispatchResponse> {
         if route_owner(raw.route) == Some(self.0) {
-            RawResponse::json(200, &raw.route.as_str())
+            RawResponse::json(200, &raw.route.as_str()).map(DispatchResponse::Unary)
         } else {
             Err(not_served(raw.route))
         }
@@ -183,7 +184,7 @@ fn route_ownership_partitions_the_regional_route_table() {
 
 /// The regional launch surface is one finite API owner.
 #[test]
-fn the_session_api_owns_every_finite_regional_route() {
+fn the_session_api_owns_every_regional_route() {
     let regional: Vec<RouteId> = RouteId::ALL
         .iter()
         .copied()
@@ -196,13 +197,15 @@ fn the_session_api_owns_every_finite_regional_route() {
     assert_eq!(RouteOwner::SessionApi.routes(), regional);
     for id in RouteOwner::SessionApi.routes() {
         assert_eq!(route_owner(id), Some(RouteOwner::SessionApi));
-        assert_eq!(route(id).serving_artifact, "session-stream-api");
-        assert_ne!(
-            route(id).transport,
-            aex_wire::routes::TransportKind::Ndjson,
-            "`{id}` must remain finite"
-        );
+        assert_eq!(route(id).serving_artifact, "session-api");
     }
+    assert_eq!(
+        regional
+            .iter()
+            .filter(|id| route(**id).transport == aex_wire::routes::TransportKind::Ndjson)
+            .count(),
+        3
+    );
 }
 
 #[test]
@@ -215,10 +218,16 @@ fn no_central_route_has_a_regional_owner() {
 }
 
 #[test]
-fn the_session_api_owns_the_complete_provider_credential_group() {
-    let group = RouteGroup::ProviderCredentials;
-    let session = RouteOwner::SessionApi.routes_in(group);
-    assert_eq!(session, group.routes(), "{group:?} has one public owner");
+fn the_session_api_owns_exactly_the_three_regional_groups() {
+    assert_eq!(
+        RouteOwner::SessionApi.groups(),
+        vec![
+            RouteGroup::Registry,
+            RouteGroup::Sessions,
+            RouteGroup::Uploads,
+        ]
+    );
+    assert_eq!(RouteOwner::SessionApi.routes().len(), 19);
 }
 
 // --- mounting -----------------------------------------------------------------
@@ -285,7 +294,7 @@ async fn a_refused_admission_never_reaches_the_dispatcher() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(concrete_path(RouteId::ProviderCredentialRegister))
+                .uri(concrete_path(RouteId::SessionCreate))
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -323,7 +332,7 @@ async fn the_declared_envelope_is_the_transport_body_ceiling() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(concrete_path(RouteId::ProviderCredentialRegister))
+                .uri(concrete_path(RouteId::SessionCreate))
                 .header("content-type", "application/json")
                 .body(Body::from(vec![b'x'; 3 * 1024 * 1024]))
                 .expect("request"),
@@ -341,7 +350,7 @@ async fn the_declared_envelope_is_the_transport_body_ceiling() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(concrete_path(RouteId::ProviderCredentialRegister))
+                .uri(concrete_path(RouteId::SessionCreate))
                 .header("content-type", "application/json")
                 .body(Body::from(vec![b'x'; ENVELOPE_BYTES + 1]))
                 .expect("request"),
@@ -412,7 +421,7 @@ fn an_owned_route_in_neither_set_fails_composition() {
             RouteOwner::SessionApi
                 .routes()
                 .into_iter()
-                .filter(|id| !route(*id).deferred && *id != RouteId::ProviderCredentialGet)
+                .filter(|id| !route(*id).deferred && *id != RouteId::RegistryFilesDelete)
                 .collect()
         }
         async fn dispatch(
@@ -421,7 +430,7 @@ fn an_owned_route_in_neither_set_fails_composition() {
             _accept: AcceptKind,
             _raw: RawRequest<'_>,
             _limits: RequestLimits,
-        ) -> WireResult<RawResponse> {
+        ) -> WireResult<DispatchResponse> {
             unreachable!("never dispatched")
         }
     }
@@ -434,7 +443,7 @@ fn an_owned_route_in_neither_set_fails_composition() {
     assert_eq!(
         error,
         MountError::Unaccounted {
-            route: "provider_credential_get",
+            route: "registry_files_delete",
             deployable: RouteOwner::SessionApi.half(),
         }
     );

@@ -74,7 +74,6 @@ fn the_corpus_covers_every_fold_guard_it_names() {
         Rejection::DuplicateEffect,
         Rejection::AlreadyStarted,
         Rejection::Budget,
-        Rejection::CompactionOutOfRange,
         Rejection::EnvelopeHashMismatch,
         Rejection::UnknownWait,
         Rejection::UnknownChild,

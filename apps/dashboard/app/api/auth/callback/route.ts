@@ -53,7 +53,6 @@ export async function GET(request: Request): Promise<Response> {
 
   try {
     const credential = await openDashboardSession({
-      provider: binding.provider,
       code,
       state: presented,
       codeVerifier: binding.verifier,

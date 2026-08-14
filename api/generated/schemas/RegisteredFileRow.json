@@ -10,30 +10,20 @@
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     },
+    "failureCode": {
+      "description": "Stable bounded failure code; present only when failed.",
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
     "name": {
       "description": "The public identity.",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
       "type": "string"
     },
-    "revision": {
-      "description": "Monotonic concurrency token.",
-      "maximum": 9007199254740991,
-      "minimum": 0,
-      "type": "integer"
-    },
-    "sha256": {
-      "description": "Hash of the canonical value document.",
-      "pattern": "^sha256:[0-9a-f]{64}$",
-      "type": "string"
-    },
-    "sizeBytes": {
-      "description": "Size of the canonical value document in bytes.",
-      "pattern": "^(0|[1-9]\\d*)$",
-      "type": "string"
-    },
     "state": {
       "$ref": "aex:schema:RegisteredState",
-      "description": "Always current."
+      "description": "Lifecycle of this one current overwrite."
     },
     "updatedAt": {
       "description": "When last replaced.",
@@ -45,9 +35,6 @@
   "required": [
     "createdAt",
     "name",
-    "revision",
-    "sha256",
-    "sizeBytes",
     "state",
     "updatedAt"
   ],

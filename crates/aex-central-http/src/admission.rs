@@ -74,8 +74,8 @@ pub const REQUEST_ID_HEADER: &str = "aex-request-id";
 
 /// What the router asks before it admits a request.
 ///
-/// `Ok(None)` means **no credential was presented at all**, which the two
-/// device-flow routes admit and every other route refuses. A credential that was
+/// `Ok(None)` means **no credential was presented at all**, which only routes
+/// explicitly declared anonymous may admit. A credential that was
 /// presented and not admitted is `Err`, never `Ok(None)`: a process that
 /// silently downgrades a rejected credential to "anonymous" is a process whose
 /// authentication can be skipped by sending garbage.
@@ -135,10 +135,9 @@ impl PurposedPeppers {
     pub const fn purpose(kind: CredentialKind) -> PepperPurpose {
         match kind {
             CredentialKind::WorkspaceKey => PepperPurpose::ApiKey,
-            CredentialKind::AccountToken
-            | CredentialKind::DashboardSession
-            | CredentialKind::EmailChallenge
-            | CredentialKind::DeviceCode => PepperPurpose::Identity,
+            CredentialKind::DashboardSession | CredentialKind::EmailChallenge => {
+                PepperPurpose::Identity
+            }
         }
     }
 }
@@ -252,19 +251,14 @@ where
         now: OffsetDateTime,
     ) -> Result<CentralAuthorizerContext, EdgeError> {
         let state = match credential.kind {
-            CredentialKind::AccountToken => {
-                self.reader
-                    .resolve_account_token_central(credential.id, now)
-                    .await
-            }
             CredentialKind::DashboardSession => {
                 self.reader
                     .resolve_dashboard_session_central(credential.id, now)
                     .await
             }
-            CredentialKind::WorkspaceKey
-            | CredentialKind::EmailChallenge
-            | CredentialKind::DeviceCode => return Err(EdgeError::CredentialRefused),
+            CredentialKind::WorkspaceKey | CredentialKind::EmailChallenge => {
+                return Err(EdgeError::CredentialRefused);
+            }
         }
         .map_err(|_| EdgeError::AuthenticationUnavailable)?
         .ok_or(EdgeError::CredentialRefused)?;
@@ -325,11 +319,8 @@ where
     ) -> Result<CentralAuthorizerContext, EdgeError> {
         let (issued_at_ms, expires_at_ms) = self.window(now);
         let principal_kind = match kind {
-            CredentialKind::AccountToken => ContextPrincipalKind::Account,
             CredentialKind::DashboardSession => ContextPrincipalKind::UserSession,
-            CredentialKind::WorkspaceKey
-            | CredentialKind::EmailChallenge
-            | CredentialKind::DeviceCode => {
+            CredentialKind::WorkspaceKey | CredentialKind::EmailChallenge => {
                 return Err(EdgeError::Internal("an actor context needs an actor kind"));
             }
         };
@@ -369,8 +360,8 @@ where
         let Some(raw) = bearer(headers) else {
             // `bearer` answers `None` both for "no header" and for "a header
             // that is not one unambiguous Bearer value", and those are not the
-            // same request. Nothing presented lets the route decide — the two
-            // device-flow routes admit it. A header that *was* sent and did not
+            // same request. Nothing presented lets the route decide. A header
+            // that *was* sent and did not
             // resolve is a refusal, because treating it as absent would make a
             // route that admits anonymous callers also admit a malformed
             // credential as one.
@@ -390,10 +381,10 @@ where
                 self.admit_workspace_key(&credential, request_id, now)
                     .await?
             }
-            CredentialKind::AccountToken | CredentialKind::DashboardSession => {
+            CredentialKind::DashboardSession => {
                 self.admit_actor(&credential, request_id, now).await?
             }
-            CredentialKind::EmailChallenge | CredentialKind::DeviceCode => {
+            CredentialKind::EmailChallenge => {
                 return Err(EdgeError::CredentialRefused);
             }
         };
@@ -427,17 +418,14 @@ pub fn bearer(headers: &HeaderMap) -> Option<&str> {
     Some(credential)
 }
 
-/// The three credential kinds the central plane resolves.
+/// The two credential kinds the central plane resolves.
 ///
-/// Relocated from `central-authz`, unchanged. `EmailChallenge` and `DeviceCode`
-/// are redeemed by a ceremony, never presented as a bearer credential, so they
-/// are not admitted here even though they parse elsewhere.
+/// Dashboard sessions serve the first-party UI; workspace keys serve API
+/// clients. Retired and ceremony credentials are not admitted.
 #[must_use]
 pub fn parse_supported(raw: &str) -> Option<ParsedCredential> {
     let kind = if raw.starts_with(CredentialKind::WorkspaceKey.prefix()) {
         CredentialKind::WorkspaceKey
-    } else if raw.starts_with(CredentialKind::AccountToken.prefix()) {
-        CredentialKind::AccountToken
     } else if raw.starts_with(CredentialKind::DashboardSession.prefix()) {
         CredentialKind::DashboardSession
     } else {
@@ -499,7 +487,7 @@ mod tests {
     const KEY: u128 = 0x31;
     const WORKSPACE: u128 = 0x32;
     const ORGANIZATION: u128 = 0x33;
-    const TOKEN: u128 = 0x11;
+    const SESSION: u128 = 0x11;
     const USER: u128 = 0x22;
 
     #[derive(Debug)]
@@ -552,15 +540,6 @@ mod tests {
             Ok(self.key.clone())
         }
 
-        async fn resolve_account_token_for_workspace(
-            &self,
-            _token_id: Uuid,
-            _workspace_id: Uuid,
-            _now: OffsetDateTime,
-        ) -> Result<Option<AccountActorState>, StoreError> {
-            Ok(None)
-        }
-
         async fn resolve_session_for_workspace(
             &self,
             _session_id: Uuid,
@@ -568,17 +547,6 @@ mod tests {
             _now: OffsetDateTime,
         ) -> Result<Option<AccountActorState>, StoreError> {
             Ok(None)
-        }
-
-        async fn resolve_account_token_central(
-            &self,
-            _token_id: Uuid,
-            _now: OffsetDateTime,
-        ) -> Result<Option<CentralActorState>, StoreError> {
-            if self.unreachable {
-                return Err(StoreError::Unavailable);
-            }
-            Ok(self.actor.clone())
         }
 
         async fn resolve_dashboard_session_central(
@@ -603,7 +571,7 @@ mod tests {
 
     fn actor_state(digest: &PresentedDigest) -> CentralActorState {
         CentralActorState {
-            credential_id: Uuid::from_u128(TOKEN),
+            credential_id: Uuid::from_u128(SESSION),
             user_id: Uuid::from_u128(USER),
             scopes: ScopeSet::CENTRAL,
             verifier: *verifier(&Pepper::new(PEPPER_BYTES), digest).as_bytes(),
@@ -649,11 +617,11 @@ mod tests {
         CredentialAdmission::new(reader, OnePepper, 30_000)
     }
 
-    fn account_token() -> (String, PresentedDigest) {
+    fn dashboard_session() -> (String, PresentedDigest) {
         let (secret, digest) = mint(
-            CredentialKind::AccountToken,
+            CredentialKind::DashboardSession,
             None,
-            Uuid::from_u128(TOKEN),
+            Uuid::from_u128(SESSION),
             &FixedRng,
         );
         (secret.expose().to_owned(), digest)
@@ -673,8 +641,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_valid_account_token_mints_the_context_the_edge_accepts() {
-        let (secret, digest) = account_token();
+    async fn a_valid_dashboard_session_mints_the_context_the_edge_accepts() {
+        let (secret, digest) = dashboard_session();
         let context = admission(Reader {
             actor: Some(actor_state(&digest)),
             ..Reader::default()
@@ -683,9 +651,9 @@ mod tests {
         .await
         .expect("the authority answers")
         .expect("a credential was presented");
-        assert_eq!(context.kind, ContextPrincipalKind::Account);
+        assert_eq!(context.kind, ContextPrincipalKind::UserSession);
         assert_eq!(context.principal_id, Uuid::from_u128(USER));
-        assert_eq!(context.credential_id, Some(Uuid::from_u128(TOKEN)));
+        assert_eq!(context.credential_id, Some(Uuid::from_u128(SESSION)));
         assert_eq!(context.account_state, AccountState::Unavailable);
         assert_eq!(context.expires_at_ms - context.issued_at_ms, 30_000);
     }
@@ -712,7 +680,7 @@ mod tests {
     async fn a_forged_secret_against_a_real_row_is_refused_in_process() {
         // The row exists, the id echoes, nothing is revoked — only the MAC is
         // wrong. This is the case the gateway used to catch and an ALB does not.
-        let (secret, digest) = account_token();
+        let (secret, digest) = dashboard_session();
         let mut state = actor_state(&digest);
         state.verifier = [99; 32];
         assert_eq!(
@@ -754,7 +722,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_credential_shaped_like_nothing_this_plane_serves_is_refused_not_ignored() {
-        for presented in ["not-a-token", "aex_dc_something", ""] {
+        for presented in ["not-a-credential", "unsupported_credential", ""] {
             let mut map = HeaderMap::new();
             map.insert(
                 http::header::AUTHORIZATION,
@@ -819,11 +787,11 @@ mod tests {
 
     #[tokio::test]
     async fn an_unknown_credential_and_a_wrong_secret_are_the_same_public_answer() {
-        let (secret, _) = account_token();
+        let (secret, _) = dashboard_session();
         let unknown = admission(Reader::default())
             .authenticate(&headers(Some(&secret)), OffsetDateTime::UNIX_EPOCH)
             .await;
-        let (secret, digest) = account_token();
+        let (secret, digest) = dashboard_session();
         let mut state = actor_state(&digest);
         state.verifier = [7; 32];
         let wrong = admission(Reader {
@@ -838,7 +806,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unreachable_store_is_retryable_and_never_a_refusal() {
-        let (secret, _) = account_token();
+        let (secret, _) = dashboard_session();
         let failure = admission(Reader {
             unreachable: true,
             ..Reader::default()
@@ -852,7 +820,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_pepper_this_process_cannot_resolve_is_a_fault_not_an_invalid_credential() {
-        let (secret, digest) = account_token();
+        let (secret, digest) = dashboard_session();
         let failure = CredentialAdmission::new(
             Reader {
                 actor: Some(actor_state(&digest)),
@@ -869,7 +837,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_configured_lifetime_can_never_exceed_the_ceiling() {
-        let (secret, digest) = account_token();
+        let (secret, digest) = dashboard_session();
         let context = CredentialAdmission::new(
             Reader {
                 actor: Some(actor_state(&digest)),
@@ -900,7 +868,7 @@ mod tests {
             "Bearer two".parse().expect("a header value"),
         );
         assert_eq!(bearer(&map), None);
-        assert_eq!(bearer(&headers(Some("aex_at_x"))), Some("aex_at_x"));
+        assert_eq!(bearer(&headers(Some("aex_ds_x"))), Some("aex_ds_x"));
         let mut comma = HeaderMap::new();
         comma.insert(
             http::header::AUTHORIZATION,
@@ -910,21 +878,17 @@ mod tests {
     }
 
     #[test]
-    fn only_the_three_central_credential_kinds_parse() {
+    fn only_dashboard_sessions_and_workspace_keys_reach_central_admission() {
         for kind in [
             CredentialKind::EmailChallenge,
-            CredentialKind::DeviceCode,
             CredentialKind::WorkspaceKey,
-            CredentialKind::AccountToken,
             CredentialKind::DashboardSession,
         ] {
             let (secret, _) = mint(kind, None, Uuid::from_u128(1), &FixedRng);
             let parsed = parse_supported(secret.expose());
             let central = matches!(
                 kind,
-                CredentialKind::WorkspaceKey
-                    | CredentialKind::AccountToken
-                    | CredentialKind::DashboardSession
+                CredentialKind::WorkspaceKey | CredentialKind::DashboardSession
             );
             // A workspace key minted without a pin does not parse either way;
             // what matters is that no non-central kind ever does.
@@ -941,10 +905,8 @@ mod tests {
             PepperPurpose::ApiKey
         );
         for kind in [
-            CredentialKind::AccountToken,
             CredentialKind::DashboardSession,
             CredentialKind::EmailChallenge,
-            CredentialKind::DeviceCode,
         ] {
             assert_eq!(PurposedPeppers::purpose(kind), PepperPurpose::Identity);
         }

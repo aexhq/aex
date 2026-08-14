@@ -4,9 +4,8 @@
 //!
 //! # Invariants
 //!
-//! - a request is sent only for a `(provider, model)` pair the compiled table
-//!   admits; the gateway ids (`openrouter`/`vercel` `upstream/model` rows)
-//!   travel as body fields, never as URL path segments
+//! - a request is sent only for a `(provider, model)` pair the compiled latest
+//!   catalog admits; Aex exposes no third-party gateway provider identity
 //! - the retry loop re-sends only after a definitive `429`/`503` rejection; an
 //!   ambiguous or started send is never followed by a second generation
 //! - an exhausted retry loop stops deterministically (`Terminal`), so the

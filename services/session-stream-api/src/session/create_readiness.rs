@@ -115,6 +115,9 @@ pub enum StartupFileError {
     /// The persisted file path could not map inside `/workspace`.
     #[error("startup mount path is not a valid guest workspace path")]
     InvalidPath,
+    /// A selected startup file cannot exist without a sandbox generation.
+    #[error("startup files require an exact sandbox generation")]
+    MissingGeneration,
     /// The guest failed or returned state for another upload.
     #[error(transparent)]
     Guest(#[from] StartupGuestError),
@@ -132,10 +135,13 @@ pub async fn materialize_selected<C: StartupContent, G: StartupGuest>(
     guest: &G,
     prepared: &CreatePreparation,
 ) -> Result<Vec<MaterializedFile>, StartupFileError> {
+    let generation = prepared
+        .generation
+        .ok_or(StartupFileError::MissingGeneration)?;
     let mut materialized = Vec::with_capacity(prepared.files.len());
     for file in &prepared.files {
         let body = content.read(file).await?;
-        let upload = upload_id(prepared.generation, file);
+        let upload = upload_id(generation, file);
         let batches = upload_batches(upload, file, &body.bytes)?;
         let expected = expected_state(upload, file, &body.bytes)?;
         for (ordinal, batch) in batches.into_iter().enumerate() {
@@ -143,7 +149,7 @@ pub async fn materialize_selected<C: StartupContent, G: StartupGuest>(
             let responses = guest
                 .call(
                     prepared.session,
-                    prepared.generation,
+                    generation,
                     activity_id(upload, ordinal),
                     batch,
                 )

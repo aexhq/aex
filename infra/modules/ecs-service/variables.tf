@@ -1,6 +1,6 @@
 variable "name" {
   type        = string
-  description = "Service name. It also selects the pins that apply to `brain-mux` and `session-stream-api`."
+  description = "Service name. It also selects the pins that apply to `brain-mux` and `session-api`."
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{2,50}$", var.name))
@@ -111,7 +111,7 @@ variable "desired_count" {
 
 variable "stop_timeout" {
   type        = number
-  description = "Seconds a container is given to drain before it is killed. 120 for `brain-mux`, 30 for `session-stream-api`."
+  description = "Seconds a container is given to drain before it is killed. 120 for `brain-mux`, 30 for `session-api`."
 
   validation {
     condition     = var.stop_timeout >= 1 && var.stop_timeout <= 120
@@ -124,8 +124,8 @@ variable "stop_timeout" {
   }
 
   validation {
-    condition     = var.name != "session-stream-api" || var.stop_timeout == 30
-    error_message = "`session-stream-api` must use a 30 second stop timeout. The process derives its own admitted `AEX_DRAIN_DEADLINE_MS` ceiling from this exact number (`aex_regional_http::drain::FARGATE_STOP_TIMEOUT_S`), and refuses to start on a deadline that could not fire before SIGKILL. Changing it here without changing that constant makes the task's drain deadline unreachable and it is killed mid-request instead of exiting on its own terms."
+    condition     = var.name != "session-api" || var.stop_timeout == 30
+    error_message = "`session-api` must use a 30 second stop timeout. The process derives its own admitted `AEX_DRAIN_DEADLINE_MS` ceiling from this exact number (`aex_regional_http::drain::FARGATE_STOP_TIMEOUT_S`), and refuses to start on a deadline that could not fire before SIGKILL."
   }
 }
 
@@ -403,6 +403,12 @@ variable "gateway_endpoint_prefix_list_ids" {
     condition     = alltrue([for id in values(var.gateway_endpoint_prefix_list_ids) : can(regex("^pl-[0-9a-f]{8,17}$", id))])
     error_message = "Every gateway endpoint value must be an AWS-managed prefix-list id such as `pl-0123456789abcdef0`."
   }
+}
+
+variable "public_https_egress" {
+  type        = bool
+  default     = false
+  description = "Whether this service may initiate HTTPS to public provider/MCP endpoints. It is false for every authority API and enabled only for the two muxes that validate their own destination allowlists."
 }
 
 # A list of at most one rather than a single id, because the *number* of rules

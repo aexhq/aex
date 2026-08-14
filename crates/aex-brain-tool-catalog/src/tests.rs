@@ -378,8 +378,18 @@ fn builtin_catalog_preserves_the_clean_cut_and_runtime_semantics() {
         .collect::<Vec<_>>();
     assert_eq!(
         names,
-        ["bash", "edit_file", "read_file", "storage_persist", "write_file"],
-        "the five MVP tools are the complete public built-in catalog"
+        [
+            "bash",
+            "create_subagent",
+            "edit_file",
+            "mcp_call",
+            "read_file",
+            "stop_subagent",
+            "storage_persist",
+            "wait_subagents",
+            "write_file",
+        ],
+        "the six Tool Mux targets plus three Brain-native tools are the complete MVP catalog"
     );
 
     for entry in entries.iter().filter(|entry| {
@@ -453,7 +463,7 @@ fn storage_persist_is_the_provider_safe_spelling_of_the_product_tool() {
         .find(|entry| entry.descriptor.name.as_str() == "storage_persist")
         .expect("storage.persist product tool is advertised with provider-safe spelling");
     assert_eq!(tool.descriptor.boundary, ToolBoundary::PlatformStorage);
-    assert_eq!(tool.descriptor.route, ExecutorRoute::ToolExec);
+    assert_eq!(tool.descriptor.route, ExecutorRoute::PlatformStorage);
     assert_eq!(tool.descriptor.effect, EffectClass::IdempotentManaged);
     assert_eq!(
         tool.descriptor.recovery,
@@ -617,8 +627,18 @@ fn advertisement_is_exactly_the_ready_session_local_tools() {
         let name = entry.descriptor.name.as_str();
         assert!(advertised.contains(name), "{name}");
     }
-    assert_eq!(advertised.entries.len(), 5);
-    for name in ["bash", "edit_file", "read_file", "storage_persist", "write_file"] {
+    assert_eq!(advertised.entries.len(), 9);
+    for name in [
+        "bash",
+        "create_subagent",
+        "edit_file",
+        "mcp_call",
+        "read_file",
+        "stop_subagent",
+        "storage_persist",
+        "wait_subagents",
+        "write_file",
+    ] {
         assert!(advertised.contains(name), "{name}");
     }
     assert!(
@@ -762,7 +782,7 @@ fn ready_executors() -> ExecutorRegistry {
         ExecutorRoute::Park,
         ExecutorRoute::SubagentScheduler,
         ExecutorRoute::ManagedWeb,
-        ExecutorRoute::ToolExec,
+        ExecutorRoute::PlatformStorage,
         ExecutorRoute::Mcp,
         ExecutorRoute::HandsFilesystem,
         ExecutorRoute::HandsDevelopment,

@@ -1,4 +1,4 @@
-//! Validated start-up configuration for `session-stream-api`.
+//! Validated start-up configuration for `session-api`.
 //!
 //! Nothing here has a default. Every table, bucket, key and function is named
 //! explicitly, and every ARN must resolve to the region this process is pinned
@@ -16,7 +16,7 @@ use aex_regional_http::drain::{MAX_DRAIN_DEADLINE_MS, MIN_DRAIN_DEADLINE_MS};
 use aex_wire::types::{HttpsUrl, Region};
 
 /// The deployable this configuration belongs to.
-pub const DEPLOYABLE: &str = "session-stream-api";
+pub const DEPLOYABLE: &str = "session-api";
 
 // --- shared: bound identically by both halves --------------------------------
 
@@ -55,7 +55,7 @@ pub const CREDENTIAL_PEPPER_REF: &str = "AEX_CREDENTIAL_PEPPER_REF";
 /// The regional authorization projection table.
 pub const AUTHZ_PROJECTION_TABLE: &str = "AEX_AUTHZ_PROJECTION_TABLE";
 /// The `session-authority` table.
-pub const SESSION_TABLE: &str = "AEX_SESSION_TABLE";
+pub const SESSION_AUTHORITY_TABLE: &str = "AEX_SESSION_AUTHORITY_TABLE";
 /// The regional content bucket.
 pub const CONTENT_BUCKET: &str = "AEX_CONTENT_BUCKET";
 /// Existing immutable AEX-generated session telemetry bucket.
@@ -74,16 +74,11 @@ pub const REGIONAL_API_URL: &str = "AEX_REGIONAL_API_URL";
 /// Reaching this table requires a `Grant<WorkClaim>`; binding the name here does
 /// not by itself give any route a write.
 pub const WORK_TABLE: &str = "AEX_WORK_TABLE";
-/// Exact live alias of the isolated session operation worker.
-pub const SESSION_OPERATION_WORKER_FUNCTION_ARN: &str = "AEX_SESSION_OPERATION_WORKER_FUNCTION_ARN";
-/// The `regional-content` table.
-pub const CONTENT_TABLE: &str = "AEX_CONTENT_TABLE";
-/// The `regional-registry` table.
-pub const REGISTRY_TABLE: &str = "AEX_REGISTRY_TABLE";
-/// The `regional-secret-custody` table, read for ciphertext metadata only.
-pub const SECRET_CUSTODY_TABLE: &str = "AEX_SECRET_CUSTODY_TABLE";
-/// The `regional-secret-keystore` table used by credential registration.
-pub const SECRET_KEYSTORE_TABLE: &str = "AEX_SECRET_KEYSTORE_TABLE";
+/// Exact live alias of the isolated session maintenance worker.
+pub const SESSION_MAINTENANCE_WORKER_FUNCTION_ARN: &str =
+    "AEX_SESSION_MAINTENANCE_WORKER_FUNCTION_ARN";
+/// The latest-only file and immutable-content metadata authority.
+pub const FILE_AUTHORITY_TABLE: &str = "AEX_FILE_AUTHORITY_TABLE";
 /// The secret KMS key. Never the content key.
 pub const SECRET_KMS_KEY_ARN: &str = "AEX_SECRET_KMS_KEY_ARN";
 /// Branch-key cache byte budget.
@@ -92,10 +87,8 @@ pub const BRANCH_KEY_CACHE_BYTES: &str = "AEX_SECRET_BRANCH_KEY_CACHE_BYTES";
 pub const BRANCH_KEY_CACHE_TTL_MS: &str = "AEX_SECRET_BRANCH_KEY_CACHE_TTL_MS";
 /// The `runtime-activity` table.
 pub const RUNTIME_ACTIVITY_TABLE: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
-/// Compute usage ingress shared with runtime-control resume accounting.
-pub const USAGE_COMPUTE_QUEUE_URL: &str = "AEX_USAGE_COMPUTE_QUEUE_URL";
-/// Storage usage ingress shared with runtime-control resume accounting.
-pub const USAGE_STORAGE_QUEUE_URL: &str = "AEX_USAGE_STORAGE_QUEUE_URL";
+/// The central billing FIFO used by trusted runtime usage accounting.
+pub const USAGE_RATING_QUEUE_URL: &str = "AEX_USAGE_RATING_QUEUE_URL";
 /// Runtime due-index shard count (constructor setting; this edge does not scan it).
 pub const RUNTIME_DUE_SHARDS: &str = "AEX_RUNTIME_DUE_SHARDS";
 /// Runtime due page item ceiling.
@@ -104,8 +97,6 @@ pub const RUNTIME_DUE_PAGE_ITEMS: &str = "AEX_RUNTIME_DUE_PAGE_ITEMS";
 pub const RUNTIME_DUE_PAGE_READS: &str = "AEX_RUNTIME_DUE_PAGE_READS";
 /// Exact pricing version attached to resume usage drafts.
 pub const PRICING_VERSION: &str = "AEX_PRICING_VERSION";
-/// The `usage-query-projection` table.
-pub const USAGE_QUERY_TABLE: &str = "AEX_USAGE_QUERY_TABLE";
 /// The account that must own the content bucket.
 pub const CONTENT_BUCKET_OWNER: &str = "AEX_CONTENT_BUCKET_OWNER";
 /// Exact release-derived five-row Hands image catalog.
@@ -122,7 +113,7 @@ pub const MAX_PAGE_ITEMS: &str = "AEX_MAX_PAGE_ITEMS";
 pub const MAX_PAGE_BYTES: &str = "AEX_MAX_PAGE_BYTES";
 
 /// Every variable a healthy `session-stream-api` requires.
-pub const REQUIRED: [&str; 37] = [
+pub const REQUIRED: [&str; 32] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
@@ -130,29 +121,24 @@ pub const REQUIRED: [&str; 37] = [
     DRAIN_DEADLINE_MS,
     CREDENTIAL_PEPPER_REF,
     AUTHZ_PROJECTION_TABLE,
-    SESSION_TABLE,
+    SESSION_AUTHORITY_TABLE,
     CONTENT_BUCKET,
     SESSION_TELEMETRY_BUCKET,
     SESSION_TELEMETRY_KMS_KEY_ARN,
     CURSOR_SIGNING_KEY_REF,
     REGIONAL_API_URL,
     WORK_TABLE,
-    SESSION_OPERATION_WORKER_FUNCTION_ARN,
-    CONTENT_TABLE,
-    REGISTRY_TABLE,
-    SECRET_CUSTODY_TABLE,
-    SECRET_KEYSTORE_TABLE,
+    SESSION_MAINTENANCE_WORKER_FUNCTION_ARN,
+    FILE_AUTHORITY_TABLE,
     SECRET_KMS_KEY_ARN,
     BRANCH_KEY_CACHE_BYTES,
     BRANCH_KEY_CACHE_TTL_MS,
     RUNTIME_ACTIVITY_TABLE,
-    USAGE_COMPUTE_QUEUE_URL,
-    USAGE_STORAGE_QUEUE_URL,
+    USAGE_RATING_QUEUE_URL,
     RUNTIME_DUE_SHARDS,
     RUNTIME_DUE_PAGE_ITEMS,
     RUNTIME_DUE_PAGE_READS,
     PRICING_VERSION,
-    USAGE_QUERY_TABLE,
     CONTENT_BUCKET_OWNER,
     HANDS_IMAGE_CATALOG,
     HANDS_PUBLIC_INTERNET_EGRESS,
@@ -206,16 +192,10 @@ pub struct Config {
     pub session_table: String,
     /// `regional-work` table.
     pub work_table: String,
-    /// Exact qualified session-operation-worker Lambda ARN.
-    pub session_operation_worker: Arn,
-    /// `regional-content` table.
-    pub content_table: String,
-    /// `regional-registry` table.
-    pub registry_table: String,
-    /// `regional-secret-custody` table.
-    pub secret_custody_table: String,
-    /// `regional-secret-keystore` table.
-    pub secret_keystore_table: String,
+    /// Exact qualified session-maintenance-worker Lambda ARN.
+    pub session_maintenance_worker: Arn,
+    /// Latest-only file and immutable-content metadata authority.
+    pub file_authority_table: String,
     /// Secret KMS key used only by provider-credential registration.
     pub secret_kms_key: Arn,
     /// Branch-key cache byte budget.
@@ -224,18 +204,14 @@ pub struct Config {
     pub branch_key_cache_ttl_ms: u64,
     /// `runtime-activity` table.
     pub runtime_activity_table: String,
-    /// Compute usage ingress used by same-generation resume.
-    pub usage_compute_queue_url: String,
-    /// Storage usage ingress used by same-generation resume.
-    pub usage_storage_queue_url: String,
+    /// Central billing FIFO used by same-generation resume accounting.
+    pub usage_rating_queue_url: String,
     /// Runtime-control due-index shard count.
     pub runtime_due_shards: u16,
     /// Runtime-control due scan budget.
     pub runtime_due_page: aex_runtime_control::store::PageBudget,
     /// Exact usage pricing version.
     pub pricing_version: String,
-    /// `usage-query-projection` table.
-    pub usage_query_table: String,
     /// Regional content bucket.
     pub content_bucket: String,
     /// Immutable AEX-generated session telemetry bucket.
@@ -291,22 +267,22 @@ impl Config {
         let session_telemetry_kms_key =
             arn_in_region(lookup, SESSION_TELEMETRY_KMS_KEY_ARN, region, "kms")?;
         let secret_kms_key = arn_in_region(lookup, SECRET_KMS_KEY_ARN, region, "kms")?;
-        let session_operation_worker = arn_in_region(
+        let session_maintenance_worker = arn_in_region(
             lookup,
-            SESSION_OPERATION_WORKER_FUNCTION_ARN,
+            SESSION_MAINTENANCE_WORKER_FUNCTION_ARN,
             region,
             "lambda",
         )?;
         let expected_worker = format!(
-            "function:aex-{}-session-operation-worker:live",
+            "function:aex-{}-session-maintenance-worker:live",
             plane.as_str()
         );
-        if session_operation_worker.resource != expected_worker {
+        if session_maintenance_worker.resource != expected_worker {
             return Err(RegionalHttpConfigError::Invalid {
-                name: SESSION_OPERATION_WORKER_FUNCTION_ARN,
+                name: SESSION_MAINTENANCE_WORKER_FUNCTION_ARN,
                 reason: format!(
                     "expected exact live alias `{expected_worker}`, got `{}`",
-                    session_operation_worker.resource
+                    session_maintenance_worker.resource
                 ),
             });
         }
@@ -320,9 +296,9 @@ impl Config {
                 ),
             });
         }
-        if session_operation_worker.account != content_bucket_owner {
+        if session_maintenance_worker.account != content_bucket_owner {
             return Err(RegionalHttpConfigError::Invalid {
-                name: SESSION_OPERATION_WORKER_FUNCTION_ARN,
+                name: SESSION_MAINTENANCE_WORKER_FUNCTION_ARN,
                 reason: "worker alias and regional resources must share one account".to_owned(),
             });
         }
@@ -361,24 +337,14 @@ impl Config {
                 .into_iter()
                 .collect(),
         };
-        let usage_compute_queue_url = required(lookup, USAGE_COMPUTE_QUEUE_URL)?;
-        let usage_storage_queue_url = required(lookup, USAGE_STORAGE_QUEUE_URL)?;
+        let usage_rating_queue_url = required(lookup, USAGE_RATING_QUEUE_URL)?;
         let queue_prefix = format!("https://sqs.{}.amazonaws.com/", region.as_str());
-        for (name, value) in [
-            (USAGE_COMPUTE_QUEUE_URL, &usage_compute_queue_url),
-            (USAGE_STORAGE_QUEUE_URL, &usage_storage_queue_url),
-        ] {
-            if !value.starts_with(&queue_prefix) {
-                return Err(RegionalHttpConfigError::Invalid {
-                    name,
-                    reason: format!("must be an SQS queue URL in `{}`", region.as_str()),
-                });
-            }
-        }
-        if usage_compute_queue_url == usage_storage_queue_url {
+        if !usage_rating_queue_url.starts_with(&queue_prefix)
+            || !usage_rating_queue_url.ends_with(".fifo")
+        {
             return Err(RegionalHttpConfigError::Invalid {
-                name: USAGE_STORAGE_QUEUE_URL,
-                reason: "compute and storage usage authorities cannot share one queue".to_owned(),
+                name: USAGE_RATING_QUEUE_URL,
+                reason: format!("must be an SQS FIFO queue URL in `{}`", region.as_str()),
             });
         }
         let runtime_due_shards_raw = bounded_u64(lookup, RUNTIME_DUE_SHARDS, 1, u16::MAX.into())?;
@@ -413,13 +379,10 @@ impl Config {
             drain_deadline_ms,
             credential_pepper_ref: required(lookup, CREDENTIAL_PEPPER_REF)?,
             authz_projection_table: required(lookup, AUTHZ_PROJECTION_TABLE)?,
-            session_table: required(lookup, SESSION_TABLE)?,
+            session_table: required(lookup, SESSION_AUTHORITY_TABLE)?,
             work_table: required(lookup, WORK_TABLE)?,
-            session_operation_worker,
-            content_table: required(lookup, CONTENT_TABLE)?,
-            registry_table: required(lookup, REGISTRY_TABLE)?,
-            secret_custody_table: required(lookup, SECRET_CUSTODY_TABLE)?,
-            secret_keystore_table: required(lookup, SECRET_KEYSTORE_TABLE)?,
+            session_maintenance_worker,
+            file_authority_table: required(lookup, FILE_AUTHORITY_TABLE)?,
             secret_kms_key,
             branch_key_cache_bytes: bounded_usize(
                 lookup,
@@ -434,15 +397,13 @@ impl Config {
                 3_600_000,
             )?,
             runtime_activity_table: required(lookup, RUNTIME_ACTIVITY_TABLE)?,
-            usage_compute_queue_url,
-            usage_storage_queue_url,
+            usage_rating_queue_url,
             runtime_due_shards,
             runtime_due_page: aex_runtime_control::store::PageBudget {
                 max_items: u32::try_from(runtime_due_page_items).unwrap_or(u32::MAX),
                 max_reads: u32::try_from(runtime_due_page_reads).unwrap_or(u32::MAX),
             },
             pricing_version,
-            usage_query_table: required(lookup, USAGE_QUERY_TABLE)?,
             content_bucket: required(lookup, CONTENT_BUCKET)?,
             session_telemetry_bucket: required(lookup, SESSION_TELEMETRY_BUCKET)?,
             session_telemetry_kms_key,

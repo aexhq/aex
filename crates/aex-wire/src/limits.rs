@@ -12,6 +12,14 @@ pub use crate::generated::models::{
     LimitSource, LimitValue,
 };
 
+/// Maximum non-root agent identities admitted during one session's lifetime.
+///
+/// Terminal agents continue to count. Retrying the same identity does not.
+pub const MAX_SUBAGENTS_PER_SESSION: u64 = 12;
+
+/// Maximum subagent lineage depth, with the session root at depth zero.
+pub const MAX_SUBAGENT_DEPTH: u16 = 3;
+
 impl fmt::Display for LimitId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())

@@ -193,7 +193,7 @@ requires_live = true
 local = "local mock server: SSE framing, 429/503, mid-stream reset, frame-to-canonical mapping"
 live_only = "real streaming, usage accounting, forced drop at each dispatch-proof point, provider-echoed error redaction"
 
-[seam."provider.zai.stream"]
+[seam."provider.xai.stream"]
 proves_locally = "partial"
 requires_live = true
 local = "local mock server: SSE framing, 429/503, mid-stream reset, frame-to-canonical mapping"
@@ -205,7 +205,13 @@ requires_live = true
 local = "local mock server: SSE framing, 429/503, mid-stream reset, frame-to-canonical mapping"
 live_only = "real streaming, usage accounting, forced drop at each dispatch-proof point, provider-echoed error redaction"
 
-[seam."provider.google.stream"]
+[seam."provider.meta.stream"]
+proves_locally = "partial"
+requires_live = true
+local = "local mock server: SSE framing, 429/503, mid-stream reset, frame-to-canonical mapping"
+live_only = "real streaming, usage accounting, forced drop at each dispatch-proof point, provider-echoed error redaction"
+
+[seam."provider.alibaba.stream"]
 proves_locally = "partial"
 requires_live = true
 local = "local mock server: SSE framing, 429/503, mid-stream reset, frame-to-canonical mapping"
@@ -218,6 +224,12 @@ proves_locally = "partial"
 requires_live = true
 local = "stripe-mock request/response protocol shape and API-version pinning"
 live_only = "signature verification against a real secret, idempotency replay, disputes/refunds, redelivery"
+
+[seam."stripe.test_mode.command"]
+proves_locally = "partial"
+requires_live = true
+local = "IAM command envelope, idempotency identity, hosted-session projection and exact Stripe request shape"
+live_only = "real test-mode customer, payment-method session and top-up checkout behavior"
 
 [seam."mcp.streamable_http"]
 proves_locally = "partial"

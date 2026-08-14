@@ -30,7 +30,7 @@ use aex_session_domain::{
 };
 use aex_wire::canonical::{CanonicalJson, to_jcs_string};
 use aex_wire::error::ErrorCode;
-use aex_wire::ids::{AgentId, GenerationId, ResourceName, SessionId, WorkspaceId};
+use aex_wire::ids::{AgentId, GenerationId, PrefixedId as _, ResourceName, SessionId, WorkspaceId};
 use aex_wire::limits::LimitId;
 use aex_wire::models;
 use aex_wire::types::ComputeSize;
@@ -81,6 +81,8 @@ pub struct ResolvedInitialFile {
     pub revision: u64,
     /// The exact strong entity tag.
     pub etag: aex_wire::types::ETag,
+    /// Exact sandbox destination selected at session admission.
+    pub mount_path: aex_wire::ids::FilePath,
     /// The canonical registered-file value used for materialization.
     pub value: models::RegisteredFileRead,
 }
@@ -112,15 +114,18 @@ pub struct PreparedSessionCreate {
     /// The root agent identity.
     pub root_agent: AgentId,
     /// Exact provider generation identity.
-    pub generation: GenerationId,
+    pub generation: Option<GenerationId>,
     /// Immutable runtime definition.
-    pub pinned_runtime: PinnedRuntime,
+    pub pinned_runtime: Option<PinnedRuntime>,
     /// Dedicated BYOK credential version.
     pub provider_credential: ProviderCredentialPin,
     /// Complete resolved public configuration.
     pub resolved: ResolvedConfigAuthority,
     /// Exact effective-limit revision and execution map used by Brain.
     pub limits_revision: u64,
+    /// Internal current catalog identity used by Brain. It is deliberately not
+    /// part of the public resolved configuration.
+    pub catalog_revision: String,
     /// Revisioned execution ceilings.
     pub agent_execution: crate::ports::AgentExecutionLimits,
     /// Revisioned per-message budget ceilings.
@@ -133,6 +138,8 @@ pub struct PreparedSessionCreate {
     pub metadata: Option<SessionMetadata>,
     /// Selected immutable registry revisions in request order.
     pub initial_files: Vec<ResolvedInitialFile>,
+    /// Frozen MCP transports with secret values replaced by custody names.
+    pub mcp_servers: Vec<aex_brain_domain::mcp::FrozenMcpServer>,
     /// When the private claim was prepared.
     pub prepared_at: aex_wire::types::Timestamp,
 }
@@ -141,7 +148,7 @@ pub struct PreparedSessionCreate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadySessionLaunch {
     /// Exact generation the provider launched.
-    pub generation: GenerationId,
+    pub generation: Option<GenerationId>,
     /// Provider-authoritative launch instant.
     pub launched_at: aex_wire::types::Timestamp,
     /// Registered names and revisions materialized into the guest, in order.
@@ -161,7 +168,7 @@ pub struct RootStartedEvidence {
     /// Exact owning session.
     pub session: SessionId,
     /// Exact elected generation.
-    pub generation: GenerationId,
+    pub generation: Option<GenerationId>,
     /// Provider-observation instant of the durable ready transition.
     pub occurred_at: aex_wire::types::Timestamp,
     /// Physical control revision after the append.
@@ -206,21 +213,55 @@ pub async fn prepare_session_create(
     {
         return replay_session_create_receipt(&stored, command);
     }
-    let prepared = prepare_create(context, command).await?;
+    validate_sandbox_opt_out(command)?;
+    let candidate_credential =
+        aex_wire::ids::ProviderCredentialId::from_uuid7(context.ids.next_uuid_v7());
+    let prepared = prepare_create(context, command, candidate_credential).await?;
 
-    let session_id: SessionId = aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
+    // The hidden credential and the session share one UUID payload. The
+    // ciphertext writer elects that payload under the create replay identity,
+    // so concurrent first attempts converge on both the same key binding and
+    // the same session instead of leaving an orphan credential behind.
+    let session_id: SessionId = aex_wire::ids::PrefixedId::from_uuid7(
+        aex_wire::ids::PrefixedId::uuid7(&prepared.credential.credential),
+    );
+    if let Some(servers) = command.request.mcp_servers.as_deref()
+        && !servers.is_empty()
+    {
+        context
+            .credentials
+            .bind_session_mcp_config(
+                command.workspace,
+                command.organization,
+                session_id,
+                servers,
+                &command.identity,
+                now,
+            )
+            .await?;
+    }
+    let mcp_servers = frozen_mcp_servers(session_id, command.request.mcp_servers.as_deref())?;
     let root_agent: AgentId = aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
-    let generation: GenerationId =
-        aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
-    let pinned = pinned_runtime(
-        prepared.deployment,
-        command,
-        session_id,
-        generation,
-        prepared.size,
-        prepared.network,
-        prepared.limits_revision,
-    )?;
+    let sandbox_enabled = command
+        .request
+        .sandbox
+        .as_ref()
+        .and_then(|sandbox| sandbox.enabled)
+        .unwrap_or(true);
+    let generation = sandbox_enabled.then(|| GenerationId::from_uuid7(context.ids.next_uuid_v7()));
+    let pinned = generation
+        .map(|generation| {
+            pinned_runtime(
+                prepared.deployment,
+                command,
+                session_id,
+                generation,
+                prepared.size,
+                prepared.network,
+                prepared.limits_revision,
+            )
+        })
+        .transpose()?;
 
     let resolved = resolved_config(
         command,
@@ -250,15 +291,108 @@ pub async fn prepare_session_create(
             },
             resolved,
             limits_revision: prepared.limits_revision,
+            catalog_revision: prepared.qualified.catalog_revision.clone(),
             agent_execution: prepared.agent_execution,
             run_budget: prepared.run_budget,
             account_revision: prepared.account_revision,
             materialized_agents: prepared.materialized_agents,
             metadata,
             initial_files: prepared.initial_files,
+            mcp_servers,
             prepared_at: now,
         },
     )))
+}
+
+fn validate_sandbox_opt_out(command: &CreateSession) -> Result<(), AppError> {
+    let enabled = command
+        .request
+        .sandbox
+        .as_ref()
+        .and_then(|sandbox| sandbox.enabled)
+        .unwrap_or(true);
+    if enabled {
+        return Ok(());
+    }
+    let has_mounts = command
+        .request
+        .registered
+        .as_ref()
+        .is_some_and(|registered| !registered.mounts.is_empty());
+    let has_packages = command
+        .request
+        .sandbox
+        .as_ref()
+        .and_then(|sandbox| sandbox.packages.as_ref())
+        .is_some_and(|packages| !packages.is_empty());
+    let has_sandbox_mcp = command
+        .request
+        .mcp_servers
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .any(|server| matches!(server.transport, models::McpTransport::SandboxProcess(_)));
+    if has_mounts || has_packages || has_sandbox_mcp {
+        return Err(AppError::Conflict(ErrorCode::InvalidRequest));
+    }
+    Ok(())
+}
+
+fn frozen_mcp_servers(
+    session: SessionId,
+    servers: Option<&[models::McpServer]>,
+) -> Result<Vec<aex_brain_domain::mcp::FrozenMcpServer>, AppError> {
+    use aex_brain_domain::mcp::{FrozenMcpServer, FrozenMcpTransport, mcp_secret_name};
+
+    servers
+        .unwrap_or_default()
+        .iter()
+        .map(|server| {
+            let transport = match &server.transport {
+                models::McpTransport::RemoteHttp(remote) => FrozenMcpTransport::RemoteHttp {
+                    endpoint: remote.url.as_str().to_owned(),
+                    headers: remote
+                        .headers
+                        .as_ref()
+                        .into_iter()
+                        .flatten()
+                        .map(|(name, _)| {
+                            (
+                                name.clone(),
+                                mcp_secret_name(session, &server.name, "header", name),
+                            )
+                        })
+                        .collect(),
+                },
+                models::McpTransport::SandboxProcess(process) => {
+                    FrozenMcpTransport::SandboxProcess {
+                        command: process.command.clone(),
+                        args: process.args.clone().unwrap_or_default(),
+                        environment: process
+                            .environment
+                            .as_ref()
+                            .into_iter()
+                            .flatten()
+                            .map(|(name, _)| {
+                                (
+                                    name.clone(),
+                                    mcp_secret_name(session, &server.name, "environment", name),
+                                )
+                            })
+                            .collect(),
+                        working_directory: process
+                            .working_directory
+                            .as_ref()
+                            .map(ToString::to_string),
+                    }
+                }
+            };
+            Ok(FrozenMcpServer {
+                name: server.name.clone(),
+                transport,
+            })
+        })
+        .collect()
 }
 
 /// Projects one strongly read create receipt without touching mutable planning
@@ -345,19 +479,28 @@ pub fn publish_ready_session(
             reason: "readiness does not prove the elected generation, file revisions and root AgentStarted",
         }));
     }
+    let mut lifecycle = prepared
+        .generation
+        .map_or_else(
+            || SessionLifecycle::sandbox_disabled(readiness.launched_at),
+            |generation| SessionLifecycle::launched(generation, readiness.launched_at),
+        )
+        .map_err(|_| {
+            AppError::Port(crate::ports::PortError::Corrupt {
+                kind: "session lifecycle",
+                reason: "the current instant cannot express the eight-hour provider lifetime",
+            })
+        })?;
+    if prepared.generation.is_some() {
+        lifecycle.begin_suspend()?;
+        lifecycle.complete_suspend(readiness.root_started.occurred_at)?;
+    }
     let session = Session {
         id: prepared.session,
         workspace: prepared.command.workspace,
         organization: prepared.command.organization,
         status: SessionStatus::Idle,
-        lifecycle: SessionLifecycle::launched(prepared.generation, readiness.launched_at).map_err(
-            |_| {
-                AppError::Port(crate::ports::PortError::Corrupt {
-                    kind: "session lifecycle",
-                    reason: "the current instant cannot express the eight-hour provider lifetime",
-                })
-            },
-        )?,
+        lifecycle,
         revision: SessionRevision::INITIAL,
         active_run: None,
         work_admission: WorkAdmission::Open,
@@ -365,7 +508,7 @@ pub fn publish_ready_session(
         deletion: DeletionGuard::live(prepared.session),
         mutation_guard: None,
         root_agent: prepared.root_agent,
-        generation: Some(prepared.generation),
+        generation: prepared.generation,
         pinned_runtime: prepared.pinned_runtime.clone(),
         provider_credential: prepared.provider_credential,
         lineage: aex_session_domain::Lineage::ROOT,
@@ -426,6 +569,7 @@ struct PreparedCreate<'a> {
 async fn prepare_create<'a>(
     context: &AppContext<'a>,
     command: &CreateSession,
+    candidate_credential: aex_wire::ids::ProviderCredentialId,
 ) -> Result<PreparedCreate<'a>, AppError> {
     let catalog = context
         .catalog
@@ -450,8 +594,9 @@ async fn prepare_create<'a>(
 
     let size = command
         .request
-        .compute
+        .sandbox
         .as_ref()
+        .and_then(|sandbox| sandbox.compute.as_ref())
         .and_then(|compute| compute.size)
         .unwrap_or(ComputeSize::DEFAULT);
     let network = network_policy(deployment, command)?;
@@ -486,20 +631,21 @@ async fn prepare_create<'a>(
         .map_err(|_| AppError::Port(crate::ports::PortError::NotFound { kind: "limit" }))?
         .min(INITIAL_FILES_HARD_MAX_BYTES);
 
+    if command.request.provider_api_key.is_empty() {
+        return Err(AppError::Conflict(ErrorCode::InvalidRequest));
+    }
     let credential = context
         .credentials
-        .read_provider_credential(command.workspace, command.request.provider_credential_id)
-        .await?
-        .ok_or(AppError::Conflict(ErrorCode::ProviderCredentialNotFound))?;
-    if credential.provider != command.request.provider {
-        // A binding for another provider is not this workspace's answer to
-        // "which key signs for this provider", and pretending it is would send
-        // one vendor's key to another.
-        return Err(AppError::Conflict(ErrorCode::ProviderCredentialNotFound));
-    }
-    if credential.state == crate::ports::CredentialState::Revoked {
-        return Err(AppError::Conflict(ErrorCode::ProviderCredentialRevoked));
-    }
+        .bind_session_api_key(
+            command.workspace,
+            command.organization,
+            candidate_credential,
+            command.request.provider,
+            &command.request.provider_api_key,
+            &command.identity,
+            context.clock.now(),
+        )
+        .await?;
 
     let selectors = selectors_of(command);
     let initial_files = resolve_initial_files(
@@ -551,7 +697,7 @@ pub fn initial_root_record(
                 reason: "the elected document no longer decodes",
             })
         })?;
-    let catalog_pin = CatalogPin::from_wire(&resolved.catalog_revision).map_err(|_| {
+    let catalog_pin = CatalogPin::from_wire(&prepared.catalog_revision).map_err(|_| {
         AppError::Port(crate::ports::PortError::Corrupt {
             kind: "model catalog pin",
             reason: "the release-qualified catalog revision is malformed",
@@ -576,7 +722,10 @@ pub fn initial_root_record(
     let mut budget = DimensionVector::ZERO;
     budget.set(
         Dimension::TotalChildrenCreated,
-        prepared.run_budget.total_children_created,
+        prepared
+            .run_budget
+            .total_children_created
+            .min(aex_wire::limits::MAX_SUBAGENTS_PER_SESSION),
     );
     budget.set(Dimension::ProviderCalls, prepared.run_budget.provider_calls);
     budget.set(Dimension::HandsCalls, prepared.run_budget.hands_calls);
@@ -587,11 +736,15 @@ pub fn initial_root_record(
         prepared
             .materialized_agents
             .saturating_sub(1)
-            .min(prepared.run_budget.total_children_created),
+            .min(prepared.run_budget.total_children_created)
+            .min(aex_wire::limits::MAX_SUBAGENTS_PER_SESSION),
     );
     budget.set(
         Dimension::QueuedChildren,
-        prepared.run_budget.queued_children,
+        prepared
+            .run_budget
+            .queued_children
+            .min(aex_wire::limits::MAX_SUBAGENTS_PER_SESSION),
     );
     budget.set(
         Dimension::RetainedResultBytes,
@@ -606,15 +759,20 @@ pub fn initial_root_record(
             system: None,
             // Bash is release-built into Hands and has no hosted tool manifest.
             tool_manifest_digests: Vec::new(),
+            mcp_servers: prepared.mcp_servers.clone(),
             hands_generation: prepared.generation,
             limits_revision: prepared.limits_revision,
             limits: AgentLimits {
-                max_turns: prepared.agent_execution.max_turns,
-                max_steps_per_turn: prepared.agent_execution.max_steps_per_turn,
                 turn_deadline_ms: prepared.agent_execution.turn_deadline_ms,
                 max_run_duration_ms: prepared.run_budget.max_run_duration_ms,
-                max_depth: prepared.agent_execution.max_depth,
-                max_fanout: prepared.agent_execution.max_fanout,
+                max_depth: prepared
+                    .agent_execution
+                    .max_depth
+                    .min(aex_wire::limits::MAX_SUBAGENT_DEPTH),
+                max_fanout: prepared
+                    .agent_execution
+                    .max_fanout
+                    .min(aex_wire::limits::MAX_SUBAGENTS_PER_SESSION as u32),
             },
         }),
         parent: None,
@@ -695,8 +853,9 @@ fn network_policy(
 
     let mode = command
         .request
-        .network
+        .sandbox
         .as_ref()
+        .and_then(|sandbox| sandbox.network.as_ref())
         .map_or(models::NetworkMode::None, |network| network.hands.mode);
     match mode {
         models::NetworkMode::None => Ok(NetworkPolicy::None),
@@ -717,7 +876,12 @@ fn check_package_ecosystems(
     deployment: &crate::ports::DeploymentFacts,
     command: &CreateSession,
 ) -> Result<(), AppError> {
-    let Some(packages) = command.request.packages.as_ref() else {
+    let Some(packages) = command
+        .request
+        .sandbox
+        .as_ref()
+        .and_then(|sandbox| sandbox.packages.as_ref())
+    else {
         return Ok(());
     };
     for package in packages {
@@ -734,13 +898,12 @@ fn selectors_of(command: &CreateSession) -> Vec<RegistrySelector> {
         return Vec::new();
     };
     registered
-        .files
+        .mounts
         .iter()
-        .flatten()
         .map(|name| RegistrySelector {
             workspace: command.workspace,
             kind: RegistryKind::File,
-            name: name.clone(),
+            name: name.name.clone(),
         })
         .collect()
 }
@@ -818,6 +981,21 @@ async fn resolve_initial_files(
             name: selector.name.clone(),
             revision: pointer.row.revision.0,
             etag: pointer.row.etag,
+            mount_path: command
+                .request
+                .registered
+                .as_ref()
+                .and_then(|registered| {
+                    registered
+                        .mounts
+                        .iter()
+                        .find(|mount| mount.name == selector.name)
+                })
+                .map(|mount| mount.path.clone())
+                .ok_or(AppError::Port(crate::ports::PortError::Corrupt {
+                    kind: "registered file",
+                    reason: "the selected file has no matching mount path",
+                }))?,
             value,
         };
         total = total
@@ -840,24 +1018,37 @@ async fn resolve_initial_files(
 /// The canonical, content-addressed configuration the session resolved.
 fn resolved_config(
     command: &CreateSession,
-    qualified: &crate::ports::QualifiedModel,
+    _qualified: &crate::ports::QualifiedModel,
     size: ComputeSize,
-    selectors: &[RegistrySelector],
+    _selectors: &[RegistrySelector],
 ) -> Result<ResolvedConfigAuthority, AppError> {
     use aex_runtime_control::shape::ShapeCapacity as _;
 
-    let registered = models::SessionRegisteredSelection {
-        files: (!selectors.is_empty()).then(|| {
-            selectors
-                .iter()
-                .map(|selector| selector.name.clone())
-                .collect()
-        }),
-    };
+    let registered = command
+        .request
+        .registered
+        .clone()
+        .unwrap_or(models::SessionRegisteredSelection { mounts: Vec::new() });
+
+    let sandbox = command.request.sandbox.as_ref();
+    let sandbox_enabled = sandbox.and_then(|sandbox| sandbox.enabled).unwrap_or(true);
+    let packages = sandbox
+        .and_then(|sandbox| sandbox.packages.clone())
+        .unwrap_or_default();
+    let network_mode = sandbox
+        .and_then(|sandbox| sandbox.network.as_ref())
+        .map_or(models::NetworkMode::None, |network| network.hands.mode);
+    let mcp_server_names = command
+        .request
+        .mcp_servers
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|server| server.name.clone())
+        .collect();
 
     let document = models::ResolvedConfig {
-        catalog_revision: qualified.catalog_revision.clone(),
-        compute: models::ResolvedCompute {
+        compute: sandbox_enabled.then_some(models::ResolvedCompute {
             size,
             baseline: models::ComputeShape {
                 memory_mi_b: memory_mib(size.baseline_memory_bytes()),
@@ -870,27 +1061,22 @@ fn resolved_config(
             max_disk_gi_b: gibibytes(size.disk_bytes()),
             endpoint_bandwidth_m_bps: megabytes(size.network_bytes_per_second()),
             max_concurrent_connections: size.max_connections(),
-        },
+        }),
         lifecycle: models::SessionLifecyclePolicy {
-            idle_suspend_after_seconds: 180,
             maximum_lifetime_seconds: 28_800,
-            resume_on_live_file_access: true,
-            resume_on_message: true,
+            maximum_subagent_depth: u32::from(aex_wire::limits::MAX_SUBAGENT_DEPTH),
+            maximum_subagents: u32::try_from(aex_wire::limits::MAX_SUBAGENTS_PER_SESSION)
+                .expect("the launch subagent ceiling fits u32"),
         },
+        mcp_server_names,
         model: command.request.model.clone(),
-        network: models::ResolvedNetwork {
-            hands: models::HandsNetworkRequest {
-                mode: command
-                    .request
-                    .network
-                    .as_ref()
-                    .map_or(models::NetworkMode::None, |network| network.hands.mode),
-            },
-        },
-        packages: command.request.packages.clone().unwrap_or_default(),
+        network: sandbox_enabled.then_some(models::ResolvedNetwork {
+            hands: models::HandsNetworkRequest { mode: network_mode },
+        }),
+        packages,
         provider: command.request.provider,
-        provider_credential_id: command.request.provider_credential_id,
         registered,
+        sandbox_enabled,
     };
     let canonical = CanonicalJson::parse(&to_jcs_string(&document)?)?;
     ResolvedConfigAuthority::new(

@@ -111,6 +111,8 @@ pub fn pointer() -> RegistryPointer {
             etag: etag_of(RegistryKind::Tool, Revision::FIRST, &digest),
             sha256: digest,
             size_bytes: document.size_bytes(),
+            state: aex_workspace_domain::registry::RegistryState::Ready,
+            failure_code: None,
             created_at: now(),
             updated_at: now(),
         },
@@ -141,6 +143,7 @@ pub fn next_pointer() -> RegistryPointer {
 pub fn upload() -> Upload {
     Upload {
         id: upload_id(),
+        target_name: name("artifact"),
         workspace: workspace(),
         state: UploadState::PartsGranted,
         provider_upload_id: "provider-mpu-1".to_owned(),

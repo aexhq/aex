@@ -90,135 +90,11 @@ kind = "repo-wide"
 
 # --- workspace members -------------------------------------------------------
 
-# Preserve ownership while the prelaunch observation/telemetry clean cut is
-# visible in change ranges. The replacement packages own the focused evidence;
-# this router edit itself widens the landing change to the full surviving graph.
-
-[[rule]]
-id = "retired-observation-app"
-prefix = "crates/aex-observation-app/"
-kind = "node"
-node = "cargo:aex-session-telemetry-aws"
-
-[[rule]]
-id = "retired-observation-domain"
-prefix = "crates/aex-observation-domain/"
-kind = "node"
-node = "cargo:aex-session-telemetry-aws"
-
-[[rule]]
-id = "retired-observation-export"
-prefix = "crates/aex-observation-export/"
-kind = "node"
-node = "cargo:aex-session-telemetry-aws"
-
-[[rule]]
-id = "retired-observation-query"
-prefix = "crates/aex-observation-query/"
-kind = "node"
-node = "cargo:aex-session-telemetry-aws"
-
-[[rule]]
-id = "retired-observation-store"
-prefix = "crates/aex-observation-store-dynamodb/"
-kind = "node"
-node = "cargo:aex-session-telemetry-aws"
-
-[[rule]]
-id = "retired-observation-test-support"
-prefix = "crates/aex-observation-test-support/"
-kind = "node"
-node = "cargo:aex-session-telemetry-aws"
-
-[[rule]]
-id = "retired-otlp-admission"
-prefix = "crates/aex-otlp-admission/"
-kind = "node"
-node = "cargo:aex-session-telemetry-aws"
-
-[[rule]]
-id = "retired-platform-telemetry"
-prefix = "crates/aex-platform-telemetry/"
-kind = "node"
-node = "cargo:aex-platform-diagnostics"
-
-[[rule]]
-id = "retired-telemetry-schema"
-prefix = "crates/aex-telemetry-schema/"
-kind = "node"
-node = "cargo:aex-platform-diagnostics"
-
-[[rule]]
-id = "retired-regional-observation-api"
-prefix = "services/regional-observation-api/"
-kind = "node"
-node = "cargo:session-stream-api"
-
-[[rule]]
-id = "retired-regional-otlp"
-prefix = "services/regional-otlp/"
-kind = "node"
-node = "cargo:session-stream-api"
-
-[[rule]]
-id = "retired-observation-export-launcher"
-prefix = "workers/observation-export-launcher/"
-kind = "node"
-node = "cargo:aex-session-telemetry-aws"
-
-[[rule]]
-id = "retired-observation-export-task"
-prefix = "workers/observation-export-task/"
-kind = "node"
-node = "cargo:aex-session-telemetry-aws"
-
-[[rule]]
-id = "retired-observation-reconciler"
-prefix = "workers/observation-reconciler/"
-kind = "node"
-node = "cargo:aex-session-telemetry-aws"
-
-[[rule]]
-id = "retired-observation-live-companions"
-prefix = "tests/live/aex-live-observation-export-launcher/"
-kind = "node"
-node = "cargo:aex-live-session-stream-api"
-
-[[rule]]
-id = "retired-observation-export-task-live-companion"
-prefix = "tests/live/aex-live-observation-export-task/"
-kind = "node"
-node = "cargo:aex-live-session-stream-api"
-
-[[rule]]
-id = "retired-observation-reconciler-live-companion"
-prefix = "tests/live/aex-live-observation-reconciler/"
-kind = "node"
-node = "cargo:aex-live-session-stream-api"
-
-[[rule]]
-id = "retired-regional-observation-api-live-companion"
-prefix = "tests/live/aex-live-regional-observation-api/"
-kind = "node"
-node = "cargo:aex-live-session-stream-api"
-
-[[rule]]
-id = "retired-regional-otlp-live-companion"
-prefix = "tests/live/aex-live-regional-otlp/"
-kind = "node"
-node = "cargo:aex-live-session-stream-api"
-
 # The three npm packages that live inside a Cargo member root. They are named
 # before the `derive-cargo` rules below because the first match wins, and a
 # derived rule would resolve them to a `cargo:` node that does not exist — an
 # owner nobody can select, which reads as ownership and behaves as a hole.
 # `aex_workspace_check::collect::NPM_EXPLICIT` holds the same three directories.
-
-[[rule]]
-id = "npm-stripe-command-edge"
-prefix = "services/stripe-command-edge/"
-kind = "node"
-node = "npm:@aexhq/stripe-command-edge"
 
 [[rule]]
 id = "npm-stripe-webhook-edge"
@@ -251,14 +127,6 @@ kind = "derive-cargo"
 id = "cargo-runtimes"
 prefix = "runtimes/"
 kind = "derive-cargo"
-
-# Preserve ownership while the removed prelaunch companion remains visible in
-# change ranges. Its deleted paths still exercise the retained internal app.
-[[rule]]
-id = "retired-tool-executor-live-companion"
-prefix = "tests/live/aex-live-tool-executor/"
-kind = "node"
-node = "cargo:tool-executor"
 
 [[rule]]
 id = "cargo-live-companions"

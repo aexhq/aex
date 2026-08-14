@@ -10,14 +10,8 @@
 //!
 //! An operation that would break an invariant is a typed error, never a clamp.
 
+pub use aex_wire::limits::{MAX_SUBAGENT_DEPTH, MAX_SUBAGENTS_PER_SESSION};
 use serde::{Deserialize, Serialize};
-
-/// The MVP lifetime ceiling for non-root agent identities in one session.
-/// Completed and cancelled children still count.
-pub const MAX_SUBAGENTS_PER_SESSION: u64 = 12;
-
-/// The MVP lineage ceiling, with the root at depth zero.
-pub const MAX_SUBAGENT_DEPTH: u16 = 3;
 
 /// One accumulating budget dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -483,10 +477,7 @@ impl BudgetNode {
 #[must_use]
 pub fn launch_session_grant(cost_micro_usd: u64) -> BudgetGrant {
     let mut grant = DimensionVector::ZERO;
-    grant.set(
-        Dimension::TotalChildrenCreated,
-        MAX_SUBAGENTS_PER_SESSION,
-    );
+    grant.set(Dimension::TotalChildrenCreated, MAX_SUBAGENTS_PER_SESSION);
     grant.set(Dimension::ProviderCalls, u64::MAX);
     grant.set(Dimension::HandsCalls, 4_096);
     grant.set(Dimension::CostMicroUsd, cost_micro_usd);

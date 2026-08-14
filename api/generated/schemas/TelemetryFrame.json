@@ -1,0 +1,55 @@
+{
+  "$id": "https://schemas.aex.dev/v1/TelemetryFrame.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One bounded normalized telemetry frame transmitted live and persisted in compressed S3 segments.",
+  "properties": {
+    "body": {
+      "description": "Bounded customer-safe structured event.",
+      "x-aex-canonical-json": true
+    },
+    "kind": {
+      "$ref": "aex:schema:TelemetryKind",
+      "description": "Signal family."
+    },
+    "occurredAt": {
+      "description": "Trusted producer time.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "preview": {
+      "description": "Bounded tool/assistant output preview.",
+      "maxLength": 65536,
+      "minLength": 0,
+      "type": "string"
+    },
+    "sequence": {
+      "description": "Monotonic per-session sequence.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "spanId": {
+      "description": "Span correlation.",
+      "pattern": "^[0-9a-f]{16}$",
+      "type": "string"
+    },
+    "traceId": {
+      "description": "Trace correlation.",
+      "pattern": "^[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "truncated": {
+      "description": "Whether retained data is larger than this frame.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "kind",
+    "occurredAt",
+    "sequence",
+    "truncated"
+  ],
+  "title": "TelemetryFrame",
+  "type": "object"
+}

@@ -59,7 +59,7 @@ fn complete() -> BTreeMap<&'static str, String> {
             "aex-dev-regional-authz-projection".to_owned(),
         ),
         (
-            config::SESSION_TABLE,
+            config::SESSION_AUTHORITY_TABLE,
             "aex-dev-session-authority".to_owned(),
         ),
         (
@@ -85,22 +85,13 @@ fn complete() -> BTreeMap<&'static str, String> {
         ),
         (config::WORK_TABLE, "aex-dev-regional-work".to_owned()),
         (
-            config::SESSION_OPERATION_WORKER_FUNCTION_ARN,
-            "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-session-operation-worker:live"
+            config::SESSION_MAINTENANCE_WORKER_FUNCTION_ARN,
+            "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-session-maintenance-worker:live"
                 .to_owned(),
         ),
-        (config::CONTENT_TABLE, "aex-dev-regional-content".to_owned()),
         (
-            config::REGISTRY_TABLE,
-            "aex-dev-regional-registry".to_owned(),
-        ),
-        (
-            config::SECRET_CUSTODY_TABLE,
-            "aex-dev-regional-secret-custody".to_owned(),
-        ),
-        (
-            config::SECRET_KEYSTORE_TABLE,
-            "aex-dev-regional-secret-keystore".to_owned(),
+            config::FILE_AUTHORITY_TABLE,
+            "aex-dev-regional-file-authority".to_owned(),
         ),
         (
             config::SECRET_KMS_KEY_ARN,
@@ -114,21 +105,13 @@ fn complete() -> BTreeMap<&'static str, String> {
             "aex-dev-runtime-activity".to_owned(),
         ),
         (
-            config::USAGE_COMPUTE_QUEUE_URL,
-            "https://sqs.eu-west-1.amazonaws.com/000000000000/aex-dev-compute".to_owned(),
-        ),
-        (
-            config::USAGE_STORAGE_QUEUE_URL,
-            "https://sqs.eu-west-1.amazonaws.com/000000000000/aex-dev-storage".to_owned(),
+            config::USAGE_RATING_QUEUE_URL,
+            "https://sqs.eu-west-1.amazonaws.com/000000000000/aex-dev-usage-rating.fifo".to_owned(),
         ),
         (config::RUNTIME_DUE_SHARDS, "8".to_owned()),
         (config::RUNTIME_DUE_PAGE_ITEMS, "32".to_owned()),
         (config::RUNTIME_DUE_PAGE_READS, "64".to_owned()),
         (config::PRICING_VERSION, "synthetic-zero-v1".to_owned()),
-        (
-            config::USAGE_QUERY_TABLE,
-            "aex-dev-usage-query-projection".to_owned(),
-        ),
         (config::CONTENT_BUCKET_OWNER, "000000000000".to_owned()),
         (config::HANDS_IMAGE_CATALOG, catalog_json()),
         (config::HANDS_PUBLIC_INTERNET_EGRESS, "true".to_owned()),
@@ -200,23 +183,31 @@ fn the_capability_manifest_matches_the_resolved_configuration() {
 }
 
 #[test]
-fn the_session_owner_contains_only_finite_regional_routes() {
+fn the_session_owner_is_the_nineteen_route_regional_contract() {
     let owned = RouteOwner::SessionApi.routes();
-    assert!(!owned.is_empty());
+    assert_eq!(owned.len(), 19);
     for id in &owned {
         let descriptor = route(*id);
         assert_eq!(descriptor.plane, Plane::Regional, "{id}");
         assert!(
             matches!(
                 descriptor.transport,
-                TransportKind::Unary | TransportKind::Binary
+                TransportKind::Unary | TransportKind::Binary | TransportKind::Ndjson
             ),
             "{id}"
         );
     }
     assert_eq!(
-        route_owner(RouteId::ProviderCredentialRegister),
-        Some(RouteOwner::SessionApi)
+        owned
+            .iter()
+            .filter(|id| route(**id).transport == TransportKind::Ndjson)
+            .count(),
+        3
+    );
+    assert!(
+        owned
+            .iter()
+            .all(|id| route_owner(*id) == Some(RouteOwner::SessionApi))
     );
 }
 

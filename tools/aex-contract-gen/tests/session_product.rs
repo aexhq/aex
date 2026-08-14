@@ -1,15 +1,11 @@
-//! The prelaunch session-centric public product boundary.
-//!
-//! These assertions are deliberately independent of the checked-in generated
-//! files. They regenerate from the authored YAML so a removed route, leaked
-//! execution identity, or broadened resource category fails before release.
+//! Exact clean-cut launch surface and security/product invariants.
 
 use std::collections::BTreeSet;
 
 use aex_contract_gen::generate_to_memory;
 use aex_contract_gen::load::repo_root;
 
-fn generated_json(path: &str) -> serde_json::Value {
+fn json(path: &str) -> serde_json::Value {
     let tree = generate_to_memory(&repo_root()).expect("contract generation");
     serde_json::from_slice(
         tree.bytes(path)
@@ -18,20 +14,10 @@ fn generated_json(path: &str) -> serde_json::Value {
     .unwrap_or_else(|error| panic!("`{path}` is not JSON: {error}"))
 }
 
-fn generated_text(path: &str) -> String {
-    let tree = generate_to_memory(&repo_root()).expect("contract generation");
-    std::str::from_utf8(
-        tree.bytes(path)
-            .unwrap_or_else(|| panic!("missing `{path}`")),
-    )
-    .unwrap_or_else(|error| panic!("`{path}` is not UTF-8: {error}"))
-    .to_owned()
-}
-
-fn regional_operations() -> BTreeSet<String> {
-    generated_json("api/generated/bundle.json")["planes"]["regional"]["operations"]
+fn operations(plane: &str) -> BTreeSet<String> {
+    json("api/generated/bundle.json")["planes"][plane]["operations"]
         .as_array()
-        .expect("regional operations")
+        .expect("operations")
         .iter()
         .map(|operation| {
             operation["operationId"]
@@ -43,243 +29,212 @@ fn regional_operations() -> BTreeSet<String> {
 }
 
 #[test]
-fn the_regional_surface_is_session_centric_and_has_one_file_registry() {
-    let operations = regional_operations();
-    assert_eq!(operations.len(), 43, "regional route ledger drifted");
+fn launch_routes_are_the_exact_thirteen_plus_nineteen_allowlist() {
+    let central = BTreeSet::from(
+        [
+            "api_key_create",
+            "api_key_revoke",
+            "api_keys_list",
+            "billing_balance_get",
+            "billing_payment_method_delete",
+            "billing_payment_method_session_create",
+            "billing_payment_methods_list",
+            "billing_top_up_checkout_create",
+            "billing_transactions_list",
+            "billing_usage_get",
+            "dashboard_bootstrap_get",
+            "dashboard_session_create",
+            "dashboard_session_delete",
+        ]
+        .map(str::to_owned),
+    );
+    let regional = BTreeSet::from(
+        [
+            "registry_files_delete",
+            "registry_files_download_create",
+            "registry_files_get",
+            "registry_files_list",
+            "registry_files_put",
+            "session_cancel",
+            "session_create",
+            "session_delete",
+            "session_get",
+            "session_message_send",
+            "session_messages_list",
+            "session_messages_stream",
+            "session_telemetry_download_create",
+            "session_telemetry_replay",
+            "session_telemetry_stream",
+            "session_terminate",
+            "sessions_list",
+            "upload_complete",
+            "upload_create",
+        ]
+        .map(str::to_owned),
+    );
+    assert_eq!(operations("central"), central);
+    assert_eq!(operations("regional"), regional);
+}
 
-    for required in [
-        "session_cancel",
-        "session_suspend",
-        "session_resume",
-        "session_terminate",
-        "session_delete",
-        "session_files_live_list",
-        "session_files_live_stat",
-        "session_files_live_download_create",
-        "session_files_live_download_part_get",
-        "session_files_live_download_complete",
-        "session_files_live_download_delete",
-        "session_files_live_upload_create",
-        "session_files_live_upload_get",
-        "session_files_live_upload_part_put",
-        "session_files_live_upload_complete",
-        "session_files_live_upload_delete",
-        "session_telemetry_segments_list",
-        "session_telemetry_segment_download_create",
-        "registry_files_list",
-        "registry_files_get",
-        "registry_files_put",
-        "registry_files_delete",
-        "registry_files_download_create",
-        "upload_create",
-        "upload_parts_grant",
-        "upload_complete",
-        "upload_abort",
-    ] {
-        assert!(operations.contains(required), "missing `{required}`");
+#[test]
+fn message_admission_is_text_only_but_supports_native_structured_output() {
+    let request = json("api/generated/schemas/MessageSendRequest.json");
+    let keys: BTreeSet<_> = request["properties"]
+        .as_object()
+        .expect("properties")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        BTreeSet::from(["deadline", "maxSpendCents", "responseFormat", "text"])
+    );
+    for forbidden in ["attachment", "attachments", "image", "file", "files"] {
+        assert!(!keys.contains(forbidden));
     }
+    assert_eq!(request["required"], serde_json::json!(["text"]));
+    assert_eq!(request["properties"]["text"]["maxLength"], 24_576);
 
-    for retired in [
-        "session_run_get",
-        "session_runs_list",
-        "session_stop",
-        "session_persist",
-        "session_workspace_discard",
-        "session_credential_rebind",
-        "session_trash",
-        "session_restore",
-        "session_purge",
-        "session_approval_get",
-        "session_approval_respond",
-        "session_approvals_list",
-        "session_files_persisted_list",
-        "session_files_persisted_stat",
-        "session_files_persisted_download_create",
-        "secrets_list",
-        "secret_get",
-        "secret_put",
-        "secret_delete",
-        "secret_revoke",
-        "registry_skills_list",
-        "registry_skills_get",
-        "registry_skills_put",
-        "registry_skills_delete",
-        "registry_tools_list",
-        "registry_tools_get",
-        "registry_tools_put",
-        "registry_tools_delete",
-        "registry_instructions_list",
-        "registry_instructions_get",
-        "registry_instructions_put",
-        "registry_instructions_delete",
-        "registry_mcp_servers_list",
-        "registry_mcp_servers_get",
-        "registry_mcp_servers_put",
-        "registry_mcp_servers_delete",
-    ] {
+    let structured = json("api/generated/schemas/ResponseFormatKind.json");
+    assert_eq!(
+        structured["enum"],
+        serde_json::json!(["text", "json_schema"])
+    );
+}
+
+#[test]
+fn providers_are_the_seven_official_candidates_and_no_credential_crud_survives() {
+    assert_eq!(
+        json("api/generated/schemas/ProviderId.json")["enum"],
+        serde_json::json!([
+            "openai",
+            "anthropic",
+            "deepseek",
+            "xai",
+            "meta",
+            "moonshotai",
+            "alibaba"
+        ])
+    );
+    let regional = operations("regional");
+    assert!(!regional.iter().any(|id| id.contains("provider_credential")));
+    let request = json("api/generated/schemas/SessionCreateRequest.json");
+    assert!(request["properties"].get("providerApiKey").is_some());
+    let session = json("api/generated/schemas/Session.json");
+    assert!(session.to_string().find("providerApiKey").is_none());
+}
+
+#[test]
+fn files_are_current_value_only_and_session_mounts_are_frozen_by_name_and_path() {
+    let regional = operations("regional");
+    for id in &regional {
+        assert!(!id.contains("version"));
+        assert!(!id.contains("restore"));
+        assert!(!id.contains("files_live"));
+    }
+    let mount = json("api/generated/schemas/WorkspaceFileMount.json");
+    assert_eq!(
+        mount["properties"]
+            .as_object()
+            .expect("properties")
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["name", "path"])
+    );
+    assert!(
+        json("api/generated/schemas/RegisteredFile.json")
+            .to_string()
+            .find("version")
+            .is_none()
+    );
+}
+
+#[test]
+fn sandbox_mcp_streaming_telemetry_and_subagent_limits_are_explicit() {
+    let create = json("api/generated/schemas/SessionCreateRequest.json");
+    for field in ["sandbox", "mcpServers", "registered"] {
         assert!(
-            !operations.contains(retired),
-            "retired `{retired}` survived"
+            create["properties"].get(field).is_some(),
+            "missing `{field}`"
         );
     }
-}
-
-#[test]
-fn message_admission_is_text_only_and_returns_the_session() {
-    let request = generated_json("api/generated/schemas/MessageSendRequest.json");
-    let properties = request["properties"]
-        .as_object()
-        .expect("request properties");
+    let lifecycle = json("api/generated/schemas/SessionLifecyclePolicy.json");
+    assert_eq!(lifecycle["properties"]["maximumSubagents"]["minimum"], 12);
+    assert_eq!(lifecycle["properties"]["maximumSubagents"]["maximum"], 12);
     assert_eq!(
-        properties
-            .keys()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from(["deadline", "maxSpendCents", "text"])
+        lifecycle["properties"]["maximumSubagentDepth"]["minimum"],
+        3
     );
-    assert_eq!(request["required"], serde_json::json!(["text"]));
-    assert_eq!(
-        properties["text"]["maxLength"],
-        serde_json::json!(24_576),
-        "the authored message ceiling must reach generated JSON Schema"
-    );
-    assert!(
-        request["description"]
-            .as_str()
-            .expect("request description")
-            .contains("1000-cent default"),
-        "the exact omitted spend default must remain public contract"
-    );
-    assert!(
-        properties["deadline"]["description"]
-            .as_str()
-            .expect("deadline description")
-            .contains("cannot exceed the session's remaining `expiresAt`/drain fence"),
-        "omitted and explicit deadline semantics must remain public contract"
-    );
-
-    let response = generated_json("api/generated/schemas/MessageSendResult.json");
-    let properties = response["properties"]
-        .as_object()
-        .expect("result properties");
-    assert_eq!(
-        properties
-            .keys()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from(["message", "session"])
-    );
-
-    let tree = generate_to_memory(&repo_root()).expect("contract generation");
-    assert!(tree.bytes("api/generated/schemas/Run.json").is_none());
-    let typescript = std::str::from_utf8(
-        tree.bytes("packages/wire/src/generated/models.ts")
-            .expect("generated TypeScript wire models"),
-    )
-    .expect("generated TypeScript is UTF-8");
-    assert!(
-        typescript.contains("\"text\": boundedText(1, 24576, undefined)"),
-        "the generated client validator must count UTF-8 bytes at the same ceiling"
-    );
-}
-
-#[test]
-fn no_public_schema_or_identifier_exposes_a_run_or_turn_identity() {
-    let tree = generate_to_memory(&repo_root()).expect("contract generation");
-    for path in [
-        "api/generated/bundle.json",
-        "api/generated/registries/ids.json",
-        "api/generated/schemas/Message.json",
-        "api/generated/schemas/UsageAttribution.json",
+    let status = json("api/generated/schemas/SandboxStatus.json");
+    for state in [
+        "materializing_workspace",
+        "qualifying_mcp",
+        "suspending",
+        "suspended",
+        "resuming",
     ] {
-        let text = std::str::from_utf8(
-            tree.bytes(path)
-                .unwrap_or_else(|| panic!("missing `{path}`")),
-        )
-        .expect("generated JSON is UTF-8");
-        for leaked in ["runId", "turnId", "aex:schema:Run", "\"kind\": \"run\""] {
-            assert!(!text.contains(leaked), "`{path}` leaked `{leaked}`");
+        assert!(
+            status["enum"]
+                .as_array()
+                .expect("enum")
+                .contains(&serde_json::json!(state))
+        );
+    }
+    let regional = operations("regional");
+    for route in [
+        "session_messages_stream",
+        "session_telemetry_stream",
+        "session_telemetry_replay",
+        "session_telemetry_download_create",
+    ] {
+        assert!(regional.contains(route));
+    }
+}
+
+#[test]
+fn essential_billing_has_no_raw_card_or_retired_product_surface() {
+    let billing = [
+        "BillingBalance",
+        "PaymentMethod",
+        "PaymentMethodSessionRequest",
+        "TopUpCheckoutRequest",
+        "BillingTransaction",
+        "BillingUsageItem",
+        "BillingUsageCoverage",
+    ];
+    for schema in billing {
+        let body = json(&format!("api/generated/schemas/{schema}.json"));
+        let keys: BTreeSet<_> = body["properties"]
+            .as_object()
+            .expect("properties")
+            .keys()
+            .map(|key| key.to_ascii_lowercase())
+            .collect();
+        for forbidden in [
+            "pan",
+            "cvc",
+            "cardnumber",
+            "clientsecret",
+            "setupintentsecret",
+        ] {
+            assert!(!keys.contains(forbidden), "{schema} leaked `{forbidden}`");
         }
     }
-}
-
-#[test]
-fn credentials_and_identity_have_one_explicit_authority_each() {
-    let scopes = generated_json("api/generated/registries/scopes.json");
-    let scopes: BTreeSet<_> = scopes["scopes"]
-        .as_array()
-        .expect("scope rows")
-        .iter()
-        .map(|row| row["scope"].as_str().expect("scope"))
-        .collect();
-    assert!(scopes.contains("provider_credentials:read"));
-    assert!(scopes.contains("provider_credentials:write"));
-    assert!(!scopes.iter().any(|scope| scope.starts_with("secrets:")));
-
-    let providers = generated_json("api/generated/schemas/IdentityProvider.json");
-    assert_eq!(providers["enum"], serde_json::json!(["github", "google"]));
-}
-
-#[test]
-fn session_lifecycle_is_automatic_but_observable_without_a_turn_resource() {
-    let session = generated_json("api/generated/schemas/Session.json");
-    let properties = session["properties"]
-        .as_object()
-        .expect("session properties");
-    for field in [
-        "activeMessageId",
-        "activeMaxSpendCents",
-        "activeDeadline",
-        "launchedAt",
-        "expiresAt",
-        "idleSince",
-        "suspendAt",
-        "suspendedAt",
-        "terminatedAt",
-        "terminationReason",
-    ] {
-        assert!(properties.contains_key(field), "Session misses `{field}`");
-    }
-    for retired in ["continuity", "lineage", "currentTurn", "run"] {
-        assert!(
-            !properties.contains_key(retired),
-            "Session retains `{retired}`"
-        );
-    }
-
-    let resolved = generated_json("api/generated/schemas/ResolvedConfig.json");
-    assert!(resolved["properties"].get("lifecycle").is_some());
-    let lifecycle = generated_json("api/generated/schemas/SessionLifecyclePolicy.json");
-    assert_eq!(
-        lifecycle["properties"]["idleSuspendAfterSeconds"]["minimum"],
-        180
-    );
-    assert_eq!(
-        lifecycle["properties"]["idleSuspendAfterSeconds"]["maximum"],
-        180
-    );
-    assert_eq!(
-        lifecycle["properties"]["maximumLifetimeSeconds"]["minimum"],
-        28_800
-    );
-    assert_eq!(
-        lifecycle["properties"]["maximumLifetimeSeconds"]["maximum"],
-        28_800
-    );
-}
-
-#[test]
-fn generated_rust_live_file_docs_mark_microvm_as_code() {
-    let models = generated_text("crates/aex-wire/src/generated/models.rs");
-    for expected in [
-        "read directly from the retained `MicroVM`.",
-        "session's exact `MicroVM` generation.",
-        "retained by the exact `MicroVM` generation.",
-        "atomically published in the `MicroVM`.",
+    let central = operations("central");
+    for retired in [
+        "portal",
+        "auto_topup",
+        "statement",
+        "subscription",
+        "invoice",
+        "organization",
+        "membership",
+        "device",
     ] {
         assert!(
-            models.contains(expected),
-            "generated Rust documentation misses `{expected}`"
+            !central.iter().any(|id| id.contains(retired)),
+            "retired `{retired}` route survived"
         );
     }
 }

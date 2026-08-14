@@ -22,7 +22,7 @@ use aex_brain_domain::ids::{
 };
 use aex_brain_domain::journal::{
     ExecutorRoute, FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
-    PreservedCounters, TypedFailure, WaitResolution,
+    TypedFailure, WaitResolution,
 };
 use aex_brain_domain::wire_pending::{
     AgentLimits, CanonicalBlock, ContentBlockRef, JoinMode, NormalizedUsage, ProviderId,
@@ -135,11 +135,10 @@ pub fn config() -> ResolvedAgentConfig {
         model: model.model().clone(),
         system: None,
         tool_manifest_digests: vec![ContentHash::of(b"fixture-tools")],
-        hands_generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
+        mcp_servers: Vec::new(),
+        hands_generation: Some(GenerationId::from_uuid7(Uuid7::compose(1, [9; 10]))),
         limits_revision: 1,
         limits: AgentLimits {
-            max_turns: 32,
-            max_steps_per_turn: 16,
             turn_deadline_ms: 600_000,
             max_run_duration_ms: 3_600_000,
             max_depth: 4,
@@ -293,7 +292,7 @@ pub fn tool_result(call: &str, text: &str, effect: EffectId) -> JournalRecord {
             text: BoundedString::truncating(text),
         }],
         is_error: false,
-        executed_on: ExecutorRoute::ManagedWeb,
+        executed_on: ExecutorRoute::ToolMux,
         duration_ms: 12,
         effect,
     }
@@ -316,6 +315,7 @@ pub const TURN_USAGE: NormalizedUsage = NormalizedUsage {
 pub fn effect_prepared(effect: EffectId, kind: EffectKind, class: EffectClass) -> JournalRecord {
     JournalRecord::EffectPrepared {
         effect,
+        tool_call: (kind == EffectKind::ToolCall).then(|| ToolCallId::truncating("fixture-call")),
         kind,
         class,
         request_hash: ContentHash::of(b"fixture-request"),
@@ -422,19 +422,6 @@ pub fn wait_resolved(wait_id: WaitId, resolution: WaitResolution) -> JournalReco
     }
 }
 
-/// A compaction replacing the prefix through `through`.
-#[must_use]
-pub fn compaction(through: JournalSeq, preserved: PreservedCounters) -> JournalRecord {
-    JournalRecord::Compaction {
-        replaces_through: through,
-        summary: vec![CanonicalBlock::Text {
-            text: BoundedString::truncating("summary of the replaced prefix"),
-            annotations: Vec::new(),
-        }],
-        preserved,
-    }
-}
-
 /// The absorbing terminal for `reason`.
 #[must_use]
 pub fn finished(reason: FinishReason) -> JournalRecord {
@@ -475,7 +462,6 @@ enum Step {
     ToolTurn,
     ParkAndResume,
     SpawnAndJoin,
-    Compact,
     Finish(FinishReason),
 }
 
@@ -486,7 +472,6 @@ fn arb_step() -> impl Strategy<Value = Step> {
         4 => Just(Step::ToolTurn),
         2 => Just(Step::ParkAndResume),
         2 => Just(Step::SpawnAndJoin),
-        1 => Just(Step::Compact),
         1 => prop_oneof![
             Just(Step::Finish(FinishReason::Completed)),
             Just(Step::Finish(FinishReason::Failed)),
@@ -508,7 +493,6 @@ fn render(owner: AgentId, steps: &[Step]) -> Vec<JournalEntry> {
     let mut has_input = false;
     let mut open_calls: Vec<String> = Vec::new();
     let mut spawned = 0_u32;
-    let mut counters = PreservedCounters::default();
 
     for step in steps {
         match step {
@@ -530,8 +514,6 @@ fn render(owner: AgentId, steps: &[Step]) -> Vec<JournalEntry> {
                     ))
                     .push(assistant_text("here you go", effect))
                     .push(effect_complete(effect));
-                counters.assistant_turns = counters.assistant_turns.saturating_add(1);
-                counters.usage.add(TURN_USAGE);
                 has_input = false;
             }
             Step::ToolTurn => {
@@ -549,8 +531,6 @@ fn render(owner: AgentId, steps: &[Step]) -> Vec<JournalEntry> {
                     ))
                     .push(assistant_tool_use(&[(&call, "read_file")], effect))
                     .push(effect_complete(effect));
-                counters.assistant_turns = counters.assistant_turns.saturating_add(1);
-                counters.usage.add(TURN_USAGE);
                 open_calls.push(call);
                 has_input = false;
             }
@@ -568,15 +548,6 @@ fn render(owner: AgentId, steps: &[Step]) -> Vec<JournalEntry> {
                     .push(child_spawned(child, spawned, join_id, grant(1), None))
                     .push(child_terminal(child, ChildOutcome::Completed));
                 spawned = spawned.saturating_add(1);
-                counters.spawn_ordinal = spawned;
-            }
-            Step::Compact => {
-                // `replaces_through` must name a sequence already applied, so the tail is
-                // the largest admissible value and zero records means nothing to compact.
-                let Some(tail) = builder.next_seq().get().checked_sub(1) else {
-                    continue;
-                };
-                builder = builder.push(compaction(JournalSeq(tail), counters));
             }
             Step::Finish(reason) => {
                 // Resolve every open call first: finishing mid-tool is a separate hostile

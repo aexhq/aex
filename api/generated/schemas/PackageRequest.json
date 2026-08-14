@@ -2,21 +2,21 @@
   "$id": "https://schemas.aex.dev/v1/PackageRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One exactly-pinned package to pre-install.",
+  "description": "One exactly pinned setup package.",
   "properties": {
     "ecosystem": {
       "$ref": "aex:schema:PackageEcosystem",
-      "description": "Which ecosystem."
+      "description": "Which package manager."
     },
     "name": {
-      "description": "The package name.",
+      "description": "Package name.",
       "maxLength": 214,
       "minLength": 1,
       "type": "string"
     },
     "version": {
-      "description": "The exact version; ranges are rejected.",
-      "maxLength": 64,
+      "description": "Exact version; ranges are rejected.",
+      "maxLength": 128,
       "minLength": 1,
       "type": "string"
     }

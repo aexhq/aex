@@ -6,7 +6,7 @@ export const metadata = { title: "Sessions — AEX" };
 
 export default async function SessionsPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const { workspace, organization, regionCode } = await requireWorkspace(slug);
+  const { workspace, regionCode } = await requireWorkspace(slug);
 
   return (
     <div className="stack">
@@ -19,7 +19,7 @@ export default async function SessionsPage({ params }: { params: Promise<{ slug:
       <SessionsPanel
         slug={slug}
         region={regionCode}
-        {...(organization ? { billingHref: `/org/${organization.slug}/billing` } : {})}
+        billingHref="/billing"
       />
     </div>
   );

@@ -153,23 +153,20 @@ async fn run(config: &Config) -> Result<(), CentralApiRunError> {
         .await
         .map_err(|error| CentralApiRunError::Dependency("identity-pepper", error.to_string()))?;
 
-    // Google's registered OAuth client. Without it
-    // `dashboard_session_create` can complete no handshake, and a browser session
-    // is the only thing that can approve a device authorization — so serving
-    // without it means the whole credential ceremony fails at its second step
-    // for the life of the process.
+    // The registered OAuth clients are startup dependencies: serving without
+    // either would make the browser sign-in exchange fail for this process.
     let google =
-        central_identity_api::oauth::load_oauth_client(&secrets, &config.google_oauth_secret_id)
+        central_api::identity_oauth::load_oauth_client(&secrets, &config.google_oauth_secret_id)
             .await
             .map_err(|reason| CentralApiRunError::Dependency("google-oauth-client", reason))?;
     let github =
-        central_identity_api::oauth::load_oauth_client(&secrets, &config.github_oauth_secret_id)
+        central_api::identity_oauth::load_oauth_client(&secrets, &config.github_oauth_secret_id)
             .await
             .map_err(|reason| CentralApiRunError::Dependency("github-oauth-client", reason))?;
     // The handshake is bounded by the same deadline the request it serves is, so
     // a provider that stops answering can never outlive its own request.
     let handshake = Arc::new(
-        central_identity_api::oauth::HttpProviderHandshake::new(
+        central_api::identity_oauth::HttpProviderHandshake::new(
             google,
             github,
             config.sign_in_redirect_uri.clone(),
@@ -205,13 +202,9 @@ async fn run(config: &Config) -> Result<(), CentralApiRunError> {
     let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
 
     let control_store = Arc::new(aex_control_aurora::AuroraControlStore::new(aurora.clone()));
-    let control = Arc::new(central_control_api::api::ControlService::new(
-        control_store.clone() as Arc<dyn central_control_api::api::Store>,
+    let control = Arc::new(central_api::control::ControlService::new(
+        control_store.clone() as Arc<dyn central_api::control::Store>,
         Arc::clone(&api_peppers) as Arc<dyn PepperKeystore>,
-        Arc::new(aex_central_aws::LambdaRegionalControl::new(
-            aws_sdk_lambda::Client::new(&aws),
-            config.regional_functions.clone(),
-        )) as Arc<dyn aex_control_app::ports::RegionalControlPort>,
         Arc::clone(&clock),
         Arc::new(aex_central_aws::Uuid7Factory),
         Arc::new(aex_central_aws::OsSecretRng),
@@ -220,42 +213,35 @@ async fn run(config: &Config) -> Result<(), CentralApiRunError> {
         config.api_urls.clone(),
     ));
 
-    let auth = Arc::new(central_identity_api::api::AuthService::new(
+    let auth = Arc::new(central_api::identity::AuthService::new(
         Arc::new(aex_identity_aurora::AuroraIdentityStore::new(
             aurora.clone(),
             Arc::clone(&identity_peppers) as Arc<dyn PepperKeystore>,
         )),
+        control_store.clone() as Arc<dyn aex_control_app::PersonalAccountProvisioner>,
         Arc::clone(&identity_peppers) as Arc<dyn PepperKeystore>,
         Arc::clone(&clock),
         Arc::new(aex_central_aws::Uuid7Factory),
         Arc::new(aex_central_aws::OsSecretRng),
-        aex_wire::types::HttpsUrl::parse(&config.device_verification_uri).map_err(|error| {
-            CentralApiRunError::Dependency("device-verification-uri", error.to_string())
-        })?,
         handshake,
     ));
 
-    let billing_authority = Arc::new(finance_api::aurora::AuroraBillingAuthority::new(
+    let billing_authority = Arc::new(central_api::billing::aurora::AuroraBillingAuthority::new(
         Arc::new(aurora.clone()),
-        finance_api::config::REQUIRED_ROLE.to_owned(),
+        central_api::billing::REQUIRED_ROLE.to_owned(),
     ));
     // The prelaunch composition intentionally uses the cluster's one managed
     // login. `finance-api`'s per-role membership probe is correct for its
     // standalone role-scoped login, but requiring it here contradicts that
     // topology and makes the first shared-login task unable to start. The
     // common Aurora login has already answered its real connection probe above.
-    let billing = Arc::new(finance_api::billing::BillingService::new(
+    let billing = Arc::new(central_api::billing::billing::BillingService::new(
         Arc::clone(&billing_authority),
-        Arc::new(finance_api::gateway::CommandEdgeGateway::new(
+        Arc::new(central_api::billing::gateway::CommandEdgeGateway::new(
             aws_sdk_lambda::Client::new(&aws),
             config.stripe_command_edge_arn.clone(),
         )),
-        Arc::new(finance_api::download::S3StatementDownloads::new(
-            aws_sdk_s3::Client::new(&aws),
-            config.statement_bucket.clone(),
-        )),
         config.page_limit,
-        i64::try_from(config.download_grant_ttl.as_millis()).unwrap_or(i64::MAX),
         aex_wire::types::HttpsUrl::parse(DEFAULT_RETURN_URL).map_err(|error| {
             CentralApiRunError::Dependency("default-return-url", error.to_string())
         })?,
@@ -292,16 +278,7 @@ async fn run(config: &Config) -> Result<(), CentralApiRunError> {
     // accepted finish.
     let draining = Arc::new(AtomicBool::new(false));
     let readiness = readiness(Probes::READY).with_drain_signal(Arc::clone(&draining));
-    // The account read shares the identity cluster client this process already
-    // opened, and the same one mapping the region uses. Two producers of one
-    // account state is how a dashboard came to call an account active while the
-    // billing page called it paused, in the same second.
-    let account = Arc::new(central_identity_api::account::AccountService::new(
-        Arc::new(central_identity_api::account::AuroraAccountReader::new(
-            aurora.clone(),
-        )),
-    ));
-    let router = app(control, auth, billing, account, edge, readiness);
+    let router = app(control, auth, billing, edge, readiness);
 
     let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, config.port));
     let listener = tokio::net::TcpListener::bind(address)

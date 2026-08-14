@@ -53,14 +53,14 @@ pub fn production_live_files(
     let compute: Arc<dyn UsageFactSink> = Arc::new(
         aex_runtime_control_aws::usage_ingress::SqsFactDraftSink::new(
             sqs.clone(),
-            config.usage_compute_queue_url.clone(),
+            config.usage_rating_queue_url.clone(),
             aex_usage_domain::meter::Category::Compute,
         ),
     );
     let storage: Arc<dyn UsageFactSink> = Arc::new(
         aex_runtime_control_aws::usage_ingress::SqsFactDraftSink::new(
             sqs,
-            config.usage_storage_queue_url.clone(),
+            config.usage_rating_queue_url.clone(),
             aex_usage_domain::meter::Category::Storage,
         ),
     );

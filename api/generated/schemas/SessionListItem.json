@@ -2,22 +2,22 @@
   "$id": "https://schemas.aex.dev/v1/SessionListItem.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The collection projection of a session; `resolvedConfig` is omitted.",
+  "description": "Bounded collection projection.",
   "properties": {
     "activeMessageId": {
-      "description": "The active user message, when any.",
+      "description": "Active root message.",
       "pattern": "^msg_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "message"
     },
     "createdAt": {
-      "description": "When metadata was created.",
+      "description": "Admission time.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     },
     "expiresAt": {
-      "description": "When the provider generation's eight-hour lifetime ends.",
+      "description": "Expiry.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
@@ -29,33 +29,31 @@
       "x-aex-id": "session"
     },
     "model": {
-      "description": "The model.",
+      "description": "Model.",
       "maxLength": 256,
       "minLength": 1,
       "type": "string"
     },
     "provider": {
       "$ref": "aex:schema:ProviderId",
-      "description": "The provider."
+      "description": "Provider."
     },
-    "revision": {
-      "description": "Monotonic concurrency token.",
-      "maximum": 9007199254740991,
-      "minimum": 0,
-      "type": "integer"
+    "sandboxStatus": {
+      "$ref": "aex:schema:SandboxStatus",
+      "description": "Sandbox lifecycle."
     },
     "status": {
       "$ref": "aex:schema:SessionStatus",
-      "description": "What the session is doing."
+      "description": "Conversation lifecycle."
     },
     "updatedAt": {
-      "description": "When the session last changed.",
+      "description": "Last change.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     },
     "workspaceId": {
-      "description": "The owning workspace.",
+      "description": "Workspace.",
       "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "workspace"
@@ -67,7 +65,7 @@
     "id",
     "model",
     "provider",
-    "revision",
+    "sandboxStatus",
     "status",
     "updatedAt",
     "workspaceId"

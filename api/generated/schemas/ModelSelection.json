@@ -4,12 +4,6 @@
   "additionalProperties": false,
   "description": "An explicit provider and model pair; a model-only override is rejected.",
   "properties": {
-    "credentialId": {
-      "description": "Which BYOK binding to use.",
-      "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
-      "type": "string",
-      "x-aex-id": "provider_credential"
-    },
     "model": {
       "description": "The exact provider-native model id.",
       "maxLength": 256,

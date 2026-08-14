@@ -42,9 +42,10 @@ mod tests {
             (ProviderId::Openai, "gpt-5.2"),
             (ProviderId::Anthropic, "claude-opus-4-5"),
             (ProviderId::Deepseek, "deepseek-v4-pro"),
-            (ProviderId::Zai, "glm-4.6"),
+            (ProviderId::Xai, "grok-4.3"),
+            (ProviderId::Meta, "muse-spark-1.2"),
             (ProviderId::Moonshotai, "kimi-k2.5"),
-            (ProviderId::Google, "gemini-2.5-flash"),
+            (ProviderId::Alibaba, "qwen3.7-plus"),
         ] {
             let qualified = catalog.admit(provider, model).expect("admitted");
             assert!(qualified.catalog_revision.starts_with("mc1_"));

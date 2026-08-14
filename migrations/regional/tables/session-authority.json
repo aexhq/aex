@@ -2,7 +2,7 @@
   "schema": "aex.regional-table.v1",
   "table": "session-authority",
   "owner": "regional-stores",
-  "purpose": "Session heads, messages, internal execution facts, native events, approvals, agent control and journals, durable operations, idempotency receipts, workspace-scoped active-session locators, durable account-pause scan progress, ephemeral live-transfer coordination, irreversible-deletion coordination, and the fenced empty-workspace control row. Brain session-level items live here under the BRAIN# sort-key prefix; per-agent items get their own partition.",
+  "purpose": "Session heads, text messages, native agents and journals, checkpoint/effect facts, frozen file mounts, encrypted session-scoped provider/MCP configuration, idempotency receipts, and restart-safe terminal deletion coordination.",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
@@ -82,16 +82,16 @@
     }
   ],
   "stream": {
-    "enabled": false,
-    "viewType": "NONE",
-    "consumers": [],
-    "rationale": "No product service consumes this authority stream. Session reads and event ordering use the authority table directly."
+    "enabled": true,
+    "viewType": "KEYS_ONLY",
+    "consumers": ["session-maintenance-worker"],
+    "rationale": "Maintenance receives identity-only hints and reloads the authority. Prompts and encrypted configuration are never duplicated into the stream."
   },
   "timeToLive": {
     "enabled": true,
     "attribute": "expiresAtEpochSeconds",
-    "appliesTo": ["idempotency_receipt", "session_create_preparation", "session_create_prepared_file", "live_file_transfer", "live_file_election"],
-    "rationale": "Space reclamation only (OD-16, 24 hours). Public receipts and generation-local live-transfer rows carry an explicit expiresAt checked by readers; private create-election rows are immutable scaffolding and use TTL only for eventual cleanup after publication or compensation. Irreversible session deletion removes enumerable live-transfer rows directly, and no authority fence reads TTL."
+    "appliesTo": ["idempotency_receipt", "session_create_preparation", "session_create_prepared_file"],
+    "rationale": "Space reclamation only. Readers enforce receipt expiry; private create-election rows are immutable scaffolding and use TTL only after publication or compensation."
   },
   "itemTypes": [
     "session_head",
@@ -100,17 +100,12 @@
     "session_deletion_progress",
     "session_deletion_evidence",
     "session_receipt_directory",
-    "session_operation_edge",
-    "live_file_transfer",
-    "live_file_election",
     "session_create_preparation",
     "session_create_prepared_file",
     "session_create_preparation_edge",
     "message",
     "sealed_message",
-    "run",
     "session_event",
-    "approval",
     "agent_index",
     "agent_control",
     "journal_entry",
@@ -118,70 +113,15 @@
     "fanout_page",
     "join_shard",
     "budget_return",
-    "operation",
+    "session_mount_manifest",
+    "provider_secret",
+    "mcp_secret",
     "idempotency_receipt",
-    "regional_workspace_control",
-    "active_session",
-    "account_pause_progress"
+    "active_session"
   ],
   "iam": [
     {
-      "role": "regional-control",
-      "actions": ["dynamodb:GetItem"],
-      "resources": ["table"],
-      "itemTypes": ["regional_workspace_control", "account_pause_progress", "session_head", "agent_control"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["CONTROL#*", "SESSION#*", "AGENT#*"]
-      }
-    },
-    {
-      "role": "regional-control",
-      "actions": ["dynamodb:Query"],
-      "resources": ["table"],
-      "itemTypes": ["active_session"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["ACTIVE#*"]
-      }
-    },
-    {
-      "role": "regional-control",
-      "actions": ["dynamodb:PutItem"],
-      "resources": ["table"],
-      "itemTypes": ["regional_workspace_control", "account_pause_progress"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["CONTROL#*"]
-      }
-    },
-    {
-      "role": "regional-control",
-      "actions": ["dynamodb:DeleteItem"],
-      "resources": ["table"],
-      "itemTypes": ["active_session"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["ACTIVE#*"]
-      }
-    },
-    {
-      "role": "regional-control",
-      "actions": ["dynamodb:TransactWriteItems"],
-      "resources": ["table"],
-      "itemTypes": ["session_head", "agent_control", "active_session"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["WS#*", "SESSION#*", "AGENT#*", "ACTIVE#*"]
-      }
-    },
-    {
-      "role": "regional-session-api",
+      "role": "session-api",
       "actions": [
         "dynamodb:GetItem",
         "dynamodb:Query",
@@ -192,7 +132,7 @@
       "resources": ["table", "index/*"]
     },
     {
-      "role": "session-operation-worker",
+      "role": "session-maintenance-worker",
       "actions": [
         "dynamodb:GetItem",
         "dynamodb:Query",
@@ -212,6 +152,15 @@
         "dynamodb:TransactWriteItems",
         "dynamodb:UpdateItem",
         "dynamodb:PutItem"
+      ],
+      "resources": ["table"]
+    },
+    {
+      "role": "tool-mux",
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:UpdateItem"
       ],
       "resources": ["table"]
     },

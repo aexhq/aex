@@ -10,6 +10,7 @@
 
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{OperationId, OrganizationId, SessionId, WorkspaceId};
+use aex_wire::provider::ProviderId;
 
 use crate::RunId;
 use aex_wire::types::{DecimalU128, Region, Timestamp};
@@ -301,6 +302,192 @@ pub struct RatingRequest {
     pub fact: UsageFact,
     /// The admission-time intent digest, which decides replay from conflict.
     pub intent_hash: IntentDigest,
+}
+
+/// One provider-reported token class under a customer-held credential.
+///
+/// This is deliberately not [`Meter`]. It has no pricing version, reservation,
+/// rate-book key, or conversion into a priced fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelTokenClass {
+    /// Uncached prompt tokens.
+    Input,
+    /// Generated tokens, including reasoning where the provider reports it that way.
+    Output,
+    /// Prompt tokens served from a provider cache.
+    CacheRead,
+    /// Prompt tokens written into a provider cache.
+    CacheWrite,
+    /// The reasoning subset, when separately reported.
+    Reasoning,
+}
+
+impl ModelTokenClass {
+    /// The stable storage spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Output => "output",
+            Self::CacheRead => "cache_read",
+            Self::CacheWrite => "cache_write",
+            Self::Reasoning => "reasoning",
+        }
+    }
+}
+
+/// Deterministic identity of one per-message model-token observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ModelUsageFactId([u8; 32]);
+
+impl ModelUsageFactId {
+    /// Derives one identity from the immutable assistant effect and token class.
+    #[must_use]
+    pub fn derive(
+        region: Region,
+        session: SessionId,
+        assistant_effect: &str,
+        token_class: ModelTokenClass,
+    ) -> Self {
+        use sha2::Digest as _;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(b"aex:model-usage:v1");
+        let session = session.to_string();
+        for field in [
+            region.as_str(),
+            session.as_str(),
+            assistant_effect,
+            token_class.as_str(),
+        ] {
+            hasher.update([0x1f]);
+            hasher.update(field.as_bytes());
+        }
+        Self(hasher.finalize().into())
+    }
+
+    /// Lowercase hexadecimal storage and FIFO spelling.
+    #[must_use]
+    pub fn to_hex(self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::with_capacity(64);
+        for byte in self.0 {
+            let _ = write!(out, "{byte:02x}");
+        }
+        out
+    }
+}
+
+impl std::fmt::Display for ModelUsageFactId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.to_hex())
+    }
+}
+
+impl Serialize for ModelUsageFactId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for ModelUsageFactId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        let text = <std::borrow::Cow<'de, str> as Deserialize<'de>>::deserialize(deserializer)?;
+        if text.len() != 64
+            || text
+                .bytes()
+                .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
+        {
+            return Err(D::Error::custom(
+                "a ModelUsageFactId is 64 lowercase hex characters",
+            ));
+        }
+        let mut bytes = [0_u8; 32];
+        for (index, slot) in bytes.iter_mut().enumerate() {
+            *slot = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16)
+                .map_err(|_| D::Error::custom("invalid ModelUsageFactId"))?;
+        }
+        Ok(Self(bytes))
+    }
+}
+
+/// One zero-dollar BYOK model-token observation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ModelUsageFact {
+    /// Envelope version.
+    pub schema_version: SchemaVersion,
+    /// Retry-stable business identity.
+    pub fact_id: ModelUsageFactId,
+    /// Owning account.
+    pub organization: OrganizationId,
+    /// Owning workspace.
+    pub workspace: WorkspaceId,
+    /// Regional producer.
+    pub region: Region,
+    /// Session attribution.
+    pub session: SessionId,
+    /// Brain's durable assistant effect identity.
+    pub assistant_effect: Box<str>,
+    /// Official provider family.
+    pub provider: ProviderId,
+    /// Provider model slug.
+    pub model: Box<str>,
+    /// Token class represented by this row.
+    pub token_class: ModelTokenClass,
+    /// Provider-reported count; never a charged quantity.
+    pub quantity: DecimalU128,
+    /// Time of the authoritative assistant commit.
+    pub observed_at: Timestamp,
+    /// Queue and inbox replay identities.
+    pub idempotency: FactIdempotency,
+}
+
+/// A zero-dollar model observation on the regional-to-central queue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ModelUsageRatingRequest {
+    /// The observation. It is not a priced [`UsageFact`].
+    pub model_usage: ModelUsageFact,
+    /// Digest over the immutable observation intent.
+    pub intent_hash: IntentDigest,
+}
+
+/// The one regional-to-central FIFO body, preserving the priced request wire.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RatingMessage {
+    /// One of the four priced meters.
+    Priced(RatingRequest),
+    /// A structurally zero-dollar BYOK model observation.
+    Model(ModelUsageRatingRequest),
+}
+
+impl RatingMessage {
+    /// Owning account used by the FIFO partition invariant.
+    #[must_use]
+    pub const fn organization(&self) -> OrganizationId {
+        match self {
+            Self::Priced(request) => request.fact.organization,
+            Self::Model(request) => request.model_usage.organization,
+        }
+    }
+
+    /// Admission intent used for replay/conflict classification.
+    #[must_use]
+    pub const fn intent_hash(&self) -> &IntentDigest {
+        match self {
+            Self::Priced(request) => &request.intent_hash,
+            Self::Model(request) => &request.intent_hash,
+        }
+    }
+}
+
+impl From<RatingRequest> for RatingMessage {
+    fn from(value: RatingRequest) -> Self {
+        Self::Priced(value)
+    }
 }
 
 /// The central inbox identity of a fact.

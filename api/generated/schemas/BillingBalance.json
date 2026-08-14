@@ -2,61 +2,49 @@
   "$id": "https://schemas.aex.dev/v1/BillingBalance.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The prepaid balance of one organization.",
+  "description": "The current prepaid position of the caller's personal account.",
   "properties": {
+    "accountId": {
+      "description": "The personal account.",
+      "pattern": "^acc_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "account"
+    },
     "availableCents": {
-      "description": "Spendable now.",
+      "description": "Credit available for new reservations.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string",
       "x-aex-money": "cents"
     },
     "currency": {
       "$ref": "aex:schema:Currency",
-      "description": "Always USD."
-    },
-    "operationalState": {
-      "$ref": "aex:schema:AccountOperationalState",
-      "description": "What the balance implies."
-    },
-    "organizationId": {
-      "description": "The organization.",
-      "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
-      "type": "string",
-      "x-aex-id": "organization"
+      "description": "Always USD at launch."
     },
     "pendingCents": {
-      "description": "Recorded but not yet settled.",
+      "description": "Rated usage not yet settled to the ledger.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string",
       "x-aex-money": "cents"
     },
     "reservedCents": {
-      "description": "Held against admitted work.",
+      "description": "Credit held for admitted sessions.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string",
       "x-aex-money": "cents"
     },
-    "revision": {
-      "description": "Monotonic balance revision.",
-      "maximum": 9007199254740991,
-      "minimum": 0,
-      "type": "integer"
-    },
     "updatedAt": {
-      "description": "When the balance last changed.",
+      "description": "When this projection last changed.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     }
   },
   "required": [
+    "accountId",
     "availableCents",
     "currency",
-    "operationalState",
-    "organizationId",
     "pendingCents",
     "reservedCents",
-    "revision",
     "updatedAt"
   ],
   "title": "BillingBalance",

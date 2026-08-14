@@ -15,19 +15,20 @@
 
 use super::{AdmissionControl, AdmissionDecision};
 use crate::ports::{
-    AgentHead, BoxFuture, CancelToken, CatalogError, CatalogPort, Claim, ClaimError, ClockPort,
-    CommitError, CommitReceipt, ConditionFailure, DecisionContext, DetachedStatus, DispatchTicket,
-    DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage, DurableWake, EffectStore,
-    FenceGuard, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
-    HandsOperationStatus, HandsPort, IdPort, JournalCursor, JournalPage, JournalStore, LeaseStore,
-    MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery, MalformedWakeReason, PreparedToolCall,
-    PreviewSink, ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
-    ReleaseDisposition, ResultBounds, SessionAuthority, SteadyInstant, StoreError,
-    ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError,
-    WakeBatch, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+    AgentHead, BoxFuture, CancelToken, CatalogError, CatalogPort, CheckpointError, Claim,
+    ClaimError, ClockPort, CommitError, CommitReceipt, ConditionFailure, ContextCheckpointStore,
+    DecisionContext, DetachedStatus, DispatchTicket, DueRowIsolation, DueRowIsolationReason,
+    DueScanCursor, DueScanPage, DurableWake, EffectStore, FenceGuard, HandsAccepted, HandsEndpoint,
+    HandsError, HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalCursor,
+    JournalPage, JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery,
+    MalformedWakeReason, PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome,
+    ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SessionAuthority,
+    SteadyInstant, StoreError, ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolPort,
+    ToolRoute, ToolRoutingError, WakeBatch, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
 };
 use aex_brain_domain::budget::BudgetNode;
-use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
+use aex_brain_domain::checkpoint::{CheckpointMetadata, ContextCheckpoint};
+use aex_brain_domain::commit::{ChildWrite, DecisionCommit, EffectWrite};
 use aex_brain_domain::effect::{
     DetachedOperationRef, DispatchEvidence, DurableEffect, EffectState, SettledOutcome,
 };
@@ -36,12 +37,14 @@ use aex_brain_domain::ids::{
     EffectId, Fence, HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId, Timestamp,
     ToolName, WakeId, WorkShard,
 };
-use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
+use aex_brain_domain::journal::{
+    FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
+};
 use aex_brain_domain::wire_pending::{CanonicalModelRequest, ProviderId};
 use aex_model_catalog::{CatalogError as ModelCatalogError, QualifiedModel};
 use aex_wire::ids::{GenerationId, PrefixedId, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -356,6 +359,10 @@ pub struct ScriptedTools {
     invoked: Mutex<Vec<String>>,
     queried: Mutex<Vec<DetachedOperationRef>>,
     cancelled: Mutex<Vec<(DetachedOperationRef, Fence)>>,
+    concurrent_barrier: AtomicUsize,
+    started: AtomicUsize,
+    active: AtomicUsize,
+    peak_active: AtomicUsize,
 }
 
 impl ScriptedTools {
@@ -387,16 +394,28 @@ impl ScriptedTools {
                     .map(|route| (route.name.as_str().to_owned(), route))
                     .collect(),
             ),
-            advertisement: ToolAdvertisement {
-                definitions,
-                parallel_safe: false,
-            },
+            advertisement: ToolAdvertisement { definitions },
             invocations: Mutex::new(script.into_iter().collect()),
             queries: Mutex::new(VecDeque::new()),
             invoked: Mutex::new(Vec::new()),
             queried: Mutex::new(Vec::new()),
             cancelled: Mutex::new(Vec::new()),
+            concurrent_barrier: AtomicUsize::new(0),
+            started: AtomicUsize::new(0),
+            active: AtomicUsize::new(0),
+            peak_active: AtomicUsize::new(0),
         }
+    }
+
+    /// Holds scripted calls pending until `count` invocations have started.
+    pub fn require_concurrent_starts(&self, count: usize) {
+        self.concurrent_barrier.store(count, Ordering::Release);
+    }
+
+    /// Largest number of simultaneously pending invocations observed.
+    #[must_use]
+    pub fn peak_active(&self) -> usize {
+        self.peak_active.load(Ordering::Acquire)
     }
 
     /// Scripts what a durable-operation query answers, in order.
@@ -456,7 +475,22 @@ impl ToolPort for ScriptedTools {
                 .lock()
                 .expect("not poisoned")
                 .push(call.call.as_str().to_owned());
-            self.invocations
+            let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
+            self.peak_active.fetch_max(active, Ordering::AcqRel);
+            self.started.fetch_add(1, Ordering::AcqRel);
+            futures::future::poll_fn(|context| {
+                if self.started.load(Ordering::Acquire)
+                    >= self.concurrent_barrier.load(Ordering::Acquire)
+                {
+                    core::task::Poll::Ready(())
+                } else {
+                    context.waker().wake_by_ref();
+                    core::task::Poll::Pending
+                }
+            })
+            .await;
+            let result = self
+                .invocations
                 .lock()
                 .expect("not poisoned")
                 .pop_front()
@@ -470,7 +504,9 @@ impl ToolPort for ScriptedTools {
                             "the script is exhausted",
                         ),
                     })
-                })
+                });
+            self.active.fetch_sub(1, Ordering::AcqRel);
+            result
         })
     }
 
@@ -590,11 +626,12 @@ impl AdmissionControl for AlwaysAdmit {
 /// One agent as the in-memory authority holds it.
 #[derive(Debug, Clone)]
 struct AgentRow {
-    generation: GenerationId,
+    generation: Option<GenerationId>,
     revision: AgentRevision,
     fence: Fence,
     tail: Option<JournalSeq>,
     tail_hash: Option<ContentHash>,
+    checkpoint: Option<CheckpointMetadata>,
     cancel_epoch: CancelEpoch,
     finish: Option<FinishReason>,
     phase: String,
@@ -629,6 +666,8 @@ pub struct MemoryStore {
     queue: Arc<MemoryQueue>,
     log: Arc<Recorder>,
     restore_effect_overlap: AtomicU8,
+    session_children_created: Mutex<BTreeMap<SessionId, u64>>,
+    checkpoint_objects: Mutex<BTreeMap<ContentHash, ContextCheckpoint>>,
 }
 
 impl MemoryStore {
@@ -646,6 +685,8 @@ impl MemoryStore {
             queue,
             log,
             restore_effect_overlap: AtomicU8::new(0),
+            session_children_created: Mutex::new(BTreeMap::new()),
+            checkpoint_objects: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -695,11 +736,12 @@ impl MemoryStore {
         self.agents.lock().expect("not poisoned").insert(
             key,
             AgentRow {
-                generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
+                generation: Some(GenerationId::from_uuid7(Uuid7::compose(1, [9; 10]))),
                 revision: AgentRevision::ZERO,
                 fence: Fence::ZERO,
                 tail,
                 tail_hash,
+                checkpoint: None,
                 cancel_epoch: CancelEpoch::ZERO,
                 finish: None,
                 phase: "awaiting_model".to_owned(),
@@ -946,6 +988,7 @@ impl MemoryStore {
             fence: row.fence,
             journal_tail: row.tail,
             journal_tail_hash: row.tail_hash,
+            checkpoint: row.checkpoint.clone(),
             cancel_epoch: row.cancel_epoch,
             finish: row.finish,
             phase: row.phase.clone(),
@@ -960,6 +1003,97 @@ impl MemoryStore {
                 .collect(),
             lease_expires_at: row.lease_expires_at,
         }
+    }
+}
+
+impl ContextCheckpointStore for MemoryStore {
+    fn load<'a>(
+        &'a self,
+        key: AgentKey,
+        metadata: &'a CheckpointMetadata,
+    ) -> BoxFuture<'a, Result<ContextCheckpoint, CheckpointError>> {
+        Box::pin(async move {
+            let checkpoint = self
+                .checkpoint_objects
+                .lock()
+                .expect("not poisoned")
+                .get(&metadata.object_hash)
+                .cloned()
+                .ok_or(CheckpointError::Missing)?;
+            let bytes = serde_json::to_vec(&checkpoint).map_err(|_| CheckpointError::Corrupt)?;
+            if ContentHash::of(&bytes) != metadata.object_hash
+                || u64::try_from(bytes.len()).ok() != Some(metadata.object_bytes)
+                || !checkpoint.matches(key, metadata)
+            {
+                return Err(CheckpointError::Corrupt);
+            }
+            Ok(checkpoint)
+        })
+    }
+
+    fn save<'a>(
+        &'a self,
+        guard: &'a FenceGuard,
+        authority: &'a SessionAuthority,
+        checkpoint: &'a ContextCheckpoint,
+    ) -> BoxFuture<'a, Result<CheckpointMetadata, CheckpointError>> {
+        Box::pin(async move {
+            let bytes = serde_json::to_vec(checkpoint).map_err(|_| CheckpointError::Corrupt)?;
+            if u64::try_from(bytes.len()).unwrap_or(u64::MAX)
+                > aex_brain_domain::checkpoint::MAX_CHECKPOINT_BYTES
+            {
+                return Err(CheckpointError::TooLarge);
+            }
+            let object_hash = ContentHash::of(&bytes);
+            self.checkpoint_objects
+                .lock()
+                .expect("not poisoned")
+                .entry(object_hash)
+                .or_insert_with(|| checkpoint.clone());
+            let metadata = CheckpointMetadata {
+                schema_version: checkpoint.schema_version,
+                id: checkpoint.id,
+                previous: checkpoint.previous,
+                covers_through: checkpoint.covers_through,
+                covers_hash: checkpoint.covers_hash,
+                object_hash,
+                object_bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                source_hash: checkpoint.source_hash,
+                approximate_tokens: checkpoint.approximate_tokens,
+                compactor: checkpoint.compactor.clone(),
+                created_at: checkpoint.created_at,
+            };
+            let current_authority = self
+                .authorities
+                .lock()
+                .expect("not poisoned")
+                .get(&guard.key().session)
+                .cloned()
+                .ok_or(CheckpointError::Conflict)?;
+            if &current_authority != authority {
+                return Err(CheckpointError::Conflict);
+            }
+            let mut agents = self.agents.lock().expect("not poisoned");
+            let row = agents
+                .get_mut(&guard.key())
+                .ok_or(CheckpointError::Conflict)?;
+            if row.fence != guard.fence()
+                || row.lease_owner != Some(guard.as_ref().owner)
+                || row.revision != guard.revision()
+                || row.tail != guard.tail()
+                || row.cancel_epoch != guard.cancel_epoch()
+                || row.tail != Some(checkpoint.covers_through)
+                || row.tail_hash != Some(checkpoint.covers_hash)
+                || row.checkpoint.as_ref().map(|head| head.id) != checkpoint.previous
+            {
+                if row.checkpoint.as_ref() == Some(&metadata) {
+                    return Ok(metadata);
+                }
+                return Err(CheckpointError::Conflict);
+            }
+            row.checkpoint = Some(metadata.clone());
+            Ok(metadata)
+        })
     }
 }
 
@@ -1114,6 +1248,22 @@ impl JournalStore for MemoryStore {
                 return Err(ConditionFailure::WakeStateMoved.into());
             }
 
+            let spawned = commit
+                .children
+                .iter()
+                .filter(|write| matches!(write, ChildWrite::Spawn { .. }))
+                .count() as u64;
+            if spawned > 0 {
+                let mut totals = self.session_children_created.lock().expect("not poisoned");
+                let used = totals.entry(key.session).or_default();
+                if used.saturating_add(spawned)
+                    > aex_brain_domain::budget::MAX_SUBAGENTS_PER_SESSION
+                {
+                    return Err(ConditionFailure::BudgetExhausted.into());
+                }
+                *used = used.saturating_add(spawned);
+            }
+
             let mut seq = commit.guard.tail.map_or(JournalSeq::ZERO, JournalSeq::next);
             for record in &commit.appends {
                 let entry = JournalEntry::seal(seq, now, record.clone())
@@ -1194,6 +1344,81 @@ impl JournalStore for MemoryStore {
                     row.finish = Some(finish);
                 }
             }
+            let receipt_revision = row.revision;
+            for write in &commit.children {
+                match write {
+                    ChildWrite::Spawn {
+                        child,
+                        join,
+                        bootstrap,
+                        ..
+                    } => {
+                        let child_key = AgentKey::new(key.session, *child);
+                        let records = [
+                            JournalRecord::AgentStarted {
+                                config: bootstrap.config.clone(),
+                                parent: Some(key.agent),
+                                join: Some(*join),
+                                depth: bootstrap.depth,
+                                budget: bootstrap.budget,
+                            },
+                            JournalRecord::UserMessage {
+                                content: bootstrap.input.clone(),
+                                origin: MessageOrigin::ParentMessage,
+                            },
+                        ];
+                        let entries = records
+                            .into_iter()
+                            .enumerate()
+                            .map(|(seq, record)| {
+                                JournalEntry::seal(JournalSeq(seq as u64), now, record)
+                                    .expect("bootstrap records are canonical")
+                            })
+                            .collect::<Vec<_>>();
+                        let tail_hash = entries.last().map(|entry| entry.envelope.content_hash);
+                        agents.insert(
+                            child_key,
+                            AgentRow {
+                                generation: bootstrap.config.hands_generation,
+                                revision: AgentRevision::ZERO,
+                                fence: Fence::ZERO,
+                                tail: Some(JournalSeq(1)),
+                                tail_hash,
+                                checkpoint: None,
+                                cancel_epoch: commit.guard.cancel_epoch,
+                                finish: None,
+                                phase: "awaiting_model".to_owned(),
+                                budget: BudgetNode {
+                                    limit: bootstrap.budget,
+                                    depth: bootstrap.depth,
+                                    ..BudgetNode::default()
+                                },
+                                stop_requested: false,
+                                stop_reason: None,
+                                lease_owner: None,
+                                lease_expires_at: Timestamp::from_millis(0),
+                                entries,
+                                effects: BTreeMap::new(),
+                            },
+                        );
+                    }
+                    ChildWrite::RequestStop { child } => {
+                        let child_key = AgentKey::new(key.session, *child);
+                        let child_row = agents
+                            .get_mut(&child_key)
+                            .ok_or(ConditionFailure::ChildStateMismatch)?;
+                        if child_row.finish.is_some() {
+                            return Err(ConditionFailure::ChildStateMismatch.into());
+                        }
+                        child_row.stop_requested = true;
+                        child_row.stop_reason = Some(FinishReason::Cancelled);
+                        child_row.phase = "stopping".to_owned();
+                    }
+                    ChildWrite::Transition { .. }
+                    | ChildWrite::Terminal { .. }
+                    | ChildWrite::FanoutIntent { .. } => {}
+                }
+            }
             let wakes: Vec<WakeId> = commit.wakes.iter().map(|wake| wake.id).collect();
             // The durable wake row is projected onto the queue, exactly as the
             // `regional-work` stream does. Nothing else ever puts a message there.
@@ -1216,7 +1441,7 @@ impl JournalStore for MemoryStore {
                 self.queue.retire(retired);
             }
             Ok(CommitReceipt {
-                revision: row.revision,
+                revision: receipt_revision,
                 tail: commit.control.next_tail,
                 wakes,
                 committed_at: now,

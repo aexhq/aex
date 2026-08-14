@@ -5,7 +5,7 @@
       "code": "unauthenticated",
       "message": "no valid credential was presented",
       "precedenceStage": "authentication",
-      "remedy": "present a valid account token or workspace API key",
+      "remedy": "present a valid dashboard session or workspace API key",
       "retryable": false,
       "status": 401
     },
@@ -62,15 +62,6 @@
       "remedy": null,
       "retryable": false,
       "status": 401
-    },
-    {
-      "class": "state",
-      "code": "authorization_pending",
-      "message": "the device authorization has not been approved yet",
-      "precedenceStage": "domain_state",
-      "remedy": null,
-      "retryable": true,
-      "status": 400
     },
     {
       "class": "quota",
@@ -424,24 +415,6 @@
       "status": 400
     },
     {
-      "class": "not_found",
-      "code": "provider_credential_not_found",
-      "message": "no such provider credential binding",
-      "precedenceStage": "tombstone_and_parent",
-      "remedy": null,
-      "retryable": false,
-      "status": 404
-    },
-    {
-      "class": "state",
-      "code": "provider_credential_revoked",
-      "message": "the provider credential binding was revoked",
-      "precedenceStage": "domain_state",
-      "remedy": null,
-      "retryable": false,
-      "status": 409
-    },
-    {
       "class": "validation",
       "code": "invalid_auto_topup_policy",
       "message": "the auto top-up policy is not internally consistent",
@@ -512,6 +485,15 @@
       "remedy": "retry the identical query",
       "retryable": true,
       "status": 503
+    },
+    {
+      "class": "state",
+      "code": "usage_coverage_gap",
+      "message": "trusted usage has a coverage gap and cannot be presented as complete",
+      "precedenceStage": "domain_state",
+      "remedy": "retry after billing reconciliation advances the coverage frontier",
+      "retryable": true,
+      "status": 409
     },
     {
       "class": "quota",

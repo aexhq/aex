@@ -14,28 +14,24 @@
 //! through the router — [`Routes::served`] never offers them — and the
 //! composition test proves it.
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use aex_content_aws::object_store::ContentObjectStore;
 use aex_content_domain::identity::RegistryKind;
 use aex_content_dynamodb::store::ContentMetadataStore;
-use aex_operation_domain::operation::{OperationKind, OperationStatus};
+use aex_operation_domain::operation::OperationKind;
 use aex_regional_http::context::RequestContext;
 use aex_regional_http::cursor::{
     CursorBinding, CursorKeyRing, CursorRequestBinding, Order, SnapshotToken, SortTuple,
 };
-use aex_regional_http::mount::{UnaryDispatch, not_served};
+use aex_regional_http::mount::{DispatchResponse, ResponseStream, UnaryDispatch, not_served};
 use aex_regional_http::projection::{
     self, ProjectionError, authority_failure, entity_tag, position_tuple, tuple_position,
 };
 use aex_regional_http::router::RouteOwner;
 use aex_registry_dynamodb::store::{PointerPage, RegistryStore};
 use aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore;
-use aex_secret_custody_dynamodb::ProviderCredentialReads;
-use aex_secret_custody_dynamodb::codec::{CredentialState, ProviderCredential as StoredCredential};
-use aex_secret_custody_dynamodb::expressions;
-use aex_secret_custody_dynamodb::store::CustodyStore;
-use aex_secret_custody_dynamodb::store::SecretCustodyStore;
 use aex_session_app::SessionReader as _;
 use aex_session_app::{
     LifecycleAdmissionOutcome, LifecycleCommand, MessageAdmissionOutcome, SendMessage,
@@ -48,30 +44,27 @@ use aex_session_dynamodb::app_authority::{
 use aex_session_dynamodb::application_plan::{FamilyCompilers, SessionBinding};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
-use aex_session_dynamodb::plan::{Participant, RegionalTables, TransactionPlan};
-use aex_session_dynamodb::projection::{AuthorizationProjection, WorkspaceProjection};
+use aex_session_dynamodb::plan::{Participant, RegionalTables};
+use aex_session_dynamodb::projection::WorkspaceProjection;
 use aex_session_dynamodb::store::{
-    OperationApiStore, OperationCancelOutcome, OperationFilter, SessionListFilter,
-    SessionListStatus, SessionQueries, SessionScoped,
+    OperationApiStore, SessionListFilter, SessionListStatus, SessionQueries, SessionScoped,
 };
-use aex_session_dynamodb::wire_pending::StoredOperation;
-use aex_usage_query_dynamodb::store::UsageProjectionReads;
 use aex_wire::cursor::Cursor;
-use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
+use aex_wire::dispatch::{RawRequest, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::idempotency::{IntentDigest, ReplayIdentity};
-use aex_wire::ids::{OperationId, ProviderCredentialId, ResourceName, SessionId, WorkspaceId};
-use aex_wire::limits::LimitId;
+use aex_wire::ids::{
+    ContentHash, MessageId, PrefixedId as _, ResourceName, SessionId, WorkspaceId,
+};
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::server::{
-    AcceptKind, Accepted, Created, NoContent, ProviderCredentialsApi, RegionalOperationsApi,
-    RegistryApi, RequestContext as WireContext, RouteGroup, SessionsApi, WithETag, WorkspaceApi,
-    dispatch_files, dispatch_provider_credentials, dispatch_regional_operations, dispatch_registry,
-    dispatch_sessions, dispatch_usage, dispatch_workspace,
+    AcceptKind, Created, NdjsonStream, NoContent, RegistryApi, RequestContext as WireContext,
+    RouteGroup, SessionsApi, WithETag, dispatch_registry, dispatch_sessions, dispatch_uploads,
 };
 use aex_wire::types::{DecimalU128, HttpsUrl, Timestamp};
 use aex_work_dynamodb::WorkApplicationCompiler;
+use bytes::Bytes;
 
 /// The adapters and start-up bindings every request shares.
 ///
@@ -85,31 +78,10 @@ pub struct Shared {
     pub deployment: aex_session_app::DeploymentFacts,
     /// Exact-generation authenticated guest transport for ephemeral live files.
     pub live_files: Arc<dyn aex_brain_hands::LiveFileBackend>,
-    /// Durable transfer election, ownership and replay authority.
-    pub live_transfers: Arc<dyn crate::session::live_transfer::LiveTransferStore>,
-    /// The ciphertext-metadata authority.
-    ///
-    /// Metadata only: this deployable holds no decrypt key, so the one thing it
-    /// writes here is a revocation fence.
-    pub custody: Arc<dyn SecretCustodyStore>,
-    /// The concrete custody store, for the two rows a custody read joins.
-    ///
-    /// Separate from `custody` above, which is the `dyn` metadata authority the
-    /// served secret routes use: reconstructing a `SessionCustody` needs the
-    /// binding listing, and that is an inherent method on the concrete store.
-    pub custody_reads: CustodyStore,
-    /// The physical `regional-secret-custody` table name.
-    ///
-    /// Carried because a conditional expression names its own table, and the
-    /// physical name is composed by the infrastructure stream rather than
-    /// guessed here.
-    pub custody_table: String,
-    /// The only plaintext-bearing capability in this process.
-    ///
-    /// Kept behind its narrow port so the other session handlers cannot reach
-    /// the secret key, branch-key store, or plaintext admission operation.
-    pub credential_registration:
-        Arc<dyn crate::session::secret_registration::ProviderCredentialRegistration>,
+    /// Bounded remote and exact-generation sandbox MCP qualification.
+    pub mcp_qualifier: Arc<dyn super::mcp_readiness::SessionMcpQualifier>,
+    /// Write-only session provider-key encryption and custody.
+    pub provider_keys: Arc<dyn aex_session_app::ProviderCredentialReader>,
     /// The named-registry authority.
     pub registry: Arc<dyn RegistryStore>,
     /// The content-descriptor authority, for the payload a registered value
@@ -148,16 +120,6 @@ pub struct Shared {
     /// name or a limit read must not widen the capability the admission path
     /// uses on every request.
     pub workspace: Arc<dyn WorkspaceProjection>,
-    /// The placement reader, for the one workspace fact the request context
-    /// does not carry: whether a deletion is running.
-    pub placements: Arc<dyn AuthorizationProjection>,
-    /// The regional host this deployable answers on.
-    ///
-    /// One value per plane and region, resolved at start-up. It is not a
-    /// per-workspace attribute: a projected one could disagree with the host
-    /// that served the request, and changing a display URL would become a
-    /// fleet-wide row rewrite.
-    pub api_url: aex_wire::types::HttpsUrl,
     /// The durable-operation point, list and conditional cancellation authority.
     pub operations: Arc<dyn OperationApiStore>,
     /// Asynchronous continuation boundary for committed lifecycle operations.
@@ -175,11 +137,6 @@ pub struct Shared {
     pub tables: RegionalTables,
     /// The client the committer submits its one transaction on.
     pub authority: aws_sdk_dynamodb::Client,
-    /// The read-only usage projection.
-    ///
-    /// A port with no method that accepts a row, so this deployable cannot be
-    /// given write authority over the billing projection by mistake.
-    pub usage: Arc<dyn UsageProjectionReads>,
     /// The signing ring every continuation is minted and verified under.
     pub cursor_keys: Arc<CursorKeyRing>,
     /// The runtime-activity authority, which owns workspace continuity and the
@@ -277,26 +234,6 @@ fn session_telemetry_failure(
         }
         _ => WireError::new(ErrorCode::UpstreamError),
     }
-}
-
-fn public_session_telemetry_segment(
-    segment: aex_session_telemetry_aws::SegmentDescriptor,
-) -> WireResult<models::SessionTelemetrySegment> {
-    let sha256 = aex_wire::ids::ContentHash::parse(&format!("sha256:{}", segment.sha256))
-        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
-    let created_at = segment
-        .created_at_ms
-        .map(Timestamp::from_unix_millis)
-        .transpose()
-        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
-    Ok(models::SessionTelemetrySegment {
-        created_at,
-        id: segment.id,
-        media_type: aex_session_telemetry_aws::OTLP_PROTOBUF_MEDIA_TYPE.to_owned(),
-        sequence: DecimalU128::new(u128::from(segment.sequence)),
-        sha256,
-        size_bytes: DecimalU128::new(u128::from(segment.size_bytes)),
-    })
 }
 
 impl Routes {
@@ -423,6 +360,20 @@ impl Routes {
             .map_err(|_| WireError::new(ErrorCode::InternalError))
     }
 
+    async fn require_live_session(&self, session_id: SessionId) -> WireResult<()> {
+        match self
+            .shared
+            .sessions
+            .load_session(self.cx.auth.workspace_id, session_id)
+            .await
+            .map_err(|error| authority_failure(&error))?
+        {
+            SessionScoped::Missing => Err(WireError::new(ErrorCode::NotFound)),
+            SessionScoped::Deleted => Err(WireError::new(ErrorCode::SessionDeleted)),
+            SessionScoped::Active(_) => Ok(()),
+        }
+    }
+
     /// The command envelope for a session lifecycle mutation.
     ///
     /// These routes are keyed by `Aex-Operation-Id` rather than by an
@@ -460,10 +411,7 @@ impl Routes {
             )),
             limits: crate::session::app_ports::LimitReads::new(Arc::clone(&self.shared.workspace)),
             reads: self.shared.commands.clone(),
-            credentials: ProviderCredentialReads::new(
-                self.shared.custody_reads.clone(),
-                self.cx.auth.workspace_id,
-            ),
+            credentials: Arc::clone(&self.shared.provider_keys),
             accounts: AuthorizedAccount {
                 organization: self.cx.auth.organization_id,
                 revision: self.cx.auth.epochs.account,
@@ -594,7 +542,8 @@ impl Routes {
         };
         Err(
             if *participant == Participant::CUSTODY_PROVIDER_CREDENTIAL {
-                WireError::new(ErrorCode::ProviderCredentialRevoked)
+                WireError::new(ErrorCode::InvalidRequest)
+                    .with_message("the session provider key is unavailable")
             } else if *participant == Participant::AUTHZ_PLACEMENT {
                 WireError::new(ErrorCode::AccountPaused)
             } else if matches!(
@@ -621,7 +570,7 @@ impl Routes {
         session_id: SessionId,
         route: RouteId,
         kind: OperationKind,
-    ) -> WireResult<Accepted> {
+    ) -> WireResult<models::SessionCommandReceipt> {
         let command = self.lifecycle_command(session_id, route, kind)?;
         let bindings = self.bindings()?;
         let outcome = admit_lifecycle_operation(&bindings.context(), &command)
@@ -630,7 +579,10 @@ impl Routes {
         self.admit_lifecycle(session_id, outcome).await
     }
 
-    async fn admit_cancellation_route(&self, session_id: SessionId) -> WireResult<Accepted> {
+    async fn admit_cancellation_route(
+        &self,
+        session_id: SessionId,
+    ) -> WireResult<models::SessionCommandReceipt> {
         const ROOT_FENCE_ATTEMPTS: usize = 3;
 
         let command = self.lifecycle_command(
@@ -669,7 +621,7 @@ impl Routes {
         &self,
         session_id: SessionId,
         outcome: LifecycleAdmissionOutcome,
-    ) -> WireResult<Accepted> {
+    ) -> WireResult<models::SessionCommandReceipt> {
         let projected = match outcome {
             LifecycleAdmissionOutcome::Replayed(operation) => operation,
             LifecycleAdmissionOutcome::Planned(planned) => {
@@ -684,11 +636,11 @@ impl Routes {
         )
         .await
         .map_err(|_| WireError::new(ErrorCode::CommitOutcomeUnknown))?;
-        let operation = projected
-            .public()
-            .map_err(|_| WireError::new(ErrorCode::InternalError))?
-            .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
-        Ok(Accepted(operation))
+        Ok(models::SessionCommandReceipt {
+            accepted_at: projected.created_at,
+            operation_id: projected.id,
+            session_id,
+        })
     }
 
     async fn commit_lifecycle(
@@ -824,7 +776,7 @@ pub(super) struct CommandBindings {
     limits: crate::session::app_ports::LimitReads,
     reads: SessionCommandReads,
     accounts: AuthorizedAccount,
-    credentials: ProviderCredentialReads,
+    credentials: Arc<dyn aex_session_app::ProviderCredentialReader>,
     catalog: Arc<dyn aex_session_app::ModelQualifier>,
     deployment: aex_session_app::DeploymentFacts,
 }
@@ -841,7 +793,7 @@ impl CommandBindings {
             sessions: &self.reads,
             accounts: &self.accounts,
             registry: &self.registry,
-            credentials: &self.credentials,
+            credentials: self.credentials.as_ref(),
             catalog: Some(self.catalog.as_ref()),
             deployment: Some(&self.deployment),
             limits: &self.limits,
@@ -887,37 +839,6 @@ fn app_failure(error: &aex_session_app::AppError) -> WireError {
     WireError::new(error.code())
 }
 
-fn public_operation(stored: &StoredOperation) -> WireResult<Option<models::Operation>> {
-    stored
-        .record
-        .public()
-        .map_err(|_| WireError::new(ErrorCode::InternalError))
-}
-
-fn operation_query_hash(query: &models::RegionalOperationsListQuery) -> WireResult<[u8; 32]> {
-    use sha2::Digest as _;
-
-    #[derive(serde::Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Normalized<'a> {
-        kind: Option<&'a str>,
-        session_id: Option<String>,
-        status: Option<&'a str>,
-    }
-
-    let normalized = Normalized {
-        kind: query.kind.map(models::OperationKind::as_str),
-        session_id: query.session_id.map(|session| session.to_string()),
-        status: query.status.map(models::OperationStatus::as_str),
-    };
-    let bytes = aex_wire::canonical::to_jcs_bytes(&normalized)
-        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
-    let mut digest = sha2::Sha256::new();
-    digest.update(b"aex.regional.operations.list.filters.v1\0");
-    digest.update(bytes);
-    Ok(digest.finalize().into())
-}
-
 fn sessions_query_hash(status: Option<models::SessionStatus>) -> [u8; 32] {
     use sha2::Digest as _;
 
@@ -927,116 +848,342 @@ fn sessions_query_hash(status: Option<models::SessionStatus>) -> [u8; 32] {
     digest.finalize().into()
 }
 
+fn frame_stream<T: serde::Serialize>(frames: &[T]) -> WireResult<ResponseStream> {
+    let mut encoded = Vec::with_capacity(frames.len());
+    for frame in frames {
+        let mut bytes =
+            serde_json::to_vec(frame).map_err(|_| WireError::new(ErrorCode::InternalError))?;
+        bytes.push(b'\n');
+        encoded.push(Ok::<Bytes, Infallible>(Bytes::from(bytes)));
+    }
+    Ok(Box::pin(futures::stream::iter(encoded)))
+}
+
+async fn retained_telemetry_frames(
+    reader: &aex_session_telemetry_aws::SessionTelemetryReader,
+    session: SessionId,
+    after: u128,
+    limit: usize,
+) -> Result<Vec<models::TelemetryFrame>, aex_session_telemetry_aws::SessionTelemetryError> {
+    let mut continuation = None;
+    let mut frames = Vec::new();
+    while frames.len() < limit {
+        let page = reader
+            .list(
+                session,
+                continuation,
+                aex_session_telemetry_aws::MAX_PAGE_ITEMS,
+            )
+            .await?;
+        for segment in page.segments {
+            if u128::from(segment.last_sequence) <= after {
+                continue;
+            }
+            frames.extend(
+                reader
+                    .read_frames(session, &segment.id)
+                    .await?
+                    .into_iter()
+                    .filter(|frame| frame.sequence.get() > after),
+            );
+            if frames.len() >= limit {
+                break;
+            }
+        }
+        continuation = page.next;
+        if continuation.is_none() || frames.len() >= limit {
+            break;
+        }
+    }
+    frames.sort_by_key(|frame| frame.sequence.get());
+    frames.dedup_by_key(|frame| frame.sequence.get());
+    frames.truncate(limit);
+    Ok(frames)
+}
+
+fn system_timestamp() -> Timestamp {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .unwrap_or_default();
+    Timestamp::from_unix_millis(millis)
+        .unwrap_or_else(|_| Timestamp::from_unix_millis(0).expect("epoch is representable"))
+}
+
+fn encode_ndjson_frames<T: serde::Serialize>(frames: &[T]) -> Bytes {
+    let mut bytes = Vec::new();
+    for frame in frames {
+        if serde_json::to_writer(&mut bytes, frame).is_err() {
+            continue;
+        }
+        bytes.push(b'\n');
+    }
+    Bytes::from(bytes)
+}
+
+fn retained_telemetry_stream(
+    reader: aex_session_telemetry_aws::SessionTelemetryReader,
+    session: SessionId,
+    after: u128,
+) -> ResponseStream {
+    Box::pin(futures::stream::unfold(
+        (reader, session, after),
+        |(reader, session, mut after)| async move {
+            let frames = match retained_telemetry_frames(&reader, session, after, 100).await {
+                Ok(frames) if !frames.is_empty() => frames,
+                Ok(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    vec![models::TelemetryFrame {
+                        body: None,
+                        kind: models::TelemetryKind::Heartbeat,
+                        occurred_at: system_timestamp(),
+                        preview: None,
+                        sequence: DecimalU128::new(after),
+                        span_id: None,
+                        trace_id: None,
+                        truncated: false,
+                    }]
+                }
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    let body = aex_wire::CanonicalJson::from_value(&serde_json::json!({
+                        "reason": "retained_stream_unavailable",
+                    }))
+                    .ok();
+                    vec![models::TelemetryFrame {
+                        body,
+                        kind: models::TelemetryKind::Gap,
+                        occurred_at: system_timestamp(),
+                        preview: None,
+                        sequence: DecimalU128::new(after),
+                        span_id: None,
+                        trace_id: None,
+                        truncated: false,
+                    }]
+                }
+            };
+            if let Some(sequence) = frames
+                .iter()
+                .filter(|frame| {
+                    !matches!(
+                        frame.kind,
+                        models::TelemetryKind::Heartbeat | models::TelemetryKind::Gap
+                    )
+                })
+                .map(|frame| frame.sequence.get())
+                .max()
+            {
+                after = after.max(sequence);
+            }
+            Some((
+                Ok::<Bytes, Infallible>(encode_ndjson_frames(&frames)),
+                (reader, session, after),
+            ))
+        },
+    ))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AssistantObservation {
+    Preview {
+        message_id: Option<MessageId>,
+        text: String,
+    },
+    Gap {
+        message_id: Option<MessageId>,
+    },
+    Committed {
+        message_id: MessageId,
+    },
+}
+
+fn assistant_observation(frame: &models::TelemetryFrame) -> Option<AssistantObservation> {
+    let body = frame.body.as_ref().map(aex_wire::CanonicalJson::to_value);
+    let event = body
+        .as_ref()
+        .and_then(|value| value.get("event"))
+        .and_then(serde_json::Value::as_str);
+    let message_id = body
+        .as_ref()
+        .and_then(|value| value.get("scope"))
+        .and_then(|scope| scope.get("messageId"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| MessageId::parse(value).ok());
+    match event {
+        Some("aex.session.assistant.preview") => {
+            frame
+                .preview
+                .as_ref()
+                .map(|text| AssistantObservation::Preview {
+                    message_id,
+                    text: text.clone(),
+                })
+        }
+        Some("aex.session.assistant.gap") => Some(AssistantObservation::Gap { message_id }),
+        Some("aex.session.assistant.committed") => message_id
+            .map(|message_id| AssistantObservation::Committed { message_id })
+            .or(Some(AssistantObservation::Gap { message_id: None })),
+        _ if frame.kind == models::TelemetryKind::Gap => {
+            Some(AssistantObservation::Gap { message_id })
+        }
+        _ => None,
+    }
+}
+
+async fn assistant_message_frame(
+    sessions: &Arc<dyn SessionQueries>,
+    workspace: WorkspaceId,
+    session: SessionId,
+    frame: &models::TelemetryFrame,
+) -> WireResult<Option<models::MessageStreamFrame>> {
+    let sequence = frame.sequence;
+    match assistant_observation(frame) {
+        Some(AssistantObservation::Preview { message_id, text }) => {
+            Ok(Some(models::MessageStreamFrame {
+                sequence,
+                kind: models::MessageStreamKind::Preview,
+                message_id,
+                text: Some(text),
+                message: None,
+            }))
+        }
+        Some(AssistantObservation::Gap { message_id }) => Ok(Some(models::MessageStreamFrame {
+            sequence,
+            kind: models::MessageStreamKind::Gap,
+            message_id,
+            text: None,
+            message: None,
+        })),
+        Some(AssistantObservation::Committed { message_id }) => {
+            let message = match sessions
+                .load_message(workspace, session, message_id)
+                .await
+                .map_err(|error| authority_failure(&error))?
+            {
+                SessionScoped::Active(Some(message)) => message,
+                SessionScoped::Active(None) => {
+                    return Ok(Some(models::MessageStreamFrame {
+                        sequence,
+                        kind: models::MessageStreamKind::Gap,
+                        message_id: Some(message_id),
+                        text: None,
+                        message: None,
+                    }));
+                }
+                SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
+                SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
+            };
+            Ok(Some(models::MessageStreamFrame {
+                sequence,
+                kind: models::MessageStreamKind::Reconcile,
+                message_id: Some(message_id),
+                text: None,
+                message: Some(projection::session_message(&message).map_err(WireError::from)?),
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
+fn assistant_message_stream(
+    reader: aex_session_telemetry_aws::SessionTelemetryReader,
+    sessions: Arc<dyn SessionQueries>,
+    workspace: WorkspaceId,
+    session: SessionId,
+    after: u128,
+) -> ResponseStream {
+    Box::pin(futures::stream::unfold(
+        (reader, sessions, workspace, session, after),
+        |(reader, sessions, workspace, session, mut after)| async move {
+            let frames = match retained_telemetry_frames(&reader, session, after, 100).await {
+                Ok(retained) if !retained.is_empty() => {
+                    after = retained
+                        .iter()
+                        .map(|frame| frame.sequence.get())
+                        .max()
+                        .unwrap_or(after)
+                        .max(after);
+                    let mut public = Vec::new();
+                    let mut failed = false;
+                    for frame in &retained {
+                        match assistant_message_frame(&sessions, workspace, session, frame).await {
+                            Ok(Some(frame)) => public.push(frame),
+                            Ok(None) => {}
+                            Err(_) => {
+                                failed = true;
+                                break;
+                            }
+                        }
+                    }
+                    if failed {
+                        vec![models::MessageStreamFrame {
+                            sequence: DecimalU128::new(after),
+                            kind: models::MessageStreamKind::Gap,
+                            message_id: None,
+                            text: None,
+                            message: None,
+                        }]
+                    } else if public.is_empty() {
+                        vec![models::MessageStreamFrame {
+                            sequence: DecimalU128::new(after),
+                            kind: models::MessageStreamKind::Heartbeat,
+                            message_id: None,
+                            text: None,
+                            message: None,
+                        }]
+                    } else {
+                        public
+                    }
+                }
+                Ok(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    vec![models::MessageStreamFrame {
+                        sequence: DecimalU128::new(after),
+                        kind: models::MessageStreamKind::Heartbeat,
+                        message_id: None,
+                        text: None,
+                        message: None,
+                    }]
+                }
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    vec![models::MessageStreamFrame {
+                        sequence: DecimalU128::new(after),
+                        kind: models::MessageStreamKind::Gap,
+                        message_id: None,
+                        text: None,
+                        message: None,
+                    }]
+                }
+            };
+            Some((
+                Ok::<Bytes, Infallible>(encode_ndjson_frames(&frames)),
+                (reader, sessions, workspace, session, after),
+            ))
+        },
+    ))
+}
+
 const fn session_list_status(status: models::SessionStatus) -> SessionListStatus {
     match status {
         models::SessionStatus::Idle => SessionListStatus::Idle,
         models::SessionStatus::Running => SessionListStatus::Running,
-        models::SessionStatus::Suspending => SessionListStatus::Suspending,
-        models::SessionStatus::Suspended => SessionListStatus::Suspended,
-        models::SessionStatus::Resuming => SessionListStatus::Resuming,
         models::SessionStatus::Terminating => SessionListStatus::Terminating,
         models::SessionStatus::Terminated => SessionListStatus::Terminated,
         models::SessionStatus::Deleting => SessionListStatus::Deleting,
     }
 }
 
-impl RegionalOperationsApi for Routes {
-    async fn regional_operation_cancel(
-        &self,
-        _cx: &WireContext,
-        operation_id: OperationId,
-        _body: models::EmptyRequest,
-    ) -> WireResult<models::Operation> {
-        match self
-            .shared
-            .operations
-            .request_cancel(self.cx.auth.workspace_id, operation_id, self.now()?)
-            .await
-            .map_err(|error| authority_failure(&error))?
-        {
-            OperationCancelOutcome::Accepted(stored) => {
-                public_operation(&stored)?.ok_or_else(|| WireError::new(ErrorCode::InternalError))
-            }
-            OperationCancelOutcome::NotFound => Err(WireError::new(ErrorCode::NotFound)),
-            OperationCancelOutcome::NotCancelable => {
-                Err(WireError::new(ErrorCode::OperationNotCancelable))
-            }
-        }
-    }
-
-    async fn regional_operation_get(
-        &self,
-        _cx: &WireContext,
-        operation_id: OperationId,
-    ) -> WireResult<models::Operation> {
-        let stored = self
-            .shared
-            .operations
-            .load(self.cx.auth.workspace_id, operation_id)
-            .await
-            .map_err(|error| authority_failure(&error))?
-            .ok_or_else(|| WireError::new(ErrorCode::NotFound))?;
-        public_operation(&stored)?.ok_or_else(|| WireError::new(ErrorCode::NotFound))
-    }
-
-    async fn regional_operations_list(
-        &self,
-        _cx: &WireContext,
-        query: models::RegionalOperationsListQuery,
-    ) -> WireResult<models::OperationPage> {
-        let filter = OperationFilter {
-            session: query.session_id,
-            kind: query.kind.map(OperationKind::from_public),
-            status: query.status.map(OperationStatus::from_public),
-        };
-        let binding = self.cursor_binding_for_query(
-            RouteId::RegionalOperationsList,
-            "operations",
-            query.session_id,
-            operation_query_hash(&query)?,
-        )?;
-        let after = self.resume(query.cursor.as_ref(), &binding)?;
-        let page = self
-            .shared
-            .operations
-            .page(
-                self.cx.auth.workspace_id,
-                &filter,
-                budget(query.limit)?,
-                after.as_ref(),
-            )
-            .await
-            .map_err(|error| authority_failure(&error))?;
-        if page.isolated > 0 {
-            // The GSI-hit/base-miss race is legitimate — an eventually
-            // consistent index racing a purge — but it must stay visible: a
-            // growing count is an index-integrity signal, not noise.
-            eprintln!(
-                "regional-session-api: an operation listing isolated {} stale locator(s) for workspace {}",
-                page.isolated, self.cx.auth.workspace_id
-            );
-        }
-        let items = page
-            .items
-            .iter()
-            .map(|stored| {
-                public_operation(stored)?.ok_or_else(|| WireError::new(ErrorCode::InternalError))
-            })
-            .collect::<WireResult<Vec<_>>>()?;
-        Ok(models::OperationPage {
-            items,
-            next_cursor: self.continuation(page.next.as_ref(), &binding)?,
-        })
-    }
-}
-
 impl SessionsApi for Routes {
+    type FrameStream = ResponseStream;
+
     async fn session_cancel(
         &self,
         _cx: &WireContext,
         session_id: SessionId,
         _body: models::EmptyRequest,
-    ) -> WireResult<Accepted> {
+    ) -> WireResult<models::SessionCommandReceipt> {
         self.admit_cancellation_route(session_id).await
     }
 
@@ -1055,7 +1202,7 @@ impl SessionsApi for Routes {
         _cx: &WireContext,
         session_id: SessionId,
         _body: models::EmptyRequest,
-    ) -> WireResult<Accepted> {
+    ) -> WireResult<models::SessionCommandReceipt> {
         self.admit_lifecycle_route(
             session_id,
             RouteId::SessionDelete,
@@ -1142,61 +1289,45 @@ impl SessionsApi for Routes {
         projection::session_message_page(&page.items, next).map_err(WireError::from)
     }
 
-    async fn session_resume(
+    async fn session_messages_stream(
         &self,
         _cx: &WireContext,
         session_id: SessionId,
-        _body: models::EmptyRequest,
-    ) -> WireResult<Accepted> {
-        self.admit_lifecycle_route(
+        query: models::SessionMessagesStreamQuery,
+    ) -> WireResult<NdjsonStream<Self::FrameStream>> {
+        self.require_live_session(session_id).await?;
+        let after = query.after.map_or(0, DecimalU128::get);
+        Ok(NdjsonStream(assistant_message_stream(
+            self.shared.session_telemetry.clone(),
+            self.shared.sessions.clone(),
+            self.cx.auth.workspace_id,
             session_id,
-            RouteId::SessionResume,
-            OperationKind::SessionResume,
-        )
-        .await
+            after,
+        )))
     }
 
-    async fn session_suspend(
+    async fn session_telemetry_download_create(
         &self,
         _cx: &WireContext,
         session_id: SessionId,
-        _body: models::EmptyRequest,
-    ) -> WireResult<Accepted> {
-        self.admit_lifecycle_route(
-            session_id,
-            RouteId::SessionSuspend,
-            OperationKind::SessionSuspend,
-        )
-        .await
-    }
-
-    async fn session_telemetry_segment_download_create(
-        &self,
-        _cx: &WireContext,
-        session_id: SessionId,
-        segment_id: String,
-    ) -> WireResult<Created<models::SessionTelemetryDownloadGrant>> {
-        match self
-            .shared
-            .sessions
-            .load_session(self.cx.auth.workspace_id, session_id)
-            .await
-            .map_err(|error| authority_failure(&error))?
-        {
-            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
-            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
-            SessionScoped::Active(_) => {}
+        body: models::TelemetryDownloadRequest,
+    ) -> WireResult<Created<models::TelemetryDownloadGrant>> {
+        self.require_live_session(session_id).await?;
+        let from = body.from_sequence.map_or(0, DecimalU128::get);
+        let to = body.to_sequence.map(DecimalU128::get);
+        if to.is_some_and(|ceiling| ceiling <= from) {
+            return Err(WireError::new(ErrorCode::InvalidRange));
         }
-        let descriptor = self
+        let export = self
             .shared
             .session_telemetry
-            .describe(session_id, &segment_id)
+            .export_range(session_id, from, to)
             .await
             .map_err(|error| session_telemetry_failure(&error))?;
         let url = self
             .shared
             .session_telemetry
-            .presign(session_id, &segment_id)
+            .presign_export(&export)
             .await
             .map_err(|error| session_telemetry_failure(&error))?;
         let expires_at = Timestamp::from_unix_millis(
@@ -1206,81 +1337,49 @@ impl SessionsApi for Routes {
             ),
         )
         .map_err(|_| WireError::new(ErrorCode::InternalError))?;
-        Ok(Created(models::SessionTelemetryDownloadGrant {
+        Ok(Created(models::TelemetryDownloadGrant {
             expires_at,
-            segment: public_session_telemetry_segment(descriptor)?,
+            media_type: aex_session_telemetry_aws::TELEMETRY_EXPORT_MEDIA_TYPE.to_owned(),
+            sha256: ContentHash::parse(&format!("sha256:{}", export.sha256))
+                .map_err(|_| WireError::new(ErrorCode::InternalError))?,
+            size_bytes: DecimalU128::new(u128::from(export.size_bytes)),
             url: HttpsUrl::parse(&url).map_err(|_| WireError::new(ErrorCode::UpstreamError))?,
         }))
     }
 
-    async fn session_telemetry_segments_list(
+    async fn session_telemetry_replay(
         &self,
         _cx: &WireContext,
         session_id: SessionId,
-        query: models::SessionTelemetrySegmentsListQuery,
-    ) -> WireResult<models::SessionTelemetrySegmentPage> {
-        let parent = match self
-            .shared
-            .sessions
-            .load_session(self.cx.auth.workspace_id, session_id)
-            .await
-            .map_err(|error| authority_failure(&error))?
-        {
-            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
-            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
-            SessionScoped::Active(parent) => parent,
-        };
-        let binding = self.cursor_binding_for_session_epoch(
-            RouteId::SessionTelemetrySegmentsList,
-            "session.telemetry-segments",
+        query: models::SessionTelemetryReplayQuery,
+    ) -> WireResult<NdjsonStream<Self::FrameStream>> {
+        self.require_live_session(session_id).await?;
+        let after = query.after.map_or(0, DecimalU128::get);
+        let requested = query.limit.unwrap_or(100).min(100);
+        let frames = retained_telemetry_frames(
+            &self.shared.session_telemetry,
             session_id,
-            parent.deletion.epoch,
-        )?;
-        let continuation = match query.cursor.as_ref() {
-            Some(cursor) => {
-                let resumed = aex_regional_http::cursor::decode_state_resume::<String>(
-                    &self.shared.cursor_keys,
-                    cursor,
-                    &CursorRequestBinding::from(&binding),
-                    self.now()?,
-                )
-                .map_err(|error| WireError::from(ProjectionError::Cursor(error)))?;
-                if resumed.snapshot != binding.snapshot {
-                    return Err(WireError::from(ProjectionError::Cursor(
-                        aex_regional_http::cursor::CursorError::NotBound,
-                    )));
-                }
-                Some(resumed.state)
-            }
-            None => None,
-        };
-        let limit = i32::try_from(query.limit.unwrap_or(100))
-            .map_err(|_| WireError::new(ErrorCode::InvalidRequest))?;
-        let page = self
-            .shared
-            .session_telemetry
-            .list(session_id, continuation, limit)
-            .await
-            .map_err(|error| session_telemetry_failure(&error))?;
-        let next_cursor = page
-            .next
-            .as_ref()
-            .map(|next| {
-                aex_regional_http::cursor::encode_state(
-                    self.shared.cursor_keys.current(),
-                    &binding,
-                    next,
-                    self.now()?,
-                )
-                .map_err(|error| WireError::from(ProjectionError::Cursor(error)))
-            })
-            .transpose()?;
-        let items = page
-            .segments
-            .into_iter()
-            .map(public_session_telemetry_segment)
-            .collect::<WireResult<Vec<_>>>()?;
-        Ok(models::SessionTelemetrySegmentPage { items, next_cursor })
+            after,
+            usize::try_from(requested).map_err(|_| WireError::new(ErrorCode::InvalidRequest))?,
+        )
+        .await
+        .map_err(|error| session_telemetry_failure(&error))?;
+        Ok(NdjsonStream(frame_stream(&frames)?))
+    }
+
+    async fn session_telemetry_stream(
+        &self,
+        _cx: &WireContext,
+        session_id: SessionId,
+        query: models::SessionTelemetryStreamQuery,
+    ) -> WireResult<NdjsonStream<Self::FrameStream>> {
+        self.require_live_session(session_id).await?;
+        let after = query.after.map_or(0, DecimalU128::get);
+        Ok(NdjsonStream(retained_telemetry_stream(
+            self.shared.session_telemetry.clone(),
+            session_id,
+            after,
+        )))
     }
 
     async fn session_terminate(
@@ -1288,7 +1387,7 @@ impl SessionsApi for Routes {
         _cx: &WireContext,
         session_id: SessionId,
         _body: models::EmptyRequest,
-    ) -> WireResult<Accepted> {
+    ) -> WireResult<models::SessionCommandReceipt> {
         self.admit_lifecycle_route(
             session_id,
             RouteId::SessionTerminate,
@@ -1365,139 +1464,6 @@ impl SessionsApi for Routes {
     }
 }
 
-impl ProviderCredentialsApi for Routes {
-    async fn provider_credential_get(
-        &self,
-        _cx: &WireContext,
-        provider_credential_id: ProviderCredentialId,
-    ) -> WireResult<WithETag<models::ProviderCredential>> {
-        let stored = self
-            .shared
-            .custody
-            .load_provider_credential(self.cx.auth.workspace_id, provider_credential_id)
-            .await
-            .map_err(|error| authority_failure(&error))?
-            .ok_or_else(|| WireError::new(ErrorCode::ProviderCredentialNotFound))?;
-        let value = projection::provider_credential(&stored);
-        let etag = entity_tag("ProviderCredential", &value).map_err(WireError::from)?;
-        Ok(WithETag { value, etag })
-    }
-
-    async fn provider_credential_register(
-        &self,
-        _cx: &WireContext,
-        body: models::ProviderCredentialRegisterRequest,
-    ) -> WireResult<Created<models::ProviderCredential>> {
-        self.shared
-            .credential_registration
-            .register(&self.cx, body)
-            .await
-    }
-
-    /// Fences one BYOK binding.
-    ///
-    /// Two things are load bearing.
-    ///
-    /// **The update is committed as a one-action transaction, not as a bare
-    /// conditional update.** This deployable is granted `GetItem`, `Query` and
-    /// `TransactWriteItems` on `regional-secret-custody` and is deliberately not
-    /// granted `UpdateItem`, so the same expression issued directly would be
-    /// denied in production while passing every local test. Routing it through
-    /// the one transaction compiler also keeps the "no unconditional authority
-    /// write" check on the path.
-    ///
-    /// **Idempotency is carried by the terminal state (RS-31).** The scope
-    /// subject is the credential and the body is `EmptyRequest`, so one scope
-    /// plus one key can only ever carry this one intent: an
-    /// `idempotency_conflict` is unreachable rather than undetected, and a
-    /// replay answers from the stored row without a second write.
-    async fn provider_credential_revoke(
-        &self,
-        _cx: &WireContext,
-        provider_credential_id: ProviderCredentialId,
-        _body: models::EmptyRequest,
-    ) -> WireResult<models::ProviderCredential> {
-        let workspace = self.cx.auth.workspace_id;
-        let stored = self
-            .shared
-            .custody
-            .load_provider_credential(workspace, provider_credential_id)
-            .await
-            .map_err(|error| authority_failure(&error))?
-            .ok_or_else(|| WireError::new(ErrorCode::ProviderCredentialNotFound))?;
-
-        if stored.state == CredentialState::Revoked {
-            return Ok(projection::provider_credential(&stored));
-        }
-
-        // Computed before the expression consumes the observed row, so the
-        // published revision is the one the condition committed against rather
-        // than a number re-derived after the fact.
-        let next_revision = stored
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
-        let now = self.now()?;
-        let builder =
-            expressions::revoke_provider_credential(&self.shared.custody_table, &stored, now)
-                .map_err(|error| authority_failure(&error))?;
-        let mut plan = TransactionPlan::new(revocation_token(workspace, &stored));
-        plan.update(Participant::CUSTODY_PROVIDER_CREDENTIAL, builder)
-            .map_err(|error| authority_failure(&error))?;
-        self.shared
-            .custody
-            .commit(&plan)
-            .await
-            .map_err(|error| authority_failure(&error))?;
-
-        // The committed row is the observed one with the state fenced, the
-        // revision advanced and both instants stamped, so the answer is built
-        // from what the transaction wrote rather than from a second read that
-        // could observe a later state.
-        Ok(projection::provider_credential(&StoredCredential {
-            state: CredentialState::Revoked,
-            revision: next_revision,
-            revoked_at: Some(now),
-            updated_at: now,
-            ..stored
-        }))
-    }
-
-    async fn provider_credentials_list(
-        &self,
-        _cx: &WireContext,
-        query: models::ProviderCredentialsListQuery,
-    ) -> WireResult<models::ProviderCredentialPage> {
-        let binding =
-            self.cursor_binding(RouteId::ProviderCredentialsList, "provider-credentials")?;
-        let after = self.resume(query.cursor.as_ref(), &binding)?;
-        let page = self
-            .shared
-            .custody
-            .page_provider_credentials(
-                self.cx.auth.workspace_id,
-                budget(query.limit)?,
-                after.as_ref(),
-            )
-            .await
-            .map_err(|error| authority_failure(&error))?;
-        let next = self.continuation(page.next.as_ref(), &binding)?;
-        // The declared `provider` filter is applied after the page is read, so a
-        // filtered page can be shorter than the budget while still naming a
-        // continuation. That is why the cursor is minted from the authority's
-        // own position and never from the filtered item count.
-        let items: Vec<_> = match query.provider {
-            None => page.items,
-            Some(provider) => page
-                .items
-                .into_iter()
-                .filter(|row| row.provider == provider)
-                .collect(),
-        };
-        Ok(projection::provider_credential_page(&items, next))
-    }
-}
-
 impl Routes {
     /// Reads one registry listing and mints its continuation.
     ///
@@ -1533,25 +1499,6 @@ impl Routes {
         let next = self.continuation(page.next.as_ref(), &binding)?;
         Ok((page, next))
     }
-}
-
-/// The transport deduplication identity of one revocation.
-///
-/// It is derived from the binding and the **observed** revision, so two attempts
-/// to fence the same observed state are one transaction inside the provider's
-/// deduplication window and a later attempt against a moved row is not. The
-/// durable identity is the terminal state itself (RS-31); this token only stops
-/// a retry of the same attempt from being counted twice.
-fn revocation_token(workspace: WorkspaceId, stored: &StoredCredential) -> String {
-    use sha2::Digest as _;
-
-    let mut digest = sha2::Sha256::new();
-    digest.update(b"aex.provider_credential.revoke.v1");
-    digest.update(workspace.to_string());
-    digest.update(stored.credential.to_string());
-    digest.update(stored.revision.to_be_bytes());
-    let digest: [u8; 32] = digest.finalize().into();
-    format!("aex-{}", hex::encode(&digest[..16]))
 }
 
 /// The snapshot token a registry listing's cursor is bound to.
@@ -1617,6 +1564,29 @@ impl RegistryApi for Routes {
         name: ResourceName,
         body: models::RegisteredFileValue,
     ) -> WireResult<WithETag<models::RegisteredFile>> {
+        if let models::BlobInput::Url(source) = &body.content {
+            let pending = serde_json::json!({
+                "source": {
+                    "type": "url",
+                    "url": source.url.as_str(),
+                },
+                "organizationId": self.cx.auth.organization_id.to_string(),
+                "mediaType": body.media_type,
+                "mode": body.mode.as_str(),
+            });
+            return self
+                .registry_put(
+                    RegistryKind::File,
+                    &name,
+                    &pending,
+                    None,
+                    aex_workspace_domain::registry::RegistryState::Pending,
+                    None,
+                    None,
+                    projection::registered_file,
+                )
+                .await;
+        }
         let payload = self
             .admit_payload(RegistryKind::File, &name, &body.content)
             .await?;
@@ -1624,13 +1594,15 @@ impl RegistryApi for Routes {
             content: payload.reference,
             media_type: body.media_type,
             mode: body.mode,
-            mount_path: body.mount_path,
         };
         self.registry_put(
             RegistryKind::File,
             &name,
             &read,
             Some(payload.source),
+            aex_workspace_domain::registry::RegistryState::Ready,
+            None,
+            None,
             projection::registered_file,
         )
         .await
@@ -1646,202 +1618,6 @@ impl RegistryApi for Routes {
             .await
             .map(Created)
     }
-}
-
-/// The three regional workspace reads.
-///
-/// # One predicate, spelled once
-///
-/// All three answer `workspace_activation_required` for the same fact: a
-/// durable row this workspace needs does not exist here yet. That is the same
-/// predicate `session_create` and the three live-file routes declare, and it has
-/// to stay one predicate rather than becoming four — [`Routes::activation`] is
-/// the whole of it.
-///
-/// What it is emphatically **not** is `404`. An absent row of a registered limit
-/// is an operator fault that clears, and answering "no such limit" would be a
-/// lie about the contract that a client would rightly stop retrying.
-impl WorkspaceApi for Routes {
-    async fn workspace_current_get(&self, _cx: &WireContext) -> WireResult<models::Workspace> {
-        let workspace = self.cx.auth.workspace_id;
-        // Two eventual point reads. The placement row is read for exactly one
-        // fact the request context does not carry — whether a deletion is
-        // running — because the admission projection collapses `deleting` onto
-        // `Paused`, which is the right answer for admission and the wrong one
-        // to publish as a workspace status.
-        let (placement, profile) = futures::future::try_join(
-            async {
-                self.shared
-                    .placements
-                    .read_placement(workspace)
-                    .await
-                    .map_err(|error| Self::activation(&error))
-            },
-            async {
-                self.shared
-                    .workspace
-                    .read_profile(workspace)
-                    .await
-                    .map_err(|error| {
-                        // A profile row that is present and will not decode is
-                        // not an un-activated workspace. Since the account
-                        // fields became required, the likeliest cause is a row
-                        // written before they existed — and the honest answer to
-                        // "what is this account's state" is then that we could
-                        // not establish it, never a guessed `Active`.
-                        if matches!(error, StoreError::Invalid { .. }) {
-                            WireError::new(ErrorCode::AccountStateUnavailable)
-                        } else {
-                            Self::activation(&error)
-                        }
-                    })
-            },
-        )
-        .await?;
-        let profile =
-            profile.ok_or_else(|| WireError::new(ErrorCode::WorkspaceActivationRequired))?;
-
-        let status = match placement.status.as_str() {
-            "deleting" => models::WorkspaceStatus::Deleting,
-            // `active` and `paused` are both live workspaces. The pause is the
-            // *account's* state and is published as such below; folding it into
-            // the workspace status would give one fact two homes.
-            "active" | "paused" => models::WorkspaceStatus::Active,
-            _ => return Err(WireError::new(ErrorCode::InternalError)),
-        };
-        Ok(models::Workspace {
-            api_url: self.shared.api_url.clone(),
-            created_at: profile.created_at,
-            // The deletion operation id is a central fact; the placement row
-            // carries whether a deletion runs, not which operation runs it.
-            deletion_operation_id: None,
-            id: workspace,
-            name: profile.name.clone(),
-            operational_state: models::WorkspaceOperationalState {
-                inherited_from: models::OperationalStateSource::Account,
-                organization_id: self.cx.auth.organization_id,
-                state: account_state(&profile)?,
-            },
-            organization_id: self.cx.auth.organization_id,
-            region: self.cx.auth.placement,
-            slug: profile.slug.clone(),
-            status,
-        })
-    }
-
-    async fn workspace_limit_get(
-        &self,
-        _cx: &WireContext,
-        limit_id: LimitId,
-    ) -> WireResult<models::EffectiveWorkspaceLimit> {
-        // `limit_id` parsed, so the identifier is registered. `not_found` was
-        // decided before this call and can no longer happen here: an absent row
-        // of a registered limit is an activation gap, not an unknown resource.
-        let stored = self
-            .shared
-            .workspace
-            .read_limit(self.cx.auth.workspace_id, limit_id)
-            .await
-            .map_err(|error| Self::activation(&error))?
-            .ok_or_else(|| WireError::new(ErrorCode::WorkspaceActivationRequired))?;
-        Ok(models::EffectiveWorkspaceLimit {
-            changed_at: stored.changed_at,
-            effective_value: stored.effective_value,
-            id: stored.id,
-            revision: stored.revision,
-            source: stored.source,
-        })
-    }
-
-    async fn workspace_limits_list(
-        &self,
-        _cx: &WireContext,
-    ) -> WireResult<models::EffectiveWorkspaceLimitPage> {
-        // The bundle item, not a query over the member rows.
-        //
-        // A paged query can interleave two authority revisions inside one page,
-        // which is the "partial answer presented as authoritative" failure this
-        // whole cluster exists to remove. The bundle is written in the same
-        // transaction as the members, so it is one complete revision or the
-        // previous one, and never a mixture of both.
-        let bundle = self
-            .shared
-            .workspace
-            .read_limit_bundle(self.cx.auth.workspace_id)
-            .await
-            .map_err(|error| Self::activation(&error))?;
-        if bundle.limits.len() != LimitId::ALL.len() {
-            // Short is not a page here. The registry is closed and every
-            // workspace's set is complete by construction, so fewer items than
-            // the registry means the set was never finished — and a `200`
-            // carrying it would be read as "these are all the limits there are".
-            return Err(WireError::new(ErrorCode::WorkspaceActivationRequired));
-        }
-        Ok(models::EffectiveWorkspaceLimitPage {
-            items: bundle.limits,
-            // Never populated. The registry is a closed, registry-sized
-            // collection and the whole of it is one item; `cursor` and `limit`
-            // were removed from this route for the same reason.
-            next_cursor: None,
-        })
-    }
-}
-
-impl Routes {
-    /// The one activation predicate, over a store failure.
-    ///
-    /// `Misconfigured` is the projection's single constructor for "this region
-    /// holds no usable record of that" — an absent row and a row contradicting
-    /// its siblings are deliberately indistinguishable, so the difference is not
-    /// probeable. On the admission path that collapses to `401`, which is right:
-    /// telling an unknown credential which of the two it hit is telling it
-    /// something. On a cold descriptive read it is wrong, because the caller's
-    /// credential was already verified and calling it unknown is a false
-    /// statement about the caller.
-    fn activation(error: &StoreError) -> WireError {
-        match error {
-            StoreError::Misconfigured { .. } => {
-                WireError::new(ErrorCode::WorkspaceActivationRequired)
-            }
-            other => authority_failure(other),
-        }
-    }
-}
-
-/// Projects the account fields the profile row carries onto the published state.
-///
-/// This calls the one mapping in `aex-control-domain`, which is also what
-/// `central-identity-api` calls. There is no second derivation and there must
-/// never be one: the same account read centrally and regionally may differ in
-/// staleness, never in vocabulary, discriminator or derivation.
-fn account_state(
-    profile: &aex_session_dynamodb::wire_pending::WorkspaceProfile,
-) -> WireResult<models::AccountOperationalState> {
-    let changed_at = profile.account_changed_at.to_datetime();
-    // Finance publishes a reason exactly when the account is paused, so the
-    // presence of one *is* the discriminator. The placement row's `deleting`
-    // collapse is not consulted: that is an admission projection of workspace
-    // status, and this is the account's state.
-    let state = if profile.account_pause_reason.is_some() {
-        aex_control_domain::AccountState::PausedTopUpRequired
-    } else {
-        aex_control_domain::AccountState::Active
-    };
-    aex_control_domain::account_operational_state(&aex_control_domain::AccountProfile {
-        state,
-        reason: profile.account_pause_reason.clone(),
-        revision: profile.account_revision,
-        changed_at,
-    })
-    .map_err(|error| match error {
-        aex_control_domain::AccountProjectionError::Unavailable => {
-            WireError::new(ErrorCode::AccountStateUnavailable)
-        }
-        // A reason outside the durable vocabulary, or an unrepresentable
-        // instant, is a corrupt projected row rather than a customer condition.
-        // It is still not an answer, so it is still not `Active`.
-        _ => WireError::new(ErrorCode::AccountStateUnavailable),
-    })
 }
 
 #[async_trait::async_trait]
@@ -1860,28 +1636,30 @@ impl UnaryDispatch for Routes {
         accept: AcceptKind,
         raw: RawRequest<'_>,
         limits: RequestLimits,
-    ) -> WireResult<RawResponse> {
+    ) -> WireResult<DispatchResponse> {
         let wire = cx.to_wire(accept);
-        // The group comes from the generated table, so a new fragment is a
-        // non-exhaustive-match compile error rather than a runtime 404.
-        let outcome = match route(raw.route).fragment {
-            "provider-credentials" => {
-                dispatch_provider_credentials(self, &wire, raw, limits).await?
-            }
-            "operations" => dispatch_regional_operations(self, &wire, raw, limits).await?,
-            "registry" => dispatch_registry(self, &wire, raw, limits).await?,
-            "sessions" => Box::pin(dispatch_sessions(self, &wire, raw, limits)).await?,
-            "files" => dispatch_files(self, &wire, raw, limits).await?,
-            "uploads" => aex_wire::server::dispatch_uploads(self, &wire, raw, limits).await?,
-            "usage" => dispatch_usage(self, &wire, raw, limits).await?,
-            "workspace" => dispatch_workspace(self, &wire, raw, limits).await?,
+        match route(raw.route).fragment {
+            "registry" => match dispatch_registry(self, &wire, raw, limits).await? {
+                aex_wire::dispatch::DispatchOutcome::Unary(response) => {
+                    Ok(DispatchResponse::Unary(response))
+                }
+                aex_wire::dispatch::DispatchOutcome::Ndjson(never) => match never.0 {},
+            },
+            "sessions" => match Box::pin(dispatch_sessions(self, &wire, raw, limits)).await? {
+                aex_wire::dispatch::DispatchOutcome::Unary(response) => {
+                    Ok(DispatchResponse::Unary(response))
+                }
+                aex_wire::dispatch::DispatchOutcome::Ndjson(stream) => {
+                    Ok(DispatchResponse::Ndjson(stream.0))
+                }
+            },
+            "uploads" => match dispatch_uploads(self, &wire, raw, limits).await? {
+                aex_wire::dispatch::DispatchOutcome::Unary(response) => {
+                    Ok(DispatchResponse::Unary(response))
+                }
+                aex_wire::dispatch::DispatchOutcome::Ndjson(never) => match never.0 {},
+            },
             _ => return Err(not_served(raw.route)),
-        };
-        match outcome {
-            aex_wire::dispatch::DispatchOutcome::Unary(response) => Ok(response),
-            // Neither group declares an NDJSON route, so `NoStream` is
-            // uninhabited and this arm is unconstructible.
-            aex_wire::dispatch::DispatchOutcome::Ndjson(never) => match never.0 {},
         }
     }
 }
@@ -1923,7 +1701,7 @@ impl UnaryDispatch for Dispatcher {
         accept: AcceptKind,
         raw: RawRequest<'_>,
         limits: RequestLimits,
-    ) -> WireResult<RawResponse> {
+    ) -> WireResult<DispatchResponse> {
         Routes::new(Arc::clone(&self.0), cx.clone())
             .dispatch(cx, accept, raw, limits)
             .await
@@ -1939,4 +1717,89 @@ pub fn served_groups() -> Vec<RouteGroup> {
         .copied()
         .filter(|group| group.routes().iter().any(|id| served.contains(id)))
         .collect()
+}
+
+#[cfg(test)]
+mod message_stream_tests {
+    use super::{AssistantObservation, assistant_observation};
+    use aex_wire::ids::{MessageId, PrefixedId as _, Uuid7};
+    use aex_wire::models::{TelemetryFrame, TelemetryKind};
+    use aex_wire::types::{DecimalU128, Timestamp};
+
+    fn frame(
+        kind: TelemetryKind,
+        event: &str,
+        message: Option<MessageId>,
+        preview: Option<&str>,
+    ) -> TelemetryFrame {
+        TelemetryFrame {
+            body: Some(
+                aex_wire::CanonicalJson::from_value(&serde_json::json!({
+                    "event": event,
+                    "scope": { "messageId": message.map(|id| id.to_string()) },
+                }))
+                .expect("canonical event"),
+            ),
+            kind,
+            occurred_at: Timestamp::from_unix_millis(1).expect("timestamp"),
+            preview: preview.map(str::to_owned),
+            sequence: DecimalU128::new(7),
+            span_id: None,
+            trace_id: None,
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn retained_assistant_events_keep_message_identity_through_reconciliation() {
+        let message = MessageId::from_uuid7(Uuid7::compose(1, [2; 10]));
+        assert_eq!(
+            assistant_observation(&frame(
+                TelemetryKind::Assistant,
+                "aex.session.assistant.preview",
+                Some(message),
+                Some("hello"),
+            )),
+            Some(AssistantObservation::Preview {
+                message_id: Some(message),
+                text: "hello".to_owned(),
+            })
+        );
+        assert_eq!(
+            assistant_observation(&frame(
+                TelemetryKind::Assistant,
+                "aex.session.assistant.committed",
+                Some(message),
+                None,
+            )),
+            Some(AssistantObservation::Committed {
+                message_id: message,
+            })
+        );
+    }
+
+    #[test]
+    fn assistant_and_exporter_loss_both_become_public_gaps() {
+        let message = MessageId::from_uuid7(Uuid7::compose(1, [3; 10]));
+        assert_eq!(
+            assistant_observation(&frame(
+                TelemetryKind::Gap,
+                "aex.session.assistant.gap",
+                Some(message),
+                None,
+            )),
+            Some(AssistantObservation::Gap {
+                message_id: Some(message),
+            })
+        );
+        assert_eq!(
+            assistant_observation(&frame(
+                TelemetryKind::Gap,
+                "aex.session.telemetry.exporter_gap",
+                None,
+                None,
+            )),
+            Some(AssistantObservation::Gap { message_id: None })
+        );
+    }
 }

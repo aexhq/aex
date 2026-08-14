@@ -55,8 +55,14 @@ variable "table_definitions" {
   description = "The already-decoded contents of `migrations/regional/generated/regional-tables.json`. The module never reads a file; the root decodes the bundle and passes the result in."
 
   validation {
-    condition     = length(var.table_definitions) > 0
-    error_message = "At least one table definition is required."
+    condition = toset([for table in var.table_definitions : table.logical_name]) == toset([
+      "regional-authz-projection",
+      "session-authority",
+      "regional-work",
+      "runtime-activity",
+      "regional-file-authority",
+    ])
+    error_message = "The session MVP has exactly five regional tables: authz projection, session, work, runtime activity, and file authority."
   }
 
   validation {
@@ -65,8 +71,8 @@ variable "table_definitions" {
   }
 
   validation {
-    condition     = alltrue([for t in var.table_definitions : can(regex("^[a-z][a-z0-9_]*$", t.logical_name))])
-    error_message = "Logical table names must be lowercase snake_case."
+    condition     = alltrue([for t in var.table_definitions : can(regex("^[a-z][a-z0-9-]*$", t.logical_name))])
+    error_message = "Logical table names must be lowercase kebab-case."
   }
 
   validation {

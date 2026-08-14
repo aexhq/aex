@@ -11,8 +11,8 @@
 //! this module had quietly acquired a runtime it does not configure.
 
 use super::memory::{
-    AbsentHands, AlwaysAdmit, CountingIds, FixedCatalog, FixedClock, MemoryQueue, MemoryStore,
-    ProviderScript, Recorder, ScriptedProvider, ScriptedTools, fixture_authority, wake_for,
+    AlwaysAdmit, CountingIds, FixedCatalog, FixedClock, MemoryQueue, MemoryStore, ProviderScript,
+    Recorder, ScriptedProvider, ScriptedTools, fixture_authority, wake_for,
 };
 use super::{
     Activation, ActivationError, ActivationPolicy, AdmissionControl, AdmissionDecision,
@@ -24,13 +24,15 @@ use crate::kernel::{
 };
 use crate::ports::{
     BoxFuture, CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure,
-    DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, JournalCursor, JournalPage,
-    LeaseStore as _, PreviewSink, ProviderDispatchError, ProviderFailureKind, ProviderOutcome,
-    ProviderPort, RedactedDetail, ReleaseDisposition, RunBoundaryAuthority, SessionAuthority,
-    StoreError, ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolResultBody, ToolRoute,
-    UnknownResolution, WakeQueue as _,
+    ContextCheckpointStore as _, DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard,
+    JournalCursor, JournalPage, JournalStore as _, LeaseStore as _, ModelUsageError,
+    ModelUsageObservation, ModelUsagePort, ModelUsagePublication, PreviewSink,
+    ProviderDispatchError, ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail,
+    ReleaseDisposition, RunBoundaryAuthority, SessionAuthority, StoreError, ToolAdvertisement,
+    ToolDispatchError, ToolOutcome, ToolResultBody, ToolRoute, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
+use aex_brain_domain::checkpoint::{CHECKPOINT_SCHEMA_VERSION, ContextCheckpoint};
 use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::effect::{
     DetachedOperationRef, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
@@ -48,6 +50,7 @@ use aex_brain_domain::wire_pending::{
     AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
     ProviderId, ResolvedAgentConfig, Role, StopReason,
 };
+use aex_brain_test_support::journal_gen::assistant_tool_use;
 use aex_model_catalog::canonical::{
     CanonicalToolDef, CredentialBindingRef, ProviderReceipt, ToolChoice, seal,
 };
@@ -117,11 +120,10 @@ fn config() -> ResolvedAgentConfig {
         model: model(),
         system: None,
         tool_manifest_digests: Vec::new(),
-        hands_generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
+        mcp_servers: Vec::new(),
+        hands_generation: Some(GenerationId::from_uuid7(Uuid7::compose(1, [9; 10]))),
         limits_revision: 1,
         limits: AgentLimits {
-            max_turns: 4,
-            max_steps_per_turn: 8,
             turn_deadline_ms: 600_000,
             max_run_duration_ms: 3_600_000,
             max_depth: 4,
@@ -183,9 +185,7 @@ fn root_history(
     run: &aex_session_domain::Run,
 ) -> Vec<JournalEntry> {
     let mut resolved = config();
-    resolved.hands_generation = session
-        .generation
-        .expect("a running session has an exact generation");
+    resolved.hands_generation = session.generation;
     let started = JournalEntry::seal(
         JournalSeq(0),
         Timestamp::from_millis(START),
@@ -319,10 +319,66 @@ fn produced_tool_use() -> ProviderOutcome {
     outcome
 }
 
+fn produced_parallel_tool_use() -> ProviderOutcome {
+    let mut outcome = produced();
+    let selected = capability();
+    let message = seal(
+        vec![
+            CanonicalBlock::ToolUse {
+                id: ToolCallId::truncating("call-first"),
+                name: ToolName::parse("tool_first").expect("tool name"),
+                input: CanonicalJson::parse("{}").expect("canonical tool input"),
+            },
+            CanonicalBlock::ToolUse {
+                id: ToolCallId::truncating("call-second"),
+                name: ToolName::parse("tool_second").expect("tool name"),
+                input: CanonicalJson::parse("{}").expect("canonical tool input"),
+            },
+        ],
+        StopReason::ToolUse,
+        &outcome.usage,
+        &selected,
+    )
+    .expect("a whole parallel tool-use message");
+    outcome.receipt.response_receipt = Some(message.proof.0);
+    outcome.message = message;
+    outcome
+}
+
+fn produced_native_tool_use(name: &str, input: &str) -> ProviderOutcome {
+    let mut outcome = produced();
+    let selected = capability();
+    let message = seal(
+        vec![CanonicalBlock::ToolUse {
+            id: ToolCallId::truncating("native-call-1"),
+            name: ToolName::parse(name).expect("native tool name"),
+            input: CanonicalJson::parse(input).expect("canonical native tool input"),
+        }],
+        StopReason::ToolUse,
+        &outcome.usage,
+        &selected,
+    )
+    .expect("a whole native tool-use message");
+    outcome.receipt.response_receipt = Some(message.proof.0);
+    outcome.message = message;
+    outcome
+}
+
+fn native_route(name: &str) -> ToolRoute {
+    ToolRoute {
+        name: ToolName::parse(name).expect("native tool name"),
+        executor: ExecutorRoute::BrainInline,
+        class: EffectClass::IdempotentManaged,
+        timeout_ms: 1_000,
+        concurrency_weight: 0,
+        manifest_digest: ContentHash::of(b"native subagent manifest"),
+    }
+}
+
 fn detached_route() -> ToolRoute {
     ToolRoute {
         name: ToolName::parse("web_fetch").expect("tool name"),
-        executor: ExecutorRoute::ManagedWeb,
+        executor: ExecutorRoute::ToolMux,
         class: EffectClass::DurableDetached,
         timeout_ms: 60_000,
         concurrency_weight: 1,
@@ -333,7 +389,7 @@ fn detached_route() -> ToolRoute {
 fn detached_ref() -> DetachedOperationRef {
     DetachedOperationRef {
         id: DetachedOperationId("shared-operation-id".to_owned()),
-        executor: ExecutorRoute::ManagedWeb,
+        executor: ExecutorRoute::ToolMux,
     }
 }
 
@@ -342,8 +398,32 @@ fn completed_detached_result() -> DetachedStatus {
         content: Vec::new(),
         is_error: false,
         duration_ms: 10,
-        executed_on: ExecutorRoute::ManagedWeb,
+        executed_on: ExecutorRoute::ToolMux,
         checksum: ContentHash::of(b"detached result"),
+    }))
+}
+
+fn batch_route(name: &str) -> ToolRoute {
+    ToolRoute {
+        name: ToolName::parse(name).expect("tool name"),
+        executor: ExecutorRoute::ToolMux,
+        class: EffectClass::NonReplayable,
+        timeout_ms: 60_000,
+        concurrency_weight: 1,
+        manifest_digest: ContentHash::of(name.as_bytes()),
+    }
+}
+
+fn batch_result(text: &str) -> Result<ToolOutcome, ToolDispatchError> {
+    let content = vec![aex_model_catalog::canonical::ToolResultPart::Text {
+        text: BoundedString::truncating(text),
+    }];
+    Ok(ToolOutcome::Completed(ToolResultBody {
+        checksum: ContentHash::of(text.as_bytes()),
+        content,
+        is_error: false,
+        duration_ms: 1,
+        executed_on: ExecutorRoute::ToolMux,
     }))
 }
 
@@ -390,6 +470,7 @@ struct Harness {
     queue: Arc<MemoryQueue>,
     store: Arc<MemoryStore>,
     provider: Arc<ScriptedProvider>,
+    model_usage: Arc<dyn ModelUsagePort>,
     tools: Arc<ScriptedTools>,
     catalog: Arc<FixedCatalog>,
     ids: Arc<CountingIds>,
@@ -415,6 +496,7 @@ impl Harness {
             queue,
             store,
             provider: Arc::new(ScriptedProvider::new(script)),
+            model_usage: Arc::new(crate::ports::NullModelUsagePort),
             tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())),
             catalog: Arc::new(FixedCatalog::with_model(capability())),
             ids: Arc::new(CountingIds::new()),
@@ -428,12 +510,14 @@ impl Harness {
     fn ports(&self) -> Ports {
         Ports {
             journal: Arc::clone(&self.store) as Arc<_>,
+            checkpoints: Arc::clone(&self.store) as Arc<_>,
             effects: Arc::clone(&self.store) as Arc<_>,
             leases: Arc::clone(&self.store) as Arc<_>,
             wakes: Arc::clone(&self.queue) as Arc<_>,
             provider: Arc::clone(&self.provider) as Arc<_>,
+            model_usage: Arc::clone(&self.model_usage),
+            previews: Arc::new(crate::ports::NullPreviewPort),
             tools: Arc::clone(&self.tools) as Arc<_>,
-            hands: Arc::new(AbsentHands) as Arc<_>,
             catalog: Arc::clone(&self.catalog) as Arc<_>,
             clock: Arc::clone(&self.clock) as Arc<_>,
             ids: Arc::clone(&self.ids) as Arc<_>,
@@ -458,6 +542,11 @@ impl Harness {
         self
     }
 
+    fn with_model_usage(mut self, model_usage: Arc<dyn ModelUsagePort>) -> Self {
+        self.model_usage = model_usage;
+        self
+    }
+
     /// Projects the wake the session authority would have created, and drives it.
     fn wake(&self) {
         self.queue.project(wake_for(key(), "wrk-1"));
@@ -479,6 +568,189 @@ impl Harness {
             .map(|entry| entry.record.kind_name())
             .collect()
     }
+}
+
+/// A model-emitted native create call commits the parent facts, child control,
+/// bootstrap mailbox and child wake through the same durable decision. The
+/// generic tool executor is never involved.
+#[test]
+fn native_create_subagent_bootstraps_one_durable_child_without_generic_dispatch() {
+    let harness = Harness::new(vec![
+        ProviderScript::Produce(Box::new(produced_native_tool_use(
+            "create_subagent",
+            r#"{"prompt":"inspect the provider boundary"}"#,
+        ))),
+        ProviderScript::Produce(Box::new(produced())),
+    ])
+    .with_tools([native_route("create_subagent")], Vec::new());
+    harness.wake();
+
+    let outcome = harness.run_next().expect("the root activation runs");
+    assert!(matches!(
+        outcome,
+        Outcome::Progressed {
+            stop: Stop::Finished(FinishReason::Completed),
+            ..
+        }
+    ));
+    assert!(harness.tools.invoked().is_empty());
+    let records = harness.store.entries(key());
+    assert!(
+        records
+            .iter()
+            .any(|entry| matches!(entry.record, JournalRecord::JoinOpened { .. }))
+    );
+    let child = records
+        .iter()
+        .find_map(|entry| match entry.record {
+            JournalRecord::ChildSpawned { child, .. } => Some(child),
+            _ => None,
+        })
+        .expect("the child spawn fact committed");
+    let child_entries = harness.store.entries(AgentKey::new(key().session, child));
+    assert!(matches!(
+        child_entries.first().map(|entry| &entry.record),
+        Some(JournalRecord::AgentStarted {
+            parent: Some(parent),
+            depth: 1,
+            ..
+        }) if *parent == key().agent
+    ));
+    assert!(matches!(
+        child_entries.get(1).map(|entry| &entry.record),
+        Some(JournalRecord::UserMessage {
+            origin: MessageOrigin::ParentMessage,
+            ..
+        })
+    ));
+    assert_eq!(harness.queue.depth(), 1, "the child wake remains runnable");
+}
+
+#[test]
+fn native_stop_subagent_sets_the_child_stop_latch_without_generic_dispatch() {
+    let child = aex_brain_domain::ids::child_agent_id(key().agent, 0);
+    let public = aex_wire::ids::AgentId::from_uuid7(
+        Uuid7::from_bytes(*child.0.as_bytes()).expect("derived child is UUIDv7"),
+    );
+    let stop = format!(r#"{{"agentId":"{public}","reason":"done"}}"#);
+    let harness = Harness::new(vec![
+        ProviderScript::Produce(Box::new(produced_native_tool_use(
+            "create_subagent",
+            r#"{"prompt":"inspect the provider boundary"}"#,
+        ))),
+        ProviderScript::Produce(Box::new(produced_native_tool_use("stop_subagent", &stop))),
+        ProviderScript::Produce(Box::new(produced())),
+    ])
+    .with_tools(
+        [
+            native_route("create_subagent"),
+            native_route("stop_subagent"),
+        ],
+        Vec::new(),
+    );
+    harness.wake();
+
+    let outcome = harness.run_next().expect("the root activation runs");
+    assert!(matches!(
+        outcome,
+        Outcome::Progressed {
+            stop: Stop::Finished(FinishReason::Completed),
+            ..
+        }
+    ));
+    let head = block_on(
+        (Arc::clone(&harness.store) as Arc<dyn crate::ports::JournalStore>)
+            .load_head(&AgentKey::new(key().session, child)),
+    )
+    .expect("the control reads")
+    .expect("the child exists");
+    assert!(head.stop_requested);
+    assert_eq!(head.stop_reason, Some(FinishReason::Cancelled));
+    assert!(harness.tools.invoked().is_empty());
+}
+
+#[test]
+fn native_wait_subagents_parks_and_resumes_from_terminal_child_authority() {
+    let child = aex_brain_domain::ids::child_agent_id(key().agent, 0);
+    let public = aex_wire::ids::AgentId::from_uuid7(
+        Uuid7::from_bytes(*child.0.as_bytes()).expect("derived child is UUIDv7"),
+    );
+    let wait = format!(r#"{{"agentIds":["{public}"],"mode":"all","timeoutSeconds":60}}"#);
+    let harness = Harness::new(vec![
+        ProviderScript::Produce(Box::new(produced_native_tool_use(
+            "create_subagent",
+            r#"{"prompt":"inspect the provider boundary"}"#,
+        ))),
+        ProviderScript::Produce(Box::new(produced_native_tool_use("wait_subagents", &wait))),
+        ProviderScript::Produce(Box::new(produced())),
+        ProviderScript::Produce(Box::new(produced())),
+    ])
+    .with_tools(
+        [
+            native_route("create_subagent"),
+            native_route("wait_subagents"),
+        ],
+        Vec::new(),
+    );
+    harness.wake();
+
+    let first = harness.run_next().expect("the parent parks");
+    assert!(matches!(
+        first,
+        Outcome::Progressed {
+            stop: Stop::Parked,
+            ..
+        }
+    ));
+    let child_outcome = harness
+        .run_next()
+        .expect("the independently claimable child finishes");
+    assert!(matches!(
+        child_outcome,
+        Outcome::Progressed {
+            stop: Stop::Finished(FinishReason::Completed),
+            ..
+        }
+    ));
+    let batch =
+        block_on(harness.queue.receive(10, core::time::Duration::ZERO)).expect("the queue answers");
+    let parent = batch
+        .deliveries
+        .into_iter()
+        .find(|delivery| {
+            delivery.wake.key == key() && delivery.wake.dedup_key.ends_with(":terminal")
+        })
+        .expect("the child terminal transaction wakes the parent");
+    let second = block_on(harness.activation().run(parent)).expect("the parent resumes");
+    assert!(matches!(
+        second,
+        Outcome::Progressed {
+            stop: Stop::Finished(FinishReason::Completed),
+            ..
+        }
+    ));
+    let records = harness.store.entries(key());
+    assert!(records.iter().any(|entry| matches!(
+        entry.record,
+        JournalRecord::ChildTerminal {
+            child: observed,
+            outcome: aex_brain_domain::child::ChildOutcome::Completed,
+            ..
+        } if observed == child
+    )));
+    assert!(records.iter().any(|entry| matches!(
+        entry.record,
+        JournalRecord::WaitResolved {
+            resolution: aex_brain_domain::journal::WaitResolution::Delivered,
+            ..
+        }
+    )));
+    assert_eq!(
+        harness.queue.durable_depth(),
+        0,
+        "child, terminal and superseded deadline wakes are all retired"
+    );
+    assert!(harness.tools.invoked().is_empty());
 }
 
 #[derive(Debug)]
@@ -687,6 +959,67 @@ fn one_wake_drives_a_turn_from_claim_to_ack() {
     assert_eq!(harness.queue.depth(), 0, "nothing was left outstanding");
 }
 
+#[derive(Debug, Default)]
+struct FailOnceModelUsage {
+    calls: AtomicUsize,
+}
+
+impl ModelUsagePort for FailOnceModelUsage {
+    fn publish<'a>(
+        &'a self,
+        _observation: &'a ModelUsageObservation,
+    ) -> BoxFuture<'a, Result<ModelUsagePublication, ModelUsageError>> {
+        Box::pin(async move {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(ModelUsageError::Unavailable(
+                    "injected queue outage".to_owned(),
+                ))
+            } else {
+                Ok(ModelUsagePublication::Accepted)
+            }
+        })
+    }
+}
+
+/// The assistant remains authoritative across a queue outage; its usage is retried without
+/// another provider generation, then the durable publication marker absorbs later wakes.
+#[test]
+fn committed_model_usage_replays_until_the_fifo_handoff_is_marked() {
+    let usage = Arc::new(FailOnceModelUsage::default());
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))])
+        .with_model_usage(Arc::clone(&usage) as Arc<_>);
+    harness.wake();
+
+    assert!(matches!(
+        harness.run_next(),
+        Err(ActivationError::ModelUsage(_))
+    ));
+    assert_eq!(harness.provider.dispatched().len(), 1);
+    assert!(harness.records().contains(&"assistant_message"));
+    assert!(!harness.records().contains(&"model_usage_published"));
+
+    let recovered = harness
+        .run_next()
+        .expect("redelivery publishes the pending usage");
+    assert!(matches!(
+        recovered,
+        Outcome::Progressed {
+            stop: Stop::Finished(FinishReason::Completed),
+            ..
+        }
+    ));
+    assert_eq!(usage.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(harness.provider.dispatched().len(), 1);
+    assert_eq!(
+        harness
+            .records()
+            .into_iter()
+            .filter(|kind| *kind == "model_usage_published")
+            .count(),
+        1
+    );
+}
+
 #[test]
 fn model_tool_fields_refuse_truncation_and_follow_the_model_on_parallel_emission() {
     let definition = CanonicalToolDef {
@@ -698,14 +1031,8 @@ fn model_tool_fields_refuse_truncation_and_follow_the_model_on_parallel_emission
         .expect("schema"),
         strict: false,
     };
-    // `parallel_safe: false` is the live production shape: `web_fetch` is
-    // advertised on every deployed task and is neither pure nor zero-weight.
-    // It bounds our own concurrency and must not reach the provider request,
-    // because four of the six dialects cannot encode "one tool at a time" and
-    // refuse the whole request rather than send something else.
     let advertised = ToolAdvertisement {
         definitions: vec![definition.clone()],
-        parallel_safe: false,
     };
 
     let capable = fixture::qualified_entry(
@@ -749,6 +1076,168 @@ fn model_tool_fields_refuse_truncation_and_follow_the_model_on_parallel_emission
             max: 128
         })
     ));
+}
+
+#[test]
+fn tool_batch_starts_concurrently_but_commits_model_context_in_call_order() {
+    let harness = Harness::new(vec![
+        ProviderScript::Produce(Box::new(produced_parallel_tool_use())),
+        ProviderScript::Produce(Box::new(produced())),
+    ])
+    .with_tools(
+        [batch_route("tool_first"), batch_route("tool_second")],
+        [batch_result("first-result"), batch_result("second-result")],
+    );
+    harness.tools.require_concurrent_starts(2);
+    harness.wake();
+    let delivery = block_on(harness.queue.receive(1, core::time::Duration::from_secs(0)))
+        .expect("the queue answers")
+        .deliveries
+        .pop()
+        .expect("a delivery is waiting");
+
+    let outcome = poll_until_ready(harness.activation().run(delivery))
+        .expect("the concurrent batch completes");
+    assert!(matches!(
+        outcome,
+        Outcome::Progressed {
+            stop: Stop::Finished(FinishReason::Completed),
+            ..
+        }
+    ));
+    assert_eq!(harness.tools.peak_active(), 2);
+
+    let entries = harness.store.entries(key());
+    let state = fold(&entries).expect("the committed batch folds");
+    let results = state
+        .model_history
+        .iter()
+        .flat_map(|message| &message.blocks)
+        .filter_map(|block| match block {
+            CanonicalBlock::ToolResult { call, .. } => Some(call.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results, ["call-first", "call-second"]);
+}
+
+#[test]
+fn recovery_never_redispatches_an_ambiguous_batch_member_and_resumes_prepared_siblings() {
+    let mut harness = Harness::new(Vec::new()).with_tools(
+        [batch_route("tool_first"), batch_route("tool_second")],
+        [batch_result("second-result")],
+    );
+    harness.policy.max_steps_per_activation = 2;
+    let model_effect = EffectId([0x40; 16]);
+    let first_effect = EffectId([0x41; 16]);
+    let second_effect = EffectId([0x42; 16]);
+    let request_hash = ContentHash::of(b"{}");
+    let mut journal = history();
+    for record in [
+        JournalRecord::EffectPrepared {
+            effect: model_effect,
+            tool_call: None,
+            kind: EffectKind::ModelCall,
+            class: EffectClass::NonReplayable,
+            request_hash: ContentHash::of(b"model"),
+            deadline: Timestamp::from_millis(START + 60_000),
+            attempt: 1,
+            reservation: Vec::new(),
+        },
+        JournalRecord::EffectSettled {
+            effect: model_effect,
+            outcome: SettledOutcome::Complete {
+                receipt: ContentHash::of(b"model receipt"),
+            },
+            charged: Vec::new(),
+        },
+        assistant_tool_use(
+            &[("call-first", "tool_first"), ("call-second", "tool_second")],
+            model_effect,
+        ),
+        JournalRecord::EffectPrepared {
+            effect: first_effect,
+            tool_call: Some(ToolCallId::truncating("call-first")),
+            kind: EffectKind::ToolCall,
+            class: EffectClass::NonReplayable,
+            request_hash,
+            deadline: Timestamp::from_millis(START + 60_000),
+            attempt: 1,
+            reservation: Vec::new(),
+        },
+        JournalRecord::EffectPrepared {
+            effect: second_effect,
+            tool_call: Some(ToolCallId::truncating("call-second")),
+            kind: EffectKind::ToolCall,
+            class: EffectClass::NonReplayable,
+            request_hash,
+            deadline: Timestamp::from_millis(START + 60_000),
+            attempt: 1,
+            reservation: Vec::new(),
+        },
+    ] {
+        let seq = JournalSeq(u64::try_from(journal.len()).expect("fixture length fits"));
+        journal.push(
+            JournalEntry::seal(seq, Timestamp::from_millis(START), record)
+                .expect("the recovery fixture canonicalizes"),
+        );
+    }
+    harness.store.seed(key(), journal);
+    harness.store.seed_effect(
+        key(),
+        DurableEffect {
+            id: first_effect,
+            kind: EffectKind::ToolCall,
+            generation: None,
+            class: EffectClass::NonReplayable,
+            request_hash,
+            state: EffectState::DispatchStarted { attempt: 1 },
+            deadline: Timestamp::from_millis(START + 60_000),
+            evidence: None,
+        },
+    );
+    harness.store.seed_effect(
+        key(),
+        DurableEffect {
+            id: second_effect,
+            kind: EffectKind::ToolCall,
+            generation: None,
+            class: EffectClass::NonReplayable,
+            request_hash,
+            state: EffectState::Prepared { attempt: 1 },
+            deadline: Timestamp::from_millis(START + 60_000),
+            evidence: None,
+        },
+    );
+    harness.wake();
+
+    let outcome = harness.run_next().expect("batch recovery is durable");
+    assert!(matches!(
+        outcome,
+        Outcome::Progressed {
+            stop: Stop::HandedBack,
+            ..
+        }
+    ));
+    assert_eq!(
+        harness.tools.invoked(),
+        vec!["call-second"],
+        "the possibly-sent first member must never be invoked again"
+    );
+    let state = fold(&harness.store.entries(key())).expect("the recovered journal folds");
+    let result_turn = state
+        .model_history
+        .last()
+        .expect("the batch emits one result turn");
+    let calls = result_turn
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            CanonicalBlock::ToolResult { call, .. } => Some(call.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(calls, vec!["call-first", "call-second"]);
 }
 
 #[test]
@@ -814,7 +1303,7 @@ fn a_new_activation_recovers_the_executor_from_durable_effect_and_journal_state(
             &entry.record,
             JournalRecord::ToolResult {
                 is_error: true,
-                executed_on: ExecutorRoute::ManagedWeb,
+                executed_on: ExecutorRoute::ToolMux,
                 ..
             }
         )
@@ -1455,6 +1944,7 @@ fn multiple_pages_cannot_exceed_the_total_restore_budget() {
             Timestamp::from_millis(START),
             JournalRecord::EffectPrepared {
                 effect: id,
+                tool_call: None,
                 kind: EffectKind::ModelCall,
                 class: EffectClass::NonReplayable,
                 request_hash: ContentHash::of(b"prepared but not recoverable under this cap"),
@@ -1776,6 +2266,7 @@ fn recovery_runs_before_the_planner_and_interrupts_a_dispatched_effect() {
             Timestamp::from_millis(START),
             JournalRecord::EffectPrepared {
                 effect: id,
+                tool_call: None,
                 kind: EffectKind::ModelCall,
                 class: EffectClass::NonReplayable,
                 request_hash: ContentHash::of(b"whatever the dead owner sent"),
@@ -2783,6 +3274,101 @@ fn every_completed_release_is_immediately_claimable_and_stale_release_is_harmles
             "a stale release cleared the successor under {disposition:?}: {third:?}"
         );
     }
+}
+
+#[test]
+fn checkpoint_object_first_crash_is_harmless_and_only_the_current_fence_moves_the_pointer() {
+    let harness = Harness::new(Vec::new());
+    let predecessor = block_on(harness.store.claim(
+        &key(),
+        OwnerToken(Uuid::from_u128(0xc1)),
+        harness.policy.lease_ttl,
+        harness.clock.now(),
+    ))
+    .expect("the predecessor claims");
+    let stale = FenceGuard::new(
+        key(),
+        predecessor.owner,
+        predecessor.fence,
+        predecessor.head.revision,
+        predecessor.head.journal_tail,
+        predecessor.head.cancel_epoch,
+        CancelToken::new(),
+    );
+    block_on(
+        harness
+            .store
+            .release(predecessor, ReleaseDisposition::Abandoned),
+    )
+    .expect("the predecessor crashes after object construction");
+    let successor = block_on(harness.store.claim(
+        &key(),
+        OwnerToken(Uuid::from_u128(0xc2)),
+        harness.policy.lease_ttl,
+        harness.clock.now(),
+    ))
+    .expect("a successor fences the predecessor");
+    let live = FenceGuard::new(
+        key(),
+        successor.owner,
+        successor.fence,
+        successor.head.revision,
+        successor.head.journal_tail,
+        successor.head.cancel_epoch,
+        CancelToken::new(),
+    );
+    let mut state = fold(&history()).expect("the source journal folds");
+    let covers_through = state.tail.expect("the fixture has a tail");
+    let covers_hash = *state.hashes.last().expect("the fixture has a tail hash");
+    state.hashes.clear();
+    state.base_seq = covers_through.next();
+    let checkpoint = ContextCheckpoint {
+        schema_version: CHECKPOINT_SCHEMA_VERSION,
+        key: key(),
+        id: ContentHash::of(b"fenced checkpoint"),
+        previous: None,
+        covers_through,
+        covers_hash,
+        source_hash: ContentHash::of(b"source fold"),
+        approximate_tokens: 10,
+        compactor: "test".to_owned(),
+        created_at: harness.clock.now(),
+        state,
+    };
+
+    let error = block_on(
+        harness
+            .store
+            .save(&stale, &successor.authority, &checkpoint),
+    )
+    .expect_err("a stale owner cannot publish the object it wrote");
+    assert_eq!(error, crate::ports::CheckpointError::Conflict);
+    assert!(
+        block_on(harness.store.load_head(&key()))
+            .expect("the control row loads")
+            .expect("the agent exists")
+            .checkpoint
+            .is_none(),
+        "an orphan object cannot become the active baseline"
+    );
+
+    let metadata = block_on(harness.store.save(&live, &successor.authority, &checkpoint))
+        .expect("the current fence commits the same immutable object");
+    assert_eq!(
+        block_on(harness.store.load_head(&key()))
+            .expect("the control row loads")
+            .expect("the agent exists")
+            .checkpoint,
+        Some(metadata.clone())
+    );
+    assert_eq!(
+        block_on(harness.store.load(key(), &metadata)).expect("the committed object verifies"),
+        checkpoint
+    );
+
+    let replay = block_on(harness.store.save(&live, &successor.authority, &checkpoint))
+        .expect("an identical retry is idempotent");
+    assert_eq!(replay, metadata);
 }
 
 /// A successor owns the current control row even though the prepared effect was written by

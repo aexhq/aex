@@ -177,15 +177,8 @@ pub fn plan_spawn(
         .session
         .reserved
         .get(Dimension::TotalChildrenCreated)
-        .saturating_add(
-            capacity
-                .session
-                .used
-                .get(Dimension::TotalChildrenCreated),
-        );
-    if u64::from(request.count)
-        > MAX_SUBAGENTS_PER_SESSION.saturating_sub(session_allocated)
-    {
+        .saturating_add(capacity.session.used.get(Dimension::TotalChildrenCreated));
+    if u64::from(request.count) > MAX_SUBAGENTS_PER_SESSION.saturating_sub(session_allocated) {
         return Err(SpawnError::Budget(BudgetError::Exhausted {
             dimension: Dimension::TotalChildrenCreated,
             limit: capacity
@@ -197,10 +190,7 @@ pub fn plan_spawn(
                 .session
                 .reserved
                 .get(Dimension::TotalChildrenCreated),
-            used: capacity
-                .session
-                .used
-                .get(Dimension::TotalChildrenCreated),
+            used: capacity.session.used.get(Dimension::TotalChildrenCreated),
             wanted: u64::from(request.count),
         }));
     }
@@ -383,14 +373,13 @@ mod tests {
     #[test]
     fn every_legal_fanout_is_one_atomic_page() {
         let state = folded(100_000);
-        let single = plan_spawn(parent(), &state, &capacity(), &request(12))
-            .expect("plans");
+        let single = plan_spawn(parent(), &state, &capacity(), &request(12)).expect("plans");
         assert_eq!(single.pages.len(), 1);
         assert_eq!(
             single.intent, None,
             "one page needs no intent to resume from"
         );
-        assert!(12 < SPAWN_PAGE_CHILDREN);
+        assert!(12 <= SPAWN_PAGE_CHILDREN);
     }
 
     /// Capacity is consumed as the page is planned, so a page of 32 into one free slot

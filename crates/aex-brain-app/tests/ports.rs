@@ -138,7 +138,6 @@ impl ToolPort for StubTools {
                 .expect("schema"),
                 strict: false,
             }],
-            parallel_safe: false,
         })
     }
 
@@ -146,7 +145,7 @@ impl ToolPort for StubTools {
         if name.as_str() == "read_file" {
             Ok(ToolRoute {
                 name: name.clone(),
-                executor: ExecutorRoute::ManagedWeb,
+                executor: ExecutorRoute::ToolMux,
                 class: EffectClass::IdempotentManaged,
                 timeout_ms: 30_000,
                 concurrency_weight: 1,
@@ -408,7 +407,8 @@ fn a_detached_tool_returns_an_operation_rather_than_blocking() {
             .expect("the tool routes"),
         input: CanonicalJson::parse("{}").expect("tool input"),
         max_result_bytes: 65_536,
-        hands_generation: generation(3),
+        hands_generation: Some(generation(3)),
+        mcp_servers: Vec::new(),
         control: ControlStateView::default(),
     };
     let outcome = block_on(tools.invoke(&ticket(EffectId([2; 16])), &call, &CancelToken::new()))

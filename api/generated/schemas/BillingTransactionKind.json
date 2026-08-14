@@ -1,0 +1,15 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BillingTransactionKind.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The customer-visible reason for an immutable balanced ledger transaction.",
+  "enum": [
+    "top_up",
+    "usage",
+    "refund",
+    "reversal",
+    "reservation",
+    "reservation_release"
+  ],
+  "title": "BillingTransactionKind",
+  "type": "string"
+}

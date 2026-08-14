@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/ApiKeyCreateRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Mint a workspace API key.",
+  "description": "Mint a key for the account's fixed workspace.",
   "properties": {
     "name": {
       "description": "Display name.",
@@ -11,16 +11,16 @@
       "type": "string"
     },
     "scopes": {
-      "description": "The scopes to grant.",
+      "description": "Launch scopes to grant.",
       "items": {
         "type": "string",
         "x-aex-registry": "scopes"
       },
-      "maxItems": 64,
+      "maxItems": 16,
       "type": "array"
     },
     "workspaceId": {
-      "description": "The workspace to authorize.",
+      "description": "Must name the fixed workspace.",
       "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "workspace"

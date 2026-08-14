@@ -995,23 +995,10 @@ pub trait AuthorizationReader: Send + Sync {
         key_id: Uuid,
     ) -> Result<Option<WorkspaceKeyState>, StoreError>;
 
-    /// Resolves an account token scoped to one workspace.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] for a transport or privilege failure.
-    async fn resolve_account_token_for_workspace(
-        &self,
-        token_id: Uuid,
-        workspace_id: Uuid,
-        now: OffsetDateTime,
-    ) -> Result<Option<AccountActorState>, StoreError>;
-
     /// Resolves a browser session scoped to one workspace.
     ///
-    /// This is what makes every regional dashboard panel implementable: a
-    /// browser session resolves through the same 30-second assertion as an
-    /// account token, not a second credential mechanism.
+    /// This makes regional dashboard panels use the same 30-second assertion
+    /// envelope as the rest of the regional edge.
     ///
     /// # Errors
     ///
@@ -1022,17 +1009,6 @@ pub trait AuthorizationReader: Send + Sync {
         workspace_id: Uuid,
         now: OffsetDateTime,
     ) -> Result<Option<AccountActorState>, StoreError>;
-
-    /// Resolves an account token for the central plane.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] for a transport or privilege failure.
-    async fn resolve_account_token_central(
-        &self,
-        token_id: Uuid,
-        now: OffsetDateTime,
-    ) -> Result<Option<CentralActorState>, StoreError>;
 
     /// Resolves a browser session for the central plane.
     ///

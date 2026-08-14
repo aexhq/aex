@@ -75,10 +75,10 @@ fn no_secret_carrying_type_renders_its_contents() {
 
 #[test]
 fn the_plaintext_is_only_reachable_through_an_explicit_call() {
-    let (secret, _) = mint(CredentialKind::AccountToken, None, id(), &Fixed(0x55));
+    let (secret, _) = mint(CredentialKind::DashboardSession, None, id(), &Fixed(0x55));
     // `expose` is the only accessor, and it is named so a review notices it.
-    assert!(secret.expose().starts_with("aex_at_"));
-    assert!(!format!("{secret:?}").contains("aex_at_"));
+    assert!(secret.expose().starts_with("aex_ds_"));
+    assert!(!format!("{secret:?}").contains("aex_ds_"));
 }
 
 #[test]
@@ -86,10 +86,10 @@ fn a_structural_parse_never_compares_a_secret() {
     // Two tokens differing only in their secret parse identically apart from the
     // digest, so a parse failure cannot distinguish "no such credential" from
     // "wrong secret" — that distinction only exists after the database lookup.
-    let (first, _) = mint(CredentialKind::AccountToken, None, id(), &Fixed(0x01));
-    let (second, _) = mint(CredentialKind::AccountToken, None, id(), &Fixed(0x02));
-    let a = parse(CredentialKind::AccountToken, first.expose()).expect("parses");
-    let b = parse(CredentialKind::AccountToken, second.expose()).expect("parses");
+    let (first, _) = mint(CredentialKind::DashboardSession, None, id(), &Fixed(0x01));
+    let (second, _) = mint(CredentialKind::DashboardSession, None, id(), &Fixed(0x02));
+    let a = parse(CredentialKind::DashboardSession, first.expose()).expect("parses");
+    let b = parse(CredentialKind::DashboardSession, second.expose()).expect("parses");
     assert_eq!(a.id, b.id);
     assert_eq!(a.kind, b.kind);
     assert_ne!(a.digest, b.digest);
@@ -105,7 +105,7 @@ fn verification_is_constant_time_within_measurement_noise() {
     // a verifier differing in its first byte costs the same as one differing in
     // its last.
     let pepper = Pepper::new([0x66_u8; 32]);
-    let (_, digest) = mint(CredentialKind::DeviceCode, None, id(), &Fixed(0x77));
+    let (_, digest) = mint(CredentialKind::EmailChallenge, None, id(), &Fixed(0x77));
     let stored = verifier(&pepper, &digest);
 
     let mut early = *stored.as_bytes();
@@ -148,8 +148,8 @@ fn a_wrong_kind_prefix_is_refused_before_anything_else_is_examined() {
     let (secret, _) = mint(CredentialKind::WorkspaceKey, Some(pin()), id(), &Fixed(1));
     // Truncated to just the prefix: the parser must refuse on the prefix rather
     // than reach a length or encoding check that could reveal the shape.
-    assert!(parse(CredentialKind::AccountToken, secret.expose()).is_err());
-    assert!(parse(CredentialKind::AccountToken, "aex_wk_").is_err());
+    assert!(parse(CredentialKind::DashboardSession, secret.expose()).is_err());
+    assert!(parse(CredentialKind::DashboardSession, "aex_wk_").is_err());
 }
 
 #[test]

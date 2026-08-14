@@ -171,11 +171,7 @@ const COMMANDS: [&str; 6] = ["SELECT", "INSERT", "UPDATE", "DELETE", "VALUES", "
 /// misspelled name — is caught from the other direction by
 /// [`RenderError::MissingParameter`].
 ///
-/// The case that motivated it was `DENY_DEVICE_AUTHORIZATION`, which took the
-/// four parameters `decide_device` binds for both decisions and referenced only
-/// two. That turned out to be the defect it looks like rather than a shape
-/// worth accommodating, and the statement now references all four. The
-/// tolerance stays, because it describes the service rather than that
+/// The tolerance stays because it describes the service rather than any one
 /// statement.
 pub fn render(sql: &str, parameters: &[SqlParameter]) -> Result<Rendered, RenderError> {
     let scan = scan(sql, parameters)?;

@@ -75,6 +75,7 @@ impl AppError {
             | Self::Session(SessionError::Deleted(_))
             | Self::Deletion(DeletionRejection::Deleted(_)) => ErrorCode::SessionDeleted,
             Self::Port(PortError::Deleting { .. }) => ErrorCode::SessionDeleting,
+            Self::Port(PortError::IdempotencyConflict) => ErrorCode::IdempotencyConflict,
             Self::Port(_)
             | Self::Plan(_)
             | Self::Commit(_)

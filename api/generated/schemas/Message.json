@@ -2,10 +2,10 @@
   "$id": "https://schemas.aex.dev/v1/Message.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One complete, sealed message in a session. `createdAt` is display metadata; collection order is the immutable seal-visibility order and is not derived from this field.",
+  "description": "One complete sealed message in immutable visibility order.",
   "properties": {
     "content": {
-      "description": "The parts.",
+      "description": "Parts.",
       "items": {
         "$ref": "aex:schema:MessagePart"
       },
@@ -13,7 +13,7 @@
       "type": "array"
     },
     "createdAt": {
-      "description": "When it was recorded.",
+      "description": "Display time; not collection ordering authority.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
@@ -26,10 +26,10 @@
     },
     "role": {
       "$ref": "aex:schema:MessageRole",
-      "description": "Who produced it."
+      "description": "Producer."
     },
     "sessionId": {
-      "description": "The owning session.",
+      "description": "Session.",
       "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "session"

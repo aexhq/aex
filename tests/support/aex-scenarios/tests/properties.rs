@@ -390,10 +390,8 @@ fn a_statement_binding_a_name_nobody_supplies_is_refused() {
 fn a_supplied_parameter_the_statement_ignores_is_tolerated() {
     // Not laxity: the Data API ignores a parameter the statement does not
     // reference, so refusing one here would make this transport stricter than
-    // the service the statements were written for. The case that motivated it
-    // was `DENY_DEVICE_AUTHORIZATION` referencing two of the four parameters
-    // `decide_device` binds, which was a defect and is now fixed; the tolerance
-    // outlives it because it describes the service, not that statement.
+    // the service the statements were written for. This tolerance describes
+    // the service itself, not any particular statement.
     let rendered = render("SELECT 1", &[text("spare", "v")]).expect("renders");
     assert!(rendered.binds.is_empty());
 }

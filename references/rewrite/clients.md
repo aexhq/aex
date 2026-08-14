@@ -1,7 +1,7 @@
 ---
-title: Clients stream handoff
-description: Implementation and merge handoff for the Rust-native clients, dashboard, site, and user-test stream.
-status: accepted
+title: Historical clients stream handoff
+description: Point-in-time implementation and merge handoff for the superseded Rust-native clients, dashboard, site, and user-test stream.
+status: superseded historical record — session-plane clean cut 2026-08-14
 keywords:
   - sdk
   - cli
@@ -16,6 +16,14 @@ related:
 ---
 
 # Clients stream handoff
+
+> **Superseded (2026-08-14).** This is a point-in-time record of the Rust-native
+> rewrite and deliberately retains its old 0.50.0, 146-route, account-token,
+> device-flow, and 47-scenario facts for provenance. The session-centered launch
+> now has 32 served routes, `DashboardSession` for central routes,
+> `WorkspaceApiKey` for regional routes, latest-only workspace files, and no
+> device authorization. See [`../architecture.md`](../architecture.md) and the
+> generated contract/SDK surface for current behavior.
 
 Plan of record: `references/rust-native-rewrite-2026-07-31/plans/13-clients-dashboard-site.md` in the parent workspace.
 

@@ -493,6 +493,7 @@ mod tests {
     fn upload_row() -> aex_workspace_domain::upload::Upload {
         aex_workspace_domain::upload::Upload {
             id: upload(),
+            target_name: aex_wire::ids::ResourceName::parse("artifact").expect("a name"),
             workspace: workspace(),
             state: UploadState::PartsGranted,
             provider_upload_id: "provider-mpu-1".to_owned(),

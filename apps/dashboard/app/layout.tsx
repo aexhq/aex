@@ -5,7 +5,7 @@ import "./app.css";
 
 export const metadata = {
   title: "AEX",
-  description: "Sessions, usage and workspace resources for AEX.",
+  description: "Sessions, usage and workspace files for AEX.",
 };
 
 export default function Layout({ children }: Readonly<{ children: ReactNode }>) {

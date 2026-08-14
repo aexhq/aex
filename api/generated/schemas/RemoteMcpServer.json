@@ -1,0 +1,29 @@
+{
+  "$id": "https://schemas.aex.dev/v1/RemoteMcpServer.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A remote Streamable HTTP MCP server qualified at session setup.",
+  "properties": {
+    "headers": {
+      "additionalProperties": {
+        "maxLength": 8192,
+        "minLength": 1,
+        "type": "string"
+      },
+      "description": "Write-only session-encrypted request headers.",
+      "maxProperties": 32,
+      "type": "object"
+    },
+    "url": {
+      "description": "Official server endpoint.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "url"
+  ],
+  "title": "RemoteMcpServer",
+  "type": "object"
+}

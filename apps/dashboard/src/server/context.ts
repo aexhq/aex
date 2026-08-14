@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import type { RegionCode } from "@aexhq/sdk";
 
-import { readBootstrap, type BootstrapResult, type Organization, type Workspace } from "./bootstrap";
+import { readBootstrap, type BootstrapResult, type Workspace } from "./bootstrap";
 import { RETURN_HEADER, signInPath } from "./return-to";
 import { regionCodeFor } from "../ui/regions";
 
@@ -26,7 +26,6 @@ export async function signInDestination(): Promise<string> {
 
 export interface WorkspaceContext {
   readonly workspace: Workspace;
-  readonly organization: Organization | null;
   readonly regionCode: RegionCode;
   readonly paused: boolean;
 }
@@ -39,22 +38,13 @@ export interface WorkspaceContext {
 export async function requireWorkspace(slug: string): Promise<WorkspaceContext> {
   const result = await currentBootstrap();
   if (result.kind !== "ready") redirect(await signInDestination());
-  const workspace = result.bootstrap.workspaces.find((candidate) => candidate.slug === slug);
-  if (!workspace) notFound();
+  const workspace = result.bootstrap.workspace;
+  if (workspace.id !== slug) notFound();
   const regionCode = regionCodeFor(workspace.region);
   if (!regionCode) notFound();
   return {
     workspace,
-    organization: result.bootstrap.organizations.find((o) => o.id === workspace.organizationId) ?? null,
     regionCode,
-    paused: workspace.operationalState.state.status === "paused",
+    paused: result.bootstrap.accountState.status === "paused",
   };
-}
-
-export async function requireOrganization(slug: string): Promise<Organization> {
-  const result = await currentBootstrap();
-  if (result.kind !== "ready") redirect(await signInDestination());
-  const organization = result.bootstrap.organizations.find((candidate) => candidate.slug === slug);
-  if (!organization) notFound();
-  return organization;
 }

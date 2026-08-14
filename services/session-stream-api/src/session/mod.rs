@@ -11,16 +11,14 @@ pub mod create_readiness;
 pub mod create_route;
 pub mod handlers;
 pub mod live_composition;
-pub mod live_files;
-pub mod live_transfer;
+pub mod mcp_readiness;
 pub mod operation_worker;
+pub mod provider_key;
 pub mod registry;
 pub mod registry_download;
 pub mod routes;
-pub mod secret_registration;
 pub mod stores;
 pub mod uploads;
-pub mod usage;
 pub mod wire_pending;
 
 pub use handlers::{Dispatcher, Routes, Shared};

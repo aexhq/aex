@@ -10,6 +10,10 @@
     {
       "$ref": "aex:schema:BlobUpload",
       "x-aex-discriminator-value": "upload"
+    },
+    {
+      "$ref": "aex:schema:BlobUrl",
+      "x-aex-discriminator-value": "url"
     }
   ],
   "title": "BlobInput",

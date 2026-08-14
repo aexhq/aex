@@ -1,0 +1,74 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BillingUsageItem.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One bounded rated-usage aggregate with exact charge evidence.",
+  "properties": {
+    "amountCents": {
+      "description": "Exact rated amount in whole cents.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string",
+      "x-aex-money": "cents"
+    },
+    "category": {
+      "$ref": "aex:schema:BillingUsageCategory",
+      "description": "What was measured."
+    },
+    "chargedQuantity": {
+      "description": "Quantity actually charged after policy.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "currency": {
+      "$ref": "aex:schema:Currency",
+      "description": "Always USD at launch."
+    },
+    "model": {
+      "description": "Provider model identifier for model usage.",
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string"
+    },
+    "provider": {
+      "$ref": "aex:schema:ProviderId",
+      "description": "Official provider for model usage."
+    },
+    "quantity": {
+      "description": "Measured quantity before rating.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "serviceTime": {
+      "$ref": "aex:schema:TimeRange",
+      "description": "Half-open service-time range."
+    },
+    "sessionId": {
+      "description": "Session attribution when present.",
+      "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "session"
+    },
+    "settlement": {
+      "$ref": "aex:schema:BillingUsageSettlement",
+      "description": "Ledger coverage."
+    },
+    "unit": {
+      "description": "Stable unit such as input_tokens or byte_minutes.",
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "amountCents",
+    "category",
+    "chargedQuantity",
+    "currency",
+    "quantity",
+    "serviceTime",
+    "settlement",
+    "unit"
+  ],
+  "title": "BillingUsageItem",
+  "type": "object"
+}

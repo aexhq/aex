@@ -52,6 +52,52 @@ SELECT applied_state, raw_body_sha256 FROM finance.provider_event_inbox \
 UPDATE finance.provider_event_inbox SET transaction_id = :transaction_id \
  WHERE provider_event_id = :provider_event_id";
 
+    /// Resolves an attached method through the provider customer authority.
+    pub const RESOLVE_CUSTOMER_ORGANIZATION: &str = "\
+SELECT org_id FROM finance.billing_account \
+ WHERE provider_customer_id = :provider_customer_id";
+
+    /// Resolves a detached method through the display projection it belongs to.
+    pub const RESOLVE_METHOD_ORGANIZATION: &str = "\
+SELECT org_id FROM finance.payment_method \
+ WHERE provider_method_id = :provider_method_id";
+
+    /// Inserts or refreshes the latest display-only card projection.
+    ///
+    /// Provider event time, rather than delivery order, is the state fence. At
+    /// an equal provider timestamp a detach remains terminal, preventing a
+    /// same-second attached delivery from resurrecting the method.
+    pub const UPSERT_PAYMENT_METHOD: &str = "\
+INSERT INTO finance.payment_method \
+  (payment_method_id, org_id, provider_method_id, brand, last4, expiry_month, expiry_year, \
+   state, provider_created_at, provider_updated_at) \
+VALUES \
+  (:payment_method_id, :org_id, :provider_method_id, :brand, :last4, :expiry_month, \
+   :expiry_year, 'attached', \
+   (TIMESTAMPTZ 'epoch' + (:provider_created_at_ms) * INTERVAL '1 millisecond'), \
+   (TIMESTAMPTZ 'epoch' + (:provider_updated_at_ms) * INTERVAL '1 millisecond')) \
+ON CONFLICT (provider_method_id) DO UPDATE SET \
+  brand = EXCLUDED.brand, last4 = EXCLUDED.last4, expiry_month = EXCLUDED.expiry_month, \
+  expiry_year = EXCLUDED.expiry_year, state = 'attached', \
+  provider_created_at = LEAST(finance.payment_method.provider_created_at, \
+                              EXCLUDED.provider_created_at), \
+  provider_updated_at = EXCLUDED.provider_updated_at, updated_at = now() \
+WHERE finance.payment_method.org_id = EXCLUDED.org_id \
+  AND (finance.payment_method.provider_updated_at < EXCLUDED.provider_updated_at \
+       OR (finance.payment_method.provider_updated_at = EXCLUDED.provider_updated_at \
+           AND finance.payment_method.state <> 'detached'))";
+
+    /// Marks a method detached if this is not an older provider event.
+    pub const DETACH_PAYMENT_METHOD: &str = "\
+UPDATE finance.payment_method \
+   SET state = 'detached', \
+       provider_updated_at = TIMESTAMPTZ 'epoch' \
+           + (:provider_updated_at_ms) * INTERVAL '1 millisecond', \
+       updated_at = now() \
+ WHERE org_id = :org_id AND provider_method_id = :provider_method_id \
+   AND provider_updated_at <= TIMESTAMPTZ 'epoch' \
+       + (:provider_updated_at_ms) * INTERVAL '1 millisecond'";
+
     /// Creates an organization's account on first use, converging on one row.
     pub const ENSURE_ACCOUNT: &str = "\
 INSERT INTO finance.account (account_id, org_id, kind, normal_side) \
@@ -278,6 +324,17 @@ impl Row for AmountRow {
     }
 }
 
+/// One organization resolved from provider-owned identity.
+#[derive(Debug)]
+struct OrganizationRow(uuid::Uuid);
+
+impl Row for OrganizationRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(1)?;
+        Ok(Self(record.uuid(0)?))
+    }
+}
+
 /// Classifies a transport failure without inventing an outcome.
 fn store(error: DataApiError) -> IngestError {
     match error {
@@ -315,7 +372,7 @@ fn to_microusd(cents: aex_wire::types::Cents) -> Result<Microusd, IngestError> {
 }
 
 /// The business key for one event's transition.
-fn business_key(event: &ProviderEventEnvelope) -> Result<BusinessKey, IngestError> {
+fn business_key(event: &ProviderEventEnvelope) -> Result<Option<BusinessKey>, IngestError> {
     let raw = match &event.facts {
         ProviderEventFacts::PaymentIntentSucceeded { intent, .. } => {
             format!("topup:{}", intent.0.to_lowercase())
@@ -332,8 +389,11 @@ fn business_key(event: &ProviderEventEnvelope) -> Result<BusinessKey, IngestErro
         ProviderEventFacts::PaymentIntentPaymentFailed { intent, .. } => {
             format!("intentfailed:{}", intent.0.to_lowercase())
         }
+        ProviderEventFacts::PaymentMethodAttached { .. }
+        | ProviderEventFacts::PaymentMethodUpdated { .. }
+        | ProviderEventFacts::PaymentMethodDetached { .. } => return Ok(None),
     };
-    BusinessKey::parse(&raw).map_err(|error| {
+    BusinessKey::parse(&raw).map(Some).map_err(|error| {
         IngestError::Conservation(format!("`{raw}` is not a business key: {error}"))
     })
 }
@@ -365,23 +425,34 @@ impl ProviderEventInbox for AuroraProviderEventInbox {
     }
 
     async fn ingest(&self, event: &ProviderEventEnvelope) -> Result<IngestOutcome, IngestError> {
+        if event.kind != event.facts.kind() {
+            return Err(IngestError::Decode(
+                "provider event kind does not match its closed facts".to_owned(),
+            ));
+        }
+        if payment_method_object(&event.facts).is_some_and(|method| method != event.object.0) {
+            return Err(IngestError::Decode(
+                "provider event object does not match its payment method".to_owned(),
+            ));
+        }
         if event.provider_api_version.0 != self.pinned_api_version {
             // A wrong pin is configuration drift, not a droppable delivery: the
             // event is stored quarantined so it can be replayed after the pin is
             // corrected, and it never reaches a money transition.
             return self.quarantine(event).await;
         }
-        let organization = event.facts.organization();
-        let key = business_key(event)?;
-
         let mut transaction = self
             .client
             .begin(Isolation::Serializable)
             .await
             .map_err(store)?;
-        let outcome = self
-            .apply(&mut transaction, event, organization, &key)
-            .await;
+        let outcome = async {
+            let Some(organization) = resolve_organization(&mut transaction, event).await? else {
+                return quarantine_unowned(&mut transaction, event).await;
+            };
+            self.apply(&mut transaction, event, organization).await
+        }
+        .await;
         match outcome {
             Ok(outcome) => {
                 transaction.commit().await.map_err(commit)?;
@@ -406,7 +477,13 @@ impl AuroraProviderEventInbox {
             .begin(Isolation::Serializable)
             .await
             .map_err(store)?;
-        let claim = claim_event(&mut transaction, event, AppliedState::Quarantined).await;
+        let claim = claim_event(
+            &mut transaction,
+            event,
+            AppliedState::Quarantined,
+            event.facts.organization(),
+        )
+        .await;
         match claim {
             Ok(_) => {
                 transaction.commit().await.map_err(commit)?;
@@ -429,10 +506,9 @@ impl AuroraProviderEventInbox {
         transaction: &mut Transaction<'_>,
         event: &ProviderEventEnvelope,
         organization: OrganizationId,
-        key: &BusinessKey,
     ) -> Result<IngestOutcome, IngestError> {
         let intended = intended_state(&event.facts);
-        let claimed = claim_event(transaction, event, intended).await?;
+        let claimed = claim_event(transaction, event, intended, Some(organization)).await?;
         if !claimed {
             // A duplicate delivery: the stored row is the answer, and no second
             // posting happens.
@@ -465,7 +541,19 @@ impl AuroraProviderEventInbox {
             });
         }
 
-        let write = self.build(transaction, event, organization, key).await?;
+        if is_payment_method_event(&event.facts) {
+            project_payment_method(transaction, event, organization).await?;
+            return Ok(IngestOutcome {
+                applied: AppliedState::Applied,
+                first_delivery: true,
+                transaction_id: None,
+            });
+        }
+
+        let key = business_key(event)?.ok_or_else(|| {
+            IngestError::Conservation("a money event has no business key".to_owned())
+        })?;
+        let write = self.build(transaction, event, organization, &key).await?;
         let posted = post(transaction, &write).await?;
         transaction
             .execute(Statement::with(
@@ -551,8 +639,268 @@ impl AuroraProviderEventInbox {
             ProviderEventFacts::PaymentIntentPaymentFailed { .. } => Err(
                 IngestError::Conservation("a failed payment intent moves no money".to_owned()),
             ),
+            ProviderEventFacts::PaymentMethodAttached { .. }
+            | ProviderEventFacts::PaymentMethodUpdated { .. }
+            | ProviderEventFacts::PaymentMethodDetached { .. } => Err(IngestError::Conservation(
+                "a payment-method event moves no money".to_owned(),
+            )),
         }
     }
+}
+
+/// Resolves the owner of an actionable event inside the settlement transaction.
+async fn resolve_organization(
+    transaction: &mut Transaction<'_>,
+    event: &ProviderEventEnvelope,
+) -> Result<Option<OrganizationId>, IngestError> {
+    if let Some(organization) = event.facts.organization() {
+        return Ok(Some(organization));
+    }
+    match &event.facts {
+        ProviderEventFacts::PaymentMethodAttached {
+            customer, method, ..
+        }
+        | ProviderEventFacts::PaymentMethodUpdated {
+            customer, method, ..
+        } => {
+            let Some(customer_owner) = read_organization(
+                transaction,
+                sql::RESOLVE_CUSTOMER_ORGANIZATION,
+                "provider_customer_id",
+                &customer.0,
+            )
+            .await?
+            else {
+                return Ok(None);
+            };
+            let method_owner = read_organization(
+                transaction,
+                sql::RESOLVE_METHOD_ORGANIZATION,
+                "provider_method_id",
+                &method.0,
+            )
+            .await?;
+            Ok(matching_owner(Some(customer_owner), method_owner))
+        }
+        ProviderEventFacts::PaymentMethodDetached { method } => {
+            read_organization(
+                transaction,
+                sql::RESOLVE_METHOD_ORGANIZATION,
+                "provider_method_id",
+                &method.0,
+            )
+            .await
+        }
+        _ => Ok(None),
+    }
+}
+
+/// A provider method can be introduced by its customer, but it can never move
+/// between organizations. A disagreement is an ownership quarantine.
+fn matching_owner(
+    customer_owner: Option<OrganizationId>,
+    method_owner: Option<OrganizationId>,
+) -> Option<OrganizationId> {
+    match (customer_owner, method_owner) {
+        (Some(customer), None) => Some(customer),
+        (Some(customer), Some(method)) if customer == method => Some(customer),
+        _ => None,
+    }
+}
+
+async fn read_organization(
+    transaction: &mut Transaction<'_>,
+    statement: &'static str,
+    parameter: &'static str,
+    value: &str,
+) -> Result<Option<OrganizationId>, IngestError> {
+    let row: Option<OrganizationRow> = transaction
+        .query_opt(Statement::with(
+            statement,
+            vec![(parameter, SqlValue::Text(value.to_owned()))],
+        ))
+        .await
+        .map_err(store)?;
+    row.map(|row| {
+        use aex_wire::PrefixedId as _;
+        aex_wire::Uuid7::from_bytes(*row.0.as_bytes())
+            .map(OrganizationId::from_uuid7)
+            .map_err(|error| IngestError::Decode(format!("organization id is not UUIDv7: {error}")))
+    })
+    .transpose()
+}
+
+/// Stores an ownerless actionable event as quarantined rather than guessing an
+/// account or acknowledging an event that was never made durable.
+async fn quarantine_unowned(
+    transaction: &mut Transaction<'_>,
+    event: &ProviderEventEnvelope,
+) -> Result<IngestOutcome, IngestError> {
+    let claimed = claim_event(transaction, event, AppliedState::Quarantined, None).await?;
+    if claimed {
+        return Ok(IngestOutcome {
+            applied: AppliedState::Quarantined,
+            first_delivery: true,
+            transaction_id: None,
+        });
+    }
+    let stored: StoredEvent = transaction
+        .query_one(Statement::with(
+            sql::READ_EVENT,
+            vec![(
+                "provider_event_id",
+                SqlValue::Text(event.provider_event_id.0.clone()),
+            )],
+        ))
+        .await
+        .map_err(store)?;
+    if stored.raw_digest != *event.raw_digest.as_bytes() {
+        return Err(IngestError::DigestConflict(
+            event.provider_event_id.0.clone(),
+        ));
+    }
+    Ok(IngestOutcome {
+        applied: parse_applied(&stored.applied_state)?,
+        first_delivery: false,
+        transaction_id: None,
+    })
+}
+
+const fn is_payment_method_event(facts: &ProviderEventFacts) -> bool {
+    matches!(
+        facts,
+        ProviderEventFacts::PaymentMethodAttached { .. }
+            | ProviderEventFacts::PaymentMethodUpdated { .. }
+            | ProviderEventFacts::PaymentMethodDetached { .. }
+    )
+}
+
+fn payment_method_object(facts: &ProviderEventFacts) -> Option<&str> {
+    match facts {
+        ProviderEventFacts::PaymentMethodAttached { method, .. }
+        | ProviderEventFacts::PaymentMethodUpdated { method, .. }
+        | ProviderEventFacts::PaymentMethodDetached { method } => Some(&method.0),
+        _ => None,
+    }
+}
+
+/// Updates the display projection without touching the journal.
+async fn project_payment_method(
+    transaction: &mut Transaction<'_>,
+    event: &ProviderEventEnvelope,
+    organization: OrganizationId,
+) -> Result<(), IngestError> {
+    match &event.facts {
+        ProviderEventFacts::PaymentMethodAttached {
+            method,
+            brand,
+            last4,
+            expiry_month,
+            expiry_year,
+            provider_created_at,
+            ..
+        }
+        | ProviderEventFacts::PaymentMethodUpdated {
+            method,
+            brand,
+            last4,
+            expiry_month,
+            expiry_year,
+            provider_created_at,
+            ..
+        } => {
+            validate_card_display(last4, *expiry_month, *expiry_year)?;
+            let affected = transaction
+                .execute(Statement::with(
+                    sql::UPSERT_PAYMENT_METHOD,
+                    vec![
+                        ("payment_method_id", SqlValue::Uuid(uuid::Uuid::now_v7())),
+                        ("org_id", SqlValue::Uuid(org_uuid(organization))),
+                        ("provider_method_id", SqlValue::Text(method.0.clone())),
+                        ("brand", SqlValue::Text(brand.as_str().to_owned())),
+                        ("last4", SqlValue::Text(last4.clone())),
+                        ("expiry_month", SqlValue::I64(i64::from(*expiry_month))),
+                        ("expiry_year", SqlValue::I64(i64::from(*expiry_year))),
+                        (
+                            "provider_created_at_ms",
+                            SqlValue::I64(provider_created_at.unix_millis()),
+                        ),
+                        (
+                            "provider_updated_at_ms",
+                            SqlValue::I64(event.occurred_at.unix_millis()),
+                        ),
+                    ],
+                ))
+                .await
+                .map_err(store)?;
+            verify_projection_owner_after_noop(transaction, affected, organization, method).await?;
+        }
+        ProviderEventFacts::PaymentMethodDetached { method } => {
+            let affected = transaction
+                .execute(Statement::with(
+                    sql::DETACH_PAYMENT_METHOD,
+                    vec![
+                        ("org_id", SqlValue::Uuid(org_uuid(organization))),
+                        ("provider_method_id", SqlValue::Text(method.0.clone())),
+                        (
+                            "provider_updated_at_ms",
+                            SqlValue::I64(event.occurred_at.unix_millis()),
+                        ),
+                    ],
+                ))
+                .await
+                .map_err(store)?;
+            verify_projection_owner_after_noop(transaction, affected, organization, method).await?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// A zero-row write is a valid stale event only while the same account still
+/// owns the method. A concurrent cross-account conflict rolls this transaction
+/// back and is quarantined when Stripe redelivers against the now-visible row.
+async fn verify_projection_owner_after_noop(
+    transaction: &mut Transaction<'_>,
+    affected: u64,
+    organization: OrganizationId,
+    method: &aex_payment_contracts::ProviderMethodRef,
+) -> Result<(), IngestError> {
+    if affected > 0 {
+        return Ok(());
+    }
+    let owner = read_organization(
+        transaction,
+        sql::RESOLVE_METHOD_ORGANIZATION,
+        "provider_method_id",
+        &method.0,
+    )
+    .await?;
+    if owner == Some(organization) {
+        Ok(())
+    } else {
+        Err(IngestError::Unavailable(
+            "payment-method ownership changed concurrently".to_owned(),
+        ))
+    }
+}
+
+fn validate_card_display(
+    last4: &str,
+    expiry_month: u8,
+    expiry_year: u16,
+) -> Result<(), IngestError> {
+    if last4.len() != 4 || !last4.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(IngestError::Decode(
+            "payment-method last4 is not four decimal digits".to_owned(),
+        ));
+    }
+    if !(1..=12).contains(&expiry_month) || !(2020..=9999).contains(&expiry_year) {
+        return Err(IngestError::Decode(
+            "payment-method expiry is outside its display bound".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Which durable state an event's facts imply.
@@ -561,7 +909,10 @@ const fn intended_state(facts: &ProviderEventFacts) -> AppliedState {
         ProviderEventFacts::PaymentIntentSucceeded { .. }
         | ProviderEventFacts::ChargeDisputeCreated { .. }
         | ProviderEventFacts::RefundCreated { .. }
-        | ProviderEventFacts::RefundFailed { .. } => AppliedState::Applied,
+        | ProviderEventFacts::RefundFailed { .. }
+        | ProviderEventFacts::PaymentMethodAttached { .. }
+        | ProviderEventFacts::PaymentMethodUpdated { .. }
+        | ProviderEventFacts::PaymentMethodDetached { .. } => AppliedState::Applied,
         // A failed intent grants nothing and reverses nothing: it is recorded so
         // the reconciler can see it, and it posts no transaction.
         ProviderEventFacts::PaymentIntentPaymentFailed { .. } => AppliedState::IgnoredUnsupported,
@@ -585,6 +936,7 @@ async fn claim_event(
     transaction: &mut Transaction<'_>,
     event: &ProviderEventEnvelope,
     applied: AppliedState,
+    organization: Option<OrganizationId>,
 ) -> Result<bool, IngestError> {
     let claimed: Vec<ClaimedRow> = transaction
         .query(Statement::with(
@@ -598,7 +950,7 @@ async fn claim_event(
                 ("object_id", SqlValue::Text(event.object.0.clone())),
                 (
                     "org_id",
-                    SqlValue::Uuid(org_uuid(event.facts.organization())),
+                    organization.map_or(SqlValue::Null, |value| SqlValue::Uuid(org_uuid(value))),
                 ),
                 (
                     "provider_api_version",
@@ -642,6 +994,9 @@ const fn event_type(event: &ProviderEventEnvelope) -> &'static str {
         Kind::ChargeDisputeCreated => "charge.dispute.created",
         Kind::RefundCreated => "refund.created",
         Kind::RefundFailed => "refund.failed",
+        Kind::PaymentMethodAttached => "payment_method.attached",
+        Kind::PaymentMethodUpdated => "payment_method.updated",
+        Kind::PaymentMethodDetached => "payment_method.detached",
     }
 }
 
@@ -809,12 +1164,18 @@ impl Row for ClaimedRow {
 
 #[cfg(test)]
 mod tests {
-    use aex_payment_contracts::{ProviderEventFacts, ProviderObjectRef};
+    use aex_payment_contracts::{
+        ProviderCustomerRef, ProviderEventFacts, ProviderMethodRef, ProviderObjectRef,
+    };
     use aex_wire::PrefixedId as _;
     use aex_wire::ids::OrganizationId;
+    use aex_wire::models::CardBrand;
     use aex_wire::types::Cents;
 
-    use super::{AppliedState, business_key, intended_state, sql, to_microusd};
+    use super::{
+        AppliedState, business_key, intended_state, matching_owner, sql, to_microusd,
+        validate_card_display,
+    };
 
     fn organization() -> OrganizationId {
         OrganizationId::parse("org_01kyw2qa4pew48j2gb1g6gw3rg").expect("a fixture organization")
@@ -827,6 +1188,10 @@ mod tests {
             sql::CLAIM_EVENT,
             sql::READ_EVENT,
             sql::BIND_EVENT_TRANSACTION,
+            sql::RESOLVE_CUSTOMER_ORGANIZATION,
+            sql::RESOLVE_METHOD_ORGANIZATION,
+            sql::UPSERT_PAYMENT_METHOD,
+            sql::DETACH_PAYMENT_METHOD,
             sql::ENSURE_ACCOUNT,
             sql::ENSURE_BALANCE,
             sql::INSERT_TRANSACTION,
@@ -888,6 +1253,51 @@ mod tests {
     }
 
     #[test]
+    fn payment_method_events_apply_a_projection_and_never_build_a_money_key() {
+        let facts = ProviderEventFacts::PaymentMethodAttached {
+            customer: ProviderCustomerRef("cus_1".to_owned()),
+            method: ProviderMethodRef("pm_1".to_owned()),
+            brand: CardBrand::Visa,
+            last4: "4242".to_owned(),
+            expiry_month: 12,
+            expiry_year: 2032,
+            provider_created_at: aex_wire::types::Timestamp::from_unix_millis(1_800_000_000_000)
+                .expect("an instant"),
+        };
+        let event = envelope(facts.clone());
+        assert_eq!(intended_state(&facts), AppliedState::Applied);
+        assert!(
+            business_key(&event)
+                .expect("classification succeeds")
+                .is_none()
+        );
+        assert!(validate_card_display("4242", 12, 2032).is_ok());
+        assert!(validate_card_display("4242424242424242", 12, 2032).is_err());
+        assert!(validate_card_display("4242", 13, 2032).is_err());
+    }
+
+    #[test]
+    fn missing_or_foreign_payment_method_ownership_is_not_adopted() {
+        let owner = organization();
+        let foreign = OrganizationId::parse("org_01kyw2qa4pew48j2gb1g6gw3rh")
+            .expect("a foreign organization");
+        assert_eq!(matching_owner(Some(owner), None), Some(owner));
+        assert_eq!(matching_owner(Some(owner), Some(owner)), Some(owner));
+        assert_eq!(matching_owner(None, None), None);
+        assert_eq!(matching_owner(Some(owner), Some(foreign)), None);
+    }
+
+    #[test]
+    fn provider_time_fences_stale_updates_and_detach_wins_an_equal_timestamp() {
+        assert!(sql::UPSERT_PAYMENT_METHOD.contains("provider_updated_at < EXCLUDED"));
+        assert!(sql::UPSERT_PAYMENT_METHOD.contains("state <> 'detached'"));
+        assert!(sql::DETACH_PAYMENT_METHOD.contains("provider_updated_at <= TIMESTAMPTZ"));
+        let ddl =
+            include_str!("../../../migrations/central/20260814000100_session_plane_billing.sql");
+        assert!(ddl.contains("provider_updated_at timestamptz NOT NULL"));
+    }
+
+    #[test]
     fn cents_widen_exactly_and_refuse_an_amount_outside_the_bound() {
         assert_eq!(
             to_microusd(Cents::new(1_234)).expect("in bound").get(),
@@ -905,7 +1315,9 @@ mod tests {
             intent: ProviderObjectRef("PI_ABCDEFGHIJ".to_owned()),
         };
         let event = envelope(facts);
-        let key = business_key(&event).expect("a valid business key");
+        let key = business_key(&event)
+            .expect("a valid business key")
+            .expect("a money event has a business key");
         assert_eq!(key.as_str(), "topup:pi_abcdefghij");
     }
 
@@ -918,7 +1330,10 @@ mod tests {
         };
         let event = envelope(facts);
         assert_eq!(
-            business_key(&event).expect("a valid key").as_str(),
+            business_key(&event)
+                .expect("a valid key")
+                .expect("a money event has a business key")
+                .as_str(),
             "dispute:ch_abcdefghij:open"
         );
     }

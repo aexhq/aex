@@ -1,4 +1,10 @@
-import { ROUTES, apiErrorFromResponse } from "@aexhq/sdk";
+import {
+  ROUTES,
+  apiErrorFromResponse,
+  type AccountOperationalState,
+  type DashboardBootstrap,
+  type Workspace,
+} from "@aexhq/sdk";
 
 import { readCookie } from "./passthrough";
 import { CLIENT_HEADER, transportFor } from "./upstream";
@@ -12,46 +18,7 @@ import { CLIENT_HEADER, transportFor } from "./upstream";
  * `DASHBOARD_ROUTES` so the generic passthrough cannot serve it a second way.
  */
 
-export interface Organization {
-  readonly id: string;
-  readonly name: string;
-  readonly slug: string;
-  readonly callerRole: string;
-  readonly createdAt: string;
-}
-
-export interface OperationalState {
-  readonly status: "active" | "paused";
-  readonly revision: number;
-  readonly changedAt: string;
-  readonly reason?: string;
-  readonly minimumRestoreCents?: string;
-  readonly retentionFundedUntil?: string;
-  readonly deletionScheduledAt?: string;
-}
-
-export interface Workspace {
-  readonly id: string;
-  readonly name: string;
-  readonly slug: string;
-  readonly organizationId: string;
-  readonly region: string;
-  readonly apiUrl: string;
-  readonly status: "active" | "deleting";
-  readonly operationalState: { readonly organizationId: string; readonly state: OperationalState };
-}
-
-export interface DashboardBootstrap {
-  readonly userId: string;
-  readonly email: string;
-  readonly generatedAt: string;
-  readonly accounts: readonly {
-    readonly organizationId: string;
-    readonly state: OperationalState;
-  }[];
-  readonly organizations: readonly Organization[];
-  readonly workspaces: readonly Workspace[];
-}
+export type { AccountOperationalState, DashboardBootstrap, Workspace };
 
 export type BootstrapResult =
   | { readonly kind: "ready"; readonly bootstrap: DashboardBootstrap }

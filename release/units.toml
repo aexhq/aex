@@ -1,109 +1,14 @@
-# The deployable registry.
+# Session-centered MVP release registry.
 #
-# One row per deployable. `graph verify` reads it, builds the `artifact:` nodes
-# and their input-closure edges from it, and rejects a row that omits its
-# resource shape or names a package, live companion or scenario that does not
-# exist.
-#
-# RESOURCE SHAPES
-#
-# Every row that runs on Lambda or Fargate now carries its shape. Two of them
-# the accepted design pins outright (`brain-mux` stop timeout 120 s and a
-# production floor of two tasks, `session-stream-api` stop timeout 30 s); the rest
-# are derived from the shape a peer doing the same kind of work already carries,
-# and each says which peer and why in the comment above it. The reserved
-# concurrencies sum to 488 in the central plane
-# (50 + 200 + 50 + 40 + 40 + 20 + 40 + 10 + 30 + 2 + 5 + 1)
-# and 242 in the regional plane
-# (40 + 40 + 20 + 5 + 5 + 50 + 20 + 20 + 8 + 4 + 10 + 10 + 10),
-# so one plane reserves 730. Every addend is a row below; no row reserves
-# concurrency that is not counted here, and the standing policy is to add none.
-# The regional total is lower than it once was because `regional-session-api`
-# moved off Lambda onto Fargate and gave its 200 back to the unreserved pool.
-#
-# BOTH PLANES SHARE ONE ACCOUNT, so the figure that has to fit is 1,460, not
-# 730. An account on the default 1,000 limit may reserve only 900, which two
-# planes exceed; the pending increase to ~3,000 (2,900 reservable, because AWS
-# holds 100 back unreserved) is therefore a deploy precondition, not a
-# nice-to-have. 1,460 is 50% of 2,900.
-#
-# One caveat on 730: it counts *rows*. `lambda_units` in Terraform is keyed by
-# function instance, and a mode-fanned row produces several functions that each
-# take this row's `reserved_concurrency`. The deployed per-plane sum is
-# therefore >= 730 and nobody has computed it — `content-lifecycle-worker`
-# alone fans to four modes today. Compute the function-level sum before filing
-# the limit increase.
-#
-# WHAT IS DELIBERATELY MISSING
-#
-# This registry models release artifacts, not only hosted deployment units, so
-# an artifact with no row is absent by decision. Each decision is named here so
-# that absence stays a choice somebody made rather than a gap nobody noticed.
-#
-# MODELLED. `@aexhq/sdk` carries the `sdk` row below: it is published to a
-# package registry and runs on nobody's plane, and the row is what gives its
-# tarball the immutable release identity a consumer pins.
-#
-# DESCOPED. Three artifacts have no row, each for its own reason:
-#
-#   * `site` — descoped for launch. The marketing site carries no API surface
-#     and no compatibility contract, so an immutable release identity for it
-#     would gate launch on something no consumer pins.
-#   * `aex-cli` — descoped for launch. It is not published in the launch scope,
-#     so there is no distribution boundary for a release identity to protect.
-#   * `@aexhq/wire` — descoped and marked `private`. `aex-contract-gen` emits the
-#     SDK's route table and error vocabulary into `packages/sdk/src/generated/`
-#     rather than as an import, so nothing installs this package and it reaches
-#     no registry; its manifest declares no `npm.registry.publish` seam, and a
-#     row here would assert a distribution boundary that does not exist.
-#
-# Re-scoping any of the three means adding its row here — and, for `wire`,
-# dropping `private` from its manifest first — not relaxing this comment. The
-# model and tool catalogues and the three generated bundles remain carried by
-# the hosted units that embed them.
-#
-# The two Stripe TypeScript edges *are* hosted workspace packages —
-# `services/stripe-{command,webhook}-edge`, named explicitly by
-# `aex_workspace_check::collect::NPM_EXPLICIT` rather than by a `workspaces`
-# glob — so they carry rows here and the graph resolves their `package` to an
-# npm node.
-#
-# PUBLISHED PACKAGES
-#
-# A row whose `kind` is `npm-package` publishes to a registry rather than to a
-# plane, so it declares no resource shape, no alarm specification, no
-# configuration environment and no live companion: there is no running resource
-# for any of those to describe. `graph verify` enforces that exemption in both
-# directions — such a row must carry none of them, and its owning npm member
-# must already record why it has no live suite.
+# This is deliberately the complete product graph, not a compatibility graph.
+# Ten rows are placed compute. The guest agent, its single general-purpose
+# image, the dashboard build output, and the published SDK are artifacts but do
+# not add a separately scheduled control-plane service.
 
 schema = "aex.units.v1"
 
-# --- central plane: request APIs ---------------------------------------------
-
-# `central-identity-api`, `central-control-api` and `finance-api` merged here.
-# All three were request-path central edges behind one API Gateway, sharing one
-# route table, one generated dispatcher and one Aurora cluster; the merge removes
-# three process boundaries between code that already agreed.
-#
-# The three rows below are **not** retired by this row. They are the alternative
-# composition, and a plane runs one or the other: `aex_central_http::config`
-# states that relationship as `CentralServiceId::CentralApi.supersedes()` rather
-# than as prose, and its suite proves the merged route set is exactly the union
-# of theirs. Retiring them is a separate step, taken once a plane has actually
-# served from this row.
-#
-# `required_receipts` is the union of the three rows it replaces: two owed
-# `contract` and `finance-api` also owed `property`, and merging the deployables
-# must not quietly retire either.
-#
-# The move off API Gateway removes the only component that ever *verified* a
-# central credential, so this deployable does it in process — see
-# `crates/aex-central-http/src/admission.rs`. It reaches Aurora through the one
-# cluster login the three rows it replaces already use; per-schema PostgreSQL
-# roles are a deferred capability recorded in `references/backlog.md`.
 [[unit]]
-id = "central-api"
+id = "control-api"
 kind = "rust-oci-service"
 plane = "central"
 package = "central-api"
@@ -116,31 +21,10 @@ config_env_namespace = "AEX_CENTRAL_API_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = [
-    "unit",
-    "contract",
-    "property",
-    "lint",
-    "package-integrity",
-]
-alarm_spec = "central-api"
-live_suite = "aex-live-central-api"
+required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
+alarm_spec = "control-api"
+live_suite = "aex-live-control-api"
 
-# Sized from `session-stream-api`, the peer of the same class: a long-lived
-# request-path task whose work is per-request rather than per-task. What this
-# task must hold is the Data API client set, the JSON codec and the route table,
-# which is what 1024/2048 already covered there.
-#
-# The 30 s stop timeout is the drain deadline, and the relationship is a start-up
-# refusal rather than a comment: this process reads its admitted
-# `AEX_CENTRAL_API_DRAIN_DEADLINE_MS` ceiling from
-# `aex_regional_http::drain`, which derives it from this exact number. Raising
-# this value without raising that constant makes the deadline unreachable and the
-# task is killed mid-transaction instead of exiting on its own terms.
-#
-# `desired_count` is the production floor: two tasks. Unlike the three Lambda
-# rows it replaces, this deployable does not scale to zero, and a single task is
-# a single point of failure in front of the whole central plane.
 [unit.fargate]
 cpu = 1024
 memory_mb = 2048
@@ -149,194 +33,25 @@ stop_timeout_s = 30
 port = 8080
 
 [[unit]]
-id = "central-identity-api"
+id = "control-projection-worker"
 kind = "rust-lambda"
 plane = "central"
-package = "central-identity-api"
-bin = "central-identity-api"
+package = "central-control-worker"
+bin = "central-control-worker"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release-lambda"
 form = "zip"
 entrypoint = "bootstrap"
-config_env_namespace = "AEX_CENTRAL_IDENTITY_"
+config_env_namespace = "AEX_CENTRAL_CONTROL_WORKER_"
 config_schema_version = 1
-health_path = "/internal/healthz"
-ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
-alarm_spec = "central-identity-api"
-live_suite = "aex-live-central-identity-api"
+required_receipts = ["unit", "lint", "package-integrity"]
+alarm_spec = "control-projection-worker"
+live_suite = "aex-live-control-projection-worker"
 
-# Request-scaled and scale-to-zero. 512 MiB is the smallest allocation that
-# still gives the Ed25519 and HMAC work a whole vCPU share; the 15 s timeout is
-# the request deadline plus one Data API statement deadline, so a hung ceremony
-# is killed by Lambda rather than by a client. The reservation is separate from
-# `central-authz` on purpose: a sign-in flood must never starve the assertion
-# path, which every regional request depends on.
 [unit.lambda]
 memory_mb = 512
-timeout_s = 15
-reserved_concurrency = 50
-
-[[unit]]
-id = "central-authz"
-kind = "rust-lambda"
-plane = "central"
-package = "central-authz"
-bin = "central-authz"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_CENTRAL_AUTHZ_"
-config_schema_version = 1
-required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
-alarm_spec = "central-authz"
-live_suite = "aex-live-central-authz"
-
-# The hottest path in the platform: every regional request that lacks a fresh
-# assertion lands here. 1024 MiB buys a full vCPU, which keeps the local
-# signature under a millisecond, and the 5 s timeout is one Data API statement
-# deadline — an assertion issue that needs longer is a failure, not a slow
-# success. The reservation covers the Area-10 refresh table's synchronized
-# burst (500 independent credentials) with headroom, and it is reserved rather
-# than shared so a control-plane incident cannot take authorization with it.
-[unit.lambda]
-memory_mb = 1024
-timeout_s = 5
-reserved_concurrency = 200
-
-[[unit]]
-id = "central-control-api"
-kind = "rust-lambda"
-plane = "central"
-package = "central-control-api"
-bin = "central-control-api"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_CENTRAL_CONTROL_"
-config_schema_version = 1
-health_path = "/internal/healthz"
-ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
-alarm_spec = "central-control-api"
-live_suite = "aex-live-central-control-api"
-
-# Request-scaled and scale-to-zero. The 30 s timeout is the one place a central
-# request legitimately waits on a cross-region effect: T1, the regional
-# provision call and T2 in sequence. Its own reservation keeps a burst of
-# workspace creations away from the authorization budget.
-[unit.lambda]
-memory_mb = 512
-timeout_s = 30
-reserved_concurrency = 50
-
-[[unit]]
-id = "finance-api"
-kind = "rust-lambda"
-plane = "central"
-package = "finance-api"
-bin = "finance-api"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_FINANCE_API_"
-config_schema_version = 1
-health_path = "/internal/healthz"
-ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
-alarm_spec = "finance-api"
-live_suite = "aex-live-finance-api"
-
-# Request-scaled and scale-to-zero. 512 MiB is the Data API client plus one
-# bounded page; 15 s covers a serializable transaction plus one synchronous
-# command-edge invoke. The reservation is capped below the ingest lane so a read
-# burst can never starve Stripe redelivery (F-29).
-[unit.lambda]
-memory_mb = 512
-timeout_s = 15
-reserved_concurrency = 40
-
-[[unit]]
-id = "finance-ingest"
-kind = "rust-lambda"
-plane = "central"
-package = "finance-ingest"
-bin = "finance-ingest"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_FINANCE_INGEST_"
-config_schema_version = 1
-required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
-alarm_spec = "finance-ingest"
-live_suite = "aex-live-finance-ingest"
-
-# Derived from `stripe-webhook-edge`, its only caller, because the pairing is
-# strictly 1:1: every admitted webhook makes exactly one synchronous
-# `RequestResponse` invoke here. Its own reservation, deliberately — a settlement
-# backlog must never make Stripe redelivery the customer's problem (F-29).
-#
-# The reservation MATCHES the caller's 40 and must not drift below it. At 20
-# behind a caller at 40, invocations 21-40 are throttled; a throttle on a
-# `RequestResponse` invoke is an immediate error, the edge returns 500, and
-# Stripe redelivers — the reservation that exists to prevent redelivery was
-# causing it. Matching exactly makes the pair saturate together.
-#
-# 512 MiB is the family floor, bought for the vCPU share the serializable
-# transaction's retry window wants and not for payload headroom: the resident
-# set is one ~2 KiB normalized envelope and at most three postings. 10 s is one
-# 6 s inbox transaction plus runtime and flush margin, well inside the caller's
-# 30 s deadline. A wrong `provider_api_version` takes an early return into
-# quarantine, so at most one 6 s transaction runs per invocation — the
-# quarantine-then-apply path that would need 12 s does not exist.
-[unit.lambda]
-memory_mb = 512
-timeout_s = 10
-reserved_concurrency = 40
-
-# --- central plane: the two TypeScript edges ---------------------------------
-#
-# `P-AUTH-EDGE` keeps these two in TypeScript: they speak the official pinned
-# Stripe protocol and nothing else, so the vendor's own client is the smaller
-# risk. Their `package` is an npm member, which is why `GraphInputs::package_node`
-# resolves a unit's owning package through both namespaces.
-
-[[unit]]
-id = "stripe-command-edge"
-kind = "ts-lambda"
-plane = "central"
-package = "@aexhq/stripe-command-edge"
-# A bundle is compiled for no triple. `none` is the honest recorded target; the
-# arm64 the function is created with is Terraform's decision, not the bytes'.
-target = "none"
-profile = "release"
-form = "zip"
-entrypoint = "handler.js"
-config_env_namespace = "AEX_STRIPE_COMMAND_"
-config_schema_version = 1
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
-alarm_spec = "stripe-command-edge"
-live_suite = "aex-live-stripe-command-edge"
-
-# It executes one already-admitted effect identity with the idempotency key
-# `finance-api` prepared, so the work is one outbound Stripe call. 512 MiB is
-# the family floor and the 30 s timeout is `finance-api`'s own request deadline:
-# an edge that outlived its caller would turn a resolved outcome into an unknown
-# one for `finance-reconcile` to chase.
-#
-# The reservation stays 20 even though its caller `finance-api` reserves 40, and
-# the asymmetry is deliberate rather than an oversight. Unlike the
-# `stripe-webhook-edge` -> `finance-ingest` pair, this one is not 1:1: only the
-# top-up and portal routes reach the command edge, so the caller's reservation is
-# not a lower bound on the callee's.
-[unit.lambda]
-memory_mb = 512
-timeout_s = 30
-reserved_concurrency = 20
+timeout_s = 120
+reserved_concurrency = 10
 
 [[unit]]
 id = "stripe-webhook-edge"
@@ -353,302 +68,34 @@ required_receipts = ["unit", "contract", "lint", "package-integrity"]
 alarm_spec = "stripe-webhook-edge"
 live_suite = "aex-live-stripe-webhook-edge"
 
-# The public edge: verify a raw signature, normalize, hand off durably to
-# `finance-ingest`, return 2xx. 512 MiB holds one webhook body, and the 30 s
-# timeout is well inside Stripe's own delivery deadline, so a slow handoff
-# becomes a redelivery rather than a duplicate. The reservation is the largest
-# in the family because this is the only unit here whose arrival rate is set by
-# somebody else, and a throttled webhook is a webhook Stripe retries.
 [unit.lambda]
 memory_mb = 512
 timeout_s = 30
 reserved_concurrency = 40
 
-# --- central plane: workers ---------------------------------------------------
-
 [[unit]]
-id = "central-control-worker"
+id = "billing-worker"
 kind = "rust-lambda"
 plane = "central"
-package = "central-control-worker"
-bin = "central-control-worker"
+package = "finance-ingest"
+bin = "finance-ingest"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release-lambda"
 form = "zip"
 entrypoint = "bootstrap"
-config_env_namespace = "AEX_CENTRAL_CONTROL_WORKER_"
+config_env_namespace = "AEX_BILLING_WORKER_"
 config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity"]
-alarm_spec = "central-control-worker"
-live_suite = "aex-live-central-control-worker"
+required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
+alarm_spec = "billing-worker"
+live_suite = "aex-live-billing-worker"
 
-# Queue- and schedule-driven. The 120 s timeout covers one FIFO batch of
-# regional deletions plus its audit writes; the low reservation is deliberate,
-# because reconciliation must never be able to consume the authorization or
-# control budget it exists to repair.
-[unit.lambda]
-memory_mb = 512
-timeout_s = 120
-reserved_concurrency = 10
-
-[[unit]]
-id = "finance-settlement-worker"
-kind = "rust-lambda"
-plane = "central"
-package = "finance-settlement-worker"
-bin = "finance-settlement-worker"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_FINANCE_SETTLEMENT_"
-config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
-alarm_spec = "finance-settlement-worker"
-live_suite = "aex-live-finance-settlement-worker"
-
-# FIFO backlog-scaled, one message group per organization, so SQS serializes one
-# account and parallelises across accounts.
-#
-# 90 s is derived from the retry budget rather than from a peer, and the previous
-# 60 s was a correctness defect: one initial attempt plus three serialization
-# retries, each with the deployed 20 s transaction deadline, is 80 s of statement
-# budget. Against a 60 s function timeout a group that used its full retry budget
-# was killed by Lambda before the last retry could commit, and because failures
-# are reported per group the whole group was redelivered — the retry budget that
-# exists to absorb serialization conflicts instead guaranteed a redelivery under
-# exactly the contention it was built for. 90 s covers 4 x 20 s plus 10 s of
-# runtime margin, and the 1800 s queue visibility timeout stays 20x the function
-# timeout, so nothing is redelivered while it is still executing.
-#
-# 1024 MiB is not a payload bound — the worst-case batch is 10 records and the
-# Data API caps a decoded result at 768 KiB — it buys roughly a full vCPU share
-# for cold-start init and JSON decode. A later cost pass could take this row to
-# 512 and lose nothing measurable on a round-trip-bound workload; recorded so
-# that trade is visible rather than discovered.
-#
-# The reservation bounds concurrent Aurora writers rather than the queue, and it
-# is also the event-source mapping's `maximum_concurrency` by construction, so
-# the two cannot be set independently.
-[unit.lambda]
-memory_mb = 1024
-timeout_s = 90
-reserved_concurrency = 30
-
-[[unit]]
-id = "finance-reconcile"
-kind = "rust-lambda"
-plane = "central"
-package = "finance-reconcile"
-bin = "finance-reconcile"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_FINANCE_RECONCILE_"
-config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
-alarm_spec = "finance-reconcile"
-live_suite = "aex-live-finance-reconcile"
-
-# One five-minute EventBridge sweep. There is no hourly deep sweep: this comment
-# claimed one until 2026-08-10, and a grep of both composition roots' schedules
-# finds exactly one `finance-reconcile` entry.
-#
-# Reserved concurrency 2 by plan: the sweeps report and fence, and a reconciler
-# that can outscale the authority it repairs is a second incident. 2 is not
-# slack — the timeout equals the schedule interval on purpose, so a sweep that
-# runs to its deadline is still running when its successor fires, and 2 is
-# exactly that overlap. It must not be raised: the keyset cursor is a single
-# global row with no lease, owner or expiry, so a third concurrent sweep re-reads
-# the identical page and loses every revision fence. Concurrency here is
-# duplicate work, not throughput. `tests/resource_envelope.rs` also pins it
-# strictly below `finance-api`, `finance-ingest` and `finance-settlement-worker`.
-#
-# 1024 MiB is not sized to payload and should not be: the Data API budget caps a
-# page at ~768 KiB and two 500-row pages at ~1.5 MiB whatever the ledger grows
-# to. It buys the vCPU share for up to a thousand sequential round-trips.
-#
-# KNOWN DEFECT, not fixable by any number here: the sweep loop awaits up to 500
-# serial `RequestResponse` invokes of an edge whose own timeout is 30 s, with no
-# per-call budget derived from the remaining Lambda deadline. `page_limit` bounds
-# the result set, not the work, so the sweep blows this timeout at a few hundred
-# unresolved effects. The fix is the `DEADLINE_SAFETY_MARGIN` pattern
-# `usage-receipt-dispatcher` already uses. Owned by central-finance.
 [unit.lambda]
 memory_mb = 1024
 timeout_s = 300
-reserved_concurrency = 2
+reserved_concurrency = 40
 
 [[unit]]
-id = "usage-receipt-dispatcher"
-kind = "rust-lambda"
-plane = "central"
-package = "usage-receipt-dispatcher"
-bin = "usage-receipt-dispatcher"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_USAGE_RECEIPT_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity"]
-alarm_spec = "usage-receipt-dispatcher"
-live_suite = "aex-live-usage-receipt-dispatcher"
-
-# Outbox-backlog-scaled and scale-to-zero. Derived from the outbox read itself
-# rather than from a peer, because the read decides what concurrency can buy.
-#
-# The reservation is 5, down from 10, and this is a correctness argument rather
-# than a cost one. The outbox `SELECT` takes no lease and no
-# `FOR UPDATE SKIP LOCKED`; only the follow-up `UPDATE` is conditional. So N
-# concurrent invocations read the same page and publish the same receipts, one
-# wins the update, and the rest are duplicate SQS traffic and duplicate Aurora
-# write contention. Concurrency above one buys ZERO additional drain throughput
-# and multiplies duplicates linearly, and the one-minute schedule already
-# guarantees a fresh drain every tick.
-#
-# The floor is 2, not 1. This unit consumes a queue, the event-source mapping's
-# `maximum_concurrency` is set from this field, and AWS's minimum for that field
-# is 2 — anything below 2 fails `terraform plan` rather than merely throttling.
-# 5 leaves the mapping room to deliver a burst without becoming the throttle
-# itself while halving the duplicate fan-out. `tests/resource_envelope.rs` pins
-# it strictly below `finance-settlement-worker`, the lane that produces the
-# receipts this one replays.
-#
-# 512 MiB is the family floor for a Data-API-bound worker: the resident set is at
-# most 30 `PendingReceipt` rows (3 categories x a page of 10), page-capped at
-# 768 KiB by the transport. 60 s must stay at or below the 60 s schedule tick so
-# a slow drain never overlaps its successor, and the in-process
-# `DEADLINE_SAFETY_MARGIN` already converts a long drain into an honest truncated
-# report instead of a kill.
-[unit.lambda]
-memory_mb = 512
-timeout_s = 60
-reserved_concurrency = 5
-
-[[unit]]
-id = "provider-cost-reconciler"
-kind = "rust-lambda"
-plane = "central"
-package = "provider-cost-reconciler"
-bin = "provider-cost-reconciler"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_PROVIDER_COST_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity"]
-alarm_spec = "provider-cost-reconciler"
-live_suite = "aex-live-provider-cost-reconciler"
-
-# Daily schedule, one task at a time. Derived from the CUR export scan's own
-# arithmetic, not from a peer.
-#
-# THIS SHAPE IS ONLY CORRECT AGAINST A 16 MiB SCAN BUDGET.
-# `AEX_PROVIDER_COST_MAX_SCAN_BYTES` is bound to 16,777,216 in both plane
-# bindings and the two numbers move together. The reason is the insert loop: the
-# parsed rows are written one Data API round-trip at a time, serially, each its
-# own implicit transaction, so at ~10 ms per round-trip a 900 s timeout buys
-# ~90,000 rows — about 11.7 MiB of export at the fixture's ~130-byte lines.
-# 16 MiB is the first round number safely above that.
-#
-# The budget was 512 MiB until 2026-08-10, which was wrong by 32x in the
-# dangerous direction: the object is read wholesale into memory twice (the raw
-# body is still live when the `String` copy exists), so a maximum-budget export
-# peaked at ~1 GiB of raw body plus parsed rows against this 2048 MiB allocation
-# and would have OOMed — while the timeout could never have reached more than
-# ~2% of it. At 16 MiB peak resident is ~58 MiB inside 2048 MiB, a 35x margin,
-# which is what makes the OOM impossible rather than merely unlikely.
-#
-# Memory stays 2048 (~1.2 vCPU) for the parse and the JSON rendering of the
-# insert statements; it was never the payload bound. Raising it to cover 512 MiB
-# instead would provision for rows the timeout can never insert, which is exactly
-# how the mismatch arose. Timeout 900 s is the Lambda ceiling, so there is
-# nowhere left to grow: if the export outgrows 16 MiB the answer is batching the
-# insert loop and re-deriving this row, not a bigger timeout.
-#
-# Reserved concurrency 1 makes a duplicate schedule a no-op rather than a second
-# scan, and `tests/resource_envelope.rs` pins it to exactly 1. Legal only because
-# this unit consumes no queue: AWS's minimum event-source `maximum_concurrency`
-# is 2 and that field is set from this one, so giving this unit a queue would
-# fail `terraform plan` rather than merely throttle it.
-[unit.lambda]
-memory_mb = 2048
-timeout_s = 900
-reserved_concurrency = 1
-
-[[unit]]
-id = "central-schema-admin"
-kind = "rust-oci-task"
-plane = "central"
-package = "central-schema-admin"
-bin = "central-schema-admin"
-extra_inputs = ["bundle:migration"]
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release"
-form = "oci-image"
-base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
-config_env_namespace = "AEX_SCHEMA_ADMIN_"
-config_schema_version = 1
-required_receipts = ["unit", "integration", "lint", "package-integrity"]
-alarm_spec = "central-schema-admin"
-live_suite = "aex-live-central-schema-admin"
-
-# A one-shot task the release engine runs once per release, so `desired_count`
-# is 0: nothing is long-lived, and `infra/modules/ecs-task-oneshot` registers a
-# task definition with no service behind it. `desired_count = 0` and `port = 0`
-# are not choices — `graph verify` rejects anything else for `rust-oci-task`.
-#
-# `regional-secret-key-admin`'s 512/1024 is the right size, and re-deriving from
-# this unit's own work agrees. Unlike every other central unit this one opens a
-# direct PostgreSQL wire connection rather than using the Data API, and the whole
-# working set is the migration bundle EMBEDDED IN THE BINARY at compile time
-# (measured: 14 files, 70,006 bytes; largest single file 15,888 bytes), one
-# connection with its TLS stack, and one statement's result — the expensive
-# subcommand returns single scalars, roughly a thousand sequential trivially
-# cheap round-trips with no parallelism anywhere. 1024 MiB is ~14,000x the
-# bundle. 512 cpu is 0.5 vCPU and buys the TLS handshake and statement rendering;
-# nothing on the critical path is CPU-bound, so raising it would shorten nothing.
-#
-# The stop timeout is the family's longest, because the one thing that must never
-# be killed mid-flight is a migration inside its transaction. 120 is also the
-# module's hard ceiling and is externally pinned: the release launcher fails the
-# run if the registered task definition's container stop timeout is not 120.
-#
-# KNOWN BOUND MISMATCH: the launcher runs `migrate` with a 900,000 ms statement
-# timeout against this 120 s stop timeout, which cannot be raised. A statement
-# running at its full declared budget is SIGKILLed ~13 minutes before it could
-# finish. Either the statement timeout comes down to something a 120 s drain can
-# protect, or the launcher is honest that a long migration is not drain-protected.
-# Owned by the central-finance / schema stream.
-[unit.fargate]
-cpu = 512
-memory_mb = 1024
-desired_count = 0
-stop_timeout_s = 120
-port = 0
-
-# --- regional plane: request APIs ---------------------------------------------
-
-# `regional-session-api` and `regional-stream` merged here. Both were long-lived
-# regional request-path edges on the same plane with the same task shape, the
-# same stop timeout, the same `central-authz` dependency and the same authority
-# tables, and each carried a production floor of two tasks. One deployable makes
-# that floor two tasks instead of four.
-#
-# The merge is a deployment change and not a contract change: `RouteOwner::SessionApi`
-# and `RouteOwner::Stream` both survive, the generated `servingArtifact` strings
-# are untouched, and the two route sets are mounted separately and joined with
-# `Router::merge` over URL prefixes that were already disjoint. Splitting them
-# back apart needs a new unit row and nothing else.
-#
-# `required_receipts` is the union of the two rows it replaces: the session half
-# owed `conformance` and the stream half owed `property`, and merging the
-# deployables must not quietly retire either.
-[[unit]]
-id = "session-stream-api"
+id = "session-api"
 kind = "rust-oci-service"
 plane = "regional"
 package = "session-stream-api"
@@ -657,32 +104,14 @@ target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release"
 form = "oci-image"
 base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
-config_env_namespace = "AEX_REGIONAL_SESSION_STREAM_"
+config_env_namespace = "AEX_SESSION_API_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = [
-    "unit",
-    "contract",
-    "conformance",
-    "property",
-    "lint",
-    "package-integrity",
-]
-alarm_spec = "session-stream-api"
-live_suite = "aex-live-session-stream-api"
+required_receipts = ["unit", "contract", "conformance", "property", "lint", "package-integrity"]
+alarm_spec = "session-api"
+live_suite = "aex-live-session-api"
 
-# The one long-lived multi-socket process besides the mux, now also carrying the
-# finite API. The 61 generated unary routes and the one DynamoDB transaction per
-# mutation are per-request work rather than per-task work, so what the task must
-# hold is the transaction compiler, the JSON codec and the socket buffers — which
-# is what this 1024/2048 shape already covered for the stream alone.
-#
-# The 30 s stop timeout is the drain deadline, and that relationship is now a
-# start-up refusal rather than a comment: `aex_regional_http::drain` derives the
-# admitted `AEX_DRAIN_DEADLINE_MS` ceiling from this number, so a deadline that
-# could never fire before SIGKILL refuses the process instead of being silently
-# truncated. Raising this value without raising that constant is a build failure.
 [unit.fargate]
 cpu = 1024
 memory_mb = 2048
@@ -690,265 +119,26 @@ desired_count = 2
 stop_timeout_s = 30
 port = 8080
 
-# --- regional plane: workers --------------------------------------------------
-
 [[unit]]
-id = "regional-capacity-controller"
+id = "file-ingest-worker"
 kind = "rust-lambda"
 plane = "regional"
-package = "regional-capacity-controller"
-bin = "regional-capacity-controller"
+package = "file-ingest-worker"
+bin = "file-ingest-worker"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release-lambda"
 form = "zip"
 entrypoint = "bootstrap"
-config_env_namespace = "AEX_CAPACITY_"
-config_schema_version = 1
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
-alarm_spec = "regional-capacity-controller"
-live_suite = "aex-live-regional-capacity-controller"
-
-# One invocation strongly reads one small authority row and commits one bounded
-# 16-action cross-table transaction. 512 MiB gives the SDK a whole vCPU share;
-# 15 s covers the read, transaction and one mandatory ambiguity-resolution read.
-# Commands are rare control traffic, and revision/fence conditions serialize a
-# workspace, so five concurrent invocations absorb provisioning/support bursts
-# without letting a bad caller consume the regional request reservation.
-[unit.lambda]
-memory_mb = 512
-timeout_s = 15
-reserved_concurrency = 5
-
-[[unit]]
-id = "regional-control"
-kind = "rust-lambda"
-plane = "regional"
-package = "regional-control"
-bin = "regional-control"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_REGIONAL_CONTROL_"
-config_schema_version = 1
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
-alarm_spec = "regional-control"
-live_suite = "aex-live-regional-control"
-
-# Direct-invoke workspace control reads and conditionally fences one session
-# authority row. Keep it isolated from the regional request path while the
-# central API fans out control-plane requests across all launch regions.
-[unit.lambda]
-memory_mb = 512
-timeout_s = 15
-reserved_concurrency = 5
-
-[[unit]]
-id = "session-operation-worker"
-kind = "rust-lambda"
-plane = "regional"
-package = "session-operation-worker"
-bin = "session-operation-worker"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_SESSION_OPERATION_"
+config_env_namespace = "AEX_FILE_INGEST_"
 config_schema_version = 1
 required_receipts = ["unit", "property", "lint", "package-integrity"]
-alarm_spec = "session-operation-worker"
-live_suite = "aex-live-session-operation-worker"
+alarm_spec = "file-ingest-worker"
+live_suite = "aex-live-session-api"
 
-# One bounded step per invocation plus the 60-second claim lease, so the timeout
-# is the step deadline with headroom rather than a whole operation.
-[unit.lambda]
-memory_mb = 1024
-timeout_s = 120
-reserved_concurrency = 50
-
-[[unit]]
-id = "runtime-control-worker"
-kind = "rust-lambda"
-plane = "regional"
-package = "runtime-control-worker"
-bin = "runtime-control-worker"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_RUNTIME_CONTROL_"
-config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
-alarm_spec = "runtime-control-worker"
-live_suite = "aex-live-runtime-control-worker"
-
-# The only ordinary MicroVM control role, so it carries the regional worker
-# family's 1024 MiB and `session-operation-worker`'s 120 s: one due-index page of
-# suspend, resume and terminate calls plus the usage receipt each closed interval
-# produces, inside one invocation, so an interval is never left unbilled by a
-# timeout. The reservation is deliberately above the scheduled reconcilers and
-# well below the session API: a burst of eight-hour expiries must clear inside
-# one schedule tick, and a stuck reaper must not be able to hold the pool the
-# session path shares with it.
-[unit.lambda]
-memory_mb = 1024
-timeout_s = 120
-reserved_concurrency = 20
-
-[[unit]]
-id = "content-lifecycle-worker"
-kind = "rust-lambda"
-plane = "regional"
-package = "content-lifecycle-worker"
-bin = "content-lifecycle-worker"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_CONTENT_LIFECYCLE_"
-config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
-alarm_spec = "content-lifecycle-worker"
-live_suite = "aex-live-content-lifecycle-worker"
-
-# The scheduled roles page; the delete role handles one key per step. The
-# timeout covers a mark or sweep page, and reserved concurrency bounds how much
-# of the content authority the sweep can occupy at once.
 [unit.lambda]
 memory_mb = 1024
 timeout_s = 300
 reserved_concurrency = 20
-
-[[unit]]
-id = "regional-secret-key-admin"
-kind = "rust-oci-task"
-plane = "regional"
-package = "regional-secret-key-admin"
-bin = "regional-secret-key-admin"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release"
-form = "oci-image"
-base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
-config_env_namespace = "AEX_SECRET_KEY_ADMIN_"
-config_schema_version = 1
-required_receipts = ["unit", "integration", "lint", "package-integrity"]
-alarm_spec = "regional-secret-key-admin"
-live_suite = "aex-live-regional-secret-key-admin"
-
-# A one-shot task, not a service: no port, and the stop timeout only has to
-# cover the conditional rotation it is in the middle of.
-[unit.fargate]
-cpu = 512
-memory_mb = 1024
-desired_count = 0
-stop_timeout_s = 60
-port = 0
-
-[[unit]]
-id = "usage-storage-worker"
-kind = "rust-lambda"
-plane = "regional"
-package = "usage-storage-worker"
-bin = "usage-storage-worker"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_USAGE_STORAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
-alarm_spec = "usage-storage-worker"
-live_suite = "aex-live-usage-storage-worker"
-
-# Shared with `usage-compute-worker` and `usage-transfer-worker`: the three carry
-# one shape because they run one code path over three meters. The shape is not
-# read off a peer, because the load profile is bimodal and one number has to
-# serve both halves.
-#
-#   Ingress / Receipt / Stream — at most 10 records held, per-record work.
-#   Sweep                      — up to 3,200 rows: 16 outbox shards x a 200-row
-#                                page, then 3,200 sequential `SendMessage`.
-#
-# 1024 MiB is paid for by the sweep, which is the only mode that holds a large
-# resident set; the three small modes would be happy at 512, and one function
-# serves all four, so the larger mode sets the number. 300 s is the right order
-# for 3,200 sequential sends (~48 s at 15 ms each, ~288 s at 90 ms).
-#
-# Reserved concurrency 10 is correct FOR THE INGRESS MODE, where admission is a
-# per-record conditional write and parallelism is real, and it is also the
-# ingress mapping's `maximum_concurrency`. It is wrong for the sweep, which wants
-# exactly one runner — two concurrent sweeps read the same 16 partitions and
-# republish the same rows. Since one function serves both, the sweep's
-# singleton-ness comes from its schedule firing once, NOT from this number. Do
-# not "fix" the 10 to protect the sweep; it would starve ingress and still not
-# make the sweep a singleton.
-#
-# KNOWN DEFECT: the sweep never consults the Lambda deadline, unlike
-# `usage-receipt-dispatcher` and its `DEADLINE_SAFETY_MARGIN`. A long sweep is
-# killed mid-shard and the later shards are silently never swept. Port the
-# margin pattern into the shared worker. Owned by observations-usage.
-[unit.lambda]
-memory_mb = 1024
-timeout_s = 300
-reserved_concurrency = 10
-
-[[unit]]
-id = "usage-compute-worker"
-kind = "rust-lambda"
-plane = "regional"
-package = "usage-compute-worker"
-bin = "usage-compute-worker"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_USAGE_COMPUTE_"
-config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
-alarm_spec = "usage-compute-worker"
-live_suite = "aex-live-usage-compute-worker"
-
-# Same shape and same derivation as `usage-storage-worker` above: one code path
-# over three meters, sized by the sweep mode's 3,200-row working set rather than
-# by the three small modes, with the reservation set for the ingress mode.
-[unit.lambda]
-memory_mb = 1024
-timeout_s = 300
-reserved_concurrency = 10
-
-[[unit]]
-id = "usage-transfer-worker"
-kind = "rust-lambda"
-plane = "regional"
-package = "usage-transfer-worker"
-bin = "usage-transfer-worker"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_USAGE_TRANSFER_"
-config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
-alarm_spec = "usage-transfer-worker"
-live_suite = "aex-live-usage-transfer-worker"
-
-# Same shape and same derivation as `usage-storage-worker` above.
-#
-# (This block used to sit after the `runtime plane` banner below. TOML still
-# attached it to this row, so it was correct, but it read as though it belonged
-# to `brain-mux`. Keep the shape above the banner.)
-#
-# KNOWN CONTRADICTION specific to this one: it has an ingress queue and a
-# consumer binding but NO `Ingress` code path — its event classifier maps any
-# SQS batch straight to `Receipt`, so an ingress message would classify as a
-# receipt and fail to decode. Either the queue goes or the mode gets written.
-# Owned by observations-usage.
-[unit.lambda]
-memory_mb = 1024
-timeout_s = 300
-reserved_concurrency = 10
-
-# --- runtime plane -------------------------------------------------------------
 
 [[unit]]
 id = "brain-mux"
@@ -968,20 +158,79 @@ required_receipts = ["unit", "property", "contract", "lint", "package-integrity"
 alarm_spec = "brain-mux"
 live_suite = "aex-live-brain-mux"
 
-# `desired_count` is the production floor: two tasks. Session state is not held
-# by the task — the journal, the lease/fence and the work and wake state are the
-# authority — so a second task takes work it can serve, and stable task affinity
-# is an accelerator over that authority rather than a correctness condition.
-# Development runs exactly one task; the plane-specific count belongs to the
-# deployment root, and `infra/modules/ecs-service` validates it per plane, so a
-# root that hands the production floor to a development plane is refused rather
-# than deployed. The 120 s stop timeout is the drain deadline the design pins.
 [unit.fargate]
 cpu = 2048
 memory_mb = 4096
 desired_count = 2
 stop_timeout_s = 120
 port = 8080
+
+[[unit]]
+id = "tool-mux"
+kind = "rust-oci-service"
+plane = "runtime"
+package = "tool-mux"
+bin = "tool-mux"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release"
+form = "oci-image"
+base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
+config_env_namespace = "AEX_TOOL_MUX_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
+alarm_spec = "tool-mux"
+live_suite = "aex-live-tool-mux"
+
+[unit.fargate]
+cpu = 1024
+memory_mb = 2048
+desired_count = 2
+stop_timeout_s = 120
+port = 8080
+
+[[unit]]
+id = "runtime-control-worker"
+kind = "rust-lambda"
+plane = "regional"
+package = "runtime-control-worker"
+bin = "runtime-control-worker"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_RUNTIME_CONTROL_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "package-integrity"]
+alarm_spec = "runtime-control-worker"
+live_suite = "aex-live-runtime-control-worker"
+
+[unit.lambda]
+memory_mb = 1024
+timeout_s = 120
+reserved_concurrency = 20
+
+[[unit]]
+id = "session-maintenance-worker"
+kind = "rust-lambda"
+plane = "regional"
+package = "session-operation-worker"
+bin = "session-operation-worker"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_SESSION_MAINTENANCE_"
+config_schema_version = 1
+required_receipts = ["unit", "property", "lint", "package-integrity"]
+alarm_spec = "session-maintenance-worker"
+live_suite = "aex-live-session-maintenance-worker"
+
+[unit.lambda]
+memory_mb = 1024
+timeout_s = 300
+reserved_concurrency = 20
 
 [[unit]]
 id = "hands-agent"
@@ -999,49 +248,7 @@ alarm_spec = "hands-agent"
 live_suite = "aex-live-hands-agent"
 
 [[unit]]
-id = "hands-image-512mb"
-kind = "microvm-image"
-plane = "runtime"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
-alarm_spec = "hands-image"
-live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "512mb"
-minimum_memory_mib = 512
-browser = false
-
-[[unit]]
-id = "hands-image-1gb"
-kind = "microvm-image"
-plane = "runtime"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
-alarm_spec = "hands-image"
-live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "1gb"
-minimum_memory_mib = 1024
-browser = false
-
-[[unit]]
-id = "hands-image-2gb"
+id = "hands-image"
 kind = "microvm-image"
 plane = "runtime"
 package = "hands-image"
@@ -1062,50 +269,6 @@ minimum_memory_mib = 2048
 browser = false
 
 [[unit]]
-id = "hands-image-4gb"
-kind = "microvm-image"
-plane = "runtime"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
-alarm_spec = "hands-image"
-live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "4gb"
-minimum_memory_mib = 4096
-browser = false
-
-[[unit]]
-id = "hands-image-8gb"
-kind = "microvm-image"
-plane = "runtime"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
-alarm_spec = "hands-image"
-live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "8gb"
-minimum_memory_mib = 8192
-browser = false
-
-# --- web plane: Vercel Build Output API --------------------------------------
-
-[[unit]]
 id = "dashboard"
 kind = "build-output"
 plane = "web"
@@ -1113,32 +276,18 @@ package = "@aexhq/dashboard"
 target = "none"
 profile = "release"
 form = "tar.gz"
-# Dashboard configuration is runtime-only and intentionally spans the shared
-# public AEX namespace rather than one AWS service namespace. Plane values are
-# private binding data and never shape these public build bytes.
 config_env_namespace = "AEX_"
 config_schema_version = 1
 required_receipts = ["unit", "lint"]
 live_suite = "aex-live-dashboard"
 
-# --- public plane: published packages -----------------------------------------
-
 [[unit]]
 id = "sdk"
 kind = "npm-package"
 plane = "public"
-# The published name. A unit id matches `^[a-z][a-z0-9-]{2,63}$` and can never
-# be a scoped npm name, so this field is the only place the mapping exists, and
-# `graph verify` requires it to be a publishable npm workspace member living in
-# `packages/<id>` — the directory the recipe packs.
 package = "@aexhq/sdk"
-# A published bundle is compiled for no triple, exactly as the two TypeScript
-# edges are: the package runs on whatever Node or Bun installed it.
 target = "none"
 profile = "release"
 form = "npm-tarball"
-# The client options shape, not a deployment environment: the package reads no
-# process environment at all, which is why no `config_env_namespace` is
-# declared.
 config_schema_version = 1
 required_receipts = ["unit", "contract", "lint", "package-integrity"]

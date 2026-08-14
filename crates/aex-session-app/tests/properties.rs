@@ -31,6 +31,7 @@ fn send_message() -> SendMessage {
     let request = MessageSendRequest {
         deadline: None,
         max_spend_cents: None,
+        response_format: None,
         text: "hello".to_owned(),
     };
     SendMessage {
@@ -354,6 +355,7 @@ async fn omitted_and_explicit_message_bounds_are_preserved_in_every_authority() 
     let request = MessageSendRequest {
         deadline: Some(moment(5_000)),
         max_spend_cents: Some(aex_wire::types::Cents::new(50_000)),
+        response_format: None,
         text: "explicit".to_owned(),
     };
     let explicit = SendMessage {
@@ -390,6 +392,7 @@ async fn message_text_is_bounded_by_utf8_bytes_below_the_journal_ceiling() {
     let admitted_request = MessageSendRequest {
         deadline: None,
         max_spend_cents: None,
+        response_format: None,
         text: "é".repeat(12_288),
     };
     assert_eq!(admitted_request.text.len(), 24_576);
@@ -410,6 +413,7 @@ async fn message_text_is_bounded_by_utf8_bytes_below_the_journal_ceiling() {
     let refused_request = MessageSendRequest {
         deadline: None,
         max_spend_cents: None,
+        response_format: None,
         text: "x".repeat(24_577),
     };
     let refused = SendMessage {

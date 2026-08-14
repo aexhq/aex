@@ -14,7 +14,7 @@ use crate::wire_pending::{EffectClass, ExecutorRoute};
 
 /// Snapshot-bound SHA-256 identity of [`builtin_catalog_bytes`].
 pub const BUILTIN_CATALOG_DIGEST: &str =
-    "sha256:3f32bc680e8e033c646fb262fe3137e54622e8219ff79530d7a62189b1ce272e";
+    "sha256:3cf5fd117e6faee27854876a0564f87c2ebe226130bc955277ecdccfb068c57b";
 
 /// Builds and validates the immutable built-in rows in canonical name order.
 ///
@@ -29,10 +29,14 @@ pub fn builtin_entries() -> Result<Vec<ToolManifestEntry>, CatalogBuildError> {
         WRITE_FILE_SPEC,
         BASH_SPEC,
         STORAGE_PERSIST_SPEC,
+        MCP_CALL_SPEC,
+        CREATE_SUBAGENT_SPEC,
+        STOP_SUBAGENT_SPEC,
+        WAIT_SUBAGENTS_SPEC,
     ]
-        .iter()
-        .map(build_entry)
-        .collect::<Result<Vec<_>, _>>()?;
+    .iter()
+    .map(build_entry)
+    .collect::<Result<Vec<_>, _>>()?;
     entries.sort_by(|left, right| left.descriptor.name.cmp(&right.descriptor.name));
     for pair in entries.windows(2) {
         if pair[0].descriptor.name == pair[1].descriptor.name {
@@ -327,7 +331,7 @@ const EDIT_FILE_SPEC: Spec = spec!(
 const STORAGE_PERSIST_SPEC: Spec = spec!(
     "storage_persist",
     PlatformStorage,
-    ToolExec,
+    PlatformStorage,
     IdempotentManaged,
     QueryDurableOperation,
     WhenPolicyRequires,
@@ -337,6 +341,70 @@ const STORAGE_PERSIST_SPEC: Spec = spec!(
     600_000,
     2,
     STORAGE,
+    None
+);
+
+const MCP_CALL_SPEC: Spec = spec!(
+    "mcp_call",
+    Mcp,
+    Mcp,
+    NonReplayable,
+    InterruptOnAmbiguity,
+    Never,
+    262_144,
+    1_000_000,
+    65_536,
+    600_000,
+    2,
+    CMT,
+    McpRemote
+);
+
+const CREATE_SUBAGENT_SPEC: Spec = spec!(
+    "create_subagent",
+    Subagent,
+    SubagentScheduler,
+    IdempotentManaged,
+    QueryDurableOperation,
+    Never,
+    262_144,
+    4_096,
+    4_096,
+    1_000,
+    0,
+    C,
+    None
+);
+
+const STOP_SUBAGENT_SPEC: Spec = spec!(
+    "stop_subagent",
+    Subagent,
+    SubagentScheduler,
+    IdempotentManaged,
+    QueryDurableOperation,
+    Never,
+    512,
+    1_024,
+    1_024,
+    1_000,
+    0,
+    C,
+    None
+);
+
+const WAIT_SUBAGENTS_SPEC: Spec = spec!(
+    "wait_subagents",
+    Subagent,
+    Park,
+    IdempotentManaged,
+    QueryDurableOperation,
+    Never,
+    4_096,
+    65_536,
+    65_536,
+    0,
+    0,
+    NONE,
     None
 );
 
@@ -558,7 +626,7 @@ const SPECS: &[Spec] = &[
     spec!(
         "web_search",
         ManagedWeb,
-        ToolExec,
+        ManagedWeb,
         NonReplayable,
         InterruptOnAmbiguity,
         WhenPolicyRequires,
@@ -880,7 +948,7 @@ fn input_schema(name: &str) -> Value {
         "wait_subagents" => object(
             &["agentIds", "mode"],
             vec![
-                ("agentIds", array_with_unique(pattern(AGENT_ID), 1, 512)),
+                ("agentIds", array_with_unique(pattern(AGENT_ID), 1, 12)),
                 ("mode", enumeration(&["any", "all"])),
                 ("timeoutSeconds", integer(Some(1), Some(86_400))),
             ],
@@ -942,6 +1010,17 @@ fn input_schema(name: &str) -> Value {
                     json!({"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}),
                 ),
                 ("mediaType", text(1, 255)),
+            ],
+        ),
+        "mcp_call" => object(
+            &["server", "tool", "arguments"],
+            vec![
+                (
+                    "server",
+                    json!({"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}),
+                ),
+                ("tool", text(1, 256)),
+                ("arguments", json!({"type":"object"})),
             ],
         ),
         "apply_patch" => object(
@@ -1214,8 +1293,8 @@ fn result_schema(name: &str) -> Value {
             vec![
                 ("mode", enumeration(&["any", "all"])),
                 ("satisfied", json!({"type":"boolean"})),
-                ("terminal", array(json!({"type":"object"}), None, Some(512))),
-                ("pending", array(pattern(AGENT_ID), None, Some(512))),
+                ("terminal", array(json!({"type":"object"}), None, Some(12))),
+                ("pending", array(pattern(AGENT_ID), None, Some(12))),
                 ("timedOut", json!({"type":"boolean"})),
             ],
         ),
@@ -1308,6 +1387,14 @@ fn result_schema(name: &str) -> Value {
                 ("truncated", json!({"type":"boolean"})),
                 ("fullResultPath", text(1, 4_096)),
                 ("downloadPath", text(1, 512)),
+            ],
+        ),
+        "mcp_call" => object(
+            &["server", "tool", "result"],
+            vec![
+                ("server", text(1, 128)),
+                ("tool", text(1, 256)),
+                ("result", json!({})),
             ],
         ),
         "apply_patch" => object(
@@ -1517,46 +1604,10 @@ fn counts() -> Value {
 }
 
 fn create_subagent_input() -> Value {
-    let mut root = object(
+    object(
         &["prompt"],
-        vec![
-            ("prompt", text(1, 200_000)),
-            ("system", text(0, 100_000)),
-            (
-                "provider",
-                enumeration(&[
-                    "openai",
-                    "anthropic",
-                    "deepseek",
-                    "zai",
-                    "moonshotai",
-                    "google",
-                ]),
-            ),
-            ("model", text(1, 256)),
-            ("tools", array(text(0, 64), None, Some(128))),
-            (
-                "budget",
-                object(
-                    &[],
-                    vec![
-                        ("providerCalls", integer(Some(1), None)),
-                        ("handsCalls", integer(Some(0), None)),
-                        ("costMicroUsd", decimal_string()),
-                        ("totalChildren", integer(Some(0), None)),
-                        ("activeChildren", integer(Some(0), None)),
-                        ("retainedResultBytes", decimal_string()),
-                    ],
-                ),
-            ),
-            ("label", text(0, 128)),
-        ],
-    );
-    root.as_object_mut().expect("object helper").insert(
-        "dependentRequired".to_owned(),
-        json!({"provider":["model"],"model":["provider"]}),
-    );
-    root
+        vec![("prompt", text(1, 200_000)), ("label", text(0, 128))],
+    )
 }
 
 fn agent_id_input(with_reason: bool) -> Value {

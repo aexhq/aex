@@ -25,6 +25,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 effects = "unit"
+payment_method_events = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"

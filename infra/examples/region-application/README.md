@@ -1,9 +1,9 @@
 # `region-application`
 
 The releasable half of one region: the public Fargate request-path service
-`session-stream-api`, the private Fargate `tool-executor`, the operation queue
-and its stream pipe, and the one public load balancer used only by the request
-path.
+`session-stream-api`, the operation queue and its stream pipe, and the one
+public load balancer used only by the request path. Tool Mux runs in-process
+with Brain and has no second service, role, listener, or discovery name here.
 
 Everything here is replaced on a deployment. Nothing here holds state, which is
 what makes it safe to plan and apply separately from `region-foundation`.
@@ -19,11 +19,8 @@ publishes `deregistration_delay` and the service behind it consumes that same
 value, so the load balancer and the task cannot disagree about how long a
 deregistering target keeps serving.
 
-The ECS cluster, both service log groups, and the private Cloud Map namespace
-are created here rather than assumed to exist, so a fresh region plans from an
-empty account. The executor has no public listener or target group. Until the
-Brain has an owning Terraform task security group to name as its client, the
-executor's empty client list deliberately admits no ingress.
+The ECS cluster and service log group are created here rather than assumed to
+exist, so a fresh region plans from an empty account.
 
 ## Every security group is created by the module that owns what it protects
 
@@ -33,10 +30,9 @@ deployment repository may not declare resources in an environment root, so the
 groups these variables named could not exist. Both variables are gone.
 
 `alb-public` creates the edge's group and admits TCP/443 and TCP/80 from the
-internet. Each `ecs-service` creates its own task group - two groups, not one
-shared between the deployables - admits the edge on its own container port, and
-writes the matching egress on the edge's group for that same port. Neither
-service can be reached through the other's rules.
+internet. `ecs-service` creates the task group, admits the edge on its own
+container port, and writes the matching egress on the edge's group for that
+same port.
 
 What the region foundation still hands over is what the tasks are allowed to
 reach: `interface_endpoint_security_group_id` and
@@ -45,7 +41,7 @@ egress - TLS to the shared interface endpoint group, TLS to the S3 and DynamoDB
 prefix lists - and there is no `0.0.0.0/0` anywhere, which matters because the
 regional VPC stands up no NAT gateway.
 
-## Two services, one listener
+## One service, one listener
 
 `alb-public` owns the load balancer and the listener whose default action is a
 fixed 404. It owns no target group and no rule. The service attaches through
@@ -89,12 +85,11 @@ in any `.tf` file here.
 | `iam-deployable-role` | One execution role per deployable. |
 | `sqs-queue` | Session operation queue and its dead-letter queue. |
 | `dynamodb-stream-pipe` | Journal mutations to operation hints. |
-| `ecs-cluster` | The cluster both services run in. |
+| `ecs-cluster` | The regional application cluster. |
 | `log-group` | One group per service. |
 | `alb-public` | Public edge: load balancer, listeners, fixed 404 default. |
 | `alb-service-target` | One target group, with its listener rules. |
-| `service-discovery-private` | Private Cloud Map name for `tool-executor`. |
-| `ecs-service` | `session-stream-api` behind the public target and `tool-executor` by private name. |
+| `ecs-service` | `session-stream-api` behind the public target. |
 
 ## Outputs
 
@@ -104,12 +99,10 @@ in any `.tf` file here.
 ## Test
 
 `tests/region-application.tftest.hcl` plans the root against a mock AWS
-provider. It asserts one role per deployable; that the cluster, both log groups,
-and the executor's private name are created here; that the executor carries its
-reviewed fixed-count shape and complete startup environment while admitting no
-undeclared client; that the request-path service's drain window is the one its
+provider. It asserts one role for the regional service; that the cluster and
+log group are created here; that the request-path service's drain window is the one its
 target group publishes; that its forwarded patterns are `/api/` paths that do
 not collide; that no pattern wildcards its own first segment; that the two rules
 claim exactly the four current regional first segments; that the session API
-carries the reviewed Fargate shape; and that both roles are assumed by
+carries the reviewed Fargate shape; and that its role is assumed by
 `ecs-tasks.amazonaws.com` rather than by Lambda.

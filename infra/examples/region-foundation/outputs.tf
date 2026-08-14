@@ -15,7 +15,12 @@ output "public_subnet_ids" {
 
 output "interface_endpoint_security_group_id" {
   value       = module.network.interface_endpoint_security_group_id
-  description = "The group every private AWS interface endpoint shares. `region-application` gives its task groups TLS egress to it; without this passthrough the tasks have no lawful way to reach ECR, CloudWatch Logs, KMS, Secrets Manager, STS or SQS, because this network has no NAT gateway."
+  description = "The group every private AWS interface endpoint shares. Regional tasks use these endpoints for AWS APIs while only Brain and Tool Mux have public TLS egress."
+}
+
+output "nat_gateway_ids" {
+  value       = module.network.nat_gateway_ids
+  description = "NAT gateways providing the private-subnet route used by bounded Brain/Tool public TLS egress."
 }
 
 output "gateway_endpoint_prefix_list_ids" {

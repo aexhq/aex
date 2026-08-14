@@ -292,6 +292,7 @@ mod tests {
                     exit_code: 0,
                     inline: Some("ok".to_owned()),
                     placed: None,
+                    sandbox_file: None,
                     truncated: false,
                     duration_ms: 1,
                     checksum: ContentHash::of(b"ok"),

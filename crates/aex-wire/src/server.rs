@@ -11,7 +11,7 @@ use crate::cursor::Cursor;
 use crate::error::ApiError;
 use crate::idempotency::{IdempotencyKey, PrincipalScope};
 use crate::ids::{OperationId, SessionId, Uuid7};
-use crate::models::{DeletingSession, Operation, Session, SessionTombstone};
+use crate::models::{DeletingSession, Session, SessionTombstone};
 use crate::routes::RouteId;
 use crate::scopes::ScopeSet;
 use crate::types::{ETag, RequestId};
@@ -47,13 +47,11 @@ pub struct RequestContext {
     ///
     /// [`PrincipalScope`] deliberately narrows an actor to *who* they are,
     /// because that is all replay identity may depend on — two credentials of
-    /// one person must share a replay scope. A handful of ceremonies need
-    /// *which credential* as well: approving a device authorization records the
-    /// live session that proved the approver was current, and closing a session
-    /// closes the one that was presented. Neither can be re-derived, because a
+    /// one person must share a replay scope. Closing a session also needs
+    /// *which credential* was presented. That cannot be re-derived, because a
     /// person may hold several sessions at once.
     ///
-    /// `None` for an account token, a workspace key and an anonymous caller —
+    /// `None` for a workspace key and an anonymous caller —
     /// so a handler that requires a browser session must refuse `None` rather
     /// than substitute anything for it.
     pub actor_session_id: Option<Uuid7>,
@@ -73,17 +71,10 @@ pub struct RequestContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Created<T>(pub T);
 
-/// A `202 Accepted` response with `Location: /api/operations/{id}`.
+/// A typed `202 Accepted` response. The route table fixes the status and the
+/// payload is a focused receipt; there is no public generic operations URL.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Accepted(pub Operation);
-
-impl Accepted {
-    /// The `Location` header value for this admission.
-    #[must_use]
-    pub fn location(&self) -> String {
-        format!("/api/operations/{}", self.0.id)
-    }
-}
+pub struct Accepted<T>(pub T);
 
 /// A response that carries a strong entity tag.
 #[derive(Debug, Clone, PartialEq, Eq)]

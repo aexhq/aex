@@ -13,6 +13,7 @@
 //! - provider or tool transport
 //! - session authority rows (`aex-session-dynamodb`)
 
+pub mod checkpoint;
 pub mod control;
 pub mod effect;
 pub mod expressions;
@@ -23,6 +24,7 @@ pub mod plan;
 pub mod translate;
 pub mod wake;
 
+pub use checkpoint::CheckpointBinding;
 pub use expressions::{Action, ActionKind, Condition, Table, WakeItem, WorkExpressions};
 pub use journal::BrainStore;
 pub use keys::{BRAIN_AGENT_PARTITION_PREFIX, BRAIN_PREFIX, BrainKeyError};

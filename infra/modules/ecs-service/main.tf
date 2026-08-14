@@ -103,6 +103,21 @@ resource "aws_vpc_security_group_egress_rule" "gateway_endpoints" {
   prefix_list_id    = each.value
 }
 
+# Provider and remote-MCP endpoints do not have stable AWS prefix lists. The
+# network boundary therefore opens only TCP/443, while Brain/Tool Mux retain
+# the hostname, redirect, DNS and credential policy. Authority APIs leave this
+# disabled and cannot reach the public internet at all.
+resource "aws_vpc_security_group_egress_rule" "public_https" {
+  count = var.public_https_egress ? 1 : 0
+
+  security_group_id = aws_security_group.task.id
+  description       = "HTTPS to validated public provider or MCP endpoints"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
 resource "aws_ecs_task_definition" "this" {
   family                   = var.task_definition_family
   skip_destroy             = true

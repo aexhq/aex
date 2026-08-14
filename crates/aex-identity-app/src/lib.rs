@@ -25,7 +25,6 @@ pub use ports::{
     RequestContext, RequestId, StoreError, TxOutcome, UnknownCommit,
 };
 pub use use_cases::{
-    ApproveDevice, CloseDashboardSession, ConsumeEmailLink, DenyDevice, DisableUser, IdentityError,
-    IssueEmailLink, OauthProfile, OpenDashboardSession, PollDevice, ResolveActor,
-    ResolveOauthSignIn, RevokeAccountToken, StartDeviceAuthorization, UnlinkProvider,
+    CloseDashboardSession, ConsumeEmailLink, DisableUser, IdentityError, IssueEmailLink,
+    OauthProfile, OpenDashboardSession, ResolveActor, ResolveOauthSignIn, UnlinkProvider,
 };

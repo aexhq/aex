@@ -1,0 +1,14 @@
+{
+  "$id": "https://schemas.aex.dev/v1/MessageStreamKind.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Preview/commit reconciliation protocol.",
+  "enum": [
+    "preview",
+    "committed",
+    "reconcile",
+    "gap",
+    "heartbeat"
+  ],
+  "title": "MessageStreamKind",
+  "type": "string"
+}

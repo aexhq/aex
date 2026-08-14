@@ -2,13 +2,26 @@
   "$id": "https://schemas.aex.dev/v1/UploadCreateRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Stage a large registered-resource value.",
+  "description": "Stage a large current workspace-file replacement.",
   "properties": {
     "contentType": {
       "description": "The media type.",
       "maxLength": 255,
       "minLength": 1,
       "type": "string"
+    },
+    "name": {
+      "description": "The latest-only logical file name to replace immediately with pending.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
+    "parts": {
+      "description": "Every contiguous part declaration used to mint the checksum-bound admission grants.",
+      "items": {
+        "$ref": "aex:schema:UploadPartRequest"
+      },
+      "maxItems": 1000,
+      "type": "array"
     },
     "sha256": {
       "description": "The exact whole-object hash.",
@@ -23,6 +36,8 @@
   },
   "required": [
     "contentType",
+    "name",
+    "parts",
     "sha256",
     "sizeBytes"
   ],

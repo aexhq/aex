@@ -2,17 +2,13 @@
   "$id": "https://schemas.aex.dev/v1/WorkspaceOperationalState.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The workspace view of the account operational state it inherits.",
+  "description": "The fixed workspace's inherited personal-account state.",
   "properties": {
-    "inheritedFrom": {
-      "$ref": "aex:schema:OperationalStateSource",
-      "description": "Always the account."
-    },
-    "organizationId": {
-      "description": "The organization the state comes from.",
-      "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
+    "accountId": {
+      "description": "The personal account.",
+      "pattern": "^acc_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
-      "x-aex-id": "organization"
+      "x-aex-id": "account"
     },
     "state": {
       "$ref": "aex:schema:AccountOperationalState",
@@ -20,8 +16,7 @@
     }
   },
   "required": [
-    "inheritedFrom",
-    "organizationId",
+    "accountId",
     "state"
   ],
   "title": "WorkspaceOperationalState",

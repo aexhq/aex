@@ -126,6 +126,18 @@ impl HostFs {
             self.mount.join(relative)
         }
     }
+
+    /// Atomically places a generated tool result, creating only its validated
+    /// workspace parent directories.
+    pub fn place_tool_result(&self, path: &GuestPath, bytes: &[u8]) -> Result<(), FsError> {
+        let host = self.host_path(path);
+        let parent = host.parent().ok_or_else(|| FsError::Other {
+            path: path.as_str().to_owned(),
+            reason: "tool result path has no parent".to_owned(),
+        })?;
+        std::fs::create_dir_all(parent).map_err(|error| fs_error(path, &error))?;
+        <Self as GuestFs>::write_atomic(self, path, bytes, 0o600).map(|_| ())
+    }
 }
 
 /// Maps an I/O error onto the typed filesystem failure it is reported as.

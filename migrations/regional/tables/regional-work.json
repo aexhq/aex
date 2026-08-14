@@ -50,10 +50,10 @@
     "viewType": "NEW_IMAGE",
     "consumers": [
       "eventbridge-pipe:agent-wake",
-      "eventbridge-pipe:operation-step",
-      "eventbridge-pipe:content-lifecycle",
+      "eventbridge-pipe:session-maintenance",
+      "eventbridge-pipe:file-ingest",
       "eventbridge-pipe:runtime-control",
-      "eventbridge-pipe:usage-facts"
+      "eventbridge-pipe:billing-usage"
     ],
     "rationale": "NEW_IMAGE is safe only because the codec rejects a payload map larger than 4 KiB or carrying a key outside the declared per-kind schema, which keeps non-content work metadata only an enforced property rather than an assumed one."
   },
@@ -66,12 +66,12 @@
   "itemTypes": ["work", "work_dedupe", "work_cursor"],
   "iam": [
     {
-      "role": "regional-session-api",
+      "role": "session-api",
       "actions": ["dynamodb:TransactWriteItems", "dynamodb:GetItem"],
       "resources": ["table"]
     },
     {
-      "role": "session-operation-worker",
+      "role": "session-maintenance-worker",
       "actions": [
         "dynamodb:GetItem",
         "dynamodb:Query",
@@ -83,7 +83,7 @@
       "resources": ["table", "index/*"]
     },
     {
-      "role": "content-lifecycle-worker",
+      "role": "file-ingest-worker",
       "actions": [
         "dynamodb:GetItem",
         "dynamodb:Query",

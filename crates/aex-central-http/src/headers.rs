@@ -131,7 +131,7 @@ fn accept(headers: &HeaderMap) -> Result<AcceptKind, EdgeError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ACCEPT, IDEMPOTENCY_KEY, IF_MATCH, OPERATION_ID, declared};
+    use super::{ACCEPT, IDEMPOTENCY_KEY, IF_MATCH, declared};
     use crate::error::EdgeError;
     use aex_wire::routes::RouteId;
     use aex_wire::server::AcceptKind;
@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn a_replay_key_is_read_where_the_route_declares_one() {
         let resolved = declared(
-            RouteId::OrganizationCreate,
+            RouteId::ApiKeyCreate,
             &headers(&[(IDEMPOTENCY_KEY, "key-1")]),
         )
         .expect("the header is declared");
@@ -160,16 +160,9 @@ mod tests {
     }
 
     #[test]
-    fn a_required_if_match_is_refused_when_absent() {
-        let error = declared(RouteId::BillingAutoTopupPolicyPut, &HeaderMap::new())
-            .expect_err("the route requires `If-Match`");
-        assert!(matches!(error, EdgeError::InvalidRequest(_)), "{error:?}");
-    }
-
-    #[test]
     fn an_if_match_on_a_route_with_no_etag_policy_is_refused() {
         let error = declared(
-            RouteId::OrganizationCreate,
+            RouteId::ApiKeyCreate,
             &headers(&[(IDEMPOTENCY_KEY, "key-1"), (IF_MATCH, "\"1\"")]),
         )
         .expect_err("the route declares no entity tag");
@@ -183,19 +176,9 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_operation_id_is_a_four_hundred_rather_than_a_dropped_header() {
-        let error = declared(
-            RouteId::WorkspaceDelete,
-            &headers(&[(OPERATION_ID, "nope")]),
-        )
-        .expect_err("the id does not parse");
-        assert!(matches!(error, EdgeError::InvalidRequest(_)), "{error:?}");
-    }
-
-    #[test]
     fn an_accept_that_excludes_json_is_refused() {
         let error = declared(
-            RouteId::OrganizationsList,
+            RouteId::BillingBalanceGet,
             &headers(&[(ACCEPT, "application/xml")]),
         )
         .expect_err("the central plane answers JSON only");
@@ -208,7 +191,7 @@ mod tests {
             "text/html, */*",
         ] {
             assert!(
-                declared(RouteId::OrganizationsList, &headers(&[(ACCEPT, admitted)])).is_ok(),
+                declared(RouteId::BillingBalanceGet, &headers(&[(ACCEPT, admitted)])).is_ok(),
                 "{admitted}"
             );
         }
@@ -222,7 +205,7 @@ mod tests {
             http::HeaderValue::from_bytes(&[0xff, 0xfe]).expect("bytes"),
         );
         let error =
-            declared(RouteId::OrganizationCreate, &map).expect_err("a non-ASCII value is refused");
+            declared(RouteId::ApiKeyCreate, &map).expect_err("a non-ASCII value is refused");
         assert!(matches!(error, EdgeError::InvalidRequest(_)), "{error:?}");
     }
 }

@@ -533,6 +533,7 @@ mod tests {
             body_len: body.len() as u64,
             digest: digest(body),
             truncated: false,
+            result_file: None,
             failure: None,
         }
     }

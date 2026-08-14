@@ -1394,8 +1394,10 @@ fn build_operation(
     // Every admission renders the same durable operation record, and the
     // generated `Accepted` response type has exactly one payload. A 202 carrying
     // anything else would make that type a lie.
-    if success_status == 202 && entry.success.as_deref() != Some("Operation") {
-        return Err(bad("a 202 admission answers with `Operation`".to_owned()));
+    if success_status == 202 && entry.success.as_deref() != Some("SessionCommandReceipt") {
+        return Err(bad(
+            "a 202 session command answers with `SessionCommandReceipt`".to_owned(),
+        ));
     }
 
     let mut path_params = Vec::new();

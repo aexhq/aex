@@ -97,13 +97,13 @@ impl<'de> Deserialize<'de> for IdempotencyKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrincipalKind {
-    /// An account identity token.
+    /// An authenticated account actor.
     Account,
     /// A workspace API key, pinned to one region.
     WorkspaceKey,
     /// A browser session, resolved through the same 30-second assertion.
     UserSession,
-    /// No credential at all; only the device-flow routes accept this.
+    /// No credential at all; only explicitly public routes accept this.
     Anonymous,
 }
 
@@ -115,7 +115,7 @@ pub enum PrincipalKind {
     rename_all_fields = "camelCase"
 )]
 pub enum PrincipalScope {
-    /// A person acting through an account token or a browser session.
+    /// A person acting through a browser session.
     Account {
         /// Who.
         user: UserId,

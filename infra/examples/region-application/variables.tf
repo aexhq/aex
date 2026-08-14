@@ -1,80 +1,62 @@
-variable "plane" {
+variable "plane" { type = string }
+variable "region" { type = string }
+variable "permissions_boundary_policy_arn" { type = string }
+variable "vpc_id" { type = string }
+variable "private_subnet_ids" { type = list(string) }
+variable "public_subnet_ids" { type = list(string) }
+variable "interface_endpoint_security_group_id" { type = string }
+variable "gateway_endpoint_prefix_list_ids" { type = map(string) }
+variable "kms_key_arn" { type = string }
+variable "cluster_name" { type = string }
+variable "service_discovery_namespace" { type = string }
+variable "artifact_bucket" { type = string }
+
+variable "content_bucket" {
   type        = string
-  description = "Deployment plane."
+  description = "Existing unversioned customer-content bucket containing immutable Brain checkpoints."
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.content_bucket))
+    error_message = "The content bucket must be a valid S3 bucket name."
+  }
 }
 
-variable "region" {
+variable "content_bucket_owner" {
   type        = string
-  description = "AWS region."
+  description = "Twelve-digit AWS account that owns the customer-content bucket."
+
+  validation {
+    condition     = can(regex("^[0-9]{12}$", var.content_bucket_owner))
+    error_message = "The content bucket owner must be a 12-digit AWS account id."
+  }
 }
 
-variable "permissions_boundary_policy_arn" {
-  type        = string
-  description = "Owner-managed permissions boundary required on every deployable execution role."
+variable "alb" {
+  type = object({ name = string, certificate_arn = string, access_logs_bucket = string })
 }
 
-variable "vpc_id" {
-  type        = string
-  description = "VPC from the region foundation."
+variable "session_rules" {
+  type = list(object({ priority = number, path_patterns = list(string) }))
+  validation {
+    condition     = length(var.session_rules) > 0 && alltrue([for path in flatten([for rule in var.session_rules : rule.path_patterns]) : startswith(path, "/api/")])
+    error_message = "The session API must own at least one public `/api/` listener path."
+  }
 }
 
-variable "private_subnet_ids" {
-  type        = list(string)
-  description = "Private subnets services run in."
-}
-
-variable "public_subnet_ids" {
-  type        = list(string)
-  description = "Public subnets the load balancer sits in."
-}
-
-variable "interface_endpoint_security_group_id" {
-  type        = string
-  description = "The group every private AWS interface endpoint shares, from the region foundation. Each service's task group is given TLS egress to it."
-}
-
-variable "gateway_endpoint_prefix_list_ids" {
-  type        = map(string)
-  description = "Gateway endpoint service to AWS-managed prefix-list id, from the region foundation. Each service's task group is given TLS egress to `s3` and `dynamodb` through these."
-}
-
-variable "kms_key_arn" {
-  type        = string
-  description = "Customer-managed key for the operation queue."
-}
-
-variable "session_journal_stream_arn" {
-  type        = string
-  description = "Stream ARN of the session journal table, from the region foundation."
-}
-
-variable "cluster_name" {
-  type        = string
-  description = "ECS cluster name."
-}
-
-variable "session_stream_api" {
-  type = object({
-    name                              = string
+variable "services" {
+  type = map(object({
     image                             = string
     cpu                               = number
     memory                            = number
     desired_count                     = number
     stop_timeout                      = number
     container_port                    = number
-    health_check_grace_period_seconds = number
+    health_check_grace_period_seconds = optional(number)
     log_group_name                    = string
     log_retention_days                = number
     execution_role_arn                = string
     env                               = map(string)
-    rules = list(object({
-      priority      = number
-      path_patterns = list(string)
-    }))
-    autoscaling_bounds = object({
-      min_capacity = number
-      max_capacity = number
-    })
+    autoscaling_bounds                = object({ min_capacity = number, max_capacity = number })
     autoscaling_metrics = list(object({
       name               = string
       namespace          = string
@@ -84,61 +66,50 @@ variable "session_stream_api" {
       scale_out_cooldown = optional(number, 60)
       scale_in_cooldown  = optional(number, 300)
     }))
-  })
-  description = "The regional request-path service that owns the current unary regional API."
+  }))
 
   validation {
-    condition     = length(var.session_stream_api.rules) > 0
-    error_message = "The service must declare the public paths it serves; the listener forwards nothing by default."
-  }
-
-  validation {
-    condition     = length(distinct([for r in var.session_stream_api.rules : r.priority])) == length(var.session_stream_api.rules)
-    error_message = "Each listener rule must claim its own priority. This root used to check the two services did not collide with each other; with one service the collision it has to rule out is within its own rule list."
-  }
-
-  validation {
-    condition     = length(flatten([for r in var.session_stream_api.rules : r.path_patterns])) == length(distinct(flatten([for r in var.session_stream_api.rules : r.path_patterns])))
-    error_message = "Two rules must not declare the same path pattern. Two rules matching one pattern is decided by priority alone, which makes the lower-priority rule silently unreachable on that path."
+    condition     = toset(keys(var.services)) == toset(["session-api", "brain-mux", "tool-mux"])
+    error_message = "The regional service set is exactly session-api, brain-mux, and tool-mux."
   }
 }
 
-variable "operation_queue" {
-  type = object({
-    name                      = string
-    visibility_timeout        = number
-    max_receive_count         = number
-    message_retention_seconds = number
-    dlq_retention_seconds     = number
-  })
-  description = "The session operation queue."
+variable "lambda_units" {
+  type = map(object({
+    function_name           = string
+    artifact_key            = string
+    artifact_object_version = string
+    artifact_sha256         = string
+    memory_mb               = number
+    timeout_s               = number
+    reserved_concurrency    = number
+    log_retention_days      = number
+    env                     = map(string)
+  }))
+
+  validation {
+    condition     = toset(keys(var.lambda_units)) == toset(["file-ingest-worker", "runtime-control-worker", "session-maintenance-worker"])
+    error_message = "The regional Lambda set is exactly file ingest, runtime control, and session maintenance."
+  }
 }
 
-variable "stream_pipe" {
-  type = object({
-    name           = string
-    filter_pattern = string
-    input_template = string
-    batch_size     = number
-  })
-  description = "The pipe that turns journal mutations into operation hints."
-}
-
-variable "alb" {
-  type = object({
-    name               = string
-    certificate_arn    = string
-    access_logs_bucket = string
-  })
-  description = "The public load balancer the regional request-path service attaches to."
+variable "event_sources" {
+  type = map(object({
+    unit                = string
+    source_arn          = string
+    batch_size          = number
+    max_batching_window = optional(number, 0)
+    starting_position   = optional(string)
+  }))
+  validation {
+    condition     = alltrue([for source in values(var.event_sources) : contains(keys(var.lambda_units), source.unit)])
+    error_message = "Every regional event source must target one of the three focused workers."
+  }
 }
 
 variable "deployable_grants" {
   type = map(object({
-    assume_principal = object({
-      type        = string
-      identifiers = list(string)
-    })
+    assume_principal            = object({ type = string, identifiers = list(string) })
     wildcard_resource_allowlist = list(string)
     action_grants = list(object({
       sid                = string
@@ -150,59 +121,14 @@ variable "deployable_grants" {
       condition_values   = optional(list(string))
     }))
   }))
-  description = "Execution role grants per deployable."
+
+  validation {
+    condition     = toset(keys(var.deployable_grants)) == toset(["session-api", "brain-mux", "tool-mux", "file-ingest-worker", "runtime-control-worker", "session-maintenance-worker"])
+    error_message = "IAM roles must match the exact six regional/runtime placed-compute units."
+  }
 }
 
 variable "tags" {
-  type        = map(string)
-  description = "Tags applied to everything in the region application."
-  default     = {}
-}
-
-variable "internal_namespace" {
-  type        = string
-  description = "The private DNS namespace services with no public edge are reached under, such as `aex-dev.internal`. It resolves only inside this VPC, which is what keeps a customer sandbox from having a name to dial even when it has internet egress."
-}
-
-variable "tool_executor" {
-  type = object({
-    name                      = string
-    image                     = string
-    cpu                       = number
-    memory                    = number
-    desired_count             = number
-    stop_timeout              = number
-    container_port            = number
-    log_group_name            = string
-    log_retention_days        = number
-    execution_role_arn        = string
-    env                       = map(string)
-    client_security_group_ids = list(string)
-  })
-  description = "The platform-paid tool executor. It has no public edge and no target group: `brain-mux` reaches it by the Cloud Map name and nothing else can reach it at all."
-
-  validation {
-    condition     = var.tool_executor.stop_timeout == 30
-    error_message = "The executor must be given exactly 30 seconds to drain. That is `MAX_TOOL_EXEC_DEADLINE_MS`: a shorter timeout kills the task while a caller is still blocked on a call it holds, and a longer one keeps a draining task alive past the point where any call it holds could still be answered."
-  }
-
-  validation {
-    condition     = lookup(var.tool_executor.env, "AEX_TOOL_EXECUTOR_VERIFICATION_KEYS", "") != ""
-    error_message = "The executor must be given the signing keys it accepts. The binary has no default and refuses to start without one, so an omitted value is a task that never starts; and a task that started with an empty set would report ready while refusing every request."
-  }
-
-  validation {
-    condition     = lookup(var.tool_executor.env, "AEX_TOOL_EXECUTOR_CEILING_TABLE", "") != ""
-    error_message = "The executor must be given the organization ceiling table. Without it there is no bound on platform-paid spend that survives a Brain bug, which is the one thing the separate process was bought for."
-  }
-
-  validation {
-    condition     = can(regex("^sha256:[0-9a-f]{64}$", lookup(var.tool_executor.env, "AEX_TOOL_EXECUTOR_MANIFEST", "")))
-    error_message = "The executor must be bound to the exact built-in tool catalog manifest; accepting an absent or mutable manifest lets Brain and executor disagree about the schema they ran."
-  }
-
-  validation {
-    condition     = lookup(var.tool_executor.env, "AEX_TOOL_EXECUTOR_CREDENTIAL_SECRET_ID", "") != ""
-    error_message = "The executor must name the platform search credential it unwraps once at startup."
-  }
+  type    = map(string)
+  default = {}
 }

@@ -1,0 +1,25 @@
+{
+  "$id": "https://schemas.aex.dev/v1/WorkspaceFileMount.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Resolve one current workspace-file name to a private immutable hash and mount path at admission.",
+  "properties": {
+    "name": {
+      "description": "Current logical workspace-file name.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
+    "path": {
+      "description": "Normalized absolute sandbox destination under /workspace.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-path": "posix"
+    }
+  },
+  "required": [
+    "name",
+    "path"
+  ],
+  "title": "WorkspaceFileMount",
+  "type": "object"
+}

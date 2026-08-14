@@ -8,9 +8,7 @@
 //! `aex-secret-custody-dynamodb` in the `regional-secret-custody` table
 //! (OD-23): a `BYOK` key is a workspace secret, and giving it a second custody
 //! home would create a second encryption authority. This module defines the two
-//! ports dispatch needs, consumes them, and ships
-//! [`DenyAllCredentialDirectory`] as the typed placeholder until the owning
-//! stream lands.
+//! ports dispatch needs and consumes them.
 //!
 //! There is deliberately **no** plaintext-from-environment path. Not "disabled
 //! by default" — absent, with a test asserting no such constructor exists.
@@ -34,20 +32,14 @@ pub use aex_secret_domain::{CiphertextRef, EncryptionContext, RevocationEpoch, S
 /// rather than a review item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthScheme {
-    /// `Authorization: Bearer <key>` — `openai`, `deepseek`, `zai`,
-    /// `moonshotai`.
+    /// `Authorization: Bearer <key>` — the Rig native/OpenAI-compatible
+    /// launch providers.
     BearerAuthorization,
     /// `x-api-key: <key>` plus a pinned `anthropic-version` — `anthropic`.
     AnthropicApiKey {
         /// The pinned API version. Always `2023-06-01` (D-17).
         version: &'static str,
     },
-    /// `x-goog-api-key: <key>` — `google`.
-    ///
-    /// The `?key=` query form is forbidden in this codebase: it would place the
-    /// customer credential in a `URL` that reaches proxies, access logs and
-    /// error strings (D-15).
-    GoogleApiKeyHeader,
 }
 
 impl AuthScheme {
@@ -57,7 +49,6 @@ impl AuthScheme {
         match self {
             Self::BearerAuthorization => "authorization",
             Self::AnthropicApiKey { .. } => "x-api-key",
-            Self::GoogleApiKeyHeader => "x-goog-api-key",
         }
     }
 }
@@ -130,12 +121,6 @@ impl ProviderCredentialBinding {
 /// in-call retry attempt already reached the provider.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CredentialResolveError {
-    /// The regional authority cannot yet mint a workspace-bound provider
-    /// credential record safely.
-    #[error(
-        "provider credential registration authority is unavailable: no port exposes the wrapped branch key required by SecretCrypto::seal, and the workspace secret-name mint/collision contract is undecided"
-    )]
-    RegistrationAuthorityUnavailable,
     /// No such binding.
     #[error("no provider credential binding matched")]
     NotFound {
@@ -181,17 +166,6 @@ pub enum CredentialResolveError {
     Transport,
 }
 
-impl CredentialResolveError {
-    /// The public wire code this failure renders as.
-    #[must_use]
-    pub const fn error_code(&self) -> aex_wire::ErrorCode {
-        match self {
-            Self::Revoked { .. } => aex_wire::ErrorCode::ProviderCredentialRevoked,
-            _ => aex_wire::ErrorCode::ProviderCredentialNotFound,
-        }
-    }
-}
-
 /// The binding directory dispatch consumes.
 ///
 /// Production composition resolves this from regional secret custody. The
@@ -226,48 +200,6 @@ pub trait ProviderCredentialDecryptor: Send + Sync + 'static {
         binding: &'a ProviderCredentialBinding,
         now: aex_wire::types::Timestamp,
     ) -> BoxFuture<'a, Result<ProviderApiKey, CredentialResolveError>>;
-}
-
-/// The typed placeholder until the owning stream lands.
-///
-/// It refuses every resolution. That is the correct closed default: the
-/// alternative — reading a plaintext key from the environment — is exactly the
-/// path this design exists to remove, so it is not implemented at all.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DenyAllCredentialDirectory;
-impl ProviderCredentialDirectory for DenyAllCredentialDirectory {
-    fn resolve(
-        &self,
-        _organization: OrganizationId,
-        _workspace: WorkspaceId,
-        _provider: ProviderId,
-        id: Option<ProviderCredentialId>,
-    ) -> BoxFuture<'_, Result<ProviderCredentialBinding, CredentialResolveError>> {
-        let _ = id;
-        Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
-    }
-
-    fn revalidate<'a>(
-        &'a self,
-        binding: &'a ProviderCredentialBinding,
-    ) -> BoxFuture<'a, Result<RevocationEpoch, CredentialResolveError>> {
-        let _ = binding;
-        Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
-    }
-}
-
-/// A decryptor that refuses everything, paired with the deny-all directory.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DenyAllCredentialDecryptor;
-impl ProviderCredentialDecryptor for DenyAllCredentialDecryptor {
-    fn decrypt<'a>(
-        &'a self,
-        binding: &'a ProviderCredentialBinding,
-        _now: aex_wire::types::Timestamp,
-    ) -> BoxFuture<'a, Result<ProviderApiKey, CredentialResolveError>> {
-        let _ = binding;
-        Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
-    }
 }
 
 /// A decrypted provider key.
@@ -331,9 +263,7 @@ impl ProviderApiKey {
             AuthScheme::BearerAuthorization => {
                 Zeroizing::new(format!("Bearer {}", self.0.as_str()))
             }
-            AuthScheme::AnthropicApiKey { .. } | AuthScheme::GoogleApiKeyHeader => {
-                Zeroizing::new(self.0.as_str().to_owned())
-            }
+            AuthScheme::AnthropicApiKey { .. } => Zeroizing::new(self.0.as_str().to_owned()),
         };
         let name = reqwest::header::HeaderName::from_static(scheme.header_name());
         let mut value = reqwest::header::HeaderValue::from_str(&rendered)
@@ -356,68 +286,7 @@ impl ProviderApiKey {
 
 #[cfg(test)]
 mod tests {
-    use aex_secret_domain::SecretName;
-    use aex_secret_domain::context::Plane;
-    use aex_wire::ids::{PrefixedId as _, ProviderCredentialId};
-    use aex_wire::provider::ProviderId;
-    use aex_wire::types::Region;
-
-    use super::{
-        AuthScheme, BindingState, CredentialResolveError, CredentialRevision,
-        DenyAllCredentialDecryptor, ProviderApiKey, ProviderCredentialBinding,
-        ProviderCredentialDecryptor,
-    };
-    use crate::credential::{CiphertextRef, RevocationEpoch, SourceGeneration};
-
-    fn workspace() -> aex_wire::ids::WorkspaceId {
-        aex_wire::ids::WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [1; 10]))
-    }
-
-    fn organization() -> aex_wire::ids::OrganizationId {
-        aex_wire::ids::OrganizationId::from_uuid7(aex_wire::Uuid7::compose(1, [2; 10]))
-    }
-
-    fn binding_id(seed: u8) -> ProviderCredentialId {
-        ProviderCredentialId::from_uuid7(aex_wire::Uuid7::compose(2, [seed; 10]))
-    }
-
-    fn binding(provider: ProviderId, state: BindingState, epoch: u64) -> ProviderCredentialBinding {
-        ProviderCredentialBinding {
-            id: binding_id(7),
-            workspace: workspace(),
-            provider,
-            revision: CredentialRevision(1),
-            generation: SourceGeneration(1),
-            revocation_epoch: RevocationEpoch(epoch),
-            is_default: true,
-            state,
-            ciphertext: CiphertextRef {
-                key_generation: 1,
-                wrapped_key: vec![1; 32],
-                nonce: Vec::new(),
-                ciphertext: vec![2; 32],
-            },
-            context: aex_secret_domain::EncryptionContext {
-                plane: Plane::Dev,
-                region: Region::EuWest1,
-                organization: organization(),
-                workspace: workspace(),
-                name: SecretName::parse("provider-key").expect("name"),
-                generation: SourceGeneration(1),
-                custody_revision: None,
-            },
-            context_digest: aex_secret_domain::EncryptionContext {
-                plane: Plane::Dev,
-                region: Region::EuWest1,
-                organization: organization(),
-                workspace: workspace(),
-                name: SecretName::parse("provider-key").expect("name"),
-                generation: SourceGeneration(1),
-                custody_revision: None,
-            }
-            .digest(),
-        }
-    }
+    use super::{AuthScheme, CredentialResolveError, ProviderApiKey};
 
     /// Whether a named type implements a named trait.
     ///
@@ -451,27 +320,6 @@ mod tests {
         }};
     }
 
-    fn now() -> aex_wire::types::Timestamp {
-        aex_wire::types::Timestamp::from_unix_millis(1).expect("timestamp")
-    }
-
-    #[tokio::test]
-    async fn the_placeholder_decryptor_refuses_everything() {
-        let decryptor = DenyAllCredentialDecryptor;
-        // `ProviderApiKey` has no `Debug`, so the success arm cannot be
-        // formatted into a panic message — which is the point.
-        match decryptor
-            .decrypt(&binding(ProviderId::Openai, BindingState::Ready, 0), now())
-            .await
-        {
-            Ok(_) => panic!("the placeholder must refuse"),
-            Err(error) => assert_eq!(
-                error,
-                CredentialResolveError::RegistrationAuthorityUnavailable
-            ),
-        }
-    }
-
     #[test]
     fn the_sensitive_header_is_marked_sensitive_and_hides_in_debug() {
         let key = ProviderApiKey::new("sk-secret-value-0123456789".to_owned());
@@ -484,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_and_google_send_the_bare_key_not_a_bearer_prefix() {
+    fn anthropic_sends_the_bare_key_not_a_bearer_prefix() {
         let key = ProviderApiKey::new("sk-ant-0123456789".to_owned());
         let (name, _) = key
             .sensitive_header(AuthScheme::AnthropicApiKey {
@@ -492,10 +340,6 @@ mod tests {
             })
             .expect("header");
         assert_eq!(name.as_str(), "x-api-key");
-        let (name, _) = key
-            .sensitive_header(AuthScheme::GoogleApiKeyHeader)
-            .expect("header");
-        assert_eq!(name.as_str(), "x-goog-api-key");
     }
 
     #[test]

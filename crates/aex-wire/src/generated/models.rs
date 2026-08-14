@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
+//! `sha256:2714e625c3ed159b08bf3f97a27b9d088369acc429073957508115af3b1f7238`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -13,23 +13,21 @@
 use crate::canonical::CanonicalJson;
 use crate::cursor::Cursor;
 use crate::error::ObservedErrorCode;
+use crate::ids::AccountId;
 use crate::ids::ApiKeyId;
+use crate::ids::BillingTransactionId;
 use crate::ids::ContentHash;
-use crate::ids::FileDownloadId;
 use crate::ids::FilePath;
-use crate::ids::FileUploadId;
 use crate::ids::GenerationId;
-use crate::ids::InvitationId;
 use crate::ids::MeasurementId;
-use crate::ids::MembershipId;
 use crate::ids::MessageId;
 use crate::ids::OperationId;
-use crate::ids::OrganizationId;
-use crate::ids::ProviderCredentialId;
+use crate::ids::PaymentMethodId;
 use crate::ids::ResourceName;
 use crate::ids::SessionId;
-use crate::ids::StatementId;
+use crate::ids::SpanId;
 use crate::ids::ToolCallId;
+use crate::ids::TraceId;
 use crate::ids::UploadId;
 use crate::ids::UserId;
 use crate::ids::WorkspaceId;
@@ -71,19 +69,17 @@ pub enum AccountOperationalState {
     Paused(AccountPausedState),
 }
 
-/// Why an account is paused, and therefore which remedy exists. One value per durable
-/// `finance.billing_account.state` hold: collapsing all four onto `top_up_required` told a customer
-/// under a dispute hold to make a payment that would not restore service.
+/// Why the personal prepaid account cannot admit paid work.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountPauseReason {
     /// The prepaid balance is exhausted; a top-up restores service.
     TopUpRequired,
-    /// A charge is held pending payment; a top-up does not clear it.
+    /// A payment is unresolved; another payment does not automatically clear it.
     PaymentHold,
-    /// A chargeback is open; nothing the customer pays restores service.
+    /// A chargeback is open and requires reconciliation.
     DisputeHold,
-    /// The account is closed. There is no remedy.
+    /// The account is closed.
     AccountClosed,
 }
 
@@ -108,33 +104,22 @@ impl AccountPauseReason {
     }
 }
 
-/// A paused account and what it takes to restore it.
+/// A paused account and its customer-visible remedy.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AccountPausedState {
     /// When the state last changed.
     pub changed_at: Timestamp,
-    /// When unfunded content is scheduled for deletion. Published and permanently absent: this is
-    /// the regional content lifecycle's fact and that authority does not exist yet.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deletion_scheduled_at: Option<Timestamp>,
-    /// Smallest top-up that restores service. Present exactly when `reason` is `top_up_required`;
-    /// the other three holds have no paying remedy, and naming an amount for them would be a false
-    /// one.
+    /// Smallest restoring top-up, only for top_up_required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum_restore_cents: Option<Cents>,
-    /// Why the account is paused.
+    /// Why it is paused.
     pub reason: AccountPauseReason,
-    /// How long retained content stays funded. Published and permanently absent: storage is billed
-    /// monthly and unfunded storage is enforced through the account pause, so no authority owns
-    /// this instant yet.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retention_funded_until: Option<Timestamp>,
     /// Monotonic state revision.
     pub revision: u64,
 }
 
-/// Workspace API key metadata. There is no public last-used timestamp.
+/// Workspace API key metadata. Secret material is never returned by reads.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ApiKey {
@@ -149,23 +134,23 @@ pub struct ApiKey {
     pub revoked_at: Option<Timestamp>,
     /// The scopes it carries.
     pub scopes: Vec<ScopeId>,
-    /// The workspace it authorizes.
+    /// The fixed workspace it authorizes.
     pub workspace_id: WorkspaceId,
 }
 
-/// Mint a workspace API key.
+/// Mint a key for the account's fixed workspace.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ApiKeyCreateRequest {
     /// Display name.
     pub name: String,
-    /// The scopes to grant.
+    /// Launch scopes to grant.
     pub scopes: Vec<ScopeId>,
-    /// The workspace to authorize.
+    /// Must name the fixed workspace.
     pub workspace_id: WorkspaceId,
 }
 
-/// One page of API key metadata.
+/// One bounded page of API key metadata.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ApiKeyPage {
@@ -176,59 +161,301 @@ pub struct ApiKeyPage {
     pub next_cursor: Option<Cursor>,
 }
 
-/// The complete automatic top-up policy.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct AutoTopupPolicy {
-    /// How much each automatic top-up adds.
-    pub amount_cents: Cents,
-    /// Whether automatic top-up runs.
-    pub enabled: bool,
-    /// The organization.
-    pub organization_id: OrganizationId,
-    /// Monotonic policy revision.
-    pub revision: u64,
-    /// Balance at or below which a top-up is attempted.
-    pub threshold_cents: Cents,
-    /// When the policy last changed.
-    pub updated_at: Timestamp,
-}
-
-/// Replace the automatic top-up policy; every field is required.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct AutoTopupPolicyRequest {
-    /// How much each automatic top-up adds.
-    pub amount_cents: Cents,
-    /// Whether automatic top-up runs.
-    pub enabled: bool,
-    /// Balance at or below which a top-up is attempted.
-    pub threshold_cents: Cents,
-}
-
-/// The prepaid balance of one organization.
+/// The current prepaid position of the caller's personal account.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct BillingBalance {
-    /// Spendable now.
+    /// The personal account.
+    pub account_id: AccountId,
+    /// Credit available for new reservations.
     pub available_cents: Cents,
-    /// Always USD.
+    /// Always USD at launch.
     pub currency: Currency,
-    /// What the balance implies.
-    pub operational_state: AccountOperationalState,
-    /// The organization.
-    pub organization_id: OrganizationId,
-    /// Recorded but not yet settled.
+    /// Rated usage not yet settled to the ledger.
     pub pending_cents: Cents,
-    /// Held against admitted work.
+    /// Credit held for admitted sessions.
     pub reserved_cents: Cents,
-    /// Monotonic balance revision.
-    pub revision: u64,
-    /// When the balance last changed.
+    /// When this projection last changed.
     pub updated_at: Timestamp,
 }
 
-/// The only supported currency.
+/// One immutable customer-visible ledger transaction.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BillingTransaction {
+    /// Absolute amount in whole cents.
+    pub amount_cents: Cents,
+    /// Available balance after this transaction.
+    pub balance_after_cents: Cents,
+    /// Always USD at launch.
+    pub currency: Currency,
+    /// Its effect on prepaid value.
+    pub direction: BillingTransactionDirection,
+    /// Transaction identity.
+    pub id: BillingTransactionId,
+    /// Why it was posted.
+    pub kind: BillingTransactionKind,
+    /// Authoritative ledger time.
+    pub occurred_at: Timestamp,
+    /// The compensated transaction, for reversals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverses_transaction_id: Option<BillingTransactionId>,
+    /// Session attribution when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+}
+
+/// Whether the transaction increases or decreases available prepaid value.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BillingTransactionDirection {
+    /// Increases prepaid value.
+    Credit,
+    /// Decreases prepaid value.
+    Debit,
+}
+
+impl BillingTransactionDirection {
+    /// Every value, in declared order.
+    pub const ALL: &'static [BillingTransactionDirection] = &[
+        BillingTransactionDirection::Credit,
+        BillingTransactionDirection::Debit,
+    ];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Credit => "credit",
+            Self::Debit => "debit",
+        }
+    }
+}
+
+/// The customer-visible reason for an immutable balanced ledger transaction.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BillingTransactionKind {
+    /// Verified prepaid credit purchase.
+    TopUp,
+    /// Settled trusted usage.
+    Usage,
+    /// Credit returned by a verified refund.
+    Refund,
+    /// A compensating entry for a prior transaction.
+    Reversal,
+    /// Credit reserved for admitted work.
+    Reservation,
+    /// Unused reservation returned.
+    ReservationRelease,
+}
+
+impl BillingTransactionKind {
+    /// Every value, in declared order.
+    pub const ALL: &'static [BillingTransactionKind] = &[
+        BillingTransactionKind::TopUp,
+        BillingTransactionKind::Usage,
+        BillingTransactionKind::Refund,
+        BillingTransactionKind::Reversal,
+        BillingTransactionKind::Reservation,
+        BillingTransactionKind::ReservationRelease,
+    ];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TopUp => "top_up",
+            Self::Usage => "usage",
+            Self::Refund => "refund",
+            Self::Reversal => "reversal",
+            Self::Reservation => "reservation",
+            Self::ReservationRelease => "reservation_release",
+        }
+    }
+}
+
+/// One newest-first page of immutable ledger transactions.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BillingTransactionPage {
+    /// The page.
+    pub items: Vec<BillingTransaction>,
+    /// Continuation token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
+}
+
+/// The independently measured and rated launch categories.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BillingUsageCategory {
+    /// Provider model input/output/cache tokens.
+    Model,
+    /// Trusted sandbox compute and memory.
+    Runtime,
+    /// Retained workspace/session bytes over time.
+    Storage,
+    /// Measured outbound bytes.
+    Transfer,
+}
+
+impl BillingUsageCategory {
+    /// Every value, in declared order.
+    pub const ALL: &'static [BillingUsageCategory] = &[
+        BillingUsageCategory::Model,
+        BillingUsageCategory::Runtime,
+        BillingUsageCategory::Storage,
+        BillingUsageCategory::Transfer,
+    ];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Runtime => "runtime",
+            Self::Storage => "storage",
+            Self::Transfer => "transfer",
+        }
+    }
+}
+
+/// The trustworthy completeness boundary for one usage answer.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BillingUsageCoverage {
+    /// All accepted facts at or before this instant are represented.
+    pub complete_through: Timestamp,
+    /// Whether a poisoned or missing fact prevents complete settlement.
+    pub has_gap: bool,
+    /// No fact after this instant is represented.
+    pub includes_through: Timestamp,
+}
+
+/// One bounded rated-usage aggregate with exact charge evidence.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BillingUsageItem {
+    /// Exact rated amount in whole cents.
+    pub amount_cents: Cents,
+    /// What was measured.
+    pub category: BillingUsageCategory,
+    /// Quantity actually charged after policy.
+    pub charged_quantity: DecimalU128,
+    /// Always USD at launch.
+    pub currency: Currency,
+    /// Provider model identifier for model usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Official provider for model usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ProviderId>,
+    /// Measured quantity before rating.
+    pub quantity: DecimalU128,
+    /// Half-open service-time range.
+    pub service_time: TimeRange,
+    /// Session attribution when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    /// Ledger coverage.
+    pub settlement: BillingUsageSettlement,
+    /// Stable unit such as input_tokens or byte_minutes.
+    pub unit: String,
+}
+
+/// One bounded page of rated usage and its explicit completeness boundary.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BillingUsagePage {
+    /// How complete this answer is.
+    pub coverage: BillingUsageCoverage,
+    /// The page.
+    pub items: Vec<BillingUsageItem>,
+    /// Continuation token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<Cursor>,
+}
+
+/// Whether this rated row has been posted to the money ledger.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BillingUsageSettlement {
+    /// Trusted and rated but not yet posted.
+    Pending,
+    /// Covered by an immutable ledger transaction.
+    Settled,
+}
+
+impl BillingUsageSettlement {
+    /// Every value, in declared order.
+    pub const ALL: &'static [BillingUsageSettlement] = &[
+        BillingUsageSettlement::Pending,
+        BillingUsageSettlement::Settled,
+    ];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Settled => "settled",
+        }
+    }
+}
+
+/// Customer-safe card-network display metadata reported by Stripe.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CardBrand {
+    /// Visa.
+    Visa,
+    /// Mastercard.
+    Mastercard,
+    /// American Express.
+    Amex,
+    /// Discover.
+    Discover,
+    /// Diners Club.
+    Diners,
+    /// JCB.
+    Jcb,
+    /// UnionPay.
+    Unionpay,
+    /// A network Stripe did not map to this display vocabulary.
+    Unknown,
+}
+
+impl CardBrand {
+    /// Every value, in declared order.
+    pub const ALL: &'static [CardBrand] = &[
+        CardBrand::Visa,
+        CardBrand::Mastercard,
+        CardBrand::Amex,
+        CardBrand::Discover,
+        CardBrand::Diners,
+        CardBrand::Jcb,
+        CardBrand::Unionpay,
+        CardBrand::Unknown,
+    ];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Visa => "visa",
+            Self::Mastercard => "mastercard",
+            Self::Amex => "amex",
+            Self::Discover => "discover",
+            Self::Diners => "diners",
+            Self::Jcb => "jcb",
+            Self::Unionpay => "unionpay",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// The only launch currency.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Currency {
@@ -250,335 +477,49 @@ impl Currency {
     }
 }
 
-/// The one bounded read that fills the dashboard shell.
+/// The single bounded read that fills the launch dashboard shell.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DashboardBootstrap {
-    /// Current operational state for each organization in this snapshot.
-    pub accounts: Vec<OrganizationAccount>,
-    /// Their email address.
+    /// Their personal prepaid account.
+    pub account_id: AccountId,
+    /// Current paid-capacity state.
+    pub account_state: AccountOperationalState,
+    /// Their verified GitHub email.
     pub email: String,
-    /// When this snapshot was taken.
+    /// When this snapshot was assembled.
     pub generated_at: Timestamp,
-    /// Organizations they belong to.
-    pub organizations: Vec<Organization>,
     /// The signed-in person.
     pub user_id: UserId,
-    /// Workspaces they can reach.
-    pub workspaces: Vec<Workspace>,
+    /// The fixed eu-west-1 workspace.
+    pub workspace: Workspace,
 }
 
-/// A minted browser session, returned exactly once.
+/// A rotated browser session returned exactly once.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DashboardSessionCredential {
     /// When it stops verifying.
     pub expires_at: Timestamp,
-    /// The bearer credential; hold it in a cookie the browser will not hand to script.
+    /// Bearer credential for an HttpOnly cookie.
     pub session: String,
-    /// The person it authenticates.
+    /// The GitHub-linked person.
     pub user_id: UserId,
 }
 
-/// Complete a browser sign-in by handing this plane the authorization code a provider redirect
-/// returned. `central-identity-api` performs the token exchange with the provider itself, so
-/// nothing the caller asserts about who they are is believed: the person is whoever the provider
-/// answers with.
+/// Complete a GitHub OAuth browser sign-in using PKCE-bound state.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DashboardSessionRequest {
-    /// The single-use authorization code the redirect returned. It is redeemed exactly once and
-    /// never retried: a code the provider may already have consumed cannot be re-presented.
+    /// Single-use GitHub authorization code.
     pub code: String,
-    /// The RFC 7636 PKCE verifier the browser held in its own cookie for this plane's origin.
-    /// Possessing it is what proves the redirect belongs to the browser that started this sign-in:
-    /// a cross-site forgery carries somebody else's `state` and cannot present a verifier that
-    /// hashes to it.
+    /// The browser-held PKCE verifier.
     pub code_verifier: String,
-    /// Which provider issued the code.
-    pub provider: IdentityProvider,
-    /// The `state` the provider echoed back. It is the RFC 7636 S256 challenge of `codeVerifier`,
-    /// and the exchange refuses any request where it is not.
+    /// The echoed S256 challenge.
     pub state: String,
 }
 
-/// A pending device authorization the user must approve in a browser.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct DeviceAuthorization {
-    /// The polling secret.
-    pub device_code: String,
-    /// When the device code stops working.
-    pub expires_at: Timestamp,
-    /// Minimum polling interval.
-    pub interval_seconds: u32,
-    /// The short code the user types.
-    pub user_code: String,
-    /// Where the user approves.
-    pub verification_uri: HttpsUrl,
-    /// The same page with the code prefilled.
-    pub verification_uri_complete: HttpsUrl,
-}
-
-/// Begin the CLI device-authorization flow.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct DeviceAuthorizationRequest {
-    /// The public client identifier.
-    pub client_id: String,
-    /// The scopes requested.
-    pub scopes: Vec<ScopeId>,
-}
-
-/// What a person chose about a device authorization.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DeviceDecision {
-    /// Let the device redeem an account token.
-    Approve,
-    /// Refuse the device; the code can never be redeemed.
-    Deny,
-}
-
-impl DeviceDecision {
-    /// Every value, in declared order.
-    pub const ALL: &'static [DeviceDecision] = &[DeviceDecision::Approve, DeviceDecision::Deny];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Approve => "approve",
-            Self::Deny => "deny",
-        }
-    }
-}
-
-/// Approve or deny a pending device authorization by its user code.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct DeviceDecisionRequest {
-    /// What the person chose.
-    pub decision: DeviceDecision,
-    /// The short code the device displayed.
-    pub user_code: String,
-}
-
-/// The recorded outcome of a device decision.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct DeviceDecisionResult {
-    /// When the decision was written.
-    pub decided_at: Timestamp,
-    /// What was recorded; never differs from the request.
-    pub decision: DeviceDecision,
-    /// The scopes the device asked for, so the page can name what it granted.
-    pub scopes: Vec<ScopeId>,
-}
-
-/// An issued account token.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct DeviceToken {
-    /// The bearer token; store it, never log it.
-    pub account_token: String,
-    /// When the token stops verifying.
-    pub expires_at: Timestamp,
-    /// The scopes it carries.
-    pub scopes: Vec<ScopeId>,
-}
-
-/// Exchange an approved device code for an account token.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct DeviceTokenRequest {
-    /// The public client identifier.
-    pub client_id: String,
-    /// The polling secret.
-    pub device_code: String,
-}
-
-/// An external sign-in provider AEX links a person to.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IdentityProvider {
-    /// GitHub.
-    Github,
-    /// Google.
-    Google,
-}
-
-impl IdentityProvider {
-    /// Every value, in declared order.
-    pub const ALL: &'static [IdentityProvider] =
-        &[IdentityProvider::Github, IdentityProvider::Google];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Github => "github",
-            Self::Google => "google",
-        }
-    }
-}
-
-/// A pending invitation to join an organization.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Invitation {
-    /// When it was sent.
-    pub created_at: Timestamp,
-    /// Who was invited.
-    pub email: String,
-    /// When it stops being redeemable.
-    pub expires_at: Timestamp,
-    /// Identity.
-    pub id: InvitationId,
-    /// The organization.
-    pub organization_id: OrganizationId,
-    /// When it was accepted, revoked or expired.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolved_at: Option<Timestamp>,
-    /// The role it grants.
-    pub role: InvitationRole,
-    /// Lifecycle position.
-    pub status: InvitationStatus,
-}
-
-/// What one acceptance redeemed. An invitation carries no secret, so acceptance names nothing:
-/// every pending invitation addressed to the caller's verified email is redeemed in one
-/// transaction. The list is empty when nothing was pending, which is what a repeated call answers.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct InvitationAcceptResult {
-    /// One membership per invitation redeemed by this call, created or raised to the invited role.
-    /// Bounded by the same 100 the acceptance transaction reads.
-    pub memberships: Vec<Membership>,
-}
-
-/// Invite a person to an organization.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct InvitationCreateRequest {
-    /// Who to invite.
-    pub email: String,
-    /// The role to grant.
-    pub role: InvitationRole,
-}
-
-/// The role an invitation grants; ownership is never invited.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InvitationRole {
-    /// Manage members, workspaces and keys.
-    Admin,
-    /// Use the organization resources.
-    Member,
-}
-
-impl InvitationRole {
-    /// Every value, in declared order.
-    pub const ALL: &'static [InvitationRole] = &[InvitationRole::Admin, InvitationRole::Member];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Admin => "admin",
-            Self::Member => "member",
-        }
-    }
-}
-
-/// Where an invitation is in its lifecycle.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InvitationStatus {
-    /// Sent, not yet resolved.
-    Pending,
-    /// Redeemed into a membership.
-    Accepted,
-    /// Withdrawn.
-    Revoked,
-    /// Timed out.
-    Expired,
-}
-
-impl InvitationStatus {
-    /// Every value, in declared order.
-    pub const ALL: &'static [InvitationStatus] = &[
-        InvitationStatus::Pending,
-        InvitationStatus::Accepted,
-        InvitationStatus::Revoked,
-        InvitationStatus::Expired,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Accepted => "accepted",
-            Self::Revoked => "revoked",
-            Self::Expired => "expired",
-        }
-    }
-}
-
-/// A person's role inside one organization.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Membership {
-    /// When it was created.
-    pub created_at: Timestamp,
-    /// The person's email address.
-    pub email: String,
-    /// Identity.
-    pub id: MembershipId,
-    /// The organization.
-    pub organization_id: OrganizationId,
-    /// The role.
-    pub role: OrganizationRole,
-    /// Whether the membership is usable.
-    pub status: MembershipStatus,
-    /// The person.
-    pub user_id: UserId,
-}
-
-/// One page of memberships.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct MembershipPage {
-    /// The page.
-    pub items: Vec<Membership>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// Whether a membership is usable.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MembershipStatus {
-    /// The only membership status v1 exposes.
-    Active,
-}
-
-impl MembershipStatus {
-    /// Every value, in declared order.
-    pub const ALL: &'static [MembershipStatus] = &[MembershipStatus::Active];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-        }
-    }
-}
-
-/// A freshly minted key. The value never appears in a later read.
+/// A freshly minted key; its value is returned once and never stored.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct NewApiKey {
@@ -592,300 +533,93 @@ pub struct NewApiKey {
     pub scopes: Vec<ScopeId>,
     /// The one-time secret value.
     pub value: String,
-    /// The workspace it authorizes.
+    /// The fixed workspace.
     pub workspace_id: WorkspaceId,
 }
 
-/// Where a workspace operational state comes from.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationalStateSource {
-    /// Inherited from the owning account.
-    Account,
-}
-
-impl OperationalStateSource {
-    /// Every value, in declared order.
-    pub const ALL: &'static [OperationalStateSource] = &[OperationalStateSource::Account];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Account => "account",
-        }
-    }
-}
-
-/// The billing and ownership boundary.
+/// Display-only metadata for one Stripe card; never PAN, CVC, or a client secret.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Organization {
-    /// What the calling principal may do here.
-    pub caller_role: OrganizationRole,
-    /// When it was created.
+pub struct PaymentMethod {
+    /// Card network.
+    pub brand: CardBrand,
+    /// When verified webhook state registered it.
     pub created_at: Timestamp,
-    /// Identity.
-    pub id: OrganizationId,
-    /// Display name.
-    pub name: String,
-    /// URL-safe name.
-    pub slug: String,
+    /// Expiry month.
+    pub expiry_month: u32,
+    /// Four-digit expiry year.
+    pub expiry_year: u32,
+    /// Aex's opaque card reference.
+    pub id: PaymentMethodId,
+    /// Whether Stripe reports this as the default card.
+    pub is_default: bool,
+    /// Last four digits for display.
+    pub last4: String,
 }
 
-/// One organization's operational state in a multi-organization dashboard snapshot.
+/// The bounded set of cards attached to the caller's account.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct OrganizationAccount {
-    /// The organization this state governs.
-    pub organization_id: OrganizationId,
-    /// The organization's current operational state.
-    pub state: AccountOperationalState,
+pub struct PaymentMethodPage {
+    /// Cards, newest first.
+    pub items: Vec<PaymentMethod>,
 }
 
-/// Create an organization.
+/// Request a Stripe-hosted card setup session.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct OrganizationCreateRequest {
-    /// Display name.
-    pub name: String,
-}
-
-/// One page of organizations.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct OrganizationPage {
-    /// The page.
-    pub items: Vec<Organization>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// The caller role inside one organization.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OrganizationRole {
-    /// Full control including deletion and billing.
-    Owner,
-    /// Manage members, workspaces and keys.
-    Admin,
-    /// Use the organization resources.
-    Member,
-}
-
-impl OrganizationRole {
-    /// Every value, in declared order.
-    pub const ALL: &'static [OrganizationRole] = &[
-        OrganizationRole::Owner,
-        OrganizationRole::Admin,
-        OrganizationRole::Member,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Owner => "owner",
-            Self::Admin => "admin",
-            Self::Member => "member",
-        }
-    }
-}
-
-/// Create a hosted billing portal session.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct PortalSessionRequest {
-    /// Where to return when the user is done.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub return_url: Option<HttpsUrl>,
-}
-
-/// One immutable issued statement. The platform never rerenders history.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Statement {
-    /// Hash of the issued artifact.
-    pub artifact_hash: ContentHash,
-    /// Always USD.
-    pub currency: Currency,
-    /// Identity.
-    pub id: StatementId,
-    /// When it was issued.
-    pub issued_at: Timestamp,
-    /// The priced lines.
-    pub lines: Vec<StatementLine>,
-    /// The organization.
-    pub organization_id: OrganizationId,
-    /// The billed period.
-    pub period: TimeRange,
-    /// The issued total.
-    pub total_cents: Cents,
-}
-
-/// One priced category line. Lines sum exactly to the statement total.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct StatementLine {
-    /// The priced category.
-    pub category: UsageCategory,
-    /// The line total.
-    pub total_cents: Cents,
-}
-
-/// The header of one immutable issued statement.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct StatementSummary {
-    /// Hash of the issued artifact.
-    pub artifact_hash: ContentHash,
-    /// Always USD.
-    pub currency: Currency,
-    /// Identity.
-    pub id: StatementId,
-    /// When it was issued.
-    pub issued_at: Timestamp,
-    /// The organization.
-    pub organization_id: OrganizationId,
-    /// The billed period.
-    pub period: TimeRange,
-    /// The issued total.
-    pub total_cents: Cents,
-}
-
-/// One page of statement headers, newest first.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct StatementSummaryPage {
-    /// The page.
-    pub items: Vec<StatementSummary>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// Create a hosted top-up checkout.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TopUpCheckoutRequest {
-    /// The amount to add, in whole cents.
-    pub amount_cents: Cents,
-    /// Where to return after cancellation.
+pub struct PaymentMethodSessionRequest {
+    /// Browser return after cancellation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cancel_url: Option<HttpsUrl>,
-    /// Where to return after success.
+    /// Must be true: the caller explicitly consents to saving this card for future prepaid
+    /// payments.
+    pub consent: bool,
+    /// Browser return after successful setup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub success_url: Option<HttpsUrl>,
 }
 
-/// A region-pinned execution and content boundary.
+/// Request a one-time Stripe-hosted prepaid top-up.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TopUpCheckoutRequest {
+    /// Credit to buy in whole cents, within configured bounds.
+    pub amount_cents: Cents,
+    /// Browser return after cancellation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel_url: Option<HttpsUrl>,
+    /// Browser return after provider success; not money authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub success_url: Option<HttpsUrl>,
+}
+
+/// The account's fixed eu-west-1 execution and content boundary.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Workspace {
-    /// The regional host this workspace answers on.
+    /// Regional session endpoint.
     pub api_url: HttpsUrl,
-    /// When it was created.
+    /// When first login provisioned it.
     pub created_at: Timestamp,
-    /// The running deletion operation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deletion_operation_id: Option<OperationId>,
     /// Identity.
     pub id: WorkspaceId,
     /// Display name.
     pub name: String,
     /// Inherited account state.
     pub operational_state: WorkspaceOperationalState,
-    /// The owning organization.
-    pub organization_id: OrganizationId,
-    /// Immutable placement.
-    pub region: Region,
-    /// URL-safe name.
-    pub slug: String,
-    /// Whether it admits work.
-    pub status: WorkspaceStatus,
-}
-
-/// Create a region-pinned workspace. Region is required and immutable.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct WorkspaceCreateRequest {
-    /// Display name.
-    pub name: String,
-    /// The owning organization.
-    pub organization_id: OrganizationId,
-    /// Where the workspace lives, forever.
+    /// Immutable placement; eu-west-1 at launch.
     pub region: Region,
 }
 
-/// Admit the global workspace-deletion operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct WorkspaceDeleteRequest {
-    /// The workspace id, restated.
-    pub confirmation: WorkspaceId,
-}
-
-/// The workspace view of the account operational state it inherits.
+/// The fixed workspace's inherited personal-account state.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct WorkspaceOperationalState {
-    /// Always the account.
-    pub inherited_from: OperationalStateSource,
-    /// The organization the state comes from.
-    pub organization_id: OrganizationId,
+    /// The personal account.
+    pub account_id: AccountId,
     /// The inherited state.
     pub state: AccountOperationalState,
-}
-
-/// One page of workspaces.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct WorkspacePage {
-    /// The page.
-    pub items: Vec<Workspace>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// Whether a workspace admits work.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceStatus {
-    /// Admitting work.
-    Active,
-    /// A deletion operation is running.
-    Deleting,
-}
-
-impl WorkspaceStatus {
-    /// Every value, in declared order.
-    pub const ALL: &'static [WorkspaceStatus] =
-        &[WorkspaceStatus::Active, WorkspaceStatus::Deleting];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Deleting => "deleting",
-        }
-    }
-}
-
-/// What remains of a deleted workspace.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct WorkspaceTombstone {
-    /// When deletion committed.
-    pub deleted_at: Timestamp,
-    /// The operation that deleted it.
-    pub operation_id: OperationId,
-    /// The owning organization.
-    pub organization_id: OrganizationId,
-    /// The deleted workspace.
-    pub workspace_id: WorkspaceId,
 }
 
 // --- common -------------------------------------------------------
@@ -1052,185 +786,6 @@ pub struct HttpHeader {
     pub value: String,
 }
 
-/// A durable operation record.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct Operation {
-    /// Whether cancellation is still possible.
-    pub cancelable: bool,
-    /// When the effect became durable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub committed_at: Option<Timestamp>,
-    /// When the operation was admitted.
-    pub created_at: Timestamp,
-    /// The terminal failure.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<OperationFailure>,
-    /// The operation identity minted by the caller.
-    pub id: OperationId,
-    /// What the operation does.
-    pub kind: OperationKind,
-    /// Coarse progress.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub progress: Option<OperationProgress>,
-    /// The typed successful result.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<OperationResult>,
-    /// The owning session, when there is one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<SessionId>,
-    /// When work began.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub started_at: Option<Timestamp>,
-    /// Lifecycle position.
-    pub status: OperationStatus,
-    /// When the record reached a terminal status.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal_at: Option<Timestamp>,
-    /// Last change to this record.
-    pub updated_at: Timestamp,
-    /// The owning workspace.
-    pub workspace_id: WorkspaceId,
-}
-
-/// A durable operation failure. It carries no synthetic request identity.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct OperationFailure {
-    /// The stable public failure code.
-    pub code: ObservedErrorCode,
-    /// Customer-safe detail, when the domain produced it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<CanonicalJson>,
-    /// Whether the same operation step may be retried.
-    pub retryable: bool,
-}
-
-/// Every durable operation the platform admits.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationKind {
-    /// Cancel the session's current work and return it to idle.
-    SessionCancel,
-    /// Suspend an idle session's exact retained generation.
-    SessionSuspend,
-    /// Resume the same retained generation to idle.
-    SessionResume,
-    /// Destroy session compute and live files while retaining metadata and messages.
-    SessionTerminate,
-    /// Irreversibly delete session-scoped user content.
-    SessionDelete,
-    /// Delete the workspace across both planes.
-    WorkspaceDelete,
-}
-
-impl OperationKind {
-    /// Every value, in declared order.
-    pub const ALL: &'static [OperationKind] = &[
-        OperationKind::SessionCancel,
-        OperationKind::SessionSuspend,
-        OperationKind::SessionResume,
-        OperationKind::SessionTerminate,
-        OperationKind::SessionDelete,
-        OperationKind::WorkspaceDelete,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::SessionCancel => "session_cancel",
-            Self::SessionSuspend => "session_suspend",
-            Self::SessionResume => "session_resume",
-            Self::SessionTerminate => "session_terminate",
-            Self::SessionDelete => "session_delete",
-            Self::WorkspaceDelete => "workspace_delete",
-        }
-    }
-}
-
-/// One page of durable operations.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct OperationPage {
-    /// The page.
-    pub items: Vec<Operation>,
-    /// Continuation token; absent on the last page.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// Coarse progress; never a completion promise.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct OperationProgress {
-    /// Units done.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub completed: Option<DecimalU128>,
-    /// The named phase.
-    pub phase: String,
-    /// Units expected.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub total: Option<DecimalU128>,
-}
-
-/// The typed successful result of a durable operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum OperationResult {
-    /// Current-work cancellation result.
-    SessionCancel(SessionCancelResult),
-    /// Manual suspension result.
-    SessionSuspend(SessionSuspendResult),
-    /// Manual resumption result.
-    SessionResume(SessionResumeResult),
-    /// Permanent compute/live-file termination result.
-    SessionTerminate(SessionTerminateResult),
-    /// Irreversible deletion tombstone.
-    SessionDelete(SessionTombstone),
-    /// Workspace tombstone.
-    WorkspaceDelete(WorkspaceTombstone),
-}
-
-/// Where a durable operation is in its lifecycle.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationStatus {
-    /// Admitted, not started.
-    Queued,
-    /// In progress.
-    Running,
-    /// Committed.
-    Succeeded,
-    /// Terminal failure.
-    Failed,
-    /// Cancelled before its commit point.
-    Cancelled,
-}
-
-impl OperationStatus {
-    /// Every value, in declared order.
-    pub const ALL: &'static [OperationStatus] = &[
-        OperationStatus::Queued,
-        OperationStatus::Running,
-        OperationStatus::Succeeded,
-        OperationStatus::Failed,
-        OperationStatus::Cancelled,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Running => "running",
-            Self::Succeeded => "succeeded",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-        }
-    }
-}
-
 /// A half-open instant range, `gte` inclusive and `lt` exclusive.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -1257,17 +812,14 @@ pub struct WorkspaceAccess {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ModelSelection {
-    /// Which BYOK binding to use.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credential_id: Option<ProviderCredentialId>,
     /// The exact provider-native model id.
     pub model: String,
     /// The provider.
     pub provider: ProviderId,
 }
 
-/// The eight customer-owned BYOK authorities. Gateway authorities use fixed endpoints; arbitrary
-/// base URLs are not accepted.
+/// The candidate official BYOK authorities. Only models admitted by the current Rig-backed catalog
+/// are selectable; arbitrary base URLs are not accepted.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderId {
@@ -1277,16 +829,14 @@ pub enum ProviderId {
     Anthropic,
     /// The `DeepSeek` API.
     Deepseek,
-    /// The Z.ai API.
-    Zai,
+    /// The official xAI API.
+    Xai,
+    /// The official Meta API.
+    Meta,
     /// The Moonshot AI API.
     Moonshotai,
-    /// Google.
-    Google,
-    /// `OpenRouter`, authenticated with the customer's `OpenRouter` key.
-    Openrouter,
-    /// `Vercel AI Gateway`, authenticated with the customer's `AI Gateway` key.
-    VercelAiGateway,
+    /// The international Alibaba Model Studio API.
+    Alibaba,
 }
 
 impl ProviderId {
@@ -1295,11 +845,10 @@ impl ProviderId {
         ProviderId::Openai,
         ProviderId::Anthropic,
         ProviderId::Deepseek,
-        ProviderId::Zai,
+        ProviderId::Xai,
+        ProviderId::Meta,
         ProviderId::Moonshotai,
-        ProviderId::Google,
-        ProviderId::Openrouter,
-        ProviderId::VercelAiGateway,
+        ProviderId::Alibaba,
     ];
 
     /// The wire spelling.
@@ -1309,11 +858,10 @@ impl ProviderId {
             Self::Openai => "openai",
             Self::Anthropic => "anthropic",
             Self::Deepseek => "deepseek",
-            Self::Zai => "zai",
+            Self::Xai => "xai",
+            Self::Meta => "meta",
             Self::Moonshotai => "moonshotai",
-            Self::Google => "google",
-            Self::Openrouter => "openrouter",
-            Self::VercelAiGateway => "vercel_ai_gateway",
+            Self::Alibaba => "alibaba",
         }
     }
 }
@@ -1364,6 +912,8 @@ pub enum BlobInput {
     Inline(BlobInline),
     /// Staged through the upload surface.
     Upload(BlobUpload),
+    /// Fetched asynchronously; admission immediately replaces the current record with pending.
+    Url(BlobUrl),
 }
 
 /// A large value staged through the upload surface.
@@ -1378,13 +928,21 @@ pub struct BlobUpload {
     pub upload_id: UploadId,
 }
 
-/// One resolved compute dimension.
+/// An HTTPS source fetched asynchronously under the platform SSRF, redirect, time and size policy.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BlobUrl {
+    /// The exact initial HTTPS URL.
+    pub url: HttpsUrl,
+}
+
+/// One resolved sandbox compute dimension.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ComputeShape {
     /// Memory in mebibytes.
     pub memory_mi_b: u32,
-    /// Virtual CPUs; fractional at the smaller shapes.
+    /// Virtual CPUs.
     pub vcpus: f64,
 }
 
@@ -1399,18 +957,16 @@ pub struct ContentRef {
     pub size_bytes: DecimalU128,
 }
 
-/// A session whose irreversible deletion is running; rendered at 410.
+/// Minimal deletion marker returned while content cleanup runs.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DeletingSession {
-    /// Identity.
+    /// Session.
     pub id: SessionId,
-    /// The deletion operation.
+    /// Diagnostic deletion identity.
     pub operation_id: OperationId,
     /// When deletion began.
     pub started_at: Timestamp,
-    /// The owning workspace.
-    pub workspace_id: WorkspaceId,
 }
 
 /// One effective workspace safety limit. There is no public mutation route.
@@ -1440,71 +996,7 @@ pub struct EffectiveWorkspaceLimitPage {
     pub next_cursor: Option<Cursor>,
 }
 
-/// One file entry, identified by its normalized POSIX path.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct FileEntry {
-    /// POSIX mode, four octal digits.
-    pub mode: String,
-    /// Modification time.
-    pub mtime: Timestamp,
-    /// The normalized POSIX path.
-    pub path: FilePath,
-    /// Content hash, for regular files.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sha256: Option<ContentHash>,
-    /// Size in bytes.
-    pub size_bytes: DecimalU128,
-    /// The exact, unnormalized link text for a symlink.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
-    /// What the entry is.
-    pub type_: FileEntryType,
-}
-
-/// One page of file entries.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct FileEntryPage {
-    /// The page.
-    pub items: Vec<FileEntry>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// What a file entry is.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileEntryType {
-    /// A regular file.
-    File,
-    /// A directory.
-    Directory,
-    /// A symbolic link.
-    Symlink,
-}
-
-impl FileEntryType {
-    /// Every value, in declared order.
-    pub const ALL: &'static [FileEntryType] = &[
-        FileEntryType::File,
-        FileEntryType::Directory,
-        FileEntryType::Symlink,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::File => "file",
-            Self::Directory => "directory",
-            Self::Symlink => "symlink",
-        }
-    }
-}
-
-/// The guest network policy.
+/// The sandbox network policy.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HandsNetworkRequest {
@@ -1562,263 +1054,43 @@ pub enum LimitValue {
     Map(LimitMapValue),
 }
 
-/// One exact-generation descriptor-pinned multipart download. It carries no object-store URL: every
-/// part is read directly from the retained `MicroVM`.
+/// One frozen MCP definition and its bounded tool namespace.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveFileDownload {
-    /// When the descriptor is closed if the client abandons it.
-    pub expires_at: Timestamp,
-    /// The only generation that may answer.
-    pub generation_id: GenerationId,
-    /// The ephemeral download identity.
-    pub id: FileDownloadId,
-    /// How many ranged parts the SDK must fetch; zero for an empty file.
-    pub part_count: u32,
-    /// The fixed non-final range size.
-    pub part_size_bytes: u32,
-    /// Expected part ranges and hashes, ascending.
-    pub parts: Vec<LiveFileDownloadPart>,
-    /// The normalized workspace path.
-    pub path: FilePath,
-    /// The owning session.
-    pub session_id: SessionId,
-    /// The expected whole-file SHA-256.
-    pub sha256: ContentHash,
-    /// The exact whole-file size.
-    pub size_bytes: DecimalU128,
-    /// The verification position.
-    pub state: LiveFileDownloadState,
-    /// Opaque identity binding the bytes and bounded stat evidence.
-    pub version: ContentHash,
-    /// Which generation answered and whether it resumed.
-    pub workspace_access: WorkspaceAccess,
+pub struct McpServer {
+    /// Unique server/tool namespace.
+    pub name: ResourceName,
+    /// How Tool Mux reaches it.
+    pub transport: McpTransport,
 }
 
-/// Close an exact live-file descriptor after the SDK verified every part and the whole hash.
+/// The two admitted MCP transports.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveFileDownloadCompleteRequest {
-    /// The whole-file SHA-256 the SDK recomputed.
-    pub sha256: ContentHash,
-    /// The exact version returned at initiation.
-    pub version: ContentHash,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum McpTransport {
+    /// Remote Streamable HTTP.
+    RemoteHttp(RemoteMcpServer),
+    /// Process inside the one sandbox.
+    SandboxProcess(SandboxMcpServer),
 }
 
-/// One fixed range and its expected digest in an exact live-file version.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveFileDownloadPart {
-    /// The first byte in the whole file.
-    pub offset: DecimalU128,
-    /// The one-based download part.
-    pub part_number: u32,
-    /// SHA-256 the SDK must verify before retaining the part.
-    pub sha256: ContentHash,
-    /// The exact range size.
-    pub size_bytes: u32,
-}
-
-/// Open one regular file without following a symlink, auto-resuming the same generation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveFileDownloadRequest {
-    /// Require this exact retained generation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub if_generation_id: Option<GenerationId>,
-    /// The regular file to open.
-    pub path: FilePath,
-}
-
-/// Whether an exact-version live download is still open or fully verified.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LiveFileDownloadState {
-    /// Parts may be read from the pinned descriptor.
-    Open,
-    /// Final re-stat and whole-file verification succeeded.
-    Verified,
-}
-
-impl LiveFileDownloadState {
-    /// Every value, in declared order.
-    pub const ALL: &'static [LiveFileDownloadState] =
-        &[LiveFileDownloadState::Open, LiveFileDownloadState::Verified];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Verified => "verified",
-        }
-    }
-}
-
-/// One live file entry plus what the read did to the workspace.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveFileEntry {
-    /// The entry.
-    pub entry: FileEntry,
-    /// What the read did.
-    pub workspace_access: WorkspaceAccess,
-}
-
-/// One page of live file entries plus what the read did.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveFileEntryPage {
-    /// The page.
-    pub items: Vec<FileEntry>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-    /// What the read did.
-    pub workspace_access: WorkspaceAccess,
-}
-
-/// List live workspace files, auto-resuming the same retained generation if suspended.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveFileListRequest {
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Only read this exact generation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub if_generation_id: Option<GenerationId>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-    /// Subtree to list; defaults to the root.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<FilePath>,
-    /// Whether to descend; defaults to false.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recursive: Option<bool>,
-}
-
-/// Stat one live workspace file, auto-resuming the same retained generation if suspended.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveFileStatRequest {
-    /// Only read this exact generation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub if_generation_id: Option<GenerationId>,
-    /// The entry to stat.
-    pub path: FilePath,
-}
-
-/// One resumable upload held only by the session's exact `MicroVM` generation. Suspension retains
-/// it; termination or runtime loss destroys it.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveFileUpload {
-    /// The provider-generation expiry; never later than eight hours after launch.
-    pub expires_at: Timestamp,
-    /// The only generation that may accept it.
-    pub generation_id: GenerationId,
-    /// The ephemeral upload identity.
-    pub id: FileUploadId,
-    /// The final POSIX mode.
-    pub mode: RegisteredFileMode,
-    /// How many logical parts the file has; zero for an empty file.
-    pub part_count: u32,
-    /// The fixed non-final logical-part size.
-    pub part_size_bytes: u32,
-    /// Verified parts, ascending.
-    pub parts: Vec<LiveFileUploadPart>,
-    /// The final normalized workspace path.
-    pub path: FilePath,
-    /// The owning session.
-    pub session_id: SessionId,
-    /// The exact complete-file SHA-256.
-    pub sha256: ContentHash,
-    /// The exact complete file size.
-    pub size_bytes: DecimalU128,
-    /// The upload position.
-    pub state: LiveFileUploadState,
-    /// Which generation answered and whether it resumed.
-    pub workspace_access: WorkspaceAccess,
-}
-
-/// Create or exactly replay a resumable upload in the session's retained generation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveFileUploadCreateRequest {
-    /// Require this exact retained generation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub if_generation_id: Option<GenerationId>,
-    /// The final mode; defaults to 0644.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<RegisteredFileMode>,
-    /// The final normalized workspace path.
-    pub path: FilePath,
-    /// The exact complete-file SHA-256.
-    pub sha256: ContentHash,
-    /// The exact complete file size, at most five GiB.
-    pub size_bytes: DecimalU128,
-}
-
-/// One verified logical part retained by the exact `MicroVM` generation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct LiveFileUploadPart {
-    /// The first byte in the complete file.
-    pub offset: DecimalU128,
-    /// The one-based logical part number.
-    pub part_number: u32,
-    /// SHA-256 of this logical part.
-    pub sha256: ContentHash,
-    /// The exact logical-part size.
-    pub size_bytes: u32,
-}
-
-/// The generation-local position of one ephemeral upload.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LiveFileUploadState {
-    /// Logical parts may still be written.
-    Staging,
-    /// The file was atomically published in the `MicroVM`.
-    Complete,
-}
-
-impl LiveFileUploadState {
-    /// Every value, in declared order.
-    pub const ALL: &'static [LiveFileUploadState] =
-        &[LiveFileUploadState::Staging, LiveFileUploadState::Complete];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Staging => "staging",
-            Self::Complete => "complete",
-        }
-    }
-}
-
-/// One complete, sealed message in a session. `createdAt` is display metadata; collection order is
-/// the immutable seal-visibility order and is not derived from this field.
+/// One complete sealed message in immutable visibility order.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Message {
-    /// The parts.
+    /// Parts.
     pub content: Vec<MessagePart>,
-    /// When it was recorded.
+    /// Display time; not collection ordering authority.
     pub created_at: Timestamp,
     /// Identity.
     pub id: MessageId,
-    /// Who produced it.
+    /// Producer.
     pub role: MessageRole,
-    /// The owning session.
+    /// Session.
     pub session_id: SessionId,
 }
 
-/// One page of complete sealed messages, ordered by the immutable seal-visibility tuple `(sealedAt,
-/// messageId)`. Open partial messages are never visible.
+/// One page of complete messages.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessagePage {
@@ -1829,56 +1101,68 @@ pub struct MessagePage {
     pub next_cursor: Option<Cursor>,
 }
 
-/// One part of a complete message. Admission is text-only; assistant and tool messages may contain
-/// canonical built-in tool records.
+/// One part of a complete committed message.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MessagePart {
     /// Text.
     Text(MessagePartText),
-    /// A canonical built-in tool call.
+    /// Tool call.
     ToolCall(MessagePartToolCall),
-    /// A canonical built-in tool result.
+    /// Tool result.
     ToolResult(MessagePartToolResult),
 }
 
-/// A text part.
+/// Text content.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessagePartText {
-    /// The text.
+    /// Text.
     pub text: String,
 }
 
-/// A built-in tool call emitted by the model.
+/// Canonical provider-independent tool call.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessagePartToolCall {
-    /// The canonical tool-argument digest.
-    pub arguments_digest: ContentHash,
-    /// The call identity.
+    /// Validated arguments.
+    pub arguments: CanonicalJson,
+    /// Call identity.
     pub id: ToolCallId,
+    /// Official or namespaced MCP tool name.
+    pub name: String,
 }
 
-/// The canonical result of a built-in tool call.
+/// Bounded tool result; large/full bytes live at its sandbox path and in retained telemetry.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessagePartToolResult {
-    /// The call identity.
+    /// Call identity.
     pub id: ToolCallId,
-    /// The canonical tool-result digest.
-    pub result_digest: ContentHash,
+    /// Bounded live/model preview.
+    pub preview: String,
+    /// Stable call-scoped full-result path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_path: Option<FilePath>,
+    /// Full-result digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<ContentHash>,
+    /// Full-result length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<DecimalU128>,
+    /// Whether full output exceeded the preview.
+    pub truncated: bool,
 }
 
-/// Who produced a message.
+/// Who produced a committed message.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageRole {
-    /// The customer.
+    /// Customer.
     User,
-    /// The model.
+    /// Model.
     Assistant,
-    /// A built-in tool result.
+    /// Canonical tool result.
     Tool,
 }
 
@@ -1898,37 +1182,92 @@ impl MessageRole {
     }
 }
 
-/// Admit one text message of at most 24,576 UTF-8 bytes. Omitting `maxSpendCents` selects the
-/// 1000-cent default; an explicit positive value may be higher or lower. Omitting `deadline` uses
-/// the session's remaining lifetime/drain fence; an explicit deadline may only shorten it.
+/// Text-only user message; arbitrary files are referenced by mounted paths in this text.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessageSendRequest {
-    /// An earlier absolute deadline. It must be in the future and cannot exceed the session's
-    /// remaining `expiresAt`/drain fence.
+    /// Earlier absolute deadline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<Timestamp>,
-    /// The current-message spend ceiling. Omission means 1000 cents; the platform does not reserve
-    /// account funds.
+    /// Earlier per-message spend fence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_spend_cents: Option<Cents>,
-    /// The complete user text. The MVP bound keeps Brain's canonical admission record below its
-    /// 32,768-byte inline journal ceiling with envelope overhead; staged message bodies are
-    /// deferred.
+    /// Native structured output request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<ResponseFormat>,
+    /// Complete user text; there is no attachment field.
     pub text: String,
 }
 
-/// The admitted user message and the session now processing it.
+/// The admitted user message and session now processing it.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessageSendResult {
-    /// The admitted message.
+    /// Admitted message.
     pub message: Message,
-    /// The session with current activity populated.
+    /// Updated session.
     pub session: Session,
 }
 
-/// What the guest may reach.
+/// One bounded NDJSON assistant-stream frame.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct MessageStreamFrame {
+    /// Frame semantics.
+    pub kind: MessageStreamKind,
+    /// Complete committed/reconcile message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<Message>,
+    /// Message correlation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<MessageId>,
+    /// Monotonic connection-independent sequence.
+    pub sequence: DecimalU128,
+    /// Bounded preview text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+/// Preview/commit reconciliation protocol.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageStreamKind {
+    /// Uncommitted assistant delta; may be lost.
+    Preview,
+    /// A complete message became durable.
+    Committed,
+    /// Replace preview state from committed authority.
+    Reconcile,
+    /// One or more live frames were dropped; replay committed messages.
+    Gap,
+    /// Keeps the bounded connection alive.
+    Heartbeat,
+}
+
+impl MessageStreamKind {
+    /// Every value, in declared order.
+    pub const ALL: &'static [MessageStreamKind] = &[
+        MessageStreamKind::Preview,
+        MessageStreamKind::Committed,
+        MessageStreamKind::Reconcile,
+        MessageStreamKind::Gap,
+        MessageStreamKind::Heartbeat,
+    ];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Preview => "preview",
+            Self::Committed => "committed",
+            Self::Reconcile => "reconcile",
+            Self::Gap => "gap",
+            Self::Heartbeat => "heartbeat",
+        }
+    }
+}
+
+/// What the sandbox may reach.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkMode {
@@ -1952,7 +1291,7 @@ impl NetworkMode {
     }
 }
 
-/// The package ecosystems a session may pre-install from.
+/// Supported setup package ecosystems.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PackageEcosystem {
@@ -1983,91 +1322,16 @@ impl PackageEcosystem {
     }
 }
 
-/// One exactly-pinned package to pre-install.
+/// One exactly pinned setup package.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PackageRequest {
-    /// Which ecosystem.
+    /// Which package manager.
     pub ecosystem: PackageEcosystem,
-    /// The package name.
+    /// Package name.
     pub name: String,
-    /// The exact version; ranges are rejected.
+    /// Exact version; ranges are rejected.
     pub version: String,
-}
-
-/// A BYOK provider-credential binding. The key material never appears here.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ProviderCredential {
-    /// When it was registered.
-    pub created_at: Timestamp,
-    /// A one-way fingerprint of the key material.
-    pub fingerprint: ContentHash,
-    /// The stable binding identity.
-    pub id: ProviderCredentialId,
-    /// A human label.
-    pub name: ResourceName,
-    /// Which provider the credential is for.
-    pub provider: ProviderId,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// When it was revoked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub revoked_at: Option<Timestamp>,
-    /// Whether it is selectable.
-    pub state: ProviderCredentialState,
-    /// When it last changed.
-    pub updated_at: Timestamp,
-}
-
-/// One page of provider-credential bindings.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ProviderCredentialPage {
-    /// The page.
-    pub items: Vec<ProviderCredential>,
-    /// Continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
-}
-
-/// Register a BYOK provider credential. This request carries plaintext.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ProviderCredentialRegisterRequest {
-    /// The provider key; write-only, never returned.
-    pub api_key: String,
-    /// A human label.
-    pub name: ResourceName,
-    /// Which provider the credential is for.
-    pub provider: ProviderId,
-}
-
-/// Whether a BYOK binding may still be selected.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderCredentialState {
-    /// Selectable.
-    Ready,
-    /// Revoked; sessions holding it fail closed.
-    Revoked,
-}
-
-impl ProviderCredentialState {
-    /// Every value, in declared order.
-    pub const ALL: &'static [ProviderCredentialState] = &[
-        ProviderCredentialState::Ready,
-        ProviderCredentialState::Revoked,
-    ];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Ready => "ready",
-            Self::Revoked => "revoked",
-        }
-    }
 }
 
 /// A registered file entry, complete.
@@ -2076,21 +1340,18 @@ impl ProviderCredentialState {
 pub struct RegisteredFile {
     /// When first written.
     pub created_at: Timestamp,
+    /// Stable bounded failure code; present only when failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_code: Option<String>,
     /// The public identity.
     pub name: ResourceName,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// Hash of the canonical value document, not of the payload. The payload's own hash is
-    /// `value.content.sha256`.
-    pub sha256: ContentHash,
-    /// Size of the canonical value document in bytes, not of the payload.
-    pub size_bytes: DecimalU128,
-    /// Always current.
+    /// Lifecycle of this one current overwrite.
     pub state: RegisteredState,
     /// When last replaced.
     pub updated_at: Timestamp,
-    /// The complete value.
-    pub value: RegisteredFileRead,
+    /// Verified current bytes; present only when ready.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<RegisteredFileRead>,
 }
 
 /// The two permitted registered-file modes.
@@ -2142,8 +1403,6 @@ pub struct RegisteredFileRead {
     pub media_type: String,
     /// POSIX mode.
     pub mode: RegisteredFileMode,
-    /// Where it is mounted in the guest.
-    pub mount_path: FilePath,
 }
 
 /// One registered file as a collection row. A listing carries no value document; read the entry
@@ -2153,21 +1412,18 @@ pub struct RegisteredFileRead {
 pub struct RegisteredFileRow {
     /// When first written.
     pub created_at: Timestamp,
+    /// Stable bounded failure code; present only when failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_code: Option<String>,
     /// The public identity.
     pub name: ResourceName,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// Hash of the canonical value document.
-    pub sha256: ContentHash,
-    /// Size of the canonical value document in bytes.
-    pub size_bytes: DecimalU128,
-    /// Always current.
+    /// Lifecycle of this one current overwrite.
     pub state: RegisteredState,
     /// When last replaced.
     pub updated_at: Timestamp,
 }
 
-/// A registered file.
+/// A latest-only registered file replacement.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegisteredFileValue {
@@ -2177,27 +1433,35 @@ pub struct RegisteredFileValue {
     pub media_type: String,
     /// POSIX mode.
     pub mode: RegisteredFileMode,
-    /// Where it is mounted in the guest.
-    pub mount_path: FilePath,
 }
 
-/// The only state a registered entry has; there is no version history.
+/// State of the single current value; prior values are never addressable.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RegisteredState {
-    /// The current replacement.
-    Current,
+    /// The latest URL/import or upload overwrite was admitted but has not published bytes.
+    Pending,
+    /// The latest overwrite has verified downloadable bytes.
+    Ready,
+    /// The latest asynchronous overwrite failed and did not fall back to prior bytes.
+    Failed,
 }
 
 impl RegisteredState {
     /// Every value, in declared order.
-    pub const ALL: &'static [RegisteredState] = &[RegisteredState::Current];
+    pub const ALL: &'static [RegisteredState] = &[
+        RegisteredState::Pending,
+        RegisteredState::Ready,
+        RegisteredState::Failed,
+    ];
 
     /// The wire spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Current => "current",
+            Self::Pending => "pending",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
         }
     }
 }
@@ -2211,7 +1475,18 @@ pub struct RegistryDownloadRequest {
     pub range: Option<ByteRange>,
 }
 
-/// The complete provider-derived capacity of the selected shape.
+/// A remote Streamable HTTP MCP server qualified at session setup.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RemoteMcpServer {
+    /// Write-only session-encrypted request headers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<BTreeMap<String, String>>,
+    /// Official server endpoint.
+    pub url: HttpsUrl,
+}
+
+/// Complete provider-derived capacity of the frozen shape.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ResolvedCompute {
@@ -2219,187 +1494,287 @@ pub struct ResolvedCompute {
     pub baseline: ComputeShape,
     /// Endpoint bandwidth.
     pub endpoint_bandwidth_m_bps: u32,
-    /// Concurrent connection ceiling.
+    /// Connection ceiling.
     pub max_concurrent_connections: u32,
     /// Maximum guest disk.
     pub max_disk_gi_b: u32,
     /// Burst ceiling.
     pub peak: ComputeShape,
-    /// The selected baseline token.
+    /// Selected token.
     pub size: ComputeSize,
 }
 
-/// Everything the platform resolved for this session.
+/// Customer-safe frozen session configuration; all plaintext secrets are omitted.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ResolvedConfig {
-    /// The signed model-catalog release that qualified this provider and model pair.
-    pub catalog_revision: String,
-    /// Resolved capacity.
-    pub compute: ResolvedCompute,
-    /// Immutable automatic lifecycle behavior.
+    /// Present only when sandbox is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compute: Option<ResolvedCompute>,
+    /// Immutable session bounds.
     pub lifecycle: SessionLifecyclePolicy,
-    /// The exact provider-native model id.
+    /// Frozen server names; secrets and transport credentials are omitted.
+    pub mcp_server_names: Vec<ResourceName>,
+    /// Current model selected at admission.
     pub model: String,
-    /// Resolved network policy.
-    pub network: ResolvedNetwork,
-    /// Resolved packages.
+    /// Present only when sandbox is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<ResolvedNetwork>,
+    /// Resolved setup packages.
     pub packages: Vec<PackageRequest>,
-    /// The provider.
+    /// Provider.
     pub provider: ProviderId,
-    /// The pinned BYOK binding.
-    pub provider_credential_id: ProviderCredentialId,
-    /// Resolved mounted files.
+    /// Frozen mount selection; hashes remain private.
     pub registered: SessionRegisteredSelection,
+    /// Whether the one sandbox exists.
+    pub sandbox_enabled: bool,
 }
 
-/// The resolved guest network policy.
+/// Resolved sandbox network policy.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ResolvedNetwork {
-    /// What the guest may reach.
+    /// Guest policy.
     pub hands: HandsNetworkRequest,
 }
 
-/// A multi-turn conversation backed by at most one retained provider generation. Termination
-/// destroys compute and live files but preserves this metadata and sealed messages until deletion.
+/// Optional native structured-output request; prompt emulation is never presented as strict.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ResponseFormat {
+    /// Format.
+    pub kind: ResponseFormatKind,
+    /// Required only for json_schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<CanonicalJson>,
+}
+
+/// Requested final response format.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseFormatKind {
+    /// Ordinary text.
+    Text,
+    /// Native provider JSON Schema support is required.
+    JsonSchema,
+}
+
+impl ResponseFormatKind {
+    /// Every value, in declared order.
+    pub const ALL: &'static [ResponseFormatKind] =
+        &[ResponseFormatKind::Text, ResponseFormatKind::JsonSchema];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::JsonSchema => "json_schema",
+        }
+    }
+}
+
+/// An MCP process launched inside the sandbox after workspace materialization.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SandboxMcpServer {
+    /// Bounded arguments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
+    /// Executable inside the sandbox.
+    pub command: String,
+    /// Write-only session-encrypted environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<BTreeMap<String, String>>,
+    /// Normalized sandbox working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<FilePath>,
+}
+
+/// Observable preparation state of the session's single default-on sandbox.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxStatus {
+    /// The caller explicitly opted out; sandbox tools return sandbox_disabled.
+    Disabled,
+    /// Preparation was durably requested.
+    Requested,
+    /// Runtime infrastructure is being provisioned.
+    Provisioning,
+    /// The exact generation is booting.
+    Booting,
+    /// Frozen files and setup are being applied.
+    MaterializingWorkspace,
+    /// Sandbox-process MCP servers are being qualified.
+    QualifyingMcp,
+    /// Ready to execute a waiting tool call.
+    Ready,
+    /// No waiter exists and initial preparation is suspending.
+    Suspending,
+    /// Prepared and suspended until the first sandbox tool call.
+    Suspended,
+    /// A tool waiter is resuming the exact generation.
+    Resuming,
+    /// The generation was lost; tool calls receive a normal structured error.
+    Lost,
+}
+
+impl SandboxStatus {
+    /// Every value, in declared order.
+    pub const ALL: &'static [SandboxStatus] = &[
+        SandboxStatus::Disabled,
+        SandboxStatus::Requested,
+        SandboxStatus::Provisioning,
+        SandboxStatus::Booting,
+        SandboxStatus::MaterializingWorkspace,
+        SandboxStatus::QualifyingMcp,
+        SandboxStatus::Ready,
+        SandboxStatus::Suspending,
+        SandboxStatus::Suspended,
+        SandboxStatus::Resuming,
+        SandboxStatus::Lost,
+    ];
+
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Requested => "requested",
+            Self::Provisioning => "provisioning",
+            Self::Booting => "booting",
+            Self::MaterializingWorkspace => "materializing_workspace",
+            Self::QualifyingMcp => "qualifying_mcp",
+            Self::Ready => "ready",
+            Self::Suspending => "suspending",
+            Self::Suspended => "suspended",
+            Self::Resuming => "resuming",
+            Self::Lost => "lost",
+        }
+    }
+}
+
+/// The only public execution resource; sandbox loss never terminates agent state.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Session {
-    /// The internal bounded deadline for the active message.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_deadline: Option<Timestamp>,
-    /// The effective current-message spend ceiling: the request value, or 1000 when omitted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_max_spend_cents: Option<Cents>,
-    /// The user message whose work is active. Absent while no message is active.
+    /// The one active root user message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_message_id: Option<MessageId>,
-    /// When metadata was created; this does not determine the provider lifetime.
+    /// Admission time.
     pub created_at: Timestamp,
-    /// Exactly 28,800 seconds after `launchedAt`; suspension never extends it.
+    /// Session expiry.
     pub expires_at: Timestamp,
     /// Identity.
     pub id: SessionId,
-    /// When the session most recently became idle.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idle_since: Option<Timestamp>,
-    /// When the provider generation first launched.
-    pub launched_at: Timestamp,
-    /// Caller-defined labels.
+    /// Caller labels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<BTreeMap<String, MetadataValue>>,
-    /// Everything the platform resolved.
+    /// Frozen customer-safe configuration.
     pub resolved_config: ResolvedConfig,
     /// Monotonic concurrency token.
     pub revision: u64,
-    /// What the session is doing.
+    /// One-Hand preparation/suspension state.
+    pub sandbox_status: SandboxStatus,
+    /// Conversation lifecycle.
     pub status: SessionStatus,
-    /// When an idle session will automatically suspend; exactly 180 seconds after `idleSince`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub suspend_at: Option<Timestamp>,
-    /// When this exact generation most recently suspended.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub suspended_at: Option<Timestamp>,
-    /// When compute and live files were permanently destroyed.
+    /// When explicit compute termination committed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminated_at: Option<Timestamp>,
-    /// Why the session permanently terminated.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub termination_reason: Option<SessionTerminationReason>,
-    /// When the session last changed.
+    /// Last durable change.
     pub updated_at: Timestamp,
-    /// The owning workspace.
+    /// Owning fixed workspace.
     pub workspace_id: WorkspaceId,
 }
 
-/// The result of cancelling the session's current work. The session is idle afterward and accepts
-/// another message.
+/// Admission receipt for an asynchronous session command; there is no generic operations resource.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionCancelResult {
-    /// Whether work was active and got cancelled.
-    pub changed: bool,
-    /// The session.
+pub struct SessionCommandReceipt {
+    /// When the command committed.
+    pub accepted_at: Timestamp,
+    /// Diagnostic and idempotency correlation identity.
+    pub operation_id: OperationId,
+    /// Target session.
     pub session_id: SessionId,
-    /// The revision after cancellation.
-    pub session_revision: u64,
 }
 
-/// The only customer compute selector.
+/// The single sandbox's bounded compute selector.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionComputeRequest {
-    /// The baseline shape; defaults to `1gb`.
+    /// Defaults to the launch baseline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<ComputeSize>,
 }
 
-/// Create an eight-hour multi-turn session with one explicitly pinned BYOK provider credential.
+/// Create a durable session with a write-only BYOK key, frozen file/MCP config and a default-on
+/// eager sandbox.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionCreateRequest {
-    /// The baseline compute shape.
+    /// Optional earlier expiry within the launch maximum.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compute: Option<SessionComputeRequest>,
-    /// Caller-defined labels.
+    pub expires_at: Option<Timestamp>,
+    /// Session prepaid reservation ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_spend_cents: Option<Cents>,
+    /// Remote and sandbox MCP definitions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_servers: Option<Vec<McpServer>>,
+    /// Caller labels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<BTreeMap<String, MetadataValue>>,
-    /// The exact provider-native model id.
+    /// Current admitted provider-native model id.
     pub model: String,
-    /// The guest network policy.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub network: Option<SessionNetworkRequest>,
-    /// Packages to pre-install.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub packages: Option<Vec<PackageRequest>>,
-    /// The direct BYOK provider.
+    /// Qualified official provider family.
     pub provider: ProviderId,
-    /// The exact BYOK binding; the platform never guesses between bindings.
-    pub provider_credential_id: ProviderCredentialId,
-    /// Opaque workspace files to mount.
+    /// Write-only session-scoped key; encrypted and never returned.
+    pub provider_api_key: String,
+    /// Files to resolve and freeze.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered: Option<SessionRegisteredSelection>,
+    /// Defaults enabled and prepares asynchronously.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<SessionSandboxRequest>,
 }
 
-/// The immutable automatic lifecycle behavior applied to this session.
+/// Immutable public session bounds; sandbox suspension is an internal lifecycle.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionLifecyclePolicy {
-    /// Idle sessions automatically suspend after exactly three minutes.
-    pub idle_suspend_after_seconds: u32,
-    /// The provider generation expires exactly eight hours after `launchedAt`.
+    /// Session lifetime, never more than eight hours at launch.
     pub maximum_lifetime_seconds: u32,
-    /// A live-file request automatically resumes this same suspended generation.
-    pub resume_on_live_file_access: bool,
-    /// A message automatically resumes this same suspended generation.
-    pub resume_on_message: bool,
+    /// Root depth is zero; children may reach depth three.
+    pub maximum_subagent_depth: u32,
+    /// Exactly 12 non-root identities over the session lifetime.
+    pub maximum_subagents: u32,
 }
 
-/// The collection projection of a session; `resolvedConfig` is omitted.
+/// Bounded collection projection.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionListItem {
-    /// The active user message, when any.
+    /// Active root message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_message_id: Option<MessageId>,
-    /// When metadata was created.
+    /// Admission time.
     pub created_at: Timestamp,
-    /// When the provider generation's eight-hour lifetime ends.
+    /// Expiry.
     pub expires_at: Timestamp,
     /// Identity.
     pub id: SessionId,
-    /// The model.
+    /// Model.
     pub model: String,
-    /// The provider.
+    /// Provider.
     pub provider: ProviderId,
-    /// Monotonic concurrency token.
-    pub revision: u64,
-    /// What the session is doing.
+    /// Sandbox lifecycle.
+    pub sandbox_status: SandboxStatus,
+    /// Conversation lifecycle.
     pub status: SessionStatus,
-    /// When the session last changed.
+    /// Last change.
     pub updated_at: Timestamp,
-    /// The owning workspace.
+    /// Workspace.
     pub workspace_id: WorkspaceId,
 }
 
@@ -2414,60 +1789,54 @@ pub struct SessionListPage {
     pub next_cursor: Option<Cursor>,
 }
 
-/// Network policy for the session.
+/// Network policy for the one sandbox.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionNetworkRequest {
-    /// The guest policy.
+    /// Guest policy.
     pub hands: HandsNetworkRequest,
 }
 
-/// Opaque workspace files mounted into the session. Conventional files such as `AGENTS.md` may
-/// carry guidance, skills, tool bundles, MCP configuration or custom instructions; the built-in
-/// model tools are `read_file`, `edit_file`, `write_file`, and Bash.
+/// Files resolved once at session admission; later workspace overwrites cannot mutate this
+/// manifest.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionRegisteredSelection {
-    /// Registered files to mount.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub files: Option<Vec<ResourceName>>,
+    /// Explicit name-to-path mounts.
+    pub mounts: Vec<WorkspaceFileMount>,
 }
 
-/// The result of manually resuming the same retained generation to idle.
+/// Default-on sandbox configuration; enabled=false creates no Hand.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionResumeResult {
-    /// Whether the retained generation was resumed.
-    pub changed: bool,
-    /// When the retained generation resumed.
-    pub resumed_at: Timestamp,
-    /// The session.
-    pub session_id: SessionId,
-    /// The revision after resumption.
-    pub session_revision: u64,
-    /// Always `idle` after a successful resume.
-    pub status: SessionStatus,
+pub struct SessionSandboxRequest {
+    /// Bounded compute shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compute: Option<SessionComputeRequest>,
+    /// Defaults true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Guest egress policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<SessionNetworkRequest>,
+    /// Pinned packages applied before initial suspension.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packages: Option<Vec<PackageRequest>>,
 }
 
-/// What a session is doing right now.
+/// Customer-visible session lifecycle, independent of sandbox suspension.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
-    /// Ready for another message.
+    /// Ready for another user message.
     Idle,
-    /// Processing the active message.
+    /// Processing the one active root message.
     Running,
-    /// Stopping compute while retaining this exact generation.
-    Suspending,
-    /// Compute is stopped and this exact generation may be resumed.
-    Suspended,
-    /// Restarting the retained generation.
-    Resuming,
-    /// Destroying compute and live files.
+    /// Destroying sandbox compute.
     Terminating,
-    /// Compute and live files are gone; metadata and sealed messages remain.
+    /// Sandbox compute is gone; metadata and messages remain.
     Terminated,
-    /// Irreversible metadata deletion is in progress.
+    /// Irreversible session-content deletion is running.
     Deleting,
 }
 
@@ -2476,9 +1845,6 @@ impl SessionStatus {
     pub const ALL: &'static [SessionStatus] = &[
         SessionStatus::Idle,
         SessionStatus::Running,
-        SessionStatus::Suspending,
-        SessionStatus::Suspended,
-        SessionStatus::Resuming,
         SessionStatus::Terminating,
         SessionStatus::Terminated,
         SessionStatus::Deleting,
@@ -2490,9 +1856,6 @@ impl SessionStatus {
         match self {
             Self::Idle => "idle",
             Self::Running => "running",
-            Self::Suspending => "suspending",
-            Self::Suspended => "suspended",
-            Self::Resuming => "resuming",
             Self::Terminating => "terminating",
             Self::Terminated => "terminated",
             Self::Deleting => "deleting",
@@ -2500,128 +1863,119 @@ impl SessionStatus {
     }
 }
 
-/// The result of manually suspending an idle session's exact retained generation. Active work must
-/// be cancelled first.
+/// Minimal marker after irreversible deletion.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionSuspendResult {
-    /// Whether the session transitioned to suspended.
-    pub changed: bool,
-    /// The session.
-    pub session_id: SessionId,
-    /// The revision after suspension.
-    pub session_revision: u64,
-    /// When the generation suspended.
-    pub suspended_at: Timestamp,
+pub struct SessionTombstone {
+    /// Commit time.
+    pub deleted_at: Timestamp,
+    /// Deleted session.
+    pub id: SessionId,
 }
 
-/// A five-minute S3 GET grant for one immutable OTLP protobuf segment.
+/// Short-lived signed download for one immutable compressed telemetry export.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionTelemetryDownloadGrant {
-    /// When the signature stops verifying.
+pub struct TelemetryDownloadGrant {
+    /// Grant expiry.
     pub expires_at: Timestamp,
-    /// The immutable object being granted.
-    pub segment: SessionTelemetrySegment,
-    /// The signed S3 URL; never printed by the CLI.
+    /// Compressed NDJSON or OTLP bundle media type.
+    pub media_type: String,
+    /// Exact compressed object digest.
+    pub sha256: ContentHash,
+    /// Compressed size.
+    pub size_bytes: DecimalU128,
+    /// Signed S3 URL; never printed by the CLI.
     pub url: HttpsUrl,
 }
 
-/// One immutable official OTLP protobuf log segment generated by AEX after a committed session
-/// boundary.
+/// Select a bounded half-open telemetry export.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionTelemetrySegment {
-    /// When S3 accepted the immutable object.
+pub struct TelemetryDownloadRequest {
+    /// First included sequence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<Timestamp>,
-    /// The ordered content-addressed segment id.
-    pub id: String,
-    /// Always `application/x-protobuf`.
-    pub media_type: String,
-    /// The native session-event sequence.
+    pub from_sequence: Option<DecimalU128>,
+    /// Exclusive sequence ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_sequence: Option<DecimalU128>,
+}
+
+/// One bounded normalized telemetry frame transmitted live and persisted in compressed S3 segments.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TelemetryFrame {
+    /// Bounded customer-safe structured event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<CanonicalJson>,
+    /// Signal family.
+    pub kind: TelemetryKind,
+    /// Trusted producer time.
+    pub occurred_at: Timestamp,
+    /// Bounded tool/assistant output preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    /// Monotonic per-session sequence.
     pub sequence: DecimalU128,
-    /// SHA-256 of the exact protobuf bytes.
-    pub sha256: ContentHash,
-    /// The exact protobuf byte size.
-    pub size_bytes: DecimalU128,
-}
-
-/// One bounded page of immutable AEX-generated session telemetry.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionTelemetrySegmentPage {
-    /// The page.
-    pub items: Vec<SessionTelemetrySegment>,
-    /// Continuation token.
+    /// Span correlation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<Cursor>,
+    pub span_id: Option<SpanId>,
+    /// Trace correlation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<TraceId>,
+    /// Whether retained data is larger than this frame.
+    pub truncated: bool,
 }
 
-/// The result of permanently destroying compute and live files while preserving session metadata
-/// and sealed messages.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionTerminateResult {
-    /// Whether live compute or files existed and were destroyed.
-    pub changed: bool,
-    /// The session.
-    pub session_id: SessionId,
-    /// The revision after termination.
-    pub session_revision: u64,
-    /// When permanent termination committed.
-    pub terminated_at: Timestamp,
-}
-
-/// Why a session permanently lost its compute and live files.
+/// Trusted live and retained session signals.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SessionTerminationReason {
-    /// The customer explicitly terminated it.
-    User,
-    /// The eight-hour provider lifetime ended.
-    LifetimeExpired,
-    /// Its pinned BYOK provider credential was revoked.
-    ProviderCredentialRevoked,
-    /// The retained runtime was lost; crash recovery is not part of this release.
-    RuntimeLost,
+pub enum TelemetryKind {
+    /// Assistant preview/commit lifecycle.
+    Assistant,
+    /// Tool waiting, start, preview and completion.
+    Tool,
+    /// Sandbox prepare/materialize/suspend/resume/loss lifecycle.
+    Runtime,
+    /// OpenTelemetry Log record.
+    Log,
+    /// OpenTelemetry Span record.
+    Span,
+    /// Trusted model/runtime/storage/transfer usage fact.
+    Usage,
+    /// Bounded live delivery dropped frames; replay from S3.
+    Gap,
+    /// Stream heartbeat.
+    Heartbeat,
 }
 
-impl SessionTerminationReason {
+impl TelemetryKind {
     /// Every value, in declared order.
-    pub const ALL: &'static [SessionTerminationReason] = &[
-        SessionTerminationReason::User,
-        SessionTerminationReason::LifetimeExpired,
-        SessionTerminationReason::ProviderCredentialRevoked,
-        SessionTerminationReason::RuntimeLost,
+    pub const ALL: &'static [TelemetryKind] = &[
+        TelemetryKind::Assistant,
+        TelemetryKind::Tool,
+        TelemetryKind::Runtime,
+        TelemetryKind::Log,
+        TelemetryKind::Span,
+        TelemetryKind::Usage,
+        TelemetryKind::Gap,
+        TelemetryKind::Heartbeat,
     ];
 
     /// The wire spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::User => "user",
-            Self::LifetimeExpired => "lifetime_expired",
-            Self::ProviderCredentialRevoked => "provider_credential_revoked",
-            Self::RuntimeLost => "runtime_lost",
+            Self::Assistant => "assistant",
+            Self::Tool => "tool",
+            Self::Runtime => "runtime",
+            Self::Log => "log",
+            Self::Span => "span",
+            Self::Usage => "usage",
+            Self::Gap => "gap",
+            Self::Heartbeat => "heartbeat",
         }
     }
-}
-
-/// The minimal marker left after irreversible deletion. Compute and live files are terminated
-/// first; session, message, and Brain user-content payloads are removed. Independent registered
-/// workspace files and aggregate billing/audit facts remain.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionTombstone {
-    /// When deletion committed.
-    pub deleted_at: Timestamp,
-    /// The deleted session.
-    pub id: SessionId,
-    /// The operation that deleted it.
-    pub operation_id: OperationId,
-    /// The owning workspace.
-    pub workspace_id: WorkspaceId,
 }
 
 /// One staged multipart upload. Uploads are transport plumbing, not assets.
@@ -2648,6 +2002,17 @@ pub struct Upload {
     pub state: UploadState,
 }
 
+/// One pending current-file overwrite and every bounded part grant needed to upload it; no extra
+/// public grant route exists.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct UploadAdmission {
+    /// Every part grant, in ascending order.
+    pub grants: Vec<UploadPartGrant>,
+    /// The admitted upload.
+    pub upload: Upload,
+}
+
 /// Complete a staged upload.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -2656,12 +2021,16 @@ pub struct UploadCompleteRequest {
     pub parts: Vec<UploadPart>,
 }
 
-/// Stage a large registered-resource value.
+/// Stage a large current workspace-file replacement.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UploadCreateRequest {
     /// The media type.
     pub content_type: String,
+    /// The latest-only logical file name to replace immediately with pending.
+    pub name: ResourceName,
+    /// Every contiguous part declaration used to mint the checksum-bound admission grants.
+    pub parts: Vec<UploadPartRequest>,
     /// The exact whole-object hash.
     pub sha256: ContentHash,
     /// The exact object size.
@@ -2693,16 +2062,6 @@ pub struct UploadPartGrant {
     pub url: HttpsUrl,
 }
 
-/// The presigned grants for the requested parts.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct UploadPartGrants {
-    /// The grants.
-    pub grants: Vec<UploadPartGrant>,
-    /// The staged upload.
-    pub upload_id: UploadId,
-}
-
 /// One part to presign. The part's own SHA-256 is required because S3 verifies it on the way up and
 /// the completion manifest checks it again; the server never sees the bytes, so it cannot compute
 /// it.
@@ -2715,15 +2074,6 @@ pub struct UploadPartRequest {
     pub sha256: ContentHash,
     /// The exact Content-Length to be signed.
     pub size_bytes: DecimalU128,
-}
-
-/// Mint presigned PUT grants for the named parts. At most 1000 parts per call against the
-/// 10000-part ceiling, so a maximal upload needs at least ten calls.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct UploadPartsRequest {
-    /// The parts to grant.
-    pub parts: Vec<UploadPartRequest>,
 }
 
 /// Where a staged upload is in its lifecycle.
@@ -2748,6 +2098,16 @@ impl UploadState {
             Self::Ready => "ready",
         }
     }
+}
+
+/// Resolve one current workspace-file name to a private immutable hash and mount path at admission.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct WorkspaceFileMount {
+    /// Current logical workspace-file name.
+    pub name: ResourceName,
+    /// Normalized absolute sandbox destination under /workspace.
+    pub path: FilePath,
 }
 
 // --- usage -------------------------------------------------------
@@ -3105,16 +2465,6 @@ pub struct UsageStorageAggregate {
 
 // --- query parameters ------------------------------------------------------
 
-/// Query parameters of `account_get`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct AccountGetQuery {
-    /// Which organization's account to read. Required: a user can belong to many organizations, so
-    /// a rule that derived it from the credential would silently change meaning the day a user
-    /// joins a second one.
-    pub organization_id: OrganizationId,
-}
-
 /// Query parameters of `api_keys_list`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -3129,105 +2479,40 @@ pub struct ApiKeysListQuery {
     pub workspace_id: WorkspaceId,
 }
 
-/// Query parameters of `billing_balance_get`.
+/// Query parameters of `billing_transactions_list`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct BillingBalanceGetQuery {
-    /// Required unless the credential derives one organization.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub organization_id: Option<OrganizationId>,
-}
-
-/// Query parameters of `billing_statements_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct BillingStatementsListQuery {
+pub struct BillingTransactionsListQuery {
     /// Opaque continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
-    /// Page size.
+    /// Page size; defaults to 25.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
 }
 
-/// Query parameters of `central_operations_list`.
+/// Query parameters of `billing_usage_get`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct CentralOperationsListQuery {
+pub struct BillingUsageGetQuery {
+    /// Restrict to one rated category.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<BillingUsageCategory>,
     /// Opaque continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
-    /// Restrict to one operation kind.
+    /// Inclusive service-time lower bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<OperationKind>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-    /// The organization whose operations are listed.
-    pub organization_id: OrganizationId,
-    /// Restrict to one status.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<OperationStatus>,
-}
-
-/// Query parameters of `memberships_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct MembershipsListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-}
-
-/// Query parameters of `organizations_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct OrganizationsListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-}
-
-/// Query parameters of `provider_credentials_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ProviderCredentialsListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-    /// Restrict to one provider.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<ProviderId>,
-}
-
-/// Query parameters of `regional_operations_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RegionalOperationsListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Restrict to one operation kind.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<OperationKind>,
-    /// Page size.
+    pub from: Option<Timestamp>,
+    /// Page size; defaults to 25.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
     /// Restrict to one session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
-    /// Restrict to one status.
+    /// Exclusive service-time upper bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<OperationStatus>,
+    pub to: Option<Timestamp>,
 }
 
 /// Query parameters of `registry_files_list`.
@@ -3242,22 +2527,6 @@ pub struct RegistryFilesListQuery {
     pub limit: Option<u32>,
 }
 
-/// Query parameters of `session_files_live_download_part_get`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionFilesLiveDownloadPartGetQuery {
-    /// The exact version returned when the download opened.
-    pub version: ContentHash,
-}
-
-/// Query parameters of `session_files_live_upload_part_put`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionFilesLiveUploadPartPutQuery {
-    /// SHA-256 of the complete logical part.
-    pub sha256: ContentHash,
-}
-
 /// Query parameters of `session_messages_list`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -3270,16 +2539,34 @@ pub struct SessionMessagesListQuery {
     pub limit: Option<u32>,
 }
 
-/// Query parameters of `session_telemetry_segments_list`.
+/// Query parameters of `session_messages_stream`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionTelemetrySegmentsListQuery {
-    /// Opaque continuation token.
+pub struct SessionMessagesStreamQuery {
+    /// Resume after this stream sequence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
+    pub after: Option<DecimalU128>,
+}
+
+/// Query parameters of `session_telemetry_replay`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionTelemetryReplayQuery {
+    /// Replay after this sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<DecimalU128>,
+    /// Maximum frames.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+}
+
+/// Query parameters of `session_telemetry_stream`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SessionTelemetryStreamQuery {
+    /// Resume after this live sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<DecimalU128>,
 }
 
 /// Query parameters of `sessions_list`.
@@ -3295,28 +2582,4 @@ pub struct SessionsListQuery {
     /// Restrict to one status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<SessionStatus>,
-}
-
-/// Query parameters of `usage_query`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct UsageQueryQuery {
-    /// Required when an account token selects the workspace.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<WorkspaceId>,
-}
-
-/// Query parameters of `workspaces_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct WorkspacesListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
-    /// Restrict to one organization.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub organization_id: Option<OrganizationId>,
 }

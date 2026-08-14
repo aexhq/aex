@@ -1,162 +1,6 @@
-# Live files, registered opaque workspace files, uploads, dedicated BYOK
-# provider credentials and effective limits.
+# Registered opaque workspace files and uploads.
 module: regional
 schemas:
-  FileEntryType:
-    doc: What a file entry is.
-    type: enum
-    values:
-      - { value: file, doc: "A regular file." }
-      - { value: directory, doc: "A directory." }
-      - { value: symlink, doc: "A symbolic link." }
-
-  FileEntry:
-    doc: One file entry, identified by its normalized POSIX path.
-    type: object
-    fields:
-      path: { type: file_path, doc: "The normalized POSIX path." }
-      type: { type: ref, to: FileEntryType, doc: "What the entry is." }
-      sizeBytes: { type: decimal, doc: "Size in bytes." }
-      sha256: { type: content_hash, optional: true, doc: "Content hash, for regular files." }
-      mode: { type: string, min: 4, max: 4, pattern: "^0[0-7]{3}$", doc: "POSIX mode, four octal digits." }
-      mtime: { type: timestamp, doc: "Modification time." }
-      target: { type: string, min: 1, max: 4096, optional: true, doc: "The exact, unnormalized link text for a symlink." }
-
-  FileEntryPage:
-    doc: One page of file entries.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: FileEntry }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-
-  LiveFileEntry:
-    doc: One live file entry plus what the read did to the workspace.
-    type: object
-    fields:
-      entry: { type: ref, to: FileEntry, doc: "The entry." }
-      workspaceAccess: { type: ref, to: WorkspaceAccess, doc: "What the read did." }
-
-  LiveFileEntryPage:
-    doc: One page of live file entries plus what the read did.
-    type: object
-    fields:
-      items: { type: array, max: 1000, items: { type: ref, to: FileEntry }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-      workspaceAccess: { type: ref, to: WorkspaceAccess, doc: "What the read did." }
-
-  LiveFileUploadState:
-    doc: The generation-local position of one ephemeral upload.
-    type: enum
-    values:
-      - { value: staging, doc: "Logical parts may still be written." }
-      - { value: complete, doc: "The file was atomically published in the `MicroVM`." }
-
-  LiveFileUploadPart:
-    doc: One verified logical part retained by the exact `MicroVM` generation.
-    type: object
-    fields:
-      partNumber: { type: integer, min: 1, max: 1280, doc: "The one-based logical part number." }
-      offset: { type: decimal, doc: "The first byte in the complete file." }
-      sizeBytes: { type: integer, min: 1, max: 4194304, doc: "The exact logical-part size." }
-      sha256: { type: content_hash, doc: "SHA-256 of this logical part." }
-
-  LiveFileUpload:
-    doc: >-
-      One resumable upload held only by the session's exact `MicroVM` generation.
-      Suspension retains it; termination or runtime loss destroys it.
-    type: object
-    fields:
-      id: { type: id, of: file_upload, doc: "The ephemeral upload identity." }
-      sessionId: { type: id, of: session, doc: "The owning session." }
-      generationId: { type: id, of: generation, doc: "The only generation that may accept it." }
-      path: { type: file_path, doc: "The final normalized workspace path." }
-      state: { type: ref, to: LiveFileUploadState, doc: "The upload position." }
-      sizeBytes: { type: decimal, doc: "The exact complete file size." }
-      sha256: { type: content_hash, doc: "The exact complete-file SHA-256." }
-      mode: { type: ref, to: RegisteredFileMode, doc: "The final POSIX mode." }
-      partSizeBytes: { type: integer, min: 4194304, max: 4194304, doc: "The fixed non-final logical-part size." }
-      partCount: { type: integer, min: 0, max: 1280, doc: "How many logical parts the file has; zero for an empty file." }
-      parts: { type: array, max: 1280, items: { type: ref, to: LiveFileUploadPart }, doc: "Verified parts, ascending." }
-      expiresAt: { type: timestamp, doc: "The provider-generation expiry; never later than eight hours after launch." }
-      workspaceAccess: { type: ref, to: WorkspaceAccess, doc: "Which generation answered and whether it resumed." }
-
-  LiveFileUploadCreateRequest:
-    doc: Create or exactly replay a resumable upload in the session's retained generation.
-    type: object
-    fields:
-      path: { type: file_path, doc: "The final normalized workspace path." }
-      sizeBytes: { type: decimal, doc: "The exact complete file size, at most five GiB." }
-      sha256: { type: content_hash, doc: "The exact complete-file SHA-256." }
-      mode: { type: ref, to: RegisteredFileMode, optional: true, doc: "The final mode; defaults to 0644." }
-      ifGenerationId: { type: id, of: generation, optional: true, doc: "Require this exact retained generation." }
-
-  LiveFileDownloadState:
-    doc: Whether an exact-version live download is still open or fully verified.
-    type: enum
-    values:
-      - { value: open, doc: "Parts may be read from the pinned descriptor." }
-      - { value: verified, doc: "Final re-stat and whole-file verification succeeded." }
-
-  LiveFileDownloadPart:
-    doc: One fixed range and its expected digest in an exact live-file version.
-    type: object
-    fields:
-      partNumber: { type: integer, min: 1, max: 1280, doc: "The one-based download part." }
-      offset: { type: decimal, doc: "The first byte in the whole file." }
-      sizeBytes: { type: integer, min: 1, max: 4194304, doc: "The exact range size." }
-      sha256: { type: content_hash, doc: "SHA-256 the SDK must verify before retaining the part." }
-
-  LiveFileDownload:
-    doc: >-
-      One exact-generation descriptor-pinned multipart download. It carries no
-      object-store URL: every part is read directly from the retained `MicroVM`.
-    type: object
-    fields:
-      id: { type: id, of: file_download, doc: "The ephemeral download identity." }
-      sessionId: { type: id, of: session, doc: "The owning session." }
-      generationId: { type: id, of: generation, doc: "The only generation that may answer." }
-      path: { type: file_path, doc: "The normalized workspace path." }
-      state: { type: ref, to: LiveFileDownloadState, doc: "The verification position." }
-      sizeBytes: { type: decimal, doc: "The exact whole-file size." }
-      sha256: { type: content_hash, doc: "The expected whole-file SHA-256." }
-      version: { type: content_hash, doc: "Opaque identity binding the bytes and bounded stat evidence." }
-      partSizeBytes: { type: integer, min: 4194304, max: 4194304, doc: "The fixed non-final range size." }
-      partCount: { type: integer, min: 0, max: 1280, doc: "How many ranged parts the SDK must fetch; zero for an empty file." }
-      parts: { type: array, max: 1280, items: { type: ref, to: LiveFileDownloadPart }, doc: "Expected part ranges and hashes, ascending." }
-      expiresAt: { type: timestamp, doc: "When the descriptor is closed if the client abandons it." }
-      workspaceAccess: { type: ref, to: WorkspaceAccess, doc: "Which generation answered and whether it resumed." }
-
-  LiveFileDownloadRequest:
-    doc: Open one regular file without following a symlink, auto-resuming the same generation.
-    type: object
-    fields:
-      path: { type: file_path, doc: "The regular file to open." }
-      ifGenerationId: { type: id, of: generation, optional: true, doc: "Require this exact retained generation." }
-
-  LiveFileDownloadCompleteRequest:
-    doc: Close an exact live-file descriptor after the SDK verified every part and the whole hash.
-    type: object
-    fields:
-      version: { type: content_hash, doc: "The exact version returned at initiation." }
-      sha256: { type: content_hash, doc: "The whole-file SHA-256 the SDK recomputed." }
-
-  LiveFileListRequest:
-    doc: List live workspace files, auto-resuming the same retained generation if suspended.
-    type: object
-    fields:
-      path: { type: file_path, optional: true, doc: "Subtree to list; defaults to the root." }
-      recursive: { type: boolean, optional: true, doc: "Whether to descend; defaults to false." }
-      limit: { type: integer, min: 1, max: 1000, optional: true, doc: "Page size." }
-      cursor: { type: cursor, optional: true, doc: "Continuation token." }
-      ifGenerationId: { type: id, of: generation, optional: true, doc: "Only read this exact generation." }
-
-  LiveFileStatRequest:
-    doc: Stat one live workspace file, auto-resuming the same retained generation if suspended.
-    type: object
-    fields:
-      path: { type: file_path, doc: "The entry to stat." }
-      ifGenerationId: { type: id, of: generation, optional: true, doc: "Only read this exact generation." }
-
   BlobEncoding:
     doc: How inline blob bytes are encoded.
     type: enum
@@ -196,10 +40,12 @@ schemas:
       - { value: url, payload: BlobUrl, doc: "Fetched asynchronously; admission immediately replaces the current record with pending." }
 
   RegisteredState:
-    doc: The only state a registered entry has; there is no version history.
+    doc: State of the single current value; prior values are never addressable.
     type: enum
     values:
-      - { value: current, doc: "The current replacement." }
+      - { value: pending, doc: "The latest URL/import or upload overwrite was admitted but has not published bytes." }
+      - { value: ready, doc: "The latest overwrite has verified downloadable bytes." }
+      - { value: failed, doc: "The latest asynchronous overwrite failed and did not fall back to prior bytes." }
 
   RegisteredFileMode:
     doc: The two permitted registered-file modes.
@@ -218,10 +64,9 @@ schemas:
       sizeBytes: { type: decimal, doc: "Size of the stored payload in bytes." }
 
   RegisteredFileValue:
-    doc: A registered file.
+    doc: A latest-only registered file replacement.
     type: object
     fields:
-      mountPath: { type: file_path, doc: "Where it is mounted in the guest." }
       content: { type: ref, to: BlobInput, doc: "The bytes." }
       mediaType: { type: string, min: 1, max: 255, doc: "Declared media type." }
       mode: { type: ref, to: RegisteredFileMode, doc: "POSIX mode." }
@@ -232,7 +77,6 @@ schemas:
       never inlined; fetch them with a download grant.
     type: object
     fields:
-      mountPath: { type: file_path, doc: "Where it is mounted in the guest." }
       mediaType: { type: string, min: 1, max: 255, doc: "Declared media type." }
       mode: { type: ref, to: RegisteredFileMode, doc: "POSIX mode." }
       content: { type: ref, to: ContentRef, doc: "The stored bytes." }
@@ -242,11 +86,9 @@ schemas:
     type: object
     fields:
       name: { type: resource_name, doc: "The public identity." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      state: { type: ref, to: RegisteredState, doc: "Always current." }
-      sha256: { type: content_hash, doc: "Hash of the canonical value document, not of the payload. The payload's own hash is `value.content.sha256`." }
-      sizeBytes: { type: decimal, doc: "Size of the canonical value document in bytes, not of the payload." }
-      value: { type: ref, to: RegisteredFileRead, doc: "The complete value." }
+      state: { type: ref, to: RegisteredState, doc: "Lifecycle of this one current overwrite." }
+      value: { type: ref, to: RegisteredFileRead, optional: true, doc: "Verified current bytes; present only when ready." }
+      failureCode: { type: string, min: 1, max: 64, optional: true, doc: "Stable bounded failure code; present only when failed." }
       createdAt: { type: timestamp, doc: "When first written." }
       updatedAt: { type: timestamp, doc: "When last replaced." }
 
@@ -257,10 +99,8 @@ schemas:
     type: object
     fields:
       name: { type: resource_name, doc: "The public identity." }
-      revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic concurrency token." }
-      state: { type: ref, to: RegisteredState, doc: "Always current." }
-      sha256: { type: content_hash, doc: "Hash of the canonical value document." }
-      sizeBytes: { type: decimal, doc: "Size of the canonical value document in bytes." }
+      state: { type: ref, to: RegisteredState, doc: "Lifecycle of this one current overwrite." }
+      failureCode: { type: string, min: 1, max: 64, optional: true, doc: "Stable bounded failure code; present only when failed." }
       createdAt: { type: timestamp, doc: "When first written." }
       updatedAt: { type: timestamp, doc: "When last replaced." }
 
@@ -294,7 +134,7 @@ schemas:
       sha256: { type: content_hash, doc: "The declared whole-object hash." }
       contentType: { type: string, min: 1, max: 255, doc: "The declared media type." }
       partSizeBytes: { type: decimal, doc: "The required part size." }
-      partCount: { type: integer, min: 1, max: 10000, doc: "How many parts the object needs." }
+      partCount: { type: integer, min: 1, max: 1000, doc: "How many parts the object needs." }
       createdAt: { type: timestamp, doc: "When staging began." }
       expiresAt: { type: timestamp, doc: "When the orphan grace expires." }
 
@@ -313,6 +153,7 @@ schemas:
       sizeBytes: { type: decimal, doc: "The exact object size." }
       sha256: { type: content_hash, doc: "The exact whole-object hash." }
       contentType: { type: string, min: 1, max: 255, doc: "The media type." }
+      parts: { type: array, min: 1, max: 1000, items: { type: ref, to: UploadPartRequest }, doc: "Every contiguous part declaration used to mint the checksum-bound admission grants." }
 
   UploadPartRequest:
     doc: >-
@@ -321,17 +162,9 @@ schemas:
       never sees the bytes, so it cannot compute it.
     type: object
     fields:
-      partNumber: { type: integer, min: 1, max: 10000, doc: "Which part." }
+      partNumber: { type: integer, min: 1, max: 1000, doc: "Which part." }
       sha256: { type: content_hash, doc: "The part's own SHA-256." }
       sizeBytes: { type: decimal, doc: "The exact Content-Length to be signed." }
-
-  UploadPartsRequest:
-    doc: >-
-      Mint presigned PUT grants for the named parts. At most 1000 parts per call
-      against the 10000-part ceiling, so a maximal upload needs at least ten calls.
-    type: object
-    fields:
-      parts: { type: array, max: 1000, items: { type: ref, to: UploadPartRequest }, doc: "The parts to grant." }
 
   UploadPartGrant:
     doc: >-
@@ -340,30 +173,23 @@ schemas:
       rejected by the object store.
     type: object
     fields:
-      partNumber: { type: integer, min: 1, max: 10000, doc: "Which part." }
+      partNumber: { type: integer, min: 1, max: 1000, doc: "Which part." }
       url: { type: https_url, doc: "The signed URL." }
       headers: { type: array, max: 32, items: { type: ref, to: HttpHeader }, doc: "Headers the caller must replay verbatim." }
       expiresAt: { type: timestamp, doc: "When the signature stops verifying." }
-
-  UploadPartGrants:
-    doc: The presigned grants for the requested parts.
-    type: object
-    fields:
-      uploadId: { type: id, of: upload, doc: "The staged upload." }
-      grants: { type: array, max: 1000, items: { type: ref, to: UploadPartGrant }, doc: "The grants." }
 
   UploadPart:
     doc: One written part and the entity tag the store returned.
     type: object
     fields:
-      partNumber: { type: integer, min: 1, max: 10000, doc: "Which part." }
+      partNumber: { type: integer, min: 1, max: 1000, doc: "Which part." }
       etag: { type: etag, doc: "The entity tag the store returned." }
 
   UploadCompleteRequest:
     doc: Complete a staged upload.
     type: object
     fields:
-      parts: { type: array, max: 10000, items: { type: ref, to: UploadPart }, doc: "Every written part." }
+      parts: { type: array, max: 1000, items: { type: ref, to: UploadPart }, doc: "Every written part." }
 
   LimitSource:
     doc: Where an effective limit value came from.

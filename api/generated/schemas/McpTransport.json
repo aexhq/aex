@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/McpTransport.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The two admitted MCP transports.",
+  "oneOf": [
+    {
+      "$ref": "aex:schema:RemoteMcpServer",
+      "x-aex-discriminator-value": "remote_http"
+    },
+    {
+      "$ref": "aex:schema:SandboxMcpServer",
+      "x-aex-discriminator-value": "sandbox_process"
+    }
+  ],
+  "title": "McpTransport",
+  "x-aex-discriminator": "kind"
+}

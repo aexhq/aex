@@ -1,49 +1,34 @@
 //! Thin executable shell over `aex_cli`.
 
-use std::io::{self, Write};
+use std::io::{self, Write as _};
 use std::process::ExitCode;
 
-use aex_cli::{Cli, Command, command_registry, marked_command, render_completions};
+use aex_cli::{Cli, command_registry, marked_command};
 use clap::FromArgMatches as _;
 
-fn main() -> ExitCode {
-    match run() {
+#[tokio::main]
+async fn main() -> ExitCode {
+    match run().await {
         Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
-            let _ = writeln!(io::stderr(), "error: {message}");
-            ExitCode::FAILURE
+        Err(error) => {
+            let _ = writeln!(io::stderr(), "error: {error}");
+            ExitCode::from(error.exit_code())
         }
     }
 }
 
-fn run() -> Result<(), String> {
-    // Parsed through the marked tree rather than `Cli::parse`, so `aex --help`
-    // and `aex <group> --help` render the deferral the contract declares.
+async fn run() -> Result<(), aex_cli::runtime::RuntimeError> {
     let matches = marked_command().get_matches();
-    let cli = Cli::from_arg_matches(&matches).map_err(|error| error.to_string())?;
+    let cli = Cli::from_arg_matches(&matches).map_err(|error| {
+        // Clap normally exits before this boundary; this branch protects only
+        // programmatic argument sources and contains no credential value.
+        aex_cli::runtime::parse_error(error.to_string())
+    })?;
     if cli.dump_command_registry {
         serde_json::to_writer(io::stdout(), &command_registry())
-            .map_err(|error| error.to_string())?;
-        writeln!(io::stdout()).map_err(|error| error.to_string())?;
+            .map_err(|_| aex_cli::runtime::output_error())?;
+        writeln!(io::stdout()).map_err(|_| aex_cli::runtime::output_error())?;
         return Ok(());
     }
-    match cli.command {
-        Some(Command::Completions { shell }) => {
-            let name = format!("{shell:?}").to_ascii_lowercase();
-            io::stdout()
-                .write_all(&render_completions(&name)?)
-                .map_err(|error| error.to_string())?;
-            Ok(())
-        }
-        Some(Command::Version) => {
-            println!(
-                "aex {} target={} contract=fec7f531dec7",
-                env!("CARGO_PKG_VERSION"),
-                std::env::consts::ARCH
-            );
-            Ok(())
-        }
-        Some(_) => Err("network command execution is not composed in this build".to_owned()),
-        None => Err("a command is required".to_owned()),
-    }
+    aex_cli::runtime::execute(cli).await
 }

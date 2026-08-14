@@ -319,10 +319,6 @@ fn emit_method(
         ResponseShape::NoContent => {
             imports.insert("crate::client::decode_no_content".to_owned());
         }
-        ResponseShape::Accepted => {
-            imports.insert("crate::client::decode_response".to_owned());
-            imports.insert("crate::models::Operation".to_owned());
-        }
         ResponseShape::Created(schema) | ResponseShape::Plain(schema) => {
             imports.insert("crate::client::decode_response".to_owned());
             imports.insert(format!("crate::models::{schema}"));
@@ -418,9 +414,7 @@ const fn decode_name(shape: &ResponseShape) -> &'static str {
         ResponseShape::Etagged(_) => "decode_response_with_etag",
         ResponseShape::Ndjson(_) => "decode_ndjson",
         ResponseShape::Binary => "decode_binary",
-        ResponseShape::Accepted | ResponseShape::Created(_) | ResponseShape::Plain(_) => {
-            "decode_response"
-        }
+        ResponseShape::Created(_) | ResponseShape::Plain(_) => "decode_response",
     }
 }
 

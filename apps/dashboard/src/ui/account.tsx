@@ -1,4 +1,4 @@
-import type { OperationalState, Organization } from "../server/bootstrap";
+import type { AccountOperationalState } from "../server/bootstrap";
 import { Badge, Notice } from "./components";
 import { centsToUsd } from "./panel";
 
@@ -10,25 +10,14 @@ import { centsToUsd } from "./panel";
  * instead, which points back here.
  */
 export function AccountBanner({
-  accounts,
-  organizations,
+  account,
 }: {
-  accounts: readonly { readonly organizationId: string; readonly state: OperationalState }[];
-  organizations: readonly Organization[];
+  account: AccountOperationalState;
 }) {
-  const paused = accounts.filter(({ state }) => state.status === "paused");
-  if (paused.length === 0) return null;
+  if (account.status !== "paused") return null;
   return (
     <div className="frame" style={{ paddingTop: "var(--aex-space-4)" }}>
-      {paused.map(({ organizationId, state: account }) => {
-        const billing = organizations.find(({ id }) => id === organizationId);
-        return (
-          <Notice
-            key={organizationId}
-            status="serious"
-            title={`${billing?.name ?? "This account"} is paused`}
-            live
-          >
+          <Notice status="serious" title="This account is paused" live>
             <p className="small">
               {account.reason === "top_up_required"
                 ? "The prepaid balance ran out, so new work is declined."
@@ -37,29 +26,13 @@ export function AccountBanner({
                 ? `A top-up of at least ${centsToUsd(account.minimumRestoreCents)} restores service.`
                 : ""}
             </p>
-            {account.retentionFundedUntil ? (
-              <p className="small">
-                Retained content stays funded until {account.retentionFundedUntil}
-                {account.deletionScheduledAt
-                  ? `, and unfunded content is scheduled for deletion at ${account.deletionScheduledAt}.`
-                  : "."}
-              </p>
-            ) : null}
-            {billing ? (
-              <p>
-                <a className="button" data-variant="primary" href={`/org/${billing.slug}/billing`}>
-                  Restore service
-                </a>
-              </p>
-            ) : null}
+            <p><a className="button" data-variant="primary" href="/billing">Restore service</a></p>
           </Notice>
-        );
-      })}
     </div>
   );
 }
 
-export function AccountBadge({ account }: { account: OperationalState }) {
+export function AccountBadge({ account }: { account: AccountOperationalState }) {
   return account.status === "active"
     ? <Badge status="good" label="Active" />
     : <Badge status="serious" label="Paused" />;

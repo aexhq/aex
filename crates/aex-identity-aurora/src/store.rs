@@ -4,30 +4,24 @@ use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
-use aex_control_domain::ScopeSet;
 use aex_identity_app::ports::{
-    ConsumeDeviceAuthorizationCommand, ConsumeEmailChallengeCommand, CreateDashboardSessionCommand,
-    CreateDeviceAuthorizationCommand, DecideDeviceAuthorizationCommand, DeviceConsumeOutcome,
-    IdentityStore, IssueEmailChallengeCommand, PepperKeystore, PepperPurpose, ReconcileIdentity,
-    ResolveDashboardSessionQuery, ResolveExternalIdentity, ResolvedUser, RevokeAccountTokenCommand,
+    ConsumeEmailChallengeCommand, CreateDashboardSessionCommand, IdentityStore,
+    IssueEmailChallengeCommand, PepperKeystore, PepperPurpose, ReconcileIdentity,
+    ResolveDashboardSessionQuery, ResolveExternalIdentity, ResolvedUser,
     RevokeDashboardSessionCommand, SetUserStatusCommand, StoreError, TxOutcome, UnknownCommit,
     UnlinkExternalIdentityCommand,
 };
 use aex_identity_domain::{
-    AccountToken, ChallengeState, DashboardSession, DeviceAuthorization, EmailChallenge,
-    ExternalIdentity, PepperVersion, PresentedDigest, TokenOrigin, User, UserStatus, Verifier,
-    verify,
+    ChallengeState, DashboardSession, EmailChallenge, ExternalIdentity, PepperVersion,
+    PresentedDigest, User, UserStatus, Verifier, verify,
 };
 use aex_rds_data::{DataApiClient, Isolation, SqlValue, Statement, Transaction};
 
 use crate::error::{map_commit_failure, map_store_error};
-use crate::rows::{
-    AccountTokenRow, CountRow, DashboardSessionRow, DeviceAuthorizationRow, EmailChallengeRow,
-    ExternalIdentityRow, UserRow,
-};
+use crate::rows::{CountRow, DashboardSessionRow, EmailChallengeRow, ExternalIdentityRow, UserRow};
 use crate::sql;
 
 macro_rules! tx_try {
@@ -88,10 +82,6 @@ impl AuroraIdentityStore {
 
     fn optional_text(value: Option<&String>) -> SqlValue {
         value.map_or(SqlValue::Null, |value| SqlValue::Text(value.clone()))
-    }
-
-    fn scope_values(scopes: ScopeSet) -> Vec<String> {
-        scopes.to_strings()
     }
 
     async fn commit<T>(
@@ -239,55 +229,6 @@ impl AuroraIdentityStore {
             true,
         )))
     }
-
-    /// Mints the account token a redemption produces.
-    ///
-    /// Runs **before** `CONSUME_DEVICE_AUTHORIZATION`, never after.
-    /// `identity.device_authorization.account_token_id` references
-    /// `identity.account_token(id)` and that constraint is not `DEFERRABLE` —
-    /// the only deferred constraints in the bundle are the control and finance
-    /// constraint triggers — so `PostgreSQL` checks it while the `UPDATE` runs
-    /// rather than at `COMMIT`. Consuming first raised 23503 on every single
-    /// redemption, which is why no device code had ever been redeemed outside
-    /// CI's raw-SQL bypass.
-    ///
-    /// The order is safe in this direction because both statements share one
-    /// serializable transaction: a token whose consumption then loses the race
-    /// is rolled back with it, so no orphan token survives, and the conditional
-    /// `UPDATE` remains the sole arbiter of who redeems.
-    async fn insert_device_account_token(
-        transaction: &mut Transaction<'_>,
-        command: &ConsumeDeviceAuthorizationCommand,
-        user_id: Uuid,
-        scopes: ScopeSet,
-    ) -> Result<(), aex_rds_data::DataApiError> {
-        transaction
-            .execute(
-                Statement::new(sql::INSERT_ACCOUNT_TOKEN)
-                    .bind("id", SqlValue::Uuid(command.preassigned_token_id))
-                    .bind("user_id", SqlValue::Uuid(user_id))
-                    .bind(
-                        "verifier",
-                        SqlValue::Bytes(command.token_verifier.as_bytes().to_vec()),
-                    )
-                    .bind(
-                        "pepper_version",
-                        SqlValue::I64(i64::from(command.token_pepper_version.get())),
-                    )
-                    .bind("name", SqlValue::Text(command.token_name.clone()))
-                    .bind("scopes", SqlValue::TextArray(Self::scope_values(scopes)))
-                    .bind(
-                        "issued_at_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.now)),
-                    )
-                    .bind(
-                        "expires_at_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.token_expires_at)),
-                    ),
-            )
-            .await
-            .map(|_| ())
-    }
 }
 
 #[cfg(test)]
@@ -299,21 +240,17 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
-    use aex_control_domain::{Scope, ScopeSet};
     use aex_identity_app::ports::{
-        ConsumeDeviceAuthorizationCommand, IdentityStore, IssueEmailChallengeCommand,
-        PepperKeystore, PepperPurpose, StoreError, TxOutcome,
+        IdentityStore, IssueEmailChallengeCommand, PepperKeystore, PepperPurpose, StoreError,
+        TxOutcome,
     };
-    use aex_identity_domain::{
-        NormalizedEmail, Pepper, PepperVersion, PresentedDigest, Verifier, verifier,
-    };
+    use aex_identity_domain::{NormalizedEmail, Pepper, PepperVersion, Verifier};
     use aex_rds_data::{
         DataApiClient, DataApiConfig, DatabaseName, ExecuteResponse, ResourceArn, SecretArn,
         TransactionId, Transport, TransportError,
     };
     use async_trait::async_trait;
-    use aws_sdk_rdsdata::primitives::Blob;
-    use aws_sdk_rdsdata::types::{ArrayValue, Field, SqlParameter};
+    use aws_sdk_rdsdata::types::{Field, SqlParameter};
     use time::{Duration, OffsetDateTime};
     use uuid::Uuid;
 
@@ -339,7 +276,7 @@ mod tests {
     /// ceremony here branches on that, so the fixture has to state which
     /// statements won rather than answer zero for all of them.
     fn affects_one_row(statement: &str) -> bool {
-        statement == sql::INSERT_EMAIL_CHALLENGE || statement == sql::CONSUME_DEVICE_AUTHORIZATION
+        statement == sql::INSERT_EMAIL_CHALLENGE
     }
 
     #[async_trait]
@@ -450,90 +387,6 @@ mod tests {
         assert_eq!(
             transport.statements.lock().expect("ledger").as_slice(),
             [sql::RESOLVE_EMAIL_CHALLENGE, sql::INSERT_EMAIL_CHALLENGE]
-        );
-    }
-
-    /// The digest the scripted device presents, and the verifier stored for it.
-    fn device_digest() -> PresentedDigest {
-        PresentedDigest::from_bytes([3; 32])
-    }
-
-    /// One `RESOLVE_DEVICE_AUTHORIZATION` record for a live, approved grant.
-    ///
-    /// The column order is `RESOLVE_DEVICE_AUTHORIZATION`'s own projection; a
-    /// record built in any other order fails `expect_arity` or decodes into the
-    /// wrong field, so this doubles as a check that the two stay in step.
-    fn approved_device_record(user_id: Uuid, now: OffsetDateTime) -> Vec<Field> {
-        let stored = verifier(&Pepper::new([7; 32]), &device_digest());
-        let scopes = AuroraIdentityStore::scope_values(ScopeSet::of(&[Scope::SessionsRead]));
-        vec![
-            Field::StringValue(Uuid::from_u128(11).to_string()),
-            Field::BlobValue(Blob::new(stored.as_bytes().to_vec())),
-            Field::LongValue(1),
-            Field::StringValue("approved".to_owned()),
-            Field::ArrayValue(ArrayValue::StringValues(
-                scopes.into_iter().map(Some).collect(),
-            )),
-            Field::StringValue(user_id.to_string()),
-            Field::LongValue(AuroraIdentityStore::millis(now)),
-            Field::IsNull(true),
-            Field::IsNull(true),
-            Field::LongValue(AuroraIdentityStore::millis(now)),
-            Field::LongValue(AuroraIdentityStore::millis(now + Duration::minutes(15))),
-            Field::LongValue(5_000),
-            Field::IsNull(true),
-        ]
-    }
-
-    /// Redeeming a device grant must insert the token before it is referenced.
-    ///
-    /// `identity.device_authorization.account_token_id` references
-    /// `identity.account_token(id)` and the constraint is not `DEFERRABLE`, so
-    /// the reverse order answers 23503 on every single redemption — which it
-    /// did, unnoticed, because the only other way to reach an account token is
-    /// CI's raw-SQL bypass. The ledger is the cheapest place to state the
-    /// order, and it states it without a container.
-    #[tokio::test]
-    async fn a_redemption_inserts_the_token_before_the_grant_points_at_it() {
-        let now = OffsetDateTime::UNIX_EPOCH + Duration::hours(1);
-        let user_id = Uuid::from_u128(23);
-        let records = HashMap::from([(
-            sql::RESOLVE_DEVICE_AUTHORIZATION,
-            vec![approved_device_record(user_id, now)],
-        )]);
-        let (store, transport) = store_answering(records, false);
-
-        let outcome = store
-            .consume_device_authorization(&ConsumeDeviceAuthorizationCommand {
-                device_id: Uuid::from_u128(11),
-                digest: device_digest(),
-                preassigned_token_id: Uuid::from_u128(31),
-                token_verifier: Verifier::from_bytes([5; 32]),
-                token_pepper_version: PepperVersion::new(1),
-                token_name: "scripted device".to_owned(),
-                token_expires_at: now + Duration::days(30),
-                now,
-            })
-            .await
-            .expect("an approved grant redeems");
-
-        let TxOutcome::Committed(redeemed) = outcome else {
-            panic!("a scripted commit is committed");
-        };
-        assert_eq!(redeemed.token.id, Uuid::from_u128(31));
-        assert_eq!(redeemed.grant.account_token_id, Some(Uuid::from_u128(31)));
-        assert_eq!(
-            transport.statements.lock().expect("ledger").as_slice(),
-            [
-                // `Isolation::Serializable` is issued as a statement of its
-                // own, so the ledger opens with it; redemption arbitrates a
-                // race and must not run at a weaker level.
-                "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE",
-                sql::RESOLVE_DEVICE_AUTHORIZATION,
-                sql::INSERT_ACCOUNT_TOKEN,
-                sql::CONSUME_DEVICE_AUTHORIZATION,
-            ],
-            "the token row has to exist before `account_token_id` names it"
         );
     }
 
@@ -1003,394 +856,5 @@ impl IdentityStore for AuroraIdentityStore {
             tx_conflict!(transaction, "external_identity_last_credential".to_owned());
         }
         Self::commit(transaction, "unlink_external_identity", command.user_id, ()).await
-    }
-
-    async fn create_device_authorization(
-        &self,
-        command: &CreateDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
-        if let Some(existing) = self
-            .client
-            .query_opt::<DeviceAuthorizationRow>(
-                Statement::new(sql::RESOLVE_DEVICE_AUTHORIZATION)
-                    .bind("device_id", SqlValue::Uuid(command.preassigned_id)),
-            )
-            .await
-            .map_err(map_store_error)?
-        {
-            let same = existing.verifier == command.device_verifier
-                && existing.value.pepper_version == command.pepper_version
-                && existing.value.requested_scopes == command.requested_scopes
-                && existing.value.issued_at == command.issued_at
-                && existing.value.expires_at == command.expires_at;
-            return Ok(if same {
-                TxOutcome::Replayed(existing.value)
-            } else {
-                TxOutcome::IntentConflict
-            });
-        }
-        let mut transaction = self
-            .client
-            .begin(Isolation::ReadCommitted)
-            .await
-            .map_err(map_store_error)?;
-        tx_try!(
-            transaction,
-            transaction.execute(
-                Statement::new(sql::INSERT_DEVICE_AUTHORIZATION)
-                    .bind("id", SqlValue::Uuid(command.preassigned_id))
-                    .bind(
-                        "device_verifier",
-                        SqlValue::Bytes(command.device_verifier.as_bytes().to_vec()),
-                    )
-                    .bind(
-                        "user_code_hash",
-                        SqlValue::Bytes(command.user_code_hash.to_vec()),
-                    )
-                    .bind(
-                        "pepper_version",
-                        SqlValue::I64(i64::from(command.pepper_version.get())),
-                    )
-                    .bind(
-                        "requested_scopes",
-                        SqlValue::TextArray(Self::scope_values(command.requested_scopes)),
-                    )
-                    .bind(
-                        "issued_at_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.issued_at)),
-                    )
-                    .bind(
-                        "expires_at_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.expires_at)),
-                    )
-                    .bind(
-                        "poll_interval_ms",
-                        SqlValue::I64(i64::from(command.poll_interval_ms)),
-                    ),
-            )
-        );
-        let grant = DeviceAuthorization {
-            id: command.preassigned_id,
-            state: aex_identity_domain::DeviceState::Pending,
-            requested_scopes: command.requested_scopes,
-            pepper_version: command.pepper_version,
-            approved_by: None,
-            approved_at: None,
-            consumed_at: None,
-            account_token_id: None,
-            issued_at: command.issued_at,
-            expires_at: command.expires_at,
-            poll_interval: Duration::milliseconds(i64::from(command.poll_interval_ms)),
-            last_polled_at: None,
-        };
-        Self::commit(
-            transaction,
-            "create_device_authorization",
-            command.preassigned_id,
-            grant,
-        )
-        .await
-    }
-
-    async fn approve_device_authorization(
-        &self,
-        command: &DecideDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
-        self.decide_device(command, true).await
-    }
-
-    async fn deny_device_authorization(
-        &self,
-        command: &DecideDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
-        self.decide_device(command, false).await
-    }
-
-    async fn poll_device_authorization(
-        &self,
-        device_id: Uuid,
-        digest: &PresentedDigest,
-        now: OffsetDateTime,
-    ) -> Result<Option<DeviceAuthorization>, StoreError> {
-        let mut transaction = self
-            .client
-            .begin(Isolation::Serializable)
-            .await
-            .map_err(map_store_error)?;
-        let Some(row) = tx_try!(
-            transaction,
-            transaction.query_opt::<DeviceAuthorizationRow>(
-                Statement::new(sql::RESOLVE_DEVICE_AUTHORIZATION)
-                    .bind("device_id", SqlValue::Uuid(device_id)),
-            )
-        ) else {
-            let _ = transaction.rollback().await;
-            return Ok(None);
-        };
-        let matches = match self
-            .credential_matches(row.value.pepper_version, digest, &row.verifier)
-            .await
-        {
-            Ok(matches) => matches,
-            Err(error) => {
-                let _ = transaction.rollback().await;
-                return Err(error);
-            }
-        };
-        if !matches {
-            let _ = transaction.rollback().await;
-            return Ok(None);
-        }
-        let before = row.value;
-        let (after, _) = before.poll(now);
-        tx_try!(
-            transaction,
-            transaction.execute(
-                Statement::new(sql::UPDATE_DEVICE_POLL)
-                    .bind("device_id", SqlValue::Uuid(device_id))
-                    .bind(
-                        "poll_interval_ms",
-                        SqlValue::I64(
-                            i64::try_from(after.poll_interval.whole_milliseconds())
-                                .unwrap_or(i64::MAX),
-                        ),
-                    )
-                    .bind("now_ms", SqlValue::TimestampMillis(Self::millis(now))),
-            )
-        );
-        match transaction.commit().await {
-            Ok(_) => Ok(Some(before)),
-            Err(failure) => Err(map_commit_failure(failure)),
-        }
-    }
-
-    async fn consume_device_authorization(
-        &self,
-        command: &ConsumeDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceConsumeOutcome>, StoreError> {
-        let mut transaction = self
-            .client
-            .begin(Isolation::Serializable)
-            .await
-            .map_err(map_store_error)?;
-        let Some(row) = tx_try!(
-            transaction,
-            transaction.query_opt::<DeviceAuthorizationRow>(
-                Statement::new(sql::RESOLVE_DEVICE_AUTHORIZATION)
-                    .bind("device_id", SqlValue::Uuid(command.device_id)),
-            )
-        ) else {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::NotFound);
-        };
-        let matches = match self
-            .credential_matches(row.value.pepper_version, &command.digest, &row.verifier)
-            .await
-        {
-            Ok(matches) => matches,
-            Err(error) => {
-                let _ = transaction.rollback().await;
-                return Err(error);
-            }
-        };
-        if !matches {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::NotFound);
-        }
-        if let Some(token_id) = row.value.account_token_id {
-            let token = tx_try!(
-                transaction,
-                transaction.query_one::<AccountTokenRow>(
-                    Statement::new(sql::RESOLVE_ACCOUNT_TOKEN)
-                        .bind("token_id", SqlValue::Uuid(token_id)),
-                )
-            );
-            let _ = transaction.rollback().await;
-            return Ok(TxOutcome::Replayed(DeviceConsumeOutcome {
-                grant: row.value,
-                token: token.0,
-            }));
-        }
-        let Some(user_id) = row.value.approved_by else {
-            tx_conflict!(transaction, "device_authorization_approved".to_owned());
-        };
-        // Mint first, then point the grant at it: the foreign key is not
-        // deferrable. See `insert_device_account_token` for why the order is
-        // load bearing and why it is safe this way round.
-        tx_try!(
-            transaction,
-            Self::insert_device_account_token(
-                &mut transaction,
-                command,
-                user_id,
-                row.value.requested_scopes,
-            )
-        );
-        let affected = tx_try!(
-            transaction,
-            transaction.execute(
-                Statement::new(sql::CONSUME_DEVICE_AUTHORIZATION)
-                    .bind("device_id", SqlValue::Uuid(command.device_id))
-                    .bind("token_id", SqlValue::Uuid(command.preassigned_token_id))
-                    .bind(
-                        "now_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.now))
-                    ),
-            )
-        );
-        if affected != 1 {
-            tx_conflict!(transaction, "device_authorization_approved".to_owned());
-        }
-        // Rolled back explicitly rather than with `?`: an early return that
-        // leaves the transaction open strands it on the service until the idle
-        // timeout, and every other exit from this ceremony ends it.
-        let grant = match row.value.consume(command.preassigned_token_id, command.now) {
-            Ok(grant) => grant,
-            Err(error) => {
-                tx_conflict!(transaction, error.to_string());
-            }
-        };
-        let token = AccountToken {
-            id: command.preassigned_token_id,
-            user_id,
-            name: command.token_name.clone(),
-            scopes: grant.requested_scopes,
-            origin: TokenOrigin::DeviceFlow,
-            pepper_version: command.token_pepper_version,
-            issued_at: command.now,
-            expires_at: command.token_expires_at,
-            revoked_at: None,
-        };
-        Self::commit(
-            transaction,
-            "consume_device_authorization",
-            command.device_id,
-            DeviceConsumeOutcome { grant, token },
-        )
-        .await
-    }
-
-    async fn revoke_account_token(
-        &self,
-        command: &RevokeAccountTokenCommand,
-    ) -> Result<TxOutcome<()>, StoreError> {
-        let mut transaction = self
-            .client
-            .begin(Isolation::Serializable)
-            .await
-            .map_err(map_store_error)?;
-        let Some(token) = tx_try!(
-            transaction,
-            transaction.query_opt::<AccountTokenRow>(
-                Statement::new(sql::RESOLVE_ACCOUNT_TOKEN)
-                    .bind("token_id", SqlValue::Uuid(command.token_id)),
-            )
-        ) else {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::NotFound);
-        };
-        if token.0.user_id != command.user_id {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::NotFound);
-        }
-        if token.0.revoked_at.is_some() {
-            let _ = transaction.rollback().await;
-            return Ok(TxOutcome::Replayed(()));
-        }
-        let affected = tx_try!(
-            transaction,
-            transaction.execute(
-                Statement::new(sql::REVOKE_ACCOUNT_TOKEN)
-                    .bind("token_id", SqlValue::Uuid(command.token_id))
-                    .bind("user_id", SqlValue::Uuid(command.user_id))
-                    .bind(
-                        "now_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.now))
-                    ),
-            )
-        );
-        if affected != 1 {
-            tx_conflict!(transaction, "account_token_live".to_owned());
-        }
-        let remaining = tx_try!(
-            transaction,
-            transaction.query_one::<CountRow>(
-                Statement::new(sql::COUNT_LIVE_ACCOUNT_TOKENS)
-                    .bind("user_id", SqlValue::Uuid(command.user_id))
-                    .bind(
-                        "now_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.now))
-                    ),
-            )
-        );
-        if remaining.0 == 0 {
-            tx_try!(
-                transaction,
-                transaction.query_one::<CountRow>(
-                    Statement::new(sql::BUMP_USER_EPOCH)
-                        .bind("user_id", SqlValue::Uuid(command.user_id)),
-                )
-            );
-        }
-        Self::commit(transaction, "revoke_account_token", command.token_id, ()).await
-    }
-}
-
-impl AuroraIdentityStore {
-    async fn decide_device(
-        &self,
-        command: &DecideDeviceAuthorizationCommand,
-        approve: bool,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
-        let statement = if approve {
-            sql::APPROVE_DEVICE_AUTHORIZATION
-        } else {
-            sql::DENY_DEVICE_AUTHORIZATION
-        };
-        let mut transaction = self
-            .client
-            .begin(Isolation::Serializable)
-            .await
-            .map_err(map_store_error)?;
-        let affected = tx_try!(
-            transaction,
-            transaction.execute(
-                Statement::new(statement)
-                    .bind(
-                        "user_code_hash",
-                        SqlValue::Bytes(command.user_code_hash.to_vec()),
-                    )
-                    .bind("actor_user_id", SqlValue::Uuid(command.actor_user_id))
-                    .bind("actor_session_id", SqlValue::Uuid(command.actor_session_id),)
-                    .bind(
-                        "now_ms",
-                        SqlValue::TimestampMillis(Self::millis(command.now))
-                    ),
-            )
-        );
-        if affected != 1 {
-            let _ = transaction.rollback().await;
-            return Err(StoreError::NotFound);
-        }
-        let row = tx_try!(
-            transaction,
-            transaction.query_one::<DeviceAuthorizationRow>(
-                Statement::new(sql::RESOLVE_DEVICE_BY_USER_CODE).bind(
-                    "user_code_hash",
-                    SqlValue::Bytes(command.user_code_hash.to_vec()),
-                ),
-            )
-        );
-        Self::commit(
-            transaction,
-            if approve {
-                "approve_device"
-            } else {
-                "deny_device"
-            },
-            row.value.id,
-            row.value,
-        )
-        .await
     }
 }

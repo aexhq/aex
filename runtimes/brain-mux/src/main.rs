@@ -1,7 +1,7 @@
 //! `brain-mux` composition root (Rust Fargate OCI).
 //!
-//! Exclusive responsibility: activations, providers, managed tools, MCP, subagents, the
-//! Hands adapter and the warm fold cache.
+//! Exclusive responsibility: activations, providers, native subagents, and the warm fold
+//! cache. Every non-native tool is sent to the separately placed ToolMux service.
 //!
 //! This binary is a composition root only. Configuration is validated before anything
 //! starts, diagnostics are installed through `aex_platform_diagnostics`, and the behaviour
@@ -16,13 +16,18 @@ pub mod drain;
 pub mod health;
 pub mod inline_tools;
 pub mod measure;
+pub mod model_usage;
 pub mod pressure;
 pub mod reactor;
 pub mod release_catalog;
 pub mod runtime;
 pub mod scale;
 pub mod task_shape;
+pub mod telemetry_gateway;
+pub mod tool_mux;
 pub mod wake;
+
+use base64::Engine as _;
 
 /// The composed loop's own assertions: one turn end to end, the drain order, and A11-MUX
 /// held through the composition rather than only inside the probe.
@@ -47,20 +52,22 @@ pub struct Config {
     pub session_telemetry_bucket: String,
     /// Exact KMS key encrypting immutable session-telemetry objects.
     pub session_telemetry_kms_key_arn: String,
+    /// Immutable content object bucket.
+    pub content_bucket: String,
+    /// Expected content bucket owner.
+    pub content_bucket_owner: String,
+    /// Content object KMS key.
+    pub content_kms_key_arn: String,
     /// The queue Brain wakes are delivered on.
     pub wake_queue_url: String,
     /// The `regional-work` table the due backstop reads.
     pub work_table: String,
-    /// The regional custody table holding provider bindings and sealed generations.
-    pub secret_custody_table: String,
     /// The exact KMS root key ARN wrapping workspace branch keys.
     pub secret_kms_key_arn: String,
     /// Runtime-activity table used by Hands.
     pub runtime_activity_table: String,
-    /// Compute-authority usage ingress used by runtime-control.
-    pub usage_compute_queue_url: String,
-    /// Storage-authority usage ingress used by runtime-control.
-    pub usage_storage_queue_url: String,
+    /// Single central rating FIFO receiving category-fenced runtime facts.
+    pub usage_rating_queue_url: String,
     /// Runtime due-index shard count.
     pub runtime_due_shards: u16,
     /// Runtime due scan budget.
@@ -69,6 +76,12 @@ pub struct Config {
     pub pricing_version: String,
     /// Maximum concurrently active activations for one task.
     pub budget: u32,
+    /// Private ToolMux service base URL.
+    pub tool_mux_url: String,
+    /// Release-projected non-secret verifier anchors used to select the signer's key id.
+    pub tool_mux_assertion_trust_anchors: Vec<(uuid::Uuid, [u8; 32])>,
+    /// Secrets Manager reference holding only the unpadded base64url Ed25519 seed.
+    pub tool_mux_assertion_signing_key_ref: String,
 }
 
 /// Why `brain-mux` refused to start.
@@ -127,12 +140,19 @@ pub enum BrainMuxRunError {
 pub const PLANE_VAR: &str = "AEX_PLANE";
 /// Environment variable naming the bound `AWS` region.
 pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming the session-authority table holding Brain journals and effects.
-pub const RESOURCE_VAR: &str = "AEX_BRAIN_JOURNAL_TABLE";
+/// Environment variable naming the session-authority table holding Brain journals,
+/// effects, provider bindings, and session-scoped sealed generations.
+pub const RESOURCE_VAR: &str = "AEX_SESSION_AUTHORITY_TABLE";
 /// Environment variable naming the immutable session-telemetry bucket.
 pub const SESSION_TELEMETRY_BUCKET_VAR: &str = "AEX_SESSION_TELEMETRY_BUCKET";
 /// Environment variable naming the KMS key for immutable session telemetry.
 pub const SESSION_TELEMETRY_KMS_KEY_ARN_VAR: &str = "AEX_SESSION_TELEMETRY_KMS_KEY_ARN";
+/// Environment variable naming the immutable content object bucket.
+pub const CONTENT_BUCKET_VAR: &str = "AEX_CONTENT_BUCKET";
+/// Environment variable naming the expected content bucket owner.
+pub const CONTENT_BUCKET_OWNER_VAR: &str = "AEX_CONTENT_BUCKET_OWNER";
+/// Environment variable naming the content object KMS key.
+pub const CONTENT_KMS_KEY_ARN_VAR: &str = "AEX_CONTENT_KMS_KEY_ARN";
 /// Environment variable naming the queue Brain wakes are delivered on.
 ///
 /// Required, like every other resource name here. A defaulted queue URL binds the process to
@@ -140,16 +160,18 @@ pub const SESSION_TELEMETRY_KMS_KEY_ARN_VAR: &str = "AEX_SESSION_TELEMETRY_KMS_K
 pub const WAKE_QUEUE_VAR: &str = "AEX_BRAIN_WAKE_QUEUE_URL";
 /// Environment variable naming the `regional-work` table the due backstop reads.
 pub const WORK_TABLE_VAR: &str = "AEX_WORK_TABLE";
-/// Environment variable naming the regional secret-custody table.
-pub const SECRET_CUSTODY_TABLE_VAR: &str = "AEX_SECRET_CUSTODY_TABLE";
 /// Environment variable naming the root KMS key for workspace branch keys.
 pub const SECRET_KMS_KEY_ARN_VAR: &str = "AEX_SECRET_KMS_KEY_ARN";
 /// Environment variable naming the runtime-activity table.
 pub const RUNTIME_ACTIVITY_TABLE_VAR: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
-/// Environment variable naming the compute usage ingress.
-pub const USAGE_COMPUTE_QUEUE_VAR: &str = "AEX_USAGE_COMPUTE_QUEUE_URL";
-/// Environment variable naming the storage usage ingress.
-pub const USAGE_STORAGE_QUEUE_VAR: &str = "AEX_USAGE_STORAGE_QUEUE_URL";
+/// Environment variable naming the single central rating FIFO.
+pub const USAGE_RATING_QUEUE_VAR: &str = "AEX_USAGE_RATING_QUEUE_URL";
+/// Private distributed ToolMux service URL.
+pub const TOOL_MUX_URL_VAR: &str = "AEX_TOOL_MUX_URL";
+/// Release-projected `kid:base64url-public` verifier anchors.
+pub const ASSERTION_TRUST_ANCHORS_VAR: &str = "AEX_ASSERTION_TRUST_ANCHORS";
+/// Secrets Manager reference holding the ToolMux assertion signing seed.
+pub const TOOL_MUX_ASSERTION_SIGNING_KEY_REF_VAR: &str = "AEX_TOOL_MUX_ASSERTION_SIGNING_KEY_REF";
 /// Environment variable naming the runtime due-index shard count.
 pub const RUNTIME_DUE_SHARDS_VAR: &str = "AEX_RUNTIME_DUE_SHARDS";
 /// Environment variable naming the maximum items in one runtime due scan.
@@ -218,9 +240,22 @@ impl Config {
             &session_telemetry_kms_key_arn,
             &region,
         )?;
+        let content_bucket = required(&lookup, CONTENT_BUCKET_VAR)?;
+        let content_bucket_owner = required(&lookup, CONTENT_BUCKET_OWNER_VAR)?;
+        if content_bucket_owner.len() != 12
+            || !content_bucket_owner
+                .bytes()
+                .all(|byte| byte.is_ascii_digit())
+        {
+            return Err(BrainMuxConfigError::Invalid {
+                name: CONTENT_BUCKET_OWNER_VAR,
+                reason: "expected a 12-digit AWS account id".to_owned(),
+            });
+        }
+        let content_kms_key_arn = required(&lookup, CONTENT_KMS_KEY_ARN_VAR)?;
+        validate_kms_arn(CONTENT_KMS_KEY_ARN_VAR, &content_kms_key_arn, &region)?;
         let wake_queue_url = required(&lookup, WAKE_QUEUE_VAR)?;
         let work_table = required(&lookup, WORK_TABLE_VAR)?;
-        let secret_custody_table = required(&lookup, SECRET_CUSTODY_TABLE_VAR)?;
         let secret_kms_key_arn = required(&lookup, SECRET_KMS_KEY_ARN_VAR)?;
         validate_kms_arn(SECRET_KMS_KEY_ARN_VAR, &secret_kms_key_arn, &region)?;
         if session_telemetry_kms_key_arn == secret_kms_key_arn {
@@ -230,14 +265,29 @@ impl Config {
             });
         }
         let runtime_activity_table = required(&lookup, RUNTIME_ACTIVITY_TABLE_VAR)?;
-        let usage_compute_queue_url = endpoint(&lookup, USAGE_COMPUTE_QUEUE_VAR, &region)?;
-        let usage_storage_queue_url = endpoint(&lookup, USAGE_STORAGE_QUEUE_VAR, &region)?;
-        if usage_compute_queue_url == usage_storage_queue_url {
+        let usage_rating_queue_url = endpoint(&lookup, USAGE_RATING_QUEUE_VAR, &region)?;
+        if !usage_rating_queue_url.ends_with(".fifo") {
             return Err(BrainMuxConfigError::Invalid {
-                name: USAGE_STORAGE_QUEUE_VAR,
-                reason: "compute and storage usage authorities cannot share one queue".to_owned(),
+                name: USAGE_RATING_QUEUE_VAR,
+                reason: "the central rating queue must be FIFO".to_owned(),
             });
         }
+        let tool_mux_url = required(&lookup, TOOL_MUX_URL_VAR)?;
+        if !tool_mux_url.starts_with("https://") {
+            return Err(BrainMuxConfigError::Invalid {
+                name: TOOL_MUX_URL_VAR,
+                reason: "expected a private https endpoint".to_owned(),
+            });
+        }
+        let tool_mux_assertion_trust_anchors = aex_tool_mux::parse_assertion_trust_anchors(
+            &required(&lookup, ASSERTION_TRUST_ANCHORS_VAR)?,
+        )
+        .map_err(|_| BrainMuxConfigError::Invalid {
+            name: ASSERTION_TRUST_ANCHORS_VAR,
+            reason: "expected bounded canonical kid:base64url-public entries".to_owned(),
+        })?;
+        let tool_mux_assertion_signing_key_ref =
+            required(&lookup, TOOL_MUX_ASSERTION_SIGNING_KEY_REF_VAR)?;
         let runtime_due_shards = positive(&lookup, RUNTIME_DUE_SHARDS_VAR)?;
         let runtime_due_page_items = positive(&lookup, RUNTIME_DUE_PAGE_ITEMS_VAR)?;
         if runtime_due_page_items > 32 {
@@ -268,13 +318,14 @@ impl Config {
             resource,
             session_telemetry_bucket,
             session_telemetry_kms_key_arn,
+            content_bucket,
+            content_bucket_owner,
+            content_kms_key_arn,
             wake_queue_url,
             work_table,
-            secret_custody_table,
             secret_kms_key_arn,
             runtime_activity_table,
-            usage_compute_queue_url,
-            usage_storage_queue_url,
+            usage_rating_queue_url,
             runtime_due_shards,
             runtime_due_page: aex_runtime_control::store::PageBudget {
                 max_items: runtime_due_page_items,
@@ -282,6 +333,9 @@ impl Config {
             },
             pricing_version,
             budget,
+            tool_mux_url,
+            tool_mux_assertion_trust_anchors,
+            tool_mux_assertion_signing_key_ref,
         })
     }
 
@@ -463,8 +517,11 @@ pub fn run(config: &Config) -> Result<(), BrainMuxRunError> {
             reason: format!("the main runtime could not start: {error}"),
         })?;
 
-    let ProductionBindings { pump_ports, probes } =
-        resolve_production_ports(config, &main_runtime)?;
+    let ProductionBindings {
+        pump_ports,
+        probes,
+        mut gateway_exporter,
+    } = resolve_production_ports(config, &main_runtime)?;
 
     composition.health.schema_matched();
     composition.health.bindings_validated();
@@ -530,6 +587,18 @@ pub fn run(config: &Config) -> Result<(), BrainMuxRunError> {
         let _ = reachability.await;
         pressure.abort();
         let _ = pressure.await;
+        if tokio::time::timeout(std::time::Duration::from_secs(5), &mut gateway_exporter)
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                target: "aex::diagnostics",
+                event = "session_telemetry_exporter_drain_timed_out",
+                deployable = DEPLOYABLE,
+            );
+            gateway_exporter.abort();
+            let _ = gateway_exporter.await;
+        }
         outcome
     });
 
@@ -551,53 +620,67 @@ fn resolve_production_ports(
         &config.wake_queue_url,
         &config.resource,
         &config.work_table,
-        &config.session_telemetry_bucket,
-        &config.session_telemetry_kms_key_arn,
+        &config.content_bucket,
+        &config.content_bucket_owner,
+        &config.content_kms_key_arn,
     ));
     let credentials = wake::credential_bindings(
         &aws.sdk,
         std::sync::Arc::clone(&aws.store),
-        &config.secret_custody_table,
+        &config.resource,
         &config.secret_kms_key_arn,
         config.secret_plane(),
         config.placement_region(),
         &config.credential_cache_partition(),
     );
     let catalog = bind_release_catalog();
-    let hands = wake::hands_binding(
-        &aws.sdk,
-        wake::HandsBinding {
-            region: config.placement_region(),
-            runtime_activity_table: config.runtime_activity_table.clone(),
-            session_authority_table: config.resource.clone(),
-            compute_queue_url: config.usage_compute_queue_url.clone(),
-            storage_queue_url: config.usage_storage_queue_url.clone(),
-            due_shards: config.runtime_due_shards,
-            due_page: config.runtime_due_page,
-            pricing_version: config.pricing_version.clone(),
-        },
-    )
-    .map_err(|error| BrainMuxRunError::Runtime {
-        reason: format!("production Hands binding failed: {error}"),
-    })?;
+    let (gateway_ingress, gateway_inputs) = telemetry_gateway::GatewayIngress::channel(1_024);
+    let gateway_ingress = std::sync::Arc::new(gateway_ingress);
+    let gateway_exporter = runtime.spawn(telemetry_gateway::export(
+        gateway_inputs,
+        aws_sdk_dynamodb::Client::new(&aws.sdk),
+        config.resource.clone(),
+        aex_session_telemetry_aws::SessionTelemetryWriter::new(
+            aws_sdk_s3::Client::new(&aws.sdk),
+            config.session_telemetry_bucket.clone(),
+            config.session_telemetry_kms_key_arn.clone(),
+        ),
+    ));
+    let assertion_plane =
+        aex_identity_domain::assertion::Plane::parse(&config.plane).ok_or_else(|| {
+            BrainMuxRunError::Runtime {
+                reason: "ToolMux assertion plane was not admitted".to_owned(),
+            }
+        })?;
+    let assertion_signer = resolve_tool_mux_assertion_signer(config, &aws.sdk, runtime)?;
+    let hands = wake::remote_tool_mux_binding(
+        config.tool_mux_url.clone(),
+        std::sync::Arc::new(assertion_signer),
+        assertion_plane,
+        config.placement_region(),
+    );
 
-    // The MVP catalog contains only Bash and the three structured file tools.
-    // They execute inside the exact session generation through Hands; hosted
-    // paid tools and typed integrations are deliberately not linked into this
-    // release binary.
+    // Brain owns native subagent scheduling while sandbox and file tools run
+    // inside the exact session generation through Hands.
     let tools = wake::ProductionToolExecutors {
-        brain_inline: None,
-        managed_web: None,
-        tool_exec: None,
-        mcp: None,
-        hands: Some(std::sync::Arc::clone(&hands.executor)),
+        brain_inline: Some(std::sync::Arc::new(inline_tools::BrainControlExecutor)),
+        tool_mux: Some(std::sync::Arc::clone(&hands.tool_mux)),
     }
     .compose([release_catalog::admission_pin()])?;
     let peers = wake::ProductionPeers::new(
         credentials.provider,
         tools,
-        hands.backend,
         std::sync::Arc::clone(&catalog) as std::sync::Arc<_>,
+        gateway_ingress,
+        std::sync::Arc::new(model_usage::SqsModelUsagePort::new(
+            aws_sdk_sqs::Client::new(&aws.sdk),
+            config.usage_rating_queue_url.clone(),
+            aex_wire::types::Region::from_name(&config.region).ok_or_else(|| {
+                BrainMuxRunError::Runtime {
+                    reason: "usage rating region was not admitted".to_owned(),
+                }
+            })?,
+        )),
     );
     // Cloned before the adapters are handed to the activation ports: the probe addresses the
     // same two clients the serving path uses, so what it proves is what the pump needs.
@@ -612,7 +695,73 @@ fn resolve_production_ports(
             bindings: wake::Bindings::production(),
         },
         probes,
+        gateway_exporter,
     })
+}
+
+fn resolve_tool_mux_assertion_signer(
+    config: &Config,
+    sdk: &aws_config::SdkConfig,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<aex_identity_domain::assertion::LocalSigner, BrainMuxRunError> {
+    let response = runtime
+        .block_on(
+            aws_sdk_secretsmanager::Client::new(sdk)
+                .get_secret_value()
+                .secret_id(&config.tool_mux_assertion_signing_key_ref)
+                .version_stage("AWSCURRENT")
+                .send(),
+        )
+        .map_err(|_| BrainMuxRunError::Runtime {
+            reason: "ToolMux assertion signing key is unavailable".to_owned(),
+        })?;
+    let encoded = zeroize::Zeroizing::new(
+        response
+            .secret_string()
+            .ok_or_else(|| BrainMuxRunError::Runtime {
+                reason: "ToolMux assertion signing key is not a SecretString".to_owned(),
+            })?
+            .to_owned(),
+    );
+    drop(response);
+    tool_mux_assertion_signer(encoded.as_str(), &config.tool_mux_assertion_trust_anchors)
+        .map_err(|reason| BrainMuxRunError::Runtime { reason })
+}
+
+fn tool_mux_assertion_signer(
+    encoded: &str,
+    anchors: &[(uuid::Uuid, [u8; 32])],
+) -> Result<aex_identity_domain::assertion::LocalSigner, String> {
+    let decoded = zeroize::Zeroizing::new(
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded.as_bytes())
+            .map_err(|_| "ToolMux assertion signing key is not canonical base64url".to_owned())?,
+    );
+    if base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(decoded.as_slice()) != encoded {
+        return Err("ToolMux assertion signing key is not canonical base64url".to_owned());
+    }
+    let seed = zeroize::Zeroizing::new(
+        <[u8; 32]>::try_from(decoded.as_slice())
+            .map_err(|_| "ToolMux assertion signing key is not 32 bytes".to_owned())?,
+    );
+    let probe = aex_identity_domain::assertion::LocalSigner::new(
+        aex_identity_domain::assertion::KeyId::new(uuid::Uuid::nil()),
+        &seed,
+    );
+    let matching = anchors
+        .iter()
+        .filter(|(_, public)| *public == probe.public_key())
+        .map(|(kid, _)| *kid)
+        .collect::<Vec<_>>();
+    let [kid] = matching.as_slice() else {
+        return Err(
+            "ToolMux assertion signing key does not match exactly one trust anchor".to_owned(),
+        );
+    };
+    Ok(aex_identity_domain::assertion::LocalSigner::new(
+        aex_identity_domain::assertion::KeyId::new(*kid),
+        &seed,
+    ))
 }
 
 fn bind_release_catalog() -> std::sync::Arc<release_catalog::CompiledCatalogPort> {
@@ -632,6 +781,7 @@ struct PumpPorts {
 struct ProductionBindings {
     pump_ports: PumpPorts,
     probes: Vec<std::sync::Arc<dyn dependencies::Reachable>>,
+    gateway_exporter: tokio::task::JoinHandle<()>,
 }
 
 /// Receives wakes and drives them until drain starts.
@@ -1020,12 +1170,13 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        BUDGET_VAR, BrainMuxConfigError, Config, PLANE_VAR, PRICING_VERSION_VAR, REGION_VAR,
-        RESOURCE_VAR, RUNTIME_ACTIVITY_TABLE_VAR, RUNTIME_DUE_PAGE_ITEMS_VAR,
-        RUNTIME_DUE_PAGE_READS_VAR, RUNTIME_DUE_SHARDS_VAR, SECRET_CUSTODY_TABLE_VAR,
-        SECRET_KMS_KEY_ARN_VAR, SESSION_TELEMETRY_BUCKET_VAR, SESSION_TELEMETRY_KMS_KEY_ARN_VAR,
-        USAGE_COMPUTE_QUEUE_VAR, USAGE_STORAGE_QUEUE_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose,
-        emit_due_isolations,
+        ASSERTION_TRUST_ANCHORS_VAR, BUDGET_VAR, BrainMuxConfigError, CONTENT_BUCKET_OWNER_VAR,
+        CONTENT_BUCKET_VAR, CONTENT_KMS_KEY_ARN_VAR, Config, PLANE_VAR, PRICING_VERSION_VAR,
+        REGION_VAR, RESOURCE_VAR, RUNTIME_ACTIVITY_TABLE_VAR, RUNTIME_DUE_PAGE_ITEMS_VAR,
+        RUNTIME_DUE_PAGE_READS_VAR, RUNTIME_DUE_SHARDS_VAR, SECRET_KMS_KEY_ARN_VAR,
+        SESSION_TELEMETRY_BUCKET_VAR, SESSION_TELEMETRY_KMS_KEY_ARN_VAR,
+        TOOL_MUX_ASSERTION_SIGNING_KEY_REF_VAR, TOOL_MUX_URL_VAR, USAGE_RATING_QUEUE_VAR,
+        WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose, emit_due_isolations, tool_mux_assertion_signer,
     };
     use aex_brain_app::activation::PollReport;
     use aex_brain_app::kernel::PermitKind;
@@ -1045,15 +1196,17 @@ mod tests {
                 SESSION_TELEMETRY_KMS_KEY_ARN_VAR,
                 "arn:aws:kms:eu-west-1:123456789012:key/session-telemetry".to_owned(),
             ),
+            (CONTENT_BUCKET_VAR, "content-bucket".to_owned()),
+            (CONTENT_BUCKET_OWNER_VAR, "123456789012".to_owned()),
+            (
+                CONTENT_KMS_KEY_ARN_VAR,
+                "arn:aws:kms:eu-west-1:123456789012:key/content".to_owned(),
+            ),
             (
                 WAKE_QUEUE_VAR,
                 "https://sqs.eu-west-1.amazonaws.com/1/aex-brain-wake".to_owned(),
             ),
             (WORK_TABLE_VAR, "aex-regional-work-fixture".to_owned()),
-            (
-                SECRET_CUSTODY_TABLE_VAR,
-                "aex-regional-secret-custody-fixture".to_owned(),
-            ),
             (
                 SECRET_KMS_KEY_ARN_VAR,
                 "arn:aws:kms:eu-west-1:123456789012:key/fixture".to_owned(),
@@ -1063,12 +1216,18 @@ mod tests {
                 "aex-dev-runtime-activity".to_owned(),
             ),
             (
-                USAGE_COMPUTE_QUEUE_VAR,
-                "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-usage-compute".to_owned(),
+                USAGE_RATING_QUEUE_VAR,
+                "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-usage-rating.fifo".to_owned(),
+            ),
+            (TOOL_MUX_URL_VAR, "https://tool-mux.internal".to_owned()),
+            (
+                ASSERTION_TRUST_ANCHORS_VAR,
+                "018f47a2-65ee-7c61-a1d2-65097d0d8b11:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+                    .to_owned(),
             ),
             (
-                USAGE_STORAGE_QUEUE_VAR,
-                "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-usage-storage".to_owned(),
+                TOOL_MUX_ASSERTION_SIGNING_KEY_REF_VAR,
+                "aex/dev/central/assertion-signing-key".to_owned(),
             ),
             (RUNTIME_DUE_SHARDS_VAR, "8".to_owned()),
             (RUNTIME_DUE_PAGE_ITEMS_VAR, "32".to_owned()),
@@ -1094,6 +1253,25 @@ mod tests {
         );
         assert_eq!(config.work_table, "aex-regional-work-fixture");
         assert_eq!(config.budget, 8);
+    }
+
+    #[test]
+    fn signing_seed_must_match_exactly_one_release_anchor() {
+        use aex_identity_domain::assertion::{KeyId, LocalSigner};
+        use base64::Engine as _;
+
+        let seed = zeroize::Zeroizing::new([7_u8; 32]);
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(*seed);
+        let probe = LocalSigner::new(KeyId::new(uuid::Uuid::nil()), &seed);
+        let kid = uuid::Uuid::from_u128(7);
+        let signer = tool_mux_assertion_signer(&encoded, &[(kid, probe.public_key())])
+            .expect("the matching anchor selects the signer");
+        assert_eq!(
+            aex_identity_domain::assertion::AssertionSigner::kid(&signer).get(),
+            kid
+        );
+        assert!(tool_mux_assertion_signer(&encoded, &[(kid, [9; 32])]).is_err());
+        assert!(tool_mux_assertion_signer("padded=", &[(kid, probe.public_key())]).is_err());
     }
 
     /// The approved first-launch profile, end to end: the deployment root supplies 16 and the
@@ -1171,11 +1349,12 @@ mod tests {
             RESOURCE_VAR,
             WAKE_QUEUE_VAR,
             WORK_TABLE_VAR,
-            SECRET_CUSTODY_TABLE_VAR,
             SECRET_KMS_KEY_ARN_VAR,
             RUNTIME_ACTIVITY_TABLE_VAR,
-            USAGE_COMPUTE_QUEUE_VAR,
-            USAGE_STORAGE_QUEUE_VAR,
+            USAGE_RATING_QUEUE_VAR,
+            TOOL_MUX_URL_VAR,
+            ASSERTION_TRUST_ANCHORS_VAR,
+            TOOL_MUX_ASSERTION_SIGNING_KEY_REF_VAR,
             RUNTIME_DUE_SHARDS_VAR,
             RUNTIME_DUE_PAGE_ITEMS_VAR,
             RUNTIME_DUE_PAGE_READS_VAR,

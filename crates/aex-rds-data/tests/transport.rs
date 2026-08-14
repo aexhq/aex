@@ -217,7 +217,7 @@ async fn an_oversized_field_fails_before_the_row_decoder_runs() {
     )]])]);
     let error = DataApiClient::new(double.clone(), config)
         .query::<Pair>(Statement::new(
-            "SELECT verifier FROM identity.account_token",
+            "SELECT verifier FROM identity.dashboard_session",
         ))
         .await
         .expect_err("the field budget is enforced");

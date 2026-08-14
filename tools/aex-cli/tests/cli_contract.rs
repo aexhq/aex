@@ -1,79 +1,164 @@
-//! Public CLI-tree and completion contract tests.
+//! Public CLI-tree, route registry, help, and completion contract tests.
 
 use std::collections::BTreeSet;
 
 use aex_cli::{Cli, command_registry, render_completions};
-use clap::CommandFactory;
+use clap::{CommandFactory as _, Parser as _};
 
 #[test]
-fn clap_tree_is_closed_and_valid() {
+fn clap_tree_is_the_exact_session_centered_surface() {
     Cli::command().debug_assert();
     let command = Cli::command();
     assert_eq!(command.get_name(), "aex");
-    let names = command
-        .get_subcommands()
-        .map(clap::Command::get_name)
-        .collect::<BTreeSet<_>>();
-    for expected in [
-        "auth",
-        "account",
-        "org",
-        "workspace",
-        "key",
-        "session",
-        "message",
-        "approval",
-        "operation",
-        "file",
-        "registry",
-        "upload",
-        "provider-credential",
-        "limit",
-        "observe",
-        "telemetry",
-        "usage",
-        "billing",
-        "completions",
-        "config",
-        "version",
-    ] {
-        assert!(names.contains(expected), "missing command group {expected}");
-    }
-    for retired in [
-        "start",
-        "chat",
-        "proxy",
-        "checkpoint",
-        "suspend",
-        "resume",
-        "webhooks",
-        "tail",
-        "otel",
-        "inspect",
-        "agents",
-        "run",
-        "secret",
-        "self-update",
-    ] {
-        assert!(
-            !names.contains(retired),
-            "retired command {retired} returned"
-        );
-    }
+    assert_eq!(
+        names(&command),
+        set([
+            "session",
+            "message",
+            "file",
+            "telemetry",
+            "billing",
+            "config",
+            "version"
+        ])
+    );
+    assert_eq!(
+        subcommands(&command, "session"),
+        set(["create", "list", "get", "terminate", "delete"])
+    );
+    assert_eq!(
+        subcommands(&command, "message"),
+        set(["send", "list", "tail"])
+    );
+    assert_eq!(
+        subcommands(&command, "file"),
+        set(["put", "upload", "list", "get", "download", "delete"])
+    );
+    assert_eq!(
+        subcommands(&command, "telemetry"),
+        set(["tail", "replay", "download"])
+    );
+    assert_eq!(
+        subcommands(&command, "billing"),
+        set([
+            "balance",
+            "cards",
+            "setup-card",
+            "remove-card",
+            "topup",
+            "transactions",
+            "usage"
+        ])
+    );
 }
 
 #[test]
-fn command_registry_is_deterministic_and_route_backed() {
+fn removed_product_nouns_and_secret_arguments_are_absent_from_help() {
+    let mut help = Vec::new();
+    Cli::command().write_long_help(&mut help).expect("help");
+    let help = String::from_utf8(help).expect("UTF-8 help");
+    for removed in [
+        "auth",
+        "account",
+        "org",
+        "approval",
+        "operation",
+        concat!("provider", "-credential"),
+        "limit",
+        "observe",
+        "usage query",
+        "completions",
+        "device",
+        concat!("account", " token"),
+        "--api-key",
+        "--provider-key ",
+        "--mcp-secret",
+    ] {
+        assert!(
+            !help.contains(removed),
+            "removed surface returned in help: {removed}\n{help}"
+        );
+    }
+    assert!(help.contains("AEX_API_KEY") || !help.contains("API key"));
+}
+
+#[test]
+fn provider_and_mcp_secrets_have_only_env_or_stdin_sources() {
+    assert!(
+        Cli::try_parse_from([
+            "aex",
+            "session",
+            "create",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt",
+            "--provider-key-env",
+            "OPENAI_API_KEY",
+        ])
+        .is_ok()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "aex",
+            "session",
+            "create",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt",
+            "--provider-key-stdin",
+            "--mcp-json-env",
+            "AEX_MCP_JSON",
+        ])
+        .is_ok()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "aex",
+            "session",
+            "create",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt",
+        ])
+        .is_err()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "aex",
+            "session",
+            "create",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt",
+            "--provider-key",
+            "visible-secret",
+        ])
+        .is_err()
+    );
+}
+
+#[test]
+fn command_registry_is_exact_deterministic_route_backed_and_live() {
     let first = serde_json::to_vec(&command_registry()).expect("registry serializes");
     let second = serde_json::to_vec(&command_registry()).expect("registry serializes twice");
     assert_eq!(first, second);
 
     let registry = command_registry();
+    assert_eq!(registry.len(), 24);
     let mut routes = BTreeSet::new();
     for entry in registry {
         assert_eq!(
             aex_wire::routes::route(entry.route).operation_id,
             entry.route_id
+        );
+        assert!(
+            !entry.deferred,
+            "visible command is a dead placeholder: {}",
+            entry.path
         );
         assert!(
             routes.insert(entry.route_id),
@@ -83,47 +168,30 @@ fn command_registry_is_deterministic_and_route_backed() {
     }
 }
 
-/// Help marks exactly the commands whose route the contract defers.
-///
-/// Both directions matter. A missing mark is the silent failure this exists to
-/// remove — `aex session create` would look like any other command and answer
-/// `501`. A mark on a command that works is the same defect wearing the other
-/// face, and it is what a hand-maintained list produces the week after a route
-/// lands.
 #[test]
-fn help_marks_exactly_the_deferred_backed_commands() {
-    let command = aex_cli::marked_command();
-    for entry in command_registry() {
-        let mut current = &command;
-        let mut leaf = None;
-        for segment in entry.path.split(' ') {
-            let found = current
-                .find_subcommand(segment)
-                .unwrap_or_else(|| panic!("`{}` names no command", entry.path));
-            current = found;
-            leaf = Some(found);
-        }
-        let about = leaf
-            .expect("every registry path has at least one segment")
-            .get_about()
-            .map(ToString::to_string)
-            .unwrap_or_default();
-        assert_eq!(
-            about.contains(aex_cli::DEFERRED_MARKER),
-            entry.deferred,
-            "`aex {}` renders `{about}` for deferred={}",
-            entry.path,
-            entry.deferred
-        );
-    }
-}
-
-#[test]
-fn five_completion_formats_are_non_empty_and_stable() {
+fn five_completion_formats_are_non_empty_stable_and_contain_no_removed_noun() {
     for shell in ["bash", "zsh", "fish", "powershell", "elvish"] {
         let first = render_completions(shell).expect("known shell");
         let second = render_completions(shell).expect("known shell twice");
         assert_eq!(first, second);
         assert!(first.len() > 100, "{shell} completion is empty");
+        let text = String::from_utf8_lossy(&first);
+        assert!(!text.contains(concat!("provider", "-credential")));
+        assert!(!text.contains("--api-key"));
     }
+}
+
+fn names(command: &clap::Command) -> BTreeSet<&str> {
+    command
+        .get_subcommands()
+        .map(clap::Command::get_name)
+        .collect()
+}
+
+fn subcommands<'a>(command: &'a clap::Command, name: &str) -> BTreeSet<&'a str> {
+    names(command.find_subcommand(name).expect("group exists"))
+}
+
+fn set<const N: usize>(values: [&'static str; N]) -> BTreeSet<&'static str> {
+    values.into_iter().collect()
 }

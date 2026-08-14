@@ -1,0 +1,67 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BillingTransaction.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One immutable customer-visible ledger transaction.",
+  "properties": {
+    "amountCents": {
+      "description": "Absolute amount in whole cents.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string",
+      "x-aex-money": "cents"
+    },
+    "balanceAfterCents": {
+      "description": "Available balance after this transaction.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string",
+      "x-aex-money": "cents"
+    },
+    "currency": {
+      "$ref": "aex:schema:Currency",
+      "description": "Always USD at launch."
+    },
+    "direction": {
+      "$ref": "aex:schema:BillingTransactionDirection",
+      "description": "Its effect on prepaid value."
+    },
+    "id": {
+      "description": "Transaction identity.",
+      "pattern": "^txn_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "billing_transaction"
+    },
+    "kind": {
+      "$ref": "aex:schema:BillingTransactionKind",
+      "description": "Why it was posted."
+    },
+    "occurredAt": {
+      "description": "Authoritative ledger time.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "reversesTransactionId": {
+      "description": "The compensated transaction, for reversals.",
+      "pattern": "^txn_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "billing_transaction"
+    },
+    "sessionId": {
+      "description": "Session attribution when applicable.",
+      "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "session"
+    }
+  },
+  "required": [
+    "amountCents",
+    "balanceAfterCents",
+    "currency",
+    "direction",
+    "id",
+    "kind",
+    "occurredAt"
+  ],
+  "title": "BillingTransaction",
+  "type": "object"
+}

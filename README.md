@@ -1,6 +1,6 @@
 # Aex
 
-Open distributed agent cloud platform
+A session-centered distributed agent runtime.
 
 [![npm version](https://img.shields.io/npm/v/@aexhq/sdk.svg)](https://www.npmjs.com/package/@aexhq/sdk)
 
@@ -11,14 +11,19 @@ Open distributed agent cloud platform
 
 ## Features
 
-- Eight-hour, multi-message sessions with one retained MicroVM generation
-- Direct BYOK model access with an explicitly pinned provider credential
-- Automatic suspension after 180 idle seconds and automatic resume on the next
-  message or live-file call
-- Durable workspace files plus generation-local live files
-- `read_file`, `edit_file`, `write_file`, and Bash inside the MicroVM
-- Recursive subagents within one customer session
-- Typed observations, telemetry exports, OpenTelemetry, and AG-UI streams
+- Multi-message sessions with direct, encrypted BYOK access to OpenAI,
+  Anthropic, DeepSeek, xAI, Meta, Moonshot AI, and Alibaba model families
+- One default-on sandbox prepared eagerly, suspended while idle, and resumed on
+  the first waiting sandbox tool call; sessions can explicitly disable it
+- Latest-only workspace files from inline bytes, HTTPS URLs, or direct upload,
+  with frozen session mounts and model-invoked `storage.persist`
+- Built-in file and Bash tools plus qualified remote and sandbox-process MCP
+- Durable parallel tool effects and native subagents, bounded to 12 children
+  per session lifetime and depth 3
+- Live assistant previews with committed reconciliation, retained telemetry,
+  replay, and compressed download
+- Essential prepaid billing: saved-card display metadata, hosted setup/top-up,
+  balance, transactions, and provider/model usage
 
 ## Start
 
@@ -26,6 +31,10 @@ Open distributed agent cloud platform
 npm install @aexhq/sdk
 ```
 
+See the [documentation](https://aex.dev/docs) for the current API and SDK
+example.
+
 ## Contact
+
 - support@aex.dev
 

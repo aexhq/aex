@@ -1,0 +1,68 @@
+[package]
+name = "aex-tool-mux"
+version = "0.1.0"
+description = "Trusted Tool Mux application: one-Hand readiness, official tools, MCP, storage and bounded live/retained results."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "tools-mcp"
+role = "application"
+artifact = "none"
+live_suite = "aex-live-tool-mux"
+layers = ["unit", "integration"]
+concerns = ["contract", "property", "fault", "security"]
+seams = ["hands.guest.lifecycle", "mcp.streamable_http"]
+security_tier = "internal"
+risk = ["concurrency", "untrusted_input"]
+scenarios = ["SC-TOOL-MUX"]
+
+[package.metadata.aex.targets]
+conformance = "unit"
+faults = "unit"
+lifecycle = "integration"
+properties = "unit"
+security = "unit"
+
+[dependencies]
+aex-hands-protocol = { path = "../aex-hands-protocol" }
+aex-runtime-control = { path = "../aex-runtime-control" }
+aex-wire = { path = "../aex-wire" }
+async-trait.workspace = true
+base64.workspace = true
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[[test]]
+name = "lifecycle"
+path = "tests/lifecycle.rs"
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "faults"
+path = "tests/faults.rs"
+
+[[test]]
+name = "properties"
+path = "tests/properties.rs"
+
+[[test]]
+name = "security"
+path = "tests/security.rs"

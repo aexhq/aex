@@ -6,14 +6,10 @@ use aex_identity_domain::credential::{
     CredentialKind, PepperVersion, RegionCode, SecretRng, WorkspacePin, decode_id, encode_id, mint,
     parse, verifier, verify,
 };
-use aex_identity_domain::device::{
-    DEVICE_TTL, DeviceAuthorization, DeviceState, USER_CODE_ALPHABET, UserCode,
-};
 use aex_identity_domain::session::{DASHBOARD_SESSION_TTL, DashboardSession, SessionState};
 use aex_identity_domain::user::{User, UserStatus};
 use aex_identity_domain::{NormalizedEmail, Pepper};
 use proptest::prelude::*;
-use std::collections::BTreeMap;
 use std::sync::Mutex;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -66,23 +62,6 @@ fn challenge() -> EmailChallenge {
         issued_at: OffsetDateTime::UNIX_EPOCH,
         expires_at: OffsetDateTime::UNIX_EPOCH + EMAIL_CHALLENGE_TTL,
         consumed_at: None,
-    }
-}
-
-fn grant(state: DeviceState) -> DeviceAuthorization {
-    DeviceAuthorization {
-        id: Uuid::from_u128(1),
-        state,
-        requested_scopes: aex_control_domain::ScopeSet::MEMBER,
-        pepper_version: PepperVersion::new(1),
-        approved_by: None,
-        approved_at: None,
-        consumed_at: None,
-        account_token_id: None,
-        issued_at: OffsetDateTime::UNIX_EPOCH,
-        expires_at: OffsetDateTime::UNIX_EPOCH + DEVICE_TTL,
-        poll_interval: aex_identity_domain::DEVICE_POLL_INTERVAL,
-        last_polled_at: None,
     }
 }
 
@@ -182,36 +161,6 @@ proptest! {
         }
     }
 
-    /// P2 for devices: a resolved grant never returns to pending or approved.
-    #[test]
-    fn a_resolved_device_grant_never_resurrects(observe in 0_i64..10_000) {
-        let now = OffsetDateTime::UNIX_EPOCH + Duration::seconds(1);
-        for resolved in [
-            grant(DeviceState::Pending).deny(now).expect("denies"),
-            grant(DeviceState::Approved)
-                .consume(Uuid::from_u128(9), now)
-                .expect("consumes"),
-        ] {
-            let at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(observe);
-            prop_assert!(resolved.state_at(at).is_terminal());
-            prop_assert!(resolved.approve(Uuid::from_u128(9), true, at).is_err());
-            prop_assert!(resolved.consume(Uuid::from_u128(9), at).is_err());
-        }
-    }
-
-    /// P10: a consumed grant always names an approver.
-    #[test]
-    fn a_consumed_grant_always_names_an_approver(seconds in 1_i64..500) {
-        let now = OffsetDateTime::UNIX_EPOCH + Duration::seconds(seconds);
-        let consumed = grant(DeviceState::Pending)
-            .approve(Uuid::from_u128(9), true, now)
-            .and_then(|approved| approved.consume(Uuid::from_u128(11), now));
-        if let Ok(consumed) = consumed {
-            prop_assert!(consumed.approved_by.is_some());
-            prop_assert!(consumed.account_token_id.is_some());
-        }
-    }
-
     /// P6: a disabled person can never be re-derived as authenticable without an
     /// explicit re-enable.
     #[test]
@@ -280,21 +229,6 @@ proptest! {
         prop_assert_eq!(decode_id(&encode_id(id)), Some(id));
     }
 
-    /// A user code always normalizes back to itself.
-    #[test]
-    fn a_user_code_normalizes_to_itself(seed in proptest::collection::vec(0_u8..240, 16..64)) {
-        let code = UserCode::mint(&Recorded::new(seed));
-        prop_assert_eq!(
-            UserCode::normalize(code.as_str()).map(|it| it.as_str().to_owned()),
-            Ok(code.as_str().to_owned())
-        );
-        prop_assert_eq!(
-            UserCode::normalize(&code.as_str().to_ascii_lowercase())
-                .map(|it| it.as_str().to_owned()),
-            Ok(code.as_str().to_owned())
-        );
-    }
-
     /// Email normalization is idempotent and case-insensitive.
     #[test]
     fn email_normalization_is_idempotent(
@@ -307,32 +241,5 @@ proptest! {
         prop_assert_eq!(once.as_str(), twice.as_str());
         let upper = NormalizedEmail::parse(&raw.to_ascii_uppercase()).expect("upper case");
         prop_assert_eq!(once.as_str(), upper.as_str());
-    }
-}
-
-/// The user-code alphabet is uniform under rejection sampling: over a full
-/// sweep of the 240 accepted byte values every symbol is chosen exactly twelve
-/// times, which is what modulo bias would break.
-#[test]
-fn the_user_code_alphabet_is_uniform_under_rejection_sampling() {
-    let alphabet = u8::try_from(USER_CODE_ALPHABET.len()).expect("20 fits in a u8");
-    let ceiling = 256_u16 - (256_u16 % u16::from(alphabet));
-    let mut counts: BTreeMap<u8, usize> = BTreeMap::new();
-    for byte in 0..=u8::MAX {
-        if u16::from(byte) >= ceiling {
-            continue;
-        }
-        *counts
-            .entry(USER_CODE_ALPHABET[usize::from(byte % alphabet)])
-            .or_default() += 1;
-    }
-    assert_eq!(counts.len(), USER_CODE_ALPHABET.len());
-    for (symbol, count) in counts {
-        assert_eq!(
-            count,
-            12,
-            "symbol {} is chosen {count} times, not 12",
-            char::from(symbol)
-        );
     }
 }

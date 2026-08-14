@@ -1,14 +1,13 @@
 //! `central-control-worker` composition (Rust Lambda ZIP).
 //!
 //! Transaction-wake-driven reconciliation for the central control plane. It
-//! is the only role that reclaims expired rows, the only one that administers
-//! assertion signing keys, and the only one that sends mail.
+//! projects the personal workspace, billing state, and API-key authorization
+//! into the one launch region.
 //!
 //! Two properties are structural rather than careful:
 //!
-//! * every duty is named in [`Handler::ALL`] and [`Handler::for_topic`] is total
-//!   over [`Topic`], so an outbox topic nobody wrote a duty for is a compile
-//!   error rather than a message that is quietly deleted;
+//! * every launch duty is named in [`Handler::ALL`], while legacy topics are
+//!   explicitly rejected and remain claimable rather than being acknowledged;
 //! * every accepted wake names an exact Aurora transaction and anchor, so a
 //!   pre-commit race, rollback and duplicate delivery have distinct outcomes.
 //!
@@ -17,15 +16,14 @@
 //! The composition — [`handle_event`], the duty table and the drain each one
 //! calls — is what a release has to be able to prove, and a `main.rs`-only
 //! crate can be proved only by starting a process and reading its stderr.
-//! Everything but `fn main` therefore lives here, matching
-//! `regional-capacity-controller`, so `tests/composition.rs` can drive both
-//! trigger shapes directly.
+//! Everything but `fn main` therefore lives here so `tests/composition.rs` can
+//! drive both trigger shapes directly.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use aex_central_http::capability::{
     Capability as _, CapabilityBinding, CompositionError, CompositionManifest, ControlWakeInvoke,
-    ControlWrite, Declares, MailSend, RegionalControlInvoke, SigningKeyAdminister,
+    ControlWrite, Declares,
 };
 use aex_central_http::config::{CentralServiceId, DeploymentPlane};
 use aex_central_http::health::{Dependency, Readiness};
@@ -37,9 +35,6 @@ pub mod runtime;
 /// The deployable this binary is.
 pub const DEPLOYABLE: CentralServiceId = CentralServiceId::ControlWorker;
 
-/// The one login role this binary may connect as.
-const REQUIRED_ROLE: &str = "aex_control_worker";
-
 /// Environment keys, all inside the declared namespace.
 pub mod keys {
     /// The plane's account id, for the ARN binding check.
@@ -48,6 +43,8 @@ pub mod keys {
     pub const AURORA_CLUSTER_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_AURORA_CLUSTER_ARN";
     /// The Aurora credentials secret.
     pub const AURORA_SECRET_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_AURORA_SECRET_ARN";
+    /// The one launch-region authorization projection table.
+    pub const AUTHZ_PROJECTION_TABLE: &str = "AEX_CENTRAL_CONTROL_WORKER_AUTHZ_PROJECTION_TABLE";
     /// How many messages one batch claims.
     pub const BATCH_SIZE: &str = "AEX_CENTRAL_CONTROL_WORKER_BATCH_SIZE";
     /// This worker's exact live alias ARN, used for bounded continuation.
@@ -60,45 +57,18 @@ pub mod keys {
     pub const PLANE: &str = "AEX_CENTRAL_CONTROL_WORKER_PLANE";
     /// The bound region.
     pub const REGION: &str = "AEX_CENTRAL_CONTROL_WORKER_REGION";
-    /// Direct regional capacity-controller Lambda ARNs, `region=arn` comma-separated.
-    ///
-    /// Separate from [`REGIONAL_FUNCTIONS`] rather than folded into it: they are
-    /// two different authorities with two different failure meanings, and one
-    /// map would make a missing capacity controller look like a missing control
-    /// function on the diagnostic that names it.
-    pub const REGIONAL_CAPACITY_FUNCTIONS: &str =
-        "AEX_CENTRAL_CONTROL_WORKER_REGIONAL_CAPACITY_FUNCTION_ARNS";
-    /// Direct regional control Lambda ARNs, `region=arn` comma-separated.
-    pub const REGIONAL_FUNCTIONS: &str = "AEX_CENTRAL_CONTROL_WORKER_REGIONAL_FUNCTION_ARNS";
-    /// Regional authz projection tables, `region=table` comma-separated.
-    pub const REGIONAL_PROJECTIONS: &str = "AEX_CENTRAL_CONTROL_WORKER_REGIONAL_PROJECTION_TABLES";
-    /// The login role. Must be `aex_control_worker`.
-    pub const ROLE: &str = "AEX_CENTRAL_CONTROL_WORKER_ROLE";
-    /// The sender identity bound to the mail capability.
-    pub const SES_IDENTITY_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_SES_IDENTITY_ARN";
-    /// The verified RFC 5322 sender address.
-    pub const MAIL_FROM: &str = "AEX_CENTRAL_CONTROL_WORKER_MAIL_FROM";
-    /// The signing-key secret prefix this worker rotates.
-    pub const SIGNING_SECRET_PREFIX: &str = "AEX_CENTRAL_CONTROL_WORKER_SIGNING_SECRET_PREFIX";
-
     /// Every key this binary reads, for the totality test.
     pub const ALL: &[&str] = &[
         ACCOUNT_ID,
         AURORA_CLUSTER_ARN,
         AURORA_SECRET_ARN,
+        AUTHZ_PROJECTION_TABLE,
         BATCH_SIZE,
         FUNCTION_ARN,
         DATABASE,
         LEASE_MS,
         PLANE,
         REGION,
-        REGIONAL_CAPACITY_FUNCTIONS,
-        REGIONAL_FUNCTIONS,
-        REGIONAL_PROJECTIONS,
-        ROLE,
-        SES_IDENTITY_ARN,
-        MAIL_FROM,
-        SIGNING_SECRET_PREFIX,
     ];
 }
 
@@ -138,26 +108,14 @@ pub struct Config {
     pub aurora_secret_arn: String,
     /// This worker's exact live alias ARN.
     pub function_arn: String,
-    /// The sender identity bound to the mail capability.
-    pub ses_identity_arn: String,
-    /// Verified sender address.
-    pub mail_from: String,
-    /// The signing-key secret prefix.
-    pub signing_secret_prefix: String,
+    /// The one launch-region authorization projection table.
+    pub authz_projection_table: String,
     /// The database name.
     pub database: String,
-    /// The login role.
-    pub role: String,
     /// How many messages one batch claims.
     pub batch_size: u32,
     /// How long a claim lease lasts.
     pub lease_ms: u64,
-    /// Every region this worker may dispatch to.
-    pub regional_functions: BTreeMap<Region, String>,
-    /// Every region's capacity controller.
-    pub regional_capacity_functions: BTreeMap<Region, String>,
-    /// Regional authorization projection tables.
-    pub regional_projections: BTreeMap<Region, String>,
 }
 
 impl Config {
@@ -203,29 +161,8 @@ impl Config {
                 reason: "expected a 12-digit AWS account id".to_owned(),
             });
         }
-        let role = required(&lookup, keys::ROLE)?;
-        if role != REQUIRED_ROLE {
-            return Err(CentralControlWorkerConfigError::Invalid {
-                name: keys::ROLE,
-                reason: format!("this binary connects only as `{REQUIRED_ROLE}`, got `{role}`"),
-            });
-        }
         let batch_size = bounded(&lookup, keys::BATCH_SIZE, 1, MAX_BATCH)?;
         let lease_ms = bounded(&lookup, keys::LEASE_MS, 1, MAX_LEASE_MS)?;
-        let regional_functions = functions(
-            keys::REGIONAL_FUNCTIONS,
-            &required(&lookup, keys::REGIONAL_FUNCTIONS)?,
-        )?;
-        let regional_capacity_functions = functions(
-            keys::REGIONAL_CAPACITY_FUNCTIONS,
-            &required(&lookup, keys::REGIONAL_CAPACITY_FUNCTIONS)?,
-        )?;
-        let regional_projections = projections(&required(&lookup, keys::REGIONAL_PROJECTIONS)?)?;
-        validate_region_maps(
-            &regional_functions,
-            &regional_capacity_functions,
-            &regional_projections,
-        )?;
         Ok(Self {
             plane,
             region,
@@ -239,16 +176,10 @@ impl Config {
                 region,
                 &account_id,
             )?,
-            ses_identity_arn: required(&lookup, keys::SES_IDENTITY_ARN)?,
-            mail_from: mail_from(&required(&lookup, keys::MAIL_FROM)?)?,
-            signing_secret_prefix: required(&lookup, keys::SIGNING_SECRET_PREFIX)?,
+            authz_projection_table: required(&lookup, keys::AUTHZ_PROJECTION_TABLE)?,
             database: required(&lookup, keys::DATABASE)?,
-            role,
             batch_size: u32::try_from(batch_size).unwrap_or(1),
             lease_ms,
-            regional_functions,
-            regional_capacity_functions,
-            regional_projections,
         })
     }
 
@@ -265,101 +196,18 @@ impl Config {
                     keys::AURORA_CLUSTER_ARN.to_owned(),
                     self.aurora_cluster_arn.clone(),
                 ),
+                (
+                    keys::AURORA_SECRET_ARN.to_owned(),
+                    self.aurora_secret_arn.clone(),
+                ),
                 (keys::FUNCTION_ARN.to_owned(), self.function_arn.clone()),
                 (
-                    keys::SES_IDENTITY_ARN.to_owned(),
-                    self.ses_identity_arn.clone(),
-                ),
-                (
-                    keys::SIGNING_SECRET_PREFIX.to_owned(),
-                    self.signing_secret_prefix.clone(),
-                ),
-                (
-                    keys::REGIONAL_FUNCTIONS.to_owned(),
-                    self.regional_functions
-                        .iter()
-                        .map(|(region, function)| format!("{}={function}", region.as_str()))
-                        .collect::<Vec<_>>()
-                        .join(","),
-                ),
-                (
-                    keys::REGIONAL_CAPACITY_FUNCTIONS.to_owned(),
-                    self.regional_capacity_functions
-                        .iter()
-                        .map(|(region, function)| format!("{}={function}", region.as_str()))
-                        .collect::<Vec<_>>()
-                        .join(","),
-                ),
-                (
-                    keys::REGIONAL_PROJECTIONS.to_owned(),
-                    self.regional_projections
-                        .iter()
-                        .map(|(region, table)| format!("{}={table}", region.as_str()))
-                        .collect::<Vec<_>>()
-                        .join(","),
+                    keys::AUTHZ_PROJECTION_TABLE.to_owned(),
+                    self.authz_projection_table.clone(),
                 ),
             ]),
         }
     }
-}
-
-fn validate_region_maps(
-    regional_functions: &BTreeMap<Region, String>,
-    regional_capacity_functions: &BTreeMap<Region, String>,
-    regional_projections: &BTreeMap<Region, String>,
-) -> Result<(), CentralControlWorkerConfigError> {
-    if let Some(region) = regional_functions
-        .keys()
-        .find(|region| !regional_projections.contains_key(region))
-    {
-        return Err(CentralControlWorkerConfigError::Invalid {
-            name: keys::REGIONAL_PROJECTIONS,
-            reason: format!(
-                "no projection table for configured region `{}`",
-                region.as_str()
-            ),
-        });
-    }
-    if let Some(region) = regional_projections
-        .keys()
-        .find(|region| !regional_functions.contains_key(region))
-    {
-        return Err(CentralControlWorkerConfigError::Invalid {
-            name: keys::REGIONAL_FUNCTIONS,
-            reason: format!(
-                "no function ARN for configured region `{}`",
-                region.as_str()
-            ),
-        });
-    }
-    // A region this worker can project into but cannot bootstrap is exactly
-    // the outage the trigger exists to prevent: the placement would land and
-    // every request behind it would answer `401`. Refuse at start-up.
-    if let Some(region) = regional_projections
-        .keys()
-        .find(|region| !regional_capacity_functions.contains_key(region))
-    {
-        return Err(CentralControlWorkerConfigError::Invalid {
-            name: keys::REGIONAL_CAPACITY_FUNCTIONS,
-            reason: format!(
-                "no capacity controller for configured region `{}`",
-                region.as_str()
-            ),
-        });
-    }
-    if let Some(region) = regional_capacity_functions
-        .keys()
-        .find(|region| !regional_projections.contains_key(region))
-    {
-        return Err(CentralControlWorkerConfigError::Invalid {
-            name: keys::REGIONAL_PROJECTIONS,
-            reason: format!(
-                "no projection table for configured region `{}`",
-                region.as_str()
-            ),
-        });
-    }
-    Ok(())
 }
 
 fn required<F>(lookup: &F, name: &'static str) -> Result<String, CentralControlWorkerConfigError>
@@ -397,96 +245,6 @@ where
     Ok(value)
 }
 
-/// Parses the `region=lambda-arn` direct-invoke map.
-///
-/// Every configured launch region must be present. A plane may compose a
-/// strict non-empty subset while the remaining regional stacks are unpublished.
-fn functions(
-    name: &'static str,
-    raw: &str,
-) -> Result<BTreeMap<Region, String>, CentralControlWorkerConfigError> {
-    let mut map = BTreeMap::new();
-    for entry in raw.split(',').filter(|it| !it.trim().is_empty()) {
-        let (region, function) =
-            entry
-                .split_once('=')
-                .ok_or_else(|| CentralControlWorkerConfigError::Invalid {
-                    name,
-                    reason: "expected `region=lambda-arn` entries".to_owned(),
-                })?;
-        let parsed = Region::from_name(region.trim()).ok_or_else(|| {
-            CentralControlWorkerConfigError::Invalid {
-                name,
-                reason: format!("`{region}` is not a launch region"),
-            }
-        })?;
-        let function = function.trim();
-        let expected = format!("arn:aws:lambda:{}:", parsed.as_str());
-        if !function.starts_with(&expected)
-            || !function.contains(":function:")
-            || map.insert(parsed, function.to_owned()).is_some()
-        {
-            return Err(CentralControlWorkerConfigError::Invalid {
-                name,
-                reason: format!(
-                    "`{}` is not a unique Lambda ARN in its region",
-                    parsed.as_str()
-                ),
-            });
-        }
-    }
-    if map.is_empty() {
-        return Err(CentralControlWorkerConfigError::Invalid {
-            name,
-            reason: "at least one configured region is required".to_owned(),
-        });
-    }
-    Ok(map)
-}
-
-fn projections(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlWorkerConfigError> {
-    let mut map = BTreeMap::new();
-    for entry in raw.split(',').filter(|entry| !entry.trim().is_empty()) {
-        let (region, table) =
-            entry
-                .split_once('=')
-                .ok_or_else(|| CentralControlWorkerConfigError::Invalid {
-                    name: keys::REGIONAL_PROJECTIONS,
-                    reason: "expected `region=table` entries".to_owned(),
-                })?;
-        let region = Region::from_name(region.trim()).ok_or_else(|| {
-            CentralControlWorkerConfigError::Invalid {
-                name: keys::REGIONAL_PROJECTIONS,
-                reason: format!("`{region}` is not a launch region"),
-            }
-        })?;
-        if table.trim().is_empty() || map.insert(region, table.trim().to_owned()).is_some() {
-            return Err(CentralControlWorkerConfigError::Invalid {
-                name: keys::REGIONAL_PROJECTIONS,
-                reason: format!("`{}` is empty or repeated", region.as_str()),
-            });
-        }
-    }
-    if map.is_empty() {
-        return Err(CentralControlWorkerConfigError::Invalid {
-            name: keys::REGIONAL_PROJECTIONS,
-            reason: "at least one configured region is required".to_owned(),
-        });
-    }
-    Ok(map)
-}
-
-fn mail_from(raw: &str) -> Result<String, CentralControlWorkerConfigError> {
-    if raw.contains('@') && !raw.contains(char::is_whitespace) {
-        Ok(raw.to_owned())
-    } else {
-        Err(CentralControlWorkerConfigError::Invalid {
-            name: keys::MAIL_FROM,
-            reason: "expected one verified sender address".to_owned(),
-        })
-    }
-}
-
 fn lambda_alias_arn(
     name: &'static str,
     raw: &str,
@@ -522,22 +280,14 @@ fn lambda_alias_arn(
 /// Every event-wake-driven duty this worker performs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Handler {
-    /// Finish a workspace whose regional half may already exist.
+    /// Publish and activate the personal workspace.
     WorkspaceProvisionReconcile,
-    /// Ask a region to remove a workspace's regional half.
-    WorkspaceDeleteDispatch,
     /// Project a finance account state and epoch to one workspace.
     AccountStateProject,
-    /// Send one invitation notification.
-    InvitationEmailDeliver,
     /// Project a newly minted key's authorization row to its region.
     ApiKeyAuthorizationProject,
     /// Project an advanced revocation epoch to every region.
     AuthorizationEpochProject,
-    /// Publish a rotated assertion signing key.
-    AuthorizationSigningKeyRotate,
-    /// Claim operations whose lease lapsed or which never ran.
-    OperationDueScan,
     /// Sweep expired replay records.
     IdempotencyGc,
     /// Sweep dispatched outbox rows.
@@ -548,15 +298,11 @@ pub enum Handler {
 
 impl Handler {
     /// Every duty.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 7] = [
         Self::WorkspaceProvisionReconcile,
-        Self::WorkspaceDeleteDispatch,
         Self::AccountStateProject,
-        Self::InvitationEmailDeliver,
         Self::ApiKeyAuthorizationProject,
         Self::AuthorizationEpochProject,
-        Self::AuthorizationSigningKeyRotate,
-        Self::OperationDueScan,
         Self::IdempotencyGc,
         Self::OutboxGc,
         Self::PepperRetireCheck,
@@ -567,13 +313,9 @@ impl Handler {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::WorkspaceProvisionReconcile => "workspace.provision.reconcile",
-            Self::WorkspaceDeleteDispatch => "workspace.delete.dispatch",
             Self::AccountStateProject => "account.state.project",
-            Self::InvitationEmailDeliver => "invitation.email.deliver",
             Self::ApiKeyAuthorizationProject => "api_key.authorization.project",
             Self::AuthorizationEpochProject => "authorization.epoch.project",
-            Self::AuthorizationSigningKeyRotate => "authorization.signing_key.rotate",
-            Self::OperationDueScan => "operation.due.scan",
             Self::IdempotencyGc => "idempotency.gc",
             Self::OutboxGc => "outbox.gc",
             Self::PepperRetireCheck => "pepper.retire.check",
@@ -582,21 +324,20 @@ impl Handler {
 
     /// The duty that consumes `topic`.
     ///
-    /// Total over [`Topic`]: adding a topic without a duty is a compile error
-    /// here, which is the point.
+    /// Retired topics have no duty in the launch projection worker.
     #[must_use]
-    pub const fn for_topic(topic: Topic) -> Self {
+    pub const fn for_topic(topic: Topic) -> Option<Self> {
         match topic {
-            Topic::WorkspaceProvisionRequested => Self::WorkspaceProvisionReconcile,
-            Topic::WorkspaceDeleteRequested => Self::WorkspaceDeleteDispatch,
-            Topic::AccountStateChanged => Self::AccountStateProject,
-            Topic::InvitationEmailRequested => Self::InvitationEmailDeliver,
+            Topic::WorkspaceProvisionRequested => Some(Self::WorkspaceProvisionReconcile),
+            Topic::AccountStateChanged => Some(Self::AccountStateProject),
             // Creation and revocation publish the same row, but they stay
             // separate duties: one duty per topic is what makes a failing
             // publication attributable to the event that caused it.
-            Topic::ApiKeyCreated => Self::ApiKeyAuthorizationProject,
-            Topic::AuthorizationEpochChanged => Self::AuthorizationEpochProject,
-            Topic::AuthorizationSigningKeyPublished => Self::AuthorizationSigningKeyRotate,
+            Topic::ApiKeyCreated => Some(Self::ApiKeyAuthorizationProject),
+            Topic::AuthorizationEpochChanged => Some(Self::AuthorizationEpochProject),
+            Topic::WorkspaceDeleteRequested
+            | Topic::InvitationEmailRequested
+            | Topic::AuthorizationSigningKeyPublished => None,
         }
     }
 }
@@ -610,33 +351,18 @@ struct Composition;
 
 impl Declares<ControlWrite> for Composition {}
 impl Declares<ControlWakeInvoke> for Composition {}
-impl Declares<RegionalControlInvoke> for Composition {}
-impl Declares<MailSend> for Composition {}
-impl Declares<SigningKeyAdminister> for Composition {}
 
 /// The manifest the start-up check runs against.
 #[must_use]
 pub fn manifest() -> CompositionManifest {
     CompositionManifest {
         deployable: DEPLOYABLE,
-        capabilities: BTreeSet::from([
-            ControlWrite::ID,
-            ControlWakeInvoke::ID,
-            RegionalControlInvoke::ID,
-            MailSend::ID,
-            SigningKeyAdminister::ID,
-        ]),
+        capabilities: BTreeSet::from([ControlWrite::ID, ControlWakeInvoke::ID]),
         bindings: vec![
             CapabilityBinding::arn(keys::AURORA_CLUSTER_ARN, ControlWrite::ID),
+            CapabilityBinding::arn(keys::AURORA_SECRET_ARN, ControlWrite::ID),
             CapabilityBinding::arn(keys::FUNCTION_ARN, ControlWakeInvoke::ID),
-            CapabilityBinding::arn(keys::SES_IDENTITY_ARN, MailSend::ID),
-            CapabilityBinding::resource(keys::SIGNING_SECRET_PREFIX, SigningKeyAdminister::ID),
-            CapabilityBinding::resource(keys::REGIONAL_FUNCTIONS, RegionalControlInvoke::ID),
-            CapabilityBinding::resource(
-                keys::REGIONAL_CAPACITY_FUNCTIONS,
-                RegionalControlInvoke::ID,
-            ),
-            CapabilityBinding::resource(keys::REGIONAL_PROJECTIONS, ControlWrite::ID),
+            CapabilityBinding::resource(keys::AUTHZ_PROJECTION_TABLE, ControlWrite::ID),
         ],
     }
 }
@@ -655,13 +381,7 @@ pub const PERMISSIONS: &[&str] = &[
     // Lambda's async on-failure delivery assumes this execution role. There is
     // no consumer permission and no event-source mapping for this queue.
     "sqs:SendMessage",
-    "secretsmanager:CreateSecret",
-    "secretsmanager:DeleteSecret",
     "secretsmanager:GetSecretValue",
-    "secretsmanager:PutSecretValue",
-    "kms:Decrypt",
-    "kms:GenerateDataKey",
-    "ses:SendEmail",
     "lambda:InvokeFunction",
 ];
 
@@ -676,14 +396,8 @@ pub struct Probes {
     pub aurora: bool,
     /// The exact worker alias is configured for continuation.
     pub wake: bool,
-    /// Every direct regional function is configured.
-    pub functions: bool,
-    /// Every regional capacity controller is configured.
-    pub capacity: bool,
-    /// Every regional authorization projection answered.
-    pub projections: bool,
-    /// The signing secret prefix is listable.
-    pub signing: bool,
+    /// The launch-region authorization projection answered.
+    pub projection: bool,
 }
 
 impl Probes {
@@ -691,10 +405,7 @@ impl Probes {
     pub const NONE: Self = Self {
         aurora: false,
         wake: false,
-        functions: false,
-        capacity: false,
-        projections: false,
-        signing: false,
+        projection: false,
     };
 }
 
@@ -713,20 +424,8 @@ pub fn readiness(probes: Probes) -> Readiness {
                 resolved: probes.wake,
             },
             Dependency {
-                name: "regional-function-map",
-                resolved: probes.functions,
-            },
-            Dependency {
-                name: "regional-capacity-function-map",
-                resolved: probes.capacity,
-            },
-            Dependency {
-                name: "regional-authz-projections",
-                resolved: probes.projections,
-            },
-            Dependency {
-                name: "signing-secret-prefix",
-                resolved: probes.signing,
+                name: "regional-authz-projection",
+                resolved: probes.projection,
             },
         ],
     )
@@ -798,46 +497,17 @@ pub async fn run(config: &Config) -> Result<(), CentralControlWorkerRunError> {
     .await
     .map_err(|error| CentralControlWorkerRunError::Dependency("aurora", error.to_string()))?;
 
-    let ses = aws_sdk_sesv2::Client::new(&aws);
-
-    let signing = std::sync::Arc::new(runtime::SecretsSigningAdmin::new(
-        aws_sdk_secretsmanager::Client::new(&aws),
-        config.signing_secret_prefix.clone(),
-    ));
-    signing.probe().await.map_err(|error| {
-        CentralControlWorkerRunError::Dependency("signing-secret-prefix", error)
+    let projection = std::sync::Arc::new(
+        aex_session_dynamodb::projection_write::ProjectionWriter::new(
+            aws_sdk_dynamodb::Client::new(&aws),
+            config.authz_projection_table.clone(),
+        ),
+    );
+    projection.probe().await.map_err(|error| {
+        CentralControlWorkerRunError::Dependency("regional-authz-projection", error)
     })?;
-
-    let mut projections = BTreeMap::new();
-    for (region, table) in &config.regional_projections {
-        let regional_aws = aws_config::defaults(aws_config::BehaviorVersion::latest())
-            .region(aws_config::Region::new(region.as_str()))
-            .load()
-            .await;
-        let writer = aex_session_dynamodb::projection_write::ProjectionWriter::new(
-            aws_sdk_dynamodb::Client::new(&regional_aws),
-            table.clone(),
-        );
-        writer.probe().await.map_err(|error| {
-            CentralControlWorkerRunError::Dependency("regional-authz-projection", error)
-        })?;
-        projections.insert(
-            *region,
-            std::sync::Arc::new(writer) as std::sync::Arc<dyn runtime::RegionalProjection>,
-        );
-    }
     let concrete_store = std::sync::Arc::new(aex_control_aurora::AuroraControlStore::new(data));
     let store: std::sync::Arc<dyn runtime::Store> = concrete_store;
-    let regional: std::sync::Arc<dyn aex_control_app::ports::RegionalControlPort> =
-        std::sync::Arc::new(aex_central_aws::LambdaRegionalControl::new(
-            aws_sdk_lambda::Client::new(&aws),
-            config.regional_functions.clone(),
-        ));
-    let capacity: std::sync::Arc<dyn runtime::RegionalCapacity> =
-        std::sync::Arc::new(aex_central_aws::LambdaRegionalCapacity::new(
-            aws_sdk_lambda::Client::new(&aws),
-            config.regional_capacity_functions.clone(),
-        ));
     let worker = std::sync::Arc::new(runtime::Worker::new(
         store,
         std::sync::Arc::new(runtime::LambdaWakeInvoker::new(
@@ -845,11 +515,8 @@ pub async fn run(config: &Config) -> Result<(), CentralControlWorkerRunError> {
             config.function_arn.clone(),
         )),
         std::sync::Arc::new(runtime::TokioWakeDelay),
-        regional,
-        capacity,
-        projections,
-        std::sync::Arc::new(runtime::SesMail::new(ses, config.mail_from.clone())),
-        signing,
+        projection,
+        config.region,
         std::sync::Arc::new(aex_central_aws::SystemClock),
         format!("{}:{}", DEPLOYABLE.as_str(), config.region.as_str()),
         config.batch_size,
@@ -936,42 +603,6 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use tower::ServiceExt as _;
 
-    fn every_function() -> String {
-        Region::ALL
-            .iter()
-            .map(|region| {
-                format!(
-                    "{}=arn:aws:lambda:{}:000000000000:function:aex-regional-control",
-                    region.as_str(),
-                    region.as_str()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-
-    fn every_capacity_function() -> String {
-        Region::ALL
-            .iter()
-            .map(|region| {
-                format!(
-                    "{}=arn:aws:lambda:{}:000000000000:function:aex-regional-capacity-controller",
-                    region.as_str(),
-                    region.as_str()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-
-    fn every_projection() -> String {
-        Region::ALL
-            .iter()
-            .map(|region| format!("{}=aex-prd-authz-projection", region.as_str()))
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-
     fn complete() -> BTreeMap<&'static str, String> {
         BTreeMap::from([
             (keys::PLANE, "prd".to_owned()),
@@ -991,21 +622,12 @@ mod tests {
                     .to_owned(),
             ),
             (
-                keys::SES_IDENTITY_ARN,
-                "arn:aws:ses:eu-west-1:000000000000:identity/aex.dev".to_owned(),
-            ),
-            (keys::MAIL_FROM, "no-reply@aex.dev".to_owned()),
-            (
-                keys::SIGNING_SECRET_PREFIX,
-                "aex/prd/authz-signing/".to_owned(),
+                keys::AUTHZ_PROJECTION_TABLE,
+                "aex-prd-eu-west-1-regional-authz-projection".to_owned(),
             ),
             (keys::DATABASE, "aex".to_owned()),
-            (keys::ROLE, "aex_control_worker".to_owned()),
             (keys::BATCH_SIZE, "10".to_owned()),
             (keys::LEASE_MS, "60000".to_owned()),
-            (keys::REGIONAL_FUNCTIONS, every_function()),
-            (keys::REGIONAL_CAPACITY_FUNCTIONS, every_capacity_function()),
-            (keys::REGIONAL_PROJECTIONS, every_projection()),
         ])
     }
 
@@ -1019,13 +641,11 @@ mod tests {
     fn a_complete_environment_is_accepted() {
         let config = read(&complete()).expect("a complete environment");
         assert_eq!(config.batch_size, 10);
-        assert_eq!(config.regional_functions.len(), Region::ALL.len());
+        assert_eq!(config.region, Region::EuWest1);
         assert_eq!(
-            config.regional_capacity_functions.len(),
-            Region::ALL.len(),
-            "a region this worker projects into but cannot bootstrap is the outage"
+            config.authz_projection_table,
+            "aex-prd-eu-west-1-regional-authz-projection"
         );
-        assert_eq!(config.regional_projections.len(), Region::ALL.len());
     }
 
     #[test]
@@ -1062,88 +682,6 @@ mod tests {
     }
 
     #[test]
-    fn a_single_composed_region_is_accepted() {
-        let mut vars = complete();
-        vars.insert(
-            keys::REGIONAL_FUNCTIONS,
-            "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-regional-control"
-                .to_owned(),
-        );
-        vars.insert(
-            keys::REGIONAL_CAPACITY_FUNCTIONS,
-            "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-capacity".to_owned(),
-        );
-        vars.insert(
-            keys::REGIONAL_PROJECTIONS,
-            "eu-west-1=aex-dev-eu-west-1-regional-authz-projection".to_owned(),
-        );
-        let config = read(&vars).expect("a composed subset of launch regions");
-        assert_eq!(config.regional_functions.len(), 1);
-        assert_eq!(config.regional_capacity_functions.len(), 1);
-        assert_eq!(config.regional_projections.len(), 1);
-    }
-
-    #[test]
-    fn the_function_and_projection_maps_must_cover_the_same_regions() {
-        let mut functions_without_projection = complete();
-        functions_without_projection.insert(
-            keys::REGIONAL_FUNCTIONS,
-            "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-regional-control"
-                .to_owned(),
-        );
-        let error = read(&functions_without_projection).expect_err("maps must agree");
-        assert!(matches!(
-            error,
-            CentralControlWorkerConfigError::Invalid { name, .. }
-                if name == keys::REGIONAL_FUNCTIONS
-        ));
-
-        let mut projections_without_function = complete();
-        projections_without_function.insert(
-            keys::REGIONAL_PROJECTIONS,
-            "eu-west-1=aex-dev-eu-west-1-regional-authz-projection".to_owned(),
-        );
-        let error = read(&projections_without_function).expect_err("maps must agree");
-        assert!(matches!(
-            error,
-            CentralControlWorkerConfigError::Invalid { name, .. }
-                if name == keys::REGIONAL_PROJECTIONS
-        ));
-
-        // The third map has to agree too, and its disagreement is the dangerous
-        // one: a region this worker can publish a placement into but cannot
-        // bootstrap serves `401` to every request for every workspace it places
-        // there.
-        let mut projection_without_capacity = complete();
-        projection_without_capacity.insert(
-            keys::REGIONAL_CAPACITY_FUNCTIONS,
-            "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-capacity".to_owned(),
-        );
-        let error = read(&projection_without_capacity).expect_err("maps must agree");
-        assert!(
-            matches!(
-                error,
-                CentralControlWorkerConfigError::Invalid { name, .. }
-                    if name == keys::REGIONAL_CAPACITY_FUNCTIONS
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn a_repeated_or_unknown_region_is_refused() {
-        for raw in [
-            "mars-central-1=arn:aws:lambda:mars-central-1:0:function:x",
-            "eu-west-1=arn:aws:lambda:eu-west-1:0:function:a,eu-west-1=arn:aws:lambda:eu-west-1:0:function:b",
-            "eu-west-1",
-        ] {
-            let mut vars = complete();
-            vars.insert(keys::REGIONAL_FUNCTIONS, raw.to_owned());
-            assert!(read(&vars).is_err(), "{raw}");
-        }
-    }
-
-    #[test]
     fn a_batch_or_lease_outside_its_bound_is_refused() {
         for (name, value) in [
             (keys::BATCH_SIZE, "0"),
@@ -1158,16 +696,19 @@ mod tests {
     }
 
     #[test]
-    fn this_binary_refuses_any_role_but_the_worker_one() {
-        let mut vars = complete();
-        vars.insert(keys::ROLE, "aex_control_api".to_owned());
-        assert!(read(&vars).is_err());
-    }
-
-    #[test]
-    fn every_outbox_topic_has_a_duty_and_every_duty_has_a_name() {
-        let handled: BTreeSet<Handler> = Topic::ALL.into_iter().map(Handler::for_topic).collect();
-        assert_eq!(handled.len(), Topic::ALL.len(), "two topics share one duty");
+    fn every_launch_outbox_topic_has_a_distinct_duty_and_retired_topics_do_not() {
+        let handled: BTreeSet<Handler> = Topic::ALL
+            .into_iter()
+            .filter_map(Handler::for_topic)
+            .collect();
+        assert_eq!(handled.len(), 4, "two launch topics share one duty");
+        for retired in [
+            Topic::WorkspaceDeleteRequested,
+            Topic::InvitationEmailRequested,
+            Topic::AuthorizationSigningKeyPublished,
+        ] {
+            assert_eq!(Handler::for_topic(retired), None);
+        }
         let mut names: Vec<&str> = Handler::ALL.iter().map(|it| it.as_str()).collect();
         let count = names.len();
         names.sort_unstable();
@@ -1215,7 +756,16 @@ mod tests {
         assert!(!PERMISSIONS.contains(&"sqs:DeleteMessage"));
         assert!(!PERMISSIONS.contains(&"sqs:ChangeMessageVisibility"));
         assert!(PERMISSIONS.contains(&"lambda:InvokeFunction"));
-        assert!(PERMISSIONS.contains(&"ses:SendEmail"));
+        assert!(
+            !PERMISSIONS
+                .iter()
+                .any(|permission| permission.starts_with("ses:"))
+        );
+        assert!(
+            !PERMISSIONS
+                .iter()
+                .any(|permission| permission.starts_with("kms:"))
+        );
     }
 
     #[tokio::test]
@@ -1233,15 +783,12 @@ mod tests {
     }
 
     #[test]
-    fn a_worker_with_an_incomplete_projection_map_is_never_ready() {
+    fn a_worker_with_an_unavailable_projection_is_never_ready() {
         assert!(
             !readiness(Probes {
                 aurora: true,
                 wake: true,
-                functions: true,
-                capacity: true,
-                projections: false,
-                signing: true,
+                projection: false,
             })
             .is_ready()
         );

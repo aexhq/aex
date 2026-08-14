@@ -1,8 +1,7 @@
 //! Slice S-1.4 and S-1.5 — owed-step totality, honest finish reasons, context policy.
 
 use aex_brain_domain::context::{
-    CLEARED_PLACEHOLDER, ContextPolicy, DEFAULT_TOOL_RESULT_BYTES, PROTECTED_TAIL_TURNS, decide,
-    view,
+    ContextPolicy, DEFAULT_TOOL_RESULT_BYTES, TRUNCATED_PLACEHOLDER, decide, render,
 };
 use aex_brain_domain::fold::{FoldState, apply, fold};
 use aex_brain_domain::ids::{JournalSeq, Timestamp};
@@ -83,7 +82,7 @@ fn a_truncated_response_finishes_failed() {
     );
 }
 
-/// Each breach maps to its own honest reason rather than a generic failure.
+/// Semantic deadline and budget breaches map to honest terminal reasons.
 #[test]
 fn each_breach_maps_to_its_own_reason() {
     let base = fold(
@@ -93,24 +92,6 @@ fn each_breach_maps_to_its_own_reason() {
             .build(),
     )
     .expect("the history folds");
-
-    let mut turns = base.clone();
-    turns.assistant_turns = config().limits.max_turns;
-    assert_eq!(
-        plan(&turns, &policy(0)),
-        OwedStep::Finish {
-            reason: FinishReason::MaxTurns
-        }
-    );
-
-    let mut steps = base.clone();
-    steps.steps_this_turn = config().limits.max_steps_per_turn;
-    assert_eq!(
-        plan(&steps, &policy(0)),
-        OwedStep::Finish {
-            reason: FinishReason::MaxSteps
-        }
-    );
 
     let deadline = i64::from(config().limits.turn_deadline_ms);
     let started_at = base
@@ -189,8 +170,6 @@ fn the_phase_decides_the_step() {
 fn a_terminal_agent_owes_nothing() {
     for reason in [
         FinishReason::Completed,
-        FinishReason::MaxTurns,
-        FinishReason::MaxSteps,
         FinishReason::Budget,
         FinishReason::Timeout,
         FinishReason::Cancelled,
@@ -261,46 +240,6 @@ fn the_context_trigger_counts_the_whole_window() {
     );
 }
 
-/// Compaction protects the last three turns and clears with a deterministic placeholder, so
-/// a retried compaction is a no-op rather than a second, different summary.
-#[test]
-fn clearing_is_deterministic_and_protects_the_tail() {
-    let mut state = FoldState::empty();
-    for index in 0..8 {
-        state.model_history.push(CanonicalMessage {
-            role: Role::User,
-            blocks: vec![text(&format!("turn {index}"))],
-        });
-    }
-    let policy = ContextPolicy::default();
-    let once = view(&state, &policy, 4);
-    let twice = view(&state, &policy, 4);
-    assert_eq!(once, twice, "the view is a pure function of its inputs");
-
-    let cleared = once
-        .iter()
-        .filter(|turn| {
-            turn.role == Role::User
-                && turn.blocks.iter().any(|block| {
-                    matches!(block, CanonicalBlock::Text { text, .. } if text.as_str() == CLEARED_PLACEHOLDER)
-                })
-        })
-        .count();
-    assert!(cleared > 0, "something must actually be cleared");
-
-    let protected = &once[once.len() - PROTECTED_TAIL_TURNS..];
-    for turn in protected {
-        if turn.role != Role::User {
-            continue;
-        }
-        for block in &turn.blocks {
-            if let CanonicalBlock::Text { text, .. } = block {
-                assert_ne!(text.as_str(), CLEARED_PLACEHOLDER, "the tail is protected");
-            }
-        }
-    }
-}
-
 /// The per-tool-result cap is idempotent: capping twice equals capping once.
 ///
 /// Without this a retried request would send the model a shorter prompt than the first
@@ -320,13 +259,13 @@ fn the_tool_result_cap_is_idempotent() {
         blocks: vec![oversized],
     });
     let policy = ContextPolicy::default();
-    let once = view(&state, &policy, 0);
+    let once = render(&state, &policy);
 
     let mut reapplied = FoldState::empty();
     reapplied.model_history.clone_from(&once);
     assert_eq!(
         once,
-        view(&reapplied, &policy, 0),
+        render(&reapplied, &policy),
         "capping is not idempotent"
     );
 
@@ -343,7 +282,7 @@ fn the_tool_result_cap_is_idempotent() {
         text.len()
     );
     assert!(
-        text.as_str().ends_with(CLEARED_PLACEHOLDER),
+        text.as_str().ends_with(TRUNCATED_PLACEHOLDER),
         "truncation is visible"
     );
 }

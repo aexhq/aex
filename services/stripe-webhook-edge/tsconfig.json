@@ -8,5 +8,5 @@
     "target": "ES2024",
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "../stripe-command-edge/src/protocol.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

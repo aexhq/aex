@@ -5,261 +5,87 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand};
 
 use crate::output::OutputFormat;
 
-/// The native client for the AEX v1 public API.
+/// The native client for the session-centered AEX public API.
 #[derive(Debug, Parser)]
 #[command(name = "aex", version, about, disable_help_subcommand = true)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "independent clap switches are boolean by contract"
-)]
 pub struct Cli {
     /// Print the declarative command registry as JSON.
     #[arg(long, hide = true)]
     pub dump_command_registry: bool,
-    /// Workspace API key or account token.
-    #[arg(long, global = true, env = "AEX_API_KEY")]
-    pub api_key: Option<String>,
-    /// Selected local profile.
+    /// Selected non-secret local profile.
     #[arg(long, global = true, env = "AEX_PROFILE", default_value = "default")]
     pub profile: String,
     /// Explicit configuration file.
     #[arg(long, global = true, env = "AEX_CONFIG")]
     pub config: Option<PathBuf>,
-    /// Bootstrap-plane URL.
+    /// Central API origin.
     #[arg(long, global = true, env = "AEX_CENTRAL_URL")]
     pub central_url: Option<String>,
-    /// Workspace-plane URL.
+    /// Regional session API origin.
     #[arg(long, global = true, env = "AEX_REGIONAL_URL")]
     pub regional_url: Option<String>,
-    /// Workspace binding for an account token.
-    #[arg(long, global = true, env = "AEX_WORKSPACE_ID")]
-    pub workspace: Option<String>,
     /// Output representation.
     #[arg(long, global = true, env = "AEX_OUTPUT", value_enum)]
     pub output: Option<OutputFormat>,
     /// Suppress non-error diagnostics.
     #[arg(short, long, global = true)]
     pub quiet: bool,
-    /// Increase diagnostic detail.
+    /// Increase diagnostic detail without printing credentials or signed URLs.
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
-    /// Disable safe retry for this invocation.
-    #[arg(long, global = true)]
-    pub no_retry: bool,
-    /// Client deadline for wait-style commands.
-    #[arg(long, global = true)]
-    pub wait_timeout: Option<u64>,
-    /// Durable operation polling interval.
-    #[arg(long, global = true, default_value_t = 1_000)]
-    pub poll_interval: u64,
-    /// Caller-supplied replay identity.
+    /// Caller-supplied replay identity for write commands.
     #[arg(long, global = true)]
     pub idempotency_key: Option<String>,
-    /// Caller-supplied durable operation identity.
-    #[arg(long, global = true)]
-    pub operation_id: Option<String>,
-    /// Return immediately after durable admission.
-    #[arg(long, global = true)]
-    pub detach: bool,
     #[command(subcommand)]
     pub command: Option<Command>,
 }
 
+/// The complete launch command surface.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    Auth {
-        #[command(subcommand)]
-        command: AuthCommand,
-    },
-    Account {
-        #[command(subcommand)]
-        command: AccountCommand,
-    },
-    Org {
-        #[command(subcommand)]
-        command: OrgCommand,
-    },
-    Workspace {
-        #[command(subcommand)]
-        command: WorkspaceCommand,
-    },
-    Key {
-        #[command(subcommand)]
-        command: KeyCommand,
-    },
+    /// Create and manage durable sessions.
     Session {
         #[command(subcommand)]
         command: SessionCommand,
     },
+    /// Send, list, and follow session messages.
     Message {
         #[command(subcommand)]
         command: MessageCommand,
     },
-    Approval {
-        #[command(subcommand)]
-        command: ApprovalCommand,
-    },
-    Operation {
-        #[command(subcommand)]
-        command: OperationCommand,
-    },
+    /// Manage current latest-only workspace files.
     File {
         #[command(subcommand)]
         command: FileCommand,
     },
-    ProviderCredential {
-        #[command(subcommand)]
-        command: ProviderCredentialCommand,
-    },
-    Limit {
-        #[command(subcommand)]
-        command: LimitCommand,
-    },
-    Observe {
-        #[command(subcommand)]
-        command: ObserveCommand,
-    },
+    /// Follow, replay, and download retained session telemetry.
     Telemetry {
         #[command(subcommand)]
         command: TelemetryCommand,
     },
-    Usage {
-        #[command(subcommand)]
-        command: UsageCommand,
-    },
+    /// Inspect balance/cards/usage and open Stripe-hosted flows.
     Billing {
         #[command(subcommand)]
         command: BillingCommand,
     },
-    /// Generate shell completions.
-    Completions {
-        #[arg(value_enum)]
-        shell: CompletionShell,
-    },
+    /// Inspect and update non-secret local configuration.
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Print CLI and contract identity.
     Version,
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub enum CompletionShell {
-    Bash,
-    Zsh,
-    Fish,
-    Powershell,
-    Elvish,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum AuthCommand {
-    Login,
-    Logout,
-    Status,
-}
-#[derive(Debug, Subcommand)]
-pub enum AccountCommand {
-    Get {
-        #[arg(long)]
-        organization: Option<String>,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum OrgCommand {
-    List(PageArgs),
-    Create {
-        #[arg(long)]
-        name: String,
-    },
-    Get {
-        organization: String,
-    },
-    Member {
-        #[command(subcommand)]
-        command: MemberCommand,
-    },
-    Invite {
-        #[command(subcommand)]
-        command: InviteCommand,
-    },
-}
-#[derive(Debug, Subcommand)]
-pub enum MemberCommand {
-    List { organization: String },
-}
-#[derive(Debug, Subcommand)]
-pub enum InviteCommand {
-    Create {
-        organization: String,
-        #[arg(long)]
-        email: String,
-        #[arg(long)]
-        role: String,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum WorkspaceCommand {
-    List(PageArgs),
-    Create {
-        #[arg(long)]
-        organization: String,
-        #[arg(long)]
-        name: String,
-        #[arg(long)]
-        region: String,
-    },
-    Get {
-        workspace: String,
-    },
-    Delete {
-        workspace: String,
-        #[arg(long)]
-        confirm: String,
-    },
-    Current,
-}
-#[derive(Debug, Subcommand)]
-pub enum KeyCommand {
-    List {
-        #[arg(long)]
-        workspace: String,
-    },
-    Create {
-        #[arg(long)]
-        workspace: String,
-        #[arg(long)]
-        name: String,
-        #[arg(long)]
-        scope: Vec<String>,
-    },
-    Revoke {
-        key: String,
-        #[arg(long)]
-        if_revision: Option<u64>,
-    },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum SessionCommand {
     Create(SessionCreateArgs),
-    List(PageArgs),
+    List(SessionListArgs),
     Get {
-        session: String,
-    },
-    Cancel {
-        session: String,
-    },
-    Suspend {
-        session: String,
-    },
-    Resume {
         session: String,
     },
     Terminate {
@@ -267,261 +93,186 @@ pub enum SessionCommand {
     },
     Delete {
         session: String,
-        #[arg(long)]
+        /// Required acknowledgement of irreversible session-content deletion.
+        #[arg(long, value_parser = ["delete"])]
         confirm: String,
     },
 }
+
 #[derive(Debug, Args)]
+#[command(group(
+    ArgGroup::new("provider-secret")
+        .required(true)
+        .args(["provider_key_env", "provider_key_stdin"])
+))]
 pub struct SessionCreateArgs {
-    #[arg(long)]
+    /// Official provider family.
+    #[arg(long, value_parser = ["openai", "anthropic", "deepseek", "xai", "meta", "moonshotai", "alibaba"])]
     pub provider: String,
+    /// Provider-native model identifier.
     #[arg(long)]
     pub model: String,
+    /// Name of the environment variable containing the write-only provider key.
+    #[arg(long, conflicts_with = "provider_key_stdin")]
+    pub provider_key_env: Option<String>,
+    /// Read the write-only provider key from stdin.
+    #[arg(long, conflicts_with = "provider_key_env")]
+    pub provider_key_stdin: bool,
+    /// Name of an environment variable containing the MCP server JSON array.
+    #[arg(long, conflicts_with = "mcp_json_stdin")]
+    pub mcp_json_env: Option<String>,
+    /// Read the MCP server JSON array, including any secrets, from stdin.
+    #[arg(long, conflicts_with = "mcp_json_env")]
+    pub mcp_json_stdin: bool,
+    /// Resolve and mount a current file as NAME=/workspace/path.
+    #[arg(long = "mount")]
+    pub mounts: Vec<String>,
+    /// Explicitly create a no-sandbox session.
     #[arg(long)]
-    pub credential: Option<String>,
+    pub no_sandbox: bool,
+    /// Prepaid reservation ceiling in whole cents.
     #[arg(long)]
-    pub compute: Option<String>,
-    #[arg(long)]
-    pub network: Option<String>,
+    pub max_spend_cents: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+pub struct SessionListArgs {
+    #[command(flatten)]
+    pub page: PageArgs,
+    #[arg(long, value_parser = ["idle", "running", "terminating", "terminated", "deleting"])]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum MessageCommand {
-    List {
-        session: String,
-    },
     Send {
         session: String,
+        /// Message text. When omitted, UTF-8 text is read from stdin.
         text: Option<String>,
+        /// Per-message spend fence in whole cents.
+        #[arg(long)]
+        max_spend_cents: Option<u64>,
+        /// JSON Schema for a native structured final response.
+        #[arg(long)]
+        response_schema: Option<PathBuf>,
     },
-}
-#[derive(Debug, Subcommand)]
-pub enum ApprovalCommand {
     List {
         session: String,
+        #[command(flatten)]
+        page: PageArgs,
     },
-    Get {
+    Tail {
         session: String,
-        approval: String,
-    },
-    Respond {
-        session: String,
-        approval: String,
+        /// Resume after this message stream sequence.
         #[arg(long)]
-        decision: String,
+        after: Option<u128>,
     },
-}
-#[derive(Debug, Subcommand)]
-pub enum OperationCommand {
-    List,
-    Get { operation: String },
-    Wait { operation: String },
-    Cancel { operation: String },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum FileCommand {
-    /// List current workspace files.
-    List(PageArgs),
-    /// Read current workspace-file metadata.
-    Get {
-        name: String,
-    },
-    /// Replace a current value from local bytes or an HTTPS URL.
+    /// Replace a current file with inline local/stdin bytes or an HTTPS URL.
     Put {
         name: String,
         #[arg(long, conflicts_with = "url")]
         path: Option<PathBuf>,
         #[arg(long, conflicts_with = "path")]
         url: Option<String>,
+        #[arg(long, default_value = "application/octet-stream")]
+        media_type: String,
         #[arg(long)]
-        media_type: Option<String>,
+        executable: bool,
     },
-    /// Upload arbitrary local bytes and publish them as the current value.
+    /// Multipart-upload arbitrary local bytes as the current logical file.
     Upload {
         name: String,
         path: PathBuf,
-        #[arg(long)]
-        media_type: Option<String>,
+        #[arg(long, default_value = "application/octet-stream")]
+        media_type: String,
     },
-    /// Download and verify the current ready bytes.
+    List(PageArgs),
+    Get {
+        name: String,
+    },
     Download {
         name: String,
         #[arg(long)]
         destination: PathBuf,
+        #[arg(long)]
+        force: bool,
     },
-    /// Delete the current logical name. Already-absent is success.
     Delete {
         name: String,
-    },
-}
-#[derive(Debug, Subcommand)]
-pub enum ProviderCredentialCommand {
-    List,
-    Get {
-        credential: String,
-    },
-    Register {
-        provider: String,
-        #[arg(long)]
-        value: Option<String>,
-        #[arg(long)]
-        value_stdin: bool,
-    },
-    Revoke {
-        credential: String,
-    },
-}
-#[derive(Debug, Subcommand)]
-pub enum LimitCommand {
-    List,
-    Get { limit: String },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum ObserveCommand {
-    Events(SignalArgs),
-    Logs(SignalArgs),
-    Spans(SignalArgs),
-    Metrics(SignalArgs),
-    Traces(SignalArgs),
-    Telemetry(SignalArgs),
-}
-#[derive(Debug, Args)]
-pub struct SignalArgs {
-    #[command(subcommand)]
-    pub command: SignalCommand,
-}
-#[derive(Debug, Subcommand)]
-pub enum SignalCommand {
-    Query {
-        #[arg(long)]
-        query: String,
-    },
-    Stream {
-        #[arg(long)]
-        query: String,
-    },
-    Listen {
-        #[arg(long)]
-        query: String,
     },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum TelemetryCommand {
-    Gap {
-        #[command(subcommand)]
-        command: GapCommand,
-    },
-    Export {
-        #[command(subcommand)]
-        command: ExportCommand,
-    },
-    Otlp {
-        #[command(subcommand)]
-        command: OtlpCommand,
-    },
-}
-#[derive(Debug, Subcommand)]
-pub enum GapCommand {
-    Query {
+    Tail {
+        session: String,
         #[arg(long)]
-        query: String,
+        after: Option<u128>,
     },
-    Get {
-        gap: String,
-    },
-}
-#[derive(Debug, Subcommand)]
-pub enum ExportCommand {
-    Create {
+    Replay {
+        session: String,
         #[arg(long)]
-        query: String,
-    },
-    Get {
-        export: String,
+        after: Option<u128>,
+        #[arg(long)]
+        limit: Option<u32>,
     },
     Download {
-        export: String,
+        session: String,
         #[arg(long)]
-        destination: String,
-    },
-    Revoke {
-        export: String,
-    },
-}
-#[derive(Debug, Subcommand)]
-pub enum OtlpCommand {
-    Logs {
+        destination: PathBuf,
         #[arg(long)]
-        request: String,
-    },
-    Traces {
+        from_sequence: Option<u128>,
         #[arg(long)]
-        request: String,
-    },
-    Metrics {
+        to_sequence: Option<u128>,
         #[arg(long)]
-        request: String,
+        force: bool,
     },
 }
 
 #[derive(Debug, Subcommand)]
-pub enum UsageCommand {
-    Query {
-        #[arg(long)]
-        query: String,
-        #[arg(long)]
-        organization: Option<String>,
-    },
-}
-#[derive(Debug, Subcommand)]
 pub enum BillingCommand {
     Balance,
+    Cards,
+    SetupCard {
+        /// Explicit consent to save the card for future prepaid payments.
+        #[arg(long)]
+        consent: bool,
+        #[arg(long)]
+        success_url: Option<String>,
+        #[arg(long)]
+        cancel_url: Option<String>,
+    },
+    RemoveCard {
+        payment_method: String,
+    },
     Topup {
-        organization: String,
         #[arg(long)]
-        amount_microusd: u64,
+        amount_cents: u64,
+        #[arg(long)]
+        success_url: Option<String>,
+        #[arg(long)]
+        cancel_url: Option<String>,
     },
-    Portal {
-        organization: String,
-    },
-    Autotopup {
-        #[command(subcommand)]
-        command: AutoTopupCommand,
-    },
-    Statement {
-        #[command(subcommand)]
-        command: StatementCommand,
-    },
+    Transactions(PageArgs),
+    Usage(BillingUsageArgs),
 }
-#[derive(Debug, Subcommand)]
-pub enum AutoTopupCommand {
-    Get {
-        organization: String,
-    },
-    Set {
-        organization: String,
-        #[arg(long)]
-        if_revision: u64,
-    },
-}
-#[derive(Debug, Subcommand)]
-pub enum StatementCommand {
-    List {
-        organization: String,
-    },
-    Get {
-        organization: String,
-        statement: String,
-    },
-    Download {
-        organization: String,
-        statement: String,
-        #[arg(long)]
-        destination: String,
-    },
+
+#[derive(Debug, Args)]
+pub struct BillingUsageArgs {
+    #[arg(long, value_parser = ["model", "runtime", "storage", "transfer"])]
+    pub category: Option<String>,
+    #[arg(long)]
+    pub session: Option<String>,
+    #[arg(long)]
+    pub from: Option<String>,
+    #[arg(long)]
+    pub to: Option<String>,
+    #[command(flatten)]
+    pub page: PageArgs,
 }
 
 #[derive(Debug, Subcommand)]
@@ -538,5 +289,5 @@ pub struct PageArgs {
     #[arg(long)]
     pub cursor: Option<String>,
     #[arg(long)]
-    pub limit: Option<u16>,
+    pub limit: Option<u32>,
 }

@@ -413,7 +413,7 @@ fn publication_plan_with_catalog(
 }
 
 pub(crate) fn requires_catalog_binding(unit: &Unit) -> bool {
-    matches!(unit.id.as_str(), "brain-mux" | "session-stream-api")
+    matches!(unit.id.as_str(), "brain-mux" | "session-api")
 }
 
 fn nonempty_environment(name: &str) -> Option<String> {
@@ -2010,9 +2010,9 @@ alarm_spec = "regional-session-api"
         brain
     }
 
-    fn session_stream_unit() -> Unit {
+    fn session_api_unit() -> Unit {
         let mut session = unit("rust-oci-service");
-        session.id = "session-stream-api".to_owned();
+        session.id = "session-api".to_owned();
         session.package = "session-stream-api".to_owned();
         session.bin = Some("session-stream-api".to_owned());
         session
@@ -2085,7 +2085,7 @@ alarm_spec = "regional-session-api"
 
     #[test]
     fn publication_refuses_every_unbound_catalog_consumer_before_build_planning() {
-        for unit in [brain_unit(), session_stream_unit()] {
+        for unit in [brain_unit(), session_api_unit()] {
             let error = publication_plan_with_catalog(&unit, None)
                 .expect_err("publication must fail closed");
             assert_eq!(

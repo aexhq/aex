@@ -34,7 +34,7 @@ pub struct SessionDeletionHead {
     /// Session-head revision produced by admission.
     pub revision: SessionRevision,
     /// Exact immutable runtime generation that must become terminal.
-    pub generation: GenerationId,
+    pub generation: Option<GenerationId>,
     /// When the destructive fence committed.
     pub started_at: Timestamp,
 }

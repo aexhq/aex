@@ -2,35 +2,37 @@
   "$id": "https://schemas.aex.dev/v1/ResolvedConfig.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Everything the platform resolved for this session.",
+  "description": "Customer-safe frozen session configuration; all plaintext secrets are omitted.",
   "properties": {
-    "catalogRevision": {
-      "description": "The signed model-catalog release that qualified this provider and model pair.",
-      "maxLength": 68,
-      "minLength": 68,
-      "pattern": "^mc1_[0-9a-f]{64}$",
-      "type": "string"
-    },
     "compute": {
       "$ref": "aex:schema:ResolvedCompute",
-      "description": "Resolved capacity."
+      "description": "Present only when sandbox is enabled."
     },
     "lifecycle": {
       "$ref": "aex:schema:SessionLifecyclePolicy",
-      "description": "Immutable automatic lifecycle behavior."
+      "description": "Immutable session bounds."
+    },
+    "mcpServerNames": {
+      "description": "Frozen server names; secrets and transport credentials are omitted.",
+      "items": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+        "type": "string"
+      },
+      "maxItems": 16,
+      "type": "array"
     },
     "model": {
-      "description": "The exact provider-native model id.",
+      "description": "Current model selected at admission.",
       "maxLength": 256,
       "minLength": 1,
       "type": "string"
     },
     "network": {
       "$ref": "aex:schema:ResolvedNetwork",
-      "description": "Resolved network policy."
+      "description": "Present only when sandbox is enabled."
     },
     "packages": {
-      "description": "Resolved packages.",
+      "description": "Resolved setup packages.",
       "items": {
         "$ref": "aex:schema:PackageRequest"
       },
@@ -39,29 +41,25 @@
     },
     "provider": {
       "$ref": "aex:schema:ProviderId",
-      "description": "The provider."
-    },
-    "providerCredentialId": {
-      "description": "The pinned BYOK binding.",
-      "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
-      "type": "string",
-      "x-aex-id": "provider_credential"
+      "description": "Provider."
     },
     "registered": {
       "$ref": "aex:schema:SessionRegisteredSelection",
-      "description": "Resolved mounted files."
+      "description": "Frozen mount selection; hashes remain private."
+    },
+    "sandboxEnabled": {
+      "description": "Whether the one sandbox exists.",
+      "type": "boolean"
     }
   },
   "required": [
-    "catalogRevision",
-    "compute",
     "lifecycle",
+    "mcpServerNames",
     "model",
-    "network",
     "packages",
     "provider",
-    "providerCredentialId",
-    "registered"
+    "registered",
+    "sandboxEnabled"
   ],
   "title": "ResolvedConfig",
   "type": "object"

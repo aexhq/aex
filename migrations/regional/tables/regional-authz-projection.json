@@ -2,80 +2,30 @@
   "schema": "aex.regional-table.v1",
   "table": "regional-authz-projection",
   "owner": "regional-stores",
-  "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key authorization and the signed feed frontier. Central control owns placement, profile, key authorization and frontier rows; regional capacity alone owns effective-limit rows, including the hot admission subset a request edge reads. Partition-key-scoped IAM keeps those write capabilities disjoint, while every serving regional role reads only: GetItem, Query, and TransactGetItems for the one-request admission snapshot.",
+  "purpose": "Read-only launch-region projection of the personal workspace placement, API-key authorization and central projection frontier.",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
   "serverSideEncryption": {
     "type": "KMS",
     "keyAuthority": "regional-authz",
-    "rationale": "Per-authority customer managed key. The projection carries authorization epochs, not credentials."
+    "rationale": "The projection carries authorization epochs and placement, never credentials or customer content."
   },
-  "attributes": [
-    { "name": "pk", "type": "S" },
-    { "name": "sk", "type": "S" }
-  ],
+  "attributes": [{ "name": "pk", "type": "S" }, { "name": "sk", "type": "S" }],
   "keySchema": { "partition": "pk", "sort": "sk" },
   "globalSecondaryIndexes": [],
-  "stream": {
-    "enabled": false,
-    "viewType": "NONE",
-    "consumers": [],
-    "rationale": "The projection is a read replica of central control state; regional consumers read it by key, never by change feed."
-  },
-  "timeToLive": {
-    "enabled": false,
-    "attribute": "",
-    "appliesTo": [],
-    "rationale": "A key authorization row that silently disappeared would take a live key with it, and an expired one would be indistinguishable from a forged key id. Neither direction is acceptable, so nothing here expires."
-  },
-  "itemTypes": ["workspace_placement", "workspace_profile", "workspace_limit", "workspace_limit_bundle_head", "workspace_limit_bundle", "workspace_edge_limits", "key_authorization", "feed_frontier"],
+  "stream": { "enabled": false, "viewType": "NONE", "consumers": [], "rationale": "Request admission reads exact keys; there is no regional projection writer behind this table." },
+  "timeToLive": { "enabled": false, "attribute": "", "appliesTo": [], "rationale": "Authorization and placement disappear only through explicit central revocation/deletion projection." },
+  "itemTypes": ["workspace_placement", "key_authorization", "feed_frontier"],
   "iam": [
     {
-      "role": "central-control-worker",
-      "actions": ["dynamodb:GetItem"],
-      "resources": ["table"]
-    },
-    {
-      "role": "central-control-worker",
-      "actions": ["dynamodb:PutItem"],
+      "role": "control-projection-worker",
+      "actions": ["dynamodb:GetItem", "dynamodb:PutItem"],
       "resources": ["table"],
-      "itemTypes": ["workspace_placement", "workspace_profile", "key_authorization", "feed_frontier"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["WS#*", "KEY#*", "FEED"]
-      }
+      "condition": { "operator": "ForAllValues:StringLike", "key": "dynamodb:LeadingKeys", "values": ["WS#*", "KEY#*", "FEED#*"] }
     },
     {
-      "role": "regional-capacity-controller",
-      "actions": ["dynamodb:PutItem"],
-      "resources": ["table"],
-      "itemTypes": ["workspace_limit", "workspace_limit_bundle_head", "workspace_limit_bundle", "workspace_edge_limits"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["LIMIT#*"]
-      }
-    },
-    {
-      "role": "regional-control",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
-      "resources": ["table"],
-      "itemTypes": ["workspace_placement"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["WS#*", "SESSION#*", "AGENT#*", "ACTIVE#*"]
-      }
-    },
-    {
-      "role": "regional-session-api",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:TransactWriteItems", "dynamodb:Query"],
-      "resources": ["table"]
-    },
-    {
-      "role": "session-stream-api",
+      "role": "session-api",
       "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:Query"],
       "resources": ["table"]
     }

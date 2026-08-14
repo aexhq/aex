@@ -234,7 +234,7 @@ mod tests {
         );
         assert_eq!(
             from_denial(Denial::InsufficientScope {
-                required: Scope::WorkspacesWrite
+                required: Scope::ApiKeysWrite
             })
             .code(),
             ErrorCode::InsufficientScope

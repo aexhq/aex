@@ -456,6 +456,98 @@ pub fn register_provider_credential(
     Ok(plan)
 }
 
+/// Compiles the hidden session-provider-key binding transaction.
+///
+/// Unlike the retired public credential collection, this write consumes no
+/// workspace collection quota: one binding is born with each session and is
+/// addressed through the session's UUID payload, never through a public list.
+/// The source ciphertext, metadata, lineage, binding and replay receipt remain
+/// atomic, so neither a crash nor a concurrent create can expose a ready
+/// binding without its encrypted source generation.
+///
+/// # Errors
+///
+/// [`StoreError`] when a row is inconsistent or cannot be encoded.
+pub fn bind_session_provider_key(
+    table: &str,
+    generation: &StoredGeneration,
+    metadata: &SecretMetadata,
+    credential: &ProviderCredential,
+    receipt: &Receipt,
+) -> Result<TransactionPlan, StoreError> {
+    validate_set(generation, metadata, None)?;
+    if credential.secret_name != metadata.name
+        || credential.workspace != metadata.workspace
+        || credential.source_generation != metadata.generation
+    {
+        return Err(StoreError::Invalid {
+            detail: "the session credential does not name its encrypted source generation"
+                .to_owned(),
+        });
+    }
+    if credential.state != CredentialState::Ready {
+        return Err(StoreError::Invalid {
+            detail: "a session credential binding must start ready".to_owned(),
+        });
+    }
+
+    let mut plan = TransactionPlan::new(token("spk", &[&receipt.scope, &receipt.key_sha256]));
+    plan.put(
+        Participant::SECRET_GENERATION,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(codec::encode_generation(generation).map_err(
+                |error| StoreError::Invalid {
+                    detail: error.to_string(),
+                },
+            )?))
+            .condition_expression(IMMUTABLE),
+    )?;
+    plan.put(
+        Participant::SECRET_METADATA,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(codec::encode_secret(metadata).map_err(|error| {
+                StoreError::Invalid {
+                    detail: error.to_string(),
+                }
+            })?))
+            .condition_expression(IMMUTABLE),
+    )?;
+    plan.put(
+        Participant::SECRET_LINEAGE,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(
+                codec::encode_lineage(
+                    metadata.workspace,
+                    &metadata.name,
+                    metadata.generation,
+                    metadata.created_at,
+                )
+                .map_err(|error| StoreError::Invalid {
+                    detail: error.to_string(),
+                })?,
+            ))
+            .condition_expression(IMMUTABLE),
+    )?;
+    plan.put(
+        Participant::CUSTODY_PROVIDER_CREDENTIAL,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(
+                codec::encode_provider_credential(credential).map_err(|error| {
+                    StoreError::Invalid {
+                        detail: error.to_string(),
+                    }
+                })?,
+            ))
+            .condition_expression(IMMUTABLE),
+    )?;
+    push_receipt(&mut plan, table, metadata.workspace, receipt)?;
+    Ok(plan)
+}
+
 /// Builds the emergency revoke: one atomic fence, O(1) in the generation count.
 ///
 /// # Errors

@@ -48,7 +48,7 @@ source = "Q-PERFORMANCE; Area 10 T3 row; 07-brain-core.md"
 
 [gate."LOAD-REGIONAL-ADMISSION"]
 owner = "regional-stores"
-target = "aex-live-session-stream-api"
+target = "aex-live-session-api"
 kind = "diagnostic"
 blocking = false
 assert = "no unbounded conflict growth across the 1/10/100/500 session and agent profiles"
@@ -56,7 +56,7 @@ source = "PERF-09; PERF-13; 05-regional-stores.md section 8.4"
 
 [gate."LOAD-FINANCE-BACKLOG"]
 owner = "central-finance"
-target = "aex-live-finance-settlement-worker"
+target = "aex-live-billing-worker"
 kind = "budget"
 blocking = true
 assert = "50000 queued facts across 500 orgs settle with bounded queueing && no cross-org serialization storm && no starvation of payment ingest && no unbounded Aurora growth"
@@ -88,7 +88,7 @@ source = "Area 7 scheduled-drift rule"
 
 [gate."PERF-BASELINE-JOURNAL-FOLD"]
 owner = "regional-domains"
-target = "aex-live-session-stream-api"
+target = "aex-live-session-api"
 kind = "budget"
 blocking = true
 assert = "journal fold of 10000 events <= 250ms on the pinned dedicated runner"
@@ -96,7 +96,7 @@ source = "Area 10 measured 207 ms; the only PERF-BASELINE row that is a budget r
 
 [gate."PERF-BASELINE-CODECS"]
 owner = "contracts"
-target = "aex-live-session-stream-api"
+target = "aex-live-session-api"
 kind = "diagnostic"
 blocking = false
 assert = "criterion baselines recorded for 64 KiB JSON body decode, RFC 8785 canonicalization of 1 MiB, and a blake3 Merkle page"

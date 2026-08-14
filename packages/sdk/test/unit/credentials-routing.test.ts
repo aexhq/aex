@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  AccountToken,
+  DashboardSession,
   AexConfigError,
   WorkspaceApiKey,
   resolveRegionalBaseUrl,
@@ -37,7 +37,7 @@ describe("credential parsing and routing", () => {
 
   test("rejects malformed credentials before any I/O", () => {
     expect(() => WorkspaceApiKey.parse("aex_wk_euw1_bad_secret")).toThrow(AexConfigError);
-    expect(() => AccountToken.parse("aex_at_bad_secret")).toThrow(AexConfigError);
+    expect(() => DashboardSession.parse("aex_ds_bad_secret")).toThrow(AexConfigError);
     expect(() =>
       WorkspaceApiKey.parse(`aex_wk_euw1_${WORKSPACE_BODY}_${"0".repeat(26)}_${SECRET}`),
     ).toThrow(AexConfigError);
@@ -50,13 +50,13 @@ describe("credential parsing and routing", () => {
     );
   });
 
-  test("an account token requires an explicit regional binding", () => {
-    const token = AccountToken.parse(`aex_at_${UUID7_BODY}_${SECRET}`);
-    expect(() => resolveRegionalBaseUrl(token, {})).toThrow(AexConfigError);
-    expect(resolveRegionalBaseUrl(token, { regionalBaseUrl: "https://regional.example" })).toBe(
+  test("a dashboard session carries no implicit regional authority", () => {
+    const session = DashboardSession.parse(`aex_ds_${UUID7_BODY}_${SECRET}`);
+    expect(resolveRegionalBaseUrl(session, {})).toBeUndefined();
+    expect(resolveRegionalBaseUrl(session, { regionalBaseUrl: "https://regional.example" })).toBe(
       "https://regional.example",
     );
-    expect(() => resolveRegionalBaseUrl(token, { regionalBaseUrl: "http://regional.example" })).toThrow(
+    expect(() => resolveRegionalBaseUrl(session, { regionalBaseUrl: "http://regional.example" })).toThrow(
       AexConfigError,
     );
   });

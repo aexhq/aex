@@ -10,7 +10,7 @@ const root = resolve(import.meta.dir, "..");
 
 test("off-allowlist routes are refused before credential attachment", () => {
   expect(authorizeDashboardRoute("session_get")).toEqual(expect.objectContaining({ id: "session_get" }));
-  expect(authorizeDashboardRoute("session_create")).toBeNull();
+  expect(authorizeDashboardRoute("workspace_create")).toBeNull();
 });
 
 test("CSRF requires matching tokens and rejects cross-site requests", () => {
@@ -65,7 +65,6 @@ const FORBIDDEN_ENVIRONMENT: readonly string[] = [
   "AURORA_SECRET_ARN",
   "AWS_ROLE_ARN",
   "AEX_API_KEY_PEPPER",
-  "AEX_ACCOUNT_TOKEN_PEPPER",
   "AEX_SHARED_SECRET",
   "AEX_TEST_AUTH",
   "AEX_E2E",

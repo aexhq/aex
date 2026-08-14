@@ -51,8 +51,6 @@ pub struct Stores {
     pub session_telemetry: aex_session_telemetry_aws::SessionTelemetryReader,
     /// The physical `session-authority` table name.
     pub session_table: String,
-    /// The physical `usage-query-projection` table name.
-    pub usage_query_table: String,
     /// The physical `regional-authz-projection` table name.
     pub authz_projection_table: String,
 }
@@ -88,9 +86,12 @@ impl Stores {
     ) -> Self {
         Self {
             work: WorkStore::new(dynamodb.clone(), config.work_table.clone()),
-            content: ContentStore::new(dynamodb.clone(), config.content_table.clone()),
-            registry: RegistryDynamoStore::new(dynamodb.clone(), config.registry_table.clone()),
-            custody: CustodyStore::new(dynamodb.clone(), config.secret_custody_table.clone()),
+            content: ContentStore::new(dynamodb.clone(), config.file_authority_table.clone()),
+            registry: RegistryDynamoStore::new(
+                dynamodb.clone(),
+                config.file_authority_table.clone(),
+            ),
+            custody: CustodyStore::new(dynamodb.clone(), config.session_table.clone()),
             runtime_activity: RuntimeActivityDynamoStore::new(
                 dynamodb.clone(),
                 config.runtime_activity_table.clone(),
@@ -108,12 +109,12 @@ impl Stores {
                     kms_key_id: config.content_kms_key.value.clone(),
                 },
             ),
-            session_telemetry: aex_session_telemetry_aws::SessionTelemetryReader::new(
+            session_telemetry: aex_session_telemetry_aws::SessionTelemetryReader::with_exports(
                 objects.clone(),
                 config.session_telemetry_bucket.clone(),
+                config.session_telemetry_kms_key.value.clone(),
             ),
             session_table: config.session_table.clone(),
-            usage_query_table: config.usage_query_table.clone(),
             authz_projection_table: config.authz_projection_table.clone(),
         }
     }
@@ -136,7 +137,6 @@ impl Stores {
                 "runtime-activity",
                 !self.runtime_activity.table().is_empty(),
             ),
-            ("usage-query-projection", !self.usage_query_table.is_empty()),
             (
                 "regional-authz-projection",
                 !self.authz_projection_table.is_empty(),

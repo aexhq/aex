@@ -2,10 +2,10 @@
   "$id": "https://schemas.aex.dev/v1/MessagePartText.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A text part.",
+  "description": "Text content.",
   "properties": {
     "text": {
-      "description": "The text.",
+      "description": "Text.",
       "maxLength": 1048576,
       "minLength": 0,
       "type": "string"

@@ -23,6 +23,7 @@ fn send_message() -> SendMessage {
     let request = MessageSendRequest {
         deadline: None,
         max_spend_cents: None,
+        response_format: None,
         text: "hello".to_owned(),
     };
     SendMessage {

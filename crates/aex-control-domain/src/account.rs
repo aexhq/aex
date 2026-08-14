@@ -178,17 +178,12 @@ pub fn account_operational_state(
                 .ok_or_else(|| AccountProjectionError::UnknownPauseCause(raw.to_owned()))?;
             Ok(AccountOperationalState::Paused(AccountPausedState {
                 changed_at,
-                // Deletion scheduling and retention funding are the regional
-                // content lifecycle's facts. Both are published and permanently
-                // empty by owner decision; nothing on either plane may guess one.
-                deletion_scheduled_at: None,
                 // Present exactly when the cause has a paying remedy. It is a
                 // flat constant, not a balance-derived figure, which is what
                 // lets the region publish the same number as the centre from
                 // the same profile without ever seeing a balance.
                 minimum_restore_cents: cause.minimum_restore_cents().map(Cents::new),
                 reason: cause.published(),
-                retention_funded_until: None,
                 revision: profile.revision,
             }))
         }
@@ -323,26 +318,5 @@ mod tests {
             2000,
             "the minimum top-up is $20 flat; there is no separate restore threshold"
         );
-    }
-
-    /// Two fields stay in the contract by owner decision and have no producer.
-    /// Publishing a guess for either is worse than publishing nothing, so the
-    /// projection must never learn to fill one in without an owner.
-    #[test]
-    fn the_two_unowned_retention_fields_are_published_and_always_empty() {
-        use aex_wire::models::AccountOperationalState;
-
-        for cause in AccountPauseCause::ALL {
-            let state = super::account_operational_state(&profile(
-                AccountState::PausedTopUpRequired,
-                Some(cause.as_str()),
-            ))
-            .expect("a declared cause projects");
-            let AccountOperationalState::Paused(paused) = state else {
-                panic!("{cause:?} projected as active");
-            };
-            assert_eq!(paused.retention_funded_until, None, "{cause:?}");
-            assert_eq!(paused.deletion_scheduled_at, None, "{cause:?}");
-        }
     }
 }

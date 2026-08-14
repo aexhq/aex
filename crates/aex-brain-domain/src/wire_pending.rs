@@ -123,8 +123,13 @@ pub struct ResolvedAgentConfig {
     pub system: Option<ContentRef>,
     /// Digests of the admitted tool manifests.
     pub tool_manifest_digests: Vec<ContentHash>,
+    /// Session-frozen MCP transports with only custody references in place of
+    /// write-only headers and environment values.
+    pub mcp_servers: Vec<crate::mcp::FrozenMcpServer>,
     /// The canonical Hands generation every agent in the session shares.
-    pub hands_generation: GenerationId,
+    /// Absent only when the session explicitly disabled its sandbox; no
+    /// runtime or logical Hand exists in that case.
+    pub hands_generation: Option<GenerationId>,
     /// Effective workspace-limit bundle revision that produced these ceilings.
     pub limits_revision: u64,
     /// Per-agent run limits.
@@ -177,10 +182,6 @@ impl SessionCredentialPin {
 /// Per-agent structural limits carried by the pinned config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentLimits {
-    /// Maximum assistant turns before the planner finishes `MaxTurns`.
-    pub max_turns: u32,
-    /// Maximum planner steps inside one turn before the planner finishes.
-    pub max_steps_per_turn: u32,
     /// Wall-clock ceiling for one turn, in milliseconds.
     pub turn_deadline_ms: u32,
     /// Maximum duration of one admitted message.

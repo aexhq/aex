@@ -110,8 +110,6 @@ pub fn groups(ir: &ContractIr) -> Vec<GroupIr<'_>> {
 pub enum ResponseShape {
     /// `204`, no body.
     NoContent,
-    /// `202`, an `Operation` plus `Location`.
-    Accepted,
     /// `201`, the named schema.
     Created(String),
     /// `200` with a strong entity tag.
@@ -129,8 +127,7 @@ impl ResponseShape {
     ///
     /// # Panics
     ///
-    /// Never: `load` rejects a `202` that is not an `Operation`, and a success
-    /// status other than `204` without a schema.
+    /// Never: `load` rejects a success status other than `204` without a schema.
     #[must_use]
     pub fn of(operation: &OperationIr) -> Self {
         let schema = || {
@@ -147,7 +144,6 @@ impl ResponseShape {
         }
         match operation.success_status {
             204 => Self::NoContent,
-            202 => Self::Accepted,
             201 => Self::Created(schema()),
             _ if operation.etag != "none" => Self::Etagged(schema()),
             _ => Self::Plain(schema()),
@@ -159,7 +155,6 @@ impl ResponseShape {
     pub fn server_type(&self) -> String {
         match self {
             Self::NoContent => "NoContent".to_owned(),
-            Self::Accepted => "Accepted".to_owned(),
             Self::Created(schema) => format!("Created<{schema}>"),
             Self::Etagged(schema) => format!("WithETag<{schema}>"),
             Self::Plain(schema) => schema.clone(),
@@ -173,7 +168,6 @@ impl ResponseShape {
     pub fn client_type(&self) -> String {
         match self {
             Self::NoContent => "()".to_owned(),
-            Self::Accepted => "Operation".to_owned(),
             Self::Created(schema) | Self::Etagged(schema) | Self::Plain(schema) => {
                 if matches!(self, Self::Etagged(_)) {
                     format!("WithETag<{schema}>")
@@ -191,7 +185,6 @@ impl ResponseShape {
     pub fn schema(&self) -> Option<&str> {
         match self {
             Self::NoContent | Self::Binary => None,
-            Self::Accepted => Some("Operation"),
             Self::Created(schema)
             | Self::Etagged(schema)
             | Self::Plain(schema)
@@ -204,7 +197,6 @@ impl ResponseShape {
     pub fn corpus_name(&self) -> &'static str {
         match self {
             Self::NoContent => "no_content",
-            Self::Accepted => "accepted",
             Self::Created(_) => "created",
             Self::Etagged(_) => "etagged",
             Self::Plain(_) => "plain",

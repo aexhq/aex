@@ -10,11 +10,9 @@ use async_trait::async_trait;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use aex_control_domain::ScopeSet;
 use aex_identity_domain::{
-    AccountToken, DashboardSession, DeviceAuthorization, EmailChallenge, ExternalIdentity,
-    MintedSecret, NormalizedEmail, Pepper, PepperVersion, PresentedDigest, Provider,
-    ProviderAccountId, User, Verifier,
+    DashboardSession, EmailChallenge, ExternalIdentity, MintedSecret, NormalizedEmail, Pepper,
+    PepperVersion, PresentedDigest, Provider, ProviderAccountId, User, Verifier,
 };
 
 /// The request this work belongs to.
@@ -134,7 +132,7 @@ impl<T> TxOutcome<T> {
 /// Which pepper a caller wants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PepperPurpose {
-    /// Identity credentials: sessions, challenges, device codes, account tokens.
+    /// Identity credentials: browser sessions and email challenges.
     Identity,
     /// Workspace API keys minted by the central control authority.
     ApiKey,
@@ -283,81 +281,6 @@ pub struct ResolveDashboardSessionQuery {
     pub now: OffsetDateTime,
 }
 
-/// Start a device authorization.
-#[derive(Debug, Clone)]
-pub struct CreateDeviceAuthorizationCommand {
-    /// The grant id, which is also the device-code lookup key.
-    pub preassigned_id: Uuid,
-    /// The keyed device-code verifier.
-    pub device_verifier: Verifier,
-    /// The keyed user-code digest.
-    pub user_code_hash: [u8; 32],
-    /// Which pepper both were computed under.
-    pub pepper_version: PepperVersion,
-    /// What the device asked for.
-    pub requested_scopes: ScopeSet,
-    /// When it was created.
-    pub issued_at: OffsetDateTime,
-    /// When it lapses.
-    pub expires_at: OffsetDateTime,
-    /// How often the device may poll.
-    pub poll_interval_ms: i32,
-}
-
-/// Approve or deny a device authorization by its user code.
-#[derive(Debug, Clone)]
-pub struct DecideDeviceAuthorizationCommand {
-    /// The keyed user-code digest.
-    pub user_code_hash: [u8; 32],
-    /// Who decided.
-    pub actor_user_id: Uuid,
-    /// Which session proved they are current.
-    pub actor_session_id: Uuid,
-    /// When they decided.
-    pub now: OffsetDateTime,
-}
-
-/// Redeem an approved device authorization.
-#[derive(Debug, Clone)]
-pub struct ConsumeDeviceAuthorizationCommand {
-    /// Which grant.
-    pub device_id: Uuid,
-    /// What the device presented.
-    pub digest: PresentedDigest,
-    /// The token id to mint under.
-    pub preassigned_token_id: Uuid,
-    /// The keyed token verifier.
-    pub token_verifier: Verifier,
-    /// Which pepper it was computed under.
-    pub token_pepper_version: PepperVersion,
-    /// The token's display name.
-    pub token_name: String,
-    /// When it lapses.
-    pub token_expires_at: OffsetDateTime,
-    /// When the ceremony ran.
-    pub now: OffsetDateTime,
-}
-
-/// What redeeming a device grant produced.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeviceConsumeOutcome {
-    /// The grant, now consumed.
-    pub grant: DeviceAuthorization,
-    /// The token it minted.
-    pub token: AccountToken,
-}
-
-/// Revoke an account token.
-#[derive(Debug, Clone)]
-pub struct RevokeAccountTokenCommand {
-    /// Which token.
-    pub token_id: Uuid,
-    /// Whose token it must be.
-    pub user_id: Uuid,
-    /// When it was revoked.
-    pub now: OffsetDateTime,
-}
-
 /// Set a person's status.
 #[derive(Debug, Clone)]
 pub struct SetUserStatusCommand {
@@ -480,75 +403,6 @@ pub trait IdentityStore: Send + Sync {
     async fn unlink_external_identity(
         &self,
         command: &UnlinkExternalIdentityCommand,
-    ) -> Result<TxOutcome<()>, StoreError>;
-
-    /// Starts a device authorization.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] for a transport or privilege failure.
-    async fn create_device_authorization(
-        &self,
-        command: &CreateDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError>;
-
-    /// Approves a device authorization.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError::NotFound`] for an unknown user code, and
-    /// [`StoreError`] for a transport or privilege failure.
-    async fn approve_device_authorization(
-        &self,
-        command: &DecideDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError>;
-
-    /// Denies a device authorization.
-    ///
-    /// # Errors
-    ///
-    /// Identical to [`IdentityStore::approve_device_authorization`].
-    async fn deny_device_authorization(
-        &self,
-        command: &DecideDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError>;
-
-    /// Reads a device authorization for a poll. Performs no write beyond the
-    /// poll bookkeeping the command carries.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] for a transport or privilege failure.
-    async fn poll_device_authorization(
-        &self,
-        device_id: Uuid,
-        digest: &PresentedDigest,
-        now: OffsetDateTime,
-    ) -> Result<Option<DeviceAuthorization>, StoreError>;
-
-    /// Redeems an approved grant and inserts its account token, atomically.
-    ///
-    /// One transaction, because a grant that is consumed without a token is a
-    /// credential the caller can never obtain and a token without a consumed
-    /// grant is one the caller could obtain twice.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] for a transport or privilege failure.
-    async fn consume_device_authorization(
-        &self,
-        command: &ConsumeDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceConsumeOutcome>, StoreError>;
-
-    /// Revokes an account token, advancing the `user` epoch when it was the
-    /// person's last live one.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] for a transport or privilege failure.
-    async fn revoke_account_token(
-        &self,
-        command: &RevokeAccountTokenCommand,
     ) -> Result<TxOutcome<()>, StoreError>;
 }
 

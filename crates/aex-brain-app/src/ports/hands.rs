@@ -160,6 +160,10 @@ pub struct HandsResult {
     pub inline: Option<String>,
     /// A pointer to the placed output, when it did not.
     pub placed: Option<ContentRef>,
+    /// A complete result retained inside the exact sandbox generation. The
+    /// bounded preview is safe for the model and live telemetry; `path` is the
+    /// authority for consumers that need the full body.
+    pub sandbox_file: Option<HandsSandboxFile>,
     /// Whether the output was cut short by the bounds. Never silently: a truncated
     /// deliverable reported as complete is the failure this flag exists to prevent.
     pub truncated: bool,
@@ -167,6 +171,17 @@ pub struct HandsResult {
     pub duration_ms: u32,
     /// A checksum over the result, verified before it enters the journal.
     pub checksum: ContentHash,
+}
+
+/// A large Hands result retained in the exact sandbox generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandsSandboxFile {
+    /// Absolute guest path under `/workspace`.
+    pub path: String,
+    /// Complete byte length verified against the guest terminal record.
+    pub byte_len: u64,
+    /// Bounded UTF-8-lossy preview of the beginning of the result.
+    pub preview: String,
 }
 
 /// Why a Hands call failed.

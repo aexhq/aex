@@ -148,10 +148,10 @@ fn the_page_size_the_validator_and_the_ceiling_agree() {
     assert_eq!(MAX_TRANSACTION_ACTIONS, 100);
     assert_eq!(
         3 * SPAWN_PAGE_CHILDREN as usize + 3,
-        99,
-        "the derivation must leave the ceiling intact"
+        39,
+        "the hard twelve-child lifetime envelope bounds a page below the provider ceiling"
     );
-    assert!(3 * (SPAWN_PAGE_CHILDREN as usize + 1) + 3 > MAX_TRANSACTION_ACTIONS);
+    assert_eq!(SPAWN_PAGE_CHILDREN, 12);
     assert_eq!(MAX_ITEM_BYTES, 256 * 1_024);
 }
 
@@ -184,7 +184,7 @@ fn conditions_are_values_and_compare_structurally() {
 #[test]
 fn an_oversized_decision_never_reaches_the_transport() {
     use aex_brain_domain::budget::DimensionVector;
-    use aex_brain_domain::commit::{ChildWrite, ControlUpdate, FenceGuardRef};
+    use aex_brain_domain::commit::{ChildBootstrap, ChildWrite, ControlUpdate, FenceGuardRef};
     use aex_brain_domain::ids::{AgentRevision, CancelEpoch, Fence, OwnerToken};
 
     let children: Vec<ChildWrite> = (0..64)
@@ -194,6 +194,12 @@ fn an_oversized_decision_never_reaches_the_transport() {
             grant: DimensionVector::uniform(1),
             join: JoinId(v7(1_767_225_600_007, 7)),
             queued_reason: None,
+            bootstrap: Box::new(ChildBootstrap {
+                config: Box::new(aex_brain_test_support::journal_gen::config()),
+                input: Vec::new(),
+                depth: 1,
+                budget: DimensionVector::uniform(1),
+            }),
         })
         .collect();
     let decision = DecisionCommit {

@@ -3,7 +3,7 @@
 //! The identifier registry and its newtypes.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:0630d74aab3bbd18ce4f60e883645d1cc62bd1e35cfe1a4fc412eadefc4694e8`.
+//! `sha256:2714e625c3ed159b08bf3f97a27b9d088369acc429073957508115af3b1f7238`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -17,6 +17,8 @@ use crate::ids::prefixed_id;
 pub enum IdKind {
     /// An authenticated person.
     User,
+    /// One personal prepaid account.
+    Account,
     /// The billing and ownership boundary.
     Organization,
     /// A person's role inside one organization.
@@ -55,12 +57,17 @@ pub enum IdKind {
     Measurement,
     /// One immutable issued billing statement.
     Statement,
+    /// Card display metadata for a provider payment method.
+    PaymentMethod,
+    /// One immutable balanced ledger transaction.
+    BillingTransaction,
 }
 
 impl IdKind {
     /// Every kind, in registry order.
     pub const ALL: &'static [IdKind] = &[
         IdKind::User,
+        IdKind::Account,
         IdKind::Organization,
         IdKind::Membership,
         IdKind::Invitation,
@@ -80,6 +87,8 @@ impl IdKind {
         IdKind::Upload,
         IdKind::Measurement,
         IdKind::Statement,
+        IdKind::PaymentMethod,
+        IdKind::BillingTransaction,
     ];
 
     /// The wire prefix, without the trailing underscore.
@@ -87,6 +96,7 @@ impl IdKind {
     pub const fn prefix(self) -> &'static str {
         match self {
             Self::User => "usr",
+            Self::Account => "acc",
             Self::Organization => "org",
             Self::Membership => "mem",
             Self::Invitation => "inv",
@@ -106,6 +116,8 @@ impl IdKind {
             Self::Upload => "upl",
             Self::Measurement => "msr",
             Self::Statement => "stm",
+            Self::PaymentMethod => "pmt",
+            Self::BillingTransaction => "txn",
         }
     }
 
@@ -114,6 +126,7 @@ impl IdKind {
     pub const fn pattern(self) -> &'static str {
         match self {
             Self::User => "^usr_[0-9a-hjkmnp-tv-z]{26}$",
+            Self::Account => "^acc_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Organization => "^org_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Membership => "^mem_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Invitation => "^inv_[0-9a-hjkmnp-tv-z]{26}$",
@@ -133,6 +146,8 @@ impl IdKind {
             Self::Upload => "^upl_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Measurement => "^msr_[0-9a-hjkmnp-tv-z]{26}$",
             Self::Statement => "^stm_[0-9a-hjkmnp-tv-z]{26}$",
+            Self::PaymentMethod => "^pmt_[0-9a-hjkmnp-tv-z]{26}$",
+            Self::BillingTransaction => "^txn_[0-9a-hjkmnp-tv-z]{26}$",
         }
     }
 
@@ -141,6 +156,7 @@ impl IdKind {
     pub const fn key(self) -> &'static str {
         match self {
             Self::User => "user",
+            Self::Account => "account",
             Self::Organization => "organization",
             Self::Membership => "membership",
             Self::Invitation => "invitation",
@@ -160,6 +176,8 @@ impl IdKind {
             Self::Upload => "upload",
             Self::Measurement => "measurement",
             Self::Statement => "statement",
+            Self::PaymentMethod => "payment_method",
+            Self::BillingTransaction => "billing_transaction",
         }
     }
 }
@@ -168,6 +186,12 @@ prefixed_id!(
     /// An authenticated person.
     UserId,
     User
+);
+
+prefixed_id!(
+    /// One personal prepaid account.
+    AccountId,
+    Account
 );
 
 prefixed_id!(
@@ -282,4 +306,16 @@ prefixed_id!(
     /// One immutable issued billing statement.
     StatementId,
     Statement
+);
+
+prefixed_id!(
+    /// Card display metadata for a provider payment method.
+    PaymentMethodId,
+    PaymentMethod
+);
+
+prefixed_id!(
+    /// One immutable balanced ledger transaction.
+    BillingTransactionId,
+    BillingTransaction
 );

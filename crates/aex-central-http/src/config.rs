@@ -129,15 +129,9 @@ impl CentralServiceId {
     #[must_use]
     pub const fn groups(self) -> &'static [RouteGroup] {
         match self {
-            Self::IdentityApi => &[RouteGroup::Auth, RouteGroup::Identity],
+            Self::IdentityApi => &[RouteGroup::Auth],
             Self::Authz | Self::FinanceIngest | Self::ControlWorker => &[],
-            Self::ControlApi => &[
-                RouteGroup::ApiKeys,
-                RouteGroup::Bootstrap,
-                RouteGroup::CentralOperations,
-                RouteGroup::Organizations,
-                RouteGroup::Workspaces,
-            ],
+            Self::ControlApi => &[RouteGroup::ApiKeys, RouteGroup::Bootstrap],
             // The union of the three above, spelled out rather than computed:
             // `groups` is `const`, and a merged deployable whose surface is
             // derived would silently grow whenever one of its parts did.
@@ -148,10 +142,6 @@ impl CentralServiceId {
                 RouteGroup::Auth,
                 RouteGroup::Billing,
                 RouteGroup::Bootstrap,
-                RouteGroup::CentralOperations,
-                RouteGroup::Identity,
-                RouteGroup::Organizations,
-                RouteGroup::Workspaces,
             ],
             Self::FinanceApi => &[RouteGroup::Billing],
         }
@@ -391,25 +381,21 @@ mod tests {
             actually_served,
             "runtime ownership must exactly equal generated actual mounts"
         );
-        assert_eq!(central.len(), 31);
-        assert_eq!(actually_served.len(), 31);
-        assert!(central.contains(&RouteId::AccountGet));
+        assert_eq!(central.len(), 13);
+        assert_eq!(actually_served.len(), 13);
+        assert!(central.contains(&RouteId::DashboardBootstrapGet));
         assert!(
-            actually_served.contains(&RouteId::AccountGet),
-            "the account read is mounted; the plane no longer owes a central route"
+            actually_served.contains(&RouteId::DashboardBootstrapGet),
+            "the personal bootstrap is mounted; the plane owes no central route"
         );
         assert_eq!(
-            aex_wire::routes::route(RouteId::AccountGet).serving_artifact,
-            "central-identity-api"
+            aex_wire::routes::route(RouteId::DashboardBootstrapGet).serving_artifact,
+            "control-api"
         );
     }
 
     #[test]
     fn every_central_group_has_a_runtime_owner() {
-        // The identity fragment was the one group nothing mounted, so
-        // `account_get` was a published route with no process behind it. The
-        // filter that used to except it is gone, which is what stops a second
-        // fragment from quietly acquiring the same status.
         let assigned: BTreeSet<_> = primaries()
             .iter()
             .flat_map(|service| service.groups().iter().copied())
@@ -418,7 +404,7 @@ mod tests {
             assigned,
             central_groups().into_iter().collect::<BTreeSet<_>>()
         );
-        assert_eq!(assigned.len(), 8);
+        assert_eq!(assigned.len(), 4);
     }
 
     #[test]
@@ -440,7 +426,7 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             central_groups().into_iter().collect::<BTreeSet<_>>()
         );
-        assert_eq!(CentralServiceId::CentralApi.routes().len(), 31);
+        assert_eq!(CentralServiceId::CentralApi.routes().len(), 13);
     }
 
     #[test]

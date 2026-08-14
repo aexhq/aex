@@ -4,6 +4,7 @@
 //! `API` timestamp string, so a decode has no dependence on the session time
 //! zone or `DateStyle`.
 
+use aex_control_app::personal_account::PersonalAccountProvision;
 use aex_control_app::ports::{
     AccountActorState, AccountProjection, CentralActorState, SigningKeyRecord, UserIdentity,
     WorkspaceKeyMaterial, WorkspaceKeyState,
@@ -52,6 +53,35 @@ fn revision(record: &Record<'_>, index: usize) -> Result<Revision, DecodeError> 
         index,
         expected: "a positive revision",
     })
+}
+
+/// The first-login aggregate, including both prepaid ledger identities.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonalAccountProvisionRow(pub PersonalAccountProvision);
+
+impl Row for PersonalAccountProvisionRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(7)?;
+        Ok(Self(PersonalAccountProvision {
+            account_id: record.uuid(0)?,
+            user_id: record.uuid(1)?,
+            membership_id: record.uuid(2)?,
+            workspace_id: record.uuid(3)?,
+            available_account_id: record.uuid(4)?,
+            reserved_account_id: record.uuid(5)?,
+            created_at: instant(record, 6)?,
+        }))
+    }
+}
+
+/// Result marker for an advisory-lock statement.
+pub struct SingleColumnRow;
+
+impl Row for SingleColumnRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(1)?;
+        Ok(Self)
+    }
 }
 
 /// A control organization.
@@ -513,11 +543,7 @@ fn epoch(record: &Record<'_>, index: usize) -> Result<Epoch, DecodeError> {
         .map_err(|_| DecodeError::Overflow { index })
 }
 
-/// The projection of the two workspace-scoped actor statements.
-///
-/// One row type for both, because a browser session and an account token are
-/// the same principal reaching the same surface. Two row types would be two
-/// places for the same shape to drift.
+/// The projection of a workspace-scoped browser actor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountActorRow(pub AccountActorState);
 

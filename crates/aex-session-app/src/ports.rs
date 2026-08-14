@@ -162,6 +162,9 @@ pub enum PortError {
         /// What was being read.
         kind: &'static str,
     },
+    /// The replay key already committed a different canonical create intent.
+    #[error("idempotency key was reused for a different intent")]
+    IdempotencyConflict,
     /// The stored record could not be decoded into a domain value.
     #[error("{kind} record is corrupt: {reason}")]
     Corrupt {
@@ -311,6 +314,37 @@ pub struct ProviderCredentialBinding {
 /// Reads dedicated BYOK provider credentials.
 #[async_trait::async_trait]
 pub trait ProviderCredentialReader: Send + Sync {
+    /// Encrypts a write-only session API key into regional custody and returns
+    /// only the non-secret binding facts the durable session may retain.
+    async fn bind_session_api_key(
+        &self,
+        workspace: WorkspaceId,
+        organization: OrganizationId,
+        credential: aex_wire::ids::ProviderCredentialId,
+        provider: aex_wire::provider::ProviderId,
+        api_key: &str,
+        identity: &IdempotencyIdentity,
+        now: Timestamp,
+    ) -> Result<ProviderCredentialBinding, PortError>;
+
+    /// Seals the complete write-only MCP definitions under a distinct
+    /// session-scoped custody purpose. Implementations must not reuse the
+    /// provider-key receipt or secret name.
+    async fn bind_session_mcp_config(
+        &self,
+        _workspace: WorkspaceId,
+        _organization: OrganizationId,
+        _session: SessionId,
+        _servers: &[aex_wire::models::McpServer],
+        _identity: &IdempotencyIdentity,
+        _now: Timestamp,
+    ) -> Result<(), PortError> {
+        Err(PortError::Unowned {
+            kind: "session MCP config",
+            seam: "session.mcp_config custody",
+        })
+    }
+
     /// One provider-credential binding, when the workspace has it.
     ///
     /// `Ok(None)` is "this workspace has no such binding" and becomes
@@ -351,10 +385,6 @@ pub struct LimitsBundle {
 /// The `session.agent_execution` effective map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentExecutionLimits {
-    /// Assistant turns per message.
-    pub max_turns: u32,
-    /// Planner steps per turn.
-    pub max_steps_per_turn: u32,
     /// One turn's wall-clock fence.
     pub turn_deadline_ms: u32,
     /// Deepest admitted child lineage, root at zero.

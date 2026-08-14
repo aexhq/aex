@@ -7,7 +7,7 @@ use aex_wire::ids::{OrganizationId, PrefixedId as _};
 // The wire body is declared once, in the contracts crate, and consumed here.
 // Declaring a second `RatingRequest` in this crate is how the producer and the
 // consumer came to serialize two different facts for one queue.
-pub use aex_internal_contracts::usage::RatingRequest;
+pub use aex_internal_contracts::usage::{RatingMessage, RatingRequest};
 
 /// Transport-independent SQS FIFO producer contract.
 #[derive(Debug, Clone, PartialEq, Eq)]

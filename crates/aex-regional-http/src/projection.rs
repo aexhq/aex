@@ -25,14 +25,15 @@
 //!   "the tag changed" and "the body changed" cannot disagree.
 
 use aex_content_domain::identity::RegistryKind;
-use aex_secret_custody_dynamodb::codec::{CredentialState, ProviderCredential as StoredCredential};
 use aex_session_domain::{Message, MessagePart, MessageRole, MessageState};
 use aex_session_dynamodb::paging::PagePosition;
 use aex_wire::cursor::Cursor;
 use aex_wire::error::{ErrorCode, WireError};
 use aex_wire::models;
-use aex_wire::types::{DecimalU128, ETag};
-use aex_workspace_domain::registry::{RegistryPointer, RegistryRow as StoredRegistryRow};
+use aex_wire::types::ETag;
+use aex_workspace_domain::registry::{
+    RegistryPointer, RegistryRow as StoredRegistryRow, RegistryState,
+};
 use serde::Serialize;
 
 use crate::cursor::{CursorError, SortTuple};
@@ -158,45 +159,6 @@ pub fn authority_failure(error: &aex_session_dynamodb::error::StoreError) -> Wir
     WireError::new(code)
 }
 
-// --- provider credentials --------------------------------------------------------
-
-/// Projects one stored BYOK binding.
-///
-/// Total with no refusal: every field the model requires is a persisted column,
-/// which is exactly why they were added to the row rather than derived here.
-/// The `fingerprint` in particular cannot be recomputed on this path — the
-/// plaintext is not reachable from a metadata read — so a projection that
-/// synthesised one would be publishing a value with no relationship to the key.
-#[must_use]
-pub fn provider_credential(stored: &StoredCredential) -> models::ProviderCredential {
-    models::ProviderCredential {
-        created_at: stored.created_at,
-        fingerprint: stored.fingerprint,
-        id: stored.credential,
-        name: stored.name.clone(),
-        provider: stored.provider,
-        revision: stored.revision,
-        revoked_at: stored.revoked_at,
-        state: match stored.state {
-            CredentialState::Ready => models::ProviderCredentialState::Ready,
-            CredentialState::Revoked => models::ProviderCredentialState::Revoked,
-        },
-        updated_at: stored.updated_at,
-    }
-}
-
-/// Projects one page of stored BYOK bindings.
-#[must_use]
-pub fn provider_credential_page(
-    stored: &[StoredCredential],
-    next_cursor: Option<Cursor>,
-) -> models::ProviderCredentialPage {
-    models::ProviderCredentialPage {
-        items: stored.iter().map(provider_credential).collect(),
-        next_cursor,
-    }
-}
-
 // --- registry ---------------------------------------------------------------------
 
 /// The shared collection columns of every registry row.
@@ -224,10 +186,12 @@ fn registry_columns(
     Ok(RegistryColumns {
         created_at: row.created_at,
         name: row.name.clone(),
-        revision: row.revision.0,
-        sha256: row.sha256,
-        size_bytes: DecimalU128::new(u128::from(row.size_bytes)),
-        state: models::RegisteredState::Current,
+        state: match row.state {
+            RegistryState::Pending => models::RegisteredState::Pending,
+            RegistryState::Ready => models::RegisteredState::Ready,
+            RegistryState::Failed => models::RegisteredState::Failed,
+        },
+        failure_code: row.failure_code.clone(),
         updated_at: row.updated_at,
     })
 }
@@ -236,10 +200,8 @@ fn registry_columns(
 struct RegistryColumns {
     created_at: aex_wire::types::Timestamp,
     name: aex_wire::ids::ResourceName,
-    revision: u64,
-    sha256: aex_wire::ids::ContentHash,
-    size_bytes: DecimalU128,
     state: models::RegisteredState,
+    failure_code: Option<String>,
     updated_at: aex_wire::types::Timestamp,
 }
 
@@ -278,19 +240,20 @@ macro_rules! registry_projections {
             /// stored document is not this kind's value.
             pub fn $point(pointer: &RegistryPointer) -> Result<models::$item, ProjectionError> {
                 let columns = registry_columns(&pointer.row, RegistryKind::$kind)?;
-                let value: models::$read =
-                    serde_json::from_str(pointer.value_doc.as_str()).map_err(|error| {
+                let value: Option<models::$read> = if columns.state == models::RegisteredState::Ready {
+                    Some(serde_json::from_str(pointer.value_doc.as_str()).map_err(|error| {
                         ProjectionError::MalformedValueDocument {
                             kind: kind_name(RegistryKind::$kind),
                             reason: error.to_string(),
                         }
-                    })?;
+                    })?)
+                } else {
+                    None
+                };
                 Ok(models::$item {
                     created_at: columns.created_at,
+                    failure_code: columns.failure_code,
                     name: columns.name,
-                    revision: columns.revision,
-                    sha256: columns.sha256,
-                    size_bytes: columns.size_bytes,
                     state: columns.state,
                     updated_at: columns.updated_at,
                     value,
@@ -310,10 +273,8 @@ macro_rules! registry_projections {
                 let columns = registry_columns(row, RegistryKind::$kind)?;
                 Ok(models::$rowty {
                     created_at: columns.created_at,
+                    failure_code: columns.failure_code,
                     name: columns.name,
-                    revision: columns.revision,
-                    sha256: columns.sha256,
-                    size_bytes: columns.size_bytes,
                     state: columns.state,
                     updated_at: columns.updated_at,
                 })
@@ -368,14 +329,22 @@ pub fn session_message(stored: &Message) -> Result<models::Message, ProjectionEr
             }
             MessagePart::ToolCall { id, arguments } => {
                 Ok(models::MessagePart::ToolCall(models::MessagePartToolCall {
-                    arguments_digest: *arguments,
                     id: *id,
+                    name: "tool".to_owned(),
+                    arguments: aex_wire::CanonicalJson::from_value(
+                        &serde_json::json!({"sha256": arguments.to_string()}),
+                    )
+                    .map_err(|_| ProjectionError::NotCanonicalizable)?,
                 }))
             }
             MessagePart::ToolResult { id, result } => Ok(models::MessagePart::ToolResult(
                 models::MessagePartToolResult {
                     id: *id,
-                    result_digest: *result,
+                    preview: result.to_string(),
+                    sandbox_path: None,
+                    sha256: None,
+                    size_bytes: None,
+                    truncated: false,
                 },
             )),
         })

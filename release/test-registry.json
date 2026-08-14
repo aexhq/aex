@@ -8,12 +8,12 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 23,
+    "awaiting_owner": 5,
     "capacity_gates": 15,
-    "live_targets": 29,
-    "packages": 131,
-    "seams_claimed": 34,
-    "seams_declared": 36,
+    "live_targets": 13,
+    "packages": 97,
+    "seams_claimed": 36,
+    "seams_declared": 38,
     "workloads": 9
   },
   "packages": {
@@ -124,9 +124,18 @@
         "scenarios": [
           "packed.sdk-install-node",
           "local.site-determinism",
-          "live.session-round-trip"
+          "live.session-round-trip",
+          "SC-BILLING-ESSENTIAL",
+          "SC-SESSION-STREAM",
+          "SC-SESSION-TERMINAL",
+          "SC-TELEMETRY-LIVE-RETAINED",
+          "SC-PROVIDER-MATRIX",
+          "SC-MCP",
+          "SC-TOOL-STORAGE",
+          "SC-LONG-CONTEXT"
         ],
         "targets": {
+          "live": "e2e",
           "public_user": "user",
           "registry": "unit"
         },
@@ -331,9 +340,10 @@
           "provider.openai.stream",
           "provider.anthropic.stream",
           "provider.deepseek.stream",
-          "provider.zai.stream",
+          "provider.xai.stream",
+          "provider.meta.stream",
           "provider.moonshotai.stream",
-          "provider.google.stream"
+          "provider.alibaba.stream"
         ],
         "security_tier": "secret",
         "risk": [
@@ -525,7 +535,7 @@
         "owner": "central-identity",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-central-identity-api",
+        "live_suite": "aex-live-control-api",
         "layers": [
           "unit",
           "integration"
@@ -623,7 +633,7 @@
         "owner": "regional-stores",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-session-stream-api",
+        "live_suite": "aex-live-session-api",
         "layers": [
           "unit",
           "integration"
@@ -697,7 +707,7 @@
         "owner": "regional-stores",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-content-lifecycle-worker",
+        "live_suite": "aex-live-session-api",
         "layers": [
           "unit",
           "integration"
@@ -750,6 +760,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "personal_account": "unit",
           "use_cases": "unit"
         },
         "not_applicable": {
@@ -766,7 +777,7 @@
         "owner": "central-identity",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-central-control-api",
+        "live_suite": "aex-live-control-api",
         "layers": [
           "unit",
           "integration"
@@ -788,6 +799,7 @@
         "scenarios": [],
         "targets": {
           "migrations": "integration",
+          "personal_account": "unit",
           "statements": "unit"
         },
         "not_applicable": {}
@@ -816,7 +828,6 @@
         ],
         "scenarios": [],
         "targets": {
-          "authorization": "unit",
           "properties": "unit"
         },
         "not_applicable": {
@@ -1055,7 +1066,7 @@
         "owner": "central-identity",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-central-identity-api",
+        "live_suite": "aex-live-control-api",
         "layers": [
           "unit",
           "integration"
@@ -1141,8 +1152,7 @@
         ],
         "scenarios": [],
         "targets": {
-          "boundaries": "unit",
-          "no_tenant_in_tool_exec": "unit"
+          "boundaries": "unit"
         },
         "not_applicable": {
           "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"
@@ -1258,7 +1268,8 @@
         ],
         "scenarios": [],
         "targets": {
-          "effects": "unit"
+          "effects": "unit",
+          "payment_method_events": "unit"
         },
         "not_applicable": {
           "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"
@@ -1308,7 +1319,7 @@
         "owner": "central-identity",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-central-identity-api",
+        "live_suite": "aex-live-control-api",
         "layers": [
           "unit",
           "integration"
@@ -1332,7 +1343,7 @@
           "transport": "unit"
         },
         "not_applicable": {
-          "integration": "the Data API has no local emulator; the transport's real-endpoint evidence is claimed by aex-live-central-identity-api, and the repository crates carry the PostgreSQL container suites"
+          "integration": "the Data API has no local emulator; the transport's real-endpoint evidence is claimed by aex-live-control-api, and the repository crates carry the PostgreSQL container suites"
         }
       },
       "unmapped_targets": [],
@@ -1411,7 +1422,7 @@
         "owner": "regional-stores",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-session-stream-api",
+        "live_suite": "aex-live-session-api",
         "layers": [
           "unit",
           "integration"
@@ -1551,7 +1562,7 @@
         "owner": "regional-stores",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-session-stream-api",
+        "live_suite": "aex-live-session-api",
         "layers": [
           "unit",
           "integration"
@@ -1590,7 +1601,7 @@
         "owner": "regional-stores",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-session-stream-api",
+        "live_suite": "aex-live-session-api",
         "layers": [
           "unit",
           "integration"
@@ -1660,7 +1671,7 @@
         "owner": "regional-stores",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-regional-secret-key-admin",
+        "live_suite": "aex-live-session-api",
         "layers": [
           "unit",
           "integration"
@@ -1759,7 +1770,7 @@
         "owner": "regional-stores",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-session-stream-api",
+        "live_suite": "aex-live-session-api",
         "layers": [
           "unit",
           "integration"
@@ -1832,6 +1843,48 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
+    "crates/aex-tool-mux": {
+      "name": "aex-tool-mux",
+      "kind": "cargo",
+      "meta": {
+        "owner": "tools-mcp",
+        "role": "application",
+        "artifact": "none",
+        "live_suite": "aex-live-tool-mux",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [
+          "hands.guest.lifecycle",
+          "mcp.streamable_http"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "concurrency",
+          "untrusted_input"
+        ],
+        "scenarios": [
+          "SC-TOOL-MUX"
+        ],
+        "targets": {
+          "conformance": "unit",
+          "faults": "unit",
+          "lifecycle": "integration",
+          "properties": "unit",
+          "security": "unit"
+        },
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
     "crates/aex-usage-app": {
       "name": "aex-usage-app",
       "kind": "cargo",
@@ -1858,75 +1911,6 @@
         "not_applicable": {
           "live_suite": "application crate; its ports are exercised through its deployable's companion"
         }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "crates/aex-usage-authority-dynamodb": {
-      "name": "aex-usage-authority-dynamodb",
-      "kind": "cargo",
-      "meta": {
-        "owner": "observations-usage",
-        "role": "adapter",
-        "artifact": "none",
-        "layers": [
-          "unit",
-          "integration"
-        ],
-        "concerns": [
-          "contract",
-          "property",
-          "fault",
-          "security"
-        ],
-        "seams": [],
-        "security_tier": "internal",
-        "risk": [
-          "concurrency"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "inline_targets": "the `observations-usage` stream keeps the byte-for-byte codec, expression, fault, and stream fixtures beside the shared mechanisms; this crate declares no separate [[test]] target",
-          "integration": "the shared leaf selects no category, table, credentials, queue, or IAM boundary; the three owning authority facades retain the existing integration and live suites",
-          "live_suite": "the shared leaf owns no deployable or external seam; compute, storage, and transfer authority live companions exercise it through their typed facades"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "crates/aex-usage-compute-dynamodb": {
-      "name": "aex-usage-compute-dynamodb",
-      "kind": "cargo",
-      "meta": {
-        "owner": "observations-usage",
-        "role": "adapter",
-        "artifact": "none",
-        "live_suite": "aex-live-usage-compute-worker",
-        "layers": [
-          "unit",
-          "integration"
-        ],
-        "concerns": [
-          "contract",
-          "property",
-          "fault",
-          "security"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.dynamodb.streams"
-        ],
-        "security_tier": "authority",
-        "risk": [
-          "concurrency"
-        ],
-        "scenarios": [],
-        "targets": {
-          "integration": "integration",
-          "isolation": "unit"
-        },
-        "not_applicable": {}
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -1968,7 +1952,7 @@
         "owner": "observations-usage",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-session-stream-api",
+        "live_suite": "aex-live-session-api",
         "layers": [
           "unit",
           "integration"
@@ -2025,77 +2009,6 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-usage-storage-dynamodb": {
-      "name": "aex-usage-storage-dynamodb",
-      "kind": "cargo",
-      "meta": {
-        "owner": "observations-usage",
-        "role": "adapter",
-        "artifact": "none",
-        "live_suite": "aex-live-usage-storage-worker",
-        "layers": [
-          "unit",
-          "integration"
-        ],
-        "concerns": [
-          "contract",
-          "property",
-          "fault",
-          "security"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.s3.conditional_put"
-        ],
-        "security_tier": "authority",
-        "risk": [
-          "concurrency"
-        ],
-        "scenarios": [],
-        "targets": {
-          "integration": "integration",
-          "isolation": "unit"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "crates/aex-usage-transfer-dynamodb": {
-      "name": "aex-usage-transfer-dynamodb",
-      "kind": "cargo",
-      "meta": {
-        "owner": "observations-usage",
-        "role": "adapter",
-        "artifact": "none",
-        "live_suite": "aex-live-usage-transfer-worker",
-        "layers": [
-          "unit",
-          "integration"
-        ],
-        "concerns": [
-          "contract",
-          "property",
-          "fault",
-          "security"
-        ],
-        "seams": [
-          "aws.dynamodb.condition"
-        ],
-        "security_tier": "authority",
-        "risk": [
-          "concurrency"
-        ],
-        "scenarios": [],
-        "targets": {
-          "integration": "integration",
-          "isolation": "unit"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
     "crates/aex-wire": {
       "name": "aex-wire",
       "kind": "cargo",
@@ -2138,7 +2051,7 @@
         "owner": "regional-stores",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-session-operation-worker",
+        "live_suite": "aex-live-session-maintenance-worker",
         "layers": [
           "unit",
           "integration"
@@ -2297,20 +2210,17 @@
           "performance"
         ],
         "seams": [
-          "aws.ecs.run_task",
           "aws.dynamodb.transact_write",
           "aws.sqs.fifo",
           "aws.iam.denial",
           "provider.openai.stream",
           "provider.anthropic.stream",
           "provider.deepseek.stream",
-          "provider.zai.stream",
+          "provider.xai.stream",
+          "provider.meta.stream",
           "provider.moonshotai.stream",
-          "provider.google.stream",
-          "mcp.streamable_http",
-          "net.public_egress",
-          "aws.lambda.microvm",
-          "hands.guest.lifecycle"
+          "provider.alibaba.stream",
+          "net.public_egress"
         ],
         "security_tier": "internal",
         "risk": [
@@ -2403,8 +2313,8 @@
         "owner": "central-identity",
         "role": "deployable",
         "artifact": "oci_image",
-        "deployable": "central-api",
-        "live_suite": "aex-live-central-api",
+        "deployable": "control-api",
+        "live_suite": "aex-live-control-api",
         "layers": [
           "unit",
           "smoke",
@@ -2438,167 +2348,6 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "services/central-authz": {
-      "name": "central-authz",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-identity",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "central-authz",
-        "live_suite": "aex-live-central-authz",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.rds_data.transaction",
-          "aws.iam.denial"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {
-          "faults": "unit",
-          "resource_envelope": "e2e"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "services/central-control-api": {
-      "name": "central-control-api",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-identity",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "central-control-api",
-        "live_suite": "aex-live-central-control-api",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.rds_data.transaction",
-          "aws.sqs.fifo",
-          "aws.iam.denial",
-          "aws.alb.framing"
-        ],
-        "security_tier": "public_edge",
-        "risk": [
-          "iam",
-          "untrusted_input"
-        ],
-        "scenarios": [],
-        "targets": {
-          "faults": "unit",
-          "invitation_acceptance": "unit",
-          "resource_envelope": "e2e"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "services/central-identity-api": {
-      "name": "central-identity-api",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-identity",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "central-identity-api",
-        "live_suite": "aex-live-central-identity-api",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.rds_data.transaction",
-          "aws.iam.denial",
-          "aws.alb.framing"
-        ],
-        "security_tier": "public_edge",
-        "risk": [
-          "iam",
-          "untrusted_input"
-        ],
-        "scenarios": [],
-        "targets": {
-          "faults": "unit",
-          "resource_envelope": "e2e"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "services/finance-api": {
-      "name": "finance-api",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "finance-api",
-        "live_suite": "aex-live-finance-api",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.rds_data.transaction",
-          "aws.iam.denial",
-          "stripe.test_mode.webhook"
-        ],
-        "security_tier": "public_edge",
-        "risk": [
-          "money"
-        ],
-        "scenarios": [],
-        "targets": {
-          "capability": "unit",
-          "conformance": "unit",
-          "resource_envelope": "e2e",
-          "smoke": "smoke"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
     "services/finance-ingest": {
       "name": "finance-ingest",
       "kind": "cargo",
@@ -2606,8 +2355,8 @@
         "owner": "central-finance",
         "role": "deployable",
         "artifact": "lambda_zip",
-        "deployable": "finance-ingest",
-        "live_suite": "aex-live-finance-ingest",
+        "deployable": "billing-worker",
+        "live_suite": "aex-live-billing-worker",
         "layers": [
           "unit",
           "smoke",
@@ -2622,8 +2371,10 @@
         "seams": [
           "aws.rds_data.transaction",
           "aws.sqs.fifo",
+          "aws.sqs.redrive",
           "aws.iam.denial",
-          "stripe.test_mode.webhook"
+          "stripe.test_mode.webhook",
+          "stripe.test_mode.command"
         ],
         "security_tier": "money",
         "risk": [
@@ -2632,7 +2383,11 @@
         "scenarios": [],
         "targets": {
           "conformance": "unit",
+          "reconcile_conformance": "unit",
+          "reconcile_properties": "unit",
           "resource_envelope": "e2e",
+          "settlement_conformance": "unit",
+          "settlement_properties": "unit",
           "smoke": "smoke"
         },
         "not_applicable": {}
@@ -2647,8 +2402,8 @@
         "owner": "regional-services",
         "role": "deployable",
         "artifact": "oci_image",
-        "deployable": "session-stream-api",
-        "live_suite": "aex-live-session-stream-api",
+        "deployable": "session-api",
+        "live_suite": "aex-live-session-api",
         "layers": [
           "unit",
           "smoke",
@@ -2678,48 +2433,7 @@
           "admission": "unit",
           "composition": "unit",
           "performance_contract": "e2e",
-          "provider_credential_registration": "unit",
           "served": "unit"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "services/stripe-command-edge": {
-      "name": "@aexhq/stripe-command-edge",
-      "kind": "npm",
-      "meta": {
-        "owner": "central-finance",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "stripe-command-edge",
-        "live_suite": "aex-live-stripe-command-edge",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.iam.denial",
-          "stripe.test_mode.webhook"
-        ],
-        "security_tier": "secret",
-        "risk": [
-          "untrusted_input",
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {
-          "edge": "unit",
-          "resource_envelope": "e2e",
-          "smoke": "smoke"
         },
         "not_applicable": {}
       },
@@ -2750,7 +2464,7 @@
           "aws.iam.denial",
           "stripe.test_mode.webhook"
         ],
-        "security_tier": "public_edge",
+        "security_tier": "secret",
         "risk": [
           "untrusted_input",
           "iam"
@@ -2766,39 +2480,97 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "services/tool-executor": {
-      "name": "tool-executor",
+    "services/tool-mux": {
+      "name": "tool-mux",
       "kind": "cargo",
       "meta": {
-        "owner": "brain-core",
-        "role": "application",
-        "artifact": "none",
+        "owner": "tools-mcp",
+        "role": "deployable",
+        "artifact": "oci_image",
+        "deployable": "tool-mux",
+        "live_suite": "aex-live-tool-mux",
         "layers": [
-          "unit"
+          "unit",
+          "integration",
+          "e2e",
+          "smoke"
         ],
         "concerns": [
           "contract",
-          "property",
           "fault",
           "security",
           "performance"
         ],
-        "seams": [],
-        "security_tier": "secret",
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.transact_write",
+          "aws.iam.denial",
+          "aws.kms.branch_key_rotation",
+          "aws.kms.encryption_context",
+          "aws.lambda.microvm",
+          "aws.s3.conditional_put",
+          "aws.s3.sse_kms",
+          "aws.sqs.fifo",
+          "hands.guest.lifecycle",
+          "mcp.streamable_http",
+          "net.public_egress"
+        ],
+        "security_tier": "internal",
         "risk": [
-          "iam",
+          "concurrency",
           "untrusted_input"
         ],
-        "scenarios": [],
+        "scenarios": [
+          "SC-TOOL-MUX"
+        ],
         "targets": {
-          "admission": "unit",
-          "composition": "unit",
+          "conformance": "unit",
+          "faults": "unit",
+          "http": "integration",
           "performance_contract": "e2e",
-          "spend": "unit"
+          "security": "unit"
         },
-        "not_applicable": {
-          "live_suite": "retained internal application code; the prelaunch product has no deployable tool-executor unit"
-        }
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "tests/live/aex-live-billing-worker": {
+      "name": "aex-live-billing-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-finance",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "billing-worker",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.iam.denial",
+          "aws.rds_data.transaction",
+          "aws.sqs.fifo",
+          "aws.sqs.redrive",
+          "stripe.test_mode.webhook",
+          "stripe.test_mode.command"
+        ],
+        "security_tier": "money",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [
+          "SC-BILLING-PAYMENT-METHOD-LIFECYCLE"
+        ],
+        "targets": {
+          "payment_methods": "e2e"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -2834,10 +2606,11 @@
           "net.public_egress",
           "provider.anthropic.stream",
           "provider.deepseek.stream",
-          "provider.google.stream",
+          "provider.xai.stream",
+          "provider.meta.stream",
           "provider.moonshotai.stream",
           "provider.openai.stream",
-          "provider.zai.stream"
+          "provider.alibaba.stream"
         ],
         "security_tier": "internal",
         "risk": [
@@ -2853,14 +2626,14 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "tests/live/aex-live-central-api": {
-      "name": "aex-live-central-api",
+    "tests/live/aex-live-control-api": {
+      "name": "aex-live-control-api",
       "kind": "cargo",
       "meta": {
         "owner": "central-identity",
         "role": "live_companion",
         "artifact": "none",
-        "deployable": "central-api",
+        "deployable": "control-api",
         "layers": [
           "smoke",
           "e2e"
@@ -2874,8 +2647,7 @@
           "aws.alb.framing",
           "aws.aurora.serverless_v2",
           "aws.iam.denial",
-          "aws.rds_data.transaction",
-          "stripe.test_mode.webhook"
+          "aws.rds_data.transaction"
         ],
         "security_tier": "public_edge",
         "risk": [
@@ -2891,85 +2663,14 @@
       "unmapped_targets": [],
       "awaiting_owner": true
     },
-    "tests/live/aex-live-central-authz": {
-      "name": "aex-live-central-authz",
+    "tests/live/aex-live-control-projection-worker": {
+      "name": "aex-live-control-projection-worker",
       "kind": "cargo",
       "meta": {
         "owner": "central-identity",
         "role": "live_companion",
         "artifact": "none",
-        "deployable": "central-authz",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.iam.denial",
-          "aws.rds_data.transaction"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {
-          "live": "e2e"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "tests/live/aex-live-central-control-api": {
-      "name": "aex-live-central-control-api",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-identity",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "central-control-api",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.alb.framing",
-          "aws.aurora.serverless_v2",
-          "aws.iam.denial",
-          "aws.rds_data.transaction",
-          "aws.sqs.fifo"
-        ],
-        "security_tier": "public_edge",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {
-          "live": "e2e"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "tests/live/aex-live-central-control-worker": {
-      "name": "aex-live-central-control-worker",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-identity",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "central-control-worker",
+        "deployable": "control-projection-worker",
         "layers": [
           "smoke",
           "e2e"
@@ -2996,113 +2697,6 @@
       },
       "unmapped_targets": [],
       "awaiting_owner": false
-    },
-    "tests/live/aex-live-central-identity-api": {
-      "name": "aex-live-central-identity-api",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-identity",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "central-identity-api",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.alb.framing",
-          "aws.aurora.serverless_v2",
-          "aws.iam.denial",
-          "aws.rds_data.transaction"
-        ],
-        "security_tier": "public_edge",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {
-          "live": "e2e"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "tests/live/aex-live-central-schema-admin": {
-      "name": "aex-live-central-schema-admin",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "central-schema-admin",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.aurora.serverless_v2",
-          "aws.ecs.run_task",
-          "aws.iam.denial"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "tests/live/aex-live-content-lifecycle-worker": {
-      "name": "aex-live-content-lifecycle-worker",
-      "kind": "cargo",
-      "meta": {
-        "owner": "regional-services",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "content-lifecycle-worker",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.dynamodb.ttl",
-          "aws.iam.denial",
-          "aws.s3.unversioned_delete"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
     },
     "tests/live/aex-live-dashboard": {
       "name": "aex-live-dashboard",
@@ -3138,149 +2732,6 @@
       },
       "unmapped_targets": [],
       "awaiting_owner": false
-    },
-    "tests/live/aex-live-finance-api": {
-      "name": "aex-live-finance-api",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "finance-api",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.aurora.serverless_v2",
-          "aws.iam.denial",
-          "aws.rds_data.transaction",
-          "stripe.test_mode.webhook"
-        ],
-        "security_tier": "public_edge",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "tests/live/aex-live-finance-ingest": {
-      "name": "aex-live-finance-ingest",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "finance-ingest",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.iam.denial",
-          "aws.rds_data.transaction",
-          "aws.sqs.fifo",
-          "stripe.test_mode.webhook"
-        ],
-        "security_tier": "money",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "tests/live/aex-live-finance-reconcile": {
-      "name": "aex-live-finance-reconcile",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "finance-reconcile",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.iam.denial",
-          "aws.rds_data.transaction",
-          "stripe.test_mode.webhook"
-        ],
-        "security_tier": "money",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "tests/live/aex-live-finance-settlement-worker": {
-      "name": "aex-live-finance-settlement-worker",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "finance-settlement-worker",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.iam.denial",
-          "aws.rds_data.transaction",
-          "aws.sqs.fifo",
-          "aws.sqs.redrive"
-        ],
-        "security_tier": "money",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
     },
     "tests/live/aex-live-hands-agent": {
       "name": "aex-live-hands-agent",
@@ -3349,147 +2800,6 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "tests/live/aex-live-provider-cost-reconciler": {
-      "name": "aex-live-provider-cost-reconciler",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "provider-cost-reconciler",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.iam.denial",
-          "aws.rds_data.transaction"
-        ],
-        "security_tier": "money",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "tests/live/aex-live-regional-capacity-controller": {
-      "name": "aex-live-regional-capacity-controller",
-      "kind": "cargo",
-      "meta": {
-        "owner": "regional-services",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "regional-capacity-controller",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.transact_write",
-          "aws.iam.denial"
-        ],
-        "security_tier": "authority",
-        "risk": [
-          "iam",
-          "concurrency"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "regional-services owns this live companion; live evidence requires the private regional deployment composition"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "tests/live/aex-live-regional-control": {
-      "name": "aex-live-regional-control",
-      "kind": "cargo",
-      "meta": {
-        "owner": "regional-services",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "regional-control",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.lambda.microvm",
-          "aws.iam.denial"
-        ],
-        "security_tier": "authority",
-        "risk": [
-          "iam",
-          "concurrency"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "regional-services owns this live companion; live evidence requires the private regional deployment composition"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "tests/live/aex-live-regional-secret-key-admin": {
-      "name": "aex-live-regional-secret-key-admin",
-      "kind": "cargo",
-      "meta": {
-        "owner": "regional-services",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "regional-secret-key-admin",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.iam.denial",
-          "aws.kms.branch_key_rotation"
-        ],
-        "security_tier": "secret",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
     "tests/live/aex-live-runtime-control-worker": {
       "name": "aex-live-runtime-control-worker",
       "kind": "cargo",
@@ -3527,51 +2837,14 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "tests/live/aex-live-session-operation-worker": {
-      "name": "aex-live-session-operation-worker",
+    "tests/live/aex-live-session-api": {
+      "name": "aex-live-session-api",
       "kind": "cargo",
       "meta": {
         "owner": "regional-services",
         "role": "live_companion",
         "artifact": "none",
-        "deployable": "session-operation-worker",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.dynamodb.transact_write",
-          "aws.dynamodb.ttl",
-          "aws.iam.denial",
-          "aws.sqs.fifo"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "tests/live/aex-live-session-stream-api": {
-      "name": "aex-live-session-stream-api",
-      "kind": "cargo",
-      "meta": {
-        "owner": "regional-services",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "session-stream-api",
+        "deployable": "session-api",
         "layers": [
           "smoke",
           "e2e"
@@ -3598,16 +2871,16 @@
           "aws.s3.multipart",
           "aws.s3.presigned_expiry",
           "aws.s3.sse_kms",
-          "aws.s3.unversioned_delete"
+          "aws.s3.unversioned_delete",
+          "net.public_egress"
         ],
         "security_tier": "public_edge",
         "risk": [
           "iam"
         ],
         "scenarios": [
-          "SC-REGIONAL-ADMISSION",
-          "SC-REGISTRY-RESOURCES",
-          "SC-SESSION-LIVE-FILES"
+          "SC-FILES-CURRENT",
+          "SC-FILES-UPLOAD"
         ],
         "targets": {
           "e2e": "e2e",
@@ -3618,6 +2891,44 @@
       },
       "unmapped_targets": [],
       "awaiting_owner": false
+    },
+    "tests/live/aex-live-session-maintenance-worker": {
+      "name": "aex-live-session-maintenance-worker",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "session-maintenance-worker",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.transact_write",
+          "aws.dynamodb.ttl",
+          "aws.iam.denial",
+          "aws.sqs.fifo",
+          "aws.s3.unversioned_delete"
+        ],
+        "security_tier": "internal",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
     },
     "tests/live/aex-live-site": {
       "name": "aex-live-site",
@@ -3653,40 +2964,6 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "tests/live/aex-live-stripe-command-edge": {
-      "name": "aex-live-stripe-command-edge",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "stripe-command-edge",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.iam.denial",
-          "stripe.test_mode.webhook"
-        ],
-        "security_tier": "money",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
     "tests/live/aex-live-stripe-webhook-edge": {
       "name": "aex-live-stripe-webhook-edge",
       "kind": "cargo",
@@ -3721,148 +2998,54 @@
       "unmapped_targets": [],
       "awaiting_owner": true
     },
-    "tests/live/aex-live-usage-compute-worker": {
-      "name": "aex-live-usage-compute-worker",
+    "tests/live/aex-live-tool-mux": {
+      "name": "aex-live-tool-mux",
       "kind": "cargo",
       "meta": {
-        "owner": "observations-usage",
+        "owner": "tools-mcp",
         "role": "live_companion",
         "artifact": "none",
-        "deployable": "usage-compute-worker",
+        "deployable": "tool-mux",
         "layers": [
-          "smoke",
-          "e2e"
+          "e2e",
+          "smoke"
         ],
         "concerns": [
+          "contract",
           "fault",
           "security",
           "performance"
         ],
         "seams": [
           "aws.dynamodb.condition",
-          "aws.dynamodb.streams",
-          "aws.iam.denial"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "tests/live/aex-live-usage-receipt-dispatcher": {
-      "name": "aex-live-usage-receipt-dispatcher",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "usage-receipt-dispatcher",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.streams",
+          "aws.dynamodb.transact_write",
           "aws.iam.denial",
-          "aws.rds_data.transaction",
+          "aws.kms.branch_key_rotation",
+          "aws.kms.encryption_context",
+          "aws.lambda.microvm",
+          "aws.s3.conditional_put",
+          "aws.s3.sse_kms",
           "aws.sqs.fifo",
-          "aws.sqs.redrive"
-        ],
-        "security_tier": "money",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the central-finance stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "tests/live/aex-live-usage-storage-worker": {
-      "name": "aex-live-usage-storage-worker",
-      "kind": "cargo",
-      "meta": {
-        "owner": "observations-usage",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "usage-storage-worker",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.dynamodb.streams",
-          "aws.iam.denial",
-          "aws.s3.conditional_put"
+          "hands.guest.lifecycle",
+          "mcp.streamable_http",
+          "net.public_egress"
         ],
         "security_tier": "internal",
         "risk": [
-          "iam"
+          "concurrency",
+          "untrusted_input"
         ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "scenarios": [
+          "SC-TOOL-MUX"
+        ],
+        "targets": {
+          "journeys": "smoke",
+          "load": "e2e"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "tests/live/aex-live-usage-transfer-worker": {
-      "name": "aex-live-usage-transfer-worker",
-      "kind": "cargo",
-      "meta": {
-        "owner": "observations-usage",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "usage-transfer-worker",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.dynamodb.streams",
-          "aws.iam.denial"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the observations-usage stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/load/aex-load-harness": {
       "name": "aex-load-harness",
@@ -3915,7 +3098,6 @@
         "scenarios": [],
         "targets": {
           "control_workspace": "integration",
-          "identity_account": "integration",
           "properties": "unit"
         },
         "not_applicable": {
@@ -4133,8 +3315,8 @@
         "owner": "central-identity",
         "role": "deployable",
         "artifact": "lambda_zip",
-        "deployable": "central-control-worker",
-        "live_suite": "aex-live-central-control-worker",
+        "deployable": "control-projection-worker",
+        "live_suite": "aex-live-control-projection-worker",
         "layers": [
           "unit",
           "smoke",
@@ -4172,10 +3354,8 @@
       "kind": "cargo",
       "meta": {
         "owner": "central-finance",
-        "role": "deployable",
-        "artifact": "oci_task",
-        "deployable": "central-schema-admin",
-        "live_suite": "aex-live-central-schema-admin",
+        "role": "tool",
+        "artifact": "none",
         "layers": [
           "unit",
           "integration",
@@ -4184,6 +3364,7 @@
         ],
         "concerns": [
           "contract",
+          "property",
           "fault",
           "security",
           "performance"
@@ -4205,265 +3386,22 @@
           "resource_envelope": "e2e",
           "smoke": "smoke"
         },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "workers/content-lifecycle-worker": {
-      "name": "content-lifecycle-worker",
-      "kind": "cargo",
-      "meta": {
-        "owner": "regional-services",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "content-lifecycle-worker",
-        "live_suite": "aex-live-content-lifecycle-worker",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.s3.unversioned_delete",
-          "aws.dynamodb.ttl",
-          "aws.iam.denial"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {
-          "composition": "unit",
-          "expiry": "unit",
-          "gc": "unit",
-          "lifecycle": "unit",
-          "performance_contract": "e2e"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "workers/finance-reconcile": {
-      "name": "finance-reconcile",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "finance-reconcile",
-        "live_suite": "aex-live-finance-reconcile",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "property",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.rds_data.transaction",
-          "aws.iam.denial",
-          "stripe.test_mode.webhook"
-        ],
-        "security_tier": "money",
-        "risk": [
-          "money"
-        ],
-        "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "properties": "unit",
-          "resource_envelope": "e2e",
-          "smoke": "smoke"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "workers/finance-settlement-worker": {
-      "name": "finance-settlement-worker",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "finance-settlement-worker",
-        "live_suite": "aex-live-finance-settlement-worker",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "property",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.rds_data.transaction",
-          "aws.sqs.fifo",
-          "aws.sqs.redrive",
-          "aws.iam.denial"
-        ],
-        "security_tier": "money",
-        "risk": [
-          "money",
-          "concurrency"
-        ],
-        "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "properties": "unit",
-          "resource_envelope": "e2e",
-          "smoke": "smoke"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "workers/provider-cost-reconciler": {
-      "name": "provider-cost-reconciler",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "provider-cost-reconciler",
-        "live_suite": "aex-live-provider-cost-reconciler",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.rds_data.transaction",
-          "aws.iam.denial"
-        ],
-        "security_tier": "money",
-        "risk": [
-          "money"
-        ],
-        "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "resource_envelope": "e2e",
-          "smoke": "smoke"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "workers/regional-capacity-controller": {
-      "name": "regional-capacity-controller",
-      "kind": "cargo",
-      "meta": {
-        "owner": "regional-services",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "regional-capacity-controller",
-        "live_suite": "aex-live-regional-capacity-controller",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.transact_write",
-          "aws.iam.denial"
-        ],
-        "security_tier": "authority",
-        "risk": [
-          "iam",
-          "concurrency"
-        ],
-        "scenarios": [],
-        "targets": {
-          "composition": "unit",
-          "performance_contract": "e2e"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "workers/regional-control": {
-      "name": "regional-control",
-      "kind": "cargo",
-      "meta": {
-        "owner": "regional-services",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "regional-control",
-        "live_suite": "aex-live-regional-control",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.lambda.microvm",
-          "aws.iam.denial"
-        ],
-        "security_tier": "authority",
-        "risk": [
-          "iam",
-          "concurrency"
-        ],
-        "scenarios": [],
-        "targets": {},
         "not_applicable": {
-          "inline_targets": "regional-services keeps the direct-invoke configuration evidence in the composition-root unit target and the fencing evidence in the owning adapter unit target; there is no separate integration binary to map"
+          "live_suite": "the migration runner is an owner-invoked release tool, not a placed service; container-backed integration tests own its database boundary"
         }
       },
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "workers/regional-secret-key-admin": {
-      "name": "regional-secret-key-admin",
+    "workers/file-ingest-worker": {
+      "name": "file-ingest-worker",
       "kind": "cargo",
       "meta": {
         "owner": "regional-services",
         "role": "deployable",
-        "artifact": "oci_task",
-        "deployable": "regional-secret-key-admin",
-        "live_suite": "aex-live-regional-secret-key-admin",
+        "artifact": "lambda_zip",
+        "deployable": "file-ingest-worker",
+        "live_suite": "aex-live-session-api",
         "layers": [
           "unit",
           "smoke",
@@ -4476,18 +3414,21 @@
           "performance"
         ],
         "seams": [
-          "aws.kms.branch_key_rotation",
-          "aws.iam.denial"
+          "net.public_egress",
+          "aws.s3.conditional_put",
+          "aws.dynamodb.streams"
         ],
-        "security_tier": "secret",
+        "security_tier": "internal",
         "risk": [
+          "untrusted_input",
           "iam"
         ],
-        "scenarios": [],
+        "scenarios": [
+          "SC-FILES-CURRENT"
+        ],
         "targets": {
-          "composition": "unit",
-          "performance_contract": "e2e",
-          "rotation": "unit"
+          "ingest": "unit",
+          "performance": "e2e"
         },
         "not_applicable": {}
       },
@@ -4540,8 +3481,8 @@
         "owner": "regional-services",
         "role": "deployable",
         "artifact": "lambda_zip",
-        "deployable": "session-operation-worker",
-        "live_suite": "aex-live-session-operation-worker",
+        "deployable": "session-maintenance-worker",
+        "live_suite": "aex-live-session-maintenance-worker",
         "layers": [
           "unit",
           "smoke",
@@ -4557,6 +3498,7 @@
           "aws.dynamodb.transact_write",
           "aws.dynamodb.condition",
           "aws.sqs.fifo",
+          "aws.s3.unversioned_delete",
           "aws.iam.denial"
         ],
         "security_tier": "internal",
@@ -4573,350 +3515,145 @@
       },
       "unmapped_targets": [],
       "awaiting_owner": false
-    },
-    "workers/usage-compute-worker": {
-      "name": "usage-compute-worker",
-      "kind": "cargo",
-      "meta": {
-        "owner": "observations-usage",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "usage-compute-worker",
-        "live_suite": "aex-live-usage-compute-worker",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.dynamodb.streams",
-          "aws.iam.denial"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "DEFERRED by observations-usage, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications, the partial-batch response contract and the sibling-authority link proofs are covered by this binary's own unit module. The smoke and e2e targets need a deployed function, a live stream and a live receipt queue, none of which exist yet; the DynamoDB and SQS ports beneath the handler are implemented and unit-covered in this worker's one adapter."
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "workers/usage-receipt-dispatcher": {
-      "name": "usage-receipt-dispatcher",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "usage-receipt-dispatcher",
-        "live_suite": "aex-live-usage-receipt-dispatcher",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.rds_data.transaction",
-          "aws.sqs.fifo",
-          "aws.iam.denial"
-        ],
-        "security_tier": "money",
-        "risk": [
-          "money"
-        ],
-        "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "resource_envelope": "e2e",
-          "smoke": "smoke"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "workers/usage-storage-worker": {
-      "name": "usage-storage-worker",
-      "kind": "cargo",
-      "meta": {
-        "owner": "observations-usage",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "usage-storage-worker",
-        "live_suite": "aex-live-usage-storage-worker",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.dynamodb.streams",
-          "aws.iam.denial"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "DEFERRED by observations-usage, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications, the partial-batch response contract and the sibling-authority link proofs are covered by this binary's own unit module. The smoke and e2e targets need a deployed function, a live stream and a live receipt queue, none of which exist yet; the DynamoDB and SQS ports beneath the handler are implemented and unit-covered in this worker's one adapter."
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
-    "workers/usage-transfer-worker": {
-      "name": "usage-transfer-worker",
-      "kind": "cargo",
-      "meta": {
-        "owner": "observations-usage",
-        "role": "deployable",
-        "artifact": "lambda_zip",
-        "deployable": "usage-transfer-worker",
-        "live_suite": "aex-live-usage-transfer-worker",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.condition",
-          "aws.dynamodb.streams",
-          "aws.iam.denial"
-        ],
-        "security_tier": "internal",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "DEFERRED by observations-usage, not inapplicable: the composition root, its charging-gate fence, the three event-mode classifications, the partial-batch response contract and the sibling-authority link proofs are covered by this binary's own unit module. The smoke and e2e targets need a deployed function, a live stream and a live receipt queue, none of which exist yet; the DynamoDB and SQS ports beneath the handler are implemented and unit-covered in this worker's one adapter."
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
     }
   },
   "live_targets": [
+    "aex-live-billing-worker",
     "aex-live-brain-mux",
-    "aex-live-central-api",
-    "aex-live-central-authz",
-    "aex-live-central-control-api",
-    "aex-live-central-control-worker",
-    "aex-live-central-identity-api",
-    "aex-live-central-schema-admin",
-    "aex-live-content-lifecycle-worker",
+    "aex-live-control-api",
+    "aex-live-control-projection-worker",
     "aex-live-dashboard",
-    "aex-live-finance-api",
-    "aex-live-finance-ingest",
-    "aex-live-finance-reconcile",
-    "aex-live-finance-settlement-worker",
     "aex-live-hands-agent",
     "aex-live-hands-image",
-    "aex-live-provider-cost-reconciler",
-    "aex-live-regional-capacity-controller",
-    "aex-live-regional-control",
-    "aex-live-regional-secret-key-admin",
     "aex-live-runtime-control-worker",
-    "aex-live-session-operation-worker",
-    "aex-live-session-stream-api",
+    "aex-live-session-api",
+    "aex-live-session-maintenance-worker",
     "aex-live-site",
-    "aex-live-stripe-command-edge",
     "aex-live-stripe-webhook-edge",
-    "aex-live-usage-compute-worker",
-    "aex-live-usage-receipt-dispatcher",
-    "aex-live-usage-storage-worker",
-    "aex-live-usage-transfer-worker"
+    "aex-live-tool-mux"
   ],
   "seam_claims": {
     "aws.alb.framing": [
-      "aex-live-central-api",
-      "aex-live-central-control-api",
-      "aex-live-central-identity-api",
-      "aex-live-session-stream-api"
+      "aex-live-control-api",
+      "aex-live-session-api"
     ],
     "aws.aurora.serverless_v2": [
-      "aex-live-central-api",
-      "aex-live-central-control-api",
-      "aex-live-central-identity-api",
-      "aex-live-central-schema-admin",
-      "aex-live-finance-api"
+      "aex-live-control-api"
     ],
     "aws.cloudwatch.export": [
       "aex-live-brain-mux"
     ],
     "aws.dynamodb.condition": [
       "aex-live-brain-mux",
-      "aex-live-content-lifecycle-worker",
-      "aex-live-regional-control",
-      "aex-live-regional-secret-key-admin",
       "aex-live-runtime-control-worker",
-      "aex-live-session-operation-worker",
-      "aex-live-session-stream-api",
-      "aex-live-usage-compute-worker",
-      "aex-live-usage-storage-worker",
-      "aex-live-usage-transfer-worker"
+      "aex-live-session-api",
+      "aex-live-session-maintenance-worker",
+      "aex-live-tool-mux"
     ],
     "aws.dynamodb.streams": [
-      "aex-live-session-stream-api",
-      "aex-live-usage-compute-worker",
-      "aex-live-usage-receipt-dispatcher",
-      "aex-live-usage-storage-worker",
-      "aex-live-usage-transfer-worker"
+      "aex-live-session-api"
     ],
     "aws.dynamodb.throughput": [
-      "aex-live-session-stream-api"
+      "aex-live-session-api"
     ],
     "aws.dynamodb.transact_write": [
       "aex-live-brain-mux",
-      "aex-live-regional-capacity-controller",
-      "aex-live-session-operation-worker",
-      "aex-live-session-stream-api"
+      "aex-live-session-api",
+      "aex-live-session-maintenance-worker",
+      "aex-live-tool-mux"
     ],
     "aws.dynamodb.ttl": [
-      "aex-live-content-lifecycle-worker",
       "aex-live-runtime-control-worker",
-      "aex-live-session-operation-worker",
-      "aex-live-session-stream-api"
+      "aex-live-session-api",
+      "aex-live-session-maintenance-worker"
     ],
     "aws.ecs.run_task": [
       "aex-live-brain-mux",
-      "aex-live-central-schema-admin",
       "aex-live-runtime-control-worker"
     ],
     "aws.iam.denial": [
+      "aex-live-billing-worker",
       "aex-live-brain-mux",
-      "aex-live-central-api",
-      "aex-live-central-authz",
-      "aex-live-central-control-api",
-      "aex-live-central-control-worker",
-      "aex-live-central-identity-api",
-      "aex-live-central-schema-admin",
-      "aex-live-content-lifecycle-worker",
+      "aex-live-control-api",
+      "aex-live-control-projection-worker",
       "aex-live-dashboard",
-      "aex-live-finance-api",
-      "aex-live-finance-ingest",
-      "aex-live-finance-reconcile",
-      "aex-live-finance-settlement-worker",
-      "aex-live-provider-cost-reconciler",
-      "aex-live-regional-capacity-controller",
-      "aex-live-regional-control",
-      "aex-live-regional-secret-key-admin",
       "aex-live-runtime-control-worker",
-      "aex-live-session-operation-worker",
-      "aex-live-session-stream-api",
-      "aex-live-stripe-command-edge",
+      "aex-live-session-api",
+      "aex-live-session-maintenance-worker",
       "aex-live-stripe-webhook-edge",
-      "aex-live-usage-compute-worker",
-      "aex-live-usage-receipt-dispatcher",
-      "aex-live-usage-storage-worker",
-      "aex-live-usage-transfer-worker"
+      "aex-live-tool-mux"
     ],
     "aws.kms.branch_key_rotation": [
-      "aex-live-regional-secret-key-admin",
-      "aex-live-session-stream-api"
+      "aex-live-session-api",
+      "aex-live-tool-mux"
     ],
     "aws.kms.encryption_context": [
-      "aex-live-session-stream-api"
+      "aex-live-session-api",
+      "aex-live-tool-mux"
     ],
     "aws.lambda.async_delivery": [
-      "aex-live-central-control-worker",
-      "aex-live-session-stream-api"
+      "aex-live-control-projection-worker",
+      "aex-live-session-api"
     ],
     "aws.lambda.microvm": [
       "aex-live-brain-mux",
       "aex-live-hands-image",
-      "aex-live-regional-control",
       "aex-live-runtime-control-worker",
-      "aex-live-session-stream-api"
+      "aex-live-session-api",
+      "aex-live-tool-mux"
     ],
     "aws.rds_data.transaction": [
-      "aex-live-central-api",
-      "aex-live-central-authz",
-      "aex-live-central-control-api",
-      "aex-live-central-control-worker",
-      "aex-live-central-identity-api",
-      "aex-live-finance-api",
-      "aex-live-finance-ingest",
-      "aex-live-finance-reconcile",
-      "aex-live-finance-settlement-worker",
-      "aex-live-provider-cost-reconciler",
-      "aex-live-usage-receipt-dispatcher"
+      "aex-live-billing-worker",
+      "aex-live-control-api",
+      "aex-live-control-projection-worker"
     ],
     "aws.s3.bounded_get": [
-      "aex-live-session-stream-api"
+      "aex-live-session-api"
     ],
     "aws.s3.conditional_put": [
       "aex-live-brain-mux",
-      "aex-live-session-stream-api",
-      "aex-live-usage-storage-worker"
+      "aex-live-session-api",
+      "aex-live-tool-mux"
     ],
     "aws.s3.multipart": [
-      "aex-live-session-stream-api"
+      "aex-live-session-api"
     ],
     "aws.s3.presigned_expiry": [
-      "aex-live-session-stream-api"
+      "aex-live-session-api"
     ],
     "aws.s3.sse_kms": [
-      "aex-live-session-stream-api"
+      "aex-live-session-api",
+      "aex-live-tool-mux"
     ],
     "aws.s3.unversioned_delete": [
-      "aex-live-content-lifecycle-worker",
-      "aex-live-session-stream-api"
+      "aex-live-session-api",
+      "aex-live-session-maintenance-worker"
     ],
     "aws.sqs.fifo": [
+      "aex-live-billing-worker",
       "aex-live-brain-mux",
-      "aex-live-central-control-api",
-      "aex-live-finance-ingest",
-      "aex-live-finance-settlement-worker",
-      "aex-live-session-operation-worker",
-      "aex-live-usage-receipt-dispatcher"
+      "aex-live-session-maintenance-worker",
+      "aex-live-tool-mux"
     ],
     "aws.sqs.redrive": [
-      "aex-live-finance-settlement-worker",
-      "aex-live-usage-receipt-dispatcher"
+      "aex-live-billing-worker"
     ],
     "hands.guest.lifecycle": [
       "aex-live-brain-mux",
       "aex-live-hands-agent",
-      "aex-live-hands-image"
+      "aex-live-hands-image",
+      "aex-live-tool-mux"
     ],
     "mcp.streamable_http": [
-      "aex-live-brain-mux"
+      "aex-live-brain-mux",
+      "aex-live-tool-mux"
     ],
     "net.public_egress": [
+      "aex-live-brain-mux",
+      "aex-live-session-api",
+      "aex-live-tool-mux"
+    ],
+    "provider.alibaba.stream": [
       "aex-live-brain-mux"
     ],
     "provider.anthropic.stream": [
@@ -4925,7 +3662,7 @@
     "provider.deepseek.stream": [
       "aex-live-brain-mux"
     ],
-    "provider.google.stream": [
+    "provider.meta.stream": [
       "aex-live-brain-mux"
     ],
     "provider.moonshotai.stream": [
@@ -4934,15 +3671,14 @@
     "provider.openai.stream": [
       "aex-live-brain-mux"
     ],
-    "provider.zai.stream": [
+    "provider.xai.stream": [
       "aex-live-brain-mux"
     ],
+    "stripe.test_mode.command": [
+      "aex-live-billing-worker"
+    ],
     "stripe.test_mode.webhook": [
-      "aex-live-central-api",
-      "aex-live-finance-api",
-      "aex-live-finance-ingest",
-      "aex-live-finance-reconcile",
-      "aex-live-stripe-command-edge",
+      "aex-live-billing-worker",
       "aex-live-stripe-webhook-edge"
     ],
     "vercel.build_output.deploy": [

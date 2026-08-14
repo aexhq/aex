@@ -1,0 +1,45 @@
+{
+  "$id": "https://schemas.aex.dev/v1/TelemetryDownloadGrant.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Short-lived signed download for one immutable compressed telemetry export.",
+  "properties": {
+    "expiresAt": {
+      "description": "Grant expiry.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "mediaType": {
+      "description": "Compressed NDJSON or OTLP bundle media type.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "sha256": {
+      "description": "Exact compressed object digest.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "sizeBytes": {
+      "description": "Compressed size.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "url": {
+      "description": "Signed S3 URL; never printed by the CLI.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "expiresAt",
+    "mediaType",
+    "sha256",
+    "sizeBytes",
+    "url"
+  ],
+  "title": "TelemetryDownloadGrant",
+  "type": "object"
+}

@@ -123,12 +123,10 @@ fn the_envelope_is_exactly_three_hundred_and_twenty_three_bytes() {
 /// A wire format's golden is a literal, not a snapshot: changing the layout must
 /// show up as a changed string in the diff rather than as an accepted snapshot.
 ///
-/// Re-derived 2026-08-10, and the two hex digits that moved are the whole of it.
-/// The scope field is a `ScopeSet` bitset over the generated `ScopeId` registry,
-/// and `claims()` sets `SessionsRead` and `SessionsWrite`. Mounting the fifteen
-/// registry pointer routes took that registry from 28 entries to 30 and the two
-/// new ids sort ahead of `sessions:*`, so the pair moved from bits 15 and 16 to
-/// bits 17 and 18 and the field went `0x18000` to `0x60000`.
+/// Re-derived 2026-08-14 after the prelaunch MVP scope contraction. The scope
+/// field is a `ScopeSet` bitset over the generated `ScopeId` registry, and
+/// `claims()` sets `SessionsRead` and `SessionsWrite`. Those are currently bits
+/// 6 and 7, so the field is `0xc0`.
 ///
 /// The layout did **not** change: the signed prefix is still 259 bytes, every
 /// field offset below still holds, and exactly one field's value differs. What
@@ -138,7 +136,7 @@ fn the_envelope_is_exactly_three_hundred_and_twenty_three_bytes() {
 /// it is free only while nothing is deployed. Once a plane holds signed
 /// assertions, a new scope has to be appended rather than sorted in, exactly as
 /// `AssertionAudience` already requires of its own arms.
-const SIGNED_GOLDEN: &str = "41455841010101923f2a1c00700080000000000000aa00eb0000019b76daa8000000019b76db1d300205010101923f2a1c00700080000000000000015a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a01923f2a1c007000800000000000000201923f2a1c0070008000000000000003050100000000000600000401923f2a1c007000800000000000000400000000000000030301923f2a1c007000800000000000000300000000000000010501923f2a1c007000800000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+const SIGNED_GOLDEN: &str = "41455841010101923f2a1c00700080000000000000aa00eb0000019b76daa8000000019b76db1d300205010101923f2a1c00700080000000000000015a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a01923f2a1c007000800000000000000201923f2a1c0070008000000000000003050100000000000000c00401923f2a1c007000800000000000000400000000000000030301923f2a1c007000800000000000000300000000000000010501923f2a1c007000800000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
 
 #[test]
 fn the_signed_prefix_is_a_fixed_layout_golden() {
@@ -170,12 +168,12 @@ fn the_signed_prefix_is_a_fixed_layout_golden() {
         "01",
         "account state = active"
     );
-    // Bits 17 and 18, not 15 and 16: see `SIGNED_GOLDEN` for why the pair moved.
-    // Spelled as the shift rather than as a bare literal so the next registry
-    // insertion fails here with its cause visible instead of as a hex diff.
+    // Bits 6 and 7: see `SIGNED_GOLDEN` for why the pair moved. Spelled as the
+    // shift rather than as a bare literal so the next registry insertion fails
+    // here with its cause visible instead of as a hex diff.
     assert_eq!(
         &SIGNED_GOLDEN[48 + 204..48 + 220],
-        format!("{:016x}", 1u64 << 17 | 1u64 << 18),
+        format!("{:016x}", 1u64 << 6 | 1u64 << 7),
         "sessions:read | sessions:write"
     );
 }
@@ -394,7 +392,7 @@ fn every_audience_field_is_checked() {
             ..claims.audience
         },
         Audience {
-            service: AssertionAudience::ToolExec,
+            service: AssertionAudience::ToolMux,
             ..claims.audience
         },
     ];
@@ -668,7 +666,7 @@ fn every_principal_kind_round_trips_through_the_envelope() {
         claims.audience.service = if kind.is_presented_credential() {
             AssertionAudience::RegionalSession
         } else {
-            AssertionAudience::ToolExec
+            AssertionAudience::ToolMux
         };
         let assertion = issue(&signer, &claims).expect("signs");
         let decoded = verify(
@@ -694,7 +692,7 @@ fn every_regional_service_and_plane_round_trips() {
     for plane in [Plane::Dev, Plane::Prd] {
         // The tool executor is excluded because it is not a regional service and
         // its principal kind is not this fixture's. It has its own round trip in
-        // `an_agent_session_envelope_pairs_only_with_the_tool_executor`.
+        // `an_agent_session_envelope_pairs_only_with_tool_mux`.
         for service in AssertionAudience::CUSTOMER_PRESENTABLE {
             let mut claims = claims();
             claims.audience = Audience {
@@ -743,7 +741,7 @@ fn the_audience_codec_is_total_and_is_declaration_order() {
 }
 
 #[test]
-fn an_agent_session_envelope_pairs_only_with_the_tool_executor() {
+fn an_agent_session_envelope_pairs_only_with_tool_mux() {
     let signer = signer();
     let keys = key_set(&signer);
     let projection = fresh();
@@ -759,7 +757,7 @@ fn an_agent_session_envelope_pairs_only_with_the_tool_executor() {
     claims.audience = Audience {
         plane: Plane::Prd,
         region: Region::EuWest1,
-        service: AssertionAudience::ToolExec,
+        service: AssertionAudience::ToolMux,
     };
 
     let assertion = issue(&signer, &claims).expect("the pair is admitted");

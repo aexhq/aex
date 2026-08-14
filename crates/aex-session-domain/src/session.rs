@@ -346,7 +346,7 @@ pub struct Session {
     /// Written once with the ready head and never rewritten. Session creation
     /// has already launched this exact generation and materialized its selected
     /// workspace files before the public session becomes visible.
-    pub pinned_runtime: PinnedRuntime,
+    pub pinned_runtime: Option<PinnedRuntime>,
     /// The dedicated BYOK provider credential version selected at creation.
     pub provider_credential: ProviderCredentialPin,
     /// Where it came from.

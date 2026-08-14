@@ -112,7 +112,7 @@ jobs:
             --out "$RELEASE_DIR/source-clean-before-plan.json"
 
       - name: Bind the immutable release tool catalogue
-        if: ${{ matrix.name == 'brain-mux' || matrix.name == 'session-stream-api' }}
+        if: ${{ matrix.name == 'brain-mux' || matrix.name == 'session-api' }}
         run: |
           set -euo pipefail
           identity=$(aex-release-tool artifact tool-catalog)
@@ -120,7 +120,7 @@ jobs:
           echo "AEX_TOOL_CATALOG_SHA256=$digest" >> "$GITHUB_ENV"
 
       - name: Verify the vendored models.dev snapshot
-        if: ${{ matrix.name == 'brain-mux' || matrix.name == 'session-stream-api' }}
+        if: ${{ matrix.name == 'brain-mux' || matrix.name == 'session-api' }}
         run: |
           set -euo pipefail
           sha256sum --check scripts/models.digest

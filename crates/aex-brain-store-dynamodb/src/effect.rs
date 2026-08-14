@@ -143,10 +143,7 @@ fn decode_evidence(
 fn parse_executor(text: &str) -> Result<ExecutorRoute, CodecError> {
     Ok(match text {
         "BrainInline" => ExecutorRoute::BrainInline,
-        "ManagedWeb" => ExecutorRoute::ManagedWeb,
-        "ToolExec" => ExecutorRoute::ToolExec,
-        "Mcp" => ExecutorRoute::Mcp,
-        "Hands" => ExecutorRoute::Hands,
+        "ToolMux" => ExecutorRoute::ToolMux,
         other => {
             return Err(malformed(
                 "detachedExecutor",
@@ -368,14 +365,14 @@ mod tests {
             .set("dispatchStage", s("Streaming"))
             .set("dispatchProof", s("ResponseStarted"))
             .set("detachedOperationId", s("same-id"))
-            .set("detachedExecutor", s("ManagedWeb"))
+            .set("detachedExecutor", s("ToolMux"))
             .build();
         let effect = decode(&item).expect("closed detached operation binding");
         assert_eq!(
             effect.evidence.and_then(|value| value.detached_tool),
             Some(DetachedOperationRef {
                 id: DetachedOperationId("same-id".to_owned()),
-                executor: ExecutorRoute::ManagedWeb,
+                executor: ExecutorRoute::ToolMux,
             })
         );
     }

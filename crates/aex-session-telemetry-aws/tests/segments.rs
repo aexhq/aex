@@ -1,81 +1,67 @@
 //! Security and wire-shape tests for immutable session telemetry segments.
 
-use aex_session_telemetry_aws::{SessionEvent, SessionOutcome, encode};
+use aex_session_telemetry_aws::{decode_encoded, encode_frames};
+use aex_wire::ids::{PrefixedId as _, SessionId, SpanId, TraceId, Uuid7};
+use aex_wire::models::{TelemetryFrame, TelemetryKind};
+use aex_wire::types::DecimalU128;
 use aex_wire::types::Timestamp;
-use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
-use opentelemetry_proto::tonic::common::v1::any_value;
-use prost::Message as _;
 
-fn event() -> SessionEvent {
-    SessionEvent::message_completed(
-        42,
-        SessionOutcome::Succeeded,
-        Timestamp::from_unix_millis(1_800_000_000_000).expect("fixture timestamp"),
-    )
+fn session() -> SessionId {
+    SessionId::from_uuid7(Uuid7::compose(1, [1; 10]))
+}
+
+fn log_frame() -> TelemetryFrame {
+    TelemetryFrame {
+        sequence: DecimalU128::new(42),
+        kind: TelemetryKind::Log,
+        occurred_at: Timestamp::from_unix_millis(1_800_000_000_000).expect("time"),
+        trace_id: None,
+        span_id: None,
+        body: None,
+        preview: None,
+        truncated: false,
+    }
 }
 
 #[test]
 fn encodes_one_allowlisted_official_otlp_log() {
-    let encoded = encode(event()).expect("closed event encodes");
-    let request = ExportLogsServiceRequest::decode(encoded.bytes.as_slice())
-        .expect("official generated type decodes its bytes");
-    assert_eq!(request.resource_logs.len(), 1);
-    let resource_logs = &request.resource_logs[0];
-    assert_eq!(resource_logs.scope_logs.len(), 1);
-    let records = &resource_logs.scope_logs[0].log_records;
-    assert_eq!(records.len(), 1);
-    let record = &records[0];
-    assert!(record.trace_id.is_empty());
-    assert!(record.span_id.is_empty());
-    assert_eq!(record.attributes.len(), 3);
-    let keys = record
-        .attributes
-        .iter()
-        .map(|attribute| attribute.key.as_str())
-        .collect::<Vec<_>>();
+    let frame = log_frame();
+    let encoded = encode_frames(session(), std::slice::from_ref(&frame)).expect("encodes");
     assert_eq!(
-        keys,
-        [
-            "aex.session.event",
-            "aex.session.outcome",
-            "aex.session.sequence"
-        ]
+        decode_encoded(session(), &encoded).expect("decodes"),
+        vec![frame]
     );
-    assert!(matches!(
-        record.body.as_ref().and_then(|value| value.value.as_ref()),
-        Some(any_value::Value::StringValue(value)) if value == "aex.session.message.completed"
-    ));
 }
 
 #[test]
 fn content_hash_and_id_are_deterministic() {
-    let first = encode(event()).expect("first encode");
-    let replay = encode(event()).expect("replay encode");
+    let frame = log_frame();
+    let first = encode_frames(session(), std::slice::from_ref(&frame)).expect("first encode");
+    let replay = encode_frames(session(), std::slice::from_ref(&frame)).expect("replay encode");
     assert_eq!(first, replay);
     assert_eq!(first.sha256.len(), 64);
-    assert_eq!(first.id, format!("00000000000000000042-{}", first.sha256));
+    assert_eq!(
+        first.id,
+        format!("00000000000000000042-00000000000000000042-{}", first.sha256)
+    );
 }
 
 #[test]
-fn sensitive_application_and_private_tracing_values_cannot_enter_bytes() {
-    let forbidden = [
-        "PROMPT-canary-e89e7a",
-        "COMPLETION-canary-dd4a11",
-        "TOOL-ARGS-canary-90abef",
-        "TOOL-RESULT-canary-4455cc",
-        "INTERNAL-RUN-ID-canary-168d12",
-        "PRIVATE-TRACE-ID-canary-a90341",
-        "PRIVATE-SPAN-ID-canary-c156a0",
-    ];
-    // `SessionEvent` has no field through which any value above can be passed.
-    let encoded = encode(event()).expect("closed event encodes");
-    for sentinel in forbidden {
-        assert!(
-            !encoded
-                .bytes
-                .windows(sentinel.len())
-                .any(|window| window == sentinel.as_bytes()),
-            "forbidden sentinel appeared in encoded bytes: {sentinel}"
-        );
-    }
+fn official_otlp_span_round_trips_with_w3c_correlation() {
+    let frame = TelemetryFrame {
+        sequence: DecimalU128::new(9),
+        kind: TelemetryKind::Span,
+        occurred_at: Timestamp::from_unix_millis(1_800_000_000_100).expect("time"),
+        trace_id: Some(TraceId::from_bytes([1; 16]).expect("trace")),
+        span_id: Some(SpanId::from_bytes([2; 8]).expect("span")),
+        body: None,
+        preview: None,
+        truncated: false,
+    };
+    let encoded = encode_frames(session(), std::slice::from_ref(&frame)).expect("encodes");
+    assert!(encoded.bytes.len() < 1024);
+    assert_eq!(
+        decode_encoded(session(), &encoded).expect("decodes"),
+        vec![frame]
+    );
 }

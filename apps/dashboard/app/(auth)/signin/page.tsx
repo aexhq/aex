@@ -65,8 +65,7 @@ export default async function SignIn({
         {providers.length === 0 ? (
           <Notice status="serious" title="No sign-in provider is configured">
             <p className="small">
-              This deployment cannot begin a browser sign-in. Use the CLI device flow — <code
-              className="mono">aex auth login</code> — until Google sign-in is configured.
+              This deployment cannot begin a browser sign-in until GitHub OAuth is configured.
             </p>
           </Notice>
         ) : (

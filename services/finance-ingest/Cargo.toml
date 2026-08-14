@@ -1,7 +1,7 @@
 [package]
 name = "finance-ingest"
 version = "0.1.0"
-description = "`finance-ingest` is the Stripe normalized-event inbox and the authoritative finance transition it implies."
+description = "`billing-worker` owns provider ingest, usage settlement, and money reconciliation for the session MVP."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,17 +17,21 @@ workspace = true
 owner = "central-finance"
 role = "deployable"
 artifact = "lambda_zip"
-deployable = "finance-ingest"
-live_suite = "aex-live-finance-ingest"
+deployable = "billing-worker"
+live_suite = "aex-live-billing-worker"
 layers = ["unit", "smoke", "e2e"]
 concerns = ["contract", "fault", "security", "performance"]
-seams = ["aws.rds_data.transaction", "aws.sqs.fifo", "aws.iam.denial", "stripe.test_mode.webhook"]
+seams = ["aws.rds_data.transaction", "aws.sqs.fifo", "aws.sqs.redrive", "aws.iam.denial", "stripe.test_mode.webhook", "stripe.test_mode.command"]
 security_tier = "money"
 risk = ["money"]
 scenarios = []
 
 [package.metadata.aex.targets]
 conformance = "unit"
+reconcile_conformance = "unit"
+reconcile_properties = "unit"
+settlement_conformance = "unit"
+settlement_properties = "unit"
 smoke = "smoke"
 resource_envelope = "e2e"
 
@@ -37,6 +41,7 @@ path = "src/main.rs"
 
 [dependencies]
 aex-finance-domain = { path = "../../crates/aex-finance-domain" }
+aex-finance-app = { path = "../../crates/aex-finance-app" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-payment-contracts = { path = "../../crates/aex-payment-contracts" }
 aex-platform-diagnostics = { path = "../../crates/aex-platform-diagnostics" }
@@ -45,17 +50,26 @@ aex-wire = { path = "../../crates/aex-wire" }
 async-trait.workspace = true
 aws-config.workspace = true
 aws-sdk-rdsdata.workspace = true
+aws-sdk-sns.workspace = true
+aws-sdk-secretsmanager.workspace = true
+aws_lambda_events.workspace = true
 blake3.workspace = true
 lambda_runtime.workspace = true
+parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+reqwest = { workspace = true, features = ["form"] }
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
+aex-usage-app = { path = "../../crates/aex-usage-app" }
+aex-usage-domain = { path = "../../crates/aex-usage-domain" }
+proptest.workspace = true
 toml.workspace = true
 
 [[test]]
@@ -69,3 +83,19 @@ path = "tests/smoke.rs"
 [[test]]
 name = "resource_envelope"
 path = "tests/resource_envelope.rs"
+
+[[test]]
+name = "settlement_conformance"
+path = "tests/settlement_conformance.rs"
+
+[[test]]
+name = "settlement_properties"
+path = "tests/settlement_properties.rs"
+
+[[test]]
+name = "reconcile_conformance"
+path = "tests/reconcile_conformance.rs"
+
+[[test]]
+name = "reconcile_properties"
+path = "tests/reconcile_properties.rs"

@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BillingUsageSettlement.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Whether this rated row has been posted to the money ledger.",
+  "enum": [
+    "pending",
+    "settled"
+  ],
+  "title": "BillingUsageSettlement",
+  "type": "string"
+}

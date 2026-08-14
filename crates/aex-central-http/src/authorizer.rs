@@ -54,30 +54,22 @@ pub const CONTEXT_KEYS: &[&str] = &[
 /// Which credential the authorizer resolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ContextPrincipalKind {
-    /// An account token minted by the device flow.
-    Account,
     /// A browser session minted by the dashboard sign-in ceremony.
     UserSession,
     /// A workspace API key.
     WorkspaceKey,
-    /// No credential at all; only the three anonymous ceremony routes admit this.
+    /// No credential at all.
     Anonymous,
 }
 
 impl ContextPrincipalKind {
     /// Every kind.
-    pub const ALL: [Self; 4] = [
-        Self::Account,
-        Self::UserSession,
-        Self::WorkspaceKey,
-        Self::Anonymous,
-    ];
+    pub const ALL: [Self; 3] = [Self::UserSession, Self::WorkspaceKey, Self::Anonymous];
 
     /// The wire spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Account => "account",
             Self::UserSession => "user_session",
             Self::WorkspaceKey => "workspace_key",
             Self::Anonymous => "anonymous",
@@ -341,7 +333,7 @@ impl CentralAuthorizerContext {
                     });
                 }
             }
-            ContextPrincipalKind::Account | ContextPrincipalKind::UserSession => {
+            ContextPrincipalKind::UserSession => {
                 if self.credential_id.is_none() {
                     return Err(ContextError::Missing("aex.credentialId"));
                 }
@@ -390,14 +382,6 @@ impl CentralAuthorizerContext {
                 workspace_id: self.workspace_id.unwrap_or_default(),
                 organization_id: self.organization_id.unwrap_or_default(),
                 scopes: self.scopes,
-            },
-            ContextPrincipalKind::Account => Principal::AccountActor {
-                user_id: self.principal_id,
-                credential: ActorCredential::AccountToken(
-                    self.credential_id.unwrap_or(self.principal_id),
-                ),
-                memberships: self.memberships.clone(),
-                token_scopes: self.scopes,
             },
             ContextPrincipalKind::UserSession => Principal::AccountActor {
                 user_id: self.principal_id,
@@ -501,7 +485,7 @@ mod tests {
     fn actor() -> BTreeMap<String, String> {
         BTreeMap::from([
             ("aex.requestId".to_owned(), "req-1".to_owned()),
-            ("aex.principalKind".to_owned(), "account".to_owned()),
+            ("aex.principalKind".to_owned(), "user_session".to_owned()),
             ("aex.principalId".to_owned(), Uuid::from_u128(1).to_string()),
             (
                 "aex.credentialId".to_owned(),
@@ -513,7 +497,7 @@ mod tests {
             ),
             (
                 "aex.scopes".to_owned(),
-                "organizations:read workspaces:read".to_owned(),
+                "account:read api_keys:read".to_owned(),
             ),
             ("aex.accountState".to_owned(), "active".to_owned()),
             ("aex.issuedAtMs".to_owned(), "1000".to_owned()),
@@ -532,7 +516,7 @@ mod tests {
                 Uuid::from_u128(7).to_string(),
             ),
             ("aex.region".to_owned(), "eu-west-1".to_owned()),
-            ("aex.scopes".to_owned(), "operations:read".to_owned()),
+            ("aex.scopes".to_owned(), "sessions:read".to_owned()),
             ("aex.accountState".to_owned(), "active".to_owned()),
             ("aex.issuedAtMs".to_owned(), "1000".to_owned()),
             ("aex.expiresAtMs".to_owned(), "2000".to_owned()),
@@ -542,7 +526,7 @@ mod tests {
     #[test]
     fn an_actor_context_binds_its_memberships_and_credential() {
         let context = CentralAuthorizerContext::parse(&actor()).expect("parses");
-        assert_eq!(context.kind, ContextPrincipalKind::Account);
+        assert_eq!(context.kind, ContextPrincipalKind::UserSession);
         assert_eq!(context.memberships.len(), 1);
         let Principal::AccountActor {
             user_id,

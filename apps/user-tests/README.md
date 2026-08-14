@@ -27,16 +27,46 @@ plane, and they do not prove publication or live behavior.
 
 ## Current scope
 
-`USER_SCENARIOS` contains 47 planned scenario identities across the `packed`,
-`local`, `live`, `browser`, `money`, and `operator` suites. At present, the two
-packed SDK install scenarios above have real blackbox journey bodies. The
-remaining registered tests validate scenario ownership and metadata only; they
-must not be treated as journey, network, browser, money, or operator coverage.
+`USER_SCENARIOS` contains 58 scenario identities across the `packed`, `local`,
+`live`, and `browser` suites. Packed and local tests exercise built artifacts
+without a plane. The live file contains deployed-dev journey bodies for
+latest-only files and uploads, frozen mounts, `storage.persist`, message and
+telemetry NDJSON streams, native structured output, sandbox opt-out,
+subagents, both MCP transports, the seven provider candidates, and essential
+billing, explicit termination, and a 24-turn rolling-context journey. Browser
+rows remain ownership metadata until the dashboard runner drives them.
 
 `resolveArtifactSelection` accepts either a paired SDK tarball/native CLI
 archive or identical exact SDK/CLI versions, and rejects partial or mixed
-selection families. Wiring those external selections into journey execution,
-native CLI archive testing, and deployed-plane execution remains outstanding.
+selection families. Wiring those external selections into every journey and
+native CLI archive testing remains outstanding; deployed-dev bodies execute
+directly when their evidence environment is supplied.
+
+## Dev live journeys
+
+Run the deployed journeys only against a disposable dev evidence account:
+
+```bash
+bun run test:user:live
+```
+
+The common inputs are `AEX_API_URL`, `AEX_API_KEY`,
+`AEX_LIVE_PROVIDER`, `AEX_LIVE_MODEL`, `AEX_LIVE_PROVIDER_API_KEY`, and
+`AEX_LIVE_TOPUP_AMOUNT_CENTS`. The seven-provider journey reads
+`AEX_LIVE_PROVIDER_CASES`, a JSON array of `{ provider, model, apiKey }` rows.
+`AEX_LIVE_LONG_CONTEXT_TURNS` optionally selects 12–64 turns and defaults to
+24.
+
+Remote MCP uses `AEX_LIVE_REMOTE_MCP_URL`, optional JSON
+`AEX_LIVE_REMOTE_MCP_HEADERS`, and the
+`AEX_LIVE_REMOTE_MCP_{SERVER,TOOL,ARGUMENTS,EXPECTED}` fixture values. Sandbox
+MCP uses JSON `AEX_LIVE_SANDBOX_MCP_TRANSPORT` plus the equivalent
+`AEX_LIVE_SANDBOX_MCP_*` values. Arguments and the sandbox transport are JSON;
+secrets stay in the evidence environment and never in source.
+
+Set `AEX_RELEASE_EVIDENCE_MODE=inventory` to compile and enumerate every live
+body without contacting a plane. A real evidence run also supplies the release
+hygiene variables consumed by the cleanup ledger.
 
 Useful focused commands are:
 
@@ -48,5 +78,6 @@ bun run test:user
 
 `test:user:smoke` checks the scenario and artifact-selection registries.
 `test:user:offline` runs the registry plus packed and local tests. `test:user`
-runs every currently committed test file; it does not turn registry-only live
-rows into live coverage.
+runs the offline and browser-owned files. Live tests are a separate explicit
+command because they create sessions, file state, Stripe hosted checkouts, and
+provider traffic in dev.

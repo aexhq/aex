@@ -1,7 +1,7 @@
 ---
-title: Central-finance Rust-native rewrite handoff
-description: Implemented authority, exact rating, central finance schema, provider edges, deployable composition, evidence, and remaining peer requests.
-status: accepted
+title: Historical central-finance Rust-native rewrite handoff
+description: Point-in-time record of the superseded central-finance rewrite implementation and its former paths.
+status: superseded historical record — session-plane clean cut 2026-08-14
 keywords:
   - finance
   - ledger
@@ -16,6 +16,14 @@ related:
 ---
 
 # Central-finance rewrite handoff
+
+> **Superseded (2026-08-14).** This point-in-time rewrite record deliberately
+> names finance packages, Stripe edges, schema tooling, rate authorities, and
+> release units that the session-plane clean cut later removed or replaced. It
+> is retained for provenance, not as current implementation guidance. The
+> current public launch surface is the essential prepaid billing slice in
+> [`../architecture.md`](../architecture.md); generated routes and
+> `release/units.toml` are the executable authorities.
 
 Plan of record: `references/rust-native-rewrite-2026-07-31/plans/03-central-finance-schema.md` in the parent workspace.
 

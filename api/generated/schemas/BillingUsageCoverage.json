@@ -1,0 +1,31 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BillingUsageCoverage.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The trustworthy completeness boundary for one usage answer.",
+  "properties": {
+    "completeThrough": {
+      "description": "All accepted facts at or before this instant are represented.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "hasGap": {
+      "description": "Whether a poisoned or missing fact prevents complete settlement.",
+      "type": "boolean"
+    },
+    "includesThrough": {
+      "description": "No fact after this instant is represented.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    }
+  },
+  "required": [
+    "completeThrough",
+    "hasGap",
+    "includesThrough"
+  ],
+  "title": "BillingUsageCoverage",
+  "type": "object"
+}

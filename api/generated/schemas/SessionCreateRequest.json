@@ -2,11 +2,27 @@
   "$id": "https://schemas.aex.dev/v1/SessionCreateRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Create an eight-hour multi-turn session with one explicitly pinned BYOK provider credential.",
+  "description": "Create a durable session with a write-only BYOK key, frozen file/MCP config and a default-on eager sandbox.",
   "properties": {
-    "compute": {
-      "$ref": "aex:schema:SessionComputeRequest",
-      "description": "The baseline compute shape."
+    "expiresAt": {
+      "description": "Optional earlier expiry within the launch maximum.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "type": "string",
+      "x-aex-time": "rfc3339-ms"
+    },
+    "maxSpendCents": {
+      "description": "Session prepaid reservation ceiling.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string",
+      "x-aex-money": "cents"
+    },
+    "mcpServers": {
+      "description": "Remote and sandbox MCP definitions.",
+      "items": {
+        "$ref": "aex:schema:McpServer"
+      },
+      "maxItems": 16,
+      "type": "array"
     },
     "metadata": {
       "additionalProperties": {
@@ -18,47 +34,39 @@
         ],
         "x-aex-float": true
       },
-      "description": "Caller-defined labels.",
+      "description": "Caller labels.",
       "maxProperties": 64,
       "type": "object"
     },
     "model": {
-      "description": "The exact provider-native model id.",
+      "description": "Current admitted provider-native model id.",
       "maxLength": 256,
       "minLength": 1,
       "type": "string"
     },
-    "network": {
-      "$ref": "aex:schema:SessionNetworkRequest",
-      "description": "The guest network policy."
-    },
-    "packages": {
-      "description": "Packages to pre-install.",
-      "items": {
-        "$ref": "aex:schema:PackageRequest"
-      },
-      "maxItems": 64,
-      "type": "array"
-    },
     "provider": {
       "$ref": "aex:schema:ProviderId",
-      "description": "The direct BYOK provider."
+      "description": "Qualified official provider family."
     },
-    "providerCredentialId": {
-      "description": "The exact BYOK binding; the platform never guesses between bindings.",
-      "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
-      "type": "string",
-      "x-aex-id": "provider_credential"
+    "providerApiKey": {
+      "description": "Write-only session-scoped key; encrypted and never returned.",
+      "maxLength": 8192,
+      "minLength": 8,
+      "type": "string"
     },
     "registered": {
       "$ref": "aex:schema:SessionRegisteredSelection",
-      "description": "Opaque workspace files to mount."
+      "description": "Files to resolve and freeze."
+    },
+    "sandbox": {
+      "$ref": "aex:schema:SessionSandboxRequest",
+      "description": "Defaults enabled and prepares asynchronously."
     }
   },
   "required": [
     "model",
     "provider",
-    "providerCredentialId"
+    "providerApiKey"
   ],
   "title": "SessionCreateRequest",
   "type": "object"

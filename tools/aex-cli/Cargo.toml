@@ -38,11 +38,18 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 aex-wire = { path = "../../crates/aex-wire" }
+base64.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
+futures.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-std", "io-util", "macros", "rt-multi-thread", "signal"] }
+uuid.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

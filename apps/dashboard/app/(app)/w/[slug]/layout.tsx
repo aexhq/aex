@@ -10,10 +10,10 @@ export default async function WorkspaceLayout({
   params,
 }: Readonly<{ children: ReactNode; params: Promise<{ slug: string }> }>) {
   const { slug } = await params;
-  const { organization } = await requireWorkspace(slug);
+  await requireWorkspace(slug);
   return (
     <>
-      <WorkspaceNav slug={slug} organizationSlug={organization?.slug ?? null} />
+      <WorkspaceNav slug={slug} />
       <main id="main" className="frame">{children}</main>
     </>
   );

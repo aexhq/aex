@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ResponseFormatKind.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Requested final response format.",
+  "enum": [
+    "text",
+    "json_schema"
+  ],
+  "title": "ResponseFormatKind",
+  "type": "string"
+}

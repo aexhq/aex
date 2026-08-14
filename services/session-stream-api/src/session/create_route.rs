@@ -134,7 +134,14 @@ async fn derive_runtime_authority(
     prepared: &PreparedSessionCreate,
     winner: &CreatePreparation,
 ) -> WireResult<()> {
-    let definition = prepared.pinned_runtime.definition();
+    let Some(definition) = prepared
+        .pinned_runtime
+        .as_ref()
+        .map(PinnedRuntime::definition)
+    else {
+        debug_assert!(winner.generation.is_none());
+        return Ok(());
+    };
     if let Err(error) = aex_runtime_activity_dynamodb::derive::derive_generation_rows(
         &routes.shared.runtime_activity,
         definition,
@@ -153,9 +160,29 @@ async fn establish_readiness(
     preparations: &CreatePreparationStore,
     winner: &CreatePreparation,
 ) -> WireResult<ReadySessionLaunch> {
+    if winner.generation.is_none() {
+        qualify_mcp_servers(routes, winner).await?;
+        let root = persist_root_started(routes, preparations, winner, winner.prepared_at).await?;
+        return Ok(ReadySessionLaunch {
+            generation: None,
+            launched_at: winner.prepared_at,
+            materialized_files: Vec::new(),
+            root_started: RootStartedEvidence {
+                agent: winner.root_agent,
+                session: winner.session,
+                generation: None,
+                occurred_at: root.occurred_at,
+                revision: AgentRevision(root.revision),
+                journal_tail: JournalSeq(root.journal_tail),
+                journal_tail_hash: root.journal_tail_hash,
+            },
+        });
+    }
     let first_ready = ensure_initial_readiness(routes, winner).await?;
     let materialized = materialize_initial_files(routes, winner).await?;
+    qualify_mcp_servers(routes, winner).await?;
     let ready = confirm_readiness(routes, winner, &first_ready).await?;
+    suspend_prepared_generation(routes, winner).await?;
     let root = persist_root_started(routes, preparations, winner, ready.observed_at).await?;
     Ok(ReadySessionLaunch {
         generation: winner.generation,
@@ -176,14 +203,70 @@ async fn establish_readiness(
     })
 }
 
+async fn qualify_mcp_servers(routes: &Routes, winner: &CreatePreparation) -> WireResult<()> {
+    let config: aex_brain_domain::wire_pending::ResolvedAgentConfig =
+        serde_json::from_slice(&winner.resolved_config)
+            .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+    if config.mcp_servers.is_empty() {
+        return Ok(());
+    }
+    if let Err(error) = routes
+        .shared
+        .mcp_qualifier
+        .qualify(
+            winner.organization,
+            winner.workspace,
+            winner.session,
+            winner.generation,
+            &config.mcp_servers,
+            winner.prepared_at,
+        )
+        .await
+    {
+        if winner.generation.is_some() {
+            compensate(routes, winner, "MCP qualification", &error).await;
+        }
+        tracing::warn!(
+            target: "aex::session_telemetry",
+            event = "sandbox_progress_failed",
+            progress = "qualifying_sandbox_mcp",
+            session = %winner.session,
+        );
+        return Err(WireError::new(ErrorCode::InternalError));
+    }
+    Ok(())
+}
+
+async fn suspend_prepared_generation(
+    routes: &Routes,
+    winner: &CreatePreparation,
+) -> WireResult<()> {
+    let generation = winner
+        .generation
+        .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
+    if let Err(error) = routes
+        .shared
+        .live_files
+        .suspend_ready(winner.session, generation)
+        .await
+    {
+        compensate(routes, winner, "initial sandbox suspension", &error).await;
+        return Err(WireError::new(ErrorCode::InternalError));
+    }
+    Ok(())
+}
+
 async fn ensure_initial_readiness(
     routes: &Routes,
     winner: &CreatePreparation,
 ) -> WireResult<aex_brain_hands::LiveGenerationReady> {
+    let generation = winner
+        .generation
+        .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
     let ready = match routes
         .shared
         .live_files
-        .ensure_ready(winner.session, winner.generation)
+        .ensure_ready(winner.session, generation)
         .await
     {
         Ok(ready) => ready,
@@ -225,13 +308,16 @@ async fn confirm_readiness(
     winner: &CreatePreparation,
     first_ready: &aex_brain_hands::LiveGenerationReady,
 ) -> WireResult<aex_brain_hands::LiveGenerationReady> {
+    let generation = winner
+        .generation
+        .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
     // A final authenticated observation proves that the generation remained
     // reachable after the last guest rename. Its observation time is the
     // truthful occurrence time for the durable root start.
     match routes
         .shared
         .live_files
-        .ensure_ready(winner.session, winner.generation)
+        .ensure_ready(winner.session, generation)
         .await
     {
         Ok(ready)
@@ -421,14 +507,18 @@ fn private_preparation(
                     size_bytes: file
                         .size_bytes()
                         .map_err(|error| create_app_failure(&error))?,
-                    mount_path: file.value.mount_path.clone(),
+                    mount_path: file.mount_path.clone(),
                     media_type: file.value.media_type.clone(),
                     mode: file.value.mode,
                 })
             })
             .collect::<WireResult<Vec<_>>>()?,
         root_record,
-        runtime_definition: to_jcs_bytes(prepared.pinned_runtime.definition())
+        runtime_definition: prepared
+            .pinned_runtime
+            .as_ref()
+            .map(|runtime| to_jcs_bytes(runtime.definition()))
+            .transpose()
             .map_err(|_| WireError::new(ErrorCode::InternalError))?,
         resolved_config: prepared.resolved.document().as_bytes().to_vec(),
         metadata: prepared
@@ -455,15 +545,21 @@ fn rehydrate(
     winner: &CreatePreparation,
     command: &CreateSession,
 ) -> WireResult<PreparedSessionCreate> {
-    let definition = serde_json::from_slice(winner.runtime_definition.as_slice())
-        .map_err(|_| WireError::new(ErrorCode::InternalError))?;
-    let pinned_runtime = PinnedRuntime::new(
-        winner.session,
-        winner.workspace,
-        winner.organization,
-        definition,
-    )
-    .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+    let pinned_runtime = winner
+        .runtime_definition
+        .as_deref()
+        .map(|bytes| {
+            let definition = serde_json::from_slice(bytes)
+                .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+            PinnedRuntime::new(
+                winner.session,
+                winner.workspace,
+                winner.organization,
+                definition,
+            )
+            .map_err(|_| WireError::new(ErrorCode::InternalError))
+        })
+        .transpose()?;
     let resolved_document = std::str::from_utf8(&winner.resolved_config)
         .ok()
         .and_then(|text| CanonicalJson::parse(text).ok())
@@ -493,7 +589,6 @@ fn rehydrate(
     };
     if config.provider != resolved.provider()
         || config.model.as_str() != resolved.model()
-        || config.catalog_pin.to_wire() != resolved_public.catalog_revision
         || config.hands_generation != winner.generation
         || config.limits_revision == 0
     {
@@ -506,6 +601,7 @@ fn rehydrate(
             name: file.name.clone(),
             revision: file.revision,
             etag: file.etag.clone(),
+            mount_path: file.mount_path.clone(),
             value: models::RegisteredFileRead {
                 content: models::ContentRef {
                     sha256: file.content,
@@ -513,7 +609,6 @@ fn rehydrate(
                 },
                 media_type: file.media_type.clone(),
                 mode: file.mode,
-                mount_path: file.mount_path.clone(),
             },
         })
         .collect();
@@ -531,9 +626,8 @@ fn rehydrate(
         },
         resolved,
         limits_revision: config.limits_revision,
+        catalog_revision: config.catalog_pin.to_wire(),
         agent_execution: AgentExecutionLimits {
-            max_turns: config.limits.max_turns,
-            max_steps_per_turn: config.limits.max_steps_per_turn,
             turn_deadline_ms: config.limits.turn_deadline_ms,
             max_depth: config.limits.max_depth,
             max_fanout: config.limits.max_fanout,
@@ -550,6 +644,7 @@ fn rehydrate(
         materialized_agents: winner.materialized_agents,
         metadata,
         initial_files,
+        mcp_servers: config.mcp_servers.clone(),
         prepared_at: winner.prepared_at,
     })
 }
@@ -582,10 +677,16 @@ async fn compensate(
     stage: &'static str,
     cause: &impl std::fmt::Display,
 ) {
+    let Some(generation) = winner.generation else {
+        eprintln!(
+            "session-stream-api: create failed during {stage} ({cause}); no sandbox generation existed"
+        );
+        return;
+    };
     if let Err(error) = routes
         .shared
         .live_files
-        .abort_unpublished(winner.session, winner.generation)
+        .abort_unpublished(winner.session, generation)
         .await
     {
         eprintln!(

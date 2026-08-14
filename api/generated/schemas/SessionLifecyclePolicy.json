@@ -2,34 +2,31 @@
   "$id": "https://schemas.aex.dev/v1/SessionLifecyclePolicy.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The immutable automatic lifecycle behavior applied to this session.",
+  "description": "Immutable public session bounds; sandbox suspension is an internal lifecycle.",
   "properties": {
-    "idleSuspendAfterSeconds": {
-      "description": "Idle sessions automatically suspend after exactly three minutes.",
-      "maximum": 180,
-      "minimum": 180,
-      "type": "integer"
-    },
     "maximumLifetimeSeconds": {
-      "description": "The provider generation expires exactly eight hours after `launchedAt`.",
+      "description": "Session lifetime, never more than eight hours at launch.",
       "maximum": 28800,
-      "minimum": 28800,
+      "minimum": 1,
       "type": "integer"
     },
-    "resumeOnLiveFileAccess": {
-      "description": "A live-file request automatically resumes this same suspended generation.",
-      "type": "boolean"
+    "maximumSubagentDepth": {
+      "description": "Root depth is zero; children may reach depth three.",
+      "maximum": 3,
+      "minimum": 3,
+      "type": "integer"
     },
-    "resumeOnMessage": {
-      "description": "A message automatically resumes this same suspended generation.",
-      "type": "boolean"
+    "maximumSubagents": {
+      "description": "Exactly 12 non-root identities over the session lifetime.",
+      "maximum": 12,
+      "minimum": 12,
+      "type": "integer"
     }
   },
   "required": [
-    "idleSuspendAfterSeconds",
     "maximumLifetimeSeconds",
-    "resumeOnLiveFileAccess",
-    "resumeOnMessage"
+    "maximumSubagentDepth",
+    "maximumSubagents"
   ],
   "title": "SessionLifecyclePolicy",
   "type": "object"

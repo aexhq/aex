@@ -208,8 +208,7 @@ async fn resolve(config: &Config) -> Result<Adapters, RuntimeControlWorkerRunErr
             "runtime-lifecycle-queue",
             config.lifecycle_queue_url.as_str(),
         ),
-        ("usage-compute-sink", config.compute_queue_url.as_str()),
-        ("usage-storage-sink", config.storage_queue_url.as_str()),
+        ("usage-rating-sink", config.rating_queue_url.as_str()),
     ] {
         sqs.get_queue_attributes()
             .queue_url(queue)
@@ -244,12 +243,12 @@ async fn resolve(config: &Config) -> Result<Adapters, RuntimeControlWorkerRunErr
         provider: Some(Arc::new(provider)),
         compute: Some(Arc::new(SqsFactDraftSink::new(
             sqs.clone(),
-            config.compute_queue_url.clone(),
+            config.rating_queue_url.clone(),
             Category::Compute,
         ))),
         storage: Some(Arc::new(SqsFactDraftSink::new(
             sqs,
-            config.storage_queue_url.clone(),
+            config.rating_queue_url.clone(),
             Category::Storage,
         ))),
     })
@@ -439,12 +438,8 @@ mod tests {
                 "https://sqs.eu-west-1.amazonaws.com/1/lifecycle".to_owned(),
             ),
             (
-                "AEX_USAGE_COMPUTE_QUEUE_URL",
-                "https://sqs.eu-west-1.amazonaws.com/1/compute".to_owned(),
-            ),
-            (
-                "AEX_USAGE_STORAGE_QUEUE_URL",
-                "https://sqs.eu-west-1.amazonaws.com/1/storage".to_owned(),
+                "AEX_USAGE_RATING_QUEUE_URL",
+                "https://sqs.eu-west-1.amazonaws.com/1/usage-rating.fifo".to_owned(),
             ),
             (
                 "AEX_MICROVM_CONTROL_ENDPOINT",

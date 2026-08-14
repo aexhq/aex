@@ -137,6 +137,13 @@ export function resolvePassthrough(
     }
     headers.set("Idempotency-Key", key);
   }
+  if (descriptor.idempotency === "operation_id") {
+    const operationId = request.headers.get("aex-operation-id");
+    if (!operationId || !SAFE_PARAMETER.test(operationId)) {
+      return refuse(400, "invalid_request", "this operation requires an Aex-Operation-Id header");
+    }
+    headers.set("Aex-Operation-Id", operationId);
+  }
 
   let bytes: Uint8Array | undefined;
   if (body !== null && body.byteLength > 0) {
@@ -187,6 +194,43 @@ export async function executePassthrough(resolution: Resolution): Promise<Respon
   }
   const transport = transportFor(resolution.descriptor.plane, resolution.region);
   const signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+  if (resolution.descriptor.transport === "ndjson") {
+    const encoder = new TextEncoder();
+    let upstream;
+    try {
+      upstream = await transport.stream<unknown>({ ...resolution.request, signal });
+    } catch {
+      return errorResponse(504, "upstream_error", "the upstream stream did not answer in time");
+    }
+    if (upstream.status >= 400 || !upstream.frames) {
+      const error = apiErrorFromResponse(
+        resolution.descriptor.id,
+        upstream.status,
+        upstream.error,
+        upstream.headers,
+      );
+      return errorResponse(upstream.status, error.code, error.message, error.requestId);
+    }
+    const iterator = upstream.frames[Symbol.asyncIterator]();
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const next = await iterator.next();
+          if (next.done) controller.close();
+          else controller.enqueue(encoder.encode(`${JSON.stringify(next.value)}\n`));
+        } catch (error) {
+          controller.error(error);
+        }
+      },
+      async cancel() {
+        await iterator.return?.();
+      },
+    });
+    return new Response(body, {
+      status: 200,
+      headers: { "Cache-Control": "private, no-store", "Content-Type": "application/x-ndjson" },
+    });
+  }
   let response;
   try {
     response = await transport.execute<unknown>({ ...resolution.request, signal });

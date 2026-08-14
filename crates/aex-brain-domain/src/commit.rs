@@ -10,7 +10,7 @@ use aex_wire::ids::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::budget::{BudgetDelta, BudgetGrant};
+use crate::budget::{BudgetDelta, BudgetGrant, Dimension};
 use crate::child::{ChildOutcome, ChildState, QueuedReason};
 use crate::effect::{DispatchEvidence, EffectClass, EffectKind, SettledOutcome};
 use crate::ids::{
@@ -18,7 +18,7 @@ use crate::ids::{
     IdempotencyKey, JoinId, JournalSeq, OwnerToken, Timestamp, WakeId, WorkShard,
 };
 use crate::journal::{FinishReason, JournalRecord, ParkReason};
-use crate::wire_pending::JoinMode;
+use crate::wire_pending::{ContentBlockRef, JoinMode, ResolvedAgentConfig};
 
 /// The most actions one `DynamoDB` transaction may carry.
 pub const MAX_TRANSACTION_ACTIONS: usize = 100;
@@ -38,11 +38,9 @@ pub const SMALL_ITEM_BYTES: usize = 512;
 
 /// The most children one spawn transaction admits.
 ///
-/// Derived, not guessed: a child costs a control put, an index put and a queued-index put;
-/// the page also carries the session guard, parent control, fanout intent and session-budget
-/// update, so `3n + 4 <= 100` gives `n = 32`. `F = 128` is realized as four idempotent
-/// pages.
-pub const SPAWN_PAGE_CHILDREN: u32 = 32;
+/// DynamoDB could carry more, but the MVP permits only twelve non-root identities
+/// for the entire session. One admission therefore always fits one transaction.
+pub const SPAWN_PAGE_CHILDREN: u32 = 12;
 
 /// Proof of ownership, carried by every store write.
 ///
@@ -110,6 +108,21 @@ pub enum EffectWrite {
     },
 }
 
+/// Immutable bootstrap facts written with a new child identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChildBootstrap {
+    /// The parent's frozen session configuration. Subagents never elect a new
+    /// provider credential, catalog, or Hands generation.
+    pub config: Box<ResolvedAgentConfig>,
+    /// Initial parent message, already ordered through the mailbox vocabulary.
+    pub input: Vec<ContentBlockRef>,
+    /// Child lineage depth, with the session root at zero.
+    pub depth: u16,
+    /// The child's independent local execution ceilings. The shared session
+    /// identity ceiling remains on the session budget row.
+    pub budget: BudgetGrant,
+}
+
 /// A child write inside a decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "write", rename_all = "snake_case")]
@@ -126,6 +139,8 @@ pub enum ChildWrite {
         join: JoinId,
         /// Which limit is binding, when it starts queued.
         queued_reason: Option<QueuedReason>,
+        /// Frozen child configuration and initial mailbox input.
+        bootstrap: Box<ChildBootstrap>,
     },
     /// Move a child's durable state without terminalizing it.
     Transition {
@@ -142,6 +157,11 @@ pub enum ChildWrite {
         child: AgentId,
         /// How it ended.
         outcome: ChildOutcome,
+    },
+    /// Ask an already-created child to stop at its next fenced decision.
+    RequestStop {
+        /// Which direct child.
+        child: AgentId,
     },
     /// Commit the intent for a fanout larger than one page.
     FanoutIntent {
@@ -391,6 +411,22 @@ pub enum EnvelopeViolation {
     /// One decision attempted to create the same identity more than once.
     #[error("a child identity appears more than once in one decision")]
     DuplicateChildIdentity,
+    /// One decision exceeded the hard session-lifetime identity ceiling.
+    #[error("spawned {spawned} children in one decision; at most {maximum} are permitted")]
+    SubagentLifetimeLimitExceeded {
+        /// Child identities in this decision.
+        spawned: u64,
+        /// The hard MVP ceiling.
+        maximum: u64,
+    },
+    /// A child bootstrap crossed the hard lineage boundary.
+    #[error("child bootstrap depth {depth} is outside 1..={maximum}")]
+    InvalidChildBootstrap {
+        /// Requested child depth.
+        depth: u16,
+        /// Hard runtime depth ceiling.
+        maximum: u16,
+    },
     /// Hands effects must bind exactly one canonical generation and other effects must not.
     #[error("effect kind {kind:?} has an invalid runtime generation binding")]
     InvalidGenerationBinding {
@@ -530,16 +566,14 @@ impl DecisionCommit {
         // One session-head guard (or boundary write) and one control update are always
         // present. For a boundary, `run` counts the run row and `session` counts the
         // internal outbox because the head write already occupies the fixed guard slot.
-        // A spawn costs three items, everything else costs one.
+        // A spawn carries its index, control and two bootstrap journal rows. A
+        // capacity-deferred child also carries one queued-index row.
         let spawn_actions: usize = self
             .children
             .iter()
-            .map(|write| {
-                if matches!(write, ChildWrite::Spawn { .. }) {
-                    3
-                } else {
-                    1
-                }
+            .map(|write| match write {
+                ChildWrite::Spawn { queued_reason, .. } => 4 + usize::from(queued_reason.is_some()),
+                _ => 1,
             })
             .sum();
         2_usize
@@ -548,7 +582,8 @@ impl DecisionCommit {
             .saturating_add(usize::from(!self.session_budget.is_empty()))
             .saturating_add(spawn_actions)
             .saturating_add(self.joins.len())
-            .saturating_add(self.wakes.len())
+            // A durable wake and its dedupe claim are two physical actions.
+            .saturating_add(self.wakes.len().saturating_mul(2))
             .saturating_add(usize::from(self.retired_wake.is_some()))
             .saturating_add(self.events.len())
             .saturating_add(self.messages.len().saturating_mul(2))
@@ -615,6 +650,22 @@ impl DecisionCommit {
             .collect::<std::collections::BTreeSet<_>>();
         if distinct.len() as u64 != spawned {
             return Err(EnvelopeViolation::DuplicateChildIdentity);
+        }
+        if spawned > crate::budget::MAX_SUBAGENTS_PER_SESSION {
+            return Err(EnvelopeViolation::SubagentLifetimeLimitExceeded {
+                spawned,
+                maximum: crate::budget::MAX_SUBAGENTS_PER_SESSION,
+            });
+        }
+        for write in &self.children {
+            if let ChildWrite::Spawn { bootstrap, .. } = write
+                && !(1..=crate::budget::MAX_SUBAGENT_DEPTH).contains(&bootstrap.depth)
+            {
+                return Err(EnvelopeViolation::InvalidChildBootstrap {
+                    depth: bootstrap.depth,
+                    maximum: crate::budget::MAX_SUBAGENT_DEPTH,
+                });
+            }
         }
         for effect in &self.effects {
             if let EffectWrite::Prepare {
@@ -692,8 +743,8 @@ pub struct AmbiguityDiagnostic {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChildWrite, ControlUpdate, DecisionCommit, EnvelopeViolation, FenceGuardRef,
-        MAX_TRANSACTION_ACTIONS, SPAWN_PAGE_CHILDREN, event_seq, fanout_pages,
+        ChildBootstrap, ChildWrite, ControlUpdate, DecisionCommit, EnvelopeViolation,
+        FenceGuardRef, MAX_TRANSACTION_ACTIONS, SPAWN_PAGE_CHILDREN, event_seq, fanout_pages,
     };
     use crate::budget::DimensionVector;
     use crate::ids::{
@@ -701,6 +752,8 @@ mod tests {
         SessionId,
     };
     use crate::journal::{FinishReason, JournalRecord};
+    use crate::wire_pending::{AgentLimits, ProviderId, ResolvedAgentConfig, SessionCredentialPin};
+    use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7};
     use uuid::Uuid;
 
     fn guard() -> FenceGuardRef {
@@ -749,12 +802,45 @@ mod tests {
     }
 
     fn spawn(ordinal: u32) -> ChildWrite {
+        let model = aex_model_catalog::fixture::qualified_entry(
+            ProviderId::Deepseek,
+            "deepseek-chat",
+            aex_model_catalog::document::CapabilitySet::default(),
+        );
         ChildWrite::Spawn {
             child: AgentId(Uuid::from_u128(u128::from(ordinal) + 100)),
             ordinal,
             grant: DimensionVector::uniform(1),
             join: JoinId(Uuid::from_u128(7)),
             queued_reason: None,
+            bootstrap: Box::new(ChildBootstrap {
+                config: Box::new(ResolvedAgentConfig {
+                    catalog_pin: model.catalog(),
+                    provider: ProviderId::Deepseek,
+                    credential: SessionCredentialPin::new(
+                        ProviderCredentialId::from_uuid7(Uuid7::compose(1, [8; 10])),
+                        1,
+                        1,
+                        0,
+                    )
+                    .expect("non-zero fixture pin"),
+                    model: model.model().clone(),
+                    system: None,
+                    tool_manifest_digests: Vec::new(),
+                    mcp_servers: Vec::new(),
+                    hands_generation: Some(GenerationId::from_uuid7(Uuid7::compose(1, [9; 10]))),
+                    limits_revision: 1,
+                    limits: AgentLimits {
+                        turn_deadline_ms: 1_000,
+                        max_run_duration_ms: 10_000,
+                        max_depth: 3,
+                        max_fanout: 12,
+                    },
+                }),
+                input: Vec::new(),
+                depth: 1,
+                budget: DimensionVector::uniform(1),
+            }),
         }
     }
 
@@ -774,13 +860,19 @@ mod tests {
     }
 
     #[test]
-    fn a_decision_over_the_action_ceiling_is_rejected_before_aws_sees_it() {
+    fn a_decision_over_the_lifetime_ceiling_is_rejected_before_aws_sees_it() {
         let children: Vec<ChildWrite> = (0..40).map(spawn).collect();
         let error = commit(Vec::new(), children)
             .validate()
-            .expect_err("40 children is 121 actions");
+            .expect_err("40 children exceeds the session lifetime ceiling");
         assert!(
-            matches!(error, EnvelopeViolation::TooManyActions { actions } if actions > MAX_TRANSACTION_ACTIONS),
+            matches!(
+                error,
+                EnvelopeViolation::SubagentLifetimeLimitExceeded {
+                    spawned: 40,
+                    maximum: 12
+                }
+            ),
             "{error:?}"
         );
     }
@@ -880,9 +972,8 @@ mod tests {
     fn a_fanout_pages_into_whole_transactions() {
         assert_eq!(fanout_pages(0), 0);
         assert_eq!(fanout_pages(1), 1);
-        assert_eq!(fanout_pages(32), 1);
-        assert_eq!(fanout_pages(33), 2);
-        assert_eq!(fanout_pages(128), 4);
+        assert_eq!(fanout_pages(SPAWN_PAGE_CHILDREN), 1);
+        assert_eq!(fanout_pages(SPAWN_PAGE_CHILDREN + 1), 2);
     }
 
     #[test]

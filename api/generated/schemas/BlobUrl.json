@@ -1,0 +1,19 @@
+{
+  "$id": "https://schemas.aex.dev/v1/BlobUrl.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "An HTTPS source fetched asynchronously under the platform SSRF, redirect, time and size policy.",
+  "properties": {
+    "url": {
+      "description": "The exact initial HTTPS URL.",
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "url"
+  ],
+  "title": "BlobUrl",
+  "type": "object"
+}

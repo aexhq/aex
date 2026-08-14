@@ -130,7 +130,6 @@ pub fn session_fixture() -> Session {
     let resolved = ResolvedConfigAuthority::new(
         CanonicalJson::parse(
             r#"{
-                "catalogRevision":"mc1_0000000000000000000000000000000000000000000000000000000000000000",
                 "compute":{
                     "baseline":{"memoryMiB":1024,"vcpus":1.0},
                     "endpointBandwidthMBps":100,
@@ -140,17 +139,17 @@ pub fn session_fixture() -> Session {
                     "size":"1gb"
                 },
                 "lifecycle":{
-                    "idleSuspendAfterSeconds":180,
                     "maximumLifetimeSeconds":28800,
-                    "resumeOnLiveFileAccess":true,
-                    "resumeOnMessage":true
+                    "maximumSubagentDepth":3,
+                    "maximumSubagents":12
                 },
+                "mcpServerNames":[],
                 "model":"gpt-test",
                 "network":{"hands":{"mode":"none"}},
                 "packages":[],
                 "provider":"openai",
-                "providerCredentialId":"pcr_01h455vb4pex5vsknk084sn02q",
-                "registered":{}
+                "registered":{"mounts":[]},
+                "sandboxEnabled":true
             }"#,
         )
         .expect("canonical fixture config"),
@@ -175,7 +174,7 @@ pub fn session_fixture() -> Session {
         mutation_guard: None,
         root_agent: id::<AgentId>(4),
         generation: Some(generation),
-        pinned_runtime,
+        pinned_runtime: Some(pinned_runtime),
         provider_credential: crate::ProviderCredentialPin {
             credential: aex_wire::ids::ProviderCredentialId::parse(
                 "pcr_01h455vb4pex5vsknk084sn02q",

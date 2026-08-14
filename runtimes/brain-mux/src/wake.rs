@@ -10,11 +10,10 @@
 //! | --- | --- | --- |
 //! | `WakeQueue` | `aex_brain_store_dynamodb::SqsWakeQueue` | real, over the configured queue and the `regional-work` due index |
 //! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_dynamodb::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
-//! | `ToolPort` | injected production router | startup refuses unless all four coarse routes have concrete executors |
+//! | `ToolPort` | Brain-inline tools plus the placed ToolMux service | activation never receives a concrete executor reference |
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
 //! | `ProviderPort` | regional custody + KMS + six-provider router, or explicit startup refusal | dispatch uses the immutable session pin and ticket-scoped tenant authority; registration remains owned by the secret API |
 //! | `CatalogPort` | release-bound `VerifiedCatalogPort` | the complete retained collection verifies before a port exists |
-//! | `HandsPort` | `HandsAdapter` over `ProductionHandsBackend` | shares the runtime store and `MicroVM` client with the runtime-control engine |
 //!
 //! Every refusal is `DispatchProof::NotSent` and carries the name of the crate that owes the
 //! implementation. None of them is a stub: a stub would let an activation appear to make
@@ -35,8 +34,7 @@ use aex_brain_app::kernel::{ActivationRegistry, DrainGate, FoldCache, PermitKind
 #[cfg(test)]
 use aex_brain_app::ports::StoreError;
 use aex_brain_app::ports::{
-    BoxFuture, CatalogPort, ClockPort, HandsError, HandsPort, IdPort, ProviderPort, SteadyInstant,
-    ToolPort,
+    BoxFuture, CatalogPort, ClockPort, IdPort, ProviderPort, SteadyInstant, ToolPort,
 };
 use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::effect::EffectKind;
@@ -72,9 +70,6 @@ use aex_brain_tool_catalog::readiness::{
 };
 use aex_brain_tool_catalog::router::{CompositeToolRouter, ToolExecutor};
 use aex_brain_tool_catalog::wire_pending::ExecutorRoute as CatalogExecutorRoute;
-use aex_runtime_control::store::{OpenEffectCounter, PageBudget, RuntimeActivityStore};
-use aex_runtime_control::usage::UsageFactSink;
-use aex_runtime_control_aws::worker::{Pace, RuntimeControl, RuntimePorts, RuntimeSettings};
 
 /// Historical refusal used by the explicit unbound-store fixture.
 ///
@@ -97,23 +92,8 @@ pub const TOOL_EXECUTORS_ABSENT: &str = "one or more production tool executors a
 pub const BRAIN_INLINE_EXECUTOR_ABSENT: &str =
     "Brain-inline control, park, and subagent scheduling authority is not implemented";
 
-/// Missing session-scoped managed-search credential authority.
-pub const MANAGED_WEB_EXECUTOR_ABSENT: &str = "managed web search cannot bind a session-scoped, \
-                                               revocation-aware credential authority";
-
-/// Missing private platform-paid tool executor.
-pub const TOOL_EXECUTOR_ABSENT: &str = "the private platform tool executor is not bound";
-
-/// Missing qualified MCP transport, task-recovery, and registry authority.
-pub const MCP_EXECUTOR_ABSENT: &str = "MCP has no production ToolExecutor with qualified \
-                                      transport, task recovery, and exact registry authority";
-
-/// Missing concrete Hands tool route.
-pub const HANDS_TOOL_EXECUTOR_ABSENT: &str = "Hands tool executor is not bound";
-
-/// Why Hands would be refused, were it ever unbound.
-#[cfg(test)]
-pub const HANDS_ABSENT: &str = "the production Hands backend is not bound";
+/// Missing sole non-native tool broker.
+pub const TOOL_MUX_EXECUTOR_ABSENT: &str = "Tool Mux is not bound";
 
 /// The admission controller, as the loop sees it.
 #[derive(Debug)]
@@ -497,10 +477,8 @@ pub struct Bindings {
     pub store: BindingState,
     /// Whether the provider port reaches a real adapter.
     pub provider: BindingState,
-    /// Whether every installed tool route has its concrete executor.
+    /// Whether Brain-native tools and the sole Tool Mux route are bound.
     pub tools: BindingState,
-    /// Whether the Hands adapter has a concrete runtime backend.
-    pub hands: BindingState,
 }
 
 impl Bindings {
@@ -516,7 +494,6 @@ impl Bindings {
             store: BindingState::Ready,
             provider: BindingState::Unavailable(PROVIDER_ABSENT),
             tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
-            hands: BindingState::Unavailable(HANDS_ABSENT),
         }
     }
 
@@ -528,7 +505,6 @@ impl Bindings {
             store: BindingState::Ready,
             provider: BindingState::Ready,
             tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
-            hands: BindingState::Unavailable(HANDS_ABSENT),
         }
     }
 
@@ -539,17 +515,13 @@ impl Bindings {
             store: BindingState::Ready,
             provider: BindingState::Ready,
             tools: BindingState::Ready,
-            hands: BindingState::Ready,
         }
     }
 
     /// Whether the task may serve work.
     #[must_use]
     pub const fn complete(&self) -> bool {
-        self.store.is_ready()
-            && self.provider.is_ready()
-            && self.tools.is_ready()
-            && self.hands.is_ready()
+        self.store.is_ready() && self.provider.is_ready() && self.tools.is_ready()
     }
 
     /// The unsatisfied bindings, named. A refusal reports a name, never a bare `false`.
@@ -557,7 +529,7 @@ impl Bindings {
     #[must_use]
     pub fn unsatisfied(&self) -> Vec<&'static str> {
         let mut missing = Vec::new();
-        for state in [self.store, self.provider, self.tools, self.hands] {
+        for state in [self.store, self.provider, self.tools] {
             if let BindingState::Unavailable(reason) = state {
                 missing.push(reason);
             }
@@ -573,24 +545,27 @@ impl Bindings {
 pub struct ProductionPeers {
     provider: Arc<dyn ProviderPort>,
     tools: Arc<dyn ToolPort>,
-    hands: Arc<dyn HandsPort>,
     catalog: Arc<dyn CatalogPort>,
+    previews: Arc<dyn aex_brain_app::ports::PreviewPort>,
+    model_usage: Arc<dyn aex_brain_app::ports::ModelUsagePort>,
 }
 
 impl ProductionPeers {
-    /// Binds real provider, tool, catalog, and Hands-runtime implementations.
+    /// Binds real provider, Tool Mux, and catalog implementations.
     #[must_use]
     pub fn new(
         provider: Arc<dyn ProviderPort>,
         tools: Arc<dyn ToolPort>,
-        hands_backend: Arc<dyn aex_brain_hands::HandsBackend>,
         catalog: Arc<dyn CatalogPort>,
+        previews: Arc<dyn aex_brain_app::ports::PreviewPort>,
+        model_usage: Arc<dyn aex_brain_app::ports::ModelUsagePort>,
     ) -> Self {
         Self {
             provider,
             tools,
-            hands: Arc::new(aex_brain_hands::HandsAdapter::new(hands_backend)),
             catalog,
+            previews,
+            model_usage,
         }
     }
 }
@@ -612,14 +587,8 @@ impl core::fmt::Debug for ProductionPeers {
 pub struct ProductionToolExecutors {
     /// Control, park, and subagent scheduling tools.
     pub brain_inline: Option<Arc<dyn ToolExecutor>>,
-    /// Managed web search.
-    pub managed_web: Option<Arc<dyn ToolExecutor>>,
-    /// Platform-paid tools served by the private executor.
-    pub tool_exec: Option<Arc<dyn ToolExecutor>>,
-    /// Qualified MCP calls and task recovery.
-    pub mcp: Option<Arc<dyn ToolExecutor>>,
-    /// Exact-generation Hands tools.
-    pub hands: Option<Arc<dyn ToolExecutor>>,
+    /// Sole broker for every non-native tool.
+    pub tool_mux: Option<Arc<dyn ToolExecutor>>,
 }
 
 impl core::fmt::Debug for ProductionToolExecutors {
@@ -637,10 +606,7 @@ impl ProductionToolExecutors {
     pub fn missing(&self) -> Vec<&'static str> {
         [
             (BRAIN_INLINE_EXECUTOR_ABSENT, self.brain_inline.is_none()),
-            (MANAGED_WEB_EXECUTOR_ABSENT, self.managed_web.is_none()),
-            (TOOL_EXECUTOR_ABSENT, self.tool_exec.is_none()),
-            (MCP_EXECUTOR_ABSENT, self.mcp.is_none()),
-            (HANDS_TOOL_EXECUTOR_ABSENT, self.hands.is_none()),
+            (TOOL_MUX_EXECUTOR_ABSENT, self.tool_mux.is_none()),
         ]
         .into_iter()
         .filter_map(|(reason, missing)| missing.then_some(reason))
@@ -660,10 +626,7 @@ impl ProductionToolExecutors {
         let mut router = CompositeToolRouter::new();
         let linked = [
             (ExecutorRoute::BrainInline, self.brain_inline),
-            (ExecutorRoute::ManagedWeb, self.managed_web),
-            (ExecutorRoute::ToolExec, self.tool_exec),
-            (ExecutorRoute::Mcp, self.mcp),
-            (ExecutorRoute::Hands, self.hands),
+            (ExecutorRoute::ToolMux, self.tool_mux),
         ]
         .into_iter()
         .filter_map(|(route, executor)| executor.map(|executor| (route, executor)))
@@ -755,22 +718,20 @@ const fn coarse_tool_route(route: CatalogExecutorRoute) -> ExecutorRoute {
         CatalogExecutorRoute::Control
         | CatalogExecutorRoute::Park
         | CatalogExecutorRoute::SubagentScheduler => ExecutorRoute::BrainInline,
-        CatalogExecutorRoute::ManagedWeb => ExecutorRoute::ManagedWeb,
-        CatalogExecutorRoute::ToolExec => ExecutorRoute::ToolExec,
-        CatalogExecutorRoute::Mcp => ExecutorRoute::Mcp,
-        CatalogExecutorRoute::HandsFilesystem
+        CatalogExecutorRoute::ManagedWeb
+        | CatalogExecutorRoute::PlatformStorage
+        | CatalogExecutorRoute::Mcp
+        | CatalogExecutorRoute::HandsFilesystem
         | CatalogExecutorRoute::HandsDevelopment
         | CatalogExecutorRoute::HandsBrowser
-        | CatalogExecutorRoute::RegisteredCustom => ExecutorRoute::Hands,
+        | CatalogExecutorRoute::RegisteredCustom => ExecutorRoute::ToolMux,
     }
 }
 
 /// Real Hands ports sharing one runtime authority and one `MicroVM` client.
 pub struct HandsBindings {
-    /// Lower backend consumed by `HandsAdapter`.
-    pub backend: Arc<dyn aex_brain_hands::HandsBackend>,
-    /// Tool executor for the coarse Hands route.
-    pub executor: Arc<dyn ToolExecutor>,
+    /// Tool Mux sandbox target adapter.
+    pub tool_mux: Arc<dyn ToolExecutor>,
 }
 
 impl core::fmt::Debug for HandsBindings {
@@ -781,107 +742,20 @@ impl core::fmt::Debug for HandsBindings {
     }
 }
 
-/// Settings for Brain's runtime-control dependency.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HandsBinding {
-    /// Deployment region.
-    pub region: aex_wire::types::Region,
-    /// Runtime-activity table.
-    pub runtime_activity_table: String,
-    /// Session-authority table used to recount open Hands effects.
-    pub session_authority_table: String,
-    /// Compute usage ingress.
-    pub compute_queue_url: String,
-    /// Storage usage ingress.
-    pub storage_queue_url: String,
-    /// Runtime due-index shard count.
-    pub due_shards: u16,
-    /// Runtime due scan budget.
-    pub due_page: PageBudget,
-    /// Exact pricing version attached to usage drafts.
-    pub pricing_version: String,
-}
-
-#[derive(Debug)]
-struct TokioPace;
-
-impl Pace for TokioPace {
-    fn sleep(&self, millis: u64) -> core::pin::Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(tokio::time::sleep(core::time::Duration::from_millis(
-            millis,
-        )))
+/// Binds Brain to the placed ToolMux service. Brain retains no runtime,
+/// sandbox, MCP or storage executor authority.
+#[must_use]
+pub fn remote_tool_mux_binding(
+    endpoint: String,
+    signer: Arc<aex_identity_domain::assertion::LocalSigner>,
+    plane: aex_identity_domain::assertion::Plane,
+    region: aex_wire::types::Region,
+) -> HandsBindings {
+    HandsBindings {
+        tool_mux: Arc::new(crate::tool_mux::RemoteToolMux::new(
+            endpoint, signer, plane, region,
+        )),
     }
-}
-
-/// Binds the production Hands backend and tool executor.
-///
-/// The backend and runtime engine share the exact same store and provider `Arc`s; this avoids
-/// split ownership of generation state or duplicate per-client resource pools.
-///
-/// # Errors
-///
-/// Returns the typed Hands construction error when its bounded HTTPS transport cannot start.
-pub fn hands_binding(
-    aws: &aws_config::SdkConfig,
-    binding: HandsBinding,
-) -> Result<HandsBindings, HandsError> {
-    let dynamo = aws_sdk_dynamodb::Client::new(aws);
-    let sqs = aws_sdk_sqs::Client::new(aws);
-    let store: Arc<dyn RuntimeActivityStore> = Arc::new(
-        aex_runtime_activity_dynamodb::RuntimeActivityDynamoStore::new(
-            dynamo.clone(),
-            binding.runtime_activity_table,
-        ),
-    );
-    let effects: Arc<dyn OpenEffectCounter> = Arc::new(
-        aex_session_dynamodb::runtime_effects::OpenHandsEffectCounter::new(
-            dynamo,
-            binding.session_authority_table,
-        ),
-    );
-    let provider: Arc<dyn aex_hands_control_aws::MicrovmControlApi> =
-        Arc::new(aex_hands_control_aws::AwsMicrovmControl::new(
-            aws_sdk_lambdamicrovms::Client::new(aws),
-            binding.region.as_str(),
-        ));
-    let compute: Arc<dyn UsageFactSink> = Arc::new(
-        aex_runtime_control_aws::usage_ingress::SqsFactDraftSink::new(
-            sqs.clone(),
-            binding.compute_queue_url,
-            aex_usage_domain::meter::Category::Compute,
-        ),
-    );
-    let storage: Arc<dyn UsageFactSink> = Arc::new(
-        aex_runtime_control_aws::usage_ingress::SqsFactDraftSink::new(
-            sqs,
-            binding.storage_queue_url,
-            aex_usage_domain::meter::Category::Storage,
-        ),
-    );
-    let runtime = Arc::new(RuntimeControl::new(
-        RuntimePorts {
-            store: Arc::clone(&store),
-            effects,
-            provider: Arc::clone(&provider),
-            compute,
-            storage,
-            pace: Arc::new(TokioPace),
-        },
-        RuntimeSettings {
-            region: binding.region,
-            pricing_version: aex_internal_contracts::PricingVersion(binding.pricing_version),
-            shards: binding.due_shards,
-            page: binding.due_page,
-            schedule_jitter_ms: 0,
-        },
-    ));
-    let backend: Arc<dyn aex_brain_hands::HandsBackend> = Arc::new(
-        aex_brain_hands::ProductionHandsBackend::new(store, provider, runtime)?,
-    );
-    let hands: Arc<dyn HandsPort> =
-        Arc::new(aex_brain_hands::HandsAdapter::new(Arc::clone(&backend)));
-    let executor: Arc<dyn ToolExecutor> = Arc::new(aex_brain_hands::HandsToolExecutor::new(hands));
-    Ok(HandsBindings { backend, executor })
 }
 
 /// Real AWS clients shared by store, queue, provider custody, and KMS composition.
@@ -900,8 +774,9 @@ pub async fn aws_bindings(
     queue_url: &str,
     session_table: &str,
     work_table: &str,
-    session_telemetry_bucket: &str,
-    session_telemetry_kms_key_arn: &str,
+    content_bucket: &str,
+    content_bucket_owner: &str,
+    content_kms_key_arn: &str,
 ) -> AwsBindings {
     let aws = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .region(aws_sdk_dynamodb::config::Region::new(region.to_owned()))
@@ -916,11 +791,12 @@ pub async fn aws_bindings(
                 regional_work: work_table.to_owned(),
             },
         )
-        .with_session_telemetry(aex_session_telemetry_aws::SessionTelemetryWriter::new(
-            aws_sdk_s3::Client::new(&aws),
-            session_telemetry_bucket,
-            session_telemetry_kms_key_arn,
-        )),
+        .with_checkpoints(aex_brain_store_dynamodb::CheckpointBinding {
+            client: aws_sdk_s3::Client::new(&aws),
+            bucket: content_bucket.to_owned(),
+            expected_owner: content_bucket_owner.to_owned(),
+            kms_key_id: content_kms_key_arn.to_owned(),
+        }),
     );
     let queue = Arc::new(aex_brain_store_dynamodb::SqsWakeQueue::new(
         aws_sdk_sqs::Client::new(&aws),
@@ -934,13 +810,11 @@ pub async fn aws_bindings(
     }
 }
 
-/// Provider and managed-search ports sharing one custody client, KMS client,
+/// Provider ports sharing one custody client, KMS client,
 /// and context-partitioned branch-key cache.
 pub struct CredentialBindings {
     /// Six-provider direct dispatch.
     pub provider: Arc<dyn ProviderPort>,
-    /// Session-scoped managed-web executor.
-    pub managed_web: Arc<dyn ToolExecutor>,
 }
 
 impl core::fmt::Debug for CredentialBindings {
@@ -951,7 +825,7 @@ impl core::fmt::Debug for CredentialBindings {
     }
 }
 
-/// Binds exact regional custody plus KMS reveal into provider and managed-web
+/// Binds exact regional custody plus KMS reveal into provider
 /// authorities without duplicating SDK pools or plaintext caches.
 #[must_use]
 pub fn credential_bindings(
@@ -986,11 +860,8 @@ pub fn credential_bindings(
         store,
         reqwest::Client::new(),
     );
-    let managed_web: Arc<dyn ToolExecutor> =
-        Arc::new(aex_brain_managed_web::executor::ManagedWebExecutor::production_fetch_only());
     CredentialBindings {
         provider: Arc::new(router),
-        managed_web,
     }
 }
 
@@ -1003,13 +874,15 @@ pub fn production_ports(
 ) -> Ports {
     Ports {
         journal: Arc::clone(&store) as Arc<_>,
+        checkpoints: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: store,
         wakes,
         provider: peers.provider,
+        model_usage: peers.model_usage,
         tools: peers.tools,
-        hands: peers.hands,
         catalog: peers.catalog,
+        previews: peers.previews,
         clock: Arc::new(SystemClock::new()),
         ids: Arc::new(ProcessIds),
     }
@@ -1248,17 +1121,16 @@ mod tests {
         assert!(!bindings.complete());
         assert!(bindings.store.is_ready());
         let missing = bindings.unsatisfied();
-        assert_eq!(missing.len(), 3);
+        assert_eq!(missing.len(), 2);
         assert!(!missing.contains(&STORE_UNBOUND));
         assert!(missing.contains(&PROVIDER_ABSENT));
         assert!(missing.contains(&super::TOOL_EXECUTORS_ABSENT));
-        assert!(missing.contains(&super::HANDS_ABSENT));
 
         let with_provider = Bindings::provider_ready();
         assert!(!with_provider.complete());
         assert!(with_provider.provider.is_ready());
         let missing = with_provider.unsatisfied();
-        assert_eq!(missing.len(), 2);
+        assert_eq!(missing.len(), 1);
         assert!(!missing.contains(&PROVIDER_ABSENT));
         assert!(Bindings::production().complete());
     }
@@ -1268,10 +1140,7 @@ mod tests {
         let pin = CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"));
         let tools = ProductionToolExecutors {
             brain_inline: None,
-            managed_web: None,
-            tool_exec: None,
-            mcp: None,
-            hands: Some(Arc::new(NeverExecutor)),
+            tool_mux: Some(Arc::new(NeverExecutor)),
         }
         .compose([
             pin,
@@ -1285,10 +1154,23 @@ mod tests {
                 .iter()
                 .map(|tool| tool.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["bash", "edit_file", "read_file", "write_file"]
+            vec![
+                "bash",
+                "edit_file",
+                "mcp_call",
+                "read_file",
+                "storage_persist",
+                "write_file"
+            ]
         );
-        assert!(!advertised.parallel_safe);
-        for name in ["bash", "edit_file", "read_file", "write_file"] {
+        for name in [
+            "bash",
+            "edit_file",
+            "mcp_call",
+            "read_file",
+            "storage_persist",
+            "write_file",
+        ] {
             tools
                 .route(&pin, &ToolName::parse(name).expect("name"))
                 .unwrap_or_else(|error| panic!("{name} must route through Hands: {error}"));
@@ -1305,14 +1187,11 @@ mod tests {
     }
 
     #[test]
-    fn deferred_authorities_never_reappear_in_the_four_tool_catalog() {
+    fn only_native_and_tool_mux_authorities_appear_in_the_mvp_catalog() {
         let pin = CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"));
         let tools = ProductionToolExecutors {
             brain_inline: Some(Arc::new(crate::inline_tools::BrainControlExecutor)),
-            managed_web: Some(Arc::new(NeverExecutor)),
-            tool_exec: Some(Arc::new(NeverExecutor)),
-            mcp: None,
-            hands: Some(Arc::new(NeverExecutor)),
+            tool_mux: Some(Arc::new(NeverExecutor)),
         }
         .compose([pin])
         .expect("optional authorities are filtered before installation");
@@ -1322,15 +1201,25 @@ mod tests {
             .iter()
             .map(|tool| tool.name.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(names, vec!["bash", "edit_file", "read_file", "write_file"]);
+        assert_eq!(
+            names,
+            vec![
+                "bash",
+                "create_subagent",
+                "edit_file",
+                "mcp_call",
+                "read_file",
+                "stop_subagent",
+                "storage_persist",
+                "wait_subagents",
+                "write_file",
+            ]
+        );
         assert!(!names.contains(&"web_fetch"));
         assert!(!names.contains(&"web_search"));
+        assert!(names.contains(&"mcp_call"));
         assert!(!names.iter().any(|name| name.starts_with("mcp__")));
         assert!(!names.contains(&"grep"));
-        assert!(
-            !advertised.parallel_safe,
-            "managed network work is not safe for us to run concurrently"
-        );
         assert!(
             advertised.allows_parallel_emission(CapabilitySet::from_slice(&[
                 Capability::Tools,
@@ -1344,7 +1233,11 @@ mod tests {
     fn a_partial_provider_composition_keeps_admission_and_readiness_closed() {
         let bindings = Bindings::provider_ready();
         assert!(!bindings.complete());
-        assert!(bindings.unsatisfied().contains(&super::HANDS_ABSENT));
+        assert!(
+            bindings
+                .unsatisfied()
+                .contains(&super::TOOL_EXECUTORS_ABSENT)
+        );
 
         let permits = Arc::new(PermitSet::new(BTreeMap::from([(
             PermitKind::Activation,
@@ -1425,7 +1318,6 @@ mod tests {
                 store: super::BindingState::Ready,
                 provider: super::BindingState::Ready,
                 tools: super::BindingState::Ready,
-                hands: super::BindingState::Ready,
             },
         );
         assert!(control.should_receive());
@@ -1509,7 +1401,6 @@ mod tests {
                 store: super::BindingState::Ready,
                 provider: super::BindingState::Ready,
                 tools: super::BindingState::Ready,
-                hands: super::BindingState::Ready,
             },
         );
 

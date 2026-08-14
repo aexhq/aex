@@ -1,293 +1,118 @@
-# The only explicit edge file in the delivery graph.
-#
-# Every other edge is derived from a manifest that already declares it. These
-# cannot be: a scenario exercises a deployable through its public surface
-# without importing it, so no dependency edge exists to derive.
-#
-# A deployable observed by no scenario fails `graph verify`. Observation alone
-# is not runnable evidence: each scenario must also declare `package` as a
-# namespaced Cargo/npm graph node and `target` as an exact `aex.targets` key
-# mapped to the `e2e` layer,
-# and that package must claim the scenario in `aex.scenarios`. A scenario whose
-# production composition is not runnable instead carries an exact non-empty
-# `deferred` reason. Deferral is architecture debt, never evidence: it is shown
-# in the graph summary and omitted from the runnable scenario matrix. An
-# implicit gap, a partial package/target pair, or runnable+deferred conflict is
-# still a graph failure.
-#
-# --- provisioning in `prd` (OD-35 / OD-36) -----------------------------------
-#
-# A scenario with no `[scenario.prd]` block runs in `dev` and provisions nothing
-# in production. That is the default and it covers everything whose value is
-# coverage rather than "does production work": permutation and matrix breadth,
-# fuzz, load, soak, provider conformance matrices, hostile workloads and the
-# migration rehearsal.
-#
-# A `[scenario.prd]` block is a claim, checked mechanically by `graph verify`:
-#
-#   * `rule` must be one of `[prd_provisioning.rule]` in
-#     `release/policy/test-profiles.toml`, and the four `exactly_one` rules
-#     admit exactly one scenario each;
-#   * every kind in `provisions` must be a `[janitor.resource]` row that the
-#     janitor can reclaim from tags. A prd-eligible scenario that creates an
-#     unreclaimable kind fails `scenario-prd-unreclaimable`;
-#   * a kind with `requires_declared_with` drags its companions in. Declaring
-#     `payment_customer` without `payment_instrument` and
-#     `auto_recharge_policy` fails, because that omission is precisely how a
-#     saved card and an enabled auto-recharge policy survived every money-path
-#     run in production.
+# Release scenarios give the seventeen launch journeys explicit ownership.
+# Files use two scenarios because current-value CRUD and upload finalization
+# have different public entry points. A deferred row records a real missing
+# hosted proof and never earns a release receipt.
 
 schema = "aex.scenario-ownership.v1"
 
-# --- identity, authorization and control -------------------------------------
-
 [[scenario]]
 id = "SC-IDENTITY-ACCOUNT"
-owner = "central-identity"
-# An engine-backed body exists and executes: `aex-scenarios`'s `identity_account`
-# target drives the real ceremony — sign in, open a dashboard session, start a
-# device authorization, approve it, redeem it — through `aex-identity-app`'s use
-# cases and `AuroraIdentityStore` against the committed schema and privileges.
-# Two things keep it deferred, and the second is a product defect rather than a
-# missing plane.
-deferred = "The engine-backed body runs on the integration lane but has no `e2e` target, which needs a plane. Redemption additionally cannot succeed against the committed schema: `CONSUME_DEVICE_AUTHORIZATION` sets `account_token_id` before `INSERT_ACCOUNT_TOKEN` inserts the row it references, and `identity.device_authorization.account_token_id` is a non-deferrable foreign key, so the only path to an account token raises SQLSTATE 23503."
-# `central-api` is the merged composition that serves the device-flow routes
-# once a plane runs it, so it observes the same scenario as the deployable it
-# replaces. Naming both is not double ownership: exactly one of them is
-# deployed, and dropping either would leave the one that *is* deployed
-# unobserved.
-observes = ["artifact:central-api", "artifact:central-identity-api", "artifact:dashboard"]
-
-[scenario.prd]
-rule = "deployable_write"
-provisions = [
-  "organization",
-  "api_key",
-]
-
-[[scenario]]
-id = "SC-AUTHZ-ASSERTION"
-owner = "central-identity"
-deferred = "No executable live target yet proves assertion issuance, verification, and revocation together."
-observes = ["artifact:central-authz"]
+owner = "clients"
+deferred = "The dashboard companion does not yet drive GitHub sign-in, idempotent personal provisioning, and bootstrap through one deployed journey."
+observes = ["artifact:dashboard", "artifact:control-api", "artifact:control-projection-worker"]
 
 [[scenario]]
 id = "SC-CONTROL-WORKSPACE"
-owner = "central-identity"
-# An engine-backed body exists and executes: `aex-scenarios`'s
-# `control_workspace` target runs the organization, workspace and API-key
-# ceremonies through `aex-control-app`'s use cases and `AuroraControlStore`
-# against the committed schema and privileges, then resolves the minted key
-# through `AuroraAuthorizationReader` as `aex_authz` and verifies it. The
-# production worker now bootstraps regional capacity before publishing a
-# placement, but this body still cannot observe that deployed cross-plane path.
-deferred = "The production worker path now invokes `regional-capacity-controller` before it publishes a workspace placement and fails closed when capacity bootstrap does not apply. That closes the source-level caller gap, not the evidence gap: this engine-backed body has no real plane `e2e` target. Keep the scenario deferred until a deployed plane proves organization, workspace and API-key creation followed by an authenticated regional request through the exact five observed artifacts."
-observes = [
-  "artifact:central-api",
-  "artifact:central-control-api",
-  "artifact:central-control-worker",
-  "artifact:regional-capacity-controller",
-  "artifact:regional-control",
-]
-
-[scenario.prd]
-rule = "deployable_write"
-provisions = [
-  "organization",
-  "workspace",
-  "api_key",
-]
+owner = "clients"
+deferred = "No release-bound target yet proves API-key create/revoke and a clean packed SDK/CLI consumer against the auto-provisioned personal workspace."
+observes = ["artifact:control-api", "artifact:control-projection-worker", "artifact:sdk"]
 
 [[scenario]]
-id = "SC-SCHEMA-MIGRATE"
+id = "SC-BILLING-ESSENTIAL"
 owner = "central-finance"
-deferred = "The central schema administrator companion has no executable migration-rehearsal target yet."
-observes = ["artifact:central-schema-admin"]
-
-# --- money --------------------------------------------------------------------
-
-[[scenario]]
-id = "SC-FINANCE-INVOICE"
-owner = "central-finance"
-# Reclassified 2026-08-10 while writing the P7.1 bodies. This scenario was
-# recorded as blocked by deployment alone — "zero route work, all 8 finance
-# routes already served". It is not: nothing anywhere writes the table the
-# scenario is about, so no plane would make it pass.
-deferred = "No code writes `finance.statement`. The whole worktree issues two SELECTs against it, both in `services/finance-api/src/aurora.rs`; `finance-reconcile` holds the `SELECT,INSERT,UPDATE` grant and never uses it. `billing_statements_list` and `billing_statement_get` therefore cannot answer with an invoice that exists. Settlement is unfinished for a second reason: `finance-settlement-worker` returns `pending` because the rating authorities it needs are unimplemented."
-observes = [
-  "artifact:central-api",
-  "artifact:finance-api",
-  "artifact:finance-settlement-worker",
-]
-
-[[scenario]]
-id = "SC-FINANCE-PAYMENT"
-owner = "central-finance"
-deferred = "The end-to-end Stripe command, webhook, and ingest path has no executable live target yet."
-# Both ends of one payment: the webhook edge is where a Stripe event enters and
-# `finance-ingest` is where it becomes a finance transition, and the command edge
-# is where an admitted effect leaves. A scenario that watched only the middle
-# would pass while either edge was broken.
-observes = [
-  "artifact:finance-ingest",
-  "artifact:stripe-command-edge",
-  "artifact:stripe-webhook-edge",
-]
-
-[scenario.prd]
-rule = "money_path"
-provisions = [
-  "organization",
-  "workspace",
-  "api_key",
-  "payment_customer",
-  "payment_instrument",
-  "auto_recharge_policy",
-]
-
-[[scenario]]
-id = "SC-FINANCE-RECONCILE"
-owner = "central-finance"
-deferred = "The finance and provider-cost reconciliation pair has no executable live target yet."
-observes = ["artifact:finance-reconcile", "artifact:provider-cost-reconciler"]
-
-[[scenario]]
-id = "SC-USAGE-SETTLE"
-owner = "observations-usage"
-deferred = "The receipt, storage, compute, transfer, and query settlement chain has no executable live target yet."
-observes = [
-  "artifact:usage-receipt-dispatcher",
-  "artifact:usage-storage-worker",
-  "artifact:usage-compute-worker",
-  "artifact:usage-transfer-worker",
-  "artifact:session-stream-api",
-]
-
-# --- regional admission and session lifecycle ---------------------------------
-
-[[scenario]]
-id = "SC-REGIONAL-ADMISSION"
-owner = "regional-services"
-package = "cargo:aex-live-session-stream-api"
-target = "e2e"
-observes = ["artifact:session-stream-api"]
-
-[[scenario]]
-id = "SC-REGISTRY-RESOURCES"
-owner = "regional-services"
-package = "cargo:aex-live-session-stream-api"
-target = "e2e"
-observes = ["artifact:session-stream-api", "artifact:content-lifecycle-worker"]
+package = "npm:@aexhq/user-tests"
+target = "live"
+observes = ["artifact:control-api", "artifact:stripe-webhook-edge", "artifact:billing-worker", "artifact:brain-mux", "artifact:runtime-control-worker", "artifact:tool-mux"]
 
 [[scenario]]
 id = "SC-SESSION-ADMIT"
 owner = "regional-services"
-deferred = "Session admission is not mounted by the production composition and has no executable live target yet."
-observes = ["artifact:session-stream-api"]
+deferred = "No deployed target yet proves BYOK session creation, the root authority row, frozen mounts, eager preparation enqueue, and admission reservation together."
+observes = ["artifact:session-api", "artifact:brain-mux", "artifact:runtime-control-worker"]
 
 [[scenario]]
-id = "SC-SESSION-LIVE-FILES"
+id = "SC-SESSION-STREAM"
 owner = "regional-services"
-# The `live-files` target drives the real session lifecycle, which requires a
-# provider, model and provider credential registered in the evidence workspace
-# (`AEX_LIVE_PROVIDER`, `AEX_LIVE_MODEL`, `AEX_LIVE_PROVIDER_CREDENTIAL_ID`).
-# No workflow or plane supplies those today, and the provider-credential
-# register itself has no live surface yet (see SC-BYOK-CUSTODY), so a release
-# run cannot provision the session this journey needs. Re-enable when the
-# provider wiring lands with the live-evidence expansion.
-deferred = "The live-files journey needs a registered provider credential in the evidence workspace (AEX_LIVE_PROVIDER/AEX_LIVE_MODEL/AEX_LIVE_PROVIDER_CREDENTIAL_ID) and a live provider-credential register; neither exists yet, and no release-evidence environment supplies the three variables."
-observes = ["artifact:session-stream-api", "artifact:session-operation-worker"]
+package = "npm:@aexhq/user-tests"
+target = "live"
+observes = ["artifact:session-api", "artifact:brain-mux"]
 
 [[scenario]]
 id = "SC-SESSION-TERMINAL"
 owner = "regional-services"
-deferred = "The complete session terminal-operation lifecycle has no executable live target yet."
-observes = ["artifact:session-stream-api", "artifact:session-operation-worker"]
-
-[scenario.prd]
-rule = "session_lifecycle"
-provisions = [
-  "organization",
-  "workspace",
-  "api_key",
-  "session",
-  "operation",
-  "ecs_task",
-  "hands_generation",
-  "dynamo_item",
-]
+package = "npm:@aexhq/user-tests"
+target = "live"
+observes = ["artifact:session-api", "artifact:session-maintenance-worker", "artifact:runtime-control-worker", "artifact:file-ingest-worker"]
 
 [[scenario]]
-id = "SC-BYOK-CUSTODY"
-owner = "regional-stores"
-deferred = "The dedicated BYOK provider-credential register, metadata read/list, revocation, and key-administration path has no executable live target yet; generic user-managed secrets are not part of this product."
-observes = [
-  "artifact:regional-secret-key-admin",
-  "artifact:session-stream-api",
-]
-
-[scenario.prd]
-rule = "secret_path"
-provisions = [
-  "organization",
-  "workspace",
-  "api_key",
-  "secret_generation",
-  "kms_key",
-]
+id = "SC-TELEMETRY-LIVE-RETAINED"
+owner = "regional-services"
+package = "npm:@aexhq/user-tests"
+target = "live"
+observes = ["artifact:session-api", "artifact:brain-mux", "artifact:runtime-control-worker", "artifact:hands-agent"]
 
 [[scenario]]
-id = "SC-CONTENT-LIFECYCLE"
-owner = "regional-stores"
-deferred = "The complete upload, persisted-content, and garbage-collection lifecycle has no executable live target yet."
-observes = ["artifact:content-lifecycle-worker", "artifact:session-stream-api"]
-
-[scenario.prd]
-rule = "content_path"
-provisions = [
-  "organization",
-  "workspace",
-  "api_key",
-  "s3_multipart",
-  "s3_object",
-  "dynamo_item",
-]
+id = "SC-FILES-CURRENT"
+owner = "regional-services"
+package = "cargo:aex-live-session-api"
+target = "live-files"
+observes = ["artifact:session-api", "artifact:file-ingest-worker"]
 
 [[scenario]]
-id = "SC-RUNTIME-CONTROL"
-owner = "hands"
-deferred = "The runtime-control production lifecycle has no executable live target yet."
-observes = ["artifact:runtime-control-worker"]
-
-# --- runtime ---------------------------------------------------------------------
+id = "SC-FILES-UPLOAD"
+owner = "regional-services"
+package = "cargo:aex-live-session-api"
+target = "live-files"
+observes = ["artifact:session-api", "artifact:file-ingest-worker"]
 
 [[scenario]]
-id = "SC-BRAIN-TURN"
+id = "SC-PROVIDER-MATRIX"
 owner = "brain-core"
-deferred = "No executable live target yet proves a complete Bash-only Brain turn across mux, session authority and the retained Hands generation."
-observes = [
-  "artifact:brain-mux",
-  "artifact:session-stream-api",
-  "artifact:hands-agent",
-]
+package = "npm:@aexhq/user-tests"
+target = "live"
+observes = ["artifact:brain-mux"]
 
 [[scenario]]
-id = "SC-HANDS-HOSTILE"
+id = "SC-EAGER-SANDBOX"
 owner = "hands"
-deferred = "The hostile-workload matrix across Hands agent and all published image variants has no executable target yet. Browser variants remain deferred until their pinned ARM64 browser layer exists."
-observes = [
-  "artifact:hands-agent",
-  "artifact:hands-image-512mb",
-  "artifact:hands-image-1gb",
-  "artifact:hands-image-2gb",
-  "artifact:hands-image-4gb",
-  "artifact:hands-image-8gb",
-]
-
-# --- published packages -----------------------------------------------------------
+deferred = "No live target yet observes the complete provision, materialize, ready, race-safe suspend sequence from default session creation."
+observes = ["artifact:session-api", "artifact:tool-mux", "artifact:runtime-control-worker", "artifact:hands-agent", "artifact:hands-image"]
 
 [[scenario]]
-id = "SC-SDK-INSTALL"
-owner = "clients"
-deferred = "The packed-tarball clean install proves the archive, not the registry. Installing `@aexhq/sdk` from the real registry and verifying its published provenance needs a version that is already published, so this becomes runnable only after the first release, not before it."
-observes = ["artifact:sdk"]
+id = "SC-SANDBOX-DISABLED-RESUME"
+owner = "tools-mcp"
+deferred = "The Tool Mux companion has focused bodies, but the plane has not supplied exact-generation fixtures that make disabled/no-VM and resume/wait one release-bound journey."
+observes = ["artifact:tool-mux", "artifact:runtime-control-worker", "artifact:hands-agent"]
+
+[[scenario]]
+id = "SC-MCP"
+owner = "tools-mcp"
+package = "npm:@aexhq/user-tests"
+target = "live"
+observes = ["artifact:tool-mux", "artifact:hands-agent"]
+
+[[scenario]]
+id = "SC-TOOL-STORAGE"
+owner = "tools-mcp"
+package = "npm:@aexhq/user-tests"
+target = "live"
+observes = ["artifact:tool-mux", "artifact:file-ingest-worker", "artifact:hands-agent"]
+
+[[scenario]]
+id = "SC-AMBIGUITY-SAFETY"
+owner = "brain-core"
+deferred = "No deployed fault target yet drops responses around Brain and Tool Mux commits and proves one ambiguity-safe outcome."
+observes = ["artifact:brain-mux", "artifact:tool-mux"]
+
+[[scenario]]
+id = "SC-PARALLEL-SUBAGENT"
+owner = "brain-core"
+deferred = "No deployed target yet combines overlapping tool calls, ordered journal output, a native child result, and atomic rejection at identity 13/depth 4."
+observes = ["artifact:brain-mux", "artifact:tool-mux"]
+
+[[scenario]]
+id = "SC-LONG-CONTEXT"
+owner = "brain-core"
+package = "npm:@aexhq/user-tests"
+target = "live"
+observes = ["artifact:brain-mux", "artifact:session-api"]

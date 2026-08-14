@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/sdk",
-  "version": "0.52.0",
+  "version": "0.53.0",
   "description": "Zero-dependency TypeScript SDK for the AEX v1 public API.",
   "aex": {
     "owner": "clients",
@@ -63,10 +63,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./node/session-files": {
-      "types": "./dist/node/session-files.d.ts",
-      "import": "./dist/node/session-files.js"
     },
     "./package.json": "./package.json"
   },

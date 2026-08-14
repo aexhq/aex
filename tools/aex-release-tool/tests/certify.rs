@@ -25,12 +25,12 @@ use common::docs::{BUILDER, digest, sha1, valid_receipt};
 /// The unit must therefore be a shipped Lambda unit — an OCI unit has no blob
 /// to publish, needs an inspected image identity before it can even be
 /// described, and is refused a `github-release` location by
-/// `github_release_unit_uri`. `central-authz` is a shipped request-path Lambda
-/// that supplies that shape and whose `required_receipts`
+/// `github_release_unit_uri`. `billing-worker` is a shipped Lambda that
+/// supplies that shape and whose `required_receipts`
 /// still carry both the `unit`/`lint` pair and the `contract` class the
 /// deferral tests split on.
 fn unit() -> Unit {
-    oci_support::shipped_unit("central-authz")
+    oci_support::shipped_unit("billing-worker")
 }
 
 fn freshness() -> FreshnessPolicy {

@@ -1,0 +1,31 @@
+{
+  "$id": "https://schemas.aex.dev/v1/SessionSandboxRequest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Default-on sandbox configuration; enabled=false creates no Hand.",
+  "properties": {
+    "compute": {
+      "$ref": "aex:schema:SessionComputeRequest",
+      "description": "Bounded compute shape."
+    },
+    "enabled": {
+      "description": "Defaults true.",
+      "type": "boolean"
+    },
+    "network": {
+      "$ref": "aex:schema:SessionNetworkRequest",
+      "description": "Guest egress policy."
+    },
+    "packages": {
+      "description": "Pinned packages applied before initial suspension.",
+      "items": {
+        "$ref": "aex:schema:PackageRequest"
+      },
+      "maxItems": 64,
+      "type": "array"
+    }
+  },
+  "required": [],
+  "title": "SessionSandboxRequest",
+  "type": "object"
+}

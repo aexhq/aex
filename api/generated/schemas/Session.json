@@ -2,34 +2,22 @@
   "$id": "https://schemas.aex.dev/v1/Session.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A multi-turn conversation backed by at most one retained provider generation. Termination destroys compute and live files but preserves this metadata and sealed messages until deletion.",
+  "description": "The only public execution resource; sandbox loss never terminates agent state.",
   "properties": {
-    "activeDeadline": {
-      "description": "The internal bounded deadline for the active message.",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-      "type": "string",
-      "x-aex-time": "rfc3339-ms"
-    },
-    "activeMaxSpendCents": {
-      "description": "The effective current-message spend ceiling: the request value, or 1000 when omitted.",
-      "pattern": "^(0|[1-9]\\d*)$",
-      "type": "string",
-      "x-aex-money": "cents"
-    },
     "activeMessageId": {
-      "description": "The user message whose work is active. Absent while no message is active.",
+      "description": "The one active root user message.",
       "pattern": "^msg_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "message"
     },
     "createdAt": {
-      "description": "When metadata was created; this does not determine the provider lifetime.",
+      "description": "Admission time.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     },
     "expiresAt": {
-      "description": "Exactly 28,800 seconds after `launchedAt`; suspension never extends it.",
+      "description": "Session expiry.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
@@ -39,18 +27,6 @@
       "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "session"
-    },
-    "idleSince": {
-      "description": "When the session most recently became idle.",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-      "type": "string",
-      "x-aex-time": "rfc3339-ms"
-    },
-    "launchedAt": {
-      "description": "When the provider generation first launched.",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-      "type": "string",
-      "x-aex-time": "rfc3339-ms"
     },
     "metadata": {
       "additionalProperties": {
@@ -62,13 +38,13 @@
         ],
         "x-aex-float": true
       },
-      "description": "Caller-defined labels.",
+      "description": "Caller labels.",
       "maxProperties": 64,
       "type": "object"
     },
     "resolvedConfig": {
       "$ref": "aex:schema:ResolvedConfig",
-      "description": "Everything the platform resolved."
+      "description": "Frozen customer-safe configuration."
     },
     "revision": {
       "description": "Monotonic concurrency token.",
@@ -76,40 +52,28 @@
       "minimum": 0,
       "type": "integer"
     },
+    "sandboxStatus": {
+      "$ref": "aex:schema:SandboxStatus",
+      "description": "One-Hand preparation/suspension state."
+    },
     "status": {
       "$ref": "aex:schema:SessionStatus",
-      "description": "What the session is doing."
-    },
-    "suspendAt": {
-      "description": "When an idle session will automatically suspend; exactly 180 seconds after `idleSince`.",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-      "type": "string",
-      "x-aex-time": "rfc3339-ms"
-    },
-    "suspendedAt": {
-      "description": "When this exact generation most recently suspended.",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-      "type": "string",
-      "x-aex-time": "rfc3339-ms"
+      "description": "Conversation lifecycle."
     },
     "terminatedAt": {
-      "description": "When compute and live files were permanently destroyed.",
+      "description": "When explicit compute termination committed.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     },
-    "terminationReason": {
-      "$ref": "aex:schema:SessionTerminationReason",
-      "description": "Why the session permanently terminated."
-    },
     "updatedAt": {
-      "description": "When the session last changed.",
+      "description": "Last durable change.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     },
     "workspaceId": {
-      "description": "The owning workspace.",
+      "description": "Owning fixed workspace.",
       "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
       "type": "string",
       "x-aex-id": "workspace"
@@ -119,9 +83,9 @@
     "createdAt",
     "expiresAt",
     "id",
-    "launchedAt",
     "resolvedConfig",
     "revision",
+    "sandboxStatus",
     "status",
     "updatedAt",
     "workspaceId"

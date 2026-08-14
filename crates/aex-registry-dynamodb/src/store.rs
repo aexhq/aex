@@ -19,7 +19,7 @@ use aex_wire::idempotency::IdempotencyKey;
 use aex_wire::ids::{UploadId, WorkspaceId};
 use aex_wire::types::{ETag, Timestamp};
 use aex_workspace_domain::registry::{
-    RegistryCommit, RegistryPointer, RegistryRow, SetOutcome, ValueDocument, etag_of,
+    RegistryCommit, RegistryPointer, RegistryRow, RegistryState, SetOutcome, ValueDocument, etag_of,
 };
 use aex_workspace_domain::upload::{Upload, UploadState};
 use async_trait::async_trait;
@@ -61,6 +61,10 @@ pub struct SetReceipt {
     pub revision: Revision,
     /// The value document the winner stored.
     pub value_doc: ValueDocument,
+    /// Lifecycle published by the winning current pointer.
+    pub state: RegistryState,
+    /// Stable failure code when the winning state is failed.
+    pub failure_code: Option<String>,
     /// When the pointer was first written.
     pub created_at: Timestamp,
     /// When the winner replaced it.
@@ -86,6 +90,8 @@ impl SetReceipt {
             name: pointer.row.name.clone(),
             revision: pointer.row.revision,
             value_doc: pointer.value_doc.clone(),
+            state: pointer.row.state,
+            failure_code: pointer.row.failure_code.clone(),
             created_at: pointer.row.created_at,
             updated_at: pointer.row.updated_at,
         }
@@ -105,6 +111,8 @@ impl SetReceipt {
                 etag: etag_of(self.kind, self.revision, &sha256),
                 sha256,
                 size_bytes: self.value_doc.size_bytes(),
+                state: self.state,
+                failure_code: self.failure_code.clone(),
                 created_at: self.created_at,
                 updated_at: self.updated_at,
             },
@@ -128,6 +136,8 @@ impl SetReceipt {
             "name": self.name.as_str(),
             "revision": self.revision.0,
             "valueDoc": self.value_doc.as_str(),
+            "state": codec::registry_state_str(self.state),
+            "failureCode": self.failure_code,
             "createdAt": self.created_at.to_string(),
             "updatedAt": self.updated_at.to_string(),
         });
@@ -184,6 +194,21 @@ impl DecodeReceipt for SetReceipt {
                 aex_wire::CanonicalJson::parse(&text("valueDoc")?)
                     .map_err(|error| corrupt("valueDoc", &error.to_string()))?,
             ),
+            state: match text("state")?.as_str() {
+                "pending" => RegistryState::Pending,
+                "ready" => RegistryState::Ready,
+                "failed" => RegistryState::Failed,
+                spelling => {
+                    return Err(corrupt(
+                        "state",
+                        &format!("`{spelling}` is not a registry lifecycle state"),
+                    ));
+                }
+            },
+            failure_code: body
+                .get("failureCode")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
             created_at: Timestamp::parse(&text("createdAt")?)
                 .map_err(|error| corrupt("createdAt", &error.to_string()))?,
             updated_at: Timestamp::parse(&text("updatedAt")?)
@@ -287,6 +312,18 @@ pub trait RegistryStore: Send + Sync + 'static {
         workspace: WorkspaceId,
         commit: SetCommit<'_>,
     ) -> Result<SetCommitted, StoreError>;
+
+    /// Replaces an existing pointer under its exact private revision without a
+    /// public request receipt.
+    ///
+    /// This is the narrow completion verb for asynchronous URL ingestion. The
+    /// worker must derive `next` from `current` through the workspace domain;
+    /// this adapter only makes the stale-intent fence atomic.
+    async fn replace_current(
+        &self,
+        current: &RegistryPointer,
+        next: &RegistryPointer,
+    ) -> Result<(), StoreError>;
 
     /// Removes one pointer, honouring `If-Match`, and releases its entry.
     ///
@@ -680,6 +717,7 @@ impl RegistryStore for RegistryDynamoStore {
             .expression_attribute_names("#pk", aex_session_dynamodb::attr::PK)
             .expression_attribute_names("#sk", aex_session_dynamodb::attr::SK)
             .expression_attribute_names("#name", "name")
+            .expression_attribute_names("#state", "state")
             .expression_attribute_values(":pk", s(keys::kind_partition(workspace, kind)))
             .expression_attribute_values(":prefix", s(keys::name_prefix()))
             .projection_expression(codec::ROW_PROJECTION)
@@ -773,6 +811,54 @@ impl RegistryStore for RegistryDynamoStore {
                 )))
             }
             Err(error) => Err(error),
+        }
+    }
+
+    async fn replace_current(
+        &self,
+        current: &RegistryPointer,
+        next: &RegistryPointer,
+    ) -> Result<(), StoreError> {
+        if current.row.workspace != next.row.workspace
+            || current.row.kind != next.row.kind
+            || current.row.name != next.row.name
+            || next.row.revision != current.row.revision.next()
+        {
+            return Err(StoreError::Invalid {
+                detail: "an asynchronous replacement must advance the same pointer exactly once"
+                    .to_owned(),
+            });
+        }
+        let built = expressions::replace_pointer(&self.table, next, current.row.revision)?
+            .build()
+            .map_err(|error| StoreError::Invalid {
+                detail: error.to_string(),
+            })?;
+        let outcome = self
+            .client
+            .put_item()
+            .table_name(&self.table)
+            .set_item(Some(built.item().clone()))
+            .set_condition_expression(built.condition_expression().map(str::to_owned))
+            .set_expression_attribute_names(built.expression_attribute_names().cloned())
+            .set_expression_attribute_values(built.expression_attribute_values().cloned())
+            .return_values_on_condition_check_failure(ReturnValuesOnConditionCheckFailure::AllOld)
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if let Some(
+                    aws_sdk_dynamodb::operation::put_item::PutItemError::ConditionalCheckFailedException(failed),
+                ) = error.as_service_error()
+                {
+                    return Err(StoreError::PreconditionFailed {
+                        participant: Participant::REGISTRY_POINTER,
+                        observed: failed.item.clone().map(Box::new),
+                    });
+                }
+                Err(classify(&error, Idempotence::Write(Resolution::TargetItem)))
+            }
         }
     }
 

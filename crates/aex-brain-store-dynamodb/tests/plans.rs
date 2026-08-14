@@ -8,9 +8,9 @@
 use aex_brain_app::ports::{DecisionContext, RunBoundaryAuthority, SessionAuthority};
 use aex_brain_domain::budget::{BudgetDelta, Dimension, DimensionVector};
 use aex_brain_domain::commit::{
-    ChildWrite, ControlUpdate, DecisionCommit, EffectWrite, FenceGuardRef, JoinWrite,
-    PublicSessionEvent, RunTransition, SPAWN_PAGE_CHILDREN, SessionHeadTransition, WakeCreate,
-    WakeRetirement, event_seq,
+    ChildBootstrap, ChildWrite, ControlUpdate, DecisionCommit, EffectWrite, FenceGuardRef,
+    JoinWrite, PublicSessionEvent, RunTransition, SPAWN_PAGE_CHILDREN, SessionHeadTransition,
+    WakeCreate, WakeRetirement, event_seq,
 };
 use aex_brain_domain::effect::{EffectClass, EffectKind};
 use aex_brain_domain::ids::{
@@ -112,6 +112,12 @@ fn spawn(ordinal: u32) -> ChildWrite {
         grant: DimensionVector::uniform(1),
         join: JoinId(v7(1_767_225_600_005, 6)),
         queued_reason: None,
+        bootstrap: Box::new(ChildBootstrap {
+            config: Box::new(aex_brain_test_support::journal_gen::config()),
+            input: Vec::new(),
+            depth: 1,
+            budget: DimensionVector::uniform(1),
+        }),
     }
 }
 
@@ -639,6 +645,42 @@ fn the_session_budget_is_fenced_by_the_cancellation_epoch() {
         .expect("conditional")
         .to_owned();
     assert!(expression.contains("cancelEpoch"), "{expression}");
+}
+
+/// The lifetime counter and child puts share one transaction. The condition is
+/// evaluated on the authoritative session row, so two concurrent parents cannot
+/// both claim the twelfth slot.
+#[test]
+fn subagent_lifetime_admission_is_an_atomic_shared_budget_condition() {
+    let mut commit = base(Vec::new());
+    commit.children.push(spawn(0));
+    commit
+        .session_budget
+        .push(BudgetDelta::new(Dimension::TotalChildrenCreated, 1));
+
+    let compiled = plan::compile(&tables(), &context(), &commit).expect("compiles");
+    let index = compiled
+        .participants()
+        .iter()
+        .position(|it| *it == participant::SESSION_BUDGET)
+        .expect("session budget participates");
+    let update = compiled.actions()[index].update().expect("budget update");
+    let condition = update
+        .condition_expression()
+        .expect("atomic admission condition");
+    assert!(
+        condition.contains("usedTotalChildrenCreated"),
+        "{condition}"
+    );
+    assert!(condition.contains(":maximumBefore"), "{condition}");
+    assert_eq!(
+        update
+            .expression_attribute_values()
+            .and_then(|values| values.get(":maximumBefore"))
+            .and_then(|value| value.as_n().ok())
+            .map(String::as_str),
+        Some("11")
+    );
 }
 
 /// An agent whose identity has no wire form is refused rather than written to a partition

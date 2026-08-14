@@ -84,7 +84,7 @@ fn with_detached_tool(attempt: u16, stage: DispatchStage) -> DispatchEvidence {
     DispatchEvidence {
         detached_tool: Some(DetachedOperationRef {
             id: DetachedOperationId("op_1".to_owned()),
-            executor: ExecutorRoute::Mcp,
+            executor: ExecutorRoute::ToolMux,
         }),
         ..DispatchEvidence::ambiguous(attempt, stage)
     }
@@ -267,7 +267,7 @@ fn a_detached_tool_route_is_durable_and_operation_bindings_are_exclusive() {
         RecoveryDecision::QueryDetachedTool {
             operation: DetachedOperationRef {
                 id: DetachedOperationId("op_1".to_owned()),
-                executor: ExecutorRoute::Mcp,
+                executor: ExecutorRoute::ToolMux,
             }
         }
     );

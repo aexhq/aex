@@ -552,6 +552,16 @@ pub enum UsageCompleteness {
 }
 
 impl UsageCompleteness {
+    /// Whether the provider reported one field rather than the normalizer filling zero.
+    #[must_use]
+    pub const fn reports(self, field: UsageField) -> bool {
+        match self {
+            Self::Exact => true,
+            Self::Partial { missing } => !missing.contains(field),
+            Self::Absent => false,
+        }
+    }
+
     const fn accumulated(self, other: Self) -> Self {
         match (self, other) {
             (Self::Exact, Self::Exact) => Self::Exact,

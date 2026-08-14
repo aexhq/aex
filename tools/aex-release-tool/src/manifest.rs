@@ -336,67 +336,26 @@ pub struct CompositionInputs {
 /// release-scenario test; a reordering nobody wrote down is a reordering nobody
 /// verified.
 pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
-    ("central-schema", &["central-schema-admin"]),
     (
-        "central-identity",
-        &[
-            "central-identity-api",
-            "central-authz",
-            "central-control-api",
-        ],
+        "central-money-ingress",
+        &["stripe-webhook-edge", "billing-worker"],
     ),
     (
-        "central-finance",
-        &[
-            "finance-api",
-            "finance-ingest",
-            "finance-settlement-worker",
-            "finance-reconcile",
-            "usage-receipt-dispatcher",
-            "provider-cost-reconciler",
-            "stripe-command-edge",
-            "stripe-webhook-edge",
-        ],
+        "central-control",
+        &["control-api", "control-projection-worker"],
     ),
-    // After finance, because the merged central edge serves the billing group
-    // and invokes `stripe-command-edge`: publishing it first would put a
-    // listener in front of a money surface whose provider edge is still the
-    // previous release. It is its own stage rather than an addition to
-    // `central-finance` because it is the alternative composition to three
-    // units in two earlier stages, and a stage is a set that goes together.
-    ("central-edge", &["central-api"]),
-    ("central-control", &["central-control-worker"]),
-    ("regional-keys", &["regional-secret-key-admin"]),
-    ("regional-api", &["session-stream-api"]),
+    ("regional-api", &["session-api"]),
+    ("regional-files", &["file-ingest-worker"]),
     (
-        "regional-workers",
-        &[
-            "session-operation-worker",
-            "runtime-control-worker",
-            "content-lifecycle-worker",
-            "regional-capacity-controller",
-            "regional-control",
-            "usage-storage-worker",
-            "usage-compute-worker",
-            "usage-transfer-worker",
-        ],
+        "regional-runtime",
+        &["runtime-control-worker", "session-maintenance-worker"],
     ),
     // The agent is its own stage and it comes first, because `hands-image`
     // embeds the agent binary: publishing them together would let an image whose
     // rootfs holds the previous agent reach a plane as if it held the new one.
     ("runtime-agent", &["hands-agent"]),
-    (
-        "runtime",
-        &[
-            "brain-mux",
-            "hands-image-512mb",
-            "hands-image-1gb",
-            "hands-image-2gb",
-            "hands-image-4gb",
-            "hands-image-8gb",
-        ],
-    ),
-    ("web", &["dashboard", "site"]),
+    ("runtime", &["brain-mux", "tool-mux", "hands-image"]),
+    ("web", &["dashboard"]),
     // Last, and deliberately after every plane. A published package version can
     // never be withdrawn, so publishing an SDK that speaks routes the deployed
     // composition does not serve yet would ship a promise nothing keeps and
@@ -1759,7 +1718,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("`{unit}` belongs to no stage"))
         };
         assert!(
-            position("hands-agent") < position("hands-image-512mb"),
+            position("hands-agent") < position("hands-image"),
             "the image embeds the agent, so publishing them in one stage would let an \
              image carrying the previous agent reach a plane as if it carried the new one"
         );
@@ -2010,12 +1969,12 @@ alarm_spec = "regional-otlp"
     fn ordering_places_every_known_unit_and_rejects_an_unknown_one() {
         let stages = order_for(&[
             "brain-mux".to_owned(),
-            "central-schema-admin".to_owned(),
-            "session-stream-api".to_owned(),
+            "control-api".to_owned(),
+            "session-api".to_owned(),
         ])
         .unwrap();
         let names: Vec<&str> = stages.iter().map(|stage| stage.name.as_str()).collect();
-        assert_eq!(names, vec!["central-schema", "regional-api", "runtime"]);
+        assert_eq!(names, vec!["central-control", "regional-api", "runtime"]);
         let err = order_for(&["ghost-service".to_owned()]).unwrap_err();
         assert_eq!(err.rules(), vec!["manifest-unit-unordered"]);
         assert_eq!(err.exit.code(), 32);

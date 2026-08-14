@@ -1,0 +1,17 @@
+{
+  "$id": "https://schemas.aex.dev/v1/CardBrand.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Customer-safe card-network display metadata reported by Stripe.",
+  "enum": [
+    "visa",
+    "mastercard",
+    "amex",
+    "discover",
+    "diners",
+    "jcb",
+    "unionpay",
+    "unknown"
+  ],
+  "title": "CardBrand",
+  "type": "string"
+}

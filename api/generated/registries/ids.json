@@ -7,6 +7,12 @@
       "rust": "UserId"
     },
     {
+      "description": "One personal prepaid account.",
+      "kind": "account",
+      "prefix": "acc",
+      "rust": "AccountId"
+    },
+    {
       "description": "The billing and ownership boundary.",
       "kind": "organization",
       "prefix": "org",
@@ -119,6 +125,18 @@
       "kind": "statement",
       "prefix": "stm",
       "rust": "StatementId"
+    },
+    {
+      "description": "Card display metadata for a provider payment method.",
+      "kind": "payment_method",
+      "prefix": "pmt",
+      "rust": "PaymentMethodId"
+    },
+    {
+      "description": "One immutable balanced ledger transaction.",
+      "kind": "billing_transaction",
+      "prefix": "txn",
+      "rust": "BillingTransactionId"
     }
   ]
 }

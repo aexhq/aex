@@ -10,19 +10,22 @@
 //! `dispatch_*` function does path, query and body decoding from the same table.
 //! This module never re-types a path, a status or an error code.
 
+use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::Arc;
 
-use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
+use aex_wire::dispatch::{CONTENT_TYPE_NDJSON, RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::routes::{Plane, RouteId, match_route, route};
 use aex_wire::server::AcceptKind;
 use aex_wire::types::{HttpMethod, RequestId};
 use axum::Router;
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::{MethodFilter, on};
+use futures::Stream;
 
 use crate::context::RequestContext;
 use crate::envelope::ENVELOPE_BYTES;
@@ -58,7 +61,27 @@ pub trait EdgeAdmission: Send + Sync + 'static {
     async fn admit(&self, request: &AdmissionRequest<'_>) -> Result<RequestContext, WireError>;
 }
 
-/// The total unary dispatch surface of one deployable.
+/// A boxed, backpressure-aware NDJSON byte stream.
+pub type ResponseStream = Pin<Box<dyn Stream<Item = Result<Bytes, Infallible>> + Send + 'static>>;
+
+/// One response produced by a regional generated dispatcher.
+pub enum DispatchResponse {
+    /// One finite generated response.
+    Unary(RawResponse),
+    /// A live or retained NDJSON frame stream.
+    Ndjson(ResponseStream),
+}
+
+impl std::fmt::Debug for DispatchResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unary(response) => formatter.debug_tuple("Unary").field(response).finish(),
+            Self::Ndjson(_) => formatter.write_str("Ndjson(<stream>)"),
+        }
+    }
+}
+
+/// The total generated dispatch surface of one deployable.
 ///
 /// One implementation per deployable matches on [`RouteId::group`] and calls the
 /// generated `dispatch_*` for that group, so the deployable never decodes a
@@ -101,7 +124,7 @@ pub trait UnaryDispatch: Send + Sync + 'static {
         accept: AcceptKind,
         raw: RawRequest<'_>,
         limits: RequestLimits,
-    ) -> WireResult<RawResponse>;
+    ) -> WireResult<DispatchResponse>;
 }
 
 /// Why a composition root refused to build its router.
@@ -349,7 +372,8 @@ where
         .dispatch(&context, accept_kind(&headers), raw, effective_limits)
         .await
     {
-        Ok(response) => render(response),
+        Ok(DispatchResponse::Unary(response)) => render(response),
+        Ok(DispatchResponse::Ndjson(stream)) => render_ndjson(stream),
         Err(failure) => render_error(&context.request_id, context.operation_id, failure),
     }
 }
@@ -384,6 +408,17 @@ pub fn render(response: RawResponse) -> Response {
     }
     rendered
         .body(response.body.into())
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// Renders a generated NDJSON stream without buffering it at the edge.
+#[must_use]
+pub fn render_ndjson(stream: ResponseStream) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, CONTENT_TYPE_NDJSON)
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from_stream(stream))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 

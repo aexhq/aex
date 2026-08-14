@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ROUTES, type RouteId } from "@aexhq/sdk";
+import { ROUTES, newId, type RouteId } from "@aexhq/sdk";
 
 import { classifyFailure, parseRetryAfter, type PanelState } from "./panel";
 
@@ -169,6 +169,7 @@ export async function submit<T>(routeId: RouteId, input: MutationInput = {}): Pr
   const descriptor = ROUTES[routeId];
   const headers: Record<string, string> = { accept: "application/json", "x-aex-csrf": csrfToken() };
   if (descriptor.idempotency === "idempotency_key") headers["idempotency-key"] = crypto.randomUUID();
+  if (descriptor.idempotency === "operation_id") headers["aex-operation-id"] = newId("operation");
   if (input.body !== undefined) headers["content-type"] = "application/json";
   try {
     const response = await fetch(panelUrl(routeId, input.parameters ?? {}, input.region), {

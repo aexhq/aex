@@ -151,9 +151,7 @@ impl ProductionHandsBackend {
                 )
             })?;
         self.settle_operation(generation, operation).await?;
-        let inline = String::from_utf8(bytes).map_err(|_| {
-            result_rejected(&start.operation, "the inline terminal result is not UTF-8")
-        })?;
+        let (inline, sandbox_file) = super::result_body(&start.operation, terminal, bytes)?;
         let duration_ms = terminal
             .ended_at
             .unix_millis()
@@ -162,8 +160,9 @@ impl ProductionHandsBackend {
             operation: start.operation.clone(),
             generation,
             exit_code: exit_code(&terminal.exit),
-            inline: Some(inline),
+            inline,
             placed: None,
+            sandbox_file,
             truncated: terminal.truncated,
             duration_ms: u32::try_from(duration_ms.max(0)).unwrap_or(u32::MAX),
             checksum: BrainContentHash(*terminal.digest.as_bytes()),

@@ -1,13 +1,13 @@
 ---
-title: Regional stores — landed state
-description: What the regional-stores stream implemented, what it deliberately left as a tracked gap, the adapter APIs and table definitions it publishes, the changes it needs from peers, and the decisions it took beyond the orchestrator conventions.
+title: Historical regional stores — landed state
+description: Point-in-time record of the superseded regional-stores rewrite, including its former adapters and table definitions.
 keywords:
   - dynamodb
   - regional authority
   - adapters
   - handoff
 audience: implementation agents and maintainers
-status: accepted
+status: superseded historical record — session-plane clean cut 2026-08-14
 last_verified: 2026-08-03
 related:
   - references/rewrite/test-architecture.md
@@ -15,6 +15,13 @@ related:
 ---
 
 # Regional stores — landed state
+
+> **Superseded (2026-08-14).** This point-in-time rewrite record deliberately
+> names adapters and table definitions deleted by the session-plane clean cut.
+> It is retained for provenance, not as current storage guidance. The current
+> public launch contract is [`../architecture.md`](../architecture.md); the five
+> authored definitions under `migrations/regional/tables/` and their generated
+> bundle are the table authority.
 
 Plan of record: `references/rust-native-rewrite-2026-07-31/plans/05-regional-stores.md` in the parent workspace.
 

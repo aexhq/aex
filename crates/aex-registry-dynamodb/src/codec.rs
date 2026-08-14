@@ -13,7 +13,9 @@ use aex_session_dynamodb::replay::{Receipt, decode_receipt_row, encode_receipt_r
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{ContentHash, UploadId, WorkspaceId};
 use aex_wire::types::{ETag, Timestamp};
-use aex_workspace_domain::registry::{RegistryPointer, RegistryRow, ValueDocument, etag_of};
+use aex_workspace_domain::registry::{
+    RegistryPointer, RegistryRow, RegistryState, ValueDocument, etag_of,
+};
 use aex_workspace_domain::upload::{
     CompletionEvidence, PartPlan, PlannedPart, RegistrySelector, SubmittedPart, Upload, UploadState,
 };
@@ -42,8 +44,27 @@ pub const COUNT: &str = "entryCount";
 /// A listing reads exactly these and never `valueDoc`: a thousand-row page that
 /// carried a thousand value documents would be the cost D-3 exists to avoid.
 /// `name` is a `DynamoDB` reserved word, so it is aliased.
-pub const ROW_PROJECTION: &str = "itemType, workspaceId, kind, #name, revision, etag, contentDigest, sizeBytes, createdAt, \
+pub const ROW_PROJECTION: &str = "itemType, workspaceId, kind, #name, revision, etag, contentDigest, sizeBytes, #state, failureCode, createdAt, \
      updatedAt";
+
+/// Stable private spelling of one current-pointer lifecycle state.
+#[must_use]
+pub const fn registry_state_str(state: RegistryState) -> &'static str {
+    match state {
+        RegistryState::Pending => "pending",
+        RegistryState::Ready => "ready",
+        RegistryState::Failed => "failed",
+    }
+}
+
+fn registry_state_of(text: &str) -> Option<RegistryState> {
+    match text {
+        "pending" => Some(RegistryState::Pending),
+        "ready" => Some(RegistryState::Ready),
+        "failed" => Some(RegistryState::Failed),
+        _ => None,
+    }
+}
 
 /// How many parts one persisted block carries (E D-1).
 ///
@@ -116,6 +137,8 @@ pub fn encode_pointer(pointer: &RegistryPointer) -> Result<Item, EncodeError> {
         .set(VALUE_DOC, s(pointer.value_doc.as_str().to_owned()))
         .set("contentDigest", s(row.sha256.to_wire()))
         .set("sizeBytes", n(row.size_bytes))
+        .set("state", s(registry_state_str(row.state)))
+        .set_opt("failureCode", row.failure_code.clone().map(s))
         .set("createdAt", stamp(row.created_at))
         .set("updatedAt", stamp(row.updated_at))
         .build())
@@ -154,6 +177,19 @@ pub fn decode_row(item: &Item, asserted: WorkspaceId) -> Result<RegistryRow, Cod
         attribute: "etag",
         reason: error.to_string(),
     })?;
+    let state = registry_state_of(row.string("state")?).ok_or(CodecError::Malformed {
+        item_type: REGISTRY_POINTER,
+        attribute: "state",
+        reason: "outside the current-pointer lifecycle vocabulary".to_owned(),
+    })?;
+    let failure_code = row.opt_string("failureCode")?.map(str::to_owned);
+    if (state == RegistryState::Failed) != failure_code.is_some() {
+        return Err(CodecError::Malformed {
+            item_type: REGISTRY_POINTER,
+            attribute: "failureCode",
+            reason: "present exactly when state is failed".to_owned(),
+        });
+    }
     let recomputed = etag_of(kind, revision, &sha256);
     if stored != recomputed {
         return Err(CodecError::Malformed {
@@ -172,6 +208,8 @@ pub fn decode_row(item: &Item, asserted: WorkspaceId) -> Result<RegistryRow, Cod
         etag: stored,
         sha256,
         size_bytes: row.u64("sizeBytes")?,
+        state,
+        failure_code,
         created_at: row.timestamp("createdAt")?,
         updated_at: row.timestamp("updatedAt")?,
     })
@@ -249,6 +287,7 @@ pub fn encode_upload(upload: &Upload) -> UploadRows {
         .set(SK, s(key.sk))
         .set("uploadId", s(upload.id.to_string()))
         .set("workspaceId", s(upload.workspace.to_string()))
+        .set("targetName", s(upload.target_name.as_str().to_owned()))
         .set("state", s(upload_state_str(upload.state)))
         .set("providerUploadId", s(upload.provider_upload_id.clone()))
         .set("objectKey", s(upload.object_key.clone()))
@@ -435,6 +474,13 @@ pub fn decode_upload_blocks(
     };
     Ok(Upload {
         id: parse_id::<UploadId>(&row, "uploadId")?,
+        target_name: aex_wire::ids::ResourceName::parse(row.string("targetName")?).map_err(
+            |error| CodecError::Malformed {
+                item_type: REGISTRY_UPLOAD,
+                attribute: "targetName",
+                reason: error.to_string(),
+            },
+        )?,
         workspace: asserted,
         state,
         provider_upload_id: row.string("providerUploadId")?.to_owned(),
@@ -722,6 +768,8 @@ mod tests {
                 etag: etag_of(RegistryKind::Tool, Revision::FIRST, &digest),
                 sha256: digest,
                 size_bytes: document.size_bytes(),
+                state: aex_workspace_domain::registry::RegistryState::Ready,
+                failure_code: None,
                 created_at: now(),
                 updated_at: now(),
             },
@@ -732,6 +780,7 @@ mod tests {
     fn upload() -> Upload {
         Upload {
             id: UploadId::from_uuid7(Uuid7::compose(1_754_051_696_789, [4; 10])),
+            target_name: ResourceName::parse("artifact").expect("a name"),
             workspace: workspace(1),
             state: UploadState::PartsGranted,
             provider_upload_id: "provider-mpu-1".to_owned(),

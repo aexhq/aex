@@ -225,24 +225,6 @@ pub async fn admit_message(
     )
     .await?;
 
-    let credential = context
-        .credentials
-        .read_provider_credential(
-            command.workspace,
-            materialized.session.provider_credential.credential,
-        )
-        .await?
-        .ok_or(AppError::Conflict(ErrorCode::ProviderCredentialNotFound))?;
-    if credential.state == crate::ports::CredentialState::Revoked
-        || credential.credential != materialized.session.provider_credential.credential
-        || credential.provider != materialized.session.provider_credential.provider
-        || credential.source_generation
-            != materialized.session.provider_credential.source_generation
-        || credential.revision != materialized.session.provider_credential.revision
-    {
-        return Err(AppError::Conflict(ErrorCode::ProviderCredentialRevoked));
-    }
-
     let bounds = resolve_message_bounds(
         command
             .request
@@ -415,10 +397,10 @@ pub async fn admit_message(
     });
     conditions.push(Condition::ProviderCredentialReady {
         workspace: command.workspace,
-        provider: credential.provider,
-        credential: credential.credential,
-        source_generation: credential.source_generation,
-        revision: credential.revision,
+        provider: materialized.session.provider_credential.provider,
+        credential: materialized.session.provider_credential.credential,
+        source_generation: materialized.session.provider_credential.source_generation,
+        revision: materialized.session.provider_credential.revision,
     });
     conditions.push(Condition::AgentRevision {
         session: command.session,

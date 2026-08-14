@@ -6,7 +6,7 @@ export const metadata = { title: "API keys — AEX" };
 
 export default async function KeysPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const { workspace, organization } = await requireWorkspace(slug);
+  const { workspace } = await requireWorkspace(slug);
 
   return (
     <div className="stack">
@@ -19,7 +19,7 @@ export default async function KeysPage({ params }: { params: Promise<{ slug: str
       </div>
       <ApiKeysPanel
         workspaceId={workspace.id}
-        billingHref={organization ? `/org/${organization.slug}/billing` : undefined}
+        billingHref="/billing"
       />
     </div>
   );

@@ -1,20 +1,22 @@
 //! The verified webhook handoff.
 //!
-//! Exactly seven pieces of information cross this boundary, and the facts union
-//! is closed per event kind. That is what makes the redaction test decidable: it
-//! is not "the Stripe object minus some fields", it is a fixed shape that has no
-//! room for a raw payload, a card detail, a customer secret or a payment URL.
+//! The facts union is closed per event kind. That is what makes the redaction
+//! test decidable: it is not "the Stripe object minus some fields", it is a
+//! fixed shape that has no room for a raw payload, PAN, CVC, customer secret or
+//! payment URL. Payment-method events carry only the provider references needed
+//! to resolve ownership and customer-safe card display metadata.
 
 use aex_internal_contracts::SchemaVersion;
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
 use aex_wire::ids::ContentHash;
 use aex_wire::ids::OrganizationId;
+use aex_wire::models::CardBrand;
 use aex_wire::types::{Cents, Timestamp};
 use serde::{Deserialize, Serialize};
 
-use crate::ProviderObjectRef;
 use crate::command::EffectId;
 use crate::result::PaymentFailure;
+use crate::{ProviderCustomerRef, ProviderMethodRef, ProviderObjectRef};
 
 /// The provider identity of one delivered event.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -30,7 +32,7 @@ pub struct ProviderEventId(pub String);
 #[serde(transparent)]
 pub struct PinnedApiVersion(pub String);
 
-/// The five provider events AEX acts on.
+/// The provider events AEX acts on.
 ///
 /// The enum is closed. An unlisted signed type is acknowledged with a bounded
 /// metric at the edge and never forwarded, because forwarding an event nothing
@@ -38,6 +40,12 @@ pub struct PinnedApiVersion(pub String);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderEventKind {
+    /// A card payment method was attached to a provider customer.
+    PaymentMethodAttached,
+    /// A card payment method's display metadata changed.
+    PaymentMethodUpdated,
+    /// A card payment method was detached.
+    PaymentMethodDetached,
     /// A payment intent succeeded; this is where credit is applied.
     PaymentIntentSucceeded,
     /// A payment intent failed.
@@ -50,14 +58,54 @@ pub enum ProviderEventKind {
     RefundFailed,
 }
 
-/// The exact money and status facts each event kind carries.
+/// The exact display, money and status facts each event kind carries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     rename_all = "snake_case",
-    rename_all_fields = "camelCase"
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
 )]
 pub enum ProviderEventFacts {
+    /// A card payment method was attached.
+    PaymentMethodAttached {
+        /// The provider customer used to resolve the owning account.
+        customer: ProviderCustomerRef,
+        /// The provider payment-method identity.
+        method: ProviderMethodRef,
+        /// Customer-safe card network.
+        brand: CardBrand,
+        /// Final four decimal digits; never PAN.
+        last4: String,
+        /// Expiry month in `1..=12`.
+        expiry_month: u8,
+        /// Four-digit expiry year.
+        expiry_year: u16,
+        /// When the provider created the payment method.
+        provider_created_at: Timestamp,
+    },
+    /// A card payment method's display metadata changed.
+    PaymentMethodUpdated {
+        /// The provider customer used to resolve the owning account.
+        customer: ProviderCustomerRef,
+        /// The provider payment-method identity.
+        method: ProviderMethodRef,
+        /// Customer-safe card network.
+        brand: CardBrand,
+        /// Final four decimal digits; never PAN.
+        last4: String,
+        /// Expiry month in `1..=12`.
+        expiry_month: u8,
+        /// Four-digit expiry year.
+        expiry_year: u16,
+        /// When the provider created the payment method.
+        provider_created_at: Timestamp,
+    },
+    /// A card payment method was detached.
+    PaymentMethodDetached {
+        /// The provider method whose existing row resolves ownership.
+        method: ProviderMethodRef,
+    },
     /// A payment intent succeeded.
     PaymentIntentSucceeded {
         /// The account.
@@ -116,6 +164,9 @@ impl ProviderEventFacts {
     #[must_use]
     pub const fn kind(&self) -> ProviderEventKind {
         match self {
+            Self::PaymentMethodAttached { .. } => ProviderEventKind::PaymentMethodAttached,
+            Self::PaymentMethodUpdated { .. } => ProviderEventKind::PaymentMethodUpdated,
+            Self::PaymentMethodDetached { .. } => ProviderEventKind::PaymentMethodDetached,
             Self::PaymentIntentSucceeded { .. } => ProviderEventKind::PaymentIntentSucceeded,
             Self::PaymentIntentPaymentFailed { .. } => {
                 ProviderEventKind::PaymentIntentPaymentFailed
@@ -126,15 +177,22 @@ impl ProviderEventFacts {
         }
     }
 
-    /// The account the event is about.
+    /// The embedded account, when the event family safely carries one.
+    ///
+    /// Payment-method ownership is deliberately absent: Stripe does not copy
+    /// setup metadata to the method and clears the customer on detach. Ingest
+    /// resolves those events through durable provider identities instead.
     #[must_use]
-    pub const fn organization(&self) -> OrganizationId {
+    pub const fn organization(&self) -> Option<OrganizationId> {
         match self {
             Self::PaymentIntentSucceeded { organization, .. }
             | Self::PaymentIntentPaymentFailed { organization, .. }
             | Self::ChargeDisputeCreated { organization, .. }
             | Self::RefundCreated { organization, .. }
-            | Self::RefundFailed { organization, .. } => *organization,
+            | Self::RefundFailed { organization, .. } => Some(*organization),
+            Self::PaymentMethodAttached { .. }
+            | Self::PaymentMethodUpdated { .. }
+            | Self::PaymentMethodDetached { .. } => None,
         }
     }
 }

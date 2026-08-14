@@ -15,6 +15,7 @@
 use super::BoxFuture;
 use super::proof::{DispatchTicket, FenceGuard};
 use aex_brain_domain::budget::BudgetNode;
+use aex_brain_domain::checkpoint::CheckpointMetadata;
 use aex_brain_domain::commit::DecisionCommit;
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect};
 use aex_brain_domain::ids::{
@@ -68,7 +69,7 @@ pub struct AgentHead {
     /// Which agent.
     pub key: AgentKey,
     /// The canonical Hands generation inherited from the session authority.
-    pub generation: GenerationId,
+    pub generation: Option<GenerationId>,
     /// The commit counter.
     pub revision: AgentRevision,
     /// The ownership generation.
@@ -82,6 +83,8 @@ pub struct AgentHead {
     /// either both present or both absent, and activation verifies both before recovery or
     /// planning.
     pub journal_tail_hash: Option<ContentHash>,
+    /// Latest committed immutable context checkpoint, when one exists.
+    pub checkpoint: Option<CheckpointMetadata>,
     /// The session cancellation epoch.
     pub cancel_epoch: CancelEpoch,
     /// The terminal reason, once the agent has one.
@@ -197,6 +200,22 @@ pub trait JournalStore: Send + Sync + 'static {
         &'a self,
         key: &'a AgentKey,
     ) -> BoxFuture<'a, Result<Option<AgentHead>, StoreError>>;
+
+    /// Strongly reads a bounded set of child controls. The default preserves
+    /// adapter correctness; production adapters may replace it with a batch
+    /// read while retaining strong consistency.
+    fn load_heads<'a>(
+        &'a self,
+        keys: &'a [AgentKey],
+    ) -> BoxFuture<'a, Result<Vec<Option<AgentHead>>, StoreError>> {
+        Box::pin(async move {
+            let mut heads = Vec::with_capacity(keys.len());
+            for key in keys {
+                heads.push(self.load_head(key).await?);
+            }
+            Ok(heads)
+        })
+    }
 
     /// Reads one page from `from`.
     ///

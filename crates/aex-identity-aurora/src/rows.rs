@@ -1,13 +1,12 @@
 //! Identity-schema row decoders.
 
-use aex_control_domain::{Revision, ScopeSet};
+use aex_control_domain::Revision;
 use aex_identity_domain::{
-    AccountToken, DashboardSession, DeviceAuthorization, DeviceState, EmailChallenge,
-    ExternalIdentity, NormalizedEmail, PepperVersion, Provider, ProviderAccountId, TokenOrigin,
-    User, UserStatus, Verifier,
+    DashboardSession, EmailChallenge, ExternalIdentity, NormalizedEmail, PepperVersion, Provider,
+    ProviderAccountId, User, UserStatus, Verifier,
 };
 use aex_rds_data::{DecodeError, Record, Row};
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 
 fn instant(record: &Record<'_>, index: usize) -> Result<OffsetDateTime, DecodeError> {
     record.timestamp_millis(index)
@@ -32,13 +31,6 @@ fn revision(record: &Record<'_>, index: usize) -> Result<Revision, DecodeError> 
     Revision::new(value).map_err(|_| DecodeError::TypeMismatch {
         index,
         expected: "a positive revision",
-    })
-}
-
-fn scopes(record: &Record<'_>, index: usize) -> Result<ScopeSet, DecodeError> {
-    ScopeSet::from_strings(&record.text_array(index)?).map_err(|_| DecodeError::TypeMismatch {
-        index,
-        expected: "a registry scope list",
     })
 }
 
@@ -156,65 +148,6 @@ impl Row for DashboardSessionRow {
                 updated_at: instant(record, 14)?,
             },
         })
-    }
-}
-
-/// A device authorization plus its stored verifier.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeviceAuthorizationRow {
-    /// The domain row.
-    pub value: DeviceAuthorization,
-    /// The keyed device-code verifier.
-    pub verifier: Verifier,
-}
-
-impl Row for DeviceAuthorizationRow {
-    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
-        record.expect_arity(13)?;
-        Ok(Self {
-            value: DeviceAuthorization {
-                id: record.uuid(0)?,
-                state: DeviceState::parse(record.text(3)?).ok_or(DecodeError::TypeMismatch {
-                    index: 3,
-                    expected: "a device authorization state",
-                })?,
-                requested_scopes: scopes(record, 4)?,
-                pepper_version: PepperVersion::new(record.u16(2)?),
-                approved_by: record.opt(5, Record::uuid)?,
-                approved_at: optional_instant(record, 6)?,
-                consumed_at: optional_instant(record, 7)?,
-                account_token_id: record.opt(8, Record::uuid)?,
-                issued_at: instant(record, 9)?,
-                expires_at: instant(record, 10)?,
-                poll_interval: Duration::milliseconds(record.i64(11)?),
-                last_polled_at: optional_instant(record, 12)?,
-            },
-            verifier: Verifier::from_bytes(record.fixed::<32>(1)?),
-        })
-    }
-}
-
-/// An account-token projection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AccountTokenRow(pub AccountToken);
-
-impl Row for AccountTokenRow {
-    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
-        record.expect_arity(9)?;
-        Ok(Self(AccountToken {
-            id: record.uuid(0)?,
-            user_id: record.uuid(1)?,
-            name: record.text(2)?.to_owned(),
-            scopes: scopes(record, 3)?,
-            origin: TokenOrigin::parse(record.text(4)?).ok_or(DecodeError::TypeMismatch {
-                index: 4,
-                expected: "an account-token origin",
-            })?,
-            pepper_version: PepperVersion::new(record.u16(5)?),
-            issued_at: instant(record, 6)?,
-            expires_at: instant(record, 7)?,
-            revoked_at: optional_instant(record, 8)?,
-        }))
     }
 }
 

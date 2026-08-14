@@ -1,7 +1,7 @@
 [package]
 name = "aex-brain-managed-web"
 version = "0.1.0"
-description = "`aex-brain-managed-web` owns the Brain-managed network tool adapter: bounded fetch and search with `URL`, redirect, `DNS`, size, media-type and timeout guards."
+description = "Bounded outbound URL, redirect, DNS, size, media-type and timeout guards reused by MCP."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -30,39 +30,7 @@ integration = "integration"
 
 [package.metadata.aex.not_applicable]
 
-# The crate is two halves and only one of them is the Brain's.
-#
-# `egress`, `fetch`, `search` and `serializer` are network work: a screened
-# outbound policy and two bounded clients. `credential` and `executor` are the
-# Brain's tenant-BYOK adapter, and they are what drags in the session store, the
-# secret custody store and the dispatch ticket.
-#
-# The tool executor holds the *platform's* credential and must link no tenant
-# custody path at all -- that separation is the whole reason it is a separate
-# process -- so the Brain's half is a feature it does not turn on. Default-on, so
-# `brain-mux` and every existing consumer are unchanged.
-[features]
-default = ["brain-adapter"]
-brain-adapter = [
-    "dep:aex-brain-app",
-    "dep:aex-brain-domain",
-    "dep:aex-brain-tool-catalog",
-    "dep:aex-model-catalog",
-    "dep:aex-secret-aws",
-    "dep:aex-secret-custody-dynamodb",
-    "dep:aex-secret-domain",
-    "dep:aex-session-dynamodb",
-]
-
 [dependencies]
-aex-brain-app = { path = "../aex-brain-app", optional = true }
-aex-brain-domain = { path = "../aex-brain-domain", optional = true }
-aex-brain-tool-catalog = { path = "../aex-brain-tool-catalog", optional = true }
-aex-model-catalog = { path = "../aex-model-catalog", optional = true }
-aex-secret-aws = { path = "../aex-secret-aws", optional = true }
-aex-secret-custody-dynamodb = { path = "../aex-secret-custody-dynamodb", optional = true }
-aex-secret-domain = { path = "../aex-secret-domain", optional = true }
-aex-session-dynamodb = { path = "../aex-session-dynamodb", optional = true }
 aex-wire = { path = "../aex-wire" }
 async-trait.workspace = true
 brotli.workspace = true
@@ -80,7 +48,6 @@ url.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-uuid.workspace = true
 
 [[test]]
 name = "conformance"

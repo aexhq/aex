@@ -1,5 +1,4 @@
-//! `finance-ingest` is the Stripe normalized-event inbox and the authoritative
-//! finance transition it implies.
+//! `billing-worker` owns provider ingest, usage settlement, and money reconciliation for the session MVP.
 //!
 //! # Invariants
 //!
@@ -13,13 +12,14 @@
 //! - money is integer micro-USD and every transition is balanced in Rust before
 //!   a statement runs.
 //!
-//! # Not this crate's job
-//!
-//! - webhook signature verification or any Stripe protocol (`stripe-webhook-edge`);
-//! - rating and settlement (`finance-settlement-worker`);
-//! - resolving an unknown provider effect (`finance-reconcile`).
+//! The single Lambda accepts direct verified provider events, SQS FIFO rating
+//! batches, and scheduled reconciliation sweeps. The three modes keep separate
+//! database roles so consolidating compute does not collapse money authority.
 
 pub mod config;
 pub mod handler;
 pub mod inbox;
 pub mod journal;
+pub mod reconcile;
+pub mod runtime;
+pub mod settlement;

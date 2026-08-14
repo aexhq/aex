@@ -2,15 +2,15 @@
   "$id": "https://schemas.aex.dev/v1/MessageSendResult.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "The admitted user message and the session now processing it.",
+  "description": "The admitted user message and session now processing it.",
   "properties": {
     "message": {
       "$ref": "aex:schema:Message",
-      "description": "The admitted message."
+      "description": "Admitted message."
     },
     "session": {
       "$ref": "aex:schema:Session",
-      "description": "The session with current activity populated."
+      "description": "Updated session."
     }
   },
   "required": [

@@ -3,7 +3,10 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-use aex_cli::config::{ConfigInputs, Profile, resolve_config};
+use aex_cli::config::{
+    ConfigInputs, Profile, get_value, load_profile, resolve_api_key, resolve_config,
+    resolve_dashboard_session, set_value,
+};
 use aex_cli::error::{CliErrorClass, exit_code_for_error_class};
 use aex_cli::output::{OutputFormat, render_raw_download};
 use aex_wire::error::ErrorClass;
@@ -21,6 +24,7 @@ fn configuration_precedence_is_flag_env_profile_default() {
     ]);
     let resolved = resolve_config(ConfigInputs {
         central_url: Some("https://flag.example".into()),
+        regional_url: Some("https://regional.example".into()),
         output: None,
         profile,
         env,
@@ -28,6 +32,7 @@ fn configuration_precedence_is_flag_env_profile_default() {
     })
     .expect("config resolves");
     assert_eq!(resolved.central_url, "https://flag.example");
+    assert_eq!(resolved.regional_url, "https://regional.example");
     assert_eq!(resolved.output, OutputFormat::Json);
 }
 
@@ -59,4 +64,82 @@ fn raw_download_is_byte_pure() {
     render_raw_download(&[0, 1, 2, 255], &mut stdout, &mut stderr).expect("write succeeds");
     assert_eq!(stdout.into_inner(), vec![0, 1, 2, 255]);
     assert!(stderr.into_inner().is_empty());
+}
+
+#[test]
+fn config_persists_only_non_secret_values_and_protected_references() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let path = directory.path().join("config.json");
+    set_value(&path, "default", "central-url", "https://api.example").expect("URL");
+    set_value(&path, "default", "api-key-ref", "env:AEX_API_KEY_DEV").expect("reference");
+    set_value(
+        &path,
+        "default",
+        "dashboard-session-ref",
+        "env:AEX_DASHBOARD_SESSION_DEV",
+    )
+    .expect("dashboard reference");
+    assert!(set_value(&path, "default", "api-key", "visible-secret").is_err());
+    assert!(set_value(&path, "default", "provider-key", "visible-secret").is_err());
+    assert!(set_value(&path, "default", "mcp-secret", "visible-secret").is_err());
+
+    let bytes = std::fs::read_to_string(&path).expect("config bytes");
+    assert!(!bytes.contains("visible-secret"));
+    let profile = load_profile(&path, "default").expect("profile");
+    assert_eq!(
+        get_value(&profile, "api-key-ref")
+            .expect("known key")
+            .as_deref(),
+        Some("env:AEX_API_KEY_DEV")
+    );
+}
+
+#[test]
+fn api_key_resolution_prefers_environment_and_debug_never_contains_material() {
+    let secret = "aex_wk_secret_value_that_must_not_appear";
+    let profile = Profile {
+        api_key_ref: Some("env:AEX_API_KEY_DEV".to_owned()),
+        ..Profile::default()
+    };
+    let env = BTreeMap::from([("AEX_API_KEY_DEV".to_owned(), secret.to_owned())]);
+    let resolved = resolve_api_key(&profile, &env).expect("reference resolves");
+    assert_eq!(resolved.as_str(), secret);
+    assert!(!format!("{profile:?}").contains(secret));
+}
+
+#[test]
+fn central_and_regional_credentials_are_separate_and_missing_central_fails_locally() {
+    let workspace_key = "aex_wk_workspace_material";
+    let dashboard_session = "aex_ds_dashboard_material";
+    let profile = Profile {
+        api_key_ref: Some("env:AEX_API_KEY_DEV".to_owned()),
+        dashboard_session_ref: Some("env:AEX_DASHBOARD_SESSION_DEV".to_owned()),
+        ..Profile::default()
+    };
+    let env = BTreeMap::from([
+        ("AEX_API_KEY_DEV".to_owned(), workspace_key.to_owned()),
+        (
+            "AEX_DASHBOARD_SESSION_DEV".to_owned(),
+            dashboard_session.to_owned(),
+        ),
+    ]);
+    assert_eq!(
+        resolve_api_key(&profile, &env).expect("regional").as_str(),
+        workspace_key
+    );
+    assert_eq!(
+        resolve_dashboard_session(&profile, &env)
+            .expect("central")
+            .as_str(),
+        dashboard_session
+    );
+    let missing = BTreeMap::from([("AEX_API_KEY_DEV".to_owned(), workspace_key.to_owned())]);
+    assert!(resolve_dashboard_session(&profile, &missing).is_err());
+
+    let crossed = BTreeMap::from([
+        ("AEX_API_KEY".to_owned(), dashboard_session.to_owned()),
+        ("AEX_DASHBOARD_SESSION".to_owned(), workspace_key.to_owned()),
+    ]);
+    assert!(resolve_api_key(&Profile::default(), &crossed).is_err());
+    assert!(resolve_dashboard_session(&Profile::default(), &crossed).is_err());
 }

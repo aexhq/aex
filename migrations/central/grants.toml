@@ -108,6 +108,10 @@ never_granted = true
 name = "finance.ensure_account(uuid)"
 revoke_public = true
 
+[[function]]
+name = "finance.ensure_personal_ledger_accounts(uuid, uuid, uuid)"
+revoke_public = true
+
 # The one identity fact finance reads, and the only way it can: `aex_finance_api`
 # holds no privilege in `identity` at all, so the address `EnsureCustomer` needs
 # arrives through this wrapper rather than through a grant on `identity.user`.
@@ -136,8 +140,6 @@ tables = [
   "identity.external_identity:SELECT,INSERT,UPDATE,DELETE",
   "identity.dashboard_session:SELECT,INSERT,UPDATE,DELETE",
   "identity.email_challenge:SELECT,INSERT,UPDATE",
-  "identity.device_authorization:SELECT,INSERT,UPDATE",
-  "identity.account_token:SELECT,INSERT,UPDATE",
   "identity.credential_pepper:SELECT",
   "identity.credential_pepper_usage:SELECT",
 ]
@@ -154,7 +156,6 @@ schemas = ["identity", "control", "finance"]
 tables = [
   "identity.user:SELECT",
   "identity.dashboard_session:SELECT",
-  "identity.account_token:SELECT",
   "identity.credential_pepper:SELECT",
   "control.organization:SELECT",
   "control.membership:SELECT",
@@ -176,6 +177,7 @@ name = "aex_control_api"
 connect = true
 schemas = ["control", "identity", "finance"]
 tables = [
+  "control.personal_account:SELECT,INSERT",
   "control.organization:SELECT,INSERT,UPDATE",
   "control.membership:SELECT,INSERT,UPDATE",
   "control.invitation:SELECT,INSERT,UPDATE",
@@ -189,12 +191,14 @@ tables = [
   "control.credential_pepper:SELECT",
   "identity.user:SELECT",
   "finance.account_state_v1:SELECT",
+  "finance.personal_ledger_accounts:SELECT",
 ]
 functions = [
   "control.bump_key_epoch(uuid)",
   "control.bump_membership_epoch(uuid)",
   "control.bump_workspace_epoch(uuid)",
   "finance.ensure_account(uuid)",
+  "finance.ensure_personal_ledger_accounts(uuid, uuid, uuid)",
 ]
 
 # central-control-worker -------------------------------------------------------
@@ -237,7 +241,10 @@ tables = [
   "finance.journal_transaction:SELECT,INSERT",
   "finance.journal_posting:SELECT,INSERT",
   "finance.billing_account:SELECT,INSERT,UPDATE",
+  "finance.payment_method:SELECT",
   "finance.provider_effect:SELECT,INSERT,UPDATE",
+  "finance.reservation:SELECT",
+  "finance.usage_inbox:SELECT",
   "finance.statement:SELECT",
   "control.organization:SELECT",
   # The published account state. `billing_balance_get` reports the projection
@@ -259,6 +266,7 @@ tables = [
   "finance.journal_transaction:SELECT,INSERT",
   "finance.journal_posting:SELECT,INSERT",
   "finance.billing_account:SELECT,UPDATE",
+  "finance.payment_method:SELECT,INSERT,UPDATE",
 ]
 functions = []
 
