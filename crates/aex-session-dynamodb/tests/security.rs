@@ -61,14 +61,29 @@ fn no_index_on_this_table_projects_all() {
 }
 
 #[test]
-fn the_session_api_role_can_query_the_index_cancel_and_resolve_by_point_read() {
+fn the_exact_session_roles_are_declared_and_the_api_remains_least_privileged() {
     let definition = table_definition();
-    let grant = definition["iam"]
-        .as_array()
-        .expect("an IAM grant list")
+    let grants = definition["iam"].as_array().expect("an IAM grant list");
+    let roles = grants
         .iter()
-        .find(|grant| grant["role"].as_str() == Some("regional-session-api"))
-        .expect("the regional session API grant");
+        .map(|grant| grant["role"].as_str().expect("a role name"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        roles,
+        vec![
+            "session-api",
+            "session-maintenance-worker",
+            "brain-mux",
+            "tool-mux",
+            "runtime-control-worker",
+        ],
+        "the session authority has exactly the five accepted production principals"
+    );
+
+    let grant = grants
+        .iter()
+        .find(|grant| grant["role"].as_str() == Some("session-api"))
+        .expect("the session API grant");
     let actions = grant["actions"]
         .as_array()
         .expect("an action list")
@@ -111,23 +126,29 @@ fn only_ephemeral_replay_scaffolding_is_reclaimed_by_ttl() {
             codec::IDEMPOTENCY_RECEIPT,
             "session_create_preparation",
             "session_create_prepared_file",
-            "live_file_transfer",
-            "live_file_election",
         ]
     );
 }
 
 #[test]
-fn the_retired_session_stream_exposes_no_change_feed() {
+fn maintenance_receives_only_key_hints_from_the_session_stream() {
     let definition = table_definition();
-    assert_eq!(definition["stream"]["viewType"].as_str(), Some("NONE"));
+    assert_eq!(definition["stream"]["enabled"].as_bool(), Some(true));
     assert_eq!(
-        definition["stream"]["consumers"]
-            .as_array()
-            .expect("a consumer list")
-            .len(),
-        0,
-        "the removed observation stream leaves no consumer"
+        definition["stream"]["viewType"].as_str(),
+        Some("KEYS_ONLY"),
+        "the stream must never duplicate prompts or encrypted configuration"
+    );
+    let consumers = definition["stream"]["consumers"]
+        .as_array()
+        .expect("a consumer list")
+        .iter()
+        .map(|consumer| consumer.as_str().expect("a consumer name"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        consumers,
+        vec!["session-maintenance-worker"],
+        "only maintenance may receive the identity-only reload hint"
     );
 }
 
