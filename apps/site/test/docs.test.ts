@@ -13,7 +13,7 @@ describe("the documentation content model", () => {
       (block): block is DocsHeading => block.kind === "heading" && block.level === 2,
     );
 
-    expect(page.title).toBe("Aex documentation");
+    expect(page.title).toBe("AEX documentation");
     expect(page.blocks[0]).toMatchObject({ kind: "heading", level: 1, text: "Aex documentation" });
     expect(sections.map((block) => block.slug)).toEqual([
       "quickstart",
