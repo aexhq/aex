@@ -110,15 +110,22 @@ variable "action_grants" {
   validation {
     condition = alltrue([
       for g in var.action_grants : g.condition_operator == "StringEquals" || (
-        g.condition_operator == "ForAllValues:StringLike"
-        && try(g.condition_key, "") == "dynamodb:LeadingKeys"
-        && alltrue([
-          for value in try(g.condition_values, []) :
-          can(regex("^[A-Z][A-Z0-9_]*#\\*$", value))
-        ])
+        try(g.condition_key, "") == "dynamodb:LeadingKeys"
+        && (
+          g.condition_operator == "ForAllValues:StringLike"
+          && alltrue([
+            for value in try(g.condition_values, []) :
+            can(regex("^[A-Z][A-Z0-9_]*#\\*$", value))
+          ])
+          || g.condition_operator == "ForAllValues:StringEquals"
+          && alltrue([
+            for value in try(g.condition_values, []) :
+            can(regex("^[A-Z][A-Z0-9_]*(#[A-Z0-9_]+)*$", value))
+          ])
+        )
       )
     ])
-    error_message = "A set-qualified wildcard condition is accepted only for reviewed DynamoDB leading-key prefixes such as `EXPORT#*`."
+    error_message = "A set-qualified condition is accepted only for reviewed DynamoDB leading-key prefixes such as `EXPORT#*` or exact keys such as `FEED`."
   }
 
   validation {

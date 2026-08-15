@@ -127,6 +127,29 @@ run "renders_a_reviewed_set_qualified_condition" {
   }
 }
 
+run "renders_a_reviewed_exact_set_qualified_condition" {
+  command = plan
+
+  variables {
+    action_grants = [
+      {
+        sid                = "FeedFrontierOnly"
+        actions            = ["dynamodb:GetItem", "dynamodb:PutItem"]
+        resources          = ["arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-regional-authz-projection"]
+        scopable           = true
+        condition_operator = "ForAllValues:StringEquals"
+        condition_key      = "dynamodb:LeadingKeys"
+        condition_values   = ["FEED"]
+      },
+    ]
+  }
+
+  assert {
+    condition     = jsondecode(aws_iam_role_policy.this.policy).Statement[0].Condition["ForAllValues:StringEquals"]["dynamodb:LeadingKeys"] == ["FEED"]
+    error_message = "The generated policy must retain the exact set-qualified leading-key condition verbatim."
+  }
+}
+
 run "rejects_an_unreviewed_set_qualified_condition" {
   command = plan
 
