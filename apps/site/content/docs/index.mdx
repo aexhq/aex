@@ -1,5 +1,5 @@
 ---
-title: Aex documentation
+title: AEX documentation
 description: Create a personal account, then build a file-aware, tool-using agent session with the public SDK.
 ---
 
@@ -20,7 +20,7 @@ The minimal onboarding path is the native CLI:
 aex account create --name first-workspace-key --output json
 ```
 
-This command needs no existing Aex credential. It opens Google sign-in in your
+This command needs no existing AEX credential. It opens Google sign-in in your
 system browser, completes an S256 PKCE exchange through the fixed local
 callback, provisions your personal account and its one fixed workspace if
 needed, and mints a workspace key with all five workspace scopes. The browser
@@ -60,8 +60,8 @@ CLI does not bypass identity verification for unattended provisioning.
 
 ### Start a session
 
-Install `@aexhq/sdk`. You need two keys: your Aex workspace key, and the
-provider key this session will use to talk to the model.
+Install `@aexhq/sdk`, then provide one workspace API key and the provider key
+that this session will encrypt and own.
 
 ```ts
 import { Aex, newId } from "@aexhq/sdk";

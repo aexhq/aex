@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:64c4b6dd322313aada4bc75aaef1d3221381b66bfb9de0e3e2b060712ac5b7db",
+  "digest": "blake3:286955f08cea75216c4a030678291e04ccda50584cca893241b5e94e78bd27db",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -67,7 +67,7 @@
             "values": [
               "WS#*",
               "KEY#*",
-              "FEED#*"
+              "FEED"
             ]
           }
         },

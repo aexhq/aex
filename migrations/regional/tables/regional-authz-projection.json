@@ -22,7 +22,7 @@
       "role": "control-projection-worker",
       "actions": ["dynamodb:GetItem", "dynamodb:PutItem"],
       "resources": ["table"],
-      "condition": { "operator": "ForAllValues:StringLike", "key": "dynamodb:LeadingKeys", "values": ["WS#*", "KEY#*", "FEED#*"] }
+      "condition": { "operator": "ForAllValues:StringLike", "key": "dynamodb:LeadingKeys", "values": ["WS#*", "KEY#*", "FEED"] }
     },
     {
       "role": "session-api",
