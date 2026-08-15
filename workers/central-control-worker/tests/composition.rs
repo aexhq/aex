@@ -351,6 +351,10 @@ impl ControlStore for FakeStore {
         &self,
         command: &FinishWorkspaceProvisionTx,
     ) -> Result<TxOutcome<Workspace>, StoreError> {
+        assert_eq!(
+            command.audit.id, command.operation_id,
+            "a workspace completion audit is uniquely and retry-stably keyed by its operation",
+        );
         self.journal
             .record(format!("finish_provision:{}", command.workspace_id));
         Ok(TxOutcome::Committed(workspace(WorkspaceStatus::Active)))

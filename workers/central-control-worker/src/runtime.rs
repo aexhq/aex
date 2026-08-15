@@ -709,7 +709,11 @@ fn system_audit(
     now: OffsetDateTime,
 ) -> AuditEvent {
     AuditEvent {
-        id: Uuid::nil(),
+        // One provision operation emits exactly one completion audit. Reusing
+        // that durable operation identity makes retries deterministic while
+        // keeping every workspace's audit primary key distinct; the nil UUID
+        // made the second workspace on a plane conflict forever.
+        id: workspace.provision_operation_id,
         organization_id: Some(workspace.organization_id),
         workspace_id: Some(workspace.id),
         actor_kind: ActorKind::System,
