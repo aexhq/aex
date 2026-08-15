@@ -6,7 +6,7 @@ use std::sync::Arc;
 use aex_central_http::cursor::{PageBinding, next_cursor, page_request};
 use aex_control_app::ports::{
     Clock, ControlStore, ControlViewStore, CreateApiKeyTx, IdempotencyRecordKey, ListApiKeys,
-    ListOrganizations, ListWorkspaces, PageRequest, RevokeApiKeyTx, StoreError,
+    RevokeApiKeyTx, StoreError,
 };
 use aex_control_app::{ControlError, CreateApiKey, RevokeApiKey};
 use aex_control_domain::{
@@ -89,42 +89,23 @@ impl ControlService {
         &self,
         user: Uuid,
     ) -> WireResult<aex_control_app::ports::WorkspaceView> {
-        let organizations = self
+        let workspace_id = self
             .store
-            .list_organization_views(&ListOrganizations {
-                user_id: user,
-                page: PageRequest {
-                    after: None,
-                    limit: 2,
-                },
-            })
+            .personal_workspace_id(user)
             .await
-            .map_err(|error| store_error(&error))?;
-        let organization = organizations.items.first().ok_or_else(|| {
-            WireError::new(ErrorCode::AccountStateUnavailable)
-                .with_message("the personal account has not been provisioned")
-        })?;
-        if organizations.items.len() != 1 {
-            return Err(WireError::new(ErrorCode::InternalError)
-                .with_message("a launch user must resolve to exactly one personal account"));
-        }
-        let workspaces = self
-            .store
-            .list_workspace_views(&ListWorkspaces {
-                user_id: user,
-                organization_id: Some(organization.organization.id),
-                page: PageRequest {
-                    after: None,
-                    limit: 2,
-                },
-            })
+            .map_err(|error| store_error(&error))?
+            .ok_or_else(|| {
+                WireError::new(ErrorCode::AccountStateUnavailable)
+                    .with_message("the personal account has not been provisioned")
+            })?;
+        self.store
+            .get_workspace_view(workspace_id)
             .await
-            .map_err(|error| store_error(&error))?;
-        if workspaces.items.len() != 1 {
-            return Err(WireError::new(ErrorCode::AccountStateUnavailable)
-                .with_message("the fixed workspace has not been provisioned"));
-        }
-        Ok(workspaces.items.into_iter().next().expect("one workspace"))
+            .map_err(|error| store_error(&error))?
+            .ok_or_else(|| {
+                WireError::new(ErrorCode::AccountStateUnavailable)
+                    .with_message("the fixed workspace has not been provisioned")
+            })
     }
     async fn require_owner(
         &self,

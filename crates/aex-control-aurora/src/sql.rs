@@ -29,6 +29,11 @@ SELECT p.account_id, p.user_id, p.membership_id, p.workspace_id, \
   JOIN finance.personal_ledger_accounts ledger ON ledger.account_id = p.account_id \
  WHERE p.user_id = :user_id";
 
+/// Resolves the fixed personal workspace without enumerating unrelated
+/// organization memberships owned by the same user.
+pub const GET_PERSONAL_WORKSPACE_ID: &str = "\
+SELECT p.workspace_id FROM control.personal_account p WHERE p.user_id = :user_id";
+
 /// Inserts the one-to-one user/account/workspace link after every referenced row exists.
 pub const INSERT_PERSONAL_ACCOUNT: &str = "\
 INSERT INTO control.personal_account \
@@ -638,6 +643,7 @@ DELETE FROM control.outbox_message WHERE id IN \
 pub const ALL: &[(&str, &str)] = &[
     ("LOCK_PERSONAL_ACCOUNT", LOCK_PERSONAL_ACCOUNT),
     ("GET_PERSONAL_ACCOUNT", GET_PERSONAL_ACCOUNT),
+    ("GET_PERSONAL_WORKSPACE_ID", GET_PERSONAL_WORKSPACE_ID),
     ("INSERT_PERSONAL_ACCOUNT", INSERT_PERSONAL_ACCOUNT),
     (
         "ENSURE_PERSONAL_LEDGER_ACCOUNTS",

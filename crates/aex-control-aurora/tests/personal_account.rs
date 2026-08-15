@@ -8,7 +8,7 @@ use aws_sdk_rdsdata::types::{Field, SqlParameter};
 use time::OffsetDateTime;
 use uuid::{Builder, Uuid};
 
-use aex_control_app::ports::IdFactory;
+use aex_control_app::ports::{ControlViewStore, IdFactory};
 use aex_control_app::{PersonalAccountProvisioner, ProvisionPersonalAccount};
 use aex_control_aurora::{AuroraControlStore, sql};
 use aex_rds_data::client::ExecuteResponse;
@@ -177,6 +177,28 @@ fn aggregate(ids: &[Uuid], user: Uuid) -> Vec<Field> {
         Field::StringValue(ids[8].to_string()),
         Field::LongValue(0),
     ]
+}
+
+#[tokio::test]
+async fn the_fixed_workspace_comes_from_the_personal_account_marker() {
+    let user = Uuid::now_v7();
+    let workspace = Uuid::now_v7();
+    let transport = ScriptedTransport::new(vec![response(vec![vec![Field::StringValue(
+        workspace.to_string(),
+    )]])]);
+    let store = AuroraControlStore::new(client(&transport));
+
+    assert_eq!(
+        ControlViewStore::personal_workspace_id(&store, user)
+            .await
+            .expect("the marker read succeeds"),
+        Some(workspace)
+    );
+    assert_eq!(
+        transport.calls(),
+        vec![Call::Execute(sql::GET_PERSONAL_WORKSPACE_ID.to_owned())]
+    );
+    assert!(!sql::GET_PERSONAL_WORKSPACE_ID.contains("membership"));
 }
 
 #[tokio::test]

@@ -450,6 +450,11 @@ pub struct OperationView {
 /// Read projections used only by the public control boundary.
 #[async_trait]
 pub trait ControlViewStore: Send + Sync {
+    /// Resolves the fixed personal workspace selected by the one-to-one
+    /// personal-account aggregate. Other organization memberships must not
+    /// make this ambiguous.
+    async fn personal_workspace_id(&self, user_id: Uuid) -> Result<Option<Uuid>, StoreError>;
+
     /// Lists the caller's organizations with the role used to admit each row.
     async fn list_organization_views(
         &self,

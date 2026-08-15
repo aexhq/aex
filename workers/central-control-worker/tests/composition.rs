@@ -452,6 +452,10 @@ impl ControlStore for FakeStore {
 
 #[async_trait]
 impl ControlViewStore for FakeStore {
+    async fn personal_workspace_id(&self, _user_id: Uuid) -> Result<Option<Uuid>, StoreError> {
+        unreachable!("the launch projection worker resolves no personal account")
+    }
+
     async fn get_workspace_view(&self, id: Uuid) -> Result<Option<WorkspaceView>, StoreError> {
         assert_eq!(id, workspace_id(), "the worker projected a foreign view");
         Ok(Some(view(self.workspace_status, self.account_state)))

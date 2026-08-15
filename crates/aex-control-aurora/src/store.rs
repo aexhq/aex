@@ -1966,6 +1966,17 @@ impl KeyMaterialReader for AuroraControlStore {
 
 #[async_trait]
 impl ControlViewStore for AuroraControlStore {
+    async fn personal_workspace_id(&self, user_id: Uuid) -> Result<Option<Uuid>, StoreError> {
+        self.client
+            .query_opt::<UuidRow>(
+                Statement::new(sql::GET_PERSONAL_WORKSPACE_ID)
+                    .bind("user_id", SqlValue::Uuid(user_id)),
+            )
+            .await
+            .map(|row| row.map(|row| row.0))
+            .map_err(map_store_error)
+    }
+
     async fn list_organization_views(
         &self,
         query: &ListOrganizations,
