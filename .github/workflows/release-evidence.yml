@@ -100,7 +100,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check out the exact public source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ inputs.public_source_sha }}
           fetch-depth: 1
@@ -108,7 +108,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # master
         with:
           toolchain: "1.97.1"
 
@@ -118,7 +118,7 @@ jobs:
       # the wrong or a corrupt binary still fails here.
       - name: Restore the pinned nextest build
         id: nextest_cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-nextest
           key: cargo-nextest-0.9.108-rust1.97.1-${{ runner.os }}-${{ runner.arch }}
@@ -435,19 +435,19 @@ jobs:
 
       - name: Attest the exact source archive
         id: attest_source
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
           subject-path: handoff/source.tar.gz
 
       - name: Attest the E2E receipt
         id: attest_e2e
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
           subject-path: handoff/receipts/e2e-receipt.json
 
       - name: Attest the user receipt
         id: attest_user
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
           subject-path: handoff/receipts/user-receipt.json
 

@@ -51,16 +51,16 @@ jobs:
       matrix: ${{ fromJSON(inputs.matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # master
         with:
           toolchain: "1.97.1"
           targets: aarch64-unknown-linux-gnu,aarch64-unknown-linux-musl
 
       - name: Cargo cache
-        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
         with:
           save-if: ${{ inputs.lane == 'main' }}
           shared-key: artifacts
@@ -99,7 +99,7 @@ jobs:
           bun-version: "1.3.14"
 
       - name: Install the cross-compiler and packagers
-        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1  # v2.85.13
         with:
           tool: cargo-lambda@1.8.6,cargo-auditable@0.7.1
           fallback: none
@@ -141,14 +141,14 @@ jobs:
       - name: Set up pinned Buildx and BuildKit
         if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         id: buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
         with:
           version: v0.34.1
           driver-opts: image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
 
       - name: Restore the pinned Rust cross-tool archive cache
         if: ${{ steps.recipe.outputs.kind == 'rust-lambda' || steps.recipe.outputs.kind == 'microvm-image' || steps.recipe.outputs.kind == 'rust-binary' || startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ${{ runner.tool_cache }}/aex-rust-cross-tools/downloads
           key: aex-rust-cross-${{ runner.os }}-${{ runner.arch }}-https_ziglang.org_download_0.15.2_zig-x86_64-linux-0.15.2.tar.xz_sha256_02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239-https_github.com_rust-cross_cargo-zigbuild_releases_download_v0.22.3_cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz_sha256_6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190
