@@ -270,6 +270,6 @@ walkdir = "2.5.0"
 proptest = "1.11.0"
 insta = { version = "1.48.0", features = ["json", "yaml", "redactions"] }
 loom = "0.7.2"
-testcontainers = "0.27.3"
+testcontainers = "0.28.0"
 tempfile = "3.27.0"
 similar-asserts = "2.0.0"
