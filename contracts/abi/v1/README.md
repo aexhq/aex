@@ -199,7 +199,7 @@ work. Codes: see `ErrorCode` in the schema.
 | I9 | Exit status, output and usage are customer-controlled observations, never billing authority |
 | I10 | Connection loss ≠ hand loss; the generation id says whether state survived; nothing is replayed |
 
-## 5. What changed from the spike-programme draft (`agentsession/docs/brain-hand-abi.md`)
+## 5. What changed from the spike-programme draft (`aex-research/docs/brain-hand-abi.md`)
 
 Dropped: `signal`, `lane_info`, `probe`, streaming `update`, `terminal` push, effect classes,
 credit-based backpressure, hard version match, reject-unknown-fields.

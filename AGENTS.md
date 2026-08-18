@@ -10,5 +10,5 @@
   provider counters stay absent (never 0).
 * Plain English in docs and comments; name operations precisely (running / suspended / released /
   sync / persist / checkpoint). Cite spike ids (PD-x, HD-x) when a decision rests on a measurement;
-  the decision record is `agentsession/docs/ARCHITECTURE-v1.md`.
+  the decision record is `aex-research/docs/ARCHITECTURE-v1.md` (private sibling repo).
 * Commit style: `area: imperative summary` (e.g. `contracts: add sync op to ABI v1`).

@@ -13,9 +13,9 @@ This repository is the public contract and control-plane home:
 | `crates/aex-contracts` | generated Rust types + the shared hashes (`manifest_digest`, `call_hash`) |
 | `packages/contracts` | generated TypeScript types (`@aex/contracts`) + the same hashes |
 | `tools/` | `gen.sh` regenerates everything derived from `contracts/`; CI fails on drift |
-| `docs/` | repository-level docs (the architecture record lives in the `agentsession` repo until it moves here) |
+| `docs/` | repository-level docs (the architecture record lives in `aex-research/docs/` until it moves here) |
 
-Planned next (see the roadmap in `agentsession/docs/MVP-ROADMAP.md`): SDK + CLI generated from the
+Planned next (see the roadmap in `aex-research/docs/MVP-ROADMAP.md`): SDK + CLI generated from the
 contracts, conformance suite, control-plane services (identity, prepaid billing, session authority).
 The `brain` and `hands` implementations live in their own repositories and consume this one by tag.
 
