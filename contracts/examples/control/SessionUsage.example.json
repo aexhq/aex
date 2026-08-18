@@ -7,8 +7,8 @@
   "workspace_byte_seconds": 48129638400,
   "artifact_byte_seconds": 552960000,
   "compute_microusd": 10733,
-  "storage_microusd": 73,
-  "total_microusd": 10806,
+  "storage_microusd": 74,
+  "total_microusd": 10807,
   "storage": {
     "workspace_bytes": 17825792,
     "suspended_bytes": 1073741824,

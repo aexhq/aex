@@ -184,7 +184,7 @@ w(C + "CreateApiKeyRequest.example.json", {"name": "laptop"})
 w(C + "ApiKeyCreated.example.json", {"key": {k: v for k, v in key.items() if k != "last_used_at"},
                                      "secret": "aex_sk_" + "A1b2" * 12})
 w(C + "ApiKeyList.example.json", {"object": "list", "data": [key]})
-w(C + "Balance.example.json", {"object": "balance", "microusd": 9989194, "usd": "9.98", "metered_to": "2026-08-18T09:45:00Z"})
+w(C + "Balance.example.json", {"object": "balance", "microusd": 9989193, "usd": "9.98", "metered_to": "2026-08-18T09:45:00Z"})
 w(C + "CreateTopupRequest.example.json", {"amount_cents": 1000})
 top_paid = {"id": "top_01J5X8Y2K3M4N5P6Q7R8S9V2", "object": "topup", "amount_cents": 1000, "status": "paid",
             "created_at": "2026-08-18T08:01:00Z", "paid_at": "2026-08-18T08:02:10Z"}
@@ -204,10 +204,10 @@ w(C + "RateCard.example.json", rates)
 susage = {"session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0", "shape": "1gb", "state": "idle",
           "running_ms": 322000, "suspended_byte_seconds": 1932735283200,
           "workspace_byte_seconds": 48129638400, "artifact_byte_seconds": 552960000,
-          "compute_microusd": 10733, "storage_microusd": 73, "total_microusd": 10806,
+          "compute_microusd": 10733, "storage_microusd": 74, "total_microusd": 10807,
           "storage": sess["storage"], "metered_to": "2026-08-18T09:45:00Z"}
 w(C + "SessionUsage.example.json", susage)
-w(C + "Usage.example.json", {"object": "usage", "account_id": acct["id"], "balance_microusd": 9989194,
+w(C + "Usage.example.json", {"object": "usage", "account_id": acct["id"], "balance_microusd": 9989193,
                              "total_microusd": 10806, "sessions": [susage], "rates": rates,
                              "metered_to": "2026-08-18T09:45:00Z"})
 w(C + "ControlErrorResponse.example.json", {"error": {"code": "insufficient_balance",
