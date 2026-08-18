@@ -5,3 +5,5 @@ dist/
 .env
 .env.*
 !.env.example
+.m1-gate/
+aex-control-data/
