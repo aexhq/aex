@@ -1,0 +1,30 @@
+{
+  "name": "@aex/contracts",
+  "version": "0.1.0",
+  "description": "aex contracts: brain-hand ABI v1 and session API v1 types, generated from contracts/",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "schemas"
+  ],
+  "scripts": {
+    "gen": "node scripts/gen.mjs",
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "json-schema-to-typescript": "^15.0.4",
+    "openapi-typescript": "^7.6.1",
+    "typescript": "^5.9.2"
+  }
+}

@@ -1,0 +1,24 @@
+[package]
+name = "aex-contracts"
+version = "0.1.0"
+description = "aex contracts: brain-hand ABI v1 and session API v1 types, generated from the JSON Schema in contracts/"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+regress.workspace = true
+sha2.workspace = true
+serde_jcs.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+jsonschema.workspace = true

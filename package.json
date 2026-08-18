@@ -1,0 +1,11 @@
+{
+  "name": "aex-monorepo",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "gen": "npm run gen --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present"
+  },
+  "engines": { "node": ">=22" }
+}
