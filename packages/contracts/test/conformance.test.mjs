@@ -52,6 +52,15 @@ test("session examples validate against the schema", () => {
   }
 });
 
+test("control examples validate against the schema", () => {
+  const validate = validatorFor(contracts.CONTROL_SCHEMA_JSON);
+  const ex = examples("control");
+  assert.ok(ex.length > 0);
+  for (const { name, typeName, value } of ex) {
+    assert.deepEqual(validate(typeName, value), [], name);
+  }
+});
+
 test("tool manifest digest matches the pin", () => {
   const manifest = contracts.toolManifestV1();
   const validate = validatorFor(contracts.ABI_SCHEMA_JSON);

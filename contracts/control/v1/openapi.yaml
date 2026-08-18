@@ -1,0 +1,203 @@
+openapi: 3.1.0
+info:
+  title: aex control API
+  version: "1.0.0"
+  description: |
+    The control plane: identity, prepaid billing, session authority. A stranger signs up, tops
+    up (Stripe, $10 minimum), creates an API key, runs sessions, sees the bill.
+
+    Two credentials, two jobs:
+      * the **account token** (`aex_at_...`, shown once at signup) manages money and keys —
+        every endpoint defined in this file except signup;
+      * an **API key** (`aex_sk_...`, shown once at creation) runs sessions.
+
+    Session operations are not redefined here: the control plane serves every `session/v1`
+    path verbatim (same shapes, same error envelope), authorized by an API key, in front of a
+    brain. It adds admission on top: 402 `insufficient_balance` when the prepaid balance is not
+    positive, 429 `rate_limited` on the per-account concurrency and create-rate caps — codes the
+    session `ApiErrorCode` already defines.
+
+    Errors here: JSON `{"error": ControlError}`. Component types are in `schemas.json`.
+servers:
+  - url: https://api.aex.dev
+security:
+  - bearer: []
+tags:
+  - name: identity
+  - name: billing
+
+paths:
+  /v1/accounts:
+    post:
+      tags: [identity]
+      operationId: createAccount
+      summary: Sign up (no auth; returns the account token, shown once)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "schemas.json#/$defs/CreateAccountRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/AccountCreated" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/account:
+    get:
+      tags: [identity]
+      operationId: getAccount
+      summary: Get the authenticated account
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/Account" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/keys:
+    post:
+      tags: [identity]
+      operationId: createApiKey
+      summary: Create an API key (the secret is shown once)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "schemas.json#/$defs/CreateApiKeyRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/ApiKeyCreated" }
+        default: { $ref: "#/components/responses/Error" }
+    get:
+      tags: [identity]
+      operationId: listApiKeys
+      summary: List API keys (never the secrets)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/ApiKeyList" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/keys/{key_id}:
+    parameters:
+      - name: key_id
+        in: path
+        required: true
+        schema: { $ref: "schemas.json#/$defs/KeyId" }
+    delete:
+      tags: [identity]
+      operationId: revokeApiKey
+      summary: Revoke an API key (immediate; running sessions keep running, new requests with it fail)
+      responses:
+        "204":
+          description: Revoked
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/balance:
+    get:
+      tags: [billing]
+      operationId: getBalance
+      summary: Get the prepaid balance (meters usage up to now first)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/Balance" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/topups:
+    post:
+      tags: [billing]
+      operationId: createTopup
+      summary: Start a top-up; pay at the returned checkout URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "schemas.json#/$defs/CreateTopupRequest" }
+      responses:
+        "201":
+          description: Created (status pending until the payment provider reports it paid)
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/Topup" }
+        default: { $ref: "#/components/responses/Error" }
+    get:
+      tags: [billing]
+      operationId: listTopups
+      summary: List top-ups (newest first; refreshes pending ones against the payment provider)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/TopupList" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/topups/{topup_id}:
+    parameters:
+      - name: topup_id
+        in: path
+        required: true
+        schema: { $ref: "schemas.json#/$defs/TopupId" }
+    get:
+      tags: [billing]
+      operationId: getTopup
+      summary: Get a top-up (polls the payment provider while pending; credits idempotently on paid)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/Topup" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/usage:
+    get:
+      tags: [billing]
+      operationId: getUsage
+      summary: The bill — every session's rated line on the two-rate card, storage meters included
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/Usage" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/rates:
+    get:
+      tags: [billing]
+      operationId: getRates
+      summary: The active rate card (public)
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/RateCard" }
+        default: { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: "schemas.json#/$defs/ControlErrorResponse" }

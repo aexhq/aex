@@ -8,8 +8,14 @@ import { readFileSync } from "node:fs";
 import type { Bounds, LaneRef, StartRequest, ToolManifest } from "./abi.js";
 
 export * as abi from "./abi.js";
+export * as control from "./control.js";
 export * as session from "./session.js";
 export type { paths, components, operations } from "./paths.js";
+export type {
+  paths as controlPaths,
+  components as controlComponents,
+  operations as controlOperations,
+} from "./control-paths.js";
 
 /** ABI version this package speaks. Major must match between brain and hand. */
 export const ABI_MAJOR = 1;
@@ -21,6 +27,7 @@ const schema = (name: string): string =>
 /** Raw JSON Schema documents (parse on demand). */
 export const ABI_SCHEMA_JSON: string = schema("abi.v1.json");
 export const SESSION_SCHEMA_JSON: string = schema("session.v1.json");
+export const CONTROL_SCHEMA_JSON: string = schema("control.v1.json");
 /** The sealed tool manifest v1 and its pinned digest. */
 export const TOOL_MANIFEST_V1_JSON: string = schema("tools.manifest.v1.json");
 export const TOOL_MANIFEST_V1_DIGEST: string = schema("tools.manifest.v1.digest").trim();

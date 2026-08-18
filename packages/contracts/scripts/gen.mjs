@@ -29,19 +29,27 @@ async function schemaToTs(rel, outName) {
 }
 await schemaToTs("abi/v1/abi.json", "abi.ts");
 await schemaToTs("session/v1/schemas.json", "session.ts");
+await schemaToTs("control/v1/schemas.json", "control.ts");
 
 const openapiPath = path.join(contracts, "session/v1/openapi.yaml");
 const ast = await openapiTS(pathToFileURL(openapiPath), { exportType: true });
 await writeFile(path.join(out, "paths.ts"), banner("contracts/session/v1/openapi.yaml") + astToString(ast));
+const controlOpenapiPath = path.join(contracts, "control/v1/openapi.yaml");
+const controlAst = await openapiTS(pathToFileURL(controlOpenapiPath), { exportType: true });
+await writeFile(
+  path.join(out, "control-paths.ts"),
+  banner("contracts/control/v1/openapi.yaml") + astToString(controlAst),
+);
 // Runtime copies of the schemas and the sealed tool manifest, shipped with the package.
 const schemasDir = path.join(here, "../schemas");
 await mkdir(schemasDir, { recursive: true });
 for (const [rel, name] of [
   ["abi/v1/abi.json", "abi.v1.json"],
   ["session/v1/schemas.json", "session.v1.json"],
+  ["control/v1/schemas.json", "control.v1.json"],
   ["abi/v1/tools/manifest.json", "tools.manifest.v1.json"],
   ["abi/v1/tools/manifest.digest", "tools.manifest.v1.digest"],
 ]) {
   await writeFile(path.join(schemasDir, name), await readFile(path.join(contracts, rel)));
 }
-console.log("generated abi.ts session.ts paths.ts schemas/");
+console.log("generated abi.ts session.ts control.ts paths.ts control-paths.ts schemas/");

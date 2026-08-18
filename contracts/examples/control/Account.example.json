@@ -1,0 +1,10 @@
+{
+  "id": "acc_01J5X8Y2K3M4N5P6Q7R8S9T0",
+  "object": "account",
+  "email": "dev@example.com",
+  "created_at": "2026-08-18T08:00:00Z",
+  "limits": {
+    "max_concurrent_sessions": 10,
+    "session_creates_per_hour": 30
+  }
+}

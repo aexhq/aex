@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use aex_contracts::{abi, session, tools};
+use aex_contracts::{abi, control, session, tools};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -112,6 +112,7 @@ fn schemas_are_valid_2020_12() {
     for (name, json) in [
         ("abi", aex_contracts::ABI_SCHEMA_JSON),
         ("session", aex_contracts::SESSION_SCHEMA_JSON),
+        ("control", aex_contracts::CONTROL_SCHEMA_JSON),
     ] {
         let schema: Value = serde_json::from_str(json).unwrap();
         jsonschema::meta::validate(&schema)
@@ -153,6 +154,36 @@ fn session_examples_validate_and_round_trip() {
             "FileList" => round_trip::<session::FileList>(&name, &value),
             "PersistRequest" => round_trip::<session::PersistRequest>(&name, &value),
             other => panic!("{name}: no round-trip mapping for session type {other}; add one"),
+        }
+    }
+}
+
+#[test]
+fn control_examples_validate_and_round_trip() {
+    for (name, type_name, value) in examples("control") {
+        validate(
+            aex_contracts::CONTROL_SCHEMA_JSON,
+            &name,
+            &type_name,
+            &value,
+        );
+        match type_name.as_str() {
+            "Account" => round_trip::<control::Account>(&name, &value),
+            "CreateAccountRequest" => round_trip::<control::CreateAccountRequest>(&name, &value),
+            "AccountCreated" => round_trip::<control::AccountCreated>(&name, &value),
+            "ApiKey" => round_trip::<control::ApiKey>(&name, &value),
+            "CreateApiKeyRequest" => round_trip::<control::CreateApiKeyRequest>(&name, &value),
+            "ApiKeyCreated" => round_trip::<control::ApiKeyCreated>(&name, &value),
+            "ApiKeyList" => round_trip::<control::ApiKeyList>(&name, &value),
+            "Balance" => round_trip::<control::Balance>(&name, &value),
+            "CreateTopupRequest" => round_trip::<control::CreateTopupRequest>(&name, &value),
+            "Topup" => round_trip::<control::Topup>(&name, &value),
+            "TopupList" => round_trip::<control::TopupList>(&name, &value),
+            "RateCard" => round_trip::<control::RateCard>(&name, &value),
+            "SessionUsage" => round_trip::<control::SessionUsage>(&name, &value),
+            "Usage" => round_trip::<control::Usage>(&name, &value),
+            "ControlErrorResponse" => round_trip::<control::ControlErrorResponse>(&name, &value),
+            other => panic!("{name}: no round-trip mapping for control type {other}; add one"),
         }
     }
 }

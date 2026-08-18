@@ -1,0 +1,18 @@
+{
+  "session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0",
+  "shape": "1gb",
+  "state": "idle",
+  "running_ms": 322000,
+  "suspended_byte_seconds": 1932735283200,
+  "workspace_byte_seconds": 48129638400,
+  "artifact_byte_seconds": 552960000,
+  "compute_microusd": 10733,
+  "storage_microusd": 73,
+  "total_microusd": 10806,
+  "storage": {
+    "workspace_bytes": 17825792,
+    "suspended_bytes": 1073741824,
+    "artifact_bytes": 204800
+  },
+  "metered_to": "2026-08-18T09:45:00Z"
+}

@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "insufficient_balance",
+    "message": "balance is $0.00; top up at least $10 to run sessions",
+    "request_id": "req_ctl_7f"
+  }
+}

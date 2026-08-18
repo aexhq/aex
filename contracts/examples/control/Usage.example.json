@@ -1,0 +1,36 @@
+{
+  "object": "usage",
+  "account_id": "acc_01J5X8Y2K3M4N5P6Q7R8S9T0",
+  "balance_microusd": 9989194,
+  "total_microusd": 10806,
+  "sessions": [
+    {
+      "session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0",
+      "shape": "1gb",
+      "state": "idle",
+      "running_ms": 322000,
+      "suspended_byte_seconds": 1932735283200,
+      "workspace_byte_seconds": 48129638400,
+      "artifact_byte_seconds": 552960000,
+      "compute_microusd": 10733,
+      "storage_microusd": 73,
+      "total_microusd": 10806,
+      "storage": {
+        "workspace_bytes": 17825792,
+        "suspended_bytes": 1073741824,
+        "artifact_bytes": 204800
+      },
+      "metered_to": "2026-08-18T09:45:00Z"
+    }
+  ],
+  "rates": {
+    "object": "rate_card",
+    "vcpu_hour_microusd": 190000,
+    "gb_hour_microusd": 25000,
+    "suspended_gb_month_microusd": 100000,
+    "workspace_gb_month_microusd": 30000,
+    "web_search_query_microusd": 3000,
+    "month_hours": 730
+  },
+  "metered_to": "2026-08-18T09:45:00Z"
+}

@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== normalise schema formatting"
-python tools/normalise-json.py contracts/abi/v1/abi.json contracts/abi/v1/tools/manifest.json contracts/session/v1/schemas.json
+python tools/normalise-json.py contracts/abi/v1/abi.json contracts/abi/v1/tools/manifest.json contracts/session/v1/schemas.json contracts/control/v1/schemas.json
 
 echo "== examples"
 python tools/make-examples.py
@@ -22,6 +22,7 @@ gen_rs() { # $1 schema, $2 out
 }
 gen_rs contracts/abi/v1/abi.json crates/aex-contracts/src/abi.rs
 gen_rs contracts/session/v1/schemas.json crates/aex-contracts/src/session.rs
+gen_rs contracts/control/v1/schemas.json crates/aex-contracts/src/control.rs
 
 echo "== typescript"
 npm run --silent --workspace @aex/contracts gen

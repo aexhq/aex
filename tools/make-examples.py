@@ -169,4 +169,48 @@ w(S + "FileList.manifest.json", {"object": "list", "data": [{"path": "/workspace
                                  "synced_at": "2026-08-18T09:42:10Z", "source": "manifest"})
 w(S + "SessionList.example.json", {"object": "list", "data": [sess], "has_more": False})
 w(S + "PersistRequest.example.json", {"name": "report.pdf", "path": "/workspace/out/report.pdf", "media_type": "application/pdf"})
-print("examples written:", len(os.listdir(ROOT / A)), len(os.listdir(ROOT / S)))
+
+C = "contracts/examples/control/"
+acct = {"id": "acc_01J5X8Y2K3M4N5P6Q7R8S9T0", "object": "account", "email": "dev@example.com",
+        "created_at": "2026-08-18T08:00:00Z",
+        "limits": {"max_concurrent_sessions": 10, "session_creates_per_hour": 30}}
+w(C + "Account.example.json", acct)
+w(C + "CreateAccountRequest.example.json", {"email": "dev@example.com"})
+w(C + "AccountCreated.example.json", {"account": acct, "account_token": "aex_at_" + "A1b2" * 12})
+key = {"id": "key_01J5X8Y2K3M4N5P6Q7R8S9U1", "object": "api_key", "name": "laptop",
+       "prefix": "aex_sk_A1b2C", "created_at": "2026-08-18T08:05:00Z", "last_used_at": "2026-08-18T09:40:00Z"}
+w(C + "ApiKey.example.json", key)
+w(C + "CreateApiKeyRequest.example.json", {"name": "laptop"})
+w(C + "ApiKeyCreated.example.json", {"key": {k: v for k, v in key.items() if k != "last_used_at"},
+                                     "secret": "aex_sk_" + "A1b2" * 12})
+w(C + "ApiKeyList.example.json", {"object": "list", "data": [key]})
+w(C + "Balance.example.json", {"object": "balance", "microusd": 9989194, "usd": "9.98", "metered_to": "2026-08-18T09:45:00Z"})
+w(C + "CreateTopupRequest.example.json", {"amount_cents": 1000})
+top_paid = {"id": "top_01J5X8Y2K3M4N5P6Q7R8S9V2", "object": "topup", "amount_cents": 1000, "status": "paid",
+            "created_at": "2026-08-18T08:01:00Z", "paid_at": "2026-08-18T08:02:10Z"}
+w(C + "Topup.paid.json", top_paid)
+w(C + "Topup.pending.json", {"id": "top_01J5X8Y2K3M4N5P6Q7R8S9V3", "object": "topup", "amount_cents": 2500,
+                             "status": "pending", "checkout_url": "https://checkout.stripe.com/c/pay/cs_test_a1B2c3",
+                             "created_at": "2026-08-18T09:50:00Z"})
+w(C + "TopupList.example.json", {"object": "list", "data": [top_paid]})
+rates = {"object": "rate_card", "vcpu_hour_microusd": 190000, "gb_hour_microusd": 25000,
+         "suspended_gb_month_microusd": 100000, "workspace_gb_month_microusd": 30000,
+         "web_search_query_microusd": 3000, "month_hours": 730}
+w(C + "RateCard.example.json", rates)
+# Worked line, arithmetic honest on the D4 card. 1gb shape = 0.5 baseline vCPU + 1 GB
+# -> 120,000 microusd/h. 322,000 ms running -> 322000*120000/3,600,000 = 10,733 microusd.
+# 1 GiB suspended for 1800 s = 1,932,735,283,200 byte*s
+# -> *100,000 / (1e9 * 730 * 3600) = 73 microusd. Workspace/artifact integrals round to 0 here.
+susage = {"session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0", "shape": "1gb", "state": "idle",
+          "running_ms": 322000, "suspended_byte_seconds": 1932735283200,
+          "workspace_byte_seconds": 48129638400, "artifact_byte_seconds": 552960000,
+          "compute_microusd": 10733, "storage_microusd": 73, "total_microusd": 10806,
+          "storage": sess["storage"], "metered_to": "2026-08-18T09:45:00Z"}
+w(C + "SessionUsage.example.json", susage)
+w(C + "Usage.example.json", {"object": "usage", "account_id": acct["id"], "balance_microusd": 9989194,
+                             "total_microusd": 10806, "sessions": [susage], "rates": rates,
+                             "metered_to": "2026-08-18T09:45:00Z"})
+w(C + "ControlErrorResponse.example.json", {"error": {"code": "insufficient_balance",
+                                                      "message": "balance is $0.00; top up at least $10 to run sessions",
+                                                      "request_id": "req_ctl_7f"}})
+print("examples written:", len(os.listdir(ROOT / A)), len(os.listdir(ROOT / S)), len(os.listdir(ROOT / C)))

@@ -1,0 +1,510 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aex.dev/contracts/control/v1/schemas.json",
+  "title": "aex control API v1 types",
+  "description": "Component types of the control plane: identity (accounts, API keys), prepaid billing (top-ups, balance), and rated usage on the two-rate card. Paths are in openapi.yaml. Session operations are NOT redefined here: the control plane serves session/v1 paths verbatim, authorized by an API key, in front of a brain. All money on the wire is integer micro-USD (1 USD = 1,000,000 micro-USD) except top-up amounts, which are whole cents (the payment surface). Storage is metered in decimal GB (1 GB = 1e9 bytes); a month is 730 hours.",
+  "$defs": {
+    "AccountId": {
+      "type": "string",
+      "pattern": "^acc_[A-Za-z0-9]{20,32}$"
+    },
+    "KeyId": {
+      "type": "string",
+      "pattern": "^key_[A-Za-z0-9]{20,32}$"
+    },
+    "TopupId": {
+      "type": "string",
+      "pattern": "^top_[A-Za-z0-9]{20,32}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339, UTC."
+    },
+    "MicroUsd": {
+      "type": "integer",
+      "description": "Integer micro-USD; 1 USD = 1,000,000. Never a float."
+    },
+    "AccountToken": {
+      "type": "string",
+      "pattern": "^aex_at_[A-Za-z0-9]{40,64}$",
+      "description": "Manages the account: keys, top-ups, the bill. Shown once at signup; only a hash is stored."
+    },
+    "ApiKeySecret": {
+      "type": "string",
+      "pattern": "^aex_sk_[A-Za-z0-9]{40,64}$",
+      "description": "Runs sessions. Shown once at creation; only a hash is stored."
+    },
+    "AccountLimits": {
+      "type": "object",
+      "required": [
+        "max_concurrent_sessions",
+        "session_creates_per_hour"
+      ],
+      "description": "Abuse controls (ARCHITECTURE-v1 §2.9): card + minimum top-up, concurrency and create-rate caps.",
+      "properties": {
+        "max_concurrent_sessions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "session_creates_per_hour": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "Account": {
+      "type": "object",
+      "required": [
+        "id",
+        "object",
+        "email",
+        "created_at",
+        "limits"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/AccountId"
+        },
+        "object": {
+          "const": "account"
+        },
+        "email": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "limits": {
+          "$ref": "#/$defs/AccountLimits"
+        }
+      }
+    },
+    "CreateAccountRequest": {
+      "type": "object",
+      "required": [
+        "email"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+          "maxLength": 254
+        }
+      }
+    },
+    "AccountCreated": {
+      "type": "object",
+      "required": [
+        "account",
+        "account_token"
+      ],
+      "description": "The account token appears here and never again.",
+      "properties": {
+        "account": {
+          "$ref": "#/$defs/Account"
+        },
+        "account_token": {
+          "$ref": "#/$defs/AccountToken"
+        }
+      }
+    },
+    "ApiKey": {
+      "type": "object",
+      "required": [
+        "id",
+        "object",
+        "name",
+        "prefix",
+        "created_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/KeyId"
+        },
+        "object": {
+          "const": "api_key"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "prefix": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 20,
+          "description": "First characters of the secret, for recognising a key in a list. Never enough to authenticate."
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "last_used_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "revoked_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "CreateApiKeyRequest": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "ApiKeyCreated": {
+      "type": "object",
+      "required": [
+        "key",
+        "secret"
+      ],
+      "description": "The secret appears here and never again.",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/ApiKey"
+        },
+        "secret": {
+          "$ref": "#/$defs/ApiKeySecret"
+        }
+      }
+    },
+    "ApiKeyList": {
+      "type": "object",
+      "required": [
+        "object",
+        "data"
+      ],
+      "properties": {
+        "object": {
+          "const": "list"
+        },
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ApiKey"
+          }
+        }
+      }
+    },
+    "Balance": {
+      "type": "object",
+      "required": [
+        "object",
+        "microusd",
+        "usd",
+        "metered_to"
+      ],
+      "description": "Prepaid balance = credits minus rated usage, metered up to `metered_to`. May be negative: usage is rated after the fact; new sessions and messages are refused while it is not positive.",
+      "properties": {
+        "object": {
+          "const": "balance"
+        },
+        "microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "usd": {
+          "type": "string",
+          "pattern": "^-?[0-9]+\\.[0-9]{2}$",
+          "description": "Display form, whole cents, rounded toward zero."
+        },
+        "metered_to": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "CreateTopupRequest": {
+      "type": "object",
+      "required": [
+        "amount_cents"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "amount_cents": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 100000000,
+          "description": "Whole cents. Minimum top-up $10.00 (abuse control, ARCHITECTURE-v1 §2.9)."
+        }
+      }
+    },
+    "TopupStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "paid",
+        "expired"
+      ]
+    },
+    "Topup": {
+      "type": "object",
+      "required": [
+        "id",
+        "object",
+        "amount_cents",
+        "status",
+        "created_at"
+      ],
+      "description": "A prepaid credit purchase. `checkout_url` is where the customer pays (Stripe Checkout); present while pending. The balance is credited when the payment provider reports it paid — on webhook or on poll, idempotently.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/TopupId"
+        },
+        "object": {
+          "const": "topup"
+        },
+        "amount_cents": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "$ref": "#/$defs/TopupStatus"
+        },
+        "checkout_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "paid_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "TopupList": {
+      "type": "object",
+      "required": [
+        "object",
+        "data"
+      ],
+      "properties": {
+        "object": {
+          "const": "list"
+        },
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Topup"
+          }
+        }
+      }
+    },
+    "RateCard": {
+      "type": "object",
+      "required": [
+        "object",
+        "vcpu_hour_microusd",
+        "gb_hour_microusd",
+        "suspended_gb_month_microusd",
+        "workspace_gb_month_microusd",
+        "web_search_query_microusd",
+        "month_hours"
+      ],
+      "description": "The two-rate card (ARCHITECTURE-v1 D4). Compute is billed per second while running on the shape's BASELINE (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes the substrate holds for a suspended hand; workspace storage covers synced workspace objects AND persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours.",
+      "properties": {
+        "object": {
+          "const": "rate_card"
+        },
+        "vcpu_hour_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "gb_hour_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "suspended_gb_month_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "workspace_gb_month_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "web_search_query_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "month_hours": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "StorageMeters": {
+      "type": "object",
+      "required": [
+        "workspace_bytes",
+        "suspended_bytes",
+        "artifact_bytes"
+      ],
+      "description": "Current stored bytes, as last reported by the brain (session/v1 StorageInfo).",
+      "properties": {
+        "workspace_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "suspended_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artifact_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "SessionUsage": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "shape",
+        "state",
+        "running_ms",
+        "suspended_byte_seconds",
+        "workspace_byte_seconds",
+        "artifact_byte_seconds",
+        "compute_microusd",
+        "storage_microusd",
+        "total_microusd",
+        "storage",
+        "metered_to"
+      ],
+      "description": "One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings.",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "pattern": "^ses_[A-Za-z0-9]{20,32}$"
+        },
+        "shape": {
+          "type": "string",
+          "description": "HandShape from session/v1 (1gb | 2gb | 4gb | 8gb)."
+        },
+        "state": {
+          "type": "string",
+          "description": "SessionState from session/v1 (active | idle | deleted | failed)."
+        },
+        "running_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "suspended_byte_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "workspace_byte_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artifact_byte_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "compute_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "storage_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "total_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "storage": {
+          "$ref": "#/$defs/StorageMeters"
+        },
+        "metered_to": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "Usage": {
+      "type": "object",
+      "required": [
+        "object",
+        "account_id",
+        "balance_microusd",
+        "total_microusd",
+        "sessions",
+        "rates",
+        "metered_to"
+      ],
+      "description": "The bill: every session's rated line, the account balance after them, and the rate card they were rated on.",
+      "properties": {
+        "object": {
+          "const": "usage"
+        },
+        "account_id": {
+          "$ref": "#/$defs/AccountId"
+        },
+        "balance_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "total_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionUsage"
+          }
+        },
+        "rates": {
+          "$ref": "#/$defs/RateCard"
+        },
+        "metered_to": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "ControlErrorCode": {
+      "type": "string",
+      "enum": [
+        "invalid_request",
+        "unauthorized",
+        "forbidden",
+        "not_found",
+        "conflict",
+        "insufficient_balance",
+        "rate_limited",
+        "payment_error",
+        "upstream_error",
+        "internal"
+      ]
+    },
+    "ControlError": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ControlErrorCode"
+        },
+        "message": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      }
+    },
+    "ControlErrorResponse": {
+      "type": "object",
+      "required": [
+        "error"
+      ],
+      "description": "Error envelope of the control plane's own endpoints. Proxied session/v1 endpoints keep the session ApiError envelope; the control plane injects only codes that ApiErrorCode already has (insufficient_balance, rate_limited, unauthorized, forbidden, not_found).",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ControlError"
+        }
+      }
+    }
+  }
+}
