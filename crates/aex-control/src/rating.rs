@@ -109,6 +109,8 @@ pub struct FoldState {
     pub suspended_byte_seconds: i64,
     pub workspace_byte_seconds: i64,
     pub artifact_byte_seconds: i64,
+    /// Successful managed `web_search` results committed to the journal.
+    pub web_search_queries: i64,
     /// Storage integrated up to this wall time.
     pub metered_to_ms: i64,
     /// Latest meter readings (brain-reported bytes) and states.
@@ -141,6 +143,12 @@ pub fn fold_events(state: &mut FoldState, events: &[Value]) {
                 if let Some(h) = ev["hand"]["state"].as_str() {
                     state.hand_state = h.into();
                 }
+            }
+            "tool.result"
+                if ev["name"].as_str() == Some("web_search")
+                    && ev["outcome"].as_str() == Some("completed") =>
+            {
+                state.web_search_queries = state.web_search_queries.saturating_add(1);
             }
             _ => {}
         }
@@ -188,6 +196,7 @@ pub struct Priced {
     pub running_ms: i64,
     pub compute_microusd: i64,
     pub storage_microusd: i64,
+    pub web_search_microusd: i64,
     pub total_microusd: i64,
 }
 
@@ -210,11 +219,15 @@ pub fn price(card: &RateCard, shape: &str, state: &FoldState, now_ms: i64) -> Pr
         / month_byte_seconds;
     let compute = i64::try_from(compute).unwrap_or(i64::MAX);
     let storage = i64::try_from(storage).unwrap_or(i64::MAX);
+    let web_search = state
+        .web_search_queries
+        .saturating_mul(card.web_search_query_microusd);
     Priced {
         running_ms,
         compute_microusd: compute,
         storage_microusd: storage,
-        total_microusd: compute.saturating_add(storage),
+        web_search_microusd: web_search,
+        total_microusd: compute.saturating_add(storage).saturating_add(web_search),
     }
 }
 
@@ -262,13 +275,32 @@ mod tests {
             suspended_byte_seconds: 1_932_735_283_200, // 1 GiB * 1800 s
             workspace_byte_seconds: 48_129_638_400,    // 17,825,792 B * 2700 s
             artifact_byte_seconds: 552_960_000,        // 204,800 B * 2700 s
+            web_search_queries: 2,
             session_state: "idle".into(),
             ..FoldState::default()
         };
         let p = price(&card, "1gb", &s, 0);
         assert_eq!(p.compute_microusd, 10_733);
         assert_eq!(p.storage_microusd, 74);
-        assert_eq!(p.total_microusd, 10_807);
+        assert_eq!(p.web_search_microusd, 6_000);
+        assert_eq!(p.total_microusd, 16_807);
+    }
+
+    #[test]
+    fn only_successful_committed_web_search_results_are_counted() {
+        let mut s = FoldState::default();
+        fold_events(
+            &mut s,
+            &[
+                json!({"type":"tool.result", "seq":1, "name":"web_search", "outcome":"completed"}),
+                json!({"type":"tool.result", "seq":2, "name":"web_search", "outcome":"failed"}),
+                json!({"type":"tool.result", "seq":3, "name":"web_fetch", "outcome":"completed"}),
+            ],
+        );
+        assert_eq!(s.web_search_queries, 1);
+        let p = price(&RateCard::default(), "1gb", &s, 0);
+        assert_eq!(p.web_search_microusd, 3_000);
+        assert_eq!(p.total_microusd, 3_000);
     }
 
     #[test]

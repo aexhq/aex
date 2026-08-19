@@ -7,7 +7,12 @@
 //! the store, idempotently, when `check` reports Paid — so webhook delivery and polling can
 //! both drive it, in any order, any number of times.
 
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
 use crate::{Error, Result};
+
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaymentStatus {
@@ -21,6 +26,143 @@ pub struct Checkout {
     pub provider_ref: String,
     /// Where the customer pays.
     pub url: String,
+}
+
+/// A verified Stripe event that can change a top-up. Unknown event types verify successfully
+/// and produce no action, as Stripe recommends for endpoints subscribed to broader event sets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StripeWebhookAction {
+    Paid {
+        topup_id: String,
+        provider_ref: String,
+        amount_cents: i64,
+    },
+    Expired {
+        topup_id: String,
+        provider_ref: String,
+    },
+}
+
+/// Stripe endpoint-signing secret. Debug output is deliberately redacted.
+#[derive(Clone)]
+pub struct StripeWebhook {
+    secret: std::sync::Arc<str>,
+}
+
+impl std::fmt::Debug for StripeWebhook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StripeWebhook")
+            .field("secret", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl StripeWebhook {
+    pub const TOLERANCE_SECONDS: i64 = 300;
+
+    pub fn new(secret: String) -> Self {
+        Self {
+            secret: secret.into(),
+        }
+    }
+
+    /// Verify Stripe's `t=...,v1=...` signature over the exact raw body, enforce the same
+    /// five-minute replay window as Stripe's official libraries, then shape relevant events.
+    pub fn verify(
+        &self,
+        signature_header: &str,
+        body: &[u8],
+        now_seconds: i64,
+    ) -> Result<Option<StripeWebhookAction>> {
+        let mut timestamp = None;
+        let mut signatures = Vec::new();
+        for part in signature_header.split(',') {
+            let Some((name, value)) = part.trim().split_once('=') else {
+                continue;
+            };
+            match name {
+                "t" => {
+                    timestamp = value.parse::<i64>().ok();
+                }
+                "v1" => {
+                    if let Ok(bytes) = hex::decode(value) {
+                        signatures.push(bytes);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let timestamp = timestamp.ok_or_else(invalid_webhook)?;
+        if now_seconds.abs_diff(timestamp) > Self::TOLERANCE_SECONDS as u64 {
+            return Err(invalid_webhook());
+        }
+
+        let mut signed = timestamp.to_string().into_bytes();
+        signed.push(b'.');
+        signed.extend_from_slice(body);
+        let valid = signatures.iter().any(|signature| {
+            HmacSha256::new_from_slice(self.secret.as_bytes()).is_ok_and(|mut mac| {
+                mac.update(&signed);
+                mac.verify_slice(signature).is_ok()
+            })
+        });
+        if !valid {
+            return Err(invalid_webhook());
+        }
+
+        let event: serde_json::Value = serde_json::from_slice(body)
+            .map_err(|_| Error::Invalid("invalid stripe webhook payload".into()))?;
+        let kind = event["type"]
+            .as_str()
+            .ok_or_else(|| Error::Invalid("invalid stripe webhook payload".into()))?;
+        if !matches!(
+            kind,
+            "checkout.session.completed"
+                | "checkout.session.async_payment_succeeded"
+                | "checkout.session.expired"
+        ) {
+            return Ok(None);
+        }
+        let object = &event["data"]["object"];
+        let provider_ref = object["id"]
+            .as_str()
+            .filter(|id| id.starts_with("cs_"))
+            .ok_or_else(|| Error::Invalid("invalid stripe webhook payload".into()))?
+            .to_owned();
+        let topup_id = object["metadata"]["aex_topup_id"]
+            .as_str()
+            .filter(|id| id.starts_with("top_"))
+            .ok_or_else(|| Error::Invalid("invalid stripe webhook payload".into()))?
+            .to_owned();
+
+        if kind == "checkout.session.expired" {
+            return Ok(Some(StripeWebhookAction::Expired {
+                topup_id,
+                provider_ref,
+            }));
+        }
+        // A completed Checkout Session can still be awaiting a delayed payment method. The
+        // asynchronous-success event returns here only after it is paid.
+        if !matches!(
+            object["payment_status"].as_str(),
+            Some("paid" | "no_payment_required")
+        ) {
+            return Ok(None);
+        }
+        let amount_cents = object["amount_total"]
+            .as_i64()
+            .filter(|amount| *amount > 0)
+            .ok_or_else(|| Error::Invalid("invalid stripe webhook payload".into()))?;
+        Ok(Some(StripeWebhookAction::Paid {
+            topup_id,
+            provider_ref,
+            amount_cents,
+        }))
+    }
+}
+
+fn invalid_webhook() -> Error {
+    Error::Invalid("invalid stripe webhook signature".into())
 }
 
 #[async_trait::async_trait]
@@ -145,5 +287,50 @@ impl Payments for StripePayments {
                 _ => PaymentStatus::Pending,
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event() -> Vec<u8> {
+        br#"{"type":"checkout.session.completed","data":{"object":{"id":"cs_test_1","amount_total":1000,"payment_status":"paid","metadata":{"aex_topup_id":"top_1"}}}}"#.to_vec()
+    }
+
+    fn signature(secret: &str, timestamp: i64, body: &[u8]) -> String {
+        let signed = [timestamp.to_string().as_bytes(), b".", body].concat();
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(&signed);
+        format!(
+            "t={timestamp},v1={}",
+            hex::encode(mac.finalize().into_bytes())
+        )
+    }
+
+    #[test]
+    fn verifies_raw_body_and_shapes_paid_checkout() {
+        let webhook = StripeWebhook::new("whsec_test".into());
+        let body = event();
+        let header = signature("whsec_test", 1_000, &body);
+        assert_eq!(
+            webhook.verify(&header, &body, 1_100).unwrap(),
+            Some(StripeWebhookAction::Paid {
+                topup_id: "top_1".into(),
+                provider_ref: "cs_test_1".into(),
+                amount_cents: 1000,
+            })
+        );
+        assert!(webhook.verify(&header, b"{}", 1_100).is_err());
+        assert!(webhook.verify(&header, &body, 1_301).is_err());
+    }
+
+    #[test]
+    fn accepts_one_of_multiple_rotation_signatures_and_ignores_unknown_events() {
+        let webhook = StripeWebhook::new("whsec_test".into());
+        let body = br#"{"type":"customer.created","data":{"object":{}}}"#;
+        let good = signature("whsec_test", 2_000, body);
+        let header = good.replacen("v1=", "v1=00,v1=", 1);
+        assert_eq!(webhook.verify(&header, body, 2_000).unwrap(), None);
     }
 }

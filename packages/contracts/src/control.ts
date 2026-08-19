@@ -227,7 +227,7 @@ export interface StorageMeters {
   artifact_bytes: number;
 }
 /**
- * One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings.
+ * One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. Successful web_search tool results are counted from the same event log.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "SessionUsage".
@@ -246,8 +246,10 @@ export interface SessionUsage {
   suspended_byte_seconds: number;
   workspace_byte_seconds: number;
   artifact_byte_seconds: number;
+  web_search_queries: number;
   compute_microusd: MicroUsd;
   storage_microusd: MicroUsd;
+  web_search_microusd: MicroUsd;
   total_microusd: MicroUsd;
   storage: StorageMeters;
   metered_to: Timestamp;

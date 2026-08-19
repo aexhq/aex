@@ -117,7 +117,10 @@ pub enum PaymentsMode {
     /// Auto-paid, no money moves. The local default; the server banners it loudly.
     Fake,
     /// Stripe Checkout with this secret key.
-    Stripe { secret_key: String },
+    Stripe {
+        secret_key: String,
+        webhook_secret: String,
+    },
 }
 
 /// Server configuration. Fail fast: `AEX_BRAIN_TOKEN` has no default, malformed numbers are
@@ -152,6 +155,9 @@ impl Config {
             Ok("stripe") => PaymentsMode::Stripe {
                 secret_key: std::env::var("STRIPE_SECRET_KEY")
                     .map_err(|_| anyhow::anyhow!("AEX_PAYMENTS=stripe needs STRIPE_SECRET_KEY"))?,
+                webhook_secret: std::env::var("STRIPE_WEBHOOK_SECRET").map_err(|_| {
+                    anyhow::anyhow!("AEX_PAYMENTS=stripe needs STRIPE_WEBHOOK_SECRET")
+                })?,
             },
             Ok(other) => anyhow::bail!("AEX_PAYMENTS={other}: expected fake or stripe"),
         };

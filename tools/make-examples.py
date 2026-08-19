@@ -204,11 +204,12 @@ w(C + "RateCard.example.json", rates)
 susage = {"session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0", "shape": "1gb", "state": "idle",
           "running_ms": 322000, "suspended_byte_seconds": 1932735283200,
           "workspace_byte_seconds": 48129638400, "artifact_byte_seconds": 552960000,
-          "compute_microusd": 10733, "storage_microusd": 74, "total_microusd": 10807,
+          "web_search_queries": 2, "compute_microusd": 10733, "storage_microusd": 74,
+          "web_search_microusd": 6000, "total_microusd": 16807,
           "storage": sess["storage"], "metered_to": "2026-08-18T09:45:00Z"}
 w(C + "SessionUsage.example.json", susage)
-w(C + "Usage.example.json", {"object": "usage", "account_id": acct["id"], "balance_microusd": 9989193,
-                             "total_microusd": 10806, "sessions": [susage], "rates": rates,
+w(C + "Usage.example.json", {"object": "usage", "account_id": acct["id"], "balance_microusd": 9983193,
+                             "total_microusd": 16807, "sessions": [susage], "rates": rates,
                              "metered_to": "2026-08-18T09:45:00Z"})
 w(C + "ControlErrorResponse.example.json", {"error": {"code": "insufficient_balance",
                                                       "message": "balance is $0.00; top up at least $10 to run sessions",

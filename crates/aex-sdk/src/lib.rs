@@ -9,6 +9,7 @@
 
 use aex_contracts::{control, session};
 use futures_util::StreamExt;
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -310,6 +311,111 @@ impl Client {
         expect_no_content(resp).await
     }
 
+    /// Deterministically list a workspace subtree. Released remote sessions answer from the
+    /// last durable manifest without waking compute.
+    pub async fn list_files(
+        &self,
+        session_id: &str,
+        path: &str,
+        recursive: bool,
+    ) -> Result<session::FileList> {
+        self.request(
+            reqwest::Method::GET,
+            &format!(
+                "/v1/sessions/{session_id}/files?path={}&recursive={recursive}",
+                encode(path)
+            ),
+            Some(self.api_key()?),
+            None::<&()>,
+        )
+        .await
+    }
+
+    /// Download exact workspace bytes (bounded by the plane's advertised file limit).
+    pub async fn download_file(&self, session_id: &str, path: &str) -> Result<bytes::Bytes> {
+        let response = self
+            .send(
+                reqwest::Method::GET,
+                &format!("/v1/sessions/{session_id}/files/{}", encode(path)),
+                Some(self.api_key()?),
+                None::<&()>,
+            )
+            .await?;
+        let status = response.status().as_u16();
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|error| SdkError::Transport(error.to_string()))?;
+        if !(200..300).contains(&status) {
+            return Err(api_error(status, &String::from_utf8_lossy(&bytes)));
+        }
+        Ok(bytes)
+    }
+
+    /// Absolute-overwrite a workspace file; success means the brain checkpointed and
+    /// committed the new durable hand state.
+    pub async fn upload_file(
+        &self,
+        session_id: &str,
+        path: &str,
+        bytes: impl Into<bytes::Bytes>,
+    ) -> Result<session::FileEntry> {
+        let response = self
+            .http
+            .put(format!(
+                "{}/v1/sessions/{session_id}/files/{}",
+                self.base,
+                encode(path)
+            ))
+            .bearer_auth(self.api_key()?)
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+            .body(bytes.into())
+            .send()
+            .await
+            .map_err(|error| SdkError::Transport(error.to_string()))?;
+        decode_response(response, "upload file").await
+    }
+
+    pub async fn persist_artifact(
+        &self,
+        session_id: &str,
+        name: &str,
+        path: &str,
+        media_type: Option<&str>,
+    ) -> Result<session::Artifact> {
+        let mut body = serde_json::json!({"name": name, "path": path});
+        if let Some(media_type) = media_type {
+            body["media_type"] = media_type.into();
+        }
+        self.request(
+            reqwest::Method::POST,
+            &format!("/v1/sessions/{session_id}/persist"),
+            Some(self.api_key()?),
+            Some(&body),
+        )
+        .await
+    }
+
+    pub async fn list_artifacts(&self, session_id: &str) -> Result<session::ArtifactList> {
+        self.request(
+            reqwest::Method::GET,
+            &format!("/v1/sessions/{session_id}/artifacts"),
+            Some(self.api_key()?),
+            None::<&()>,
+        )
+        .await
+    }
+
+    pub async fn get_artifact(&self, session_id: &str, name: &str) -> Result<session::Artifact> {
+        self.request(
+            reqwest::Method::GET,
+            &format!("/v1/sessions/{session_id}/artifacts/{}", encode(name)),
+            Some(self.api_key()?),
+            None::<&()>,
+        )
+        .await
+    }
+
     /// Stream events (SSE) starting after `after`. `on_event` returns `false` to stop early
     /// (e.g. on `turn.completed`). With `follow=false` the stream ends at the journal head.
     pub async fn events(
@@ -354,6 +460,26 @@ impl Client {
         }
         Ok(())
     }
+}
+
+fn encode(value: &str) -> String {
+    utf8_percent_encode(value, NON_ALPHANUMERIC).to_string()
+}
+
+async fn decode_response<T: DeserializeOwned>(
+    response: reqwest::Response,
+    context: &str,
+) -> Result<T> {
+    let status = response.status().as_u16();
+    let text = response
+        .text()
+        .await
+        .map_err(|error| SdkError::Transport(error.to_string()))?;
+    if !(200..300).contains(&status) {
+        return Err(api_error(status, &text));
+    }
+    serde_json::from_str(&text)
+        .map_err(|error| SdkError::Decode(format!("{context}: {error}\n{text}")))
 }
 
 async fn expect_no_content(resp: reqwest::Response) -> Result<()> {

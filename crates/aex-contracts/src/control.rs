@@ -1390,13 +1390,13 @@ impl RateCard {
         Default::default()
     }
 }
-#[doc = "One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings."]
+#[doc = "One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. Successful web_search tool results are counted from the same event log."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings.\","]
+#[doc = "  \"description\": \"One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. Successful web_search tool results are counted from the same event log.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"required\": ["]
 #[doc = "    \"artifact_byte_seconds\","]
@@ -1410,6 +1410,8 @@ impl RateCard {
 #[doc = "    \"storage_microusd\","]
 #[doc = "    \"suspended_byte_seconds\","]
 #[doc = "    \"total_microusd\","]
+#[doc = "    \"web_search_microusd\","]
+#[doc = "    \"web_search_queries\","]
 #[doc = "    \"workspace_byte_seconds\""]
 #[doc = "  ],"]
 #[doc = "  \"properties\": {"]
@@ -1452,6 +1454,13 @@ impl RateCard {
 #[doc = "    \"total_microusd\": {"]
 #[doc = "      \"$ref\": \"#/$defs/MicroUsd\""]
 #[doc = "    },"]
+#[doc = "    \"web_search_microusd\": {"]
+#[doc = "      \"$ref\": \"#/$defs/MicroUsd\""]
+#[doc = "    },"]
+#[doc = "    \"web_search_queries\": {"]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"minimum\": 0.0"]
+#[doc = "    },"]
 #[doc = "    \"workspace_byte_seconds\": {"]
 #[doc = "      \"type\": \"integer\","]
 #[doc = "      \"minimum\": 0.0"]
@@ -1475,6 +1484,8 @@ pub struct SessionUsage {
     pub storage_microusd: MicroUsd,
     pub suspended_byte_seconds: u64,
     pub total_microusd: MicroUsd,
+    pub web_search_microusd: MicroUsd,
+    pub web_search_queries: u64,
     pub workspace_byte_seconds: u64,
 }
 impl SessionUsage {
@@ -2846,6 +2857,8 @@ pub mod builder {
         storage_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
         suspended_byte_seconds: ::std::result::Result<u64, ::std::string::String>,
         total_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
+        web_search_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
+        web_search_queries: ::std::result::Result<u64, ::std::string::String>,
         workspace_byte_seconds: ::std::result::Result<u64, ::std::string::String>,
     }
     impl ::std::default::Default for SessionUsage {
@@ -2866,6 +2879,8 @@ pub mod builder {
                     "no value supplied for suspended_byte_seconds".to_string()
                 ),
                 total_microusd: Err("no value supplied for total_microusd".to_string()),
+                web_search_microusd: Err("no value supplied for web_search_microusd".to_string()),
+                web_search_queries: Err("no value supplied for web_search_queries".to_string()),
                 workspace_byte_seconds: Err(
                     "no value supplied for workspace_byte_seconds".to_string()
                 ),
@@ -2983,6 +2998,26 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for total_microusd: {e}"));
             self
         }
+        pub fn web_search_microusd<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::MicroUsd>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.web_search_microusd = value.try_into().map_err(|e| {
+                format!("error converting supplied value for web_search_microusd: {e}")
+            });
+            self
+        }
+        pub fn web_search_queries<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<u64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.web_search_queries = value.try_into().map_err(|e| {
+                format!("error converting supplied value for web_search_queries: {e}")
+            });
+            self
+        }
         pub fn workspace_byte_seconds<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<u64>,
@@ -3011,6 +3046,8 @@ pub mod builder {
                 storage_microusd: value.storage_microusd?,
                 suspended_byte_seconds: value.suspended_byte_seconds?,
                 total_microusd: value.total_microusd?,
+                web_search_microusd: value.web_search_microusd?,
+                web_search_queries: value.web_search_queries?,
                 workspace_byte_seconds: value.workspace_byte_seconds?,
             })
         }
@@ -3029,6 +3066,8 @@ pub mod builder {
                 storage_microusd: Ok(value.storage_microusd),
                 suspended_byte_seconds: Ok(value.suspended_byte_seconds),
                 total_microusd: Ok(value.total_microusd),
+                web_search_microusd: Ok(value.web_search_microusd),
+                web_search_queries: Ok(value.web_search_queries),
                 workspace_byte_seconds: Ok(value.workspace_byte_seconds),
             }
         }

@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   susp_byte_s INTEGER NOT NULL DEFAULT 0,
   ws_byte_s INTEGER NOT NULL DEFAULT 0,
   art_byte_s INTEGER NOT NULL DEFAULT 0,
+  web_search_queries INTEGER NOT NULL DEFAULT 0,
   metered_to_ms INTEGER NOT NULL DEFAULT 0,
   workspace_bytes INTEGER NOT NULL DEFAULT 0,
   suspended_bytes INTEGER NOT NULL DEFAULT 0,
@@ -152,6 +153,28 @@ impl Db {
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(internal)?;
         conn.execute_batch(SCHEMA).map_err(internal)?;
+        // EFS carries the SQLite ledger across task and image upgrades. Additive schema
+        // changes therefore migrate in place; new databases already contain the column.
+        let has_web_search_queries = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(sessions)")
+                .map_err(internal)?;
+            let names = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(internal)?;
+            names
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(internal)?
+                .iter()
+                .any(|name| name == "web_search_queries")
+        };
+        if !has_web_search_queries {
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN web_search_queries INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(internal)?;
+        }
         Ok(Db {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -368,6 +391,42 @@ impl Db {
         .await
     }
 
+    /// Webhook settlement: the signed event must still match the exact Stripe Checkout
+    /// Session and amount stored when this top-up was created. Returns false for an unrelated
+    /// or mismatched event; a poll can continue to be the recovery path.
+    pub async fn stripe_topup_paid(
+        &self,
+        id: String,
+        provider_ref: String,
+        amount_cents: i64,
+        now_ms: i64,
+    ) -> Result<bool> {
+        self.call(move |c| {
+            let tx = c.transaction()?;
+            let matched: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM topups WHERE id = ?1 AND provider = 'stripe' AND provider_ref = ?2 AND amount_cents = ?3)",
+                params![id, provider_ref, amount_cents],
+                |r| r.get(0),
+            )?;
+            if matched {
+                let n = tx.execute(
+                    "UPDATE topups SET status = 'paid', paid_ms = ?4 WHERE id = ?1 AND provider = 'stripe' AND provider_ref = ?2 AND amount_cents = ?3 AND status = 'pending'",
+                    params![id, provider_ref, amount_cents, now_ms],
+                )?;
+                if n > 0 {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO ledger (ref, account_id, microusd, updated_ms)
+                         SELECT 'topup:' || id, account_id, amount_cents * 10000, ?2 FROM topups WHERE id = ?1",
+                        params![id, now_ms],
+                    )?;
+                }
+            }
+            tx.commit()?;
+            Ok(matched)
+        })
+        .await
+    }
+
     pub async fn topup_expired(&self, id: String) -> Result<()> {
         self.call(move |c| {
             c.execute(
@@ -375,6 +434,17 @@ impl Db {
                 params![id],
             )
             .map(|_| ())
+        })
+        .await
+    }
+
+    pub async fn stripe_topup_expired(&self, id: String, provider_ref: String) -> Result<bool> {
+        self.call(move |c| {
+            let n = c.execute(
+                "UPDATE topups SET status = 'expired' WHERE id = ?1 AND provider = 'stripe' AND provider_ref = ?2 AND status = 'pending'",
+                params![id, provider_ref],
+            )?;
+            Ok(n > 0)
         })
         .await
     }
@@ -484,10 +554,11 @@ impl Db {
             let tx = c.transaction()?;
             let n = tx.execute(
                 "UPDATE sessions SET folded_seq = ?2, running_ms = ?3, turn_open_ms = ?4,
-                    susp_byte_s = ?5, ws_byte_s = ?6, art_byte_s = ?7, metered_to_ms = ?8,
-                    workspace_bytes = ?9, suspended_bytes = ?10, artifact_bytes = ?11,
-                    hand_state = ?12, session_state = ?13, final = ?14
-                 WHERE id = ?1 AND folded_seq <= ?2 AND metered_to_ms <= ?8 AND final = 0",
+                    susp_byte_s = ?5, ws_byte_s = ?6, art_byte_s = ?7,
+                    web_search_queries = ?8, metered_to_ms = ?9,
+                    workspace_bytes = ?10, suspended_bytes = ?11, artifact_bytes = ?12,
+                    hand_state = ?13, session_state = ?14, final = ?15
+                 WHERE id = ?1 AND folded_seq <= ?2 AND metered_to_ms <= ?9 AND final = 0",
                 params![
                     session_id,
                     fold.folded_seq,
@@ -496,6 +567,7 @@ impl Db {
                     fold.suspended_byte_seconds,
                     fold.workspace_byte_seconds,
                     fold.artifact_byte_seconds,
+                    fold.web_search_queries,
                     fold.metered_to_ms,
                     fold.workspace_bytes,
                     fold.suspended_bytes,
@@ -521,7 +593,8 @@ impl Db {
 }
 
 const SESSION_COLS: &str = "SELECT id, account_id, key_id, shape, created_ms, final,
-    folded_seq, running_ms, turn_open_ms, susp_byte_s, ws_byte_s, art_byte_s, metered_to_ms,
+    folded_seq, running_ms, turn_open_ms, susp_byte_s, ws_byte_s, art_byte_s,
+    web_search_queries, metered_to_ms,
     workspace_bytes, suspended_bytes, artifact_bytes, hand_state, session_state FROM sessions";
 
 fn account_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AccountRow> {
@@ -575,12 +648,13 @@ fn session_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
             suspended_byte_seconds: r.get(9)?,
             workspace_byte_seconds: r.get(10)?,
             artifact_byte_seconds: r.get(11)?,
-            metered_to_ms: r.get(12)?,
-            workspace_bytes: r.get(13)?,
-            suspended_bytes: r.get(14)?,
-            artifact_bytes: r.get(15)?,
-            hand_state: r.get(16)?,
-            session_state: r.get(17)?,
+            web_search_queries: r.get(12)?,
+            metered_to_ms: r.get(13)?,
+            workspace_bytes: r.get(14)?,
+            suspended_bytes: r.get(15)?,
+            artifact_bytes: r.get(16)?,
+            hand_state: r.get(17)?,
+            session_state: r.get(18)?,
         },
     })
 }
@@ -601,6 +675,25 @@ mod tests {
             max_concurrent_sessions: 10,
             session_creates_per_hour: 30,
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn existing_ledger_is_migrated_for_web_search_metering() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute("ALTER TABLE sessions DROP COLUMN web_search_queries", [])
+            .unwrap();
+        let db = Db::init(conn).unwrap();
+        let columns: Vec<String> = db
+            .call(|connection| {
+                let mut statement = connection.prepare("PRAGMA table_info(sessions)")?;
+                statement
+                    .query_map([], |row| row.get(1))?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .await
+            .unwrap();
+        assert!(columns.iter().any(|name| name == "web_search_queries"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -631,6 +724,50 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!((t.status.as_str(), t.paid_ms), ("paid", Some(3)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stripe_webhook_requires_exact_session_and_amount() {
+        let db = Db::open_memory().unwrap();
+        db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+            .await
+            .unwrap();
+        db.create_topup(TopupRow {
+            id: "top_1".into(),
+            account_id: "acc_a".into(),
+            amount_cents: 1000,
+            status: "pending".into(),
+            provider: "stripe".into(),
+            provider_ref: "cs_test_1".into(),
+            checkout_url: None,
+            created_ms: 2,
+            paid_ms: None,
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            !db.stripe_topup_paid("top_1".into(), "cs_wrong".into(), 1000, 3)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !db.stripe_topup_paid("top_1".into(), "cs_test_1".into(), 999, 3)
+                .await
+                .unwrap()
+        );
+        assert_eq!(db.balance("acc_a".into()).await.unwrap(), 0);
+        assert!(
+            db.stripe_topup_paid("top_1".into(), "cs_test_1".into(), 1000, 4)
+                .await
+                .unwrap()
+        );
+        assert!(
+            db.stripe_topup_paid("top_1".into(), "cs_test_1".into(), 1000, 5)
+                .await
+                .unwrap()
+        );
+        assert_eq!(db.balance("acc_a".into()).await.unwrap(), 10_000_000);
     }
 
     #[tokio::test(flavor = "multi_thread")]

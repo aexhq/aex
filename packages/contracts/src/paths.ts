@@ -136,7 +136,7 @@ export type paths = {
             };
             cookie?: never;
         };
-        /** List workspace files (live from the hand when it is up, else from the last sync) */
+        /** List workspace files (live from the hand when it is up, else from the last sync manifest) */
         get: operations["listFiles"];
         put?: never;
         post?: never;
@@ -157,9 +157,9 @@ export type paths = {
             };
             cookie?: never;
         };
-        /** Download one file (raw bytes) */
+        /** Download one file (raw bytes; 64 MiB deployment ceiling) */
         get: operations["downloadFile"];
-        /** Upload one file into the workspace (raw bytes; overwrites) */
+        /** Upload one file into the workspace (raw bytes; overwrites; checkpoints before acknowledgement; 64 MiB ceiling) */
         put: operations["uploadFile"];
         post?: never;
         delete?: never;

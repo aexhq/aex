@@ -171,7 +171,7 @@ paths:
     get:
       tags: [files]
       operationId: listFiles
-      summary: List workspace files (live from the hand when it is up, else from the last sync)
+      summary: List workspace files (live from the hand when it is up, else from the last sync manifest)
       parameters:
         - name: path
           in: query
@@ -198,7 +198,7 @@ paths:
     get:
       tags: [files]
       operationId: downloadFile
-      summary: Download one file (raw bytes)
+      summary: Download one file (raw bytes; 64 MiB deployment ceiling)
       responses:
         "200":
           description: File bytes
@@ -209,7 +209,7 @@ paths:
     put:
       tags: [files]
       operationId: uploadFile
-      summary: Upload one file into the workspace (raw bytes; overwrites)
+      summary: Upload one file into the workspace (raw bytes; overwrites; checkpoints before acknowledgement; 64 MiB ceiling)
       requestBody:
         required: true
         content:

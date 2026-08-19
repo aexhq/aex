@@ -128,6 +128,23 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/v1/webhooks/stripe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Receive a signed Stripe Checkout settlement event */
+        post: operations["receiveStripeWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/usage": {
         parameters: {
             query?: never;
@@ -274,7 +291,7 @@ export type components = {
             suspended_bytes: number;
             artifact_bytes: number;
         };
-        /** @description One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. */
+        /** @description One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. Successful web_search tool results are counted from the same event log. */
         SessionUsage: {
             session_id: string;
             /** @description HandShape from session/v1 (1gb | 2gb | 4gb | 8gb). */
@@ -285,8 +302,10 @@ export type components = {
             suspended_byte_seconds: number;
             workspace_byte_seconds: number;
             artifact_byte_seconds: number;
+            web_search_queries: number;
             compute_microusd: components["schemas"]["MicroUsd"];
             storage_microusd: components["schemas"]["MicroUsd"];
+            web_search_microusd: components["schemas"]["MicroUsd"];
             total_microusd: components["schemas"]["MicroUsd"];
             storage: components["schemas"]["StorageMeters"];
             metered_to: components["schemas"]["Timestamp"];
@@ -533,6 +552,37 @@ export interface operations {
                 };
             };
             default: components["responses"]["Error"];
+        };
+    };
+    receiveStripeWebhook: {
+        parameters: {
+            query?: never;
+            header: {
+                "Stripe-Signature": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Event verified and accepted (including an irrelevant event type) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid signature, stale timestamp, or malformed event */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getUsage: {

@@ -117,8 +117,60 @@ enum SessionCmd {
     Send { session_id: String, message: String },
     /// End now: release the hand, keep the workspace.
     End { session_id: String },
+    /// Workspace files.
+    Files {
+        #[command(subcommand)]
+        cmd: FilesCmd,
+    },
+    /// Persist a workspace file as a named durable artifact.
+    Persist {
+        session_id: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        media_type: Option<String>,
+    },
+    /// Durable artifacts.
+    Artifacts {
+        #[command(subcommand)]
+        cmd: ArtifactsCmd,
+    },
     /// Delete (irreversible): hand, workspace, artifacts, journal.
     Delete { session_id: String },
+}
+
+#[derive(Subcommand)]
+enum FilesCmd {
+    /// List a workspace path.
+    List {
+        session_id: String,
+        #[arg(long, default_value = "/workspace")]
+        path: String,
+        #[arg(long)]
+        recursive: bool,
+    },
+    /// Download exact bytes to a local file.
+    Get {
+        session_id: String,
+        path: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Upload a local file as an absolute workspace overwrite.
+    Put {
+        session_id: String,
+        path: String,
+        #[arg(long)]
+        input: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum ArtifactsCmd {
+    List { session_id: String },
+    Get { session_id: String, name: String },
 }
 
 // ---- config file ----
@@ -275,18 +327,28 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Usage => {
             let u = c.usage().await?;
             println!(
-                "{:<32} {:<5} {:<8} {:>10} {:>12} {:>12} {:>12}",
-                "SESSION", "SHAPE", "STATE", "RUNNING", "COMPUTE", "STORAGE", "TOTAL"
+                "{:<32} {:<5} {:<8} {:>10} {:>8} {:>12} {:>12} {:>12} {:>12}",
+                "SESSION",
+                "SHAPE",
+                "STATE",
+                "RUNNING",
+                "SEARCH",
+                "COMPUTE",
+                "STORAGE",
+                "WEB",
+                "TOTAL"
             );
             for s in &u.sessions {
                 println!(
-                    "{:<32} {:<5} {:<8} {:>9.1}s {:>12} {:>12} {:>12}",
+                    "{:<32} {:<5} {:<8} {:>9.1}s {:>8} {:>12} {:>12} {:>12} {:>12}",
                     *s.session_id,
                     s.shape,
                     s.state,
                     s.running_ms as f64 / 1000.0,
+                    s.web_search_queries,
                     musd(s.compute_microusd.0),
                     musd(s.storage_microusd.0),
+                    musd(s.web_search_microusd.0),
                     musd(s.total_microusd.0),
                 );
             }
@@ -446,6 +508,83 @@ async fn main() -> anyhow::Result<()> {
                 let s = c.end_session(&session_id).await?;
                 println!("ended: hand {}, workspace kept", s.hand.state);
             }
+            SessionCmd::Files { cmd } => match cmd {
+                FilesCmd::List {
+                    session_id,
+                    path,
+                    recursive,
+                } => {
+                    let files = c.list_files(&session_id, &path, recursive).await?;
+                    println!(
+                        "source {}{}",
+                        files.source,
+                        files
+                            .synced_at
+                            .map(|at| format!("  synced {at}"))
+                            .unwrap_or_default()
+                    );
+                    for file in files.data {
+                        println!(
+                            "{:<7} {:>12}  {}",
+                            file.kind,
+                            file.size
+                                .map(|size| size.to_string())
+                                .unwrap_or_else(|| "-".into()),
+                            file.path
+                        );
+                    }
+                }
+                FilesCmd::Get {
+                    session_id,
+                    path,
+                    output,
+                } => {
+                    let bytes = c.download_file(&session_id, &path).await?;
+                    std::fs::write(&output, &bytes)?;
+                    println!("wrote {} bytes to {}", bytes.len(), output.display());
+                }
+                FilesCmd::Put {
+                    session_id,
+                    path,
+                    input,
+                } => {
+                    let bytes = std::fs::read(&input)?;
+                    let entry = c.upload_file(&session_id, &path, bytes).await?;
+                    println!(
+                        "uploaded {} bytes to {}",
+                        entry.size.unwrap_or_default(),
+                        entry.path
+                    );
+                }
+            },
+            SessionCmd::Persist {
+                session_id,
+                name,
+                path,
+                media_type,
+            } => {
+                let artifact = c
+                    .persist_artifact(&session_id, &name, &path, media_type.as_deref())
+                    .await?;
+                println!(
+                    "artifact {}  {} bytes  sha256 {}",
+                    artifact.name, artifact.bytes, *artifact.sha256
+                );
+            }
+            SessionCmd::Artifacts { cmd } => match cmd {
+                ArtifactsCmd::List { session_id } => {
+                    for artifact in c.list_artifacts(&session_id).await?.data {
+                        println!(
+                            "{:<32} {:>12}  {}",
+                            artifact.name, artifact.bytes, *artifact.sha256
+                        );
+                    }
+                }
+                ArtifactsCmd::Get { session_id, name } => {
+                    let artifact = c.get_artifact(&session_id, &name).await?;
+                    println!("{}", serde_json::to_string_pretty(&artifact)?);
+                }
+            },
             SessionCmd::Delete { session_id } => {
                 c.delete_session(&session_id).await?;
                 println!("deleted {session_id} (irreversible)");

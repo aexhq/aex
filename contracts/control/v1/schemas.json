@@ -369,13 +369,15 @@
         "suspended_byte_seconds",
         "workspace_byte_seconds",
         "artifact_byte_seconds",
+        "web_search_queries",
         "compute_microusd",
         "storage_microusd",
+        "web_search_microusd",
         "total_microusd",
         "storage",
         "metered_to"
       ],
-      "description": "One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings.",
+      "description": "One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. Successful web_search tool results are counted from the same event log.",
       "properties": {
         "session_id": {
           "type": "string",
@@ -405,10 +407,17 @@
           "type": "integer",
           "minimum": 0
         },
+        "web_search_queries": {
+          "type": "integer",
+          "minimum": 0
+        },
         "compute_microusd": {
           "$ref": "#/$defs/MicroUsd"
         },
         "storage_microusd": {
+          "$ref": "#/$defs/MicroUsd"
+        },
+        "web_search_microusd": {
           "$ref": "#/$defs/MicroUsd"
         },
         "total_microusd": {

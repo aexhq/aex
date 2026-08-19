@@ -142,6 +142,19 @@ async fn stub_handler(
             };
             let first = ev("turn.started", t0, json!({}));
             ev(
+                "tool.call",
+                t0 + 500,
+                json!({"agent_id":"root", "call_id":"call_search", "name":"web_search",
+                       "input":{"query":"aex"}, "detach":false}),
+            );
+            ev(
+                "tool.result",
+                t0 + 1_000,
+                json!({"agent_id":"root", "call_id":"call_search", "name":"web_search",
+                       "outcome":"completed", "duration_ms":500,
+                       "output_preview":"{\"results\":[]}", "truncated":false}),
+            );
+            ev(
                 "assistant.message",
                 t0 + 1_400,
                 json!({"agent_id": "root", "text": "done"}),
@@ -149,7 +162,7 @@ async fn stub_handler(
             ev(
                 "turn.completed",
                 t0 + 1_500,
-                json!({"stop_reason": "end_turn", "rounds": 1, "tool_calls": 0}),
+                json!({"stop_reason": "end_turn", "rounds": 1, "tool_calls": 1}),
             );
             s.turns += 1;
             s.doc = stub_doc(
@@ -238,6 +251,7 @@ async fn spawn_control(brain_url: &str, brain_token: &str, limits: (i64, i64)) -
         db: Db::open_memory().unwrap(),
         brain: BrainClient::new(brain_url, brain_token),
         payments: Arc::new(FakePayments),
+        stripe_webhook: None,
         card: RateCard::default(),
         default_limits: limits,
     };
@@ -508,7 +522,8 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     assert_valid(aex_contracts::SESSION_SCHEMA_JSON, "SessionList", &listed);
     assert_eq!(listed["data"].as_array().unwrap().len(), 1);
 
-    // The bill. 1.5 s running on 1gb = 1500 * 120000 / 3.6e6 = 50 micro-USD of compute, exact.
+    // The bill. 1.5 s on 1gb = 50 micro-USD compute, plus one successful managed search =
+    // exactly 3,000 micro-USD. Both are folded from the committed event log.
     let usage = json_of(
         http.get(format!("{base}/v1/usage"))
             .bearer_auth(&at)
@@ -525,9 +540,11 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     assert_eq!(line["session_id"], sid.as_str());
     assert_eq!(line["running_ms"], 1_500);
     assert_eq!(line["compute_microusd"], 50);
+    assert_eq!(line["web_search_queries"], 1);
+    assert_eq!(line["web_search_microusd"], 3_000);
     assert_eq!(line["storage"]["suspended_bytes"], 1_073_741_824);
     let total = usage["total_microusd"].as_i64().unwrap();
-    assert!(total >= 50, "storage only adds: {total}");
+    assert!(total >= 3_050, "storage only adds: {total}");
     assert_eq!(
         usage["balance_microusd"].as_i64().unwrap(),
         10_000_000 - total,
@@ -546,6 +563,8 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     .await;
     assert_eq!(usage2["sessions"][0]["running_ms"], 1_500);
     assert_eq!(usage2["sessions"][0]["compute_microusd"], 50);
+    assert_eq!(usage2["sessions"][0]["web_search_queries"], 1);
+    assert_eq!(usage2["sessions"][0]["web_search_microusd"], 3_000);
 
     // Delete: irreversible at the brain; the control plane goes final, the bill survives.
     let deleted = http

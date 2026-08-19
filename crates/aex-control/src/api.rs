@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::Response;
 use axum::routing::{any, delete, get, post};
@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 
 use crate::brain::BrainClient;
 use crate::identity::{self, bearer};
-use crate::payments::{PaymentStatus, Payments};
+use crate::payments::{PaymentStatus, Payments, StripeWebhook, StripeWebhookAction};
 use crate::rating::RateCard;
 use crate::store::{AccountRow, Db, KeyRow, SessionRow, TopupRow};
 use crate::sweep::{SweptLine, sweep_account, sweep_session};
@@ -32,6 +32,7 @@ pub struct AppState {
     pub db: Db,
     pub brain: BrainClient,
     pub payments: Arc<dyn Payments>,
+    pub stripe_webhook: Option<StripeWebhook>,
     pub card: RateCard,
     /// Defaults stamped onto new accounts: (max_concurrent_sessions, session_creates_per_hour).
     pub default_limits: (i64, i64),
@@ -46,10 +47,12 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/balance", get(get_balance))
         .route("/v1/topups", post(create_topup).get(list_topups))
         .route("/v1/topups/{topup_id}", get(get_topup))
+        .route("/v1/webhooks/stripe", post(stripe_webhook))
         .route("/v1/usage", get(get_usage))
         .route("/v1/rates", get(get_rates))
         .route("/v1/sessions", any(proxy_sessions_root))
         .route("/v1/sessions/{*rest}", any(proxy_session))
+        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .with_state(state)
 }
 
@@ -164,8 +167,10 @@ fn usage_line_json(line: &SweptLine) -> Value {
         "suspended_byte_seconds": row.fold.suspended_byte_seconds,
         "workspace_byte_seconds": row.fold.workspace_byte_seconds,
         "artifact_byte_seconds": row.fold.artifact_byte_seconds,
+        "web_search_queries": row.fold.web_search_queries,
         "compute_microusd": line.priced.compute_microusd,
         "storage_microusd": line.priced.storage_microusd,
+        "web_search_microusd": line.priced.web_search_microusd,
         "total_microusd": line.priced.total_microusd,
         "storage": {
             "workspace_bytes": row.fold.workspace_bytes,
@@ -334,8 +339,8 @@ async fn create_topup(State(state): State<AppState>, headers: HeaderMap, body: B
     )
 }
 
-/// While pending, ask the provider; on Paid, credit idempotently. Webhookless MVP: polling IS
-/// the settlement path, and a future webhook endpoint drives the same `topup_paid`.
+/// While pending, ask the provider; on Paid, credit idempotently. Polling remains the
+/// correctness/recovery path if webhook delivery is late or unavailable.
 async fn refresh_topup(state: &AppState, t: TopupRow) -> Result<TopupRow> {
     if t.status != "pending" {
         return Ok(t);
@@ -350,6 +355,53 @@ async fn refresh_topup(state: &AppState, t: TopupRow) -> Result<TopupRow> {
         .topup(t.account_id.clone(), t.id.clone())
         .await?
         .ok_or(Error::NotFound)
+}
+
+async fn stripe_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    unwrap_response(
+        async {
+            let webhook = state.stripe_webhook.as_ref().ok_or(Error::NotFound)?;
+            let signature = headers
+                .get("stripe-signature")
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| Error::Invalid("missing stripe webhook signature".into()))?;
+            let now_seconds = chrono::Utc::now().timestamp();
+            match webhook.verify(signature, &body, now_seconds)? {
+                Some(StripeWebhookAction::Paid {
+                    topup_id,
+                    provider_ref,
+                    amount_cents,
+                }) => {
+                    if !state
+                        .db
+                        .stripe_topup_paid(topup_id, provider_ref, amount_cents, now_ms())
+                        .await?
+                    {
+                        tracing::warn!("ignored unmatched Stripe paid event");
+                    }
+                }
+                Some(StripeWebhookAction::Expired {
+                    topup_id,
+                    provider_ref,
+                }) => {
+                    if !state
+                        .db
+                        .stripe_topup_expired(topup_id, provider_ref)
+                        .await?
+                    {
+                        tracing::warn!("ignored unmatched Stripe expired event");
+                    }
+                }
+                None => {}
+            }
+            Ok(json_response(200, &json!({"received": true})))
+        }
+        .await,
+    )
 }
 
 async fn get_topup(

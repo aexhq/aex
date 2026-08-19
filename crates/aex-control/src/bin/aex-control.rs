@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use aex_control::api::{AppState, router};
 use aex_control::brain::BrainClient;
-use aex_control::payments::{FakePayments, Payments, StripePayments};
+use aex_control::payments::{FakePayments, Payments, StripePayments, StripeWebhook};
 use aex_control::store::Db;
 use aex_control::sweep::run_sweeper;
 use aex_control::{Config, PaymentsMode};
@@ -31,26 +31,33 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn run(cfg: Config) -> anyhow::Result<()> {
-    let payments: Arc<dyn Payments> = match &cfg.payments {
+    let (payments, stripe_webhook): (Arc<dyn Payments>, Option<StripeWebhook>) = match &cfg.payments
+    {
         PaymentsMode::Fake => {
             tracing::warn!(
                 "payments: FAKE — every top-up is instantly 'paid', no money moves. \
                  Local development only; set AEX_PAYMENTS=stripe and STRIPE_SECRET_KEY for real billing."
             );
-            Arc::new(FakePayments)
+            (Arc::new(FakePayments), None)
         }
-        PaymentsMode::Stripe { secret_key } => {
+        PaymentsMode::Stripe {
+            secret_key,
+            webhook_secret,
+        } => {
             let mode = if secret_key.starts_with("sk_live_") {
                 "LIVE"
             } else {
                 "test"
             };
             tracing::info!("payments: stripe ({mode} mode)");
-            Arc::new(StripePayments::new(
-                secret_key.clone(),
-                cfg.topup_success_url.clone(),
-                cfg.topup_cancel_url.clone(),
-            ))
+            (
+                Arc::new(StripePayments::new(
+                    secret_key.clone(),
+                    cfg.topup_success_url.clone(),
+                    cfg.topup_cancel_url.clone(),
+                )),
+                Some(StripeWebhook::new(webhook_secret.clone())),
+            )
         }
     };
     let db = Db::open(&cfg.db_path)?;
@@ -73,6 +80,7 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         db,
         brain,
         payments,
+        stripe_webhook,
         card: cfg.card.clone(),
         default_limits: (cfg.max_concurrent_sessions, cfg.session_creates_per_hour),
     };

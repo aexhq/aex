@@ -19,6 +19,9 @@ services:
       AEX_MODE: local
       AEX_LISTEN: 0.0.0.0:8700 # container-network only; not published to the host
       AEX_API_TOKEN: ${AEX_LOCAL_TOKEN:-dev-local-token}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      VERCEL_AI_GATEWAY_API_KEY: ${VERCEL_AI_GATEWAY_API_KEY:-}
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
     volumes:
       - brain-data:/data
 

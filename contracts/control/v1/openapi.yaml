@@ -163,6 +163,28 @@ paths:
               schema: { $ref: "schemas.json#/$defs/Topup" }
         default: { $ref: "#/components/responses/Error" }
 
+  /v1/webhooks/stripe:
+    post:
+      tags: [billing]
+      summary: Receive a signed Stripe Checkout settlement event
+      operationId: receiveStripeWebhook
+      security: []
+      parameters:
+        - in: header
+          name: Stripe-Signature
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Event verified and accepted (including an irrelevant event type)
+        "400":
+          description: Invalid signature, stale timestamp, or malformed event
+
   /v1/usage:
     get:
       tags: [billing]
