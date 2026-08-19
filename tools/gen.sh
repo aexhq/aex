@@ -25,7 +25,7 @@ gen_rs contracts/session/v1/schemas.json crates/aex-contracts/src/session.rs
 gen_rs contracts/control/v1/schemas.json crates/aex-contracts/src/control.rs
 
 echo "== typescript"
-npm run --silent --workspace @aex/contracts gen
+npm run --silent --workspace @aexhq/contracts gen
 
 echo "== tool manifest digest"
 cargo run --quiet -p aex-contracts --bin manifest-digest > contracts/abi/v1/tools/manifest.digest.tmp

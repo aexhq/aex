@@ -3,7 +3,7 @@ info:
   title: aex control API
   version: "1.0.0"
   description: |
-    The control plane: Founding Beta waitlist and invitations, identity, prepaid billing, and
+    The control plane: beta waitlist and invitations, identity, prepaid billing, and
     session authority. An invited customer signs up, tops up (Stripe, $10 minimum), creates an
     API key, runs sessions, and sees the bill.
 
@@ -37,7 +37,7 @@ paths:
     post:
       tags: [onboarding]
       operationId: joinWaitlist
-      summary: Join the Founding Beta waitlist (idempotent and privacy-preserving)
+      summary: Join the beta waitlist (idempotent and privacy-preserving)
       security: []
       requestBody:
         required: true

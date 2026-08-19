@@ -52,7 +52,7 @@ export type AccountToken = string;
  */
 export type ApiKeySecret = string;
 /**
- * One-time Founding Beta invitation. Shown once to the operator; only a hash is stored.
+ * One-time beta invitation. Shown once to the operator; only a hash is stored.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "InvitationToken".
@@ -115,7 +115,7 @@ export interface WaitlistSubmission {
   received_at: Timestamp;
 }
 /**
- * Operator view of one canonical Founding Beta waitlist record.
+ * Operator view of one canonical beta waitlist record.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "WaitlistEntry".
@@ -256,7 +256,7 @@ export interface Balance {
  */
 export interface CreateTopupRequest {
   /**
-   * Whole cents. Founding Beta top-ups are $10.00 to $1,000.00.
+   * Whole cents. Beta top-ups are $10.00 to $1,000.00.
    */
   amount_cents: number;
 }

@@ -12,7 +12,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
-        /** Join the Founding Beta waitlist (idempotent and privacy-preserving) */
+        /** Join the beta waitlist (idempotent and privacy-preserving) */
         post: operations["joinWaitlist"];
         delete?: never;
         options?: never;
@@ -287,7 +287,7 @@ export type components = {
         };
         /** @enum {string} */
         WaitlistStatus: "waiting" | "invited" | "joined";
-        /** @description Operator view of one canonical Founding Beta waitlist record. */
+        /** @description Operator view of one canonical beta waitlist record. */
         WaitlistEntry: {
             /** @constant */
             object: "waitlist_entry";
@@ -305,7 +305,7 @@ export type components = {
         CreateInvitationRequest: {
             email: string;
         };
-        /** @description One-time Founding Beta invitation. Shown once to the operator; only a hash is stored. */
+        /** @description One-time beta invitation. Shown once to the operator; only a hash is stored. */
         InvitationToken: string;
         /** @description The invitation token appears here and never again. Creating another invitation rotates it. */
         InvitationCreated: {
@@ -420,7 +420,7 @@ export type components = {
             data: components["schemas"]["Topup"][];
         };
         CreateTopupRequest: {
-            /** @description Whole cents. Founding Beta top-ups are $10.00 to $1,000.00. */
+            /** @description Whole cents. Beta top-ups are $10.00 to $1,000.00. */
             amount_cents: number;
         };
         /** @description Current stored bytes, as last reported by the brain (session/v1 StorageInfo). */

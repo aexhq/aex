@@ -92,7 +92,7 @@ the brain's adapter (`hand.lost` on the session API) — the hand never reports 
   `replayed: true` and runs nothing. Same `operation_id` with a different `call_hash` →
   `operation_idempotency_conflict`. `call_hash` = SHA-256 over the RFC 8785 canonical JSON of
   `{tool, input, lane, cwd, detach, bounds}` (absent optionals as `null`); `aex_contracts::tools::call_hash`
-  and `@aex/contracts` `callHash` implement it and the examples pin values.
+  and `@aexhq/contracts` `callHash` implement it and the examples pin values.
 * `lane` names a persistent lane (created on first use, up to `limits.max_lanes`) or an ephemeral
   lane forked from `parent`. An attached operation holds its lane until terminal (`lane_busy`
   otherwise); a detached one does not hold the lane.

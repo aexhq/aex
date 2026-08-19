@@ -635,6 +635,26 @@ fn render_event(ev: &Event, turn: &aex_contracts::session::TurnId, saw_delta: &m
             );
             true
         }
+        Event::OutputStarted { output_id, .. } => {
+            println!("… output {} started", **output_id);
+            true
+        }
+        Event::OutputCompleted {
+            output_id, output, ..
+        } => {
+            println!(
+                "✓ output {} {}",
+                **output_id,
+                serde_json::to_string(&output.value).unwrap_or_default()
+            );
+            true
+        }
+        Event::OutputFailed {
+            output_id, error, ..
+        } => {
+            println!("✗ output {} failed: {}", **output_id, error.message);
+            true
+        }
         Event::ModelUsage { .. } | Event::SessionUpdated { .. } => true,
         Event::AgentSpawned {
             agent_id,

@@ -110,6 +110,13 @@ export type ContentPart =
       path: string;
     };
 /**
+ * Correlation id for one output request. It is not a separately managed resource.
+ *
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "OutputId".
+ */
+export type OutputId = string;
+/**
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
  * via the `definition` "ToolOutcome".
  */
@@ -133,6 +140,44 @@ export type Event =
       at: Timestamp;
       session_id: SessionId;
       turn_id: TurnId;
+    }
+  | {
+      type: "output.started";
+      seq: number;
+      at: Timestamp;
+      session_id: SessionId;
+      /**
+       * Present when the output request included new user input.
+       */
+      turn_id?: string;
+      output_id: OutputId;
+      schema_hash: Sha256Hex;
+      /**
+       * Last committed session sequence captured for this output request.
+       */
+      source_seq: number;
+    }
+  | {
+      type: "output.completed";
+      seq: number;
+      at: Timestamp;
+      session_id: SessionId;
+      turn_id?: TurnId;
+      output_id: OutputId;
+      output: OutputContent;
+      usage?: ProviderUsage1;
+    }
+  | {
+      type: "output.failed";
+      seq: number;
+      at: Timestamp;
+      session_id: SessionId;
+      turn_id?: TurnId;
+      output_id: OutputId;
+      schema_hash: Sha256Hex;
+      error: ApiError;
+      issues?: OutputValidationIssue[];
+      usage?: ProviderUsage2;
     }
   | {
       type: "assistant.delta";
@@ -293,9 +338,13 @@ export type ApiErrorCode =
   | "session_busy"
   | "session_deleted"
   | "session_failed"
+  | "cancelled"
   | "insufficient_balance"
   | "rate_limited"
   | "provider_error"
+  | "output_schema_error"
+  | "output_refused"
+  | "output_validation_error"
   | "hand_unavailable"
   | "too_large"
   | "internal";
@@ -539,12 +588,95 @@ export interface MessageAccepted {
   seq: number;
 }
 /**
+ * JSON Schema 2020-12 produced by the SDK. AEX validates and normalises it for the selected model provider.
+ *
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "OutputSchema".
+ */
+export interface OutputSchema {
+  [k: string]: unknown | undefined;
+}
+/**
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "OutputRequest".
+ */
+export interface OutputRequest {
+  schema: OutputSchema;
+  /**
+   * SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model.
+   */
+  schema_hash: string;
+  /**
+   * Optional real user input. It is journaled and worked normally before the private output commit step.
+   */
+  input?: string | [ContentPart, ...ContentPart[]];
+  metadata?: {
+    [k: string]: string | undefined;
+  };
+}
+/**
+ * The output request was admitted. Follow the session event stream from seq - 1 until the matching output.completed or output.failed event.
+ *
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "OutputAccepted".
+ */
+export interface OutputAccepted {
+  session_id: SessionId;
+  output_id: OutputId;
+  schema_hash: Sha256Hex;
+  /**
+   * Journal sequence of the output.started event.
+   */
+  seq: number;
+}
+/**
+ * The only durable assistant content created by the private output commit phase. The schema and repair context are never journaled.
+ *
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "OutputContent".
+ */
+export interface OutputContent {
+  type: "output";
+  schema_hash: Sha256Hex;
+  /**
+   * The validated JSON value.
+   */
+  value: {
+    [k: string]: unknown | undefined;
+  };
+}
+/**
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "OutputValidationIssue".
+ */
+export interface OutputValidationIssue {
+  /**
+   * JSON Pointer into the candidate output.
+   */
+  path: string;
+  message: string;
+  /**
+   * The failed JSON Schema keyword when available.
+   */
+  keyword?: string;
+}
+/**
  * Raw provider counters for one model call. A counter the provider did not send is absent here — never reported as 0.
  *
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
  * via the `definition` "ProviderUsage".
  */
 export interface ProviderUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  reasoning_tokens?: number;
+}
+/**
+ * Aggregate provider counters for the private commit and bounded repair calls. Absent counters remain absent.
+ */
+export interface ProviderUsage1 {
   input_tokens?: number;
   output_tokens?: number;
   cache_read_input_tokens?: number;
@@ -563,6 +695,16 @@ export interface ApiError {
    */
   param?: string;
   request_id?: string;
+}
+/**
+ * Aggregate provider counters for any private commit or repair calls completed before failure.
+ */
+export interface ProviderUsage2 {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  reasoning_tokens?: number;
 }
 /**
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema

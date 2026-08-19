@@ -1335,7 +1335,7 @@ impl CreateRefundRequest {
 #[doc = "  ],"]
 #[doc = "  \"properties\": {"]
 #[doc = "    \"amount_cents\": {"]
-#[doc = "      \"description\": \"Whole cents. Founding Beta top-ups are $10.00 to $1,000.00.\","]
+#[doc = "      \"description\": \"Whole cents. Beta top-ups are $10.00 to $1,000.00.\","]
 #[doc = "      \"type\": \"integer\","]
 #[doc = "      \"maximum\": 100000.0,"]
 #[doc = "      \"minimum\": 1000.0"]
@@ -1348,7 +1348,7 @@ impl CreateRefundRequest {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CreateTopupRequest {
-    #[doc = "Whole cents. Founding Beta top-ups are $10.00 to $1,000.00."]
+    #[doc = "Whole cents. Beta top-ups are $10.00 to $1,000.00."]
     pub amount_cents: i64,
 }
 impl CreateTopupRequest {
@@ -1399,13 +1399,13 @@ impl InvitationCreated {
         Default::default()
     }
 }
-#[doc = "One-time Founding Beta invitation. Shown once to the operator; only a hash is stored."]
+#[doc = "One-time beta invitation. Shown once to the operator; only a hash is stored."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"One-time Founding Beta invitation. Shown once to the operator; only a hash is stored.\","]
+#[doc = "  \"description\": \"One-time beta invitation. Shown once to the operator; only a hash is stored.\","]
 #[doc = "  \"type\": \"string\","]
 #[doc = "  \"pattern\": \"^aex_iv_[A-Za-z0-9]{40,64}$\""]
 #[doc = "}"]
@@ -2553,13 +2553,13 @@ impl Usage {
         Default::default()
     }
 }
-#[doc = "Operator view of one canonical Founding Beta waitlist record."]
+#[doc = "Operator view of one canonical beta waitlist record."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"Operator view of one canonical Founding Beta waitlist record.\","]
+#[doc = "  \"description\": \"Operator view of one canonical beta waitlist record.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"required\": ["]
 #[doc = "    \"created_at\","]

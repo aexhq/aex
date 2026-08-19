@@ -4,8 +4,8 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "gen": "npm run gen --workspaces --if-present",
-    "build": "npm run build --workspaces --if-present",
-    "test": "npm test --workspaces --if-present"
+    "build": "npm run build --workspace @aexhq/contracts && npm run build --workspace @aexhq/sdk && npm run build --workspace @aexhq/cli",
+    "test": "npm test --workspace @aexhq/contracts && npm test --workspace @aexhq/sdk && npm test --workspace @aexhq/cli"
   },
   "engines": { "node": ">=22" }
 }

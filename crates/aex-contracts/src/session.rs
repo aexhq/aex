@@ -193,9 +193,13 @@ impl ApiError {
 #[doc = "    \"session_busy\","]
 #[doc = "    \"session_deleted\","]
 #[doc = "    \"session_failed\","]
+#[doc = "    \"cancelled\","]
 #[doc = "    \"insufficient_balance\","]
 #[doc = "    \"rate_limited\","]
 #[doc = "    \"provider_error\","]
+#[doc = "    \"output_schema_error\","]
+#[doc = "    \"output_refused\","]
+#[doc = "    \"output_validation_error\","]
 #[doc = "    \"hand_unavailable\","]
 #[doc = "    \"too_large\","]
 #[doc = "    \"internal\""]
@@ -232,12 +236,20 @@ pub enum ApiErrorCode {
     SessionDeleted,
     #[serde(rename = "session_failed")]
     SessionFailed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
     #[serde(rename = "insufficient_balance")]
     InsufficientBalance,
     #[serde(rename = "rate_limited")]
     RateLimited,
     #[serde(rename = "provider_error")]
     ProviderError,
+    #[serde(rename = "output_schema_error")]
+    OutputSchemaError,
+    #[serde(rename = "output_refused")]
+    OutputRefused,
+    #[serde(rename = "output_validation_error")]
+    OutputValidationError,
     #[serde(rename = "hand_unavailable")]
     HandUnavailable,
     #[serde(rename = "too_large")]
@@ -256,9 +268,13 @@ impl ::std::fmt::Display for ApiErrorCode {
             Self::SessionBusy => f.write_str("session_busy"),
             Self::SessionDeleted => f.write_str("session_deleted"),
             Self::SessionFailed => f.write_str("session_failed"),
+            Self::Cancelled => f.write_str("cancelled"),
             Self::InsufficientBalance => f.write_str("insufficient_balance"),
             Self::RateLimited => f.write_str("rate_limited"),
             Self::ProviderError => f.write_str("provider_error"),
+            Self::OutputSchemaError => f.write_str("output_schema_error"),
+            Self::OutputRefused => f.write_str("output_refused"),
+            Self::OutputValidationError => f.write_str("output_validation_error"),
             Self::HandUnavailable => f.write_str("hand_unavailable"),
             Self::TooLarge => f.write_str("too_large"),
             Self::Internal => f.write_str("internal"),
@@ -277,9 +293,13 @@ impl ::std::str::FromStr for ApiErrorCode {
             "session_busy" => Ok(Self::SessionBusy),
             "session_deleted" => Ok(Self::SessionDeleted),
             "session_failed" => Ok(Self::SessionFailed),
+            "cancelled" => Ok(Self::Cancelled),
             "insufficient_balance" => Ok(Self::InsufficientBalance),
             "rate_limited" => Ok(Self::RateLimited),
             "provider_error" => Ok(Self::ProviderError),
+            "output_schema_error" => Ok(Self::OutputSchemaError),
+            "output_refused" => Ok(Self::OutputRefused),
+            "output_validation_error" => Ok(Self::OutputValidationError),
             "hand_unavailable" => Ok(Self::HandUnavailable),
             "too_large" => Ok(Self::TooLarge),
             "internal" => Ok(Self::Internal),
@@ -940,6 +960,148 @@ impl CreateSessionRequest {
 #[doc = "    {"]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
+#[doc = "        \"at\","]
+#[doc = "        \"output_id\","]
+#[doc = "        \"schema_hash\","]
+#[doc = "        \"seq\","]
+#[doc = "        \"session_id\","]
+#[doc = "        \"source_seq\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"at\": {"]
+#[doc = "          \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "        },"]
+#[doc = "        \"output_id\": {"]
+#[doc = "          \"$ref\": \"#/$defs/OutputId\""]
+#[doc = "        },"]
+#[doc = "        \"schema_hash\": {"]
+#[doc = "          \"$ref\": \"#/$defs/Sha256Hex\""]
+#[doc = "        },"]
+#[doc = "        \"seq\": {"]
+#[doc = "          \"type\": \"integer\","]
+#[doc = "          \"minimum\": 1.0"]
+#[doc = "        },"]
+#[doc = "        \"session_id\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SessionId\""]
+#[doc = "        },"]
+#[doc = "        \"source_seq\": {"]
+#[doc = "          \"description\": \"Last committed session sequence captured for this output request.\","]
+#[doc = "          \"type\": \"integer\","]
+#[doc = "          \"minimum\": 0.0"]
+#[doc = "        },"]
+#[doc = "        \"turn_id\": {"]
+#[doc = "          \"description\": \"Present when the output request included new user input.\","]
+#[doc = "          \"$ref\": \"#/$defs/TurnId\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"type\": \"string\","]
+#[doc = "          \"enum\": ["]
+#[doc = "            \"output.started\""]
+#[doc = "          ]"]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"at\","]
+#[doc = "        \"output\","]
+#[doc = "        \"output_id\","]
+#[doc = "        \"seq\","]
+#[doc = "        \"session_id\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"at\": {"]
+#[doc = "          \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "        },"]
+#[doc = "        \"output\": {"]
+#[doc = "          \"$ref\": \"#/$defs/OutputContent\""]
+#[doc = "        },"]
+#[doc = "        \"output_id\": {"]
+#[doc = "          \"$ref\": \"#/$defs/OutputId\""]
+#[doc = "        },"]
+#[doc = "        \"seq\": {"]
+#[doc = "          \"type\": \"integer\","]
+#[doc = "          \"minimum\": 1.0"]
+#[doc = "        },"]
+#[doc = "        \"session_id\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SessionId\""]
+#[doc = "        },"]
+#[doc = "        \"turn_id\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TurnId\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"type\": \"string\","]
+#[doc = "          \"enum\": ["]
+#[doc = "            \"output.completed\""]
+#[doc = "          ]"]
+#[doc = "        },"]
+#[doc = "        \"usage\": {"]
+#[doc = "          \"description\": \"Aggregate provider counters for the private commit and bounded repair calls. Absent counters remain absent.\","]
+#[doc = "          \"$ref\": \"#/$defs/ProviderUsage\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
+#[doc = "        \"at\","]
+#[doc = "        \"error\","]
+#[doc = "        \"output_id\","]
+#[doc = "        \"schema_hash\","]
+#[doc = "        \"seq\","]
+#[doc = "        \"session_id\","]
+#[doc = "        \"type\""]
+#[doc = "      ],"]
+#[doc = "      \"properties\": {"]
+#[doc = "        \"at\": {"]
+#[doc = "          \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "        },"]
+#[doc = "        \"error\": {"]
+#[doc = "          \"$ref\": \"#/$defs/ApiError\""]
+#[doc = "        },"]
+#[doc = "        \"issues\": {"]
+#[doc = "          \"type\": \"array\","]
+#[doc = "          \"items\": {"]
+#[doc = "            \"$ref\": \"#/$defs/OutputValidationIssue\""]
+#[doc = "          }"]
+#[doc = "        },"]
+#[doc = "        \"output_id\": {"]
+#[doc = "          \"$ref\": \"#/$defs/OutputId\""]
+#[doc = "        },"]
+#[doc = "        \"schema_hash\": {"]
+#[doc = "          \"$ref\": \"#/$defs/Sha256Hex\""]
+#[doc = "        },"]
+#[doc = "        \"seq\": {"]
+#[doc = "          \"type\": \"integer\","]
+#[doc = "          \"minimum\": 1.0"]
+#[doc = "        },"]
+#[doc = "        \"session_id\": {"]
+#[doc = "          \"$ref\": \"#/$defs/SessionId\""]
+#[doc = "        },"]
+#[doc = "        \"turn_id\": {"]
+#[doc = "          \"$ref\": \"#/$defs/TurnId\""]
+#[doc = "        },"]
+#[doc = "        \"type\": {"]
+#[doc = "          \"type\": \"string\","]
+#[doc = "          \"enum\": ["]
+#[doc = "            \"output.failed\""]
+#[doc = "          ]"]
+#[doc = "        },"]
+#[doc = "        \"usage\": {"]
+#[doc = "          \"description\": \"Aggregate provider counters for any private commit or repair calls completed before failure.\","]
+#[doc = "          \"$ref\": \"#/$defs/ProviderUsage\""]
+#[doc = "        }"]
+#[doc = "      },"]
+#[doc = "      \"additionalProperties\": false"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"required\": ["]
 #[doc = "        \"agent_id\","]
 #[doc = "        \"at\","]
 #[doc = "        \"seq\","]
@@ -1498,7 +1660,7 @@ impl CreateSessionRequest {
 #[doc = r" ```"]
 #[doc = r" </details>"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 pub enum Event {
     #[serde(rename = "turn.started")]
     TurnStarted {
@@ -1506,6 +1668,48 @@ pub enum Event {
         seq: ::std::num::NonZeroU64,
         session_id: SessionId,
         turn_id: TurnId,
+    },
+    #[serde(rename = "output.started")]
+    OutputStarted {
+        at: Timestamp,
+        output_id: OutputId,
+        schema_hash: Sha256Hex,
+        seq: ::std::num::NonZeroU64,
+        session_id: SessionId,
+        #[doc = "Last committed session sequence captured for this output request."]
+        source_seq: u64,
+        #[doc = "Present when the output request included new user input."]
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        turn_id: ::std::option::Option<TurnId>,
+    },
+    #[serde(rename = "output.completed")]
+    OutputCompleted {
+        at: Timestamp,
+        output: OutputContent,
+        output_id: OutputId,
+        seq: ::std::num::NonZeroU64,
+        session_id: SessionId,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        turn_id: ::std::option::Option<TurnId>,
+        #[doc = "Aggregate provider counters for the private commit and bounded repair calls. Absent counters remain absent."]
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        usage: ::std::option::Option<ProviderUsage>,
+    },
+    #[serde(rename = "output.failed")]
+    OutputFailed {
+        at: Timestamp,
+        error: ApiError,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        issues: ::std::vec::Vec<OutputValidationIssue>,
+        output_id: OutputId,
+        schema_hash: Sha256Hex,
+        seq: ::std::num::NonZeroU64,
+        session_id: SessionId,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        turn_id: ::std::option::Option<TurnId>,
+        #[doc = "Aggregate provider counters for any private commit or repair calls completed before failure."]
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        usage: ::std::option::Option<ProviderUsage>,
     },
     #[serde(rename = "assistant.delta")]
     AssistantDelta {
@@ -3237,6 +3441,491 @@ pub struct ModelInfo {
 }
 impl ModelInfo {
     pub fn builder() -> builder::ModelInfo {
+        Default::default()
+    }
+}
+#[doc = "The output request was admitted. Follow the session event stream from seq - 1 until the matching output.completed or output.failed event."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"The output request was admitted. Follow the session event stream from seq - 1 until the matching output.completed or output.failed event.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"output_id\","]
+#[doc = "    \"schema_hash\","]
+#[doc = "    \"seq\","]
+#[doc = "    \"session_id\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"output_id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/OutputId\""]
+#[doc = "    },"]
+#[doc = "    \"schema_hash\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Sha256Hex\""]
+#[doc = "    },"]
+#[doc = "    \"seq\": {"]
+#[doc = "      \"description\": \"Journal sequence of the output.started event.\","]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"minimum\": 1.0"]
+#[doc = "    },"]
+#[doc = "    \"session_id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/SessionId\""]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OutputAccepted {
+    pub output_id: OutputId,
+    pub schema_hash: Sha256Hex,
+    #[doc = "Journal sequence of the output.started event."]
+    pub seq: ::std::num::NonZeroU64,
+    pub session_id: SessionId,
+}
+impl OutputAccepted {
+    pub fn builder() -> builder::OutputAccepted {
+        Default::default()
+    }
+}
+#[doc = "The only durable assistant content created by the private output commit phase. The schema and repair context are never journaled."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"The only durable assistant content created by the private output commit phase. The schema and repair context are never journaled.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"schema_hash\","]
+#[doc = "    \"type\","]
+#[doc = "    \"value\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"schema_hash\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Sha256Hex\""]
+#[doc = "    },"]
+#[doc = "    \"type\": {"]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"enum\": ["]
+#[doc = "        \"output\""]
+#[doc = "      ]"]
+#[doc = "    },"]
+#[doc = "    \"value\": {"]
+#[doc = "      \"description\": \"The validated JSON value.\""]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OutputContent {
+    pub schema_hash: Sha256Hex,
+    #[serde(rename = "type")]
+    pub type_: OutputContentType,
+    #[doc = "The validated JSON value."]
+    pub value: ::serde_json::Value,
+}
+impl OutputContent {
+    pub fn builder() -> builder::OutputContent {
+        Default::default()
+    }
+}
+#[doc = "`OutputContentType`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"output\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum OutputContentType {
+    #[serde(rename = "output")]
+    Output,
+}
+impl ::std::fmt::Display for OutputContentType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Output => f.write_str("output"),
+        }
+    }
+}
+impl ::std::str::FromStr for OutputContentType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "output" => Ok(Self::Output),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OutputContentType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for OutputContentType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OutputContentType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Correlation id for one output request. It is not a separately managed resource."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Correlation id for one output request. It is not a separately managed resource.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"pattern\": \"^out_[A-Za-z0-9]{20,32}$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct OutputId(::std::string::String);
+impl ::std::ops::Deref for OutputId {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<OutputId> for ::std::string::String {
+    fn from(value: OutputId) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for OutputId {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^out_[A-Za-z0-9]{20,32}$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^out_[A-Za-z0-9]{20,32}$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for OutputId {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for OutputId {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OutputId {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for OutputId {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`OutputRequest`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"schema\","]
+#[doc = "    \"schema_hash\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"input\": {"]
+#[doc = "      \"description\": \"Optional real user input. It is journaled and worked normally before the private output commit step.\","]
+#[doc = "      \"oneOf\": ["]
+#[doc = "        {"]
+#[doc = "          \"type\": \"string\","]
+#[doc = "          \"minLength\": 1"]
+#[doc = "        },"]
+#[doc = "        {"]
+#[doc = "          \"type\": \"array\","]
+#[doc = "          \"items\": {"]
+#[doc = "            \"$ref\": \"#/$defs/ContentPart\""]
+#[doc = "          },"]
+#[doc = "          \"minItems\": 1"]
+#[doc = "        }"]
+#[doc = "      ]"]
+#[doc = "    },"]
+#[doc = "    \"metadata\": {"]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"additionalProperties\": {"]
+#[doc = "        \"type\": \"string\""]
+#[doc = "      }"]
+#[doc = "    },"]
+#[doc = "    \"schema\": {"]
+#[doc = "      \"$ref\": \"#/$defs/OutputSchema\""]
+#[doc = "    },"]
+#[doc = "    \"schema_hash\": {"]
+#[doc = "      \"description\": \"SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model.\","]
+#[doc = "      \"$ref\": \"#/$defs/Sha256Hex\""]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OutputRequest {
+    #[doc = "Optional real user input. It is journaled and worked normally before the private output commit step."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub input: ::std::option::Option<OutputRequestInput>,
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+    )]
+    pub metadata: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+    pub schema: OutputSchema,
+    #[doc = "SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model."]
+    pub schema_hash: Sha256Hex,
+}
+impl OutputRequest {
+    pub fn builder() -> builder::OutputRequest {
+        Default::default()
+    }
+}
+#[doc = "Optional real user input. It is journaled and worked normally before the private output commit step."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Optional real user input. It is journaled and worked normally before the private output commit step.\","]
+#[doc = "  \"oneOf\": ["]
+#[doc = "    {"]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"minLength\": 1"]
+#[doc = "    },"]
+#[doc = "    {"]
+#[doc = "      \"type\": \"array\","]
+#[doc = "      \"items\": {"]
+#[doc = "        \"$ref\": \"#/$defs/ContentPart\""]
+#[doc = "      },"]
+#[doc = "      \"minItems\": 1"]
+#[doc = "    }"]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum OutputRequestInput {
+    String(OutputRequestInputString),
+    Array(::std::vec::Vec<ContentPart>),
+}
+impl ::std::convert::From<OutputRequestInputString> for OutputRequestInput {
+    fn from(value: OutputRequestInputString) -> Self {
+        Self::String(value)
+    }
+}
+impl ::std::convert::From<::std::vec::Vec<ContentPart>> for OutputRequestInput {
+    fn from(value: ::std::vec::Vec<ContentPart>) -> Self {
+        Self::Array(value)
+    }
+}
+#[doc = "`OutputRequestInputString`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct OutputRequestInputString(::std::string::String);
+impl ::std::ops::Deref for OutputRequestInputString {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<OutputRequestInputString> for ::std::string::String {
+    fn from(value: OutputRequestInputString) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for OutputRequestInputString {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for OutputRequestInputString {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for OutputRequestInputString {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OutputRequestInputString {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for OutputRequestInputString {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "JSON Schema 2020-12 produced by the SDK. AEX validates and normalises it for the selected model provider."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"JSON Schema 2020-12 produced by the SDK. AEX validates and normalises it for the selected model provider.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"minProperties\": 1,"]
+#[doc = "  \"additionalProperties\": true"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(transparent)]
+pub struct OutputSchema(pub ::serde_json::Map<::std::string::String, ::serde_json::Value>);
+impl ::std::ops::Deref for OutputSchema {
+    type Target = ::serde_json::Map<::std::string::String, ::serde_json::Value>;
+    fn deref(&self) -> &::serde_json::Map<::std::string::String, ::serde_json::Value> {
+        &self.0
+    }
+}
+impl ::std::convert::From<OutputSchema>
+    for ::serde_json::Map<::std::string::String, ::serde_json::Value>
+{
+    fn from(value: OutputSchema) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for OutputSchema
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self(value)
+    }
+}
+#[doc = "`OutputValidationIssue`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"message\","]
+#[doc = "    \"path\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"keyword\": {"]
+#[doc = "      \"description\": \"The failed JSON Schema keyword when available.\","]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    \"message\": {"]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    \"path\": {"]
+#[doc = "      \"description\": \"JSON Pointer into the candidate output.\","]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OutputValidationIssue {
+    #[doc = "The failed JSON Schema keyword when available."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub keyword: ::std::option::Option<::std::string::String>,
+    pub message: ::std::string::String,
+    #[doc = "JSON Pointer into the candidate output."]
+    pub path: ::std::string::String,
+}
+impl OutputValidationIssue {
+    pub fn builder() -> builder::OutputValidationIssue {
         Default::default()
     }
 }
@@ -5894,6 +6583,317 @@ pub mod builder {
                 base_url: Ok(value.base_url),
                 name: Ok(value.name),
                 provider: Ok(value.provider),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct OutputAccepted {
+        output_id: ::std::result::Result<super::OutputId, ::std::string::String>,
+        schema_hash: ::std::result::Result<super::Sha256Hex, ::std::string::String>,
+        seq: ::std::result::Result<::std::num::NonZeroU64, ::std::string::String>,
+        session_id: ::std::result::Result<super::SessionId, ::std::string::String>,
+    }
+    impl ::std::default::Default for OutputAccepted {
+        fn default() -> Self {
+            Self {
+                output_id: Err("no value supplied for output_id".to_string()),
+                schema_hash: Err("no value supplied for schema_hash".to_string()),
+                seq: Err("no value supplied for seq".to_string()),
+                session_id: Err("no value supplied for session_id".to_string()),
+            }
+        }
+    }
+    impl OutputAccepted {
+        pub fn output_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::OutputId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.output_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for output_id: {e}"));
+            self
+        }
+        pub fn schema_hash<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Sha256Hex>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.schema_hash = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for schema_hash: {e}"));
+            self
+        }
+        pub fn seq<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::num::NonZeroU64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.seq = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for seq: {e}"));
+            self
+        }
+        pub fn session_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::SessionId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.session_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for session_id: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<OutputAccepted> for super::OutputAccepted {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: OutputAccepted,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                output_id: value.output_id?,
+                schema_hash: value.schema_hash?,
+                seq: value.seq?,
+                session_id: value.session_id?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::OutputAccepted> for OutputAccepted {
+        fn from(value: super::OutputAccepted) -> Self {
+            Self {
+                output_id: Ok(value.output_id),
+                schema_hash: Ok(value.schema_hash),
+                seq: Ok(value.seq),
+                session_id: Ok(value.session_id),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct OutputContent {
+        schema_hash: ::std::result::Result<super::Sha256Hex, ::std::string::String>,
+        type_: ::std::result::Result<super::OutputContentType, ::std::string::String>,
+        value: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+    }
+    impl ::std::default::Default for OutputContent {
+        fn default() -> Self {
+            Self {
+                schema_hash: Err("no value supplied for schema_hash".to_string()),
+                type_: Err("no value supplied for type_".to_string()),
+                value: Err("no value supplied for value".to_string()),
+            }
+        }
+    }
+    impl OutputContent {
+        pub fn schema_hash<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Sha256Hex>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.schema_hash = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for schema_hash: {e}"));
+            self
+        }
+        pub fn type_<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::OutputContentType>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.type_ = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for type_: {e}"));
+            self
+        }
+        pub fn value<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::serde_json::Value>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.value = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for value: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<OutputContent> for super::OutputContent {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: OutputContent,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                schema_hash: value.schema_hash?,
+                type_: value.type_?,
+                value: value.value?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::OutputContent> for OutputContent {
+        fn from(value: super::OutputContent) -> Self {
+            Self {
+                schema_hash: Ok(value.schema_hash),
+                type_: Ok(value.type_),
+                value: Ok(value.value),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct OutputRequest {
+        input: ::std::result::Result<
+            ::std::option::Option<super::OutputRequestInput>,
+            ::std::string::String,
+        >,
+        metadata: ::std::result::Result<
+            ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+            ::std::string::String,
+        >,
+        schema: ::std::result::Result<super::OutputSchema, ::std::string::String>,
+        schema_hash: ::std::result::Result<super::Sha256Hex, ::std::string::String>,
+    }
+    impl ::std::default::Default for OutputRequest {
+        fn default() -> Self {
+            Self {
+                input: Ok(Default::default()),
+                metadata: Ok(Default::default()),
+                schema: Err("no value supplied for schema".to_string()),
+                schema_hash: Err("no value supplied for schema_hash".to_string()),
+            }
+        }
+    }
+    impl OutputRequest {
+        pub fn input<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::OutputRequestInput>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.input = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for input: {e}"));
+            self
+        }
+        pub fn metadata<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.metadata = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+            self
+        }
+        pub fn schema<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::OutputSchema>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.schema = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for schema: {e}"));
+            self
+        }
+        pub fn schema_hash<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Sha256Hex>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.schema_hash = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for schema_hash: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<OutputRequest> for super::OutputRequest {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: OutputRequest,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                input: value.input?,
+                metadata: value.metadata?,
+                schema: value.schema?,
+                schema_hash: value.schema_hash?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::OutputRequest> for OutputRequest {
+        fn from(value: super::OutputRequest) -> Self {
+            Self {
+                input: Ok(value.input),
+                metadata: Ok(value.metadata),
+                schema: Ok(value.schema),
+                schema_hash: Ok(value.schema_hash),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct OutputValidationIssue {
+        keyword: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        message: ::std::result::Result<::std::string::String, ::std::string::String>,
+        path: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for OutputValidationIssue {
+        fn default() -> Self {
+            Self {
+                keyword: Ok(Default::default()),
+                message: Err("no value supplied for message".to_string()),
+                path: Err("no value supplied for path".to_string()),
+            }
+        }
+    }
+    impl OutputValidationIssue {
+        pub fn keyword<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.keyword = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for keyword: {e}"));
+            self
+        }
+        pub fn message<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.message = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for message: {e}"));
+            self
+        }
+        pub fn path<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.path = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for path: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<OutputValidationIssue> for super::OutputValidationIssue {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: OutputValidationIssue,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                keyword: value.keyword?,
+                message: value.message?,
+                path: value.path?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::OutputValidationIssue> for OutputValidationIssue {
+        fn from(value: super::OutputValidationIssue) -> Self {
+            Self {
+                keyword: Ok(value.keyword),
+                message: Ok(value.message),
+                path: Ok(value.path),
             }
         }
     }

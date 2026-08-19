@@ -1,5 +1,5 @@
 /**
- * @aex/contracts — brain–hand ABI v1 and session API v1 types, generated from the JSON Schema
+ * @aexhq/contracts — brain–hand ABI v1 and session API v1 types, generated from the JSON Schema
  * in contracts/ (see tools/gen.sh). Plus the two hashes both sides of the ABI must agree on.
  */
 import { createHash } from "node:crypto";

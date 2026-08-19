@@ -594,6 +594,128 @@
         }
       }
     },
+    "OutputId": {
+      "type": "string",
+      "pattern": "^out_[A-Za-z0-9]{20,32}$",
+      "description": "Correlation id for one output request. It is not a separately managed resource."
+    },
+    "OutputSchema": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": true,
+      "description": "JSON Schema 2020-12 produced by the SDK. AEX validates and normalises it for the selected model provider."
+    },
+    "OutputRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "schema_hash"
+      ],
+      "properties": {
+        "schema": {
+          "$ref": "#/$defs/OutputSchema"
+        },
+        "schema_hash": {
+          "$ref": "#/$defs/Sha256Hex",
+          "description": "SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model."
+        },
+        "input": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/ContentPart"
+              }
+            }
+          ],
+          "description": "Optional real user input. It is journaled and worked normally before the private output commit step."
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "OutputAccepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "output_id",
+        "schema_hash",
+        "seq"
+      ],
+      "description": "The output request was admitted. Follow the session event stream from seq - 1 until the matching output.completed or output.failed event.",
+      "properties": {
+        "session_id": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "output_id": {
+          "$ref": "#/$defs/OutputId"
+        },
+        "schema_hash": {
+          "$ref": "#/$defs/Sha256Hex"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Journal sequence of the output.started event."
+        }
+      }
+    },
+    "OutputContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "schema_hash",
+        "value"
+      ],
+      "description": "The only durable assistant content created by the private output commit phase. The schema and repair context are never journaled.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "output"
+          ]
+        },
+        "schema_hash": {
+          "$ref": "#/$defs/Sha256Hex"
+        },
+        "value": {
+          "description": "The validated JSON value."
+        }
+      }
+    },
+    "OutputValidationIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "message"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "JSON Pointer into the candidate output."
+        },
+        "message": {
+          "type": "string"
+        },
+        "keyword": {
+          "type": "string",
+          "description": "The failed JSON Schema keyword when available."
+        }
+      }
+    },
     "ProviderUsage": {
       "type": "object",
       "description": "Raw provider counters for one model call. A counter the provider did not send is absent here — never reported as 0.",
@@ -670,6 +792,148 @@
             },
             "turn_id": {
               "$ref": "#/$defs/TurnId"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "seq",
+            "at",
+            "session_id",
+            "output_id",
+            "schema_hash",
+            "source_seq"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "output.started"
+              ]
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "at": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "session_id": {
+              "$ref": "#/$defs/SessionId"
+            },
+            "turn_id": {
+              "$ref": "#/$defs/TurnId",
+              "description": "Present when the output request included new user input."
+            },
+            "output_id": {
+              "$ref": "#/$defs/OutputId"
+            },
+            "schema_hash": {
+              "$ref": "#/$defs/Sha256Hex"
+            },
+            "source_seq": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Last committed session sequence captured for this output request."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "seq",
+            "at",
+            "session_id",
+            "output_id",
+            "output"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "output.completed"
+              ]
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "at": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "session_id": {
+              "$ref": "#/$defs/SessionId"
+            },
+            "turn_id": {
+              "$ref": "#/$defs/TurnId"
+            },
+            "output_id": {
+              "$ref": "#/$defs/OutputId"
+            },
+            "output": {
+              "$ref": "#/$defs/OutputContent"
+            },
+            "usage": {
+              "$ref": "#/$defs/ProviderUsage",
+              "description": "Aggregate provider counters for the private commit and bounded repair calls. Absent counters remain absent."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "seq",
+            "at",
+            "session_id",
+            "output_id",
+            "schema_hash",
+            "error"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "output.failed"
+              ]
+            },
+            "seq": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "at": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "session_id": {
+              "$ref": "#/$defs/SessionId"
+            },
+            "turn_id": {
+              "$ref": "#/$defs/TurnId"
+            },
+            "output_id": {
+              "$ref": "#/$defs/OutputId"
+            },
+            "schema_hash": {
+              "$ref": "#/$defs/Sha256Hex"
+            },
+            "error": {
+              "$ref": "#/$defs/ApiError"
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/OutputValidationIssue"
+              }
+            },
+            "usage": {
+              "$ref": "#/$defs/ProviderUsage",
+              "description": "Aggregate provider counters for any private commit or repair calls completed before failure."
             }
           }
         },
@@ -1401,9 +1665,13 @@
         "session_busy",
         "session_deleted",
         "session_failed",
+        "cancelled",
         "insufficient_balance",
         "rate_limited",
         "provider_error",
+        "output_schema_error",
+        "output_refused",
+        "output_validation_error",
         "hand_unavailable",
         "too_large",
         "internal"
