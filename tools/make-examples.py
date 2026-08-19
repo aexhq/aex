@@ -171,11 +171,22 @@ w(S + "SessionList.example.json", {"object": "list", "data": [sess], "has_more":
 w(S + "PersistRequest.example.json", {"name": "report.pdf", "path": "/workspace/out/report.pdf", "media_type": "application/pdf"})
 
 C = "contracts/examples/control/"
+wait = {"object": "waitlist_entry", "email": "dev@example.com", "status": "waiting",
+        "created_at": "2026-08-18T07:55:00Z"}
+w(C + "JoinWaitlistRequest.example.json", {"email": "dev@example.com"})
+w(C + "WaitlistSubmission.example.json", {"object": "waitlist_submission", "email": "dev@example.com",
+                                                "status": "received", "received_at": "2026-08-18T07:55:00Z"})
+w(C + "WaitlistEntry.example.json", wait)
+w(C + "WaitlistEntryList.example.json", {"object": "list", "data": [wait]})
+w(C + "CreateInvitationRequest.example.json", {"email": "dev@example.com"})
+w(C + "InvitationCreated.example.json", {"object": "invitation", "email": "dev@example.com",
+                                             "invite_token": "aex_iv_" + "A1b2" * 12,
+                                             "invited_at": "2026-08-18T07:58:00Z"})
 acct = {"id": "acc_01J5X8Y2K3M4N5P6Q7R8S9T0", "object": "account", "email": "dev@example.com",
         "created_at": "2026-08-18T08:00:00Z",
         "limits": {"max_concurrent_sessions": 10, "session_creates_per_hour": 30}}
 w(C + "Account.example.json", acct)
-w(C + "CreateAccountRequest.example.json", {"email": "dev@example.com"})
+w(C + "CreateAccountRequest.example.json", {"email": "dev@example.com", "invite_token": "aex_iv_" + "A1b2" * 12})
 w(C + "AccountCreated.example.json", {"account": acct, "account_token": "aex_at_" + "A1b2" * 12})
 key = {"id": "key_01J5X8Y2K3M4N5P6Q7R8S9U1", "object": "api_key", "name": "laptop",
        "prefix": "aex_sk_A1b2C", "created_at": "2026-08-18T08:05:00Z", "last_used_at": "2026-08-18T09:40:00Z"}

@@ -168,6 +168,14 @@ fn control_examples_validate_and_round_trip() {
             &value,
         );
         match type_name.as_str() {
+            "JoinWaitlistRequest" => round_trip::<control::JoinWaitlistRequest>(&name, &value),
+            "WaitlistSubmission" => round_trip::<control::WaitlistSubmission>(&name, &value),
+            "WaitlistEntry" => round_trip::<control::WaitlistEntry>(&name, &value),
+            "WaitlistEntryList" => round_trip::<control::WaitlistEntryList>(&name, &value),
+            "CreateInvitationRequest" => {
+                round_trip::<control::CreateInvitationRequest>(&name, &value)
+            }
+            "InvitationCreated" => round_trip::<control::InvitationCreated>(&name, &value),
             "Account" => round_trip::<control::Account>(&name, &value),
             "CreateAccountRequest" => round_trip::<control::CreateAccountRequest>(&name, &value),
             "AccountCreated" => round_trip::<control::AccountCreated>(&name, &value),

@@ -35,6 +35,143 @@
       "pattern": "^aex_sk_[A-Za-z0-9]{40,64}$",
       "description": "Runs sessions. Shown once at creation; only a hash is stored."
     },
+    "InvitationToken": {
+      "type": "string",
+      "pattern": "^aex_iv_[A-Za-z0-9]{40,64}$",
+      "description": "One-time Founding Beta invitation. Shown once to the operator; only a hash is stored."
+    },
+    "WaitlistStatus": {
+      "type": "string",
+      "enum": [
+        "waiting",
+        "invited",
+        "joined"
+      ]
+    },
+    "JoinWaitlistRequest": {
+      "type": "object",
+      "required": [
+        "email"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+          "maxLength": 254
+        }
+      }
+    },
+    "WaitlistSubmission": {
+      "type": "object",
+      "required": [
+        "object",
+        "email",
+        "status",
+        "received_at"
+      ],
+      "description": "A privacy-preserving acknowledgement. It does not reveal whether the email was already waiting, invited, or joined.",
+      "properties": {
+        "object": {
+          "const": "waitlist_submission"
+        },
+        "email": {
+          "type": "string"
+        },
+        "status": {
+          "const": "received"
+        },
+        "received_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "WaitlistEntry": {
+      "type": "object",
+      "required": [
+        "object",
+        "email",
+        "status",
+        "created_at"
+      ],
+      "description": "Operator view of one canonical Founding Beta waitlist record.",
+      "properties": {
+        "object": {
+          "const": "waitlist_entry"
+        },
+        "email": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/WaitlistStatus"
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "invited_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "joined_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
+    "WaitlistEntryList": {
+      "type": "object",
+      "required": [
+        "object",
+        "data"
+      ],
+      "properties": {
+        "object": {
+          "const": "list"
+        },
+        "data": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WaitlistEntry"
+          }
+        }
+      }
+    },
+    "CreateInvitationRequest": {
+      "type": "object",
+      "required": [
+        "email"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+          "maxLength": 254
+        }
+      }
+    },
+    "InvitationCreated": {
+      "type": "object",
+      "required": [
+        "object",
+        "email",
+        "invite_token",
+        "invited_at"
+      ],
+      "description": "The invitation token appears here and never again. Creating another invitation rotates it.",
+      "properties": {
+        "object": {
+          "const": "invitation"
+        },
+        "email": {
+          "type": "string"
+        },
+        "invite_token": {
+          "$ref": "#/$defs/InvitationToken"
+        },
+        "invited_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      }
+    },
     "AccountLimits": {
       "type": "object",
       "required": [
@@ -83,7 +220,8 @@
     "CreateAccountRequest": {
       "type": "object",
       "required": [
-        "email"
+        "email",
+        "invite_token"
       ],
       "additionalProperties": false,
       "properties": {
@@ -91,6 +229,9 @@
           "type": "string",
           "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
           "maxLength": 254
+        },
+        "invite_token": {
+          "$ref": "#/$defs/InvitationToken"
         }
       }
     },
@@ -232,8 +373,8 @@
         "amount_cents": {
           "type": "integer",
           "minimum": 1000,
-          "maximum": 100000000,
-          "description": "Whole cents. Minimum top-up $10.00 (abuse control, ARCHITECTURE-v1 §2.9)."
+          "maximum": 100000,
+          "description": "Whole cents. Founding Beta top-ups are $10.00 to $1,000.00."
         }
       }
     },

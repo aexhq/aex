@@ -3,6 +3,57 @@
  * GENERATED from contracts/control/v1/openapi.yaml by packages/contracts/scripts/gen.mjs (tools/gen.sh). DO NOT EDIT.
  */
 export type paths = {
+    "/v1/waitlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Join the Founding Beta waitlist (idempotent and privacy-preserving) */
+        post: operations["joinWaitlist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/waitlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the canonical waitlist, newest first */
+        get: operations["listWaitlist"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/invitations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create or rotate a one-time invitation for a waitlisted email */
+        post: operations["createInvitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/accounts": {
         parameters: {
             query?: never;
@@ -12,7 +63,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
-        /** Sign up (no auth; returns the account token, shown once) */
+        /** Accept a one-time invitation and sign up (returns the account token, shown once) */
         post: operations["createAccount"];
         delete?: never;
         options?: never;
@@ -183,7 +234,7 @@ export type paths = {
 export type webhooks = Record<string, never>;
 export type components = {
     schemas: {
-        CreateAccountRequest: {
+        JoinWaitlistRequest: {
             email: string;
         };
         /** @enum {string} */
@@ -197,12 +248,55 @@ export type components = {
         ControlErrorResponse: {
             error: components["schemas"]["ControlError"];
         };
-        AccountId: string;
         /**
          * Format: date-time
          * @description RFC 3339, UTC.
          */
         Timestamp: string;
+        /** @description A privacy-preserving acknowledgement. It does not reveal whether the email was already waiting, invited, or joined. */
+        WaitlistSubmission: {
+            /** @constant */
+            object: "waitlist_submission";
+            email: string;
+            /** @constant */
+            status: "received";
+            received_at: components["schemas"]["Timestamp"];
+        };
+        /** @enum {string} */
+        WaitlistStatus: "waiting" | "invited" | "joined";
+        /** @description Operator view of one canonical Founding Beta waitlist record. */
+        WaitlistEntry: {
+            /** @constant */
+            object: "waitlist_entry";
+            email: string;
+            status: components["schemas"]["WaitlistStatus"];
+            created_at: components["schemas"]["Timestamp"];
+            invited_at?: components["schemas"]["Timestamp"];
+            joined_at?: components["schemas"]["Timestamp"];
+        };
+        WaitlistEntryList: {
+            /** @constant */
+            object: "list";
+            data: components["schemas"]["WaitlistEntry"][];
+        };
+        CreateInvitationRequest: {
+            email: string;
+        };
+        /** @description One-time Founding Beta invitation. Shown once to the operator; only a hash is stored. */
+        InvitationToken: string;
+        /** @description The invitation token appears here and never again. Creating another invitation rotates it. */
+        InvitationCreated: {
+            /** @constant */
+            object: "invitation";
+            email: string;
+            invite_token: components["schemas"]["InvitationToken"];
+            invited_at: components["schemas"]["Timestamp"];
+        };
+        CreateAccountRequest: {
+            email: string;
+            invite_token: components["schemas"]["InvitationToken"];
+        };
+        AccountId: string;
         /** @description Abuse controls (ARCHITECTURE-v1 §2.9): card + minimum top-up, concurrency and create-rate caps. */
         AccountLimits: {
             max_concurrent_sessions: number;
@@ -282,7 +376,7 @@ export type components = {
             data: components["schemas"]["Topup"][];
         };
         CreateTopupRequest: {
-            /** @description Whole cents. Minimum top-up $10.00 (abuse control, ARCHITECTURE-v1 §2.9). */
+            /** @description Whole cents. Founding Beta top-ups are $10.00 to $1,000.00. */
             amount_cents: number;
         };
         /** @description Current stored bytes, as last reported by the brain (session/v1 StorageInfo). */
@@ -351,6 +445,77 @@ export type components = {
 };
 export type $defs = Record<string, never>;
 export interface operations {
+    joinWaitlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JoinWaitlistRequest"];
+            };
+        };
+        responses: {
+            /** @description Received, whether or not this email already has a record */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WaitlistSubmission"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listWaitlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WaitlistEntryList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createInvitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateInvitationRequest"];
+            };
+        };
+        responses: {
+            /** @description Created; the invitation token is shown once */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationCreated"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     createAccount: {
         parameters: {
             query?: never;

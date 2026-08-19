@@ -18,6 +18,15 @@ use crate::rating::FoldState;
 use crate::{Error, Result};
 
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS waitlist (
+  email TEXT PRIMARY KEY COLLATE NOCASE,
+  status TEXT NOT NULL CHECK (status IN ('waiting', 'invited', 'joined')),
+  invite_hash TEXT UNIQUE,
+  created_ms INTEGER NOT NULL,
+  invited_ms INTEGER,
+  joined_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS waitlist_status ON waitlist(status, created_ms);
 CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
@@ -79,6 +88,15 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);
 ";
+
+#[derive(Debug, Clone)]
+pub struct WaitlistRow {
+    pub email: String,
+    pub status: String,
+    pub created_ms: i64,
+    pub invited_ms: Option<i64>,
+    pub joined_ms: Option<i64>,
+}
 
 #[derive(Debug, Clone)]
 pub struct AccountRow {
@@ -197,6 +215,115 @@ impl Db {
     }
 
     // ---- identity ----
+
+    /// Add an email once. Repeated submissions preserve the operator-owned lifecycle state.
+    pub async fn join_waitlist(&self, email: String, now_ms: i64) -> Result<WaitlistRow> {
+        self.call(move |c| {
+            c.execute(
+                "INSERT INTO waitlist (email, status, created_ms)
+                 VALUES (?1, 'waiting', ?2)
+                 ON CONFLICT(email) DO NOTHING",
+                params![email, now_ms],
+            )?;
+            c.query_row(
+                "SELECT email, status, created_ms, invited_ms, joined_ms
+                 FROM waitlist WHERE email = ?1",
+                params![email],
+                waitlist_row,
+            )
+        })
+        .await
+    }
+
+    pub async fn list_waitlist(&self) -> Result<Vec<WaitlistRow>> {
+        self.call(|c| {
+            let mut stmt = c.prepare(
+                "SELECT email, status, created_ms, invited_ms, joined_ms
+                 FROM waitlist ORDER BY created_ms DESC",
+            )?;
+            stmt.query_map([], waitlist_row)?.collect()
+        })
+        .await
+    }
+
+    /// Create or rotate an invitation. Joined rows cannot be invited again.
+    pub async fn invite_waitlist(
+        &self,
+        email: String,
+        invite_hash: String,
+        now_ms: i64,
+    ) -> Result<Option<WaitlistRow>> {
+        self.call(move |c| {
+            let changed = c.execute(
+                "UPDATE waitlist
+                 SET status = 'invited', invite_hash = ?2, invited_ms = ?3
+                 WHERE email = ?1 AND status != 'joined'",
+                params![email, invite_hash, now_ms],
+            )?;
+            if changed == 0 {
+                return Ok(None);
+            }
+            c.query_row(
+                "SELECT email, status, created_ms, invited_ms, joined_ms
+                 FROM waitlist WHERE email = ?1",
+                params![email],
+                waitlist_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    /// Consume an invitation and create its account in one SQLite transaction.
+    pub async fn create_invited_account(
+        &self,
+        row: AccountRow,
+        email: String,
+        token_hash: String,
+        invite_hash: String,
+        joined_ms: i64,
+    ) -> Result<()> {
+        let result = self
+            .call(move |c| {
+                let tx = c.transaction()?;
+                let invited = tx
+                    .query_row(
+                        "SELECT 1 FROM waitlist
+                         WHERE email = ?1 AND status = 'invited' AND invite_hash = ?2",
+                        params![email, invite_hash],
+                        |_| Ok(()),
+                    )
+                    .optional()?
+                    .is_some();
+                if !invited {
+                    return Ok(false);
+                }
+                tx.execute(
+                    "INSERT INTO accounts (id, email, token_hash, created_ms, max_concurrent_sessions, session_creates_per_hour)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![row.id, email, token_hash, row.created_ms, row.max_concurrent_sessions, row.session_creates_per_hour],
+                )?;
+                tx.execute(
+                    "UPDATE waitlist
+                     SET status = 'joined', invite_hash = NULL, joined_ms = ?2
+                     WHERE email = ?1",
+                    params![email, joined_ms],
+                )?;
+                tx.commit()?;
+                Ok(true)
+            })
+            .await;
+        match result {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(Error::Forbidden(
+                "a valid one-time Founding Beta invitation is required".into(),
+            )),
+            Err(Error::Internal(message)) if message.contains("UNIQUE") => Err(Error::Conflict(
+                "an account with this email already exists".into(),
+            )),
+            Err(error) => Err(error),
+        }
+    }
 
     pub async fn create_account(
         &self,
@@ -597,6 +724,16 @@ const SESSION_COLS: &str = "SELECT id, account_id, key_id, shape, created_ms, fi
     web_search_queries, metered_to_ms,
     workspace_bytes, suspended_bytes, artifact_bytes, hand_state, session_state FROM sessions";
 
+fn waitlist_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<WaitlistRow> {
+    Ok(WaitlistRow {
+        email: r.get(0)?,
+        status: r.get(1)?,
+        created_ms: r.get(2)?,
+        invited_ms: r.get(3)?,
+        joined_ms: r.get(4)?,
+    })
+}
+
 fn account_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AccountRow> {
     Ok(AccountRow {
         id: r.get(0)?,
@@ -879,6 +1016,58 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Conflict(_)), "{err}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn waitlist_invitation_is_canonical_and_one_time() {
+        let db = Db::open_memory().unwrap();
+        let first = db
+            .join_waitlist("Beta@Example.com".into(), 1)
+            .await
+            .unwrap();
+        assert_eq!(first.status, "waiting");
+        let repeated = db
+            .join_waitlist("beta@example.com".into(), 2)
+            .await
+            .unwrap();
+        assert_eq!(repeated.created_ms, 1, "a repeat does not reset queue age");
+
+        db.invite_waitlist("beta@example.com".into(), "invite-hash".into(), 3)
+            .await
+            .unwrap()
+            .unwrap();
+        let wrong = db
+            .create_invited_account(
+                acct("acc_wrong"),
+                "beta@example.com".into(),
+                "account-hash-wrong".into(),
+                "wrong-invite".into(),
+                4,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(wrong, Error::Forbidden(_)));
+
+        db.create_invited_account(
+            acct("acc_beta"),
+            "beta@example.com".into(),
+            "account-hash".into(),
+            "invite-hash".into(),
+            5,
+        )
+        .await
+        .unwrap();
+        let rows = db.list_waitlist().await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, "joined");
+        assert_eq!(rows[0].joined_ms, Some(5));
+        assert!(
+            db.invite_waitlist("beta@example.com".into(), "again".into(), 6)
+                .await
+                .unwrap()
+                .is_none(),
+            "a joined address cannot be re-invited"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -971,13 +971,17 @@ impl ControlErrorResponse {
 #[doc = "{"]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"required\": ["]
-#[doc = "    \"email\""]
+#[doc = "    \"email\","]
+#[doc = "    \"invite_token\""]
 #[doc = "  ],"]
 #[doc = "  \"properties\": {"]
 #[doc = "    \"email\": {"]
 #[doc = "      \"type\": \"string\","]
 #[doc = "      \"maxLength\": 254,"]
 #[doc = "      \"pattern\": \"^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$\""]
+#[doc = "    },"]
+#[doc = "    \"invite_token\": {"]
+#[doc = "      \"$ref\": \"#/$defs/InvitationToken\""]
 #[doc = "    }"]
 #[doc = "  },"]
 #[doc = "  \"additionalProperties\": false"]
@@ -988,6 +992,7 @@ impl ControlErrorResponse {
 #[serde(deny_unknown_fields)]
 pub struct CreateAccountRequest {
     pub email: CreateAccountRequestEmail,
+    pub invite_token: InvitationToken,
 }
 impl CreateAccountRequest {
     pub fn builder() -> builder::CreateAccountRequest {
@@ -1173,6 +1178,113 @@ impl<'de> ::serde::Deserialize<'de> for CreateApiKeyRequestName {
             })
     }
 }
+#[doc = "`CreateInvitationRequest`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"email\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"email\": {"]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"maxLength\": 254,"]
+#[doc = "      \"pattern\": \"^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$\""]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CreateInvitationRequest {
+    pub email: CreateInvitationRequestEmail,
+}
+impl CreateInvitationRequest {
+    pub fn builder() -> builder::CreateInvitationRequest {
+        Default::default()
+    }
+}
+#[doc = "`CreateInvitationRequestEmail`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"maxLength\": 254,"]
+#[doc = "  \"pattern\": \"^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct CreateInvitationRequestEmail(::std::string::String);
+impl ::std::ops::Deref for CreateInvitationRequestEmail {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<CreateInvitationRequestEmail> for ::std::string::String {
+    fn from(value: CreateInvitationRequestEmail) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for CreateInvitationRequestEmail {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 254usize {
+            return Err("longer than 254 characters".into());
+        }
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for CreateInvitationRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for CreateInvitationRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CreateInvitationRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CreateInvitationRequestEmail {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
 #[doc = "`CreateTopupRequest`"]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
@@ -1185,9 +1297,9 @@ impl<'de> ::serde::Deserialize<'de> for CreateApiKeyRequestName {
 #[doc = "  ],"]
 #[doc = "  \"properties\": {"]
 #[doc = "    \"amount_cents\": {"]
-#[doc = "      \"description\": \"Whole cents. Minimum top-up $10.00 (abuse control, ARCHITECTURE-v1 §2.9).\","]
+#[doc = "      \"description\": \"Whole cents. Founding Beta top-ups are $10.00 to $1,000.00.\","]
 #[doc = "      \"type\": \"integer\","]
-#[doc = "      \"maximum\": 100000000.0,"]
+#[doc = "      \"maximum\": 100000.0,"]
 #[doc = "      \"minimum\": 1000.0"]
 #[doc = "    }"]
 #[doc = "  },"]
@@ -1198,12 +1310,235 @@ impl<'de> ::serde::Deserialize<'de> for CreateApiKeyRequestName {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CreateTopupRequest {
-    #[doc = "Whole cents. Minimum top-up $10.00 (abuse control, ARCHITECTURE-v1 §2.9)."]
+    #[doc = "Whole cents. Founding Beta top-ups are $10.00 to $1,000.00."]
     pub amount_cents: i64,
 }
 impl CreateTopupRequest {
     pub fn builder() -> builder::CreateTopupRequest {
         Default::default()
+    }
+}
+#[doc = "The invitation token appears here and never again. Creating another invitation rotates it."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"The invitation token appears here and never again. Creating another invitation rotates it.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"email\","]
+#[doc = "    \"invite_token\","]
+#[doc = "    \"invited_at\","]
+#[doc = "    \"object\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"email\": {"]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    \"invite_token\": {"]
+#[doc = "      \"$ref\": \"#/$defs/InvitationToken\""]
+#[doc = "    },"]
+#[doc = "    \"invited_at\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "    },"]
+#[doc = "    \"object\": {"]
+#[doc = "      \"const\": \"invitation\""]
+#[doc = "    }"]
+#[doc = "  }"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct InvitationCreated {
+    pub email: ::std::string::String,
+    pub invite_token: InvitationToken,
+    pub invited_at: Timestamp,
+    pub object: ::serde_json::Value,
+}
+impl InvitationCreated {
+    pub fn builder() -> builder::InvitationCreated {
+        Default::default()
+    }
+}
+#[doc = "One-time Founding Beta invitation. Shown once to the operator; only a hash is stored."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"One-time Founding Beta invitation. Shown once to the operator; only a hash is stored.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"pattern\": \"^aex_iv_[A-Za-z0-9]{40,64}$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct InvitationToken(::std::string::String);
+impl ::std::ops::Deref for InvitationToken {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<InvitationToken> for ::std::string::String {
+    fn from(value: InvitationToken) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for InvitationToken {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^aex_iv_[A-Za-z0-9]{40,64}$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^aex_iv_[A-Za-z0-9]{40,64}$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for InvitationToken {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for InvitationToken {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for InvitationToken {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for InvitationToken {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`JoinWaitlistRequest`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"email\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"email\": {"]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"maxLength\": 254,"]
+#[doc = "      \"pattern\": \"^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$\""]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct JoinWaitlistRequest {
+    pub email: JoinWaitlistRequestEmail,
+}
+impl JoinWaitlistRequest {
+    pub fn builder() -> builder::JoinWaitlistRequest {
+        Default::default()
+    }
+}
+#[doc = "`JoinWaitlistRequestEmail`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"maxLength\": 254,"]
+#[doc = "  \"pattern\": \"^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct JoinWaitlistRequestEmail(::std::string::String);
+impl ::std::ops::Deref for JoinWaitlistRequestEmail {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<JoinWaitlistRequestEmail> for ::std::string::String {
+    fn from(value: JoinWaitlistRequestEmail) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for JoinWaitlistRequestEmail {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 254usize {
+            return Err("longer than 254 characters".into());
+        }
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for JoinWaitlistRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for JoinWaitlistRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for JoinWaitlistRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for JoinWaitlistRequestEmail {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "`KeyId`"]
@@ -1965,6 +2300,214 @@ impl Usage {
         Default::default()
     }
 }
+#[doc = "Operator view of one canonical Founding Beta waitlist record."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Operator view of one canonical Founding Beta waitlist record.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"created_at\","]
+#[doc = "    \"email\","]
+#[doc = "    \"object\","]
+#[doc = "    \"status\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"created_at\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "    },"]
+#[doc = "    \"email\": {"]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    \"invited_at\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "    },"]
+#[doc = "    \"joined_at\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "    },"]
+#[doc = "    \"object\": {"]
+#[doc = "      \"const\": \"waitlist_entry\""]
+#[doc = "    },"]
+#[doc = "    \"status\": {"]
+#[doc = "      \"$ref\": \"#/$defs/WaitlistStatus\""]
+#[doc = "    }"]
+#[doc = "  }"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct WaitlistEntry {
+    pub created_at: Timestamp,
+    pub email: ::std::string::String,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub invited_at: ::std::option::Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub joined_at: ::std::option::Option<Timestamp>,
+    pub object: ::serde_json::Value,
+    pub status: WaitlistStatus,
+}
+impl WaitlistEntry {
+    pub fn builder() -> builder::WaitlistEntry {
+        Default::default()
+    }
+}
+#[doc = "`WaitlistEntryList`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"data\","]
+#[doc = "    \"object\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"data\": {"]
+#[doc = "      \"type\": \"array\","]
+#[doc = "      \"items\": {"]
+#[doc = "        \"$ref\": \"#/$defs/WaitlistEntry\""]
+#[doc = "      }"]
+#[doc = "    },"]
+#[doc = "    \"object\": {"]
+#[doc = "      \"const\": \"list\""]
+#[doc = "    }"]
+#[doc = "  }"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct WaitlistEntryList {
+    pub data: ::std::vec::Vec<WaitlistEntry>,
+    pub object: ::serde_json::Value,
+}
+impl WaitlistEntryList {
+    pub fn builder() -> builder::WaitlistEntryList {
+        Default::default()
+    }
+}
+#[doc = "`WaitlistStatus`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"waiting\","]
+#[doc = "    \"invited\","]
+#[doc = "    \"joined\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum WaitlistStatus {
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "invited")]
+    Invited,
+    #[serde(rename = "joined")]
+    Joined,
+}
+impl ::std::fmt::Display for WaitlistStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Waiting => f.write_str("waiting"),
+            Self::Invited => f.write_str("invited"),
+            Self::Joined => f.write_str("joined"),
+        }
+    }
+}
+impl ::std::str::FromStr for WaitlistStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "waiting" => Ok(Self::Waiting),
+            "invited" => Ok(Self::Invited),
+            "joined" => Ok(Self::Joined),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for WaitlistStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for WaitlistStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for WaitlistStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "A privacy-preserving acknowledgement. It does not reveal whether the email was already waiting, invited, or joined."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"A privacy-preserving acknowledgement. It does not reveal whether the email was already waiting, invited, or joined.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"email\","]
+#[doc = "    \"object\","]
+#[doc = "    \"received_at\","]
+#[doc = "    \"status\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"email\": {"]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    \"object\": {"]
+#[doc = "      \"const\": \"waitlist_submission\""]
+#[doc = "    },"]
+#[doc = "    \"received_at\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "    },"]
+#[doc = "    \"status\": {"]
+#[doc = "      \"const\": \"received\""]
+#[doc = "    }"]
+#[doc = "  }"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct WaitlistSubmission {
+    pub email: ::std::string::String,
+    pub object: ::serde_json::Value,
+    pub received_at: Timestamp,
+    pub status: ::serde_json::Value,
+}
+impl WaitlistSubmission {
+    pub fn builder() -> builder::WaitlistSubmission {
+        Default::default()
+    }
+}
 #[doc = r" Types for composing complex structures."]
 pub mod builder {
     #[derive(Clone, Debug)]
@@ -2601,11 +3144,13 @@ pub mod builder {
     #[derive(Clone, Debug)]
     pub struct CreateAccountRequest {
         email: ::std::result::Result<super::CreateAccountRequestEmail, ::std::string::String>,
+        invite_token: ::std::result::Result<super::InvitationToken, ::std::string::String>,
     }
     impl ::std::default::Default for CreateAccountRequest {
         fn default() -> Self {
             Self {
                 email: Err("no value supplied for email".to_string()),
+                invite_token: Err("no value supplied for invite_token".to_string()),
             }
         }
     }
@@ -2620,6 +3165,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for email: {e}"));
             self
         }
+        pub fn invite_token<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::InvitationToken>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.invite_token = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for invite_token: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<CreateAccountRequest> for super::CreateAccountRequest {
         type Error = super::error::ConversionError;
@@ -2628,6 +3183,7 @@ pub mod builder {
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 email: value.email?,
+                invite_token: value.invite_token?,
             })
         }
     }
@@ -2635,6 +3191,7 @@ pub mod builder {
         fn from(value: super::CreateAccountRequest) -> Self {
             Self {
                 email: Ok(value.email),
+                invite_token: Ok(value.invite_token),
             }
         }
     }
@@ -2677,6 +3234,46 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct CreateInvitationRequest {
+        email: ::std::result::Result<super::CreateInvitationRequestEmail, ::std::string::String>,
+    }
+    impl ::std::default::Default for CreateInvitationRequest {
+        fn default() -> Self {
+            Self {
+                email: Err("no value supplied for email".to_string()),
+            }
+        }
+    }
+    impl CreateInvitationRequest {
+        pub fn email<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::CreateInvitationRequestEmail>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.email = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for email: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CreateInvitationRequest> for super::CreateInvitationRequest {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CreateInvitationRequest,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                email: value.email?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CreateInvitationRequest> for CreateInvitationRequest {
+        fn from(value: super::CreateInvitationRequest) -> Self {
+            Self {
+                email: Ok(value.email),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct CreateTopupRequest {
         amount_cents: ::std::result::Result<i64, ::std::string::String>,
     }
@@ -2713,6 +3310,128 @@ pub mod builder {
         fn from(value: super::CreateTopupRequest) -> Self {
             Self {
                 amount_cents: Ok(value.amount_cents),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct InvitationCreated {
+        email: ::std::result::Result<::std::string::String, ::std::string::String>,
+        invite_token: ::std::result::Result<super::InvitationToken, ::std::string::String>,
+        invited_at: ::std::result::Result<super::Timestamp, ::std::string::String>,
+        object: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+    }
+    impl ::std::default::Default for InvitationCreated {
+        fn default() -> Self {
+            Self {
+                email: Err("no value supplied for email".to_string()),
+                invite_token: Err("no value supplied for invite_token".to_string()),
+                invited_at: Err("no value supplied for invited_at".to_string()),
+                object: Err("no value supplied for object".to_string()),
+            }
+        }
+    }
+    impl InvitationCreated {
+        pub fn email<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.email = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for email: {e}"));
+            self
+        }
+        pub fn invite_token<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::InvitationToken>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.invite_token = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for invite_token: {e}"));
+            self
+        }
+        pub fn invited_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Timestamp>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.invited_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for invited_at: {e}"));
+            self
+        }
+        pub fn object<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::serde_json::Value>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.object = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for object: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<InvitationCreated> for super::InvitationCreated {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: InvitationCreated,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                email: value.email?,
+                invite_token: value.invite_token?,
+                invited_at: value.invited_at?,
+                object: value.object?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::InvitationCreated> for InvitationCreated {
+        fn from(value: super::InvitationCreated) -> Self {
+            Self {
+                email: Ok(value.email),
+                invite_token: Ok(value.invite_token),
+                invited_at: Ok(value.invited_at),
+                object: Ok(value.object),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct JoinWaitlistRequest {
+        email: ::std::result::Result<super::JoinWaitlistRequestEmail, ::std::string::String>,
+    }
+    impl ::std::default::Default for JoinWaitlistRequest {
+        fn default() -> Self {
+            Self {
+                email: Err("no value supplied for email".to_string()),
+            }
+        }
+    }
+    impl JoinWaitlistRequest {
+        pub fn email<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::JoinWaitlistRequestEmail>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.email = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for email: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<JoinWaitlistRequest> for super::JoinWaitlistRequest {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: JoinWaitlistRequest,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                email: value.email?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::JoinWaitlistRequest> for JoinWaitlistRequest {
+        fn from(value: super::JoinWaitlistRequest) -> Self {
+            Self {
+                email: Ok(value.email),
             }
         }
     }
@@ -3440,6 +4159,254 @@ pub mod builder {
                 rates: Ok(value.rates),
                 sessions: Ok(value.sessions),
                 total_microusd: Ok(value.total_microusd),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct WaitlistEntry {
+        created_at: ::std::result::Result<super::Timestamp, ::std::string::String>,
+        email: ::std::result::Result<::std::string::String, ::std::string::String>,
+        invited_at:
+            ::std::result::Result<::std::option::Option<super::Timestamp>, ::std::string::String>,
+        joined_at:
+            ::std::result::Result<::std::option::Option<super::Timestamp>, ::std::string::String>,
+        object: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+        status: ::std::result::Result<super::WaitlistStatus, ::std::string::String>,
+    }
+    impl ::std::default::Default for WaitlistEntry {
+        fn default() -> Self {
+            Self {
+                created_at: Err("no value supplied for created_at".to_string()),
+                email: Err("no value supplied for email".to_string()),
+                invited_at: Ok(Default::default()),
+                joined_at: Ok(Default::default()),
+                object: Err("no value supplied for object".to_string()),
+                status: Err("no value supplied for status".to_string()),
+            }
+        }
+    }
+    impl WaitlistEntry {
+        pub fn created_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Timestamp>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.created_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for created_at: {e}"));
+            self
+        }
+        pub fn email<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.email = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for email: {e}"));
+            self
+        }
+        pub fn invited_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::Timestamp>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.invited_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for invited_at: {e}"));
+            self
+        }
+        pub fn joined_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::Timestamp>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.joined_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for joined_at: {e}"));
+            self
+        }
+        pub fn object<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::serde_json::Value>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.object = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for object: {e}"));
+            self
+        }
+        pub fn status<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::WaitlistStatus>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.status = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for status: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<WaitlistEntry> for super::WaitlistEntry {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: WaitlistEntry,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                created_at: value.created_at?,
+                email: value.email?,
+                invited_at: value.invited_at?,
+                joined_at: value.joined_at?,
+                object: value.object?,
+                status: value.status?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::WaitlistEntry> for WaitlistEntry {
+        fn from(value: super::WaitlistEntry) -> Self {
+            Self {
+                created_at: Ok(value.created_at),
+                email: Ok(value.email),
+                invited_at: Ok(value.invited_at),
+                joined_at: Ok(value.joined_at),
+                object: Ok(value.object),
+                status: Ok(value.status),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct WaitlistEntryList {
+        data: ::std::result::Result<::std::vec::Vec<super::WaitlistEntry>, ::std::string::String>,
+        object: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+    }
+    impl ::std::default::Default for WaitlistEntryList {
+        fn default() -> Self {
+            Self {
+                data: Err("no value supplied for data".to_string()),
+                object: Err("no value supplied for object".to_string()),
+            }
+        }
+    }
+    impl WaitlistEntryList {
+        pub fn data<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<super::WaitlistEntry>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.data = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for data: {e}"));
+            self
+        }
+        pub fn object<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::serde_json::Value>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.object = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for object: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<WaitlistEntryList> for super::WaitlistEntryList {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: WaitlistEntryList,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                data: value.data?,
+                object: value.object?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::WaitlistEntryList> for WaitlistEntryList {
+        fn from(value: super::WaitlistEntryList) -> Self {
+            Self {
+                data: Ok(value.data),
+                object: Ok(value.object),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct WaitlistSubmission {
+        email: ::std::result::Result<::std::string::String, ::std::string::String>,
+        object: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+        received_at: ::std::result::Result<super::Timestamp, ::std::string::String>,
+        status: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+    }
+    impl ::std::default::Default for WaitlistSubmission {
+        fn default() -> Self {
+            Self {
+                email: Err("no value supplied for email".to_string()),
+                object: Err("no value supplied for object".to_string()),
+                received_at: Err("no value supplied for received_at".to_string()),
+                status: Err("no value supplied for status".to_string()),
+            }
+        }
+    }
+    impl WaitlistSubmission {
+        pub fn email<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.email = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for email: {e}"));
+            self
+        }
+        pub fn object<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::serde_json::Value>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.object = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for object: {e}"));
+            self
+        }
+        pub fn received_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Timestamp>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.received_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for received_at: {e}"));
+            self
+        }
+        pub fn status<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::serde_json::Value>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.status = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for status: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<WaitlistSubmission> for super::WaitlistSubmission {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: WaitlistSubmission,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                email: value.email?,
+                object: value.object?,
+                received_at: value.received_at?,
+                status: value.status?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::WaitlistSubmission> for WaitlistSubmission {
+        fn from(value: super::WaitlistSubmission) -> Self {
+            Self {
+                email: Ok(value.email),
+                object: Ok(value.object),
+                received_at: Ok(value.received_at),
+                status: Ok(value.status),
             }
         }
     }

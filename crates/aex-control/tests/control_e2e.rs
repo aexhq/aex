@@ -20,6 +20,8 @@ use axum::http::{HeaderMap, Method, Uri, header};
 use axum::response::Response;
 use serde_json::{Value, json};
 
+const OPERATOR_TOKEN: &str = "aex_ad_A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2";
+
 // ---- a stub brain: session/v1, just enough, contract-shaped ----
 
 struct StubSession {
@@ -253,6 +255,7 @@ async fn spawn_control(brain_url: &str, brain_token: &str, limits: (i64, i64)) -
         payments: Arc::new(FakePayments),
         stripe_webhook: None,
         card: RateCard::default(),
+        operator_token_hash: Some(aex_control::identity::hash_secret(OPERATOR_TOKEN)),
         default_limits: limits,
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -292,6 +295,43 @@ async fn json_of(resp: reqwest::Response, expect: u16) -> Value {
     serde_json::from_str(&text).unwrap()
 }
 
+async fn invited_signup(http: &reqwest::Client, base: &str, email: &str) -> Value {
+    let submission = json_of(
+        http.post(format!("{base}/v1/waitlist"))
+            .json(&json!({"email": email}))
+            .send()
+            .await
+            .unwrap(),
+        202,
+    )
+    .await;
+    control_valid("WaitlistSubmission", &submission);
+
+    let invitation = json_of(
+        http.post(format!("{base}/v1/admin/invitations"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .json(&json!({"email": email}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    control_valid("InvitationCreated", &invitation);
+
+    let created = json_of(
+        http.post(format!("{base}/v1/accounts"))
+            .json(&json!({"email": email, "invite_token": invitation["invite_token"]}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    control_valid("AccountCreated", &created);
+    created
+}
+
 // ---- the gate flow ----
 
 #[tokio::test(flavor = "multi_thread")]
@@ -301,31 +341,47 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     let base = spawn_control(&brain_url, brain_token, (10, 30)).await;
     let http = reqwest::Client::new();
 
-    // Sign up. The account token appears once.
-    let created = json_of(
-        http.post(format!("{base}/v1/accounts"))
-            .json(&json!({"email": "stranger@example.com"}))
-            .send()
-            .await
-            .unwrap(),
-        201,
-    )
-    .await;
-    control_valid("AccountCreated", &created);
+    // Join the canonical waitlist, receive a one-time invitation, and sign up. The account
+    // token appears once; the dashboard can establish its HttpOnly session now.
+    let created = invited_signup(&http, &base, "stranger@example.com").await;
     let at = created["account_token"].as_str().unwrap().to_string();
     let account_id = created["account"]["id"].as_str().unwrap().to_string();
 
-    // A second signup with the same email is a conflict; a garbage email fails fast.
-    let dup = http
-        .post(format!("{base}/v1/accounts"))
-        .json(&json!({"email": "stranger@example.com"}))
+    let hidden = http
+        .get(format!("{base}/v1/admin/waitlist"))
         .send()
         .await
         .unwrap();
-    assert_eq!(dup.status().as_u16(), 409);
+    assert_eq!(hidden.status().as_u16(), 401);
+    let waitlist = json_of(
+        http.get(format!("{base}/v1/admin/waitlist"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    control_valid("WaitlistEntryList", &waitlist);
+    assert_eq!(waitlist["data"][0]["status"], "joined");
+
+    // The invite was consumed, so a second signup is forbidden. A garbage email fails fast.
+    let dup = http
+        .post(format!("{base}/v1/accounts"))
+        .json(&json!({
+            "email": "stranger@example.com",
+            "invite_token": "aex_iv_A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dup.status().as_u16(), 403);
     let bad = http
         .post(format!("{base}/v1/accounts"))
-        .json(&json!({"email": "not an email"}))
+        .json(&json!({
+            "email": "not an email",
+            "invite_token": "aex_iv_A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2"
+        }))
         .send()
         .await
         .unwrap();
@@ -402,6 +458,18 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         .await
         .unwrap();
     assert_eq!(below_min.status().as_u16(), 400, "the $10 minimum holds");
+    let above_max = http
+        .post(format!("{base}/v1/topups"))
+        .bearer_auth(&at)
+        .json(&json!({"amount_cents": 100_001}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        above_max.status().as_u16(),
+        400,
+        "the $1,000 Founding Beta maximum holds"
+    );
     let topup_id = topup["id"].as_str().unwrap();
     let paid = json_of(
         http.get(format!("{base}/v1/topups/{topup_id}"))
@@ -442,15 +510,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     let sid = session["id"].as_str().unwrap().to_string();
 
     // Ownership: a different account's key sees 404, not 403 — existence is not revealed.
-    let other = json_of(
-        http.post(format!("{base}/v1/accounts"))
-            .json(&json!({"email": "other@example.com"}))
-            .send()
-            .await
-            .unwrap(),
-        201,
-    )
-    .await;
+    let other = invited_signup(&http, &base, "other@example.com").await;
     let other_key = json_of(
         http.post(format!("{base}/v1/keys"))
             .bearer_auth(other["account_token"].as_str().unwrap())
@@ -615,15 +675,7 @@ async fn abuse_caps_hold_concurrency_and_create_rate() {
     let base = spawn_control(&brain_url, brain_token, (1, 2)).await;
     let http = reqwest::Client::new();
 
-    let created = json_of(
-        http.post(format!("{base}/v1/accounts"))
-            .json(&json!({"email": "capped@example.com"}))
-            .send()
-            .await
-            .unwrap(),
-        201,
-    )
-    .await;
+    let created = invited_signup(&http, &base, "capped@example.com").await;
     let at = created["account_token"].as_str().unwrap();
     let keyed = json_of(
         http.post(format!("{base}/v1/keys"))
