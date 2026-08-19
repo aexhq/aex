@@ -28,7 +28,9 @@ export class Transport {
 
   constructor(apiKey: string, baseUrl: string, fetchImplementation: Fetch) {
     this.#apiKey = apiKey;
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    let end = baseUrl.length;
+    while (end > 0 && baseUrl.charCodeAt(end - 1) === 47) end -= 1;
+    this.baseUrl = baseUrl.slice(0, end);
     this.#fetch = fetchImplementation;
   }
 
