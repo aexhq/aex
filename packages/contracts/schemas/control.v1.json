@@ -42,7 +42,7 @@
     "InvitationToken": {
       "type": "string",
       "pattern": "^aex_iv_[A-Za-z0-9]{40,64}$",
-      "description": "One-time Founding Beta invitation. Shown once to the operator; only a hash is stored."
+      "description": "One-time beta invitation. Shown once to the operator; only a hash is stored."
     },
     "WaitlistStatus": {
       "type": "string",
@@ -98,7 +98,7 @@
         "status",
         "created_at"
       ],
-      "description": "Operator view of one canonical Founding Beta waitlist record.",
+      "description": "Operator view of one canonical beta waitlist record.",
       "properties": {
         "object": {
           "const": "waitlist_entry"
@@ -378,7 +378,7 @@
           "type": "integer",
           "minimum": 1000,
           "maximum": 100000,
-          "description": "Whole cents. Founding Beta top-ups are $10.00 to $1,000.00."
+          "description": "Whole cents. Beta top-ups are $10.00 to $1,000.00."
         }
       }
     },

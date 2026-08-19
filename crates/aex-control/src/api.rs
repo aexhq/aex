@@ -916,9 +916,9 @@ async fn proxy_session(
                 .filter(|r| r.account_id == account.id)
                 .ok_or(Error::NotFound)?;
 
-            let is_message = method == Method::POST && sub == "/messages";
+            let is_work = method == Method::POST && matches!(sub, "/messages" | "/output");
             let is_delete = method == Method::DELETE && sub.is_empty();
-            if is_message {
+            if is_work {
                 sweep_session(&state.db, &state.brain, &state.card, row.clone()).await?;
                 require_positive_balance(&state, &account).await?;
             } else if is_delete && !row.is_final {

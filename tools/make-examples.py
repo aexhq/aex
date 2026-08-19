@@ -136,6 +136,29 @@ w(S + "CreateSessionRequest.minimal.json", {"model": {"provider": "openai", "nam
 w(S + "MessageRequest.text.json", {"content": "Run the test suite and fix the failing test."})
 w(S + "MessageRequest.parts.json", {"content": [{"type": "text", "text": "Summarise this file."}, {"type": "workspace_file", "path": "/workspace/README.md"}]})
 w(S + "MessageAccepted.example.json", {"session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0", "turn_id": "trn_01HZX8Y2K3M4N5P6Q7R8S9U1", "seq": 118})
+output_schema = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["recommendation", "confidence"],
+    "properties": {
+        "recommendation": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+}
+output_schema_hash = jcs_sha256(output_schema)
+output_id = "out_01HZX8Y2K3M4N5P6Q7R8S9V2"
+w(S + "OutputRequest.with-input.json", {
+    "schema": output_schema,
+    "schema_hash": output_schema_hash,
+    "input": "Research the available options and recommend one.",
+})
+w(S + "OutputAccepted.example.json", {
+    "session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0",
+    "output_id": output_id,
+    "schema_hash": output_schema_hash,
+    "seq": 132,
+})
 base = {"session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0", "turn_id": "trn_01HZX8Y2K3M4N5P6Q7R8S9U1"}
 
 
@@ -144,6 +167,18 @@ def ev(seq, t, **k):
 
 
 w(S + "Event.turn.started.json", ev(118, "turn.started"))
+w(S + "Event.output.started.json", ev(132, "output.started", output_id=output_id,
+                                        schema_hash=output_schema_hash, source_seq=131))
+w(S + "Event.output.completed.json", ev(139, "output.completed", output_id=output_id,
+                                          output={"type": "output", "schema_hash": output_schema_hash,
+                                                  "value": {"recommendation": "Option A", "confidence": 0.86}},
+                                          usage={"input_tokens": 1840, "output_tokens": 47,
+                                                 "cache_read_input_tokens": 1600}))
+w(S + "Event.output.failed.json", ev(140, "output.failed", output_id=output_id,
+                                       schema_hash=output_schema_hash,
+                                       error={"code": "output_validation_error", "message": "Model output did not satisfy the schema"},
+                                       issues=[{"path": "/confidence", "message": "must be less than or equal to 1", "keyword": "maximum"}],
+                                       usage={"input_tokens": 2100, "output_tokens": 83}))
 w(S + "Event.assistant.delta.json", ev(119, "assistant.delta", agent_id="root", text="I will run"))
 w(S + "Event.assistant.message.json", ev(127, "assistant.message", agent_id="root", text="I will run the tests first."))
 w(S + "Event.tool.call.json", ev(120, "tool.call", agent_id="root", call_id="op-0001", name="bash", input={"command": "cargo test 2>&1 | tail -20"}, detach=False))

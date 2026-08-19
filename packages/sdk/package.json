@@ -1,13 +1,13 @@
 {
-  "name": "@aexhq/contracts",
-  "version": "0.26.0",
-  "description": "aex contracts: brain-hand ABI v1 and session API v1 types, generated from contracts/",
+  "name": "@aexhq/sdk",
+  "version": "0.55.0",
+  "description": "TypeScript SDK for AEX sessions",
   "license": "Apache-2.0",
   "homepage": "https://aex.dev",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aexhq/aex.git",
-    "directory": "packages/contracts"
+    "directory": "packages/sdk"
   },
   "type": "module",
   "engines": {
@@ -22,27 +22,24 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./session": {
-      "types": "./dist/session.d.ts",
-      "import": "./dist/session.js"
-    },
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
-    "schemas"
+    "README.md"
   ],
   "scripts": {
-    "gen": "node scripts/gen.mjs",
     "build": "tsc -p tsconfig.json",
     "test": "tsc -p tsconfig.json && node --test"
   },
+  "dependencies": {
+    "@aexhq/contracts": "0.26.0"
+  },
+  "peerDependencies": {
+    "zod": "^4.0.0"
+  },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "ajv": "^8.17.1",
-    "ajv-formats": "^3.0.1",
-    "json-schema-to-typescript": "^15.0.4",
-    "openapi-typescript": "^7.6.1",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "zod": "^4.0.0"
   }
 }

@@ -359,7 +359,7 @@ impl Db {
         match result {
             Ok(true) => Ok(()),
             Ok(false) => Err(Error::Forbidden(
-                "a valid one-time Founding Beta invitation is required".into(),
+                "a valid one-time beta invitation is required".into(),
             )),
             Err(Error::Internal(message)) if message.contains("UNIQUE") => Err(Error::Conflict(
                 "an account with this email already exists".into(),

@@ -64,6 +64,31 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{session_id}/output": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Work from an optional user input, then commit a validated typed output
+         * @description The schema is private operation metadata: it is used only for the output commit step and
+         *     is never added to the conversation. Returns 202 after output.started is journaled. Follow
+         *     the session event stream from `seq - 1` until the matching output.completed or
+         *     output.failed event. Only one mutating request is admitted to a session at a time.
+         */
+        post: operations["requestSessionOutput"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{session_id}/events": {
         parameters: {
             query?: never;
@@ -236,7 +261,7 @@ export type components = {
          */
         SessionState: "active" | "idle" | "deleted" | "failed";
         /** @enum {string} */
-        ApiErrorCode: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "session_busy" | "session_deleted" | "session_failed" | "insufficient_balance" | "rate_limited" | "provider_error" | "hand_unavailable" | "too_large" | "internal";
+        ApiErrorCode: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "session_busy" | "session_deleted" | "session_failed" | "cancelled" | "insufficient_balance" | "rate_limited" | "provider_error" | "output_schema_error" | "output_refused" | "output_validation_error" | "hand_unavailable" | "too_large" | "internal";
         ApiError: {
             code: components["schemas"]["ApiErrorCode"];
             message: string;
@@ -436,12 +461,39 @@ export type components = {
             /** @description Journal sequence of the turn.started event. */
             seq: number;
         };
-        /** @description "root" for the session's root agent; subagents get brain-minted ids. */
-        AgentId: string;
-        /** @description Brain-minted id of one tool call (equals the ABI operation_id for hand tools). */
-        CallId: string;
-        /** @enum {string} */
-        ToolOutcome: "completed" | "failed" | "cancelled" | "deadline_exceeded" | "interrupted";
+        /** @description JSON Schema 2020-12 produced by the SDK. AEX validates and normalises it for the selected model provider. */
+        OutputSchema: {
+            [key: string]: unknown;
+        };
+        Sha256Hex: string;
+        OutputRequest: {
+            schema: components["schemas"]["OutputSchema"];
+            /** @description SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model. */
+            schema_hash: components["schemas"]["Sha256Hex"];
+            /** @description Optional real user input. It is journaled and worked normally before the private output commit step. */
+            input?: string | components["schemas"]["ContentPart"][];
+            metadata?: {
+                [key: string]: string;
+            };
+        };
+        /** @description Correlation id for one output request. It is not a separately managed resource. */
+        OutputId: string;
+        /** @description The output request was admitted. Follow the session event stream from seq - 1 until the matching output.completed or output.failed event. */
+        OutputAccepted: {
+            session_id: components["schemas"]["SessionId"];
+            output_id: components["schemas"]["OutputId"];
+            schema_hash: components["schemas"]["Sha256Hex"];
+            /** @description Journal sequence of the output.started event. */
+            seq: number;
+        };
+        /** @description The only durable assistant content created by the private output commit phase. The schema and repair context are never journaled. */
+        OutputContent: {
+            /** @enum {string} */
+            type: "output";
+            schema_hash: components["schemas"]["Sha256Hex"];
+            /** @description The validated JSON value. */
+            value: unknown;
+        };
         /** @description Raw provider counters for one model call. A counter the provider did not send is absent here — never reported as 0. */
         ProviderUsage: {
             input_tokens?: number;
@@ -450,6 +502,19 @@ export type components = {
             cache_creation_input_tokens?: number;
             reasoning_tokens?: number;
         };
+        OutputValidationIssue: {
+            /** @description JSON Pointer into the candidate output. */
+            path: string;
+            message: string;
+            /** @description The failed JSON Schema keyword when available. */
+            keyword?: string;
+        };
+        /** @description "root" for the session's root agent; subagents get brain-minted ids. */
+        AgentId: string;
+        /** @description Brain-minted id of one tool call (equals the ABI operation_id for hand tools). */
+        CallId: string;
+        /** @enum {string} */
+        ToolOutcome: "completed" | "failed" | "cancelled" | "deadline_exceeded" | "interrupted";
         /** @enum {string} */
         StopReason: "end_turn" | "max_rounds" | "cancelled" | "error";
         /** @description One journal event, delivered over SSE as `event: <type>` with `id: <seq>` and this object as data. Discriminated by `type`. */
@@ -460,6 +525,42 @@ export type components = {
             at: components["schemas"]["Timestamp"];
             session_id: components["schemas"]["SessionId"];
             turn_id: components["schemas"]["TurnId"];
+        } | {
+            /** @enum {string} */
+            type: "output.started";
+            seq: number;
+            at: components["schemas"]["Timestamp"];
+            session_id: components["schemas"]["SessionId"];
+            /** @description Present when the output request included new user input. */
+            turn_id?: components["schemas"]["TurnId"];
+            output_id: components["schemas"]["OutputId"];
+            schema_hash: components["schemas"]["Sha256Hex"];
+            /** @description Last committed session sequence captured for this output request. */
+            source_seq: number;
+        } | {
+            /** @enum {string} */
+            type: "output.completed";
+            seq: number;
+            at: components["schemas"]["Timestamp"];
+            session_id: components["schemas"]["SessionId"];
+            turn_id?: components["schemas"]["TurnId"];
+            output_id: components["schemas"]["OutputId"];
+            output: components["schemas"]["OutputContent"];
+            /** @description Aggregate provider counters for the private commit and bounded repair calls. Absent counters remain absent. */
+            usage?: components["schemas"]["ProviderUsage"];
+        } | {
+            /** @enum {string} */
+            type: "output.failed";
+            seq: number;
+            at: components["schemas"]["Timestamp"];
+            session_id: components["schemas"]["SessionId"];
+            turn_id?: components["schemas"]["TurnId"];
+            output_id: components["schemas"]["OutputId"];
+            schema_hash: components["schemas"]["Sha256Hex"];
+            error: components["schemas"]["ApiError"];
+            issues?: components["schemas"]["OutputValidationIssue"][];
+            /** @description Aggregate provider counters for any private commit or repair calls completed before failure. */
+            usage?: components["schemas"]["ProviderUsage"];
         } | {
             /** @enum {string} */
             type: "assistant.delta";
@@ -595,7 +696,6 @@ export type components = {
             turn_id: components["schemas"]["TurnId"];
             error: components["schemas"]["ApiError"];
         };
-        Sha256Hex: string;
         FileEntry: {
             path: string;
             /** @enum {string} */
@@ -791,6 +891,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessageAccepted"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    requestSessionOutput: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Repeating a request with the same key within 24 h returns the original result. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                session_id: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OutputRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutputAccepted"];
                 };
             };
             default: components["responses"]["Error"];
