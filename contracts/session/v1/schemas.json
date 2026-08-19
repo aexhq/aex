@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aex.dev/contracts/session/v1/schemas.json",
-  "title": "aex session API v1 types",
+  "title": "Aex session API v1 types",
   "description": "Component types of the public session API. Paths are in openapi.yaml, which references these by $ref. Public state model: session `active | idle | deleted | failed`; hand state is a separate field. Absent provider counters are absent, never zero.",
   "$defs": {
     "SessionId": {
@@ -603,7 +603,7 @@
       "type": "object",
       "minProperties": 1,
       "additionalProperties": true,
-      "description": "JSON Schema 2020-12 produced by the SDK. AEX validates and normalises it for the selected model provider."
+      "description": "JSON Schema 2020-12 produced by the SDK. Aex validates and normalises it for the selected model provider."
     },
     "OutputRequest": {
       "type": "object",

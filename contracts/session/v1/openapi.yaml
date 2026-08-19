@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: aex session API
+  title: Aex session API
   version: "1.0.0"
   description: |
     Session-oriented platform for running agents. A session = one agent, one workspace, one

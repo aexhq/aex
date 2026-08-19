@@ -1,4 +1,4 @@
-//! The aex control-plane server.
+//! The Aex control-plane server.
 //!
 //! Env: AEX_BRAIN_TOKEN required (the brain's AEX_API_TOKEN); AEX_BRAIN_URL (default
 //! http://127.0.0.1:8700); AEX_CONTROL_LISTEN (default 127.0.0.1:8600); AEX_CONTROL_DB

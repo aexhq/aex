@@ -217,7 +217,7 @@ export class Session implements SessionSummary {
       if (options.signal?.aborted === true) throw abortError(error);
       throw error;
     }
-    throw new SessionError("The AEX event stream ended before the session finished its work");
+    throw new SessionError("The Aex event stream ended before the session finished its work");
   }
 
   async output<Schema extends z.ZodType>(
@@ -259,21 +259,21 @@ export class Session implements SessionSummary {
       },
     );
     if (accepted.session_id !== this.id || accepted.schema_hash !== schemaHash) {
-      throw new SessionError("AEX returned an inconsistent output admission");
+      throw new SessionError("Aex returned an inconsistent output admission");
     }
 
     try {
       for await (const event of this.events({ after: Math.max(0, accepted.seq - 1), signal: options.signal })) {
         if (event.type === "output.failed" && event.output_id === accepted.output_id) {
           if (event.schema_hash !== schemaHash) {
-            throw new SessionError("AEX returned an output failure for a different schema");
+            throw new SessionError("Aex returned an output failure for a different schema");
           }
           this.markIdle();
           throw outputEventError(event.error, event.issues);
         }
         if (event.type === "output.completed" && event.output_id === accepted.output_id) {
           if (event.output.schema_hash !== schemaHash) {
-            throw new SessionError("AEX returned an output value for a different schema");
+            throw new SessionError("Aex returned an output value for a different schema");
           }
           this.markIdle();
           const parsed = await schema.safeParseAsync(event.output.value);
@@ -297,7 +297,7 @@ export class Session implements SessionSummary {
       }
       throw error;
     }
-    throw new SessionError("The AEX event stream ended before the typed output completed");
+    throw new SessionError("The Aex event stream ended before the typed output completed");
   }
 
   events(options: EventOptions = {}): AsyncGenerator<Event> {
@@ -359,7 +359,7 @@ function assertPortableOutputSchema(schema: z.ZodType): void {
         definition.check === "overwrite";
       if (unsupported) {
         throw new OutputSchemaError(
-          `This Zod schema contains ${String(definition.type ?? definition.check)} behavior that cannot be enforced by the AEX output service`,
+          `This Zod schema contains ${String(definition.type ?? definition.check)} behavior that cannot be enforced by the Aex output service`,
         );
       }
       visit(definition);

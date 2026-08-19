@@ -36,7 +36,7 @@ pub mod error {
 #[doc = r" ```json"]
 #[doc = "{"]
 #[doc = "  \"$id\": \"https://aex.dev/contracts/session/v1/schemas.json\","]
-#[doc = "  \"title\": \"aex session API v1 types\","]
+#[doc = "  \"title\": \"Aex session API v1 types\","]
 #[doc = "  \"description\": \"Component types of the public session API. Paths are in openapi.yaml, which references these by $ref. Public state model: session `active | idle | deleted | failed`; hand state is a separate field. Absent provider counters are absent, never zero.\""]
 #[doc = "}"]
 #[doc = r" ```"]
@@ -3850,13 +3850,13 @@ impl<'de> ::serde::Deserialize<'de> for OutputRequestInputString {
             })
     }
 }
-#[doc = "JSON Schema 2020-12 produced by the SDK. AEX validates and normalises it for the selected model provider."]
+#[doc = "JSON Schema 2020-12 produced by the SDK. Aex validates and normalises it for the selected model provider."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"JSON Schema 2020-12 produced by the SDK. AEX validates and normalises it for the selected model provider.\","]
+#[doc = "  \"description\": \"JSON Schema 2020-12 produced by the SDK. Aex validates and normalises it for the selected model provider.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"minProperties\": 1,"]
 #[doc = "  \"additionalProperties\": true"]

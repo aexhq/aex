@@ -1,4 +1,4 @@
-//! The aex control plane: identity, prepaid billing, session authority, rated usage.
+//! The Aex control plane: identity, prepaid billing, session authority, rated usage.
 //!
 //! One process in front of one brain. It owns accounts, API keys, the prepaid ledger and the
 //! meters; it serves the control API (`contracts/control/v1`) and every `session/v1` path

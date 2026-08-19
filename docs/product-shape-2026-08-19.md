@@ -1,4 +1,4 @@
-# AEX product shape: session, tools, output
+# Aex product shape: session, tools, output
 
 Status: accepted; implementation in progress
 Date: 19 August 2026
@@ -6,7 +6,7 @@ Scope: public product, API, SDK, CLI, dashboard, docs, pricing, and launch seque
 
 ## Outcome
 
-AEX should aggressively minimise its developer vocabulary.
+Aex should aggressively minimise its developer vocabulary.
 
 The developer creates a session, gives it tools, sends it work, and optionally asks for a typed
 output. Every session gets a computer automatically. Durable remote objects are assets.
@@ -30,7 +30,7 @@ The public learn set is three nouns and one method:
 | Session | The durable agent context. It includes its history and an automatically managed computer. |
 | Tool | A typed capability the developer imports or writes. |
 | Asset | A private remote object that can outlive a session. |
-| `session.output(schema)` | Ask AEX to commit and return a response conforming to the schema. |
+| `session.output(schema)` | Ask Aex to commit and return a response conforming to the schema. |
 
 `hand`, microVM, shape, region, workspace, artifact, turn, operation, journal sequence, provider
 response format, and output repair are implementation terms. Developers should not need them to
@@ -43,17 +43,17 @@ use the product.
 > Start a session. Give it tools. Get back text, data, or files.
 
 Postgres is the centre of Supabase; the surrounding products make Postgres easier to use. The
-session is the centre of AEX; tools, a computer, assets, typed output, events, and billing make a
+session is the centre of Aex; tools, a computer, assets, typed output, events, and billing make a
 session usable in production.
 
-AEX is not a sandbox product. E2B, Modal, and Daytona expose machine lifecycle and resource
-choices. AEX uses computers internally but exposes an agent session. AEX is also not a general
-deployment platform: the customer's application can stay on Vercel or anywhere else and call AEX
+Aex is not a sandbox product. E2B, Modal, and Daytona expose machine lifecycle and resource
+choices. Aex uses computers internally but exposes an agent session. Aex is also not a general
+deployment platform: the customer's application can stay on Vercel or anywhere else and call Aex
 for agent work.
 
 ## The SDK surface
 
-`@aexhq/sdk` is the primary beta SDK. It defaults to `https://api.aex.dev` and accepts a placeholder
+`@aexhq/sdk` is the primary alpha SDK. It defaults to `https://api.aex.dev` and accepts a placeholder
 API key directly in the quickstart. Raw HTTP remains in generated API reference, not onboarding.
 
 ### Normal text
@@ -117,11 +117,11 @@ The TypeScript signature is conceptually:
 output<T>(schema: OutputSchema<T>, input?: SessionInput): Promise<T>
 ```
 
-With no second argument, AEX produces a typed projection of the session's current state. With an
+With no second argument, Aex produces a typed projection of the session's current state. With an
 input, that input is the only new user message and the agent may use its tools before committing
 the typed answer.
 
-Do not add `.result(callback).error(callback)` as an AEX-specific control-flow language. Returning
+Do not add `.result(callback).error(callback)` as an Aex-specific control-flow language. Returning
 a real `Promise<T>` is smaller and more conventional:
 
 ```ts
@@ -130,7 +130,7 @@ const value = await session.output(schema);
 session.output(schema).then(onResult).catch(onError);
 ```
 
-Errors reject the Promise with typed AEX errors. Progress and tool events stay on the session event
+Errors reject the Promise with typed Aex errors. Progress and tool events stay on the session event
 stream rather than being mixed into the result API.
 
 ### Files as output
@@ -166,7 +166,7 @@ Output control data must not become conversation content.
   it.
 - Persist only the real user input and the final validated assistant output.
 
-The schema is operation metadata held by AEX. It is visible to the model only during a private
+The schema is operation metadata held by Aex. It is visible to the model only during a private
 output-commit phase and is absent from later requests.
 
 ### Two phases
@@ -175,11 +175,11 @@ An output request has a work phase and a commit phase.
 
 #### 1. Work phase
 
-If the caller supplied an input, AEX appends it as a real user message. The agent then works with
+If the caller supplied an input, Aex appends it as a real user message. The agent then works with
 its normal stable system prompt, normal session history, and normal tools. The output schema is not
 inserted into the conversation or ordinary tool list.
 
-If no input is supplied, this phase is skipped. AEX captures the current committed session
+If no input is supplied, this phase is skipped. Aex captures the current committed session
 sequence as the source state for the output.
 
 Only one mutating action is admitted to a session at a time. Later messages wait behind the output
@@ -187,10 +187,10 @@ request, so the Promise refers to an exact session state rather than a moving ta
 
 #### 2. Commit phase
 
-When the agent has finished its work, AEX makes one additional model step to commit the typed
+When the agent has finished its work, Aex makes one additional model step to commit the typed
 answer.
 
-Use the session's configured model and provider key for this step by default. AEX should not hide a
+Use the session's configured model and provider key for this step by default. Aex should not hide a
 second formatter model or send session data to another provider merely to shape the response.
 
 The provider adapter receives:
@@ -212,21 +212,21 @@ The preferred implementation order is:
 
 The commit phase has no ordinary tools. It formats and synthesises already available session data;
 it does not continue the task. If the desired fields require research or an external action, that
-requirement belongs in the real user instruction. AEX guarantees the shape, not the factual quality
+requirement belongs in the real user instruction. Aex guarantees the shape, not the factual quality
 of information the agent was never asked to gather.
 
 This extra model step is intentional. Current tool-plus-structured-output systems also treat the
 structured response as an additional step. It keeps the schema out of the agent's working context
-and gives AEX one provider-independent contract.
+and gives Aex one provider-independent contract.
 
 ### Schema compilation
 
-For beta, make Zod the documented TypeScript path because it matches the proposed API and has a
+For alpha, make Zod the documented TypeScript path because it matches the proposed API and has a
 mature JSON Schema conversion. Internally, keep the adapter boundary compatible with Standard
 Schema and Standard JSON Schema so ArkType and Valibot can be accepted later without changing
 `session.output()`.
 
-At call time AEX:
+At call time Aex:
 
 1. extracts the inferred TypeScript type in the SDK;
 2. converts the schema to JSON Schema;
@@ -234,8 +234,8 @@ At call time AEX:
 4. normalises the schema for the chosen provider's supported subset;
 5. retains the original Zod schema for final local validation.
 
-Provider schema support is not identical, so AEX validates the returned value locally even when a
-provider guarantees its reduced schema. The beta SDK rejects process-local Zod refinements,
+Provider schema support is not identical, so Aex validates the returned value locally even when a
+provider guarantees its reduced schema. The alpha SDK rejects process-local Zod refinements,
 transforms, and other constructs the service cannot enforce before it admits model work. A future
 client-validation handshake could support those safely; silently committing a value and only then
 discovering that a JavaScript callback rejects it would violate the method's contract.
@@ -315,7 +315,7 @@ schema changes.
 
 Provider-native structured-output configuration is the cleanest control plane. Current Claude
 structured outputs use constrained decoding and may add an internal system instruction, but that
-configuration can be scoped to one API request. AEX should scope it to the private commit phase so
+configuration can be scoped to one API request. Aex should scope it to the private commit phase so
 the durable session prompt stays stable.
 
 The forced terminal-tool fallback is the next-best option. It exposes exactly one schema-bearing
@@ -338,7 +338,7 @@ cancel current work
 delete
 ```
 
-There is no separate lifecycle object for each message or output. AEX still records internal
+There is no separate lifecycle object for each message or output. Aex still records internal
 operation identities, terminal states, usage, and event boundaries for correctness, billing, and
 debugging. The SDK and dashboard present them as activity inside the session.
 
@@ -374,22 +374,22 @@ const lookupCustomer = defineTool({
 });
 ```
 
-A hosted agent cannot serialise that function. In the beta, callback tools execute in the
+A hosted agent cannot serialise that function. In the alpha, callback tools execute in the
 developer process attached through the SDK or `aex dev`:
 
-1. AEX commits a uniquely identified tool call to the session journal.
+1. Aex commits a uniquely identified tool call to the session journal.
 2. The SDK validates the input and executes the callback.
 3. The SDK submits an idempotent result.
-4. AEX commits the result before continuing the agent.
+4. Aex commits the result before continuing the agent.
 
 The attachment has a lease. The SDK de-duplicates replayed calls. If the process disappears after
-an ambiguous side effect, AEX marks that activity interrupted and never executes it again
+an ambiguous side effect, Aex marks that activity interrupted and never executes it again
 automatically.
 
-Tool signatures are fixed when the session is created for beta. Hooks, approvals, call limits,
+Tool signatures are fixed when the session is created for alpha. Hooks, approvals, call limits,
 remote endpoints, managed tool deployment, dynamic tool changes, and MCP follow after launch.
 
-An AEX package is an ordinary npm package exporting a `Tool` or `Toolset`. There is no AEX-specific
+An Aex package is an ordinary npm package exporting a `Tool` or `Toolset`. There is no Aex-specific
 package manifest or marketplace in the MVP. `@aexhq/tools` initially exports `webSearch()` and
 `assets()`.
 
@@ -402,11 +402,11 @@ It contributes four always-available model tools: `read`, `bash`, `edit`, and `w
 the useful minimal default in current Pi. Search, asset transfer, browser work, and customer
 integrations are explicit additions.
 
-The contract promises that working files survive normal continuation during the session. AEX may
+The contract promises that working files survive normal continuation during the session. Aex may
 stop, restore, or replace the underlying machine. Process memory and machine identity are not
 durable promises. Deleting the session deletes its working state.
 
-After beta, the official `sandbox()` tool lets the agent allocate additional isolated computers.
+After alpha, the official `sandbox()` tool lets the agent allocate additional isolated computers.
 The developer supplies policy rather than infrastructure dimensions:
 
 ```ts
@@ -419,7 +419,7 @@ sandbox({
 });
 ```
 
-The agent requests intent, such as a disposable test environment or browser-capable computer. AEX
+The agent requests intent, such as a disposable test environment or browser-capable computer. Aex
 chooses the allocation. This remains post-MVP but the policy-and-intent boundary is reserved now.
 
 ## Assets
@@ -427,7 +427,7 @@ chooses the allocation. This remains post-MVP but the policy-and-intent boundary
 An asset is private remote storage for something the application or agent needs beyond the
 session.
 
-Recommended beta rules:
+Recommended alpha rules:
 
 - account-owned and private by default;
 - immutable, with a new ID for new content;
@@ -437,7 +437,7 @@ Recommended beta rules:
 - transferred through short-lived, single-object signed URLs;
 - visible to the agent only when attached to the session or created by it.
 
-Do not add projects, buckets, folders, RLS policy language, or a workspace browser in the beta.
+Do not add projects, buckets, folders, RLS policy language, or a workspace browser in the alpha.
 The SDK provides upload, download, get, list, and delete. The `assets()` tool provides agent-facing
 download-to-computer and upload-from-computer operations.
 
@@ -491,7 +491,7 @@ aex asset put|get|list|delete
 aex doctor
 ```
 
-The CLI defaults to `https://api.aex.dev`. Beta login can paste and store a dashboard-created API
+The CLI defaults to `https://api.aex.dev`. Alpha login can paste and store a dashboard-created API
 key. Browser/device login follows. The current Rust CLI remains an internal diagnostic during the
 migration; the public CLI should be Node-based so it can load the same TypeScript tools and Zod
 schemas as the SDK.
@@ -502,7 +502,7 @@ TypeScript is the only launch SDK. Python follows with Pydantic after the contra
 
 Hide dimensions the user cannot choose:
 
-| Meter | Recommended beta price |
+| Meter | Recommended alpha price |
 | --- | --- |
 | Computer while active | $0.12 per hour, metered by the second |
 | Retained session files and assets | $0.03 per GB-month |
@@ -514,7 +514,7 @@ their working files instead of promising retained RAM. Internal infrastructure a
 remain detailed.
 
 The private output-commit step is a model call through the developer's provider key. It should be
-visible in session usage but does not create an AEX output fee.
+visible in session usage but does not create an Aex output fee.
 
 ## Dashboard and site
 
@@ -531,7 +531,7 @@ region picker, or machine-size picker.
 The public site stays prose-first and short:
 
 ```text
-aex
+Aex
 
 The session backend for AI apps.
 Start a session. Give it tools. Get back text, data, or files.
@@ -550,22 +550,24 @@ Await validated data. Keep schema mechanics out of your application.
 Pricing
 $0.12 active computer hour · $0.03/GB-month storage · $0.003 web search
 
-Beta
+Alpha
 [waitlist]
 ```
 
 Copy sweep:
 
-- `Founding beta` becomes `Beta`.
+- Display the product name as `Aex`; keep lowercase only in technical identifiers and domains.
+- Use `Alpha` for the current invitation-only release.
+- Reserve `Beta` for the first limited public release with regular signup.
 - Remove `eu-west-1` from product, dashboard, status, docs, and metadata.
 - Remove Run, hand, microVM, workspace, artifact, shape, suspended RAM, and same-machine promises.
 - Replace raw HTTP onboarding with the SDK.
-- Keep THINK SLOWLY LTD trading as AEX and `support@aex.dev`.
-- Do not describe the beta as UK-only; England and Wales governing law is not an access limit.
+- Keep THINK SLOWLY LTD trading as Aex and `support@aex.dev`.
+- Do not describe the alpha as UK-only; England and Wales governing law is not an access limit.
 
 ## MVP boundary
 
-### Required for beta
+### Required for alpha
 
 - Waitlist, invitation, email sign-in, dashboard onboarding, and API keys.
 - Prepaid top-up, usage, balance, and unused-credit refund.
@@ -578,7 +580,7 @@ Copy sweep:
 - Callback custom tools while the SDK/CLI is attached.
 - Minimal site, concise docs, legal pages, support, status, and alert verification.
 
-### After beta
+### After alpha
 
 - `sandbox()` for agent-created additional computers.
 - Tool hooks, limits, approvals, remote tools, managed deployment, and dynamic tool manifests.
@@ -633,7 +635,7 @@ Copy sweep:
 ### 5. Hide compute (`aex`, `brain`, `platform`, `hands`)
 
 - Make the default computer unconditional and remove public sizing.
-- Select the beta allocation through platform policy.
+- Select the alpha allocation through platform policy.
 - Promise working-file continuation, not RAM or machine identity.
 - Release idle machines and consolidate storage metering.
 
@@ -675,11 +677,11 @@ The first option is recommended in each case.
    value masquerading as `T`.
 3. **Promise API:** return a standard `Promise<T>`; use `await` or `.then/.catch`, not custom
    `.result/.error` methods.
-4. **Schema support:** document Zod at beta launch; preserve an internal Standard Schema boundary
+4. **Schema support:** document Zod at alpha launch; preserve an internal Standard Schema boundary
    for other validators later.
 5. **History:** persist the validated structured value as the assistant's output, but never persist
    the schema-control or repair conversation.
-6. **SDK languages:** TypeScript only for beta; Python/Pydantic immediately afterward.
+6. **SDK languages:** TypeScript only for alpha; Python/Pydantic immediately afterward.
 7. **Assets:** immutable account assets attached to sessions; no projects, buckets, or paths yet.
 8. **Computer:** session files persist; RAM, process, and machine identity do not.
 9. **Contract:** replace the prelaunch `/v1` model cleanly rather than retain aliases.

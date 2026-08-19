@@ -12,7 +12,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
-        /** Join the beta waitlist (idempotent and privacy-preserving) */
+        /** Join the alpha waitlist (idempotent and privacy-preserving) */
         post: operations["joinWaitlist"];
         delete?: never;
         options?: never;
@@ -65,7 +65,7 @@ export type paths = {
         put?: never;
         /**
          * Return unused prepaid credit from a paid top-up
-         * @description Operator-only. AEX reserves the requested credit before contacting the payment
+         * @description Operator-only. Aex reserves the requested credit before contacting the payment
          *     provider. Retry an uncertain response with the same Idempotency-Key; using that key
          *     with different request fields returns 409. A failed provider refund restores the
          *     reservation.
@@ -287,7 +287,7 @@ export type components = {
         };
         /** @enum {string} */
         WaitlistStatus: "waiting" | "invited" | "joined";
-        /** @description Operator view of one canonical beta waitlist record. */
+        /** @description Operator view of one canonical alpha waitlist record. */
         WaitlistEntry: {
             /** @constant */
             object: "waitlist_entry";
@@ -305,7 +305,7 @@ export type components = {
         CreateInvitationRequest: {
             email: string;
         };
-        /** @description One-time beta invitation. Shown once to the operator; only a hash is stored. */
+        /** @description One-time alpha invitation. Shown once to the operator; only a hash is stored. */
         InvitationToken: string;
         /** @description The invitation token appears here and never again. Creating another invitation rotates it. */
         InvitationCreated: {
@@ -420,7 +420,7 @@ export type components = {
             data: components["schemas"]["Topup"][];
         };
         CreateTopupRequest: {
-            /** @description Whole cents. Beta top-ups are $10.00 to $1,000.00. */
+            /** @description Whole cents. Alpha top-ups are $10.00 to $1,000.00. */
             amount_cents: number;
         };
         /** @description Current stored bytes, as last reported by the brain (session/v1 StorageInfo). */

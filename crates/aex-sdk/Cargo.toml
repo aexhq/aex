@@ -1,7 +1,7 @@
 [package]
 name = "aex-sdk"
 version = "0.1.0"
-description = "aex client SDK over the generated contracts"
+description = "Aex client SDK over the generated contracts"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

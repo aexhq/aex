@@ -63,7 +63,7 @@ export class Transport {
         lastError = error;
       }
     }
-    throw new SessionError("Could not reach the AEX API", { cause: lastError });
+    throw new SessionError("Could not reach the Aex API", { cause: lastError });
   }
 
   async *events(sessionId: string, options: EventOptions = {}): AsyncGenerator<Event> {
@@ -87,7 +87,7 @@ export class Transport {
           },
         );
         if (!response.ok) throw await this.responseError(response);
-        if (response.body === null) throw new SessionError("The AEX event stream had no body");
+        if (response.body === null) throw new SessionError("The Aex event stream had no body");
 
         let received = false;
         for await (const event of parseEventStream(response.body)) {
@@ -105,7 +105,7 @@ export class Transport {
         consecutiveFailures += 1;
         if (consecutiveFailures > 5) {
           if (error instanceof AexError) throw error;
-          throw new SessionError("The AEX event stream disconnected", { cause: error });
+          throw new SessionError("The Aex event stream disconnected", { cause: error });
         }
       }
 
@@ -121,7 +121,7 @@ export class Transport {
       // Fall through to a status-based error.
     }
     if (envelope?.error !== undefined) return errorFromApi(envelope.error, response.status);
-    return new SessionError(`AEX API request failed with HTTP ${response.status}`, {
+    return new SessionError(`Aex API request failed with HTTP ${response.status}`, {
       status: response.status,
       requestId: response.headers.get("x-request-id") ?? undefined,
     });
@@ -150,7 +150,7 @@ async function* parseEventStream(stream: ReadableStream<Uint8Array>): AsyncGener
     try {
       return JSON.parse(data) as Event;
     } catch (cause) {
-      throw new SessionError("AEX sent an invalid event", { cause });
+      throw new SessionError("Aex sent an invalid event", { cause });
     }
   };
 

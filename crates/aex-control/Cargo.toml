@@ -1,7 +1,7 @@
 [package]
 name = "aex-control"
 version = "0.1.0"
-description = "aex control plane: identity, prepaid billing, session authority, rated usage"
+description = "Aex control plane: identity, prepaid billing, session authority, rated usage"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

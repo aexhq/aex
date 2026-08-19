@@ -1,4 +1,4 @@
-# aex
+# Aex
 
 The session backend for AI apps. Start a durable agent session, give it tools, and get back text or
 validated data. Every session includes an automatically managed computer. BYOK — you bring the
@@ -21,7 +21,7 @@ This repository is the public contract and control-plane home:
 
 The `brain` and `hands` implementations live in their own repositories and consume this one by tag.
 
-## Using the beta
+## Using the alpha
 
 Join the waitlist at [aex.dev](https://aex.dev). After an invitation, the dashboard handles
 signup, prepaid credit, and creation of a session API key. Continue with the short

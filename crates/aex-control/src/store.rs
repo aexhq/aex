@@ -359,7 +359,7 @@ impl Db {
         match result {
             Ok(true) => Ok(()),
             Ok(false) => Err(Error::Forbidden(
-                "a valid one-time beta invitation is required".into(),
+                "a valid one-time alpha invitation is required".into(),
             )),
             Err(Error::Internal(message)) if message.contains("UNIQUE") => Err(Error::Conflict(
                 "an account with this email already exists".into(),
@@ -1480,24 +1480,24 @@ mod tests {
     async fn waitlist_invitation_is_canonical_and_one_time() {
         let db = Db::open_memory().unwrap();
         let first = db
-            .join_waitlist("Beta@Example.com".into(), 1)
+            .join_waitlist("Alpha@Example.com".into(), 1)
             .await
             .unwrap();
         assert_eq!(first.status, "waiting");
         let repeated = db
-            .join_waitlist("beta@example.com".into(), 2)
+            .join_waitlist("alpha@example.com".into(), 2)
             .await
             .unwrap();
         assert_eq!(repeated.created_ms, 1, "a repeat does not reset queue age");
 
-        db.invite_waitlist("beta@example.com".into(), "invite-hash".into(), 3)
+        db.invite_waitlist("alpha@example.com".into(), "invite-hash".into(), 3)
             .await
             .unwrap()
             .unwrap();
         let wrong = db
             .create_invited_account(
                 acct("acc_wrong"),
-                "beta@example.com".into(),
+                "alpha@example.com".into(),
                 "account-hash-wrong".into(),
                 "wrong-invite".into(),
                 4,
@@ -1508,7 +1508,7 @@ mod tests {
 
         db.create_invited_account(
             acct("acc_beta"),
-            "beta@example.com".into(),
+            "alpha@example.com".into(),
             "account-hash".into(),
             "invite-hash".into(),
             5,
@@ -1520,7 +1520,7 @@ mod tests {
         assert_eq!(rows[0].status, "joined");
         assert_eq!(rows[0].joined_ms, Some(5));
         assert!(
-            db.invite_waitlist("beta@example.com".into(), "again".into(), 6)
+            db.invite_waitlist("alpha@example.com".into(), "again".into(), 6)
                 .await
                 .unwrap()
                 .is_none(),
