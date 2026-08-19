@@ -25,7 +25,7 @@ const result = await session.output(
     summary: z.string(),
     nextSteps: z.array(z.string()),
   }),
-  "Review this repository and tell me what to do next.",
+  "Give me a concise launch plan for a small production AI application.",
 );
 
 console.log(result.summary);
@@ -34,6 +34,9 @@ console.log(result.summary);
 `session.output()` returns a normal typed Promise. Aex keeps the schema and any repair attempt out
 of the session conversation, validates the result, and rejects with a typed error if it cannot
 produce the requested shape. The SDK uses `https://api.aex.dev` by default.
+
+Sessions start with no tools. Install `@aexhq/tools` and add explicit imported capabilities when
+the agent needs a computer, subagents, managed web access, or another integration.
 
 Use `session.send()` when you want ordinary text, and call either method again to continue the same
 session.

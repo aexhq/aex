@@ -49,6 +49,7 @@ test("create uses the production origin and maps the small camelCase surface", a
       api_key: "sk-ant-test",
       max_output_tokens: 2048,
     },
+    tools: { builtin: [] },
   });
   assert.equal(request.init.headers.Authorization, "Bearer aex_sk_test");
   assert.ok(request.init.headers["Idempotency-Key"]);
@@ -56,6 +57,44 @@ test("create uses the production origin and maps the small camelCase surface", a
   assert.equal("hand" in session, false);
   assert.equal(JSON.stringify(aex).includes("aex_sk_test"), false);
   assert.equal(JSON.stringify(session).includes("aex_sk_test"), false);
+});
+
+test("create flattens imported tools in order and rejects duplicates", async () => {
+  const bodies = [];
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    fetch: async (_input, init) => {
+      bodies.push(JSON.parse(init.body));
+      return Response.json(snapshot, { status: 201 });
+    },
+  });
+
+  await aex.sessions.create({
+    model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
+    tools: [
+      { kind: "aex.builtin", name: "task" },
+      {
+        kind: "aex.toolset",
+        tools: [
+          { kind: "aex.builtin", name: "read" },
+          { kind: "aex.builtin", name: "write" },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(bodies[0].tools, { builtin: ["task", "read", "write"] });
+  await assert.rejects(
+    aex.sessions.create({
+      model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
+      tools: [
+        { kind: "aex.builtin", name: "read" },
+        { kind: "aex.builtin", name: "read" },
+      ],
+    }),
+    /selected more than once/,
+  );
+  assert.equal(bodies.length, 1, "invalid tool selections fail before creating a session");
 });
 
 test("output hashes the Zod schema, follows events, and resolves inferred data", async () => {

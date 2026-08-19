@@ -27,6 +27,13 @@ export type {
   SessionSummary,
 } from "./session.js";
 export type { EventOptions } from "./transport.js";
+export type {
+  BuiltinTool,
+  BuiltinToolName,
+  Tool,
+  ToolSelection,
+  Toolset,
+} from "./tools.js";
 
 const DEFAULT_API_URL = "https://api.aex.dev";
 

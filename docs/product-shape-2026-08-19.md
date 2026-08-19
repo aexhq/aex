@@ -351,7 +351,7 @@ Tool selection is an array of imported values, never names:
 
 ```ts
 const session = await aex.sessions.create({
-  tools: [webSearch(), assets(), lookupCustomer],
+  tools: [computer(), subagents(), webSearch(), assets(), lookupCustomer],
 });
 ```
 
@@ -389,18 +389,19 @@ automatically.
 Tool signatures are fixed when the session is created for alpha. Hooks, approvals, call limits,
 remote endpoints, managed tool deployment, dynamic tool changes, and MCP follow after launch.
 
-An Aex package is an ordinary npm package exporting a `Tool` or `Toolset`. There is no Aex-specific
-package manifest or marketplace in the MVP. `@aexhq/tools` initially exports `webSearch()` and
-`assets()`.
+An Aex tool package is an ordinary npm package exporting a `Tool` or `Toolset`. There is no
+Aex-specific package manifest or marketplace in the MVP. `@aexhq/tools` initially exports explicit
+computer tools, `subagents()`, `todo()`, `webSearch()`, and `webFetch()`. The durable-assets slice
+will add `assets()` later.
 
 ## Computer and agent-allocated infrastructure
 
 Every session gets one logical computer automatically. The developer does not configure whether
-it exists, region, CPU, RAM, machine shape, substrate, or suspend behaviour.
-
-It contributes four always-available model tools: `read`, `bash`, `edit`, and `write`. This matches
-the useful minimal default in current Pi. Search, asset transfer, browser work, and customer
-integrations are explicit additions.
+it exists, region, CPU, RAM, machine shape, substrate, or suspend behaviour. It contributes no
+model tools by default: every capability is an explicit imported value. `computer()` enables the
+standard computer toolset, while individual helpers such as `read()` and `write()` support a
+smaller grant. Search, subagents, asset transfer, browser work, and customer integrations are also
+explicit additions.
 
 The contract promises that working files survive normal continuation during the session. Aex may
 stop, restore, or replace the underlying machine. Process memory and machine identity are not
@@ -475,7 +476,8 @@ Do not expose internal operation IDs as a collection developers must list or man
 Ship:
 
 - `@aexhq/sdk`: sessions, `send`, `output`, asset client, `defineTool`, events, typed errors;
-- `@aexhq/tools`: `webSearch()` and `assets()`;
+- `@aexhq/tools`: computer tools, `subagents()`, `todo()`, `webSearch()`, `webFetch()`, and
+  `assets()`;
 - `@aexhq/cli`: binary name `aex`, able to load TypeScript tools.
 
 Minimum CLI:

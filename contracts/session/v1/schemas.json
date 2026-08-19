@@ -210,14 +210,15 @@
     "ToolsConfig": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Sealed at create with the rest of the prefix. Defaults: all hand tools + task + todo; no MCP; no web.",
+      "description": "Sealed at create with the rest of the prefix. Omitted tools default to an empty set.",
       "properties": {
         "builtin": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/BuiltinTool"
           },
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "Built-in tools to enable. Defaults to an empty array."
         },
         "mcp": {
           "type": "array",

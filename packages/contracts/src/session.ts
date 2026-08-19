@@ -414,12 +414,15 @@ export interface McpServerConfig {
   allowed_tools?: string[];
 }
 /**
- * Sealed at create with the rest of the prefix. Defaults: all hand tools + task + todo; no MCP; no web.
+ * Sealed at create with the rest of the prefix. Omitted tools default to an empty set.
  *
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
  * via the `definition` "ToolsConfig".
  */
 export interface ToolsConfig {
+  /**
+   * Built-in tools to enable. Defaults to an empty array.
+   */
   builtin?: BuiltinTool[];
   mcp?: McpServerConfig[];
 }

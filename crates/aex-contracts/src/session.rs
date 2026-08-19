@@ -5095,16 +5095,17 @@ impl ::std::convert::TryFrom<::std::string::String> for ToolOutcome {
         value.parse()
     }
 }
-#[doc = "Sealed at create with the rest of the prefix. Defaults: all hand tools + task + todo; no MCP; no web."]
+#[doc = "Sealed at create with the rest of the prefix. Omitted tools default to an empty set."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"Sealed at create with the rest of the prefix. Defaults: all hand tools + task + todo; no MCP; no web.\","]
+#[doc = "  \"description\": \"Sealed at create with the rest of the prefix. Omitted tools default to an empty set.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"properties\": {"]
 #[doc = "    \"builtin\": {"]
+#[doc = "      \"description\": \"Built-in tools to enable. Defaults to an empty array.\","]
 #[doc = "      \"type\": \"array\","]
 #[doc = "      \"items\": {"]
 #[doc = "        \"$ref\": \"#/$defs/BuiltinTool\""]
@@ -5125,6 +5126,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ToolOutcome {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolsConfig {
+    #[doc = "Built-in tools to enable. Defaults to an empty array."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub builtin: ::std::option::Option<Vec<BuiltinTool>>,
     #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]

@@ -24,6 +24,8 @@ import {
 import { jcsSha256, randomIdempotencyKey } from "./json.js";
 import type { EventOptions } from "./transport.js";
 import { Transport } from "./transport.js";
+import { compileTools } from "./tools.js";
+import type { ToolSelection } from "./tools.js";
 
 export type SessionInput = string;
 
@@ -39,6 +41,8 @@ export interface ModelOptions {
 
 export interface CreateSessionOptions {
   model: ModelOptions;
+  /** Tools are opt-in. Omitted or empty means the model receives no tools. */
+  tools?: readonly ToolSelection[];
   systemPrompt?: string;
   metadata?: Record<string, string>;
 }
@@ -101,6 +105,7 @@ export class Sessions {
           ? {}
           : { reasoning_effort: options.model.reasoningEffort }),
       },
+      tools: compileTools(options.tools),
       ...(options.systemPrompt === undefined ? {} : { system_prompt: options.systemPrompt }),
       ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
     };

@@ -61,4 +61,5 @@ jobs:
 
           publish_workspace contracts
           publish_workspace sdk
+          publish_workspace tools
           publish_workspace cli

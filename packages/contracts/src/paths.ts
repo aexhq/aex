@@ -396,8 +396,9 @@ export type components = {
             /** @description Whitelist; default all. */
             allowed_tools?: string[];
         };
-        /** @description Sealed at create with the rest of the prefix. Defaults: all hand tools + task + todo; no MCP; no web. */
+        /** @description Sealed at create with the rest of the prefix. Omitted tools default to an empty set. */
         ToolsConfig: {
+            /** @description Built-in tools to enable. Defaults to an empty array. */
             builtin?: components["schemas"]["BuiltinTool"][];
             mcp?: components["schemas"]["McpServerConfig"][];
         };

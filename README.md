@@ -15,6 +15,7 @@ This repository is the public contract and control-plane home:
 | `crates/aex-cli` | the existing internal Rust diagnostic CLI |
 | `packages/contracts` | generated TypeScript types (`@aexhq/contracts`) + the same hashes |
 | `packages/sdk` | the public TypeScript SDK (`@aexhq/sdk`) |
+| `packages/tools` | explicit built-in tool and toolset selections (`@aexhq/tools`) |
 | `packages/cli` | the public Node CLI (`@aexhq/cli`, binary `aex`) |
 | `tools/` | `gen.sh` regenerates everything derived from `contracts/`; CI fails on drift. `m1.sh` starts the real-wire gate stack (local brain + control plane + Stripe) |
 | `docs/` | repository-level docs (the architecture record lives in `aex-research/docs/` until it moves here) |
@@ -52,6 +53,7 @@ tools/gen.sh                                  # regenerate Rust + TS + examples 
 cargo test && cargo clippy --all-targets -- -D warnings
 npm test --workspace @aexhq/contracts         # tsc + ajv conformance
 npm test --workspace @aexhq/sdk               # SDK contract + event replay tests
+npm test --workspace @aexhq/tools             # official tool selection + SDK integration tests
 ```
 
 Requires: Rust 1.97 (`rust-toolchain.toml`), `cargo install cargo-typify`, Node ≥ 22, Python 3.
