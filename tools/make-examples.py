@@ -204,6 +204,11 @@ w(C + "Topup.pending.json", {"id": "top_01J5X8Y2K3M4N5P6Q7R8S9V3", "object": "to
                              "status": "pending", "checkout_url": "https://checkout.stripe.com/c/pay/cs_test_a1B2c3",
                              "created_at": "2026-08-18T09:50:00Z"})
 w(C + "TopupList.example.json", {"object": "list", "data": [top_paid]})
+w(C + "CreateRefundRequest.example.json", {"topup_id": top_paid["id"], "amount_cents": 500})
+w(C + "Refund.example.json", {"id": "rfd_01J5X8Y2K3M4N5P6Q7R8S9W4", "object": "refund",
+                              "topup_id": top_paid["id"], "amount_cents": 500,
+                              "status": "succeeded", "created_at": "2026-08-18T10:00:00Z",
+                              "updated_at": "2026-08-18T10:00:01Z"})
 rates = {"object": "rate_card", "vcpu_hour_microusd": 190000, "gb_hour_microusd": 25000,
          "suspended_gb_month_microusd": 100000, "workspace_gb_month_microusd": 30000,
          "web_search_query_microusd": 3000, "month_hours": 730}

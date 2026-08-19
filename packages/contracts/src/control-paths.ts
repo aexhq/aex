@@ -54,6 +54,29 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/refunds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Return unused prepaid credit from a paid top-up
+         * @description Operator-only. AEX reserves the requested credit before contacting the payment
+         *     provider. Retry an uncertain response with the same Idempotency-Key; using that key
+         *     with different request fields returns 409. A failed provider refund restores the
+         *     reservation.
+         */
+        post: operations["createRefund"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/accounts": {
         parameters: {
             query?: never;
@@ -292,6 +315,28 @@ export type components = {
             invite_token: components["schemas"]["InvitationToken"];
             invited_at: components["schemas"]["Timestamp"];
         };
+        TopupId: string;
+        CreateRefundRequest: {
+            topup_id: components["schemas"]["TopupId"];
+            /** @description Whole cents of unused prepaid credit to return from this top-up. */
+            amount_cents: number;
+        };
+        RefundId: string;
+        /** @enum {string} */
+        RefundStatus: "pending" | "succeeded" | "failed";
+        /** @description An operator-initiated return of unused prepaid credit. Credit is reserved before the payment provider is called. Retrying the same Idempotency-Key returns the same refund. */
+        Refund: {
+            id: components["schemas"]["RefundId"];
+            /** @constant */
+            object: "refund";
+            topup_id: components["schemas"]["TopupId"];
+            amount_cents: number;
+            status: components["schemas"]["RefundStatus"];
+            created_at: components["schemas"]["Timestamp"];
+            updated_at: components["schemas"]["Timestamp"];
+            /** @description Operator-facing payment-provider failure detail; present only when status is failed. */
+            failure_reason?: string;
+        };
         CreateAccountRequest: {
             email: string;
             invite_token: components["schemas"]["InvitationToken"];
@@ -355,7 +400,6 @@ export type components = {
             usd: string;
             metered_to: components["schemas"]["Timestamp"];
         };
-        TopupId: string;
         /** @enum {string} */
         TopupStatus: "pending" | "paid" | "expired";
         /** @description A prepaid credit purchase. `checkout_url` is where the customer pays (Stripe Checkout); present while pending. The balance is credited when the payment provider reports it paid — on webhook or on poll, idempotently. */
@@ -438,7 +482,10 @@ export type components = {
             };
         };
     };
-    parameters: never;
+    parameters: {
+        /** @description A unique key for one intended refund; reuse it only to retry that request. */
+        IdempotencyKey: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -511,6 +558,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InvitationCreated"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createRefund: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A unique key for one intended refund; reuse it only to retry that request. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRefundRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing or completed request; inspect status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refund"];
                 };
             };
             default: components["responses"]["Error"];

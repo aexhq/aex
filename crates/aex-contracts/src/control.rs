@@ -1285,6 +1285,44 @@ impl<'de> ::serde::Deserialize<'de> for CreateInvitationRequestEmail {
             })
     }
 }
+#[doc = "`CreateRefundRequest`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"amount_cents\","]
+#[doc = "    \"topup_id\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"amount_cents\": {"]
+#[doc = "      \"description\": \"Whole cents of unused prepaid credit to return from this top-up.\","]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 100000.0,"]
+#[doc = "      \"minimum\": 1.0"]
+#[doc = "    },"]
+#[doc = "    \"topup_id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/TopupId\""]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CreateRefundRequest {
+    #[doc = "Whole cents of unused prepaid credit to return from this top-up."]
+    pub amount_cents: ::std::num::NonZeroU64,
+    pub topup_id: TopupId,
+}
+impl CreateRefundRequest {
+    pub fn builder() -> builder::CreateRefundRequest {
+        Default::default()
+    }
+}
 #[doc = "`CreateTopupRequest`"]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
@@ -1723,6 +1761,221 @@ pub struct RateCard {
 impl RateCard {
     pub fn builder() -> builder::RateCard {
         Default::default()
+    }
+}
+#[doc = "An operator-initiated return of unused prepaid credit. Credit is reserved before the payment provider is called. Retrying the same Idempotency-Key returns the same refund."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"An operator-initiated return of unused prepaid credit. Credit is reserved before the payment provider is called. Retrying the same Idempotency-Key returns the same refund.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"amount_cents\","]
+#[doc = "    \"created_at\","]
+#[doc = "    \"id\","]
+#[doc = "    \"object\","]
+#[doc = "    \"status\","]
+#[doc = "    \"topup_id\","]
+#[doc = "    \"updated_at\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"amount_cents\": {"]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"minimum\": 1.0"]
+#[doc = "    },"]
+#[doc = "    \"created_at\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "    },"]
+#[doc = "    \"failure_reason\": {"]
+#[doc = "      \"description\": \"Operator-facing payment-provider failure detail; present only when status is failed.\","]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    \"id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/RefundId\""]
+#[doc = "    },"]
+#[doc = "    \"object\": {"]
+#[doc = "      \"const\": \"refund\""]
+#[doc = "    },"]
+#[doc = "    \"status\": {"]
+#[doc = "      \"$ref\": \"#/$defs/RefundStatus\""]
+#[doc = "    },"]
+#[doc = "    \"topup_id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/TopupId\""]
+#[doc = "    },"]
+#[doc = "    \"updated_at\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "    }"]
+#[doc = "  }"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct Refund {
+    pub amount_cents: ::std::num::NonZeroU64,
+    pub created_at: Timestamp,
+    #[doc = "Operator-facing payment-provider failure detail; present only when status is failed."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub failure_reason: ::std::option::Option<::std::string::String>,
+    pub id: RefundId,
+    pub object: ::serde_json::Value,
+    pub status: RefundStatus,
+    pub topup_id: TopupId,
+    pub updated_at: Timestamp,
+}
+impl Refund {
+    pub fn builder() -> builder::Refund {
+        Default::default()
+    }
+}
+#[doc = "`RefundId`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"pattern\": \"^rfd_[A-Za-z0-9]{20,32}$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct RefundId(::std::string::String);
+impl ::std::ops::Deref for RefundId {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<RefundId> for ::std::string::String {
+    fn from(value: RefundId) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for RefundId {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^rfd_[A-Za-z0-9]{20,32}$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^rfd_[A-Za-z0-9]{20,32}$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for RefundId {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for RefundId {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RefundId {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for RefundId {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`RefundStatus`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"pending\","]
+#[doc = "    \"succeeded\","]
+#[doc = "    \"failed\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum RefundStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "succeeded")]
+    Succeeded,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for RefundStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pending => f.write_str("pending"),
+            Self::Succeeded => f.write_str("succeeded"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for RefundStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for RefundStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for RefundStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RefundStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
 #[doc = "One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. Successful web_search tool results are counted from the same event log."]
@@ -3274,6 +3527,60 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct CreateRefundRequest {
+        amount_cents: ::std::result::Result<::std::num::NonZeroU64, ::std::string::String>,
+        topup_id: ::std::result::Result<super::TopupId, ::std::string::String>,
+    }
+    impl ::std::default::Default for CreateRefundRequest {
+        fn default() -> Self {
+            Self {
+                amount_cents: Err("no value supplied for amount_cents".to_string()),
+                topup_id: Err("no value supplied for topup_id".to_string()),
+            }
+        }
+    }
+    impl CreateRefundRequest {
+        pub fn amount_cents<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::num::NonZeroU64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.amount_cents = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for amount_cents: {e}"));
+            self
+        }
+        pub fn topup_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::TopupId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.topup_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for topup_id: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CreateRefundRequest> for super::CreateRefundRequest {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CreateRefundRequest,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                amount_cents: value.amount_cents?,
+                topup_id: value.topup_id?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CreateRefundRequest> for CreateRefundRequest {
+        fn from(value: super::CreateRefundRequest) -> Self {
+            Self {
+                amount_cents: Ok(value.amount_cents),
+                topup_id: Ok(value.topup_id),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct CreateTopupRequest {
         amount_cents: ::std::result::Result<i64, ::std::string::String>,
     }
@@ -3560,6 +3867,145 @@ pub mod builder {
                 vcpu_hour_microusd: Ok(value.vcpu_hour_microusd),
                 web_search_query_microusd: Ok(value.web_search_query_microusd),
                 workspace_gb_month_microusd: Ok(value.workspace_gb_month_microusd),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct Refund {
+        amount_cents: ::std::result::Result<::std::num::NonZeroU64, ::std::string::String>,
+        created_at: ::std::result::Result<super::Timestamp, ::std::string::String>,
+        failure_reason: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        id: ::std::result::Result<super::RefundId, ::std::string::String>,
+        object: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+        status: ::std::result::Result<super::RefundStatus, ::std::string::String>,
+        topup_id: ::std::result::Result<super::TopupId, ::std::string::String>,
+        updated_at: ::std::result::Result<super::Timestamp, ::std::string::String>,
+    }
+    impl ::std::default::Default for Refund {
+        fn default() -> Self {
+            Self {
+                amount_cents: Err("no value supplied for amount_cents".to_string()),
+                created_at: Err("no value supplied for created_at".to_string()),
+                failure_reason: Ok(Default::default()),
+                id: Err("no value supplied for id".to_string()),
+                object: Err("no value supplied for object".to_string()),
+                status: Err("no value supplied for status".to_string()),
+                topup_id: Err("no value supplied for topup_id".to_string()),
+                updated_at: Err("no value supplied for updated_at".to_string()),
+            }
+        }
+    }
+    impl Refund {
+        pub fn amount_cents<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::num::NonZeroU64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.amount_cents = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for amount_cents: {e}"));
+            self
+        }
+        pub fn created_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Timestamp>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.created_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for created_at: {e}"));
+            self
+        }
+        pub fn failure_reason<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.failure_reason = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for failure_reason: {e}"));
+            self
+        }
+        pub fn id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::RefundId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for id: {e}"));
+            self
+        }
+        pub fn object<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::serde_json::Value>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.object = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for object: {e}"));
+            self
+        }
+        pub fn status<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::RefundStatus>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.status = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for status: {e}"));
+            self
+        }
+        pub fn topup_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::TopupId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.topup_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for topup_id: {e}"));
+            self
+        }
+        pub fn updated_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Timestamp>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.updated_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for updated_at: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<Refund> for super::Refund {
+        type Error = super::error::ConversionError;
+        fn try_from(value: Refund) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                amount_cents: value.amount_cents?,
+                created_at: value.created_at?,
+                failure_reason: value.failure_reason?,
+                id: value.id?,
+                object: value.object?,
+                status: value.status?,
+                topup_id: value.topup_id?,
+                updated_at: value.updated_at?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::Refund> for Refund {
+        fn from(value: super::Refund) -> Self {
+            Self {
+                amount_cents: Ok(value.amount_cents),
+                created_at: Ok(value.created_at),
+                failure_reason: Ok(value.failure_reason),
+                id: Ok(value.id),
+                object: Ok(value.object),
+                status: Ok(value.status),
+                topup_id: Ok(value.topup_id),
+                updated_at: Ok(value.updated_at),
             }
         }
     }

@@ -11,7 +11,7 @@ This repository is the public contract and control-plane home:
 | --- | --- |
 | `contracts/` | JSON Schema for the brain↔hand ABI v1, the session API v1 and the control API v1 (+ OpenAPI), the sealed tool manifest, worked examples — **the source of truth** |
 | `crates/aex-contracts` | generated Rust types + the shared hashes (`manifest_digest`, `call_hash`) |
-| `crates/aex-control` | the control plane: identity (accounts, API keys), prepaid billing (signed Stripe webhooks plus poll recovery, or a loud-bannered fake), session authority (the session API served verbatim in front of a brain, with admission), rated compute/storage/search usage folded from the session event log |
+| `crates/aex-control` | the control plane: identity (accounts, API keys), prepaid billing (signed Stripe webhooks, poll recovery, and operator refunds), session authority (the session API served verbatim in front of a brain, with admission), rated compute/storage/search usage folded from the session event log |
 | `crates/aex-sdk` | Rust client SDK over the generated types |
 | `crates/aex-cli` | the experimental `aex` command line; it is not part of the Founding Beta onboarding path |
 | `packages/contracts` | generated TypeScript types (`@aex/contracts`) + the same hashes |

@@ -19,6 +19,11 @@ export type KeyId = string;
  */
 export type TopupId = string;
 /**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "RefundId".
+ */
+export type RefundId = string;
+/**
  * RFC 3339, UTC.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
@@ -63,6 +68,11 @@ export type WaitlistStatus = "waiting" | "invited" | "joined";
  * via the `definition` "TopupStatus".
  */
 export type TopupStatus = "pending" | "paid" | "expired";
+/**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "RefundStatus".
+ */
+export type RefundStatus = "pending" | "succeeded" | "failed";
 /**
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "ControlErrorCode".
@@ -272,6 +282,36 @@ export interface Topup {
 export interface TopupList {
   object: "list";
   data: Topup[];
+}
+/**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "CreateRefundRequest".
+ */
+export interface CreateRefundRequest {
+  topup_id: TopupId;
+  /**
+   * Whole cents of unused prepaid credit to return from this top-up.
+   */
+  amount_cents: number;
+}
+/**
+ * An operator-initiated return of unused prepaid credit. Credit is reserved before the payment provider is called. Retrying the same Idempotency-Key returns the same refund.
+ *
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "Refund".
+ */
+export interface Refund {
+  id: RefundId;
+  object: "refund";
+  topup_id: TopupId;
+  amount_cents: number;
+  status: RefundStatus;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  /**
+   * Operator-facing payment-provider failure detail; present only when status is failed.
+   */
+  failure_reason?: string;
 }
 /**
  * The two-rate card (ARCHITECTURE-v1 D4). Compute is billed per second while running on the shape's BASELINE (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes the substrate holds for a suspended hand; workspace storage covers synced workspace objects AND persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours.

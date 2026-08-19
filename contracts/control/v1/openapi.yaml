@@ -11,8 +11,9 @@ info:
       * the **account token** (`aex_at_...`, shown once at signup) manages money and keys —
         every customer endpoint defined in this file except the waitlist and invited signup;
       * an **API key** (`aex_sk_...`, shown once at creation) runs sessions.
-      * an **operator token** (`aex_ad_...`, configured out of band) lists the waitlist and
-        creates one-time invitations. It is never a customer credential.
+      * an **operator token** (`aex_ad_...`, configured out of band) lists the waitlist,
+        creates one-time invitations, and returns unused prepaid credit. It is never a
+        customer credential.
 
     Session operations are not redefined here: the control plane serves every `session/v1`
     path verbatim (same shapes, same error envelope), authorized by an API key, in front of a
@@ -84,6 +85,33 @@ paths:
           content:
             application/json:
               schema: { $ref: "schemas.json#/$defs/InvitationCreated" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/admin/refunds:
+    post:
+      tags: [operator]
+      operationId: createRefund
+      summary: Return unused prepaid credit from a paid top-up
+      description: |
+        Operator-only. AEX reserves the requested credit before contacting the payment
+        provider. Retry an uncertain response with the same Idempotency-Key; using that key
+        with different request fields returns 409. A failed provider refund restores the
+        reservation.
+      security:
+        - operatorBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "schemas.json#/$defs/CreateRefundRequest" }
+      responses:
+        "200":
+          description: Existing or completed request; inspect status
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/Refund" }
         default: { $ref: "#/components/responses/Error" }
 
   /v1/accounts:
@@ -272,6 +300,17 @@ paths:
         default: { $ref: "#/components/responses/Error" }
 
 components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: A unique key for one intended refund; reuse it only to retry that request.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._:-]+$"
   securitySchemes:
     bearer:
       type: http
