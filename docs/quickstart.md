@@ -86,7 +86,8 @@ only when you intend to irreversibly remove its workspace, artifacts, and journa
 - [Session API](../contracts/session/v1/openapi.yaml): sessions, turns, events, files, artifacts,
   suspend/end, and delete semantics.
 - [Control API](../contracts/control/v1/openapi.yaml): waitlist, invited signup, keys, balance,
-  top-ups, usage, and the live rate card.
+  top-ups, usage, the live rate card, and operator-only unused-credit refunds.
+- [Operator refund runbook](operator-refunds.md): safely keep Stripe and AEX credit in sync.
 - [Generated examples](../contracts/examples/): conforming request, response, and event bodies.
 
 Founding Beta limits and prices are published on [aex.dev](https://aex.dev) and at

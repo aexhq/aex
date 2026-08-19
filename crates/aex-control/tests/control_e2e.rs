@@ -6,12 +6,12 @@
 //! (real brain, real Stripe test mode) is `tools/m1.sh`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use aex_control::api::{AppState, router};
 use aex_control::brain::BrainClient;
-use aex_control::payments::FakePayments;
+use aex_control::payments::{Checkout, FakePayments, PaymentStatus, Payments, RefundAttempt};
 use aex_control::rating::RateCard;
 use aex_control::store::Db;
 use axum::body::Body;
@@ -249,10 +249,19 @@ async fn spawn_stub_brain(token: &str) -> String {
 }
 
 async fn spawn_control(brain_url: &str, brain_token: &str, limits: (i64, i64)) -> String {
+    spawn_control_with_payments(brain_url, brain_token, limits, Arc::new(FakePayments)).await
+}
+
+async fn spawn_control_with_payments(
+    brain_url: &str,
+    brain_token: &str,
+    limits: (i64, i64),
+    payments: Arc<dyn Payments>,
+) -> String {
     let state = AppState {
         db: Db::open_memory().unwrap(),
         brain: BrainClient::new(brain_url, brain_token),
-        payments: Arc::new(FakePayments),
+        payments,
         stripe_webhook: None,
         card: RateCard::default(),
         operator_token_hash: Some(aex_control::identity::hash_secret(OPERATOR_TOKEN)),
@@ -262,6 +271,49 @@ async fn spawn_control(brain_url: &str, brain_token: &str, limits: (i64, i64)) -
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
     base
+}
+
+struct FlakyRefundPayments {
+    refund_attempts: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl Payments for FlakyRefundPayments {
+    fn name(&self) -> &'static str {
+        "fake"
+    }
+
+    async fn create_checkout(
+        &self,
+        topup_id: &str,
+        _amount_cents: i64,
+    ) -> aex_control::Result<Checkout> {
+        Ok(Checkout {
+            provider_ref: format!("fake_{topup_id}"),
+            url: format!("https://payments.invalid/checkout/{topup_id}"),
+        })
+    }
+
+    async fn check(&self, _provider_ref: &str) -> aex_control::Result<PaymentStatus> {
+        Ok(PaymentStatus::Paid)
+    }
+
+    async fn refund(
+        &self,
+        _topup_id: &str,
+        _provider_ref: &str,
+        refund_id: &str,
+        _amount_cents: i64,
+    ) -> aex_control::Result<RefundAttempt> {
+        if self.refund_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Err(aex_control::Error::Payment(
+                "simulated uncertain response".into(),
+            ));
+        }
+        Ok(RefundAttempt::Succeeded {
+            provider_ref: format!("fake_{refund_id}"),
+        })
+    }
 }
 
 // ---- schema validation of every wire response ----
@@ -495,6 +547,71 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     assert_eq!(balance["microusd"], 10_000_000);
     assert_eq!(balance["usd"], "10.00");
 
+    // Support can return unused credit without a customer-side refund control. The operator
+    // request reserves the ledger first and is idempotent across retries.
+    let unauthenticated_refund = http
+        .post(format!("{base}/v1/admin/refunds"))
+        .header("Idempotency-Key", "e2e-refund-1")
+        .json(&json!({"topup_id": topup_id, "amount_cents": 100}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated_refund.status().as_u16(), 401);
+    let missing_key = http
+        .post(format!("{base}/v1/admin/refunds"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .json(&json!({"topup_id": topup_id, "amount_cents": 100}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_key.status().as_u16(), 400);
+    let refunded = json_of(
+        http.post(format!("{base}/v1/admin/refunds"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .header("Idempotency-Key", "e2e-refund-1")
+            .json(&json!({"topup_id": topup_id, "amount_cents": 100}))
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    control_valid("Refund", &refunded);
+    assert_eq!(refunded["status"], "succeeded");
+    let refund_id = refunded["id"].as_str().unwrap().to_owned();
+    let retried = json_of(
+        http.post(format!("{base}/v1/admin/refunds"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .header("Idempotency-Key", "e2e-refund-1")
+            .json(&json!({"topup_id": topup_id, "amount_cents": 100}))
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(retried["id"], refund_id);
+    let changed_retry = http
+        .post(format!("{base}/v1/admin/refunds"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .header("Idempotency-Key", "e2e-refund-1")
+        .json(&json!({"topup_id": topup_id, "amount_cents": 101}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(changed_retry.status().as_u16(), 409);
+    let balance = json_of(
+        http.get(format!("{base}/v1/balance"))
+            .bearer_auth(&at)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(balance["microusd"], 9_000_000);
+    assert_eq!(balance["usd"], "9.00");
+
     // Now a session runs.
     let session = json_of(
         http.post(format!("{base}/v1/sessions"))
@@ -607,7 +724,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     assert!(total >= 3_050, "storage only adds: {total}");
     assert_eq!(
         usage["balance_microusd"].as_i64().unwrap(),
-        10_000_000 - total,
+        9_000_000 - total,
         "balance = credits minus the rated total"
     );
 
@@ -665,6 +782,85 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     .await;
     control_valid("RateCard", &rates);
     assert_eq!(rates["vcpu_hour_microusd"], 190_000);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn uncertain_refund_keeps_credit_reserved_and_retries_safely() {
+    let brain_token = "operator-token";
+    let brain_url = spawn_stub_brain(brain_token).await;
+    let payments = Arc::new(FlakyRefundPayments {
+        refund_attempts: AtomicUsize::new(0),
+    });
+    let base =
+        spawn_control_with_payments(&brain_url, brain_token, (10, 30), payments.clone()).await;
+    let http = reqwest::Client::new();
+    let created = invited_signup(&http, &base, "refund@example.com").await;
+    let account_token = created["account_token"].as_str().unwrap();
+    let topup = json_of(
+        http.post(format!("{base}/v1/topups"))
+            .bearer_auth(account_token)
+            .json(&json!({"amount_cents": 1000}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    let topup_id = topup["id"].as_str().unwrap();
+    json_of(
+        http.get(format!("{base}/v1/topups/{topup_id}"))
+            .bearer_auth(account_token)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+
+    let first = http
+        .post(format!("{base}/v1/admin/refunds"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .header("Idempotency-Key", "uncertain-refund-1")
+        .json(&json!({"topup_id": topup_id, "amount_cents": 1000}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.status().as_u16(), 502);
+    let held = json_of(
+        http.get(format!("{base}/v1/balance"))
+            .bearer_auth(account_token)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(held["microusd"], 0, "uncertain money cannot be spent");
+
+    let retry = json_of(
+        http.post(format!("{base}/v1/admin/refunds"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .header("Idempotency-Key", "uncertain-refund-1")
+            .json(&json!({"topup_id": topup_id, "amount_cents": 1000}))
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    control_valid("Refund", &retry);
+    assert_eq!(retry["status"], "succeeded");
+    assert_eq!(payments.refund_attempts.load(Ordering::SeqCst), 2);
+    let held = json_of(
+        http.get(format!("{base}/v1/balance"))
+            .bearer_auth(account_token)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(held["microusd"], 0, "retry never removes credit twice");
 }
 
 #[tokio::test(flavor = "multi_thread")]

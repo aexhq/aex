@@ -21,9 +21,9 @@ use serde_json::{Value, json};
 
 use crate::brain::BrainClient;
 use crate::identity::{self, bearer};
-use crate::payments::{PaymentStatus, Payments, StripeWebhook, StripeWebhookAction};
+use crate::payments::{PaymentStatus, Payments, RefundAttempt, StripeWebhook, StripeWebhookAction};
 use crate::rating::RateCard;
-use crate::store::{AccountRow, Db, KeyRow, SessionRow, TopupRow, WaitlistRow};
+use crate::store::{AccountRow, Db, KeyRow, RefundRow, SessionRow, TopupRow, WaitlistRow};
 use crate::sweep::{SweptLine, sweep_account, sweep_session};
 use crate::{Error, Result, now_ms, rfc3339, usd_display};
 
@@ -45,6 +45,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/waitlist", post(join_waitlist))
         .route("/v1/admin/waitlist", get(list_waitlist))
         .route("/v1/admin/invitations", post(create_invitation))
+        .route("/v1/admin/refunds", post(create_refund))
         .route("/v1/accounts", post(create_account))
         .route("/v1/account", get(get_account))
         .route("/v1/keys", post(create_key).get(list_keys))
@@ -187,6 +188,24 @@ fn topup_json(t: &TopupRow) -> Value {
     v
 }
 
+fn refund_json(r: &RefundRow) -> Value {
+    let mut value = json!({
+        "id": r.id,
+        "object": "refund",
+        "topup_id": r.topup_id,
+        "amount_cents": r.amount_cents,
+        "status": r.status,
+        "created_at": rfc3339(r.created_ms),
+        "updated_at": rfc3339(r.updated_ms),
+    });
+    if r.status == "failed"
+        && let Some(reason) = &r.failure_reason
+    {
+        value["failure_reason"] = json!(reason);
+    }
+    value
+}
+
 fn usage_line_json(line: &SweptLine) -> Value {
     let row: &SessionRow = &line.row;
     json!({
@@ -281,6 +300,145 @@ async fn create_invitation(
                     "invited_at": rfc3339(invited_ms),
                 }),
             ))
+        }
+        .await,
+    )
+}
+
+fn refund_idempotency_key(headers: &HeaderMap) -> Result<String> {
+    let key = headers
+        .get("Idempotency-Key")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| Error::Invalid("missing Idempotency-Key header".into()))?;
+    if !(8..=128).contains(&key.len())
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
+    {
+        return Err(Error::Invalid(
+            "Idempotency-Key must be 8-128 letters, digits, '.', '_', ':', or '-'".into(),
+        ));
+    }
+    Ok(key.to_owned())
+}
+
+/// The operator support path for the public unused-credit promise. The ledger reservation is
+/// committed before Stripe is called. A provider/network error leaves it pending and unspendable;
+/// retrying the same request reconciles by durable AEX/Stripe metadata before creating anything.
+async fn create_refund(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+    unwrap_response(
+        async {
+            auth_operator(&state, &headers).await?;
+            let request_key = refund_idempotency_key(&headers)?;
+            let req: aex_contracts::control::CreateRefundRequest = parse_body(&body)?;
+            let amount_cents = i64::try_from(req.amount_cents.get())
+                .map_err(|_| Error::Invalid("refund amount is too large".into()))?;
+            let topup_id: String = req.topup_id.into();
+            if amount_cents > 100_000 {
+                return Err(Error::Invalid(
+                    "refund amount must be 1 to 100,000 cents".into(),
+                ));
+            }
+
+            let existing = state.db.refund_by_request_key(request_key.clone()).await?;
+            let mut refund = if let Some(existing) = existing {
+                if existing.topup_id != topup_id || existing.amount_cents != amount_cents {
+                    return Err(Error::Conflict(
+                        "Idempotency-Key was already used with different refund fields".into(),
+                    ));
+                }
+                existing
+            } else {
+                let topup = state
+                    .db
+                    .operator_topup(topup_id.clone())
+                    .await?
+                    .ok_or(Error::NotFound)?;
+                if topup.status != "paid" {
+                    return Err(Error::Conflict("only a paid top-up can be refunded".into()));
+                }
+                if topup.provider != state.payments.name() {
+                    return Err(Error::Conflict(
+                        "top-up payment provider is not active".into(),
+                    ));
+                }
+                let lines =
+                    sweep_account(&state.db, &state.brain, &state.card, &topup.account_id).await?;
+                if lines
+                    .iter()
+                    .any(|line| line.row.fold.turn_open_ms.is_some())
+                {
+                    return Err(Error::Conflict(
+                        "wait for running session turns to finish before refunding credit".into(),
+                    ));
+                }
+                let created_ms = now_ms();
+                state
+                    .db
+                    .begin_refund(
+                        RefundRow {
+                            id: identity::new_id("rfd"),
+                            request_key,
+                            topup_id: topup_id.clone(),
+                            account_id: String::new(),
+                            amount_cents,
+                            status: "pending".into(),
+                            provider_ref: None,
+                            failure_reason: None,
+                            created_ms,
+                            updated_ms: created_ms,
+                        },
+                        state.payments.name().into(),
+                    )
+                    .await?
+            };
+
+            if refund.status != "pending" {
+                return Ok(json_response(200, &refund_json(&refund)));
+            }
+            let topup = state
+                .db
+                .operator_topup(refund.topup_id.clone())
+                .await?
+                .ok_or(Error::NotFound)?;
+            if topup.provider != state.payments.name() {
+                return Err(Error::Conflict(
+                    "top-up payment provider is not active".into(),
+                ));
+            }
+            refund = match state
+                .payments
+                .refund(
+                    &topup.id,
+                    &topup.provider_ref,
+                    &refund.id,
+                    refund.amount_cents,
+                )
+                .await?
+            {
+                RefundAttempt::Pending { provider_ref } => {
+                    state
+                        .db
+                        .refund_pending(refund.id, provider_ref, now_ms())
+                        .await?
+                }
+                RefundAttempt::Succeeded { provider_ref } => {
+                    state
+                        .db
+                        .refund_succeeded(refund.id, provider_ref, now_ms())
+                        .await?
+                }
+                RefundAttempt::Failed {
+                    provider_ref,
+                    reason,
+                } => {
+                    state
+                        .db
+                        .refund_failed(refund.id, provider_ref, reason, now_ms())
+                        .await?
+                }
+            };
+            Ok(json_response(200, &refund_json(&refund)))
         }
         .await,
     )

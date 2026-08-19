@@ -58,6 +58,19 @@ CREATE TABLE IF NOT EXISTS topups (
   paid_ms INTEGER
 );
 CREATE INDEX IF NOT EXISTS topups_account ON topups(account_id);
+CREATE TABLE IF NOT EXISTS refunds (
+  id TEXT PRIMARY KEY,
+  request_key TEXT NOT NULL UNIQUE,
+  topup_id TEXT NOT NULL REFERENCES topups(id),
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'failed')),
+  provider_ref TEXT,
+  failure_reason TEXT,
+  created_ms INTEGER NOT NULL,
+  updated_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS refunds_topup ON refunds(topup_id, status);
 CREATE TABLE IF NOT EXISTS ledger (
   ref TEXT PRIMARY KEY,
   account_id TEXT NOT NULL REFERENCES accounts(id),
@@ -129,6 +142,36 @@ pub struct TopupRow {
     pub checkout_url: Option<String>,
     pub created_ms: i64,
     pub paid_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RefundRow {
+    pub id: String,
+    pub request_key: String,
+    pub topup_id: String,
+    pub account_id: String,
+    pub amount_cents: i64,
+    pub status: String,
+    pub provider_ref: Option<String>,
+    pub failure_reason: Option<String>,
+    pub created_ms: i64,
+    pub updated_ms: i64,
+}
+
+enum BeginRefundOutcome {
+    Ready(RefundRow),
+    RequestMismatch,
+    TopupNotFound,
+    TopupNotPaid,
+    ProviderMismatch,
+    ExceedsTopup,
+    InsufficientBalance(i64),
+}
+
+enum RefundTransitionOutcome {
+    Ready(RefundRow),
+    NotFound,
+    Conflict,
 }
 
 #[derive(Debug, Clone)]
@@ -497,6 +540,252 @@ impl Db {
         .await
     }
 
+    /// Operator lookup used to settle support-requested refunds. Customer reads remain scoped by
+    /// account in `topup` and `list_topups`.
+    pub async fn operator_topup(&self, id: String) -> Result<Option<TopupRow>> {
+        self.call(move |c| {
+            c.query_row(
+                "SELECT id, account_id, amount_cents, status, provider, provider_ref, checkout_url, created_ms, paid_ms
+                 FROM topups WHERE id = ?1",
+                params![id],
+                topup_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    pub async fn refund_by_request_key(&self, request_key: String) -> Result<Option<RefundRow>> {
+        self.call(move |c| {
+            c.query_row(
+                &format!("{REFUND_COLS} WHERE request_key = ?1"),
+                params![request_key],
+                refund_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    /// Reserve unused credit before calling the payment provider. The request key is unique, so
+    /// an operator retry either returns the original row or conflicts if its fields changed.
+    pub async fn begin_refund(
+        &self,
+        row: RefundRow,
+        expected_provider: String,
+    ) -> Result<RefundRow> {
+        let result = self
+            .call(move |c| {
+                let tx = c.transaction()?;
+                if let Some(existing) = tx
+                    .query_row(
+                        &format!("{REFUND_COLS} WHERE request_key = ?1"),
+                        params![row.request_key],
+                        refund_row,
+                    )
+                    .optional()?
+                {
+                    if existing.topup_id == row.topup_id
+                        && existing.amount_cents == row.amount_cents
+                    {
+                        return Ok(BeginRefundOutcome::Ready(existing));
+                    }
+                    return Ok(BeginRefundOutcome::RequestMismatch);
+                }
+
+                let topup = tx
+                    .query_row(
+                        "SELECT account_id, amount_cents, status, provider FROM topups WHERE id = ?1",
+                        params![row.topup_id],
+                        |r| {
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                r.get::<_, i64>(1)?,
+                                r.get::<_, String>(2)?,
+                                r.get::<_, String>(3)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let Some((account_id, topup_cents, topup_status, provider)) = topup else {
+                    return Ok(BeginRefundOutcome::TopupNotFound);
+                };
+                if topup_status != "paid" {
+                    return Ok(BeginRefundOutcome::TopupNotPaid);
+                }
+                if provider != expected_provider {
+                    return Ok(BeginRefundOutcome::ProviderMismatch);
+                }
+                let committed_cents: i64 = tx.query_row(
+                    "SELECT COALESCE(SUM(amount_cents), 0) FROM refunds
+                     WHERE topup_id = ?1 AND status IN ('pending', 'succeeded')",
+                    params![row.topup_id],
+                    |r| r.get(0),
+                )?;
+                if row.amount_cents > topup_cents - committed_cents {
+                    return Ok(BeginRefundOutcome::ExceedsTopup);
+                }
+                let balance: i64 = tx.query_row(
+                    "SELECT COALESCE(SUM(microusd), 0) FROM ledger WHERE account_id = ?1",
+                    params![account_id],
+                    |r| r.get(0),
+                )?;
+                let reserve_microusd = row.amount_cents * 10_000;
+                if balance < reserve_microusd {
+                    return Ok(BeginRefundOutcome::InsufficientBalance(balance));
+                }
+
+                let mut row = row;
+                row.account_id = account_id;
+                tx.execute(
+                    "INSERT INTO refunds
+                     (id, request_key, topup_id, account_id, amount_cents, status, provider_ref,
+                      failure_reason, created_ms, updated_ms)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'pending', NULL, NULL, ?6, ?6)",
+                    params![
+                        row.id,
+                        row.request_key,
+                        row.topup_id,
+                        row.account_id,
+                        row.amount_cents,
+                        row.created_ms
+                    ],
+                )?;
+                tx.execute(
+                    "INSERT INTO ledger (ref, account_id, microusd, updated_ms)
+                     VALUES ('refund:' || ?1, ?2, ?3, ?4)",
+                    params![
+                        row.id,
+                        row.account_id,
+                        -reserve_microusd,
+                        row.created_ms
+                    ],
+                )?;
+                tx.commit()?;
+                Ok(BeginRefundOutcome::Ready(row))
+            })
+            .await?;
+
+        match result {
+            BeginRefundOutcome::Ready(row) => Ok(row),
+            BeginRefundOutcome::RequestMismatch => Err(Error::Conflict(
+                "Idempotency-Key was already used with different refund fields".into(),
+            )),
+            BeginRefundOutcome::TopupNotFound => Err(Error::NotFound),
+            BeginRefundOutcome::TopupNotPaid => {
+                Err(Error::Conflict("only a paid top-up can be refunded".into()))
+            }
+            BeginRefundOutcome::ProviderMismatch => Err(Error::Conflict(
+                "top-up payment provider is not active".into(),
+            )),
+            BeginRefundOutcome::ExceedsTopup => Err(Error::Conflict(
+                "amount exceeds the unrefunded portion of this top-up".into(),
+            )),
+            BeginRefundOutcome::InsufficientBalance(balance) => {
+                Err(Error::InsufficientBalance(format!(
+                    "only {} of unused account credit is available",
+                    crate::usd_display(balance)
+                )))
+            }
+        }
+    }
+
+    pub async fn refund_pending(
+        &self,
+        id: String,
+        provider_ref: String,
+        now_ms: i64,
+    ) -> Result<RefundRow> {
+        self.transition_refund(id, Some(provider_ref), "pending", None, now_ms)
+            .await
+    }
+
+    pub async fn refund_succeeded(
+        &self,
+        id: String,
+        provider_ref: String,
+        now_ms: i64,
+    ) -> Result<RefundRow> {
+        self.transition_refund(id, Some(provider_ref), "succeeded", None, now_ms)
+            .await
+    }
+
+    pub async fn refund_failed(
+        &self,
+        id: String,
+        provider_ref: Option<String>,
+        reason: String,
+        now_ms: i64,
+    ) -> Result<RefundRow> {
+        self.transition_refund(id, provider_ref, "failed", Some(reason), now_ms)
+            .await
+    }
+
+    async fn transition_refund(
+        &self,
+        id: String,
+        provider_ref: Option<String>,
+        target: &'static str,
+        failure_reason: Option<String>,
+        now_ms: i64,
+    ) -> Result<RefundRow> {
+        let result = self
+            .call(move |c| {
+                let tx = c.transaction()?;
+                let existing = tx
+                    .query_row(
+                        &format!("{REFUND_COLS} WHERE id = ?1"),
+                        params![id],
+                        refund_row,
+                    )
+                    .optional()?;
+                let Some(existing) = existing else {
+                    return Ok(RefundTransitionOutcome::NotFound);
+                };
+                if existing
+                    .provider_ref
+                    .as_ref()
+                    .zip(provider_ref.as_ref())
+                    .is_some_and(|(stored, supplied)| stored != supplied)
+                {
+                    return Ok(RefundTransitionOutcome::Conflict);
+                }
+                if existing.status != "pending" && existing.status != target {
+                    return Ok(RefundTransitionOutcome::Conflict);
+                }
+                if existing.status == "pending" {
+                    tx.execute(
+                        "UPDATE refunds
+                         SET status = ?2, provider_ref = COALESCE(provider_ref, ?3),
+                             failure_reason = ?4, updated_ms = ?5
+                         WHERE id = ?1 AND status = 'pending'",
+                        params![id, target, provider_ref, failure_reason, now_ms],
+                    )?;
+                    if target == "failed" {
+                        tx.execute(
+                            "DELETE FROM ledger WHERE ref = 'refund:' || ?1",
+                            params![id],
+                        )?;
+                    }
+                }
+                let updated = tx.query_row(
+                    &format!("{REFUND_COLS} WHERE id = ?1"),
+                    params![id],
+                    refund_row,
+                )?;
+                tx.commit()?;
+                Ok(RefundTransitionOutcome::Ready(updated))
+            })
+            .await?;
+        match result {
+            RefundTransitionOutcome::Ready(row) => Ok(row),
+            RefundTransitionOutcome::NotFound => Err(Error::NotFound),
+            RefundTransitionOutcome::Conflict => Err(Error::Conflict(
+                "refund provider state conflicts with the recorded attempt".into(),
+            )),
+        }
+    }
+
     /// Mark paid and credit the ledger, atomically and idempotently: the credit row's primary
     /// key is `topup:<id>`, so a webhook and a poll racing (or a retried poll) credit once.
     pub async fn topup_paid(&self, id: String, now_ms: i64) -> Result<()> {
@@ -724,6 +1013,9 @@ const SESSION_COLS: &str = "SELECT id, account_id, key_id, shape, created_ms, fi
     web_search_queries, metered_to_ms,
     workspace_bytes, suspended_bytes, artifact_bytes, hand_state, session_state FROM sessions";
 
+const REFUND_COLS: &str = "SELECT id, request_key, topup_id, account_id, amount_cents, status,
+    provider_ref, failure_reason, created_ms, updated_ms FROM refunds";
+
 fn waitlist_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<WaitlistRow> {
     Ok(WaitlistRow {
         email: r.get(0)?,
@@ -767,6 +1059,21 @@ fn topup_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<TopupRow> {
         checkout_url: r.get(6)?,
         created_ms: r.get(7)?,
         paid_ms: r.get(8)?,
+    })
+}
+
+fn refund_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RefundRow> {
+    Ok(RefundRow {
+        id: r.get(0)?,
+        request_key: r.get(1)?,
+        topup_id: r.get(2)?,
+        account_id: r.get(3)?,
+        amount_cents: r.get(4)?,
+        status: r.get(5)?,
+        provider_ref: r.get(6)?,
+        failure_reason: r.get(7)?,
+        created_ms: r.get(8)?,
+        updated_ms: r.get(9)?,
     })
 }
 
@@ -861,6 +1168,157 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!((t.status.as_str(), t.paid_ms), ("paid", Some(3)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refund_reservation_is_idempotent_and_failure_restores_credit() {
+        let db = Db::open_memory().unwrap();
+        db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+            .await
+            .unwrap();
+        db.create_topup(TopupRow {
+            id: "top_1".into(),
+            account_id: "acc_a".into(),
+            amount_cents: 1000,
+            status: "pending".into(),
+            provider: "fake".into(),
+            provider_ref: "fake_top_1".into(),
+            checkout_url: None,
+            created_ms: 2,
+            paid_ms: None,
+        })
+        .await
+        .unwrap();
+        db.topup_paid("top_1".into(), 3).await.unwrap();
+
+        let requested = RefundRow {
+            id: "rfd_1".into(),
+            request_key: "request-1".into(),
+            topup_id: "top_1".into(),
+            account_id: String::new(),
+            amount_cents: 400,
+            status: "pending".into(),
+            provider_ref: None,
+            failure_reason: None,
+            created_ms: 4,
+            updated_ms: 4,
+        };
+        let first = db
+            .begin_refund(requested.clone(), "fake".into())
+            .await
+            .unwrap();
+        assert_eq!(first.account_id, "acc_a");
+        assert_eq!(db.balance("acc_a".into()).await.unwrap(), 6_000_000);
+
+        let mut retry = requested.clone();
+        retry.id = "rfd_ignored".into();
+        let same = db.begin_refund(retry, "fake".into()).await.unwrap();
+        assert_eq!(same.id, first.id, "the request key selects one refund");
+        assert_eq!(db.balance("acc_a".into()).await.unwrap(), 6_000_000);
+
+        let mut changed = requested;
+        changed.amount_cents = 401;
+        let conflict = db.begin_refund(changed, "fake".into()).await.unwrap_err();
+        assert!(matches!(conflict, Error::Conflict(_)), "{conflict}");
+
+        db.refund_pending("rfd_1".into(), "fake_refund_1".into(), 5)
+            .await
+            .unwrap();
+        let failed = db
+            .refund_failed(
+                "rfd_1".into(),
+                Some("fake_refund_1".into()),
+                "declined".into(),
+                6,
+            )
+            .await
+            .unwrap();
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.failure_reason.as_deref(), Some("declined"));
+        assert_eq!(
+            db.balance("acc_a".into()).await.unwrap(),
+            10_000_000,
+            "a failed provider attempt releases the reservation"
+        );
+
+        let succeeded = db
+            .begin_refund(
+                RefundRow {
+                    id: "rfd_2".into(),
+                    request_key: "request-2".into(),
+                    topup_id: "top_1".into(),
+                    account_id: String::new(),
+                    amount_cents: 1000,
+                    status: "pending".into(),
+                    provider_ref: None,
+                    failure_reason: None,
+                    created_ms: 7,
+                    updated_ms: 7,
+                },
+                "fake".into(),
+            )
+            .await
+            .unwrap();
+        db.refund_succeeded(succeeded.id, "fake_refund_2".into(), 8)
+            .await
+            .unwrap();
+        assert_eq!(db.balance("acc_a".into()).await.unwrap(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refund_cannot_exceed_the_topup_or_unused_account_balance() {
+        let db = Db::open_memory().unwrap();
+        db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+            .await
+            .unwrap();
+        for id in ["top_1", "top_2"] {
+            db.create_topup(TopupRow {
+                id: id.into(),
+                account_id: "acc_a".into(),
+                amount_cents: 1000,
+                status: "pending".into(),
+                provider: "fake".into(),
+                provider_ref: format!("fake_{id}"),
+                checkout_url: None,
+                created_ms: 2,
+                paid_ms: None,
+            })
+            .await
+            .unwrap();
+            db.topup_paid(id.into(), 3).await.unwrap();
+        }
+        db.call(|connection| {
+            connection.execute(
+                "INSERT INTO ledger (ref, account_id, microusd, updated_ms)
+                 VALUES ('usage:test', 'acc_a', -15000000, 4)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let refund = |id: &str, topup_id: &str, cents| RefundRow {
+            id: id.into(),
+            request_key: format!("request-{id}"),
+            topup_id: topup_id.into(),
+            account_id: String::new(),
+            amount_cents: cents,
+            status: "pending".into(),
+            provider_ref: None,
+            failure_reason: None,
+            created_ms: 5,
+            updated_ms: 5,
+        };
+        let unavailable = db
+            .begin_refund(refund("rfd_1", "top_1", 600), "fake".into())
+            .await
+            .unwrap_err();
+        assert!(matches!(unavailable, Error::InsufficientBalance(_)));
+        let too_much = db
+            .begin_refund(refund("rfd_2", "top_1", 1001), "fake".into())
+            .await
+            .unwrap_err();
+        assert!(matches!(too_much, Error::Conflict(_)));
     }
 
     #[tokio::test(flavor = "multi_thread")]

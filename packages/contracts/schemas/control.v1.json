@@ -16,6 +16,10 @@
       "type": "string",
       "pattern": "^top_[A-Za-z0-9]{20,32}$"
     },
+    "RefundId": {
+      "type": "string",
+      "pattern": "^rfd_[A-Za-z0-9]{20,32}$"
+    },
     "Timestamp": {
       "type": "string",
       "format": "date-time",
@@ -437,6 +441,74 @@
           "items": {
             "$ref": "#/$defs/Topup"
           }
+        }
+      }
+    },
+    "CreateRefundRequest": {
+      "type": "object",
+      "required": [
+        "topup_id",
+        "amount_cents"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "topup_id": {
+          "$ref": "#/$defs/TopupId"
+        },
+        "amount_cents": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000,
+          "description": "Whole cents of unused prepaid credit to return from this top-up."
+        }
+      }
+    },
+    "RefundStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "succeeded",
+        "failed"
+      ]
+    },
+    "Refund": {
+      "type": "object",
+      "required": [
+        "id",
+        "object",
+        "topup_id",
+        "amount_cents",
+        "status",
+        "created_at",
+        "updated_at"
+      ],
+      "description": "An operator-initiated return of unused prepaid credit. Credit is reserved before the payment provider is called. Retrying the same Idempotency-Key returns the same refund.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RefundId"
+        },
+        "object": {
+          "const": "refund"
+        },
+        "topup_id": {
+          "$ref": "#/$defs/TopupId"
+        },
+        "amount_cents": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "$ref": "#/$defs/RefundStatus"
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "failure_reason": {
+          "type": "string",
+          "description": "Operator-facing payment-provider failure detail; present only when status is failed."
         }
       }
     },
