@@ -1,8 +1,8 @@
 # Returning unused credit
 
-Refunds are a support operation, not a customer dashboard control. Use the AEX operator endpoint
+Refunds are a support operation, not a customer dashboard control. Use the Aex operator endpoint
 so the Stripe refund and the spendable-credit ledger stay consistent. Do not create the refund
-directly in the Stripe Dashboard: Stripe would return the money while AEX left the credit
+directly in the Stripe Dashboard: Stripe would return the money while Aex left the credit
 spendable.
 
 ## Before the request
@@ -32,12 +32,12 @@ curl --fail-with-body https://api.aex.dev/v1/admin/refunds \
 
 The response status is:
 
-- `succeeded`: Stripe completed the refund and the credit remains removed from the AEX balance.
+- `succeeded`: Stripe completed the refund and the credit remains removed from the Aex balance.
 - `pending`: the credit is reserved and cannot be spent. Retry the same request later to
   reconcile Stripe's latest state.
-- `failed`: Stripe definitively rejected or failed the refund and AEX restored the reserved
+- `failed`: Stripe definitively rejected or failed the refund and Aex restored the reserved
   credit. Fix the cause, then make a new intended attempt with a new request key.
 
-AEX sends the local refund ID to Stripe as metadata and checks for it before every create. This
+Aex sends the local refund ID to Stripe as metadata and checks for it before every create. This
 recovers safely even if the service stopped after Stripe accepted the refund or the retry happens
 after Stripe's idempotency-key retention window.

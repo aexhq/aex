@@ -1,7 +1,7 @@
 [package]
 name = "aex-cli"
 version = "0.1.0"
-description = "aex command-line interface"
+description = "Aex command-line interface"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

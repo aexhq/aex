@@ -1,4 +1,4 @@
-//! `aex` — the command line for the aex platform.
+//! `aex` — the command line for the Aex platform.
 //!
 //! The slice-4 gate flow, end to end: `aex signup` → `aex topup` (pay at the printed checkout
 //! URL) → `aex keys create` → `aex session new` + `aex session send` → `aex usage`.
@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 #[command(
     name = "aex",
     version,
-    about = "aex: sessions with a workspace, prepaid"
+    about = "Aex: durable agent sessions with prepaid usage"
 )]
 struct Cli {
     /// Control-plane URL (default: AEX_BASE_URL, then the config file, then http://127.0.0.1:8600).

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aex.dev/contracts/control/v1/schemas.json",
-  "title": "aex control API v1 types",
+  "title": "Aex control API v1 types",
   "description": "Component types of the control plane: identity (accounts, API keys), prepaid billing (top-ups, balance), and rated usage on the two-rate card. Paths are in openapi.yaml. Session operations are NOT redefined here: the control plane serves session/v1 paths verbatim, authorized by an API key, in front of a brain. All money on the wire is integer micro-USD (1 USD = 1,000,000 micro-USD) except top-up amounts, which are whole cents (the payment surface). Storage is metered in decimal GB (1 GB = 1e9 bytes); a month is 730 hours.",
   "$defs": {
     "AccountId": {
@@ -42,7 +42,7 @@
     "InvitationToken": {
       "type": "string",
       "pattern": "^aex_iv_[A-Za-z0-9]{40,64}$",
-      "description": "One-time beta invitation. Shown once to the operator; only a hash is stored."
+      "description": "One-time alpha invitation. Shown once to the operator; only a hash is stored."
     },
     "WaitlistStatus": {
       "type": "string",
@@ -98,7 +98,7 @@
         "status",
         "created_at"
       ],
-      "description": "Operator view of one canonical beta waitlist record.",
+      "description": "Operator view of one canonical alpha waitlist record.",
       "properties": {
         "object": {
           "const": "waitlist_entry"
@@ -378,7 +378,7 @@
           "type": "integer",
           "minimum": 1000,
           "maximum": 100000,
-          "description": "Whole cents. Beta top-ups are $10.00 to $1,000.00."
+          "description": "Whole cents. Alpha top-ups are $10.00 to $1,000.00."
         }
       }
     },

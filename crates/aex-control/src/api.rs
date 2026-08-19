@@ -324,7 +324,7 @@ fn refund_idempotency_key(headers: &HeaderMap) -> Result<String> {
 
 /// The operator support path for the public unused-credit promise. The ledger reservation is
 /// committed before Stripe is called. A provider/network error leaves it pending and unspendable;
-/// retrying the same request reconciles by durable AEX/Stripe metadata before creating anything.
+/// retrying the same request reconciles by durable Aex/Stripe metadata before creating anything.
 async fn create_refund(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
     unwrap_response(
         async {

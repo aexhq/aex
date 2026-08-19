@@ -461,7 +461,7 @@ export type components = {
             /** @description Journal sequence of the turn.started event. */
             seq: number;
         };
-        /** @description JSON Schema 2020-12 produced by the SDK. AEX validates and normalises it for the selected model provider. */
+        /** @description JSON Schema 2020-12 produced by the SDK. Aex validates and normalises it for the selected model provider. */
         OutputSchema: {
             [key: string]: unknown;
         };

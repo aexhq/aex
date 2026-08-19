@@ -1,4 +1,4 @@
-//! aex contracts.
+//! Aex contracts.
 //!
 //! The JSON Schema files under `contracts/` are the single source of truth. `abi`, `session` and
 //! `control` are generated from them by `tools/gen.sh` (cargo-typify) and must not be hand-edited; CI fails

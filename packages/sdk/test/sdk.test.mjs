@@ -18,6 +18,10 @@ const snapshot = {
   metadata: {},
 };
 
+test("errors use the Aex display name", () => {
+  assert.throws(() => new Aex({ apiKey: "" }), /Aex apiKey cannot be empty/);
+});
+
 test("create uses the production origin and maps the small camelCase surface", async () => {
   let request;
   const aex = new Aex({

@@ -13,8 +13,10 @@ test("help presents only the small session vocabulary", async () => {
     cwd: new URL("..", import.meta.url),
   });
   assert.equal(stderr, "");
+  assert.match(stdout, /^Aex —/);
   assert.match(stdout, /session output/);
   assert.match(stdout, /https:\/\/api\.aex\.dev/);
+  assert.doesNotMatch(stdout, /\bAEX\b/);
   assert.doesNotMatch(stdout, /workspace|microvm|hand|region/i);
 });
 

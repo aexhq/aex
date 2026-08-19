@@ -292,7 +292,7 @@ impl StripePayments {
             .ok_or_else(|| Error::Payment("stripe: checkout session missing payment intent".into()))
     }
 
-    /// Reconcile by AEX refund metadata before creating. This remains safe even after Stripe's
+    /// Reconcile by Aex refund metadata before creating. This remains safe even after Stripe's
     /// idempotency-key retention window has elapsed or the process died after Stripe committed.
     async fn existing_refund(
         &self,
@@ -366,7 +366,7 @@ impl Payments for StripePayments {
             ("line_items[0][price_data][currency]", "usd"),
             (
                 "line_items[0][price_data][product_data][name]",
-                "aex prepaid credit",
+                "Aex prepaid credit",
             ),
             ("line_items[0][price_data][unit_amount]", &amount),
             ("line_items[0][quantity]", "1"),

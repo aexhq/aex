@@ -8,7 +8,7 @@ import process from "node:process";
 import { Aex, AexError, type SessionSummary } from "@aexhq/sdk";
 import * as z from "zod";
 
-const HELP = `aex — the session backend for AI apps
+const HELP = `Aex — the session backend for AI apps
 
 Usage:
   aex login
@@ -41,7 +41,7 @@ async function main(argv: string[]): Promise<void> {
   const aex = await client();
   if (command === "doctor") {
     await aex.sessions.list({ limit: 1 });
-    process.stdout.write("AEX API: ok\n");
+    process.stdout.write("Aex API: ok\n");
     return;
   }
   if (command !== "session") usage(`Unknown command: ${command}`);
@@ -131,7 +131,7 @@ function summary(session: SessionSummary): SessionSummary {
 async function client(): Promise<Aex> {
   const apiKey = process.env.AEX_API_KEY ?? (await readConfig())?.apiKey;
   if (apiKey === undefined || apiKey === "") {
-    throw new Error("No AEX API key. Run `aex login` first.");
+    throw new Error("No Aex API key. Run `aex login` first.");
   }
   return new Aex({
     apiKey,
@@ -140,9 +140,9 @@ async function client(): Promise<Aex> {
 }
 
 async function login(): Promise<void> {
-  const apiKey = (await readSecret("Paste AEX API key: ")).trim();
+  const apiKey = (await readSecret("Paste Aex API key: ")).trim();
   if (!/^aex_sk_[A-Za-z0-9]{40,64}$/.test(apiKey)) {
-    throw new Error("That does not look like an AEX session API key.");
+    throw new Error("That does not look like an Aex session API key.");
   }
   const path = configPath();
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });

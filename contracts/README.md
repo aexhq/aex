@@ -1,6 +1,6 @@
 # contracts/
 
-The single source of truth for every wire format in aex. Everything else is generated from here
+The single source of truth for every wire format in Aex. Everything else is generated from here
 by `tools/gen.sh` and checked for drift in CI.
 
 | Path | What | Consumers |

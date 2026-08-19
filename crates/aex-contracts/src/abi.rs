@@ -82,7 +82,7 @@ impl AbiError {
 #[doc = r" ```json"]
 #[doc = "{"]
 #[doc = "  \"$id\": \"https://aex.dev/contracts/abi/v1/abi.json\","]
-#[doc = "  \"title\": \"aex brain-hand ABI v1\","]
+#[doc = "  \"title\": \"Aex brain-hand ABI v1\","]
 #[doc = "  \"description\": \"Wire contract between the brain (LLM harness) and a hand (tool executor in a microVM). One multiplexed WebSocket per hand carries JSON text frames: the brain sends `Request` frames, the hand sends `HandFrame` frames (responses correlated by `id`, plus unsolicited `hand_status` events). Major version must match; unknown fields are ignored. Semantics live in contracts/abi/v1/README.md.\""]
 #[doc = "}"]
 #[doc = r" ```"]

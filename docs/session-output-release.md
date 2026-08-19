@@ -19,13 +19,14 @@ the new contract tag does not exist yet. It must not be part of a release artifa
 
 ## npm order
 
-The next available versions are already set in the package manifests:
+The typed-output baseline was first published as:
 
 1. `@aexhq/contracts@0.26.0`
 2. `@aexhq/sdk@0.55.0`
 3. `@aexhq/cli@0.26.0`
 
-Publish them in that order through npm trusted publishing, then verify each exact version is
+For later patches, advance the versions in the package manifests and preserve this dependency
+order through npm trusted publishing: contracts, SDK, then CLI. Verify each exact version is
 visible before publishing its consumer. The packages request public access and provenance in
 their manifests.
 

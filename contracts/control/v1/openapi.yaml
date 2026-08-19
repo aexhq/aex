@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: aex control API
+  title: Aex control API
   version: "1.0.0"
   description: |
-    The control plane: beta waitlist and invitations, identity, prepaid billing, and
+    The control plane: alpha waitlist and invitations, identity, prepaid billing, and
     session authority. An invited customer signs up, tops up (Stripe, $10 minimum), creates an
     API key, runs sessions, and sees the bill.
 
@@ -37,7 +37,7 @@ paths:
     post:
       tags: [onboarding]
       operationId: joinWaitlist
-      summary: Join the beta waitlist (idempotent and privacy-preserving)
+      summary: Join the alpha waitlist (idempotent and privacy-preserving)
       security: []
       requestBody:
         required: true
@@ -93,7 +93,7 @@ paths:
       operationId: createRefund
       summary: Return unused prepaid credit from a paid top-up
       description: |
-        Operator-only. AEX reserves the requested credit before contacting the payment
+        Operator-only. Aex reserves the requested credit before contacting the payment
         provider. Retry an uncertain response with the same Idempotency-Key; using that key
         with different request fields returns 409. A failed provider refund restores the
         reservation.
@@ -318,7 +318,7 @@ components:
     operatorBearer:
       type: http
       scheme: bearer
-      description: The separately configured AEX operator token (`aex_ad_...`).
+      description: The separately configured Aex operator token (`aex_ad_...`).
   responses:
     Error:
       description: Error

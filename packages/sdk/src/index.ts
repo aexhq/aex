@@ -40,7 +40,7 @@ export class Aex {
   readonly sessions: Sessions;
 
   constructor(options: AexOptions) {
-    if (options.apiKey.trim() === "") throw new TypeError("AEX apiKey cannot be empty");
+    if (options.apiKey.trim() === "") throw new TypeError("Aex apiKey cannot be empty");
     const fetchImplementation = options.fetch ?? globalThis.fetch?.bind(globalThis);
     if (fetchImplementation === undefined) {
       throw new TypeError("This runtime does not provide fetch; pass a fetch implementation to Aex");

@@ -1,4 +1,4 @@
-//! The aex client SDK — a typed client over the generated contracts.
+//! The Aex client SDK — a typed client over the generated contracts.
 //!
 //! Responses deserialize into `aex_contracts::control` / `aex_contracts::session` types (the
 //! same JSON Schemas the server is pinned to), so a wire drift is a decode error here, not a

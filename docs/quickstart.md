@@ -1,6 +1,6 @@
-# AEX beta quickstart
+# Aex alpha quickstart
 
-Create an AEX API key in the dashboard, then install the SDK and Zod:
+Create an Aex API key in the dashboard, then install the SDK and Zod:
 
 ```sh
 npm install @aexhq/sdk zod
@@ -31,7 +31,7 @@ const result = await session.output(
 console.log(result.summary);
 ```
 
-`session.output()` returns a normal typed Promise. AEX keeps the schema and any repair attempt out
+`session.output()` returns a normal typed Promise. Aex keeps the schema and any repair attempt out
 of the session conversation, validates the result, and rejects with a typed error if it cannot
 produce the requested shape. The SDK uses `https://api.aex.dev` by default.
 

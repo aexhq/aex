@@ -520,7 +520,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     assert_eq!(
         above_max.status().as_u16(),
         400,
-        "the $1,000 beta maximum holds"
+        "the $1,000 alpha maximum holds"
     );
     let topup_id = topup["id"].as_str().unwrap();
     let paid = json_of(

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aex.dev/contracts/abi/v1/abi.json",
-  "title": "aex brain-hand ABI v1",
+  "title": "Aex brain-hand ABI v1",
   "description": "Wire contract between the brain (LLM harness) and a hand (tool executor in a microVM). One multiplexed WebSocket per hand carries JSON text frames: the brain sends `Request` frames, the hand sends `HandFrame` frames (responses correlated by `id`, plus unsolicited `hand_status` events). Major version must match; unknown fields are ignored. Semantics live in contracts/abi/v1/README.md.",
   "$defs": {
     "Sha256Hex": {

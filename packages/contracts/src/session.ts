@@ -588,7 +588,7 @@ export interface MessageAccepted {
   seq: number;
 }
 /**
- * JSON Schema 2020-12 produced by the SDK. AEX validates and normalises it for the selected model provider.
+ * JSON Schema 2020-12 produced by the SDK. Aex validates and normalises it for the selected model provider.
  *
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
  * via the `definition` "OutputSchema".
