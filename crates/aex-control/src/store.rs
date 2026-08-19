@@ -881,19 +881,33 @@ impl Db {
 
     pub async fn insert_session(&self, row: SessionRow) -> Result<()> {
         self.call(move |c| {
-            c.execute(
-                "INSERT INTO sessions (id, account_id, key_id, shape, created_ms, metered_to_ms)
+            let tx = c.transaction()?;
+            let inserted = tx.execute(
+                "INSERT OR IGNORE INTO sessions
+                 (id, account_id, key_id, shape, created_ms, metered_to_ms)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
-                    row.id,
-                    row.account_id,
-                    row.key_id,
-                    row.shape,
+                    &row.id,
+                    &row.account_id,
+                    &row.key_id,
+                    &row.shape,
                     row.created_ms,
                     row.fold.metered_to_ms
                 ],
-            )
-            .map(|_| ())
+            )?;
+            if inserted == 0 {
+                let owner: String = tx.query_row(
+                    "SELECT account_id FROM sessions WHERE id = ?1",
+                    params![&row.id],
+                    |record| record.get(0),
+                )?;
+                if owner != row.account_id {
+                    return Err(rusqlite::Error::InvalidParameterName(
+                        "session id belongs to another account".into(),
+                    ));
+                }
+            }
+            tx.commit()
         })
         .await
     }
