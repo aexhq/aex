@@ -5,7 +5,7 @@
 //! (default ./aex-control-data/control.db); AEX_PAYMENTS fake|stripe (default fake — loud
 //! banner; stripe needs STRIPE_SECRET_KEY); AEX_TOPUP_SUCCESS_URL / AEX_TOPUP_CANCEL_URL;
 //! AEX_RATE_* card overrides; AEX_LIMIT_CONCURRENT_SESSIONS / AEX_LIMIT_SESSION_CREATES_PER_HOUR;
-//! AEX_SWEEP_SECONDS (default 30).
+//! AEX_OPERATOR_TOKEN (enables waitlist administration); AEX_SWEEP_SECONDS (default 30).
 
 use std::sync::Arc;
 
@@ -82,6 +82,7 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         payments,
         stripe_webhook,
         card: cfg.card.clone(),
+        operator_token_hash: cfg.operator_token_hash,
         default_limits: (cfg.max_concurrent_sessions, cfg.session_creates_per_hour),
     };
     let listener = tokio::net::TcpListener::bind(cfg.listen).await?;

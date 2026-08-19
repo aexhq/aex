@@ -134,6 +134,7 @@ pub struct Config {
     pub topup_success_url: String,
     pub topup_cancel_url: String,
     pub card: rating::RateCard,
+    pub operator_token_hash: Option<String>,
     pub max_concurrent_sessions: i64,
     pub session_creates_per_hour: i64,
     pub sweep_seconds: u64,
@@ -161,6 +162,22 @@ impl Config {
             },
             Ok(other) => anyhow::bail!("AEX_PAYMENTS={other}: expected fake or stripe"),
         };
+        let operator_token_hash = match std::env::var("AEX_OPERATOR_TOKEN") {
+            Ok(token)
+                if token.starts_with("aex_ad_")
+                    && token.len() >= "aex_ad_".len() + 40
+                    && token.len() <= "aex_ad_".len() + 64
+                    && token["aex_ad_".len()..]
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric()) =>
+            {
+                Some(identity::hash_secret(&token))
+            }
+            Ok(_) => anyhow::bail!(
+                "AEX_OPERATOR_TOKEN must be aex_ad_ followed by 40 to 64 alphanumeric characters"
+            ),
+            Err(_) => None,
+        };
         Ok(Config {
             listen: num("AEX_CONTROL_LISTEN", "127.0.0.1:8600".parse()?)?,
             brain_url: std::env::var("AEX_BRAIN_URL")
@@ -177,6 +194,7 @@ impl Config {
             topup_cancel_url: std::env::var("AEX_TOPUP_CANCEL_URL")
                 .unwrap_or_else(|_| "https://aex.dev/topup/cancelled".into()),
             card: rating::RateCard::from_env()?,
+            operator_token_hash,
             max_concurrent_sessions: num("AEX_LIMIT_CONCURRENT_SESSIONS", 10)?,
             session_creates_per_hour: num("AEX_LIMIT_SESSION_CREATES_PER_HOUR", 30)?,
             sweep_seconds: num("AEX_SWEEP_SECONDS", 30)?,

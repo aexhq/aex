@@ -23,7 +23,7 @@ use crate::brain::BrainClient;
 use crate::identity::{self, bearer};
 use crate::payments::{PaymentStatus, Payments, StripeWebhook, StripeWebhookAction};
 use crate::rating::RateCard;
-use crate::store::{AccountRow, Db, KeyRow, SessionRow, TopupRow};
+use crate::store::{AccountRow, Db, KeyRow, SessionRow, TopupRow, WaitlistRow};
 use crate::sweep::{SweptLine, sweep_account, sweep_session};
 use crate::{Error, Result, now_ms, rfc3339, usd_display};
 
@@ -34,12 +34,17 @@ pub struct AppState {
     pub payments: Arc<dyn Payments>,
     pub stripe_webhook: Option<StripeWebhook>,
     pub card: RateCard,
+    /// SHA-256 of the separately configured operator token. `None` disables admin routes.
+    pub operator_token_hash: Option<String>,
     /// Defaults stamped onto new accounts: (max_concurrent_sessions, session_creates_per_hour).
     pub default_limits: (i64, i64),
 }
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/v1/waitlist", post(join_waitlist))
+        .route("/v1/admin/waitlist", get(list_waitlist))
+        .route("/v1/admin/invitations", post(create_invitation))
         .route("/v1/accounts", post(create_account))
         .route("/v1/account", get(get_account))
         .route("/v1/keys", post(create_key).get(list_keys))
@@ -106,6 +111,15 @@ async fn auth_key(state: &AppState, headers: &HeaderMap) -> Result<(KeyRow, Acco
         .ok_or(Error::Unauthorized)
 }
 
+async fn auth_operator(state: &AppState, headers: &HeaderMap) -> Result<()> {
+    let expected = state.operator_token_hash.as_ref().ok_or(Error::NotFound)?;
+    let token = bearer(headers).ok_or(Error::Unauthorized)?;
+    if !token.starts_with("aex_ad_") || identity::hash_secret(token) != *expected {
+        return Err(Error::Unauthorized);
+    }
+    Ok(())
+}
+
 // ---- JSON shapes (pinned to contracts/control/v1 by the e2e schema validation) ----
 
 fn account_json(a: &AccountRow) -> Value {
@@ -119,6 +133,22 @@ fn account_json(a: &AccountRow) -> Value {
             "session_creates_per_hour": a.session_creates_per_hour,
         },
     })
+}
+
+fn waitlist_entry_json(row: &WaitlistRow) -> Value {
+    let mut value = json!({
+        "object": "waitlist_entry",
+        "email": row.email,
+        "status": row.status,
+        "created_at": rfc3339(row.created_ms),
+    });
+    if let Some(ms) = row.invited_ms {
+        value["invited_at"] = json!(rfc3339(ms));
+    }
+    if let Some(ms) = row.joined_ms {
+        value["joined_at"] = json!(rfc3339(ms));
+    }
+    value
 }
 
 fn key_json(k: &KeyRow) -> Value {
@@ -183,21 +213,102 @@ fn usage_line_json(line: &SweptLine) -> Value {
 
 // ---- identity ----
 
+fn normalized_email(email: &str) -> String {
+    email.trim().to_ascii_lowercase()
+}
+
+async fn join_waitlist(State(state): State<AppState>, body: Bytes) -> Response {
+    unwrap_response(
+        async {
+            let req: aex_contracts::control::JoinWaitlistRequest = parse_body(&body)?;
+            let email = normalized_email(req.email.as_str());
+            let received_ms = now_ms();
+            state.db.join_waitlist(email.clone(), received_ms).await?;
+            Ok(json_response(
+                202,
+                &json!({
+                    "object": "waitlist_submission",
+                    "email": email,
+                    "status": "received",
+                    "received_at": rfc3339(received_ms),
+                }),
+            ))
+        }
+        .await,
+    )
+}
+
+async fn list_waitlist(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    unwrap_response(
+        async {
+            auth_operator(&state, &headers).await?;
+            let data = state
+                .db
+                .list_waitlist()
+                .await?
+                .iter()
+                .map(waitlist_entry_json)
+                .collect::<Vec<_>>();
+            Ok(json_response(200, &json!({"object": "list", "data": data})))
+        }
+        .await,
+    )
+}
+
+async fn create_invitation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    unwrap_response(
+        async {
+            auth_operator(&state, &headers).await?;
+            let req: aex_contracts::control::CreateInvitationRequest = parse_body(&body)?;
+            let email = normalized_email(req.email.as_str());
+            let minted = identity::mint_secret("iv");
+            let invited_ms = now_ms();
+            state
+                .db
+                .invite_waitlist(email.clone(), minted.hash, invited_ms)
+                .await?
+                .ok_or(Error::NotFound)?;
+            Ok(json_response(
+                201,
+                &json!({
+                    "object": "invitation",
+                    "email": email,
+                    "invite_token": minted.secret,
+                    "invited_at": rfc3339(invited_ms),
+                }),
+            ))
+        }
+        .await,
+    )
+}
+
 async fn create_account(State(state): State<AppState>, body: Bytes) -> Response {
     unwrap_response(
         async {
             let req: aex_contracts::control::CreateAccountRequest = parse_body(&body)?;
             let minted = identity::mint_secret("at");
+            let email = normalized_email(req.email.as_str());
+            let invite_hash = identity::hash_secret(req.invite_token.as_str());
             let row = AccountRow {
                 id: identity::new_id("acc"),
-                email: req.email.to_string(),
+                email: email.clone(),
                 created_ms: now_ms(),
                 max_concurrent_sessions: state.default_limits.0,
                 session_creates_per_hour: state.default_limits.1,
             };
             state
                 .db
-                .create_account(row.clone(), row.email.clone(), minted.hash)
+                .create_invited_account(
+                    row.clone(),
+                    email,
+                    minted.hash,
+                    invite_hash,
+                    row.created_ms,
+                )
                 .await?;
             Ok(json_response(
                 201,
@@ -313,8 +424,8 @@ async fn create_topup(State(state): State<AppState>, headers: HeaderMap, body: B
                     "minimum top-up is $10.00 (1000 cents)".into(),
                 ));
             }
-            if req.amount_cents > 100_000_000 {
-                return Err(Error::Invalid("maximum top-up is $1,000,000.00".into()));
+            if req.amount_cents > 100_000 {
+                return Err(Error::Invalid("maximum top-up is $1,000.00".into()));
             }
             let id = identity::new_id("top");
             let checkout = state

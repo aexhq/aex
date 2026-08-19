@@ -3,13 +3,16 @@ info:
   title: aex control API
   version: "1.0.0"
   description: |
-    The control plane: identity, prepaid billing, session authority. A stranger signs up, tops
-    up (Stripe, $10 minimum), creates an API key, runs sessions, sees the bill.
+    The control plane: Founding Beta waitlist and invitations, identity, prepaid billing, and
+    session authority. An invited customer signs up, tops up (Stripe, $10 minimum), creates an
+    API key, runs sessions, and sees the bill.
 
     Two credentials, two jobs:
       * the **account token** (`aex_at_...`, shown once at signup) manages money and keys —
-        every endpoint defined in this file except signup;
+        every customer endpoint defined in this file except the waitlist and invited signup;
       * an **API key** (`aex_sk_...`, shown once at creation) runs sessions.
+      * an **operator token** (`aex_ad_...`, configured out of band) lists the waitlist and
+        creates one-time invitations. It is never a customer credential.
 
     Session operations are not redefined here: the control plane serves every `session/v1`
     path verbatim (same shapes, same error envelope), authorized by an API key, in front of a
@@ -23,15 +26,71 @@ servers:
 security:
   - bearer: []
 tags:
+  - name: onboarding
   - name: identity
   - name: billing
+  - name: operator
 
 paths:
+  /v1/waitlist:
+    post:
+      tags: [onboarding]
+      operationId: joinWaitlist
+      summary: Join the Founding Beta waitlist (idempotent and privacy-preserving)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "schemas.json#/$defs/JoinWaitlistRequest" }
+      responses:
+        "202":
+          description: Received, whether or not this email already has a record
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/WaitlistSubmission" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/admin/waitlist:
+    get:
+      tags: [operator]
+      operationId: listWaitlist
+      summary: List the canonical waitlist, newest first
+      security:
+        - operatorBearer: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/WaitlistEntryList" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/admin/invitations:
+    post:
+      tags: [operator]
+      operationId: createInvitation
+      summary: Create or rotate a one-time invitation for a waitlisted email
+      security:
+        - operatorBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "schemas.json#/$defs/CreateInvitationRequest" }
+      responses:
+        "201":
+          description: Created; the invitation token is shown once
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/InvitationCreated" }
+        default: { $ref: "#/components/responses/Error" }
+
   /v1/accounts:
     post:
       tags: [identity]
       operationId: createAccount
-      summary: Sign up (no auth; returns the account token, shown once)
+      summary: Accept a one-time invitation and sign up (returns the account token, shown once)
       security: []
       requestBody:
         required: true
@@ -217,6 +276,10 @@ components:
     bearer:
       type: http
       scheme: bearer
+    operatorBearer:
+      type: http
+      scheme: bearer
+      description: The separately configured AEX operator token (`aex_ad_...`).
   responses:
     Error:
       description: Error

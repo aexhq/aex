@@ -1,0 +1,11 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "waitlist_entry",
+      "email": "dev@example.com",
+      "status": "waiting",
+      "created_at": "2026-08-18T07:55:00Z"
+    }
+  ]
+}

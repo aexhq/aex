@@ -47,6 +47,18 @@ export type AccountToken = string;
  */
 export type ApiKeySecret = string;
 /**
+ * One-time Founding Beta invitation. Shown once to the operator; only a hash is stored.
+ *
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "InvitationToken".
+ */
+export type InvitationToken = string;
+/**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "WaitlistStatus".
+ */
+export type WaitlistStatus = "waiting" | "invited" | "joined";
+/**
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "TopupStatus".
  */
@@ -72,6 +84,66 @@ export type ControlErrorCode =
  */
 export interface AexControlAPIV1Types {
   [k: string]: unknown | undefined;
+}
+/**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "JoinWaitlistRequest".
+ */
+export interface JoinWaitlistRequest {
+  email: string;
+}
+/**
+ * A privacy-preserving acknowledgement. It does not reveal whether the email was already waiting, invited, or joined.
+ *
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "WaitlistSubmission".
+ */
+export interface WaitlistSubmission {
+  object: "waitlist_submission";
+  email: string;
+  status: "received";
+  received_at: Timestamp;
+}
+/**
+ * Operator view of one canonical Founding Beta waitlist record.
+ *
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "WaitlistEntry".
+ */
+export interface WaitlistEntry {
+  object: "waitlist_entry";
+  email: string;
+  status: WaitlistStatus;
+  created_at: Timestamp;
+  invited_at?: Timestamp;
+  joined_at?: Timestamp;
+}
+/**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "WaitlistEntryList".
+ */
+export interface WaitlistEntryList {
+  object: "list";
+  data: WaitlistEntry[];
+}
+/**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "CreateInvitationRequest".
+ */
+export interface CreateInvitationRequest {
+  email: string;
+}
+/**
+ * The invitation token appears here and never again. Creating another invitation rotates it.
+ *
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "InvitationCreated".
+ */
+export interface InvitationCreated {
+  object: "invitation";
+  email: string;
+  invite_token: InvitationToken;
+  invited_at: Timestamp;
 }
 /**
  * Abuse controls (ARCHITECTURE-v1 §2.9): card + minimum top-up, concurrency and create-rate caps.
@@ -100,6 +172,7 @@ export interface Account {
  */
 export interface CreateAccountRequest {
   email: string;
+  invite_token: InvitationToken;
 }
 /**
  * The account token appears here and never again.
@@ -173,7 +246,7 @@ export interface Balance {
  */
 export interface CreateTopupRequest {
   /**
-   * Whole cents. Minimum top-up $10.00 (abuse control, ARCHITECTURE-v1 §2.9).
+   * Whole cents. Founding Beta top-ups are $10.00 to $1,000.00.
    */
   amount_cents: number;
 }

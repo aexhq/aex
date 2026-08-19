@@ -1,0 +1,6 @@
+{
+  "object": "waitlist_submission",
+  "email": "dev@example.com",
+  "status": "received",
+  "received_at": "2026-08-18T07:55:00Z"
+}
