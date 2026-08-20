@@ -181,13 +181,13 @@ impl<'de> ::serde::Deserialize<'de> for AccountId {
             })
     }
 }
-#[doc = "Abuse controls (ARCHITECTURE-v1 §2.9): card + minimum top-up, concurrency and create-rate caps."]
+#[doc = "Account-level limits for concurrent sessions and session creation rate."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"Abuse controls (ARCHITECTURE-v1 §2.9): card + minimum top-up, concurrency and create-rate caps.\","]
+#[doc = "  \"description\": \"Account-level limits for concurrent sessions and session creation rate.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"required\": ["]
 #[doc = "    \"max_concurrent_sessions\","]
@@ -2033,13 +2033,13 @@ impl ::std::fmt::Display for MicroUsd {
         self.0.fmt(f)
     }
 }
-#[doc = "The two-rate card (ARCHITECTURE-v1 D4). Compute is billed per second while running on the shape's BASELINE (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes the substrate holds for a suspended hand; workspace storage covers synced workspace objects AND persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours."]
+#[doc = "The public usage rate card. Compute is billed per second while running on the shape's baseline (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes held for a suspended hand; workspace storage covers synced workspace objects and persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"The two-rate card (ARCHITECTURE-v1 D4). Compute is billed per second while running on the shape's BASELINE (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes the substrate holds for a suspended hand; workspace storage covers synced workspace objects AND persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours.\","]
+#[doc = "  \"description\": \"The public usage rate card. Compute is billed per second while running on the shape's baseline (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes held for a suspended hand; workspace storage covers synced workspace objects and persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"required\": ["]
 #[doc = "    \"gb_hour_microusd\","]

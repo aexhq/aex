@@ -11,7 +11,7 @@ and Brain↔Hand protocols live in [`aexhq/brain`](https://github.com/aexhq/brai
 
 Rules:
 
-* Change the schema first, run `tools/gen.sh`, commit schema + generated code together.
-* Within a major version, changes are additive. Removing or re-typing a field is a new major.
-* Optional fields are absent when unset, not `null`. Required nullable fields use `null`.
-* Absent provider counters are absent — never reported as 0.
+- Change the schema first, run `tools/gen.sh`, and commit schema and generated code together.
+- Within a major version, changes are additive. Removing or retyping a field requires a new major.
+- Optional fields are absent when unset, not `null`. Required nullable fields use `null`.
+- Absent provider counters remain absent; they are never reported as zero.

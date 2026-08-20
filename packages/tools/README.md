@@ -1,30 +1,27 @@
-# @aexhq/tools
+# `@aexhq/tools`
 
-Official individual tool selections for Aex sessions. Sessions have no model tools unless the
-application adds them at creation:
+Explicit tool selections for Aex sessions. Nothing is granted by default.
 
 ```ts
 import { Aex } from "@aexhq/sdk";
 import { bash, edit, read, subagents, write } from "@aexhq/tools";
 
-const aex = new Aex({ apiKey: "aex_sk_..." });
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 const session = await aex.sessions.create({
   model: {
-    provider: "anthropic",
-    name: "claude-sonnet-5",
-    apiKey: "sk-ant-...",
+    provider: "openai",
+    name: "openai/gpt-5.4",
+    apiKey: process.env.AI_GATEWAY_API_KEY!,
+    baseUrl: "https://ai-gateway.vercel.sh",
   },
   tools: [bash(), read(), write(), edit(), subagents()],
 });
 ```
 
-Omitting `tools` and passing `tools: []` both grant no model tools. Every non-empty list is the
-exact grant. `glob()`, `grep()`, `ls()`, `todo()`, `webSearch()`, and `webFetch()` are separate
-opt-ins. Duplicate selections fail before session creation.
+`glob()`, `grep()`, `ls()`, `todo()`, `webSearch()`, and `webFetch()` are separate opt-ins.
+Duplicate selections fail before session creation.
 
-`subagents()` enables the stable `task` primitive. Each call runs one child in-process inside the
-parent turn. Children start with isolated history, share the parent's model, workspace, and enabled
-tools (except `todo`), and return their final report as the parent's tool result. Calls in one model
-message can run in parallel. The engine caps nesting at three levels and child identities at 12 per
-session, propagates cancellation, journals child decisions before dispatch, and never replays a
-child after an interrupted process.
+`subagents()` enables the `task` tool. Each call runs one child agent inside the parent turn with
+isolated history and the parent's model, workspace, and enabled tools (except `todo`). Calls from
+one model message can run in parallel. Nesting, child count, cancellation, and replay are bounded
+by the session engine.

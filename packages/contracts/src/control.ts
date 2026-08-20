@@ -161,7 +161,7 @@ export interface InvitationCreated {
   invited_at: Timestamp;
 }
 /**
- * Abuse controls (ARCHITECTURE-v1 §2.9): card + minimum top-up, concurrency and create-rate caps.
+ * Account-level limits for concurrent sessions and session creation rate.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "AccountLimits".
@@ -349,7 +349,7 @@ export interface Refund {
   failure_reason?: string;
 }
 /**
- * The two-rate card (ARCHITECTURE-v1 D4). Compute is billed per second while running on the shape's BASELINE (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes the substrate holds for a suspended hand; workspace storage covers synced workspace objects AND persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours.
+ * The public usage rate card. Compute is billed per second while running on the shape's baseline (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes held for a suspended hand; workspace storage covers synced workspace objects and persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "RateCard".

@@ -1,15 +1,15 @@
-//! Rated usage on the two-rate card (ARCHITECTURE-v1 D4).
+//! Rated usage on the public compute and storage rate card.
 //!
 //! The brain's journal is the billing record. Compute time is a pure fold over a session's
 //! event log: a turn runs from `turn.started` to `turn.completed`/`turn.failed`; those
 //! intervals — and nothing else — are billed at the shape's baseline rate (the pre-suspend
-//! idle window is absorbed, per D4). Storage is the brain-reported byte meters (session/v1
+//! idle window is absorbed by the public rate policy). Storage is the Brain-reported byte meters (session/v1
 //! `StorageInfo`) integrated over wall time, piecewise-constant between meter readings.
 //! Everything is integer arithmetic in micro-USD; division floors, in the customer's favor.
 
 use serde_json::Value;
 
-/// The active prices, in micro-USD. Defaults are the D4 card; every field can be overridden by
+/// The active prices, in micro-USD. Defaults match the public rate card; every field can be overridden by
 /// `AEX_RATE_*` env (the private `platform` repo owns the deployed pricing config).
 #[derive(Debug, Clone)]
 pub struct RateCard {
@@ -241,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn card_matches_d4() {
+    fn card_matches_public_rate_card() {
         let c = RateCard::default();
         assert_eq!(c.hourly_microusd("1gb"), 120_000); // $0.12/h
         assert_eq!(c.hourly_microusd("2gb"), 240_000);
