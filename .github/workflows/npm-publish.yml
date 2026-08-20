@@ -36,11 +36,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run package-smoke
-      - name: Publish in dependency order
-        env:
-          # Bootstrap-safe for a package's first release; provenance is still minted by this
-          # public GitHub Actions job. Existing packages may authenticate through OIDC instead.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish with trusted publishing in dependency order
         shell: bash
         run: |
           set -euo pipefail
@@ -48,20 +44,20 @@ jobs:
           publish_workspace() {
             local workspace="$1"
             local package_json="packages/$workspace/package.json"
-            local name version spec visible
+            local name version spec version_url
             name=$(node -p "require('./$package_json').name")
             version=$(node -p "require('./$package_json').version")
             spec="$name@$version"
+            version_url=$(node -e 'const [name, version] = process.argv.slice(1); process.stdout.write(`https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`)' "$name" "$version")
 
-            if npm view "$spec" version --json >/dev/null 2>&1; then
+            if curl --fail --silent "$version_url" >/dev/null 2>&1; then
               echo "$spec is already published"
             else
               npm publish --workspace "$name" --access public
             fi
 
             for attempt in $(seq 1 12); do
-              visible=$(npm view "$spec" version --json 2>/dev/null | tr -d '"' || true)
-              if [[ "$visible" == "$version" ]]; then
+              if curl --fail --silent "$version_url" >/dev/null 2>&1; then
                 echo "$spec is visible on the public registry"
                 return 0
               fi
