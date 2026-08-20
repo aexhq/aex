@@ -202,6 +202,31 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/v1/topups/checkout/{checkout_session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                checkout_session_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Confirm a Stripe Checkout return and reconcile its top-up
+         * @description Stripe substitutes the unguessable Checkout Session ID into the configured success URL.
+         *     This credential-free endpoint discloses no account or payment details: only the HTTP
+         *     status. Webhooks remain the primary settlement path; this poll is an idempotent recovery
+         *     path and lets the browser render an authoritative confirmation.
+         */
+        get: operations["getCheckoutReturn"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/webhooks/stripe": {
         parameters: {
             query?: never;
@@ -790,6 +815,48 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Topup"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCheckoutReturn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                checkout_session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Payment paid and prepaid credit reconciled */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Payment is still pending */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Checkout Session is not an Aex top-up */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Checkout Session expired */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

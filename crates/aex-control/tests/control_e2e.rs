@@ -346,6 +346,46 @@ struct FlakyRefundPayments {
     refund_attempts: AtomicUsize,
 }
 
+struct ReturnPagePayments {
+    checks: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl Payments for ReturnPagePayments {
+    fn name(&self) -> &'static str {
+        "stripe"
+    }
+
+    async fn create_checkout(
+        &self,
+        topup_id: &str,
+        _amount_cents: i64,
+    ) -> aex_control::Result<Checkout> {
+        Ok(Checkout {
+            provider_ref: format!("cs_test_{topup_id}"),
+            url: "https://checkout.stripe.test/session".into(),
+        })
+    }
+
+    async fn check(&self, provider_ref: &str) -> aex_control::Result<PaymentStatus> {
+        assert!(provider_ref.starts_with("cs_test_top_"));
+        self.checks.fetch_add(1, Ordering::SeqCst);
+        Ok(PaymentStatus::Paid)
+    }
+
+    async fn refund(
+        &self,
+        _topup_id: &str,
+        _provider_ref: &str,
+        refund_id: &str,
+        _amount_cents: i64,
+    ) -> aex_control::Result<RefundAttempt> {
+        Ok(RefundAttempt::Succeeded {
+            provider_ref: format!("re_{refund_id}"),
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl Payments for FlakyRefundPayments {
     fn name(&self) -> &'static str {
@@ -499,6 +539,66 @@ async fn private_executor_requires_its_service_credential_and_routes_pinned_capa
     assert_eq!(accepted["outcome"], "failed");
     assert_eq!(accepted["disposition"], "continue");
     assert!(accepted["content"].as_str().unwrap().contains("SSRF guard"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn checkout_return_reconciles_by_session_id_without_disclosing_the_topup() {
+    let brain_token = "operator-token";
+    let brain_url = spawn_stub_brain(brain_token).await;
+    let payments = Arc::new(ReturnPagePayments {
+        checks: AtomicUsize::new(0),
+    });
+    let base =
+        spawn_control_with_payments(&brain_url, brain_token, (10, 30), payments.clone()).await;
+    let http = reqwest::Client::new();
+    let created = invited_signup(&http, &base, "checkout-return@example.com").await;
+    let account_token = created["account_token"].as_str().unwrap();
+    let topup = json_of(
+        http.post(format!("{base}/v1/topups"))
+            .bearer_auth(account_token)
+            .json(&json!({"amount_cents": 1000}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    let checkout_session_id = format!("cs_test_{}", topup["id"].as_str().unwrap());
+
+    let returned = http
+        .get(format!("{base}/v1/topups/checkout/{checkout_session_id}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(returned.status().as_u16(), 200);
+    assert_eq!(returned.bytes().await.unwrap().len(), 0);
+    assert_eq!(payments.checks.load(Ordering::SeqCst), 1);
+
+    let balance = json_of(
+        http.get(format!("{base}/v1/balance"))
+            .bearer_auth(account_token)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(balance["microusd"], 10_000_000);
+
+    let replay = http
+        .get(format!("{base}/v1/topups/checkout/{checkout_session_id}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(replay.status().as_u16(), 200);
+    assert_eq!(payments.checks.load(Ordering::SeqCst), 1);
+
+    let unknown = http
+        .get(format!("{base}/v1/topups/checkout/cs_test_unknown"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown.status().as_u16(), 404);
 }
 
 #[tokio::test(flavor = "multi_thread")]
