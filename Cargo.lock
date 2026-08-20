@@ -909,7 +909,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 [[package]]
 name = "brain"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=372871cf4a523b16bdfce98d07dfc00051fbe2a8#372871cf4a523b16bdfce98d07dfc00051fbe2a8"
+source = "git+https://github.com/aexhq/brain.git?rev=830356e72cf1de7b8f4b6f3971f40eff01bbdb31#830356e72cf1de7b8f4b6f3971f40eff01bbdb31"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -941,7 +941,7 @@ dependencies = [
 [[package]]
 name = "brain-aws"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=372871cf4a523b16bdfce98d07dfc00051fbe2a8#372871cf4a523b16bdfce98d07dfc00051fbe2a8"
+source = "git+https://github.com/aexhq/brain.git?rev=830356e72cf1de7b8f4b6f3971f40eff01bbdb31#830356e72cf1de7b8f4b6f3971f40eff01bbdb31"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -962,7 +962,7 @@ dependencies = [
 [[package]]
 name = "brain-hand-client"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=372871cf4a523b16bdfce98d07dfc00051fbe2a8#372871cf4a523b16bdfce98d07dfc00051fbe2a8"
+source = "git+https://github.com/aexhq/brain.git?rev=830356e72cf1de7b8f4b6f3971f40eff01bbdb31#830356e72cf1de7b8f4b6f3971f40eff01bbdb31"
 dependencies = [
  "brain-protocol",
  "futures-util",
@@ -976,7 +976,7 @@ dependencies = [
 [[package]]
 name = "brain-protocol"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=372871cf4a523b16bdfce98d07dfc00051fbe2a8#372871cf4a523b16bdfce98d07dfc00051fbe2a8"
+source = "git+https://github.com/aexhq/brain.git?rev=830356e72cf1de7b8f4b6f3971f40eff01bbdb31#830356e72cf1de7b8f4b6f3971f40eff01bbdb31"
 dependencies = [
  "chrono",
  "hex",
@@ -1560,7 +1560,7 @@ dependencies = [
 [[package]]
 name = "hand-brain-aws"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=e824fb7ed402524a377129dd43d865304fa3be54#e824fb7ed402524a377129dd43d865304fa3be54"
+source = "git+https://github.com/aexhq/hands.git?rev=02abba92220791e4fe0752527a59c72661628994#02abba92220791e4fe0752527a59c72661628994"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1588,7 +1588,7 @@ dependencies = [
 [[package]]
 name = "hand-lambda"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=e824fb7ed402524a377129dd43d865304fa3be54#e824fb7ed402524a377129dd43d865304fa3be54"
+source = "git+https://github.com/aexhq/hands.git?rev=02abba92220791e4fe0752527a59c72661628994#02abba92220791e4fe0752527a59c72661628994"
 dependencies = [
  "anyhow",
  "aws-config",

@@ -21,7 +21,7 @@ jobs:
       - name: Checkout pinned Brain packages
         run: |
           git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout 372871cf4a523b16bdfce98d07dfc00051fbe2a8
+          git -C ../brain checkout 830356e72cf1de7b8f4b6f3971f40eff01bbdb31
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
