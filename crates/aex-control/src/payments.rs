@@ -492,7 +492,7 @@ fn parse_stripe_refund(
 ) -> Result<RefundAttempt> {
     let provider_ref = value["id"]
         .as_str()
-        .filter(|id| id.starts_with("re_"))
+        .filter(|id| id.starts_with("re_") || id.starts_with("pyr_"))
         .ok_or_else(|| Error::Payment("stripe: refund missing id".into()))?
         .to_owned();
     if value["metadata"]["aex_refund_id"].as_str() != Some(refund_id)
@@ -651,6 +651,16 @@ mod tests {
             parse_stripe_refund(&succeeded, "rfd_1", 500).unwrap(),
             RefundAttempt::Succeeded {
                 provider_ref: "re_test_1".into()
+            }
+        );
+        let payment_refund = serde_json::json!({
+            "id": "pyr_test_1", "amount": 500, "status": "succeeded",
+            "metadata": {"aex_refund_id": "rfd_1"}
+        });
+        assert_eq!(
+            parse_stripe_refund(&payment_refund, "rfd_1", 500).unwrap(),
+            RefundAttempt::Succeeded {
+                provider_ref: "pyr_test_1".into()
             }
         );
         let failed = serde_json::json!({
