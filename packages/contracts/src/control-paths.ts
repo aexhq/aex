@@ -409,7 +409,7 @@ export type components = {
             email: string;
             invite_token: components["schemas"]["InvitationToken"];
         };
-        /** @description Abuse controls (ARCHITECTURE-v1 §2.9): card + minimum top-up, concurrency and create-rate caps. */
+        /** @description Account-level limits for concurrent sessions and session creation rate. */
         AccountLimits: {
             max_concurrent_sessions: number;
             session_creates_per_hour: number;
@@ -515,7 +515,7 @@ export type components = {
             storage: components["schemas"]["StorageMeters"];
             metered_to: components["schemas"]["Timestamp"];
         };
-        /** @description The two-rate card (ARCHITECTURE-v1 D4). Compute is billed per second while running on the shape's BASELINE (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes the substrate holds for a suspended hand; workspace storage covers synced workspace objects AND persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours. */
+        /** @description The public usage rate card. Compute is billed per second while running on the shape's baseline (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes held for a suspended hand; workspace storage covers synced workspace objects and persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours. */
         RateCard: {
             /** @constant */
             object: "rate_card";

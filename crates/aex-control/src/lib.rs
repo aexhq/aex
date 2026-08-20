@@ -3,9 +3,9 @@
 //! One process in front of one brain. It owns accounts, API keys, the prepaid ledger and the
 //! meters; it serves the control API (`contracts/control/v1`) and every `session/v1` path
 //! verbatim as an authorizing, admitting, metering proxy. The brain's journal is the billing
-//! record: compute time is folded from each session's event log (turn intervals — the
-//! pre-suspend idle window is absorbed, ARCHITECTURE-v1 D4), storage from the brain-reported
-//! byte meters integrated over wall time.
+//! record: compute time is folded from each session's event log (turn intervals, with the
+//! pre-suspend idle window absorbed), and storage comes from Brain-reported byte meters integrated
+//! over wall time.
 //!
 //! Substrate posture matches the brain: SQLite on local disk by default (one file, zero
 //! config), payments faked by default with a loud banner; `AEX_PAYMENTS=stripe` +

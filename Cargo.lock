@@ -23,20 +23,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-cli"
-version = "0.1.0"
-dependencies = [
- "aex-contracts",
- "aex-sdk",
- "anyhow",
- "brain-protocol",
- "clap",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "aex-contracts"
 version = "0.1.0"
 dependencies = [
@@ -74,21 +60,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "aex-sdk"
-version = "0.1.0"
-dependencies = [
- "aex-contracts",
- "brain-protocol",
- "bytes",
- "futures-util",
- "percent-encoding",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
 ]
 
 [[package]]

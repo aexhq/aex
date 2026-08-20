@@ -1,6 +1,6 @@
-# Aex alpha quickstart
+# TypeScript quickstart
 
-Create an Aex API key in the dashboard, then install the SDK and Zod:
+Create an Aex API key in the [dashboard](https://aex.dev/dashboard), then install the SDK and Zod:
 
 ```sh
 npm install @aexhq/sdk zod
@@ -10,40 +10,35 @@ npm install @aexhq/sdk zod
 import { Aex } from "@aexhq/sdk";
 import { z } from "zod";
 
-const aex = new Aex({ apiKey: "aex_sk_..." });
-
+const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 const session = await aex.sessions.create({
   model: {
-    provider: "anthropic",
-    name: "claude-sonnet-5",
-    apiKey: "sk-ant-...",
+    provider: "openai",
+    name: "openai/gpt-5.4",
+    apiKey: process.env.AI_GATEWAY_API_KEY!,
+    baseUrl: "https://ai-gateway.vercel.sh",
   },
 });
 
-const result = await session.send(
-  "Give me a concise launch plan for a small production AI application.",
-  {
-    output: z.object({
-      summary: z.string(),
-      nextSteps: z.array(z.string()),
-    }),
-  },
-);
+const result = await session.send("Review this repository.", {
+  output: z.object({
+    summary: z.string(),
+    nextSteps: z.array(z.string()),
+  }),
+});
 
 console.log(result.summary);
 ```
 
-`session.send(input, { output: schema })` returns a normal typed Promise. The schema is scoped to
-this send, Aex validates submissions in its trusted control plane, and the Promise rejects with a
-typed error if the agent cannot produce the requested shape. The SDK uses `https://api.aex.dev` by
-default.
+`session.send()` returns text by default. Passing `output` returns a typed Promise and validates
+the result against the supplied schema. Call `session.send()` again to continue the same session.
 
-Sessions start with no model tools. Install `@aexhq/tools` and pass the exact capabilities the
-application wants to grant, such as `bash()`, `read()`, `write()`, `edit()`, or `subagents()`.
-Omitting `tools` and passing `tools: []` are equivalent.
+The Aex client uses `https://api.aex.dev` by default. The model's `provider` selects its wire
+protocol; `baseUrl` routes model calls through Vercel AI Gateway. These are independent settings.
 
-Omit `output` when you want ordinary text, and call `session.send()` again to continue the same
-session.
+Sessions start with no model tools. Install `@aexhq/tools` and pass only the capabilities the
+application needs, such as `bash()`, `read()`, `write()`, `edit()`, or `subagents()`. Omitting
+`tools` and passing `tools: []` are equivalent.
 
-Reference: [session API](https://github.com/aexhq/brain/blob/main/contracts/session/v1/openapi.yaml) ·
-[control API](../contracts/control/v1/openapi.yaml) · [refund runbook](operator-refunds.md)
+[Session API](https://github.com/aexhq/brain/blob/main/contracts/session/v1/openapi.yaml) ·
+[Control API](../contracts/control/v1/openapi.yaml)

@@ -1,66 +1,42 @@
 # Aex
 
-The session backend for AI apps. Start a durable agent session, give it tools, and get back text or
-validated data. Every session includes an automatically managed computer. BYOK — you bring the
-model key.
+The session backend for AI applications. Create a durable agent session, grant the tools it needs,
+and receive text or validated data. Every session includes a managed computer; model access is
+bring-your-own-key.
 
-This repository is the public contract and control-plane home:
+[Join the alpha](https://aex.dev) · [TypeScript quickstart](docs/quickstart.md) ·
+[Session API](https://github.com/aexhq/brain/blob/main/contracts/session/v1/openapi.yaml) ·
+[Control API](contracts/control/v1/openapi.yaml)
 
-| Directory | Holds |
+## Repository
+
+| Path | Purpose |
 | --- | --- |
-| `contracts/` | Aex-only account, billing, and control-plane JSON Schema, OpenAPI, and worked examples |
-| `crates/aex-contracts` | generated Rust types for Aex-owned control-plane contracts |
-| `crates/aex-control` | the control plane: identity (accounts, API keys), prepaid billing (signed Stripe webhooks, poll recovery, and operator refunds), session authority (the session API served verbatim in front of a brain, with admission), rated compute/storage/search usage folded from the session event log |
-| `crates/aex-brain` | Aex's downstream hosted composition: Brain + the selected Hands adapter + Aex's exact trusted capability set |
-| `crates/aex-sdk` | Rust client SDK over the generated types |
-| `crates/aex-cli` | the existing internal Rust diagnostic CLI |
-| `packages/contracts` | generated TypeScript types for Aex-owned contracts (`@aexhq/contracts`) |
-| `packages/sdk` | the public TypeScript SDK (`@aexhq/sdk`) |
-| `packages/tools` | individual built-in tool selections (`@aexhq/tools`) |
-| `packages/cli` | the public Node CLI (`@aexhq/cli`, binary `aex`) |
-| `tools/` | `gen.sh` regenerates everything derived from `contracts/`; CI fails on drift. `m1.sh` starts the real-wire gate stack (local brain + control plane + Stripe) |
-| `docs/` | repository-level docs (the architecture record lives in `aex-research/docs/` until it moves here) |
+| `contracts/` | Account, billing, and control-plane schemas, OpenAPI, and examples |
+| `crates/aex-control` | Identity, prepaid billing, session admission, and usage rating |
+| `crates/aex-brain` | Hosted composition of Brain, Hands, and Aex capabilities |
+| `packages/contracts` | Generated TypeScript control-plane types |
+| `packages/sdk` | Public TypeScript SDK, published as `@aexhq/sdk` |
+| `packages/tools` | Explicit built-in tool selections, published as `@aexhq/tools` |
+| `packages/cli` | Public Node.js CLI, published as `@aexhq/cli` |
 
-The independent `brain` repository owns the public session API and Brain↔Hand protocol. `hands`
-implements Brain's Hand interface; Aex consumes both at immutable source identities.
+The independent [`brain`](https://github.com/aexhq/brain) repository owns the session API and
+Brain-to-Hand protocol. [`hands`](https://github.com/aexhq/hands) implements Brain's Hand ports.
+Aex composes both at immutable source revisions.
 
-## Using the alpha
+## Develop
 
-Join the waitlist at [aex.dev](https://aex.dev). After an invitation, the dashboard handles
-signup, prepaid credit, and creation of a session API key. Continue with the short
-[SDK quickstart](docs/quickstart.md) to create a session and await typed output.
+Requires Rust 1.97, Node.js 22 or later, Python 3, and `cargo-typify`.
 
-The [control API](contracts/control/v1/openapi.yaml) is owned here; the
-[session API](https://github.com/aexhq/brain/blob/main/contracts/session/v1/openapi.yaml) is owned
-by Brain. The SDK is the onboarding surface; raw HTTP remains available as reference.
-
-## Running the services locally
-
-```
-# standalone Brain development is documented at github.com/aexhq/brain
-# the Aex control plane in front of Brain (payments default to a loud fake; set AEX_PAYMENTS=stripe
-# and STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET for real billing):
-AEX_BRAIN_TOKEN=<token> aex-control
+```sh
+tools/gen.sh
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+npm ci
+npm test
 ```
 
-The hosted `aex-brain` image maps Aex's operator and private-executor credentials into public Brain
-ports, wires the AWS persistence adapters to Hands' Lambda MicroVM implementation, and registers
-only `aex.output.v1`, `aex.web.search.v1`, and `aex.web.fetch.v1`.
+Change schemas before generated Rust or TypeScript files, then run `tools/gen.sh`. CI rejects
+generated drift.
 
-Managed `web_search` is available when the brain has `SERPER_API_KEY`; successful committed
-search results are rated at the public per-query rate. `web_fetch` uses guarded outbound HTTPS
-with private/link-local/metadata destinations rejected at every redirect.
-
-## Working on it
-
-```
-tools/gen.sh                                  # regenerate Aex-owned Rust + TS + examples
-cargo test && cargo clippy --all-targets -- -D warnings
-npm test --workspace @aexhq/contracts         # tsc + ajv conformance
-npm test --workspace @aexhq/sdk               # SDK contract + event replay tests
-npm test --workspace @aexhq/tools             # official tool selection + SDK integration tests
-```
-
-Requires: Rust 1.97 (`rust-toolchain.toml`), `cargo install cargo-typify`, Node ≥ 22, Python 3.
-
-License: Apache-2.0.
+Apache-2.0 licensed.

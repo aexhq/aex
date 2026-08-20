@@ -1077,7 +1077,7 @@ fn path_and_query(uri: &Uri) -> String {
         .unwrap_or_else(|| uri.path().to_string())
 }
 
-/// Balance must be positive to admit new work (D4: prepaid; rated after the fact, so it may go
+/// Balance must be positive to admit new work. Usage is prepaid but rated after the fact, so it may go
 /// negative mid-turn — new work is what gets refused).
 async fn require_positive_balance(state: &AppState, account: &AccountRow) -> Result<()> {
     let balance = state.db.balance(account.id.clone()).await?;

@@ -1,9 +1,9 @@
-//! The slice-4 gate, in CI form: a stranger signs up, tops up, creates a key, runs a session,
+//! End-to-end control-plane coverage: a customer signs up, tops up, creates a key, runs a session,
 //! sees the bill — over real HTTP against the control router, with a stub brain implementing
 //! session/v1 from the contracts and the fake payments adapter. Every control-plane response
 //! is validated against `contracts/control/v1/schemas.json`; the proxied session documents are
-//! validated against Brain's owned session schema. The real-wire version of this flow
-//! (real brain, real Stripe test mode) is `tools/m1.sh`.
+//! validated against Brain's owned session schema. Hosted customer flows are verified separately
+//! during deployment.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
@@ -1029,7 +1029,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     .await;
     assert_eq!(listed_after["data"].as_array().unwrap().len(), 0);
 
-    // The public rate card needs no auth and is the D4 card.
+    // The public rate card needs no authentication.
     let rates = json_of(
         http.get(format!("{base}/v1/rates")).send().await.unwrap(),
         200,
