@@ -235,6 +235,26 @@ pub struct StripePayments {
     cancel_url: String,
 }
 
+fn checkout_success_url(base: &str) -> String {
+    if base.contains("{CHECKOUT_SESSION_ID}") {
+        return base.to_owned();
+    }
+    let (before_fragment, fragment) = base
+        .split_once('#')
+        .map_or((base, None), |(before, fragment)| (before, Some(fragment)));
+    let separator = if before_fragment.contains('?') {
+        '&'
+    } else {
+        '?'
+    };
+    let mut url = format!("{before_fragment}{separator}session_id={{CHECKOUT_SESSION_ID}}");
+    if let Some(fragment) = fragment {
+        url.push('#');
+        url.push_str(fragment);
+    }
+    url
+}
+
 impl StripePayments {
     pub fn new(secret_key: String, success_url: String, cancel_url: String) -> Self {
         Self::new_with_api_base(
@@ -361,6 +381,7 @@ impl Payments for StripePayments {
 
     async fn create_checkout(&self, topup_id: &str, amount_cents: i64) -> Result<Checkout> {
         let amount = amount_cents.to_string();
+        let success_url = checkout_success_url(&self.success_url);
         let form: Vec<(&str, &str)> = vec![
             ("mode", "payment"),
             ("line_items[0][price_data][currency]", "usd"),
@@ -370,7 +391,7 @@ impl Payments for StripePayments {
             ),
             ("line_items[0][price_data][unit_amount]", &amount),
             ("line_items[0][quantity]", "1"),
-            ("success_url", &self.success_url),
+            ("success_url", &success_url),
             ("cancel_url", &self.cancel_url),
             ("metadata[aex_topup_id]", topup_id),
         ];
@@ -532,6 +553,22 @@ mod tests {
 
     const TEST_TOPUP_ID: &str = "top_01J5X8Y2K3M4N5P6Q7R8S9V2";
     const TEST_REFUND_ID: &str = "rfd_01J5X8Y2K3M4N5P6Q7R8S9W4";
+
+    #[test]
+    fn checkout_return_url_carries_the_stripe_session_id() {
+        assert_eq!(
+            checkout_success_url("https://aex.dev/topup/success"),
+            "https://aex.dev/topup/success?session_id={CHECKOUT_SESSION_ID}"
+        );
+        assert_eq!(
+            checkout_success_url("https://aex.dev/topup/success?from=checkout#status"),
+            "https://aex.dev/topup/success?from=checkout&session_id={CHECKOUT_SESSION_ID}#status"
+        );
+        assert_eq!(
+            checkout_success_url("https://aex.dev/topup/success?session_id={CHECKOUT_SESSION_ID}"),
+            "https://aex.dev/topup/success?session_id={CHECKOUT_SESSION_ID}"
+        );
+    }
 
     struct StripeStub {
         existing: bool,

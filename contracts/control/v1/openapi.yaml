@@ -250,6 +250,32 @@ paths:
               schema: { $ref: "schemas.json#/$defs/Topup" }
         default: { $ref: "#/components/responses/Error" }
 
+  /v1/topups/checkout/{checkout_session_id}:
+    parameters:
+      - name: checkout_session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^cs_[A-Za-z0-9_]+$
+          maxLength: 128
+    get:
+      tags: [billing]
+      operationId: getCheckoutReturn
+      summary: Confirm a Stripe Checkout return and reconcile its top-up
+      description: |
+        Stripe substitutes the unguessable Checkout Session ID into the configured success URL.
+        This credential-free endpoint discloses no account or payment details: only the HTTP
+        status. Webhooks remain the primary settlement path; this poll is an idempotent recovery
+        path and lets the browser render an authoritative confirmation.
+      security: []
+      responses:
+        "200": { description: Payment paid and prepaid credit reconciled }
+        "202": { description: Payment is still pending }
+        "410": { description: Checkout Session expired }
+        "404": { description: Checkout Session is not an Aex top-up }
+        default: { $ref: "#/components/responses/Error" }
+
   /v1/webhooks/stripe:
     post:
       tags: [billing]

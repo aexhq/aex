@@ -63,6 +63,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/balance", get(get_balance))
         .route("/v1/topups", post(create_topup).get(list_topups))
         .route("/v1/topups/{topup_id}", get(get_topup))
+        .route(
+            "/v1/topups/checkout/{checkout_session_id}",
+            get(get_checkout_return),
+        )
         .route("/v1/webhooks/stripe", post(stripe_webhook))
         .route("/v1/usage", get(get_usage))
         .route("/v1/rates", get(get_rates))
@@ -747,6 +751,45 @@ async fn get_topup(
                 .ok_or(Error::NotFound)?;
             let t = refresh_topup(&state, t).await?;
             Ok(json_response(200, &topup_json(&t)))
+        }
+        .await,
+    )
+}
+
+/// Return-page verification is intentionally credential-free: Stripe places the unguessable
+/// Checkout Session id in the success URL. Only the payment state is disclosed, while polling
+/// still drives the same idempotent ledger-credit recovery path as the authenticated endpoint.
+async fn get_checkout_return(
+    State(state): State<AppState>,
+    Path(checkout_session_id): Path<String>,
+) -> Response {
+    unwrap_response(
+        async {
+            if !checkout_session_id.starts_with("cs_")
+                || checkout_session_id.len() > 128
+                || !checkout_session_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            {
+                return Err(Error::NotFound);
+            }
+            let topup = state
+                .db
+                .stripe_topup_by_provider_ref(checkout_session_id)
+                .await?
+                .ok_or(Error::NotFound)?;
+            let topup = refresh_topup(&state, topup).await?;
+            let status = match topup.status.as_str() {
+                "paid" => StatusCode::OK,
+                "pending" => StatusCode::ACCEPTED,
+                "expired" => StatusCode::GONE,
+                _ => return Err(Error::Internal("invalid top-up status".into())),
+            };
+            Ok(Response::builder()
+                .status(status)
+                .header(header::CACHE_CONTROL, "no-store")
+                .body(Body::empty())
+                .expect("static response"))
         }
         .await,
     )

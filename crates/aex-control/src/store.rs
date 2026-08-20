@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS topups (
   paid_ms INTEGER
 );
 CREATE INDEX IF NOT EXISTS topups_account ON topups(account_id);
+CREATE UNIQUE INDEX IF NOT EXISTS topups_provider_ref ON topups(provider, provider_ref);
 CREATE TABLE IF NOT EXISTS refunds (
   id TEXT PRIMARY KEY,
   request_key TEXT NOT NULL UNIQUE,
@@ -605,6 +606,24 @@ impl Db {
                 "SELECT id, account_id, amount_cents, status, provider, provider_ref, checkout_url, created_ms, paid_ms
                  FROM topups WHERE id = ?1 AND account_id = ?2",
                 params![id, account_id],
+                topup_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
+    /// Checkout-return lookup. The provider reference is an unguessable Stripe Checkout Session
+    /// id; callers receive only an HTTP status and never this row's account or payment details.
+    pub async fn stripe_topup_by_provider_ref(
+        &self,
+        provider_ref: String,
+    ) -> Result<Option<TopupRow>> {
+        self.call(move |c| {
+            c.query_row(
+                "SELECT id, account_id, amount_cents, status, provider, provider_ref, checkout_url, created_ms, paid_ms
+                 FROM topups WHERE provider = 'stripe' AND provider_ref = ?1",
+                params![provider_ref],
                 topup_row,
             )
             .optional()
