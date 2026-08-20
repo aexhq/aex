@@ -207,6 +207,73 @@
         }
       }
     },
+    "ExternalToolScope": {
+      "type": "string",
+      "enum": [
+        "root"
+      ],
+      "description": "Host-executed tools are root-only in the MVP, keeping terminal control out of subagents."
+    },
+    "ExternalToolCompletion": {
+      "type": "string",
+      "enum": [
+        "continue",
+        "return_direct"
+      ],
+      "description": "continue returns the result to the model. return_direct may complete or fail the turn without another model call."
+    },
+    "ExternalToolEffect": {
+      "type": "string",
+      "enum": [
+        "opaque",
+        "replay_safe"
+      ],
+      "description": "replay_safe promises that repeating the same session_id and call_id returns the same logical result."
+    },
+    "ExternalToolConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description",
+        "input_schema",
+        "scope",
+        "completion",
+        "effect",
+        "max_input_bytes"
+      ],
+      "description": "A model-visible tool executed by the Brain host's configured external executor. The executor address and credentials are host configuration, never session data.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "input_schema": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        },
+        "scope": {
+          "$ref": "#/$defs/ExternalToolScope"
+        },
+        "completion": {
+          "$ref": "#/$defs/ExternalToolCompletion"
+        },
+        "effect": {
+          "$ref": "#/$defs/ExternalToolEffect"
+        },
+        "max_input_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 98304
+        }
+      }
+    },
     "ToolsConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -218,13 +285,20 @@
             "$ref": "#/$defs/BuiltinTool"
           },
           "uniqueItems": true,
-          "description": "Built-in tools to enable. Defaults to an empty array."
+          "description": "Built-in tools to enable. Omitted or empty means no built-in tools."
         },
         "mcp": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/McpServerConfig"
           }
+        },
+        "external": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExternalToolConfig"
+          },
+          "description": "Host-executed tools sealed into the model prefix. Hosted Aex reserves its own output tool; direct Brain deployments may compose others."
         }
       }
     },
@@ -570,6 +644,10 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "output": {
+          "$ref": "#/$defs/MessageOutput",
+          "description": "Optional typed result requested for this turn. It is a per-message operation, not session configuration."
         }
       }
     },
@@ -592,6 +670,14 @@
           "type": "integer",
           "minimum": 1,
           "description": "Journal sequence of the turn.started event."
+        },
+        "output_id": {
+          "$ref": "#/$defs/OutputId",
+          "description": "Present when this message requested typed output."
+        },
+        "schema_hash": {
+          "$ref": "#/$defs/Sha256Hex",
+          "description": "Present when this message requested typed output."
         }
       }
     },
@@ -604,9 +690,9 @@
       "type": "object",
       "minProperties": 1,
       "additionalProperties": true,
-      "description": "JSON Schema 2020-12 produced by the SDK. Aex validates and normalises it for the selected model provider."
+      "description": "JSON Schema 2020-12 produced by the SDK. Aex validates it in the trusted host executor; it is never provider-native response-format configuration."
     },
-    "OutputRequest": {
+    "MessageOutput": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -621,78 +707,12 @@
           "$ref": "#/$defs/Sha256Hex",
           "description": "SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model."
         },
-        "input": {
-          "oneOf": [
-            {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "$ref": "#/$defs/ContentPart"
-              }
-            }
-          ],
-          "description": "Optional real user input. It is journaled and worked normally before the private output commit step."
-        },
-        "metadata": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "OutputAccepted": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "session_id",
-        "output_id",
-        "schema_hash",
-        "seq"
-      ],
-      "description": "The output request was admitted. Follow the session event stream from seq - 1 until the matching output.completed or output.failed event.",
-      "properties": {
-        "session_id": {
-          "$ref": "#/$defs/SessionId"
-        },
-        "output_id": {
-          "$ref": "#/$defs/OutputId"
-        },
-        "schema_hash": {
-          "$ref": "#/$defs/Sha256Hex"
-        },
-        "seq": {
+        "retries": {
           "type": "integer",
-          "minimum": 1,
-          "description": "Journal sequence of the output.started event."
-        }
-      }
-    },
-    "OutputContent": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "type",
-        "schema_hash",
-        "value"
-      ],
-      "description": "The only durable assistant content created by the private output commit phase. The schema and repair context are never journaled.",
-      "properties": {
-        "type": {
-          "type": "string",
-          "enum": [
-            "output"
-          ]
-        },
-        "schema_hash": {
-          "$ref": "#/$defs/Sha256Hex"
-        },
-        "value": {
-          "description": "The validated JSON value."
+          "minimum": 0,
+          "maximum": 2,
+          "default": 1,
+          "description": "Extra model attempts after the first invalid candidate."
         }
       }
     },
@@ -714,6 +734,119 @@
         "keyword": {
           "type": "string",
           "description": "The failed JSON Schema keyword when available."
+        }
+      }
+    },
+    "ExternalToolCallRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "turn_id",
+        "agent_id",
+        "call_id",
+        "name",
+        "input",
+        "context"
+      ],
+      "description": "Generic Brain-to-host executor request. Repeating a replay_safe call uses the same session_id and call_id.",
+      "properties": {
+        "session_id": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "turn_id": {
+          "$ref": "#/$defs/TurnId"
+        },
+        "agent_id": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "call_id": {
+          "$ref": "#/$defs/CallId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "input": {},
+        "context": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Trusted, journaled message metadata supplied by the host, not model arguments."
+        }
+      }
+    },
+    "ExternalToolDisposition": {
+      "type": "string",
+      "enum": [
+        "continue",
+        "complete_turn",
+        "fail_turn"
+      ]
+    },
+    "ExternalToolCallResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome",
+        "content",
+        "is_error",
+        "disposition"
+      ],
+      "description": "Generic host executor result. Brain honors terminal dispositions only for a return_direct tool called alone by an allowed agent.",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/ToolOutcome"
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 98304,
+          "description": "Bounded result shown to the model and journaled as the tool result."
+        },
+        "is_error": {
+          "type": "boolean"
+        },
+        "disposition": {
+          "$ref": "#/$defs/ExternalToolDisposition"
+        },
+        "result": {
+          "description": "Client-facing value attached to turn.completed when disposition is complete_turn."
+        },
+        "result_metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "error": {
+          "$ref": "#/$defs/ApiError",
+          "description": "Turn failure attached to turn.failed when disposition is fail_turn."
+        }
+      }
+    },
+    "TurnResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "call_id",
+        "name",
+        "value"
+      ],
+      "description": "A replayable client-facing result returned directly by a generic external tool.",
+      "properties": {
+        "call_id": {
+          "$ref": "#/$defs/CallId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {},
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     },
@@ -793,148 +926,6 @@
             },
             "turn_id": {
               "$ref": "#/$defs/TurnId"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "type",
-            "seq",
-            "at",
-            "session_id",
-            "output_id",
-            "schema_hash",
-            "source_seq"
-          ],
-          "properties": {
-            "type": {
-              "type": "string",
-              "enum": [
-                "output.started"
-              ]
-            },
-            "seq": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "at": {
-              "$ref": "#/$defs/Timestamp"
-            },
-            "session_id": {
-              "$ref": "#/$defs/SessionId"
-            },
-            "turn_id": {
-              "$ref": "#/$defs/TurnId",
-              "description": "Present when the output request included new user input."
-            },
-            "output_id": {
-              "$ref": "#/$defs/OutputId"
-            },
-            "schema_hash": {
-              "$ref": "#/$defs/Sha256Hex"
-            },
-            "source_seq": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "Last committed session sequence captured for this output request."
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "type",
-            "seq",
-            "at",
-            "session_id",
-            "output_id",
-            "output"
-          ],
-          "properties": {
-            "type": {
-              "type": "string",
-              "enum": [
-                "output.completed"
-              ]
-            },
-            "seq": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "at": {
-              "$ref": "#/$defs/Timestamp"
-            },
-            "session_id": {
-              "$ref": "#/$defs/SessionId"
-            },
-            "turn_id": {
-              "$ref": "#/$defs/TurnId"
-            },
-            "output_id": {
-              "$ref": "#/$defs/OutputId"
-            },
-            "output": {
-              "$ref": "#/$defs/OutputContent"
-            },
-            "usage": {
-              "$ref": "#/$defs/ProviderUsage",
-              "description": "Aggregate provider counters for the private commit and bounded repair calls. Absent counters remain absent."
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "type",
-            "seq",
-            "at",
-            "session_id",
-            "output_id",
-            "schema_hash",
-            "error"
-          ],
-          "properties": {
-            "type": {
-              "type": "string",
-              "enum": [
-                "output.failed"
-              ]
-            },
-            "seq": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "at": {
-              "$ref": "#/$defs/Timestamp"
-            },
-            "session_id": {
-              "$ref": "#/$defs/SessionId"
-            },
-            "turn_id": {
-              "$ref": "#/$defs/TurnId"
-            },
-            "output_id": {
-              "$ref": "#/$defs/OutputId"
-            },
-            "schema_hash": {
-              "$ref": "#/$defs/Sha256Hex"
-            },
-            "error": {
-              "$ref": "#/$defs/ApiError"
-            },
-            "issues": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/OutputValidationIssue"
-              }
-            },
-            "usage": {
-              "$ref": "#/$defs/ProviderUsage",
-              "description": "Aggregate provider counters for any private commit or repair calls completed before failure."
             }
           }
         },
@@ -1456,6 +1447,10 @@
             "tool_calls": {
               "type": "integer",
               "minimum": 0
+            },
+            "result": {
+              "$ref": "#/$defs/TurnResult",
+              "description": "Present when a return_direct external tool completed the turn."
             }
           }
         },
@@ -1697,6 +1692,9 @@
         },
         "request_id": {
           "type": "string"
+        },
+        "details": {
+          "description": "Machine-readable failure details when available, such as bounded validation issues."
         }
       }
     },

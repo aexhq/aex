@@ -2,21 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { Aex } from "@aexhq/sdk";
-import { computer, subagents, webFetch, webSearch } from "../dist/index.js";
+import { bash, edit, read, subagents, webFetch, webSearch, write } from "../dist/index.js";
 
 test("subagents selects the stable task primitive", () => {
   assert.deepEqual(subagents(), { kind: "aex.builtin", name: "task" });
   assert.ok(Object.isFrozen(subagents()));
 });
 
-test("computer expands to the ordered hand toolset", () => {
-  const selected = computer();
+test("hand helpers select individual builtins", () => {
   assert.deepEqual(
-    selected.tools.map((tool) => tool.name),
-    ["bash", "read", "write", "edit", "glob", "grep", "ls"],
+    [bash(), read(), write(), edit()].map((tool) => tool.name),
+    ["bash", "read", "write", "edit"],
   );
-  assert.ok(Object.isFrozen(selected));
-  assert.ok(Object.isFrozen(selected.tools));
 });
 
 test("managed web helpers select only their matching builtins", () => {
@@ -47,17 +44,14 @@ test("SDK creation compiles imported values into the sealed builtin order", asyn
 
   await aex.sessions.create({
     model: { provider: "anthropic", name: "test", apiKey: "sk-ant-test" },
-    tools: [subagents(), computer()],
+    tools: [bash(), read(), write(), edit(), subagents()],
   });
 
   assert.deepEqual(body.tools.builtin, [
-    "task",
     "bash",
     "read",
     "write",
     "edit",
-    "glob",
-    "grep",
-    "ls",
+    "task",
   ]);
 });

@@ -265,6 +265,7 @@ async fn spawn_control_with_payments(
         stripe_webhook: None,
         card: RateCard::default(),
         operator_token_hash: Some(aex_control::identity::hash_secret(OPERATOR_TOKEN)),
+        external_executor_token_hash: None,
         default_limits: limits,
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

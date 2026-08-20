@@ -20,25 +20,29 @@ const session = await aex.sessions.create({
   },
 });
 
-const result = await session.output(
-  z.object({
-    summary: z.string(),
-    nextSteps: z.array(z.string()),
-  }),
+const result = await session.send(
   "Give me a concise launch plan for a small production AI application.",
+  {
+    output: z.object({
+      summary: z.string(),
+      nextSteps: z.array(z.string()),
+    }),
+  },
 );
 
 console.log(result.summary);
 ```
 
-`session.output()` returns a normal typed Promise. Aex keeps the schema and any repair attempt out
-of the session conversation, validates the result, and rejects with a typed error if it cannot
-produce the requested shape. The SDK uses `https://api.aex.dev` by default.
+`session.send(input, { output: schema })` returns a normal typed Promise. The schema is scoped to
+this send, Aex validates submissions in its trusted control plane, and the Promise rejects with a
+typed error if the agent cannot produce the requested shape. The SDK uses `https://api.aex.dev` by
+default.
 
-Sessions start with no tools. Install `@aexhq/tools` and add explicit imported capabilities when
-the agent needs a computer, subagents, managed web access, or another integration.
+Sessions start with no model tools. Install `@aexhq/tools` and pass the exact capabilities the
+application wants to grant, such as `bash()`, `read()`, `write()`, `edit()`, or `subagents()`.
+Omitting `tools` and passing `tools: []` are equivalent.
 
-Use `session.send()` when you want ordinary text, and call either method again to continue the same
+Omit `output` when you want ordinary text, and call `session.send()` again to continue the same
 session.
 
 Reference: [session API](../contracts/session/v1/openapi.yaml) ·

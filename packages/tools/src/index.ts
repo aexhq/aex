@@ -1,11 +1,7 @@
-import type { BuiltinToolName, Tool, Toolset } from "@aexhq/sdk";
+import type { BuiltinToolName, Tool } from "@aexhq/sdk";
 
 function builtin(name: BuiltinToolName): Tool {
   return Object.freeze({ kind: "aex.builtin", name });
-}
-
-function group(tools: readonly Tool[]): Toolset {
-  return Object.freeze({ kind: "aex.toolset", tools: Object.freeze([...tools]) });
 }
 
 export const bash = (): Tool => builtin("bash");
@@ -24,7 +20,3 @@ export const webFetch = (): Tool => builtin("web_fetch");
  * The stable session wire calls this primitive `task`; applications select it by intent.
  */
 export const subagents = (): Tool => builtin("task");
-
-/** All seven tools backed by the session's managed computer. */
-export const computer = (): Toolset =>
-  group([bash(), read(), write(), edit(), glob(), grep(), ls()]);

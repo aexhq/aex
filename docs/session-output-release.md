@@ -1,21 +1,18 @@
 # Session output release handoff
 
-The typed-output implementation spans `aex` and `brain`. Do not publish the SDK before the
-matching session API is deployed.
+The typed-output implementation spans `aex`, `brain`, and hosted platform configuration. Do not
+publish the SDK before the matching control plane and Brain revisions are deployed.
 
 ## Source order
 
-1. Merge the `aex` contract, control-plane, SDK, and CLI changes.
-2. Tag that exact public commit as `aex-contracts-v0.4.0` and push the tag.
-3. In `brain`, change the workspace `aex-contracts` dependency from
-   `aex-contracts-v0.3.0` to `aex-contracts-v0.4.0`, remove the local path patch, refresh
-   `Cargo.lock`, and rerun the brain gates.
-4. Merge and deploy the matching brain and control-plane revisions.
-5. Run the quickstart against production, including one valid output, one bounded repair, one
-   cancellation, and one same-key retry.
-
-The local brain checkout currently uses an excluded `.cargo/config.toml` path patch only because
-the new contract tag does not exist yet. It must not be part of a release artifact.
+1. Merge and tag the Brain-owned protocol plus generic external-tool executor support.
+2. Point Aex at that immutable Brain protocol identity and regenerate its public contract views.
+3. Merge the Aex control-plane, SDK, and CLI changes.
+4. Configure Brain's `AEX_EXTERNAL_TOOL_EXECUTOR_URL` and give Brain and aex-control the same
+   `AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN` secret. Never put that token in a session, journal, or hand.
+5. Deploy the matching Brain and control-plane revisions, then publish contracts, SDK, and CLI.
+6. Run the quickstart against production, including one valid output, one bounded repair, one
+   final validation failure, cancellation, and one same-key retry.
 
 ## npm order
 
@@ -32,9 +29,14 @@ their manifests.
 
 ## Final proof
 
-Use the example in `docs/quickstart.md` unchanged. After the output resolves, send another message
-to the same session and inspect the provider request: it may contain the validated output value,
-but must not contain the schema, output-control instruction, invalid candidate, validation issues,
-or repair instruction.
+Use the example in `docs/quickstart.md` unchanged. Confirm that the stable `aex_submit_output` tool
+was present from session creation, ordinary tools remained available, and no provider-native
+response-format option or private model call occurred. Verify validation happened in aex-control,
+the successful sole tool call completed the turn without another model round, and a retry of the
+same Brain call id returned the exact stored executor response.
+
+The per-send schema and any validation feedback are ordinary model-visible messages for that turn.
+They must not be placed in the sealed system prefix, the hand/microVM, or provider configuration.
+Large files remain assets; inline typed output is bounded by the journal item limit.
 
 Nothing in this handoff deploys services, creates a Git tag, or publishes an npm package by itself.

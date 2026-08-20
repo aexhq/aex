@@ -28,6 +28,20 @@
         },
         "protocol": "auto"
       }
+    ],
+    "external": [
+      {
+        "name": "host_result",
+        "description": "Return a result to the host.",
+        "input_schema": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "scope": "root",
+        "completion": "return_direct",
+        "effect": "replay_safe",
+        "max_input_bytes": 98304
+      }
     ]
   },
   "hand": {

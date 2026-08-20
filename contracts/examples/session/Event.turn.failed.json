@@ -5,8 +5,17 @@
   "session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0",
   "turn_id": "trn_01HZX8Y2K3M4N5P6Q7R8S9U1",
   "error": {
-    "code": "provider_error",
-    "message": "anthropic: 401 invalid x-api-key",
-    "request_id": "req_9x"
+    "code": "output_validation_error",
+    "message": "Model output did not satisfy the schema",
+    "request_id": "req_9x",
+    "details": {
+      "issues": [
+        {
+          "path": "/confidence",
+          "message": "must be less than or equal to 1",
+          "keyword": "maximum"
+        }
+      ]
+    }
   }
 }

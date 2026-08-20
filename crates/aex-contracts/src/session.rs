@@ -148,6 +148,9 @@ impl<'de> ::serde::Deserialize<'de> for AgentId {
 #[doc = "    \"code\": {"]
 #[doc = "      \"$ref\": \"#/$defs/ApiErrorCode\""]
 #[doc = "    },"]
+#[doc = "    \"details\": {"]
+#[doc = "      \"description\": \"Machine-readable failure details when available, such as bounded validation issues.\""]
+#[doc = "    },"]
 #[doc = "    \"message\": {"]
 #[doc = "      \"type\": \"string\""]
 #[doc = "    },"]
@@ -165,6 +168,9 @@ impl<'de> ::serde::Deserialize<'de> for AgentId {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct ApiError {
     pub code: ApiErrorCode,
+    #[doc = "Machine-readable failure details when available, such as bounded validation issues."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub details: ::std::option::Option<::serde_json::Value>,
     pub message: ::std::string::String,
     #[doc = "JSON pointer to the offending request field, when applicable."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -960,148 +966,6 @@ impl CreateSessionRequest {
 #[doc = "    {"]
 #[doc = "      \"type\": \"object\","]
 #[doc = "      \"required\": ["]
-#[doc = "        \"at\","]
-#[doc = "        \"output_id\","]
-#[doc = "        \"schema_hash\","]
-#[doc = "        \"seq\","]
-#[doc = "        \"session_id\","]
-#[doc = "        \"source_seq\","]
-#[doc = "        \"type\""]
-#[doc = "      ],"]
-#[doc = "      \"properties\": {"]
-#[doc = "        \"at\": {"]
-#[doc = "          \"$ref\": \"#/$defs/Timestamp\""]
-#[doc = "        },"]
-#[doc = "        \"output_id\": {"]
-#[doc = "          \"$ref\": \"#/$defs/OutputId\""]
-#[doc = "        },"]
-#[doc = "        \"schema_hash\": {"]
-#[doc = "          \"$ref\": \"#/$defs/Sha256Hex\""]
-#[doc = "        },"]
-#[doc = "        \"seq\": {"]
-#[doc = "          \"type\": \"integer\","]
-#[doc = "          \"minimum\": 1.0"]
-#[doc = "        },"]
-#[doc = "        \"session_id\": {"]
-#[doc = "          \"$ref\": \"#/$defs/SessionId\""]
-#[doc = "        },"]
-#[doc = "        \"source_seq\": {"]
-#[doc = "          \"description\": \"Last committed session sequence captured for this output request.\","]
-#[doc = "          \"type\": \"integer\","]
-#[doc = "          \"minimum\": 0.0"]
-#[doc = "        },"]
-#[doc = "        \"turn_id\": {"]
-#[doc = "          \"description\": \"Present when the output request included new user input.\","]
-#[doc = "          \"$ref\": \"#/$defs/TurnId\""]
-#[doc = "        },"]
-#[doc = "        \"type\": {"]
-#[doc = "          \"type\": \"string\","]
-#[doc = "          \"enum\": ["]
-#[doc = "            \"output.started\""]
-#[doc = "          ]"]
-#[doc = "        }"]
-#[doc = "      },"]
-#[doc = "      \"additionalProperties\": false"]
-#[doc = "    },"]
-#[doc = "    {"]
-#[doc = "      \"type\": \"object\","]
-#[doc = "      \"required\": ["]
-#[doc = "        \"at\","]
-#[doc = "        \"output\","]
-#[doc = "        \"output_id\","]
-#[doc = "        \"seq\","]
-#[doc = "        \"session_id\","]
-#[doc = "        \"type\""]
-#[doc = "      ],"]
-#[doc = "      \"properties\": {"]
-#[doc = "        \"at\": {"]
-#[doc = "          \"$ref\": \"#/$defs/Timestamp\""]
-#[doc = "        },"]
-#[doc = "        \"output\": {"]
-#[doc = "          \"$ref\": \"#/$defs/OutputContent\""]
-#[doc = "        },"]
-#[doc = "        \"output_id\": {"]
-#[doc = "          \"$ref\": \"#/$defs/OutputId\""]
-#[doc = "        },"]
-#[doc = "        \"seq\": {"]
-#[doc = "          \"type\": \"integer\","]
-#[doc = "          \"minimum\": 1.0"]
-#[doc = "        },"]
-#[doc = "        \"session_id\": {"]
-#[doc = "          \"$ref\": \"#/$defs/SessionId\""]
-#[doc = "        },"]
-#[doc = "        \"turn_id\": {"]
-#[doc = "          \"$ref\": \"#/$defs/TurnId\""]
-#[doc = "        },"]
-#[doc = "        \"type\": {"]
-#[doc = "          \"type\": \"string\","]
-#[doc = "          \"enum\": ["]
-#[doc = "            \"output.completed\""]
-#[doc = "          ]"]
-#[doc = "        },"]
-#[doc = "        \"usage\": {"]
-#[doc = "          \"description\": \"Aggregate provider counters for the private commit and bounded repair calls. Absent counters remain absent.\","]
-#[doc = "          \"$ref\": \"#/$defs/ProviderUsage\""]
-#[doc = "        }"]
-#[doc = "      },"]
-#[doc = "      \"additionalProperties\": false"]
-#[doc = "    },"]
-#[doc = "    {"]
-#[doc = "      \"type\": \"object\","]
-#[doc = "      \"required\": ["]
-#[doc = "        \"at\","]
-#[doc = "        \"error\","]
-#[doc = "        \"output_id\","]
-#[doc = "        \"schema_hash\","]
-#[doc = "        \"seq\","]
-#[doc = "        \"session_id\","]
-#[doc = "        \"type\""]
-#[doc = "      ],"]
-#[doc = "      \"properties\": {"]
-#[doc = "        \"at\": {"]
-#[doc = "          \"$ref\": \"#/$defs/Timestamp\""]
-#[doc = "        },"]
-#[doc = "        \"error\": {"]
-#[doc = "          \"$ref\": \"#/$defs/ApiError\""]
-#[doc = "        },"]
-#[doc = "        \"issues\": {"]
-#[doc = "          \"type\": \"array\","]
-#[doc = "          \"items\": {"]
-#[doc = "            \"$ref\": \"#/$defs/OutputValidationIssue\""]
-#[doc = "          }"]
-#[doc = "        },"]
-#[doc = "        \"output_id\": {"]
-#[doc = "          \"$ref\": \"#/$defs/OutputId\""]
-#[doc = "        },"]
-#[doc = "        \"schema_hash\": {"]
-#[doc = "          \"$ref\": \"#/$defs/Sha256Hex\""]
-#[doc = "        },"]
-#[doc = "        \"seq\": {"]
-#[doc = "          \"type\": \"integer\","]
-#[doc = "          \"minimum\": 1.0"]
-#[doc = "        },"]
-#[doc = "        \"session_id\": {"]
-#[doc = "          \"$ref\": \"#/$defs/SessionId\""]
-#[doc = "        },"]
-#[doc = "        \"turn_id\": {"]
-#[doc = "          \"$ref\": \"#/$defs/TurnId\""]
-#[doc = "        },"]
-#[doc = "        \"type\": {"]
-#[doc = "          \"type\": \"string\","]
-#[doc = "          \"enum\": ["]
-#[doc = "            \"output.failed\""]
-#[doc = "          ]"]
-#[doc = "        },"]
-#[doc = "        \"usage\": {"]
-#[doc = "          \"description\": \"Aggregate provider counters for any private commit or repair calls completed before failure.\","]
-#[doc = "          \"$ref\": \"#/$defs/ProviderUsage\""]
-#[doc = "        }"]
-#[doc = "      },"]
-#[doc = "      \"additionalProperties\": false"]
-#[doc = "    },"]
-#[doc = "    {"]
-#[doc = "      \"type\": \"object\","]
-#[doc = "      \"required\": ["]
 #[doc = "        \"agent_id\","]
 #[doc = "        \"at\","]
 #[doc = "        \"seq\","]
@@ -1590,6 +1454,10 @@ impl CreateSessionRequest {
 #[doc = "        \"at\": {"]
 #[doc = "          \"$ref\": \"#/$defs/Timestamp\""]
 #[doc = "        },"]
+#[doc = "        \"result\": {"]
+#[doc = "          \"description\": \"Present when a return_direct external tool completed the turn.\","]
+#[doc = "          \"$ref\": \"#/$defs/TurnResult\""]
+#[doc = "        },"]
 #[doc = "        \"rounds\": {"]
 #[doc = "          \"description\": \"Model calls in this turn (root agent).\","]
 #[doc = "          \"type\": \"integer\","]
@@ -1660,7 +1528,7 @@ impl CreateSessionRequest {
 #[doc = r" ```"]
 #[doc = r" </details>"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-#[serde(tag = "type", deny_unknown_fields)]
+#[serde(tag = "type")]
 pub enum Event {
     #[serde(rename = "turn.started")]
     TurnStarted {
@@ -1668,48 +1536,6 @@ pub enum Event {
         seq: ::std::num::NonZeroU64,
         session_id: SessionId,
         turn_id: TurnId,
-    },
-    #[serde(rename = "output.started")]
-    OutputStarted {
-        at: Timestamp,
-        output_id: OutputId,
-        schema_hash: Sha256Hex,
-        seq: ::std::num::NonZeroU64,
-        session_id: SessionId,
-        #[doc = "Last committed session sequence captured for this output request."]
-        source_seq: u64,
-        #[doc = "Present when the output request included new user input."]
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        turn_id: ::std::option::Option<TurnId>,
-    },
-    #[serde(rename = "output.completed")]
-    OutputCompleted {
-        at: Timestamp,
-        output: OutputContent,
-        output_id: OutputId,
-        seq: ::std::num::NonZeroU64,
-        session_id: SessionId,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        turn_id: ::std::option::Option<TurnId>,
-        #[doc = "Aggregate provider counters for the private commit and bounded repair calls. Absent counters remain absent."]
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        usage: ::std::option::Option<ProviderUsage>,
-    },
-    #[serde(rename = "output.failed")]
-    OutputFailed {
-        at: Timestamp,
-        error: ApiError,
-        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-        issues: ::std::vec::Vec<OutputValidationIssue>,
-        output_id: OutputId,
-        schema_hash: Sha256Hex,
-        seq: ::std::num::NonZeroU64,
-        session_id: SessionId,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        turn_id: ::std::option::Option<TurnId>,
-        #[doc = "Aggregate provider counters for any private commit or repair calls completed before failure."]
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        usage: ::std::option::Option<ProviderUsage>,
     },
     #[serde(rename = "assistant.delta")]
     AssistantDelta {
@@ -1833,6 +1659,9 @@ pub enum Event {
     #[serde(rename = "turn.completed")]
     TurnCompleted {
         at: Timestamp,
+        #[doc = "Present when a return_direct external tool completed the turn."]
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        result: ::std::option::Option<TurnResult>,
         #[doc = "Model calls in this turn (root agent)."]
         rounds: u64,
         seq: ::std::num::NonZeroU64,
@@ -1992,6 +1821,717 @@ impl ::std::convert::TryFrom<&::std::string::String> for EventStream {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for EventStream {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Generic Brain-to-host executor request. Repeating a replay_safe call uses the same session_id and call_id."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Generic Brain-to-host executor request. Repeating a replay_safe call uses the same session_id and call_id.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"agent_id\","]
+#[doc = "    \"call_id\","]
+#[doc = "    \"context\","]
+#[doc = "    \"input\","]
+#[doc = "    \"name\","]
+#[doc = "    \"session_id\","]
+#[doc = "    \"turn_id\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"agent_id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/AgentId\""]
+#[doc = "    },"]
+#[doc = "    \"call_id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/CallId\""]
+#[doc = "    },"]
+#[doc = "    \"context\": {"]
+#[doc = "      \"description\": \"Trusted, journaled message metadata supplied by the host, not model arguments.\","]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"additionalProperties\": {"]
+#[doc = "        \"type\": \"string\""]
+#[doc = "      }"]
+#[doc = "    },"]
+#[doc = "    \"input\": {},"]
+#[doc = "    \"name\": {"]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    \"session_id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/SessionId\""]
+#[doc = "    },"]
+#[doc = "    \"turn_id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/TurnId\""]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalToolCallRequest {
+    pub agent_id: AgentId,
+    pub call_id: CallId,
+    #[doc = "Trusted, journaled message metadata supplied by the host, not model arguments."]
+    pub context: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+    pub input: ::serde_json::Value,
+    pub name: ::std::string::String,
+    pub session_id: SessionId,
+    pub turn_id: TurnId,
+}
+impl ExternalToolCallRequest {
+    pub fn builder() -> builder::ExternalToolCallRequest {
+        Default::default()
+    }
+}
+#[doc = "Generic host executor result. Brain honors terminal dispositions only for a return_direct tool called alone by an allowed agent."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Generic host executor result. Brain honors terminal dispositions only for a return_direct tool called alone by an allowed agent.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"content\","]
+#[doc = "    \"disposition\","]
+#[doc = "    \"is_error\","]
+#[doc = "    \"outcome\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"content\": {"]
+#[doc = "      \"description\": \"Bounded result shown to the model and journaled as the tool result.\","]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"maxLength\": 98304,"]
+#[doc = "      \"minLength\": 1"]
+#[doc = "    },"]
+#[doc = "    \"disposition\": {"]
+#[doc = "      \"$ref\": \"#/$defs/ExternalToolDisposition\""]
+#[doc = "    },"]
+#[doc = "    \"error\": {"]
+#[doc = "      \"description\": \"Turn failure attached to turn.failed when disposition is fail_turn.\","]
+#[doc = "      \"$ref\": \"#/$defs/ApiError\""]
+#[doc = "    },"]
+#[doc = "    \"is_error\": {"]
+#[doc = "      \"type\": \"boolean\""]
+#[doc = "    },"]
+#[doc = "    \"outcome\": {"]
+#[doc = "      \"$ref\": \"#/$defs/ToolOutcome\""]
+#[doc = "    },"]
+#[doc = "    \"result\": {"]
+#[doc = "      \"description\": \"Client-facing value attached to turn.completed when disposition is complete_turn.\""]
+#[doc = "    },"]
+#[doc = "    \"result_metadata\": {"]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"additionalProperties\": {"]
+#[doc = "        \"type\": \"string\""]
+#[doc = "      }"]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalToolCallResponse {
+    #[doc = "Bounded result shown to the model and journaled as the tool result."]
+    pub content: ExternalToolCallResponseContent,
+    pub disposition: ExternalToolDisposition,
+    #[doc = "Turn failure attached to turn.failed when disposition is fail_turn."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<ApiError>,
+    pub is_error: bool,
+    pub outcome: ToolOutcome,
+    #[doc = "Client-facing value attached to turn.completed when disposition is complete_turn."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub result: ::std::option::Option<::serde_json::Value>,
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+    )]
+    pub result_metadata: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+}
+impl ExternalToolCallResponse {
+    pub fn builder() -> builder::ExternalToolCallResponse {
+        Default::default()
+    }
+}
+#[doc = "Bounded result shown to the model and journaled as the tool result."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Bounded result shown to the model and journaled as the tool result.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"maxLength\": 98304,"]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct ExternalToolCallResponseContent(::std::string::String);
+impl ::std::ops::Deref for ExternalToolCallResponseContent {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<ExternalToolCallResponseContent> for ::std::string::String {
+    fn from(value: ExternalToolCallResponseContent) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for ExternalToolCallResponseContent {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 98304usize {
+            return Err("longer than 98304 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for ExternalToolCallResponseContent {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ExternalToolCallResponseContent {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ExternalToolCallResponseContent {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ExternalToolCallResponseContent {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "continue returns the result to the model. return_direct may complete or fail the turn without another model call."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"continue returns the result to the model. return_direct may complete or fail the turn without another model call.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"continue\","]
+#[doc = "    \"return_direct\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ExternalToolCompletion {
+    #[serde(rename = "continue")]
+    Continue,
+    #[serde(rename = "return_direct")]
+    ReturnDirect,
+}
+impl ::std::fmt::Display for ExternalToolCompletion {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Continue => f.write_str("continue"),
+            Self::ReturnDirect => f.write_str("return_direct"),
+        }
+    }
+}
+impl ::std::str::FromStr for ExternalToolCompletion {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "continue" => Ok(Self::Continue),
+            "return_direct" => Ok(Self::ReturnDirect),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ExternalToolCompletion {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ExternalToolCompletion {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ExternalToolCompletion {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "A model-visible tool executed by the Brain host's configured external executor. The executor address and credentials are host configuration, never session data."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"A model-visible tool executed by the Brain host's configured external executor. The executor address and credentials are host configuration, never session data.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"completion\","]
+#[doc = "    \"description\","]
+#[doc = "    \"effect\","]
+#[doc = "    \"input_schema\","]
+#[doc = "    \"max_input_bytes\","]
+#[doc = "    \"name\","]
+#[doc = "    \"scope\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"completion\": {"]
+#[doc = "      \"$ref\": \"#/$defs/ExternalToolCompletion\""]
+#[doc = "    },"]
+#[doc = "    \"description\": {"]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"maxLength\": 4096,"]
+#[doc = "      \"minLength\": 1"]
+#[doc = "    },"]
+#[doc = "    \"effect\": {"]
+#[doc = "      \"$ref\": \"#/$defs/ExternalToolEffect\""]
+#[doc = "    },"]
+#[doc = "    \"input_schema\": {"]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"minProperties\": 1,"]
+#[doc = "      \"additionalProperties\": true"]
+#[doc = "    },"]
+#[doc = "    \"max_input_bytes\": {"]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 98304.0,"]
+#[doc = "      \"minimum\": 1.0"]
+#[doc = "    },"]
+#[doc = "    \"name\": {"]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"pattern\": \"^[A-Za-z_][A-Za-z0-9_-]{0,63}$\""]
+#[doc = "    },"]
+#[doc = "    \"scope\": {"]
+#[doc = "      \"$ref\": \"#/$defs/ExternalToolScope\""]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalToolConfig {
+    pub completion: ExternalToolCompletion,
+    pub description: ExternalToolConfigDescription,
+    pub effect: ExternalToolEffect,
+    pub input_schema: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    pub max_input_bytes: ::std::num::NonZeroU64,
+    pub name: ExternalToolConfigName,
+    pub scope: ExternalToolScope,
+}
+impl ExternalToolConfig {
+    pub fn builder() -> builder::ExternalToolConfig {
+        Default::default()
+    }
+}
+#[doc = "`ExternalToolConfigDescription`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"maxLength\": 4096,"]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct ExternalToolConfigDescription(::std::string::String);
+impl ::std::ops::Deref for ExternalToolConfigDescription {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<ExternalToolConfigDescription> for ::std::string::String {
+    fn from(value: ExternalToolConfigDescription) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for ExternalToolConfigDescription {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 4096usize {
+            return Err("longer than 4096 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for ExternalToolConfigDescription {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ExternalToolConfigDescription {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ExternalToolConfigDescription {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ExternalToolConfigDescription {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`ExternalToolConfigName`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"pattern\": \"^[A-Za-z_][A-Za-z0-9_-]{0,63}$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct ExternalToolConfigName(::std::string::String);
+impl ::std::ops::Deref for ExternalToolConfigName {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<ExternalToolConfigName> for ::std::string::String {
+    fn from(value: ExternalToolConfigName) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for ExternalToolConfigName {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^[A-Za-z_][A-Za-z0-9_-]{0,63}$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^[A-Za-z_][A-Za-z0-9_-]{0,63}$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for ExternalToolConfigName {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ExternalToolConfigName {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ExternalToolConfigName {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ExternalToolConfigName {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "`ExternalToolDisposition`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"continue\","]
+#[doc = "    \"complete_turn\","]
+#[doc = "    \"fail_turn\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ExternalToolDisposition {
+    #[serde(rename = "continue")]
+    Continue,
+    #[serde(rename = "complete_turn")]
+    CompleteTurn,
+    #[serde(rename = "fail_turn")]
+    FailTurn,
+}
+impl ::std::fmt::Display for ExternalToolDisposition {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Continue => f.write_str("continue"),
+            Self::CompleteTurn => f.write_str("complete_turn"),
+            Self::FailTurn => f.write_str("fail_turn"),
+        }
+    }
+}
+impl ::std::str::FromStr for ExternalToolDisposition {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "continue" => Ok(Self::Continue),
+            "complete_turn" => Ok(Self::CompleteTurn),
+            "fail_turn" => Ok(Self::FailTurn),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ExternalToolDisposition {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ExternalToolDisposition {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ExternalToolDisposition {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "replay_safe promises that repeating the same session_id and call_id returns the same logical result."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"replay_safe promises that repeating the same session_id and call_id returns the same logical result.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"opaque\","]
+#[doc = "    \"replay_safe\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ExternalToolEffect {
+    #[serde(rename = "opaque")]
+    Opaque,
+    #[serde(rename = "replay_safe")]
+    ReplaySafe,
+}
+impl ::std::fmt::Display for ExternalToolEffect {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Opaque => f.write_str("opaque"),
+            Self::ReplaySafe => f.write_str("replay_safe"),
+        }
+    }
+}
+impl ::std::str::FromStr for ExternalToolEffect {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "opaque" => Ok(Self::Opaque),
+            "replay_safe" => Ok(Self::ReplaySafe),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ExternalToolEffect {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ExternalToolEffect {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ExternalToolEffect {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Host-executed tools are root-only in the MVP, keeping terminal control out of subagents."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Host-executed tools are root-only in the MVP, keeping terminal control out of subagents.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"enum\": ["]
+#[doc = "    \"root\""]
+#[doc = "  ]"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ExternalToolScope {
+    #[serde(rename = "root")]
+    Root,
+}
+impl ::std::fmt::Display for ExternalToolScope {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Root => f.write_str("root"),
+        }
+    }
+}
+impl ::std::str::FromStr for ExternalToolScope {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "root" => Ok(Self::Root),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ExternalToolScope {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for ExternalToolScope {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ExternalToolScope {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -2924,6 +3464,14 @@ impl<'de> ::serde::Deserialize<'de> for McpServerConfigName {
 #[doc = "    \"turn_id\""]
 #[doc = "  ],"]
 #[doc = "  \"properties\": {"]
+#[doc = "    \"output_id\": {"]
+#[doc = "      \"description\": \"Present when this message requested typed output.\","]
+#[doc = "      \"$ref\": \"#/$defs/OutputId\""]
+#[doc = "    },"]
+#[doc = "    \"schema_hash\": {"]
+#[doc = "      \"description\": \"Present when this message requested typed output.\","]
+#[doc = "      \"$ref\": \"#/$defs/Sha256Hex\""]
+#[doc = "    },"]
 #[doc = "    \"seq\": {"]
 #[doc = "      \"description\": \"Journal sequence of the turn.started event.\","]
 #[doc = "      \"type\": \"integer\","]
@@ -2941,6 +3489,12 @@ impl<'de> ::serde::Deserialize<'de> for McpServerConfigName {
 #[doc = r" </details>"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct MessageAccepted {
+    #[doc = "Present when this message requested typed output."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub output_id: ::std::option::Option<OutputId>,
+    #[doc = "Present when this message requested typed output."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub schema_hash: ::std::option::Option<Sha256Hex>,
     #[doc = "Journal sequence of the turn.started event."]
     pub seq: ::std::num::NonZeroU64,
     pub session_id: SessionId,
@@ -2948,6 +3502,52 @@ pub struct MessageAccepted {
 }
 impl MessageAccepted {
     pub fn builder() -> builder::MessageAccepted {
+        Default::default()
+    }
+}
+#[doc = "`MessageOutput`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"schema\","]
+#[doc = "    \"schema_hash\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"retries\": {"]
+#[doc = "      \"description\": \"Extra model attempts after the first invalid candidate.\","]
+#[doc = "      \"default\": 1,"]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 2.0,"]
+#[doc = "      \"minimum\": 0.0"]
+#[doc = "    },"]
+#[doc = "    \"schema\": {"]
+#[doc = "      \"$ref\": \"#/$defs/OutputSchema\""]
+#[doc = "    },"]
+#[doc = "    \"schema_hash\": {"]
+#[doc = "      \"description\": \"SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model.\","]
+#[doc = "      \"$ref\": \"#/$defs/Sha256Hex\""]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MessageOutput {
+    #[doc = "Extra model attempts after the first invalid candidate."]
+    #[serde(default = "defaults::default_u64::<i64, 1>")]
+    pub retries: i64,
+    pub schema: OutputSchema,
+    #[doc = "SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model."]
+    pub schema_hash: Sha256Hex,
+}
+impl MessageOutput {
+    pub fn builder() -> builder::MessageOutput {
         Default::default()
     }
 }
@@ -2982,6 +3582,10 @@ impl MessageAccepted {
 #[doc = "      \"additionalProperties\": {"]
 #[doc = "        \"type\": \"string\""]
 #[doc = "      }"]
+#[doc = "    },"]
+#[doc = "    \"output\": {"]
+#[doc = "      \"description\": \"Optional typed result requested for this turn. It is a per-message operation, not session configuration.\","]
+#[doc = "      \"$ref\": \"#/$defs/MessageOutput\""]
 #[doc = "    }"]
 #[doc = "  },"]
 #[doc = "  \"additionalProperties\": false"]
@@ -2997,6 +3601,9 @@ pub struct MessageRequest {
         skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
     )]
     pub metadata: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+    #[doc = "Optional typed result requested for this turn. It is a per-message operation, not session configuration."]
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub output: ::std::option::Option<MessageOutput>,
 }
 impl MessageRequest {
     pub fn builder() -> builder::MessageRequest {
@@ -3444,166 +4051,6 @@ impl ModelInfo {
         Default::default()
     }
 }
-#[doc = "The output request was admitted. Follow the session event stream from seq - 1 until the matching output.completed or output.failed event."]
-#[doc = r""]
-#[doc = r" <details><summary>JSON schema</summary>"]
-#[doc = r""]
-#[doc = r" ```json"]
-#[doc = "{"]
-#[doc = "  \"description\": \"The output request was admitted. Follow the session event stream from seq - 1 until the matching output.completed or output.failed event.\","]
-#[doc = "  \"type\": \"object\","]
-#[doc = "  \"required\": ["]
-#[doc = "    \"output_id\","]
-#[doc = "    \"schema_hash\","]
-#[doc = "    \"seq\","]
-#[doc = "    \"session_id\""]
-#[doc = "  ],"]
-#[doc = "  \"properties\": {"]
-#[doc = "    \"output_id\": {"]
-#[doc = "      \"$ref\": \"#/$defs/OutputId\""]
-#[doc = "    },"]
-#[doc = "    \"schema_hash\": {"]
-#[doc = "      \"$ref\": \"#/$defs/Sha256Hex\""]
-#[doc = "    },"]
-#[doc = "    \"seq\": {"]
-#[doc = "      \"description\": \"Journal sequence of the output.started event.\","]
-#[doc = "      \"type\": \"integer\","]
-#[doc = "      \"minimum\": 1.0"]
-#[doc = "    },"]
-#[doc = "    \"session_id\": {"]
-#[doc = "      \"$ref\": \"#/$defs/SessionId\""]
-#[doc = "    }"]
-#[doc = "  },"]
-#[doc = "  \"additionalProperties\": false"]
-#[doc = "}"]
-#[doc = r" ```"]
-#[doc = r" </details>"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct OutputAccepted {
-    pub output_id: OutputId,
-    pub schema_hash: Sha256Hex,
-    #[doc = "Journal sequence of the output.started event."]
-    pub seq: ::std::num::NonZeroU64,
-    pub session_id: SessionId,
-}
-impl OutputAccepted {
-    pub fn builder() -> builder::OutputAccepted {
-        Default::default()
-    }
-}
-#[doc = "The only durable assistant content created by the private output commit phase. The schema and repair context are never journaled."]
-#[doc = r""]
-#[doc = r" <details><summary>JSON schema</summary>"]
-#[doc = r""]
-#[doc = r" ```json"]
-#[doc = "{"]
-#[doc = "  \"description\": \"The only durable assistant content created by the private output commit phase. The schema and repair context are never journaled.\","]
-#[doc = "  \"type\": \"object\","]
-#[doc = "  \"required\": ["]
-#[doc = "    \"schema_hash\","]
-#[doc = "    \"type\","]
-#[doc = "    \"value\""]
-#[doc = "  ],"]
-#[doc = "  \"properties\": {"]
-#[doc = "    \"schema_hash\": {"]
-#[doc = "      \"$ref\": \"#/$defs/Sha256Hex\""]
-#[doc = "    },"]
-#[doc = "    \"type\": {"]
-#[doc = "      \"type\": \"string\","]
-#[doc = "      \"enum\": ["]
-#[doc = "        \"output\""]
-#[doc = "      ]"]
-#[doc = "    },"]
-#[doc = "    \"value\": {"]
-#[doc = "      \"description\": \"The validated JSON value.\""]
-#[doc = "    }"]
-#[doc = "  },"]
-#[doc = "  \"additionalProperties\": false"]
-#[doc = "}"]
-#[doc = r" ```"]
-#[doc = r" </details>"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct OutputContent {
-    pub schema_hash: Sha256Hex,
-    #[serde(rename = "type")]
-    pub type_: OutputContentType,
-    #[doc = "The validated JSON value."]
-    pub value: ::serde_json::Value,
-}
-impl OutputContent {
-    pub fn builder() -> builder::OutputContent {
-        Default::default()
-    }
-}
-#[doc = "`OutputContentType`"]
-#[doc = r""]
-#[doc = r" <details><summary>JSON schema</summary>"]
-#[doc = r""]
-#[doc = r" ```json"]
-#[doc = "{"]
-#[doc = "  \"type\": \"string\","]
-#[doc = "  \"enum\": ["]
-#[doc = "    \"output\""]
-#[doc = "  ]"]
-#[doc = "}"]
-#[doc = r" ```"]
-#[doc = r" </details>"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-)]
-pub enum OutputContentType {
-    #[serde(rename = "output")]
-    Output,
-}
-impl ::std::fmt::Display for OutputContentType {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::Output => f.write_str("output"),
-        }
-    }
-}
-impl ::std::str::FromStr for OutputContentType {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "output" => Ok(Self::Output),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for OutputContentType {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<&::std::string::String> for OutputContentType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for OutputContentType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 #[doc = "Correlation id for one output request. It is not a separately managed resource."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
@@ -3677,186 +4124,13 @@ impl<'de> ::serde::Deserialize<'de> for OutputId {
             })
     }
 }
-#[doc = "`OutputRequest`"]
+#[doc = "JSON Schema 2020-12 produced by the SDK. Aex validates it in the trusted host executor; it is never provider-native response-format configuration."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"type\": \"object\","]
-#[doc = "  \"required\": ["]
-#[doc = "    \"schema\","]
-#[doc = "    \"schema_hash\""]
-#[doc = "  ],"]
-#[doc = "  \"properties\": {"]
-#[doc = "    \"input\": {"]
-#[doc = "      \"description\": \"Optional real user input. It is journaled and worked normally before the private output commit step.\","]
-#[doc = "      \"oneOf\": ["]
-#[doc = "        {"]
-#[doc = "          \"type\": \"string\","]
-#[doc = "          \"minLength\": 1"]
-#[doc = "        },"]
-#[doc = "        {"]
-#[doc = "          \"type\": \"array\","]
-#[doc = "          \"items\": {"]
-#[doc = "            \"$ref\": \"#/$defs/ContentPart\""]
-#[doc = "          },"]
-#[doc = "          \"minItems\": 1"]
-#[doc = "        }"]
-#[doc = "      ]"]
-#[doc = "    },"]
-#[doc = "    \"metadata\": {"]
-#[doc = "      \"type\": \"object\","]
-#[doc = "      \"additionalProperties\": {"]
-#[doc = "        \"type\": \"string\""]
-#[doc = "      }"]
-#[doc = "    },"]
-#[doc = "    \"schema\": {"]
-#[doc = "      \"$ref\": \"#/$defs/OutputSchema\""]
-#[doc = "    },"]
-#[doc = "    \"schema_hash\": {"]
-#[doc = "      \"description\": \"SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model.\","]
-#[doc = "      \"$ref\": \"#/$defs/Sha256Hex\""]
-#[doc = "    }"]
-#[doc = "  },"]
-#[doc = "  \"additionalProperties\": false"]
-#[doc = "}"]
-#[doc = r" ```"]
-#[doc = r" </details>"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct OutputRequest {
-    #[doc = "Optional real user input. It is journaled and worked normally before the private output commit step."]
-    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-    pub input: ::std::option::Option<OutputRequestInput>,
-    #[serde(
-        default,
-        skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
-    )]
-    pub metadata: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
-    pub schema: OutputSchema,
-    #[doc = "SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model."]
-    pub schema_hash: Sha256Hex,
-}
-impl OutputRequest {
-    pub fn builder() -> builder::OutputRequest {
-        Default::default()
-    }
-}
-#[doc = "Optional real user input. It is journaled and worked normally before the private output commit step."]
-#[doc = r""]
-#[doc = r" <details><summary>JSON schema</summary>"]
-#[doc = r""]
-#[doc = r" ```json"]
-#[doc = "{"]
-#[doc = "  \"description\": \"Optional real user input. It is journaled and worked normally before the private output commit step.\","]
-#[doc = "  \"oneOf\": ["]
-#[doc = "    {"]
-#[doc = "      \"type\": \"string\","]
-#[doc = "      \"minLength\": 1"]
-#[doc = "    },"]
-#[doc = "    {"]
-#[doc = "      \"type\": \"array\","]
-#[doc = "      \"items\": {"]
-#[doc = "        \"$ref\": \"#/$defs/ContentPart\""]
-#[doc = "      },"]
-#[doc = "      \"minItems\": 1"]
-#[doc = "    }"]
-#[doc = "  ]"]
-#[doc = "}"]
-#[doc = r" ```"]
-#[doc = r" </details>"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-#[serde(untagged)]
-pub enum OutputRequestInput {
-    String(OutputRequestInputString),
-    Array(::std::vec::Vec<ContentPart>),
-}
-impl ::std::convert::From<OutputRequestInputString> for OutputRequestInput {
-    fn from(value: OutputRequestInputString) -> Self {
-        Self::String(value)
-    }
-}
-impl ::std::convert::From<::std::vec::Vec<ContentPart>> for OutputRequestInput {
-    fn from(value: ::std::vec::Vec<ContentPart>) -> Self {
-        Self::Array(value)
-    }
-}
-#[doc = "`OutputRequestInputString`"]
-#[doc = r""]
-#[doc = r" <details><summary>JSON schema</summary>"]
-#[doc = r""]
-#[doc = r" ```json"]
-#[doc = "{"]
-#[doc = "  \"type\": \"string\","]
-#[doc = "  \"minLength\": 1"]
-#[doc = "}"]
-#[doc = r" ```"]
-#[doc = r" </details>"]
-#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[serde(transparent)]
-pub struct OutputRequestInputString(::std::string::String);
-impl ::std::ops::Deref for OutputRequestInputString {
-    type Target = ::std::string::String;
-    fn deref(&self) -> &::std::string::String {
-        &self.0
-    }
-}
-impl ::std::convert::From<OutputRequestInputString> for ::std::string::String {
-    fn from(value: OutputRequestInputString) -> Self {
-        value.0
-    }
-}
-impl ::std::str::FromStr for OutputRequestInputString {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if value.chars().count() < 1usize {
-            return Err("shorter than 1 characters".into());
-        }
-        Ok(Self(value.to_string()))
-    }
-}
-impl ::std::convert::TryFrom<&str> for OutputRequestInputString {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<&::std::string::String> for OutputRequestInputString {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for OutputRequestInputString {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl<'de> ::serde::Deserialize<'de> for OutputRequestInputString {
-    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-    where
-        D: ::serde::Deserializer<'de>,
-    {
-        ::std::string::String::deserialize(deserializer)?
-            .parse()
-            .map_err(|e: self::error::ConversionError| {
-                <D::Error as ::serde::de::Error>::custom(e.to_string())
-            })
-    }
-}
-#[doc = "JSON Schema 2020-12 produced by the SDK. Aex validates and normalises it for the selected model provider."]
-#[doc = r""]
-#[doc = r" <details><summary>JSON schema</summary>"]
-#[doc = r""]
-#[doc = r" ```json"]
-#[doc = "{"]
-#[doc = "  \"description\": \"JSON Schema 2020-12 produced by the SDK. Aex validates and normalises it for the selected model provider.\","]
+#[doc = "  \"description\": \"JSON Schema 2020-12 produced by the SDK. Aex validates it in the trusted host executor; it is never provider-native response-format configuration.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"minProperties\": 1,"]
 #[doc = "  \"additionalProperties\": true"]
@@ -5105,12 +5379,19 @@ impl ::std::convert::TryFrom<::std::string::String> for ToolOutcome {
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"properties\": {"]
 #[doc = "    \"builtin\": {"]
-#[doc = "      \"description\": \"Built-in tools to enable. Defaults to an empty array.\","]
+#[doc = "      \"description\": \"Built-in tools to enable. Omitted or empty means no built-in tools.\","]
 #[doc = "      \"type\": \"array\","]
 #[doc = "      \"items\": {"]
 #[doc = "        \"$ref\": \"#/$defs/BuiltinTool\""]
 #[doc = "      },"]
 #[doc = "      \"uniqueItems\": true"]
+#[doc = "    },"]
+#[doc = "    \"external\": {"]
+#[doc = "      \"description\": \"Host-executed tools sealed into the model prefix. Hosted Aex reserves its own output tool; direct Brain deployments may compose others.\","]
+#[doc = "      \"type\": \"array\","]
+#[doc = "      \"items\": {"]
+#[doc = "        \"$ref\": \"#/$defs/ExternalToolConfig\""]
+#[doc = "      }"]
 #[doc = "    },"]
 #[doc = "    \"mcp\": {"]
 #[doc = "      \"type\": \"array\","]
@@ -5126,9 +5407,12 @@ impl ::std::convert::TryFrom<::std::string::String> for ToolOutcome {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolsConfig {
-    #[doc = "Built-in tools to enable. Defaults to an empty array."]
+    #[doc = "Built-in tools to enable. Omitted or empty means no built-in tools."]
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub builtin: ::std::option::Option<Vec<BuiltinTool>>,
+    #[doc = "Host-executed tools sealed into the model prefix. Hosted Aex reserves its own output tool; direct Brain deployments may compose others."]
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub external: ::std::vec::Vec<ExternalToolConfig>,
     #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub mcp: ::std::vec::Vec<McpServerConfig>,
 }
@@ -5136,6 +5420,7 @@ impl ::std::default::Default for ToolsConfig {
     fn default() -> Self {
         Self {
             builtin: Default::default(),
+            external: Default::default(),
             mcp: Default::default(),
         }
     }
@@ -5217,11 +5502,64 @@ impl<'de> ::serde::Deserialize<'de> for TurnId {
             })
     }
 }
+#[doc = "A replayable client-facing result returned directly by a generic external tool."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"A replayable client-facing result returned directly by a generic external tool.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"call_id\","]
+#[doc = "    \"name\","]
+#[doc = "    \"value\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"call_id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/CallId\""]
+#[doc = "    },"]
+#[doc = "    \"metadata\": {"]
+#[doc = "      \"type\": \"object\","]
+#[doc = "      \"additionalProperties\": {"]
+#[doc = "        \"type\": \"string\""]
+#[doc = "      }"]
+#[doc = "    },"]
+#[doc = "    \"name\": {"]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    \"value\": {}"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TurnResult {
+    pub call_id: CallId,
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+    )]
+    pub metadata: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+    pub name: ::std::string::String,
+    pub value: ::serde_json::Value,
+}
+impl TurnResult {
+    pub fn builder() -> builder::TurnResult {
+        Default::default()
+    }
+}
 #[doc = r" Types for composing complex structures."]
 pub mod builder {
     #[derive(Clone, Debug)]
     pub struct ApiError {
         code: ::std::result::Result<super::ApiErrorCode, ::std::string::String>,
+        details: ::std::result::Result<
+            ::std::option::Option<::serde_json::Value>,
+            ::std::string::String,
+        >,
         message: ::std::result::Result<::std::string::String, ::std::string::String>,
         param: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
@@ -5236,6 +5574,7 @@ pub mod builder {
         fn default() -> Self {
             Self {
                 code: Err("no value supplied for code".to_string()),
+                details: Ok(Default::default()),
                 message: Err("no value supplied for message".to_string()),
                 param: Ok(Default::default()),
                 request_id: Ok(Default::default()),
@@ -5251,6 +5590,16 @@ pub mod builder {
             self.code = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for code: {e}"));
+            self
+        }
+        pub fn details<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::serde_json::Value>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.details = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for details: {e}"));
             self
         }
         pub fn message<T>(mut self, value: T) -> Self
@@ -5289,6 +5638,7 @@ pub mod builder {
         fn try_from(value: ApiError) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 code: value.code?,
+                details: value.details?,
                 message: value.message?,
                 param: value.param?,
                 request_id: value.request_id?,
@@ -5299,6 +5649,7 @@ pub mod builder {
         fn from(value: super::ApiError) -> Self {
             Self {
                 code: Ok(value.code),
+                details: Ok(value.details),
                 message: Ok(value.message),
                 param: Ok(value.param),
                 request_id: Ok(value.request_id),
@@ -5670,6 +6021,398 @@ pub mod builder {
                 model: Ok(value.model),
                 system_prompt: Ok(value.system_prompt),
                 tools: Ok(value.tools),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct ExternalToolCallRequest {
+        agent_id: ::std::result::Result<super::AgentId, ::std::string::String>,
+        call_id: ::std::result::Result<super::CallId, ::std::string::String>,
+        context: ::std::result::Result<
+            ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+            ::std::string::String,
+        >,
+        input: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+        name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        session_id: ::std::result::Result<super::SessionId, ::std::string::String>,
+        turn_id: ::std::result::Result<super::TurnId, ::std::string::String>,
+    }
+    impl ::std::default::Default for ExternalToolCallRequest {
+        fn default() -> Self {
+            Self {
+                agent_id: Err("no value supplied for agent_id".to_string()),
+                call_id: Err("no value supplied for call_id".to_string()),
+                context: Err("no value supplied for context".to_string()),
+                input: Err("no value supplied for input".to_string()),
+                name: Err("no value supplied for name".to_string()),
+                session_id: Err("no value supplied for session_id".to_string()),
+                turn_id: Err("no value supplied for turn_id".to_string()),
+            }
+        }
+    }
+    impl ExternalToolCallRequest {
+        pub fn agent_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::AgentId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.agent_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for agent_id: {e}"));
+            self
+        }
+        pub fn call_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::CallId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.call_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for call_id: {e}"));
+            self
+        }
+        pub fn context<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.context = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for context: {e}"));
+            self
+        }
+        pub fn input<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::serde_json::Value>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.input = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for input: {e}"));
+            self
+        }
+        pub fn name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for name: {e}"));
+            self
+        }
+        pub fn session_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::SessionId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.session_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for session_id: {e}"));
+            self
+        }
+        pub fn turn_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::TurnId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.turn_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for turn_id: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<ExternalToolCallRequest> for super::ExternalToolCallRequest {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: ExternalToolCallRequest,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                agent_id: value.agent_id?,
+                call_id: value.call_id?,
+                context: value.context?,
+                input: value.input?,
+                name: value.name?,
+                session_id: value.session_id?,
+                turn_id: value.turn_id?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::ExternalToolCallRequest> for ExternalToolCallRequest {
+        fn from(value: super::ExternalToolCallRequest) -> Self {
+            Self {
+                agent_id: Ok(value.agent_id),
+                call_id: Ok(value.call_id),
+                context: Ok(value.context),
+                input: Ok(value.input),
+                name: Ok(value.name),
+                session_id: Ok(value.session_id),
+                turn_id: Ok(value.turn_id),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct ExternalToolCallResponse {
+        content:
+            ::std::result::Result<super::ExternalToolCallResponseContent, ::std::string::String>,
+        disposition: ::std::result::Result<super::ExternalToolDisposition, ::std::string::String>,
+        error: ::std::result::Result<::std::option::Option<super::ApiError>, ::std::string::String>,
+        is_error: ::std::result::Result<bool, ::std::string::String>,
+        outcome: ::std::result::Result<super::ToolOutcome, ::std::string::String>,
+        result: ::std::result::Result<
+            ::std::option::Option<::serde_json::Value>,
+            ::std::string::String,
+        >,
+        result_metadata: ::std::result::Result<
+            ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for ExternalToolCallResponse {
+        fn default() -> Self {
+            Self {
+                content: Err("no value supplied for content".to_string()),
+                disposition: Err("no value supplied for disposition".to_string()),
+                error: Ok(Default::default()),
+                is_error: Err("no value supplied for is_error".to_string()),
+                outcome: Err("no value supplied for outcome".to_string()),
+                result: Ok(Default::default()),
+                result_metadata: Ok(Default::default()),
+            }
+        }
+    }
+    impl ExternalToolCallResponse {
+        pub fn content<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::ExternalToolCallResponseContent>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.content = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for content: {e}"));
+            self
+        }
+        pub fn disposition<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::ExternalToolDisposition>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.disposition = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for disposition: {e}"));
+            self
+        }
+        pub fn error<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::ApiError>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.error = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for error: {e}"));
+            self
+        }
+        pub fn is_error<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.is_error = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for is_error: {e}"));
+            self
+        }
+        pub fn outcome<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::ToolOutcome>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.outcome = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for outcome: {e}"));
+            self
+        }
+        pub fn result<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::serde_json::Value>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.result = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for result: {e}"));
+            self
+        }
+        pub fn result_metadata<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.result_metadata = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for result_metadata: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<ExternalToolCallResponse> for super::ExternalToolCallResponse {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: ExternalToolCallResponse,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                content: value.content?,
+                disposition: value.disposition?,
+                error: value.error?,
+                is_error: value.is_error?,
+                outcome: value.outcome?,
+                result: value.result?,
+                result_metadata: value.result_metadata?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::ExternalToolCallResponse> for ExternalToolCallResponse {
+        fn from(value: super::ExternalToolCallResponse) -> Self {
+            Self {
+                content: Ok(value.content),
+                disposition: Ok(value.disposition),
+                error: Ok(value.error),
+                is_error: Ok(value.is_error),
+                outcome: Ok(value.outcome),
+                result: Ok(value.result),
+                result_metadata: Ok(value.result_metadata),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct ExternalToolConfig {
+        completion: ::std::result::Result<super::ExternalToolCompletion, ::std::string::String>,
+        description:
+            ::std::result::Result<super::ExternalToolConfigDescription, ::std::string::String>,
+        effect: ::std::result::Result<super::ExternalToolEffect, ::std::string::String>,
+        input_schema: ::std::result::Result<
+            ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+            ::std::string::String,
+        >,
+        max_input_bytes: ::std::result::Result<::std::num::NonZeroU64, ::std::string::String>,
+        name: ::std::result::Result<super::ExternalToolConfigName, ::std::string::String>,
+        scope: ::std::result::Result<super::ExternalToolScope, ::std::string::String>,
+    }
+    impl ::std::default::Default for ExternalToolConfig {
+        fn default() -> Self {
+            Self {
+                completion: Err("no value supplied for completion".to_string()),
+                description: Err("no value supplied for description".to_string()),
+                effect: Err("no value supplied for effect".to_string()),
+                input_schema: Err("no value supplied for input_schema".to_string()),
+                max_input_bytes: Err("no value supplied for max_input_bytes".to_string()),
+                name: Err("no value supplied for name".to_string()),
+                scope: Err("no value supplied for scope".to_string()),
+            }
+        }
+    }
+    impl ExternalToolConfig {
+        pub fn completion<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::ExternalToolCompletion>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.completion = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for completion: {e}"));
+            self
+        }
+        pub fn description<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::ExternalToolConfigDescription>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.description = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for description: {e}"));
+            self
+        }
+        pub fn effect<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::ExternalToolEffect>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.effect = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for effect: {e}"));
+            self
+        }
+        pub fn input_schema<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.input_schema = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for input_schema: {e}"));
+            self
+        }
+        pub fn max_input_bytes<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::num::NonZeroU64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.max_input_bytes = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for max_input_bytes: {e}"));
+            self
+        }
+        pub fn name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::ExternalToolConfigName>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for name: {e}"));
+            self
+        }
+        pub fn scope<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::ExternalToolScope>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.scope = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for scope: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<ExternalToolConfig> for super::ExternalToolConfig {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: ExternalToolConfig,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                completion: value.completion?,
+                description: value.description?,
+                effect: value.effect?,
+                input_schema: value.input_schema?,
+                max_input_bytes: value.max_input_bytes?,
+                name: value.name?,
+                scope: value.scope?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::ExternalToolConfig> for ExternalToolConfig {
+        fn from(value: super::ExternalToolConfig) -> Self {
+            Self {
+                completion: Ok(value.completion),
+                description: Ok(value.description),
+                effect: Ok(value.effect),
+                input_schema: Ok(value.input_schema),
+                max_input_bytes: Ok(value.max_input_bytes),
+                name: Ok(value.name),
+                scope: Ok(value.scope),
             }
         }
     }
@@ -6259,6 +7002,10 @@ pub mod builder {
     }
     #[derive(Clone, Debug)]
     pub struct MessageAccepted {
+        output_id:
+            ::std::result::Result<::std::option::Option<super::OutputId>, ::std::string::String>,
+        schema_hash:
+            ::std::result::Result<::std::option::Option<super::Sha256Hex>, ::std::string::String>,
         seq: ::std::result::Result<::std::num::NonZeroU64, ::std::string::String>,
         session_id: ::std::result::Result<super::SessionId, ::std::string::String>,
         turn_id: ::std::result::Result<super::TurnId, ::std::string::String>,
@@ -6266,6 +7013,8 @@ pub mod builder {
     impl ::std::default::Default for MessageAccepted {
         fn default() -> Self {
             Self {
+                output_id: Ok(Default::default()),
+                schema_hash: Ok(Default::default()),
                 seq: Err("no value supplied for seq".to_string()),
                 session_id: Err("no value supplied for session_id".to_string()),
                 turn_id: Err("no value supplied for turn_id".to_string()),
@@ -6273,6 +7022,26 @@ pub mod builder {
         }
     }
     impl MessageAccepted {
+        pub fn output_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::OutputId>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.output_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for output_id: {e}"));
+            self
+        }
+        pub fn schema_hash<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::Sha256Hex>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.schema_hash = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for schema_hash: {e}"));
+            self
+        }
         pub fn seq<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::num::NonZeroU64>,
@@ -6310,6 +7079,8 @@ pub mod builder {
             value: MessageAccepted,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
+                output_id: value.output_id?,
+                schema_hash: value.schema_hash?,
                 seq: value.seq?,
                 session_id: value.session_id?,
                 turn_id: value.turn_id?,
@@ -6319,9 +7090,79 @@ pub mod builder {
     impl ::std::convert::From<super::MessageAccepted> for MessageAccepted {
         fn from(value: super::MessageAccepted) -> Self {
             Self {
+                output_id: Ok(value.output_id),
+                schema_hash: Ok(value.schema_hash),
                 seq: Ok(value.seq),
                 session_id: Ok(value.session_id),
                 turn_id: Ok(value.turn_id),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct MessageOutput {
+        retries: ::std::result::Result<i64, ::std::string::String>,
+        schema: ::std::result::Result<super::OutputSchema, ::std::string::String>,
+        schema_hash: ::std::result::Result<super::Sha256Hex, ::std::string::String>,
+    }
+    impl ::std::default::Default for MessageOutput {
+        fn default() -> Self {
+            Self {
+                retries: Ok(super::defaults::default_u64::<i64, 1>()),
+                schema: Err("no value supplied for schema".to_string()),
+                schema_hash: Err("no value supplied for schema_hash".to_string()),
+            }
+        }
+    }
+    impl MessageOutput {
+        pub fn retries<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<i64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.retries = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for retries: {e}"));
+            self
+        }
+        pub fn schema<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::OutputSchema>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.schema = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for schema: {e}"));
+            self
+        }
+        pub fn schema_hash<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Sha256Hex>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.schema_hash = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for schema_hash: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<MessageOutput> for super::MessageOutput {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: MessageOutput,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                retries: value.retries?,
+                schema: value.schema?,
+                schema_hash: value.schema_hash?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::MessageOutput> for MessageOutput {
+        fn from(value: super::MessageOutput) -> Self {
+            Self {
+                retries: Ok(value.retries),
+                schema: Ok(value.schema),
+                schema_hash: Ok(value.schema_hash),
             }
         }
     }
@@ -6332,12 +7173,17 @@ pub mod builder {
             ::std::collections::HashMap<::std::string::String, ::std::string::String>,
             ::std::string::String,
         >,
+        output: ::std::result::Result<
+            ::std::option::Option<super::MessageOutput>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for MessageRequest {
         fn default() -> Self {
             Self {
                 content: Err("no value supplied for content".to_string()),
                 metadata: Ok(Default::default()),
+                output: Ok(Default::default()),
             }
         }
     }
@@ -6364,6 +7210,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for metadata: {e}"));
             self
         }
+        pub fn output<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::MessageOutput>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.output = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for output: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<MessageRequest> for super::MessageRequest {
         type Error = super::error::ConversionError;
@@ -6373,6 +7229,7 @@ pub mod builder {
             Ok(Self {
                 content: value.content?,
                 metadata: value.metadata?,
+                output: value.output?,
             })
         }
     }
@@ -6381,6 +7238,7 @@ pub mod builder {
             Self {
                 content: Ok(value.content),
                 metadata: Ok(value.metadata),
+                output: Ok(value.output),
             }
         }
     }
@@ -6585,246 +7443,6 @@ pub mod builder {
                 base_url: Ok(value.base_url),
                 name: Ok(value.name),
                 provider: Ok(value.provider),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
-    pub struct OutputAccepted {
-        output_id: ::std::result::Result<super::OutputId, ::std::string::String>,
-        schema_hash: ::std::result::Result<super::Sha256Hex, ::std::string::String>,
-        seq: ::std::result::Result<::std::num::NonZeroU64, ::std::string::String>,
-        session_id: ::std::result::Result<super::SessionId, ::std::string::String>,
-    }
-    impl ::std::default::Default for OutputAccepted {
-        fn default() -> Self {
-            Self {
-                output_id: Err("no value supplied for output_id".to_string()),
-                schema_hash: Err("no value supplied for schema_hash".to_string()),
-                seq: Err("no value supplied for seq".to_string()),
-                session_id: Err("no value supplied for session_id".to_string()),
-            }
-        }
-    }
-    impl OutputAccepted {
-        pub fn output_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<super::OutputId>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.output_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for output_id: {e}"));
-            self
-        }
-        pub fn schema_hash<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<super::Sha256Hex>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.schema_hash = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for schema_hash: {e}"));
-            self
-        }
-        pub fn seq<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::num::NonZeroU64>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.seq = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for seq: {e}"));
-            self
-        }
-        pub fn session_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<super::SessionId>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.session_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for session_id: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<OutputAccepted> for super::OutputAccepted {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: OutputAccepted,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                output_id: value.output_id?,
-                schema_hash: value.schema_hash?,
-                seq: value.seq?,
-                session_id: value.session_id?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::OutputAccepted> for OutputAccepted {
-        fn from(value: super::OutputAccepted) -> Self {
-            Self {
-                output_id: Ok(value.output_id),
-                schema_hash: Ok(value.schema_hash),
-                seq: Ok(value.seq),
-                session_id: Ok(value.session_id),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
-    pub struct OutputContent {
-        schema_hash: ::std::result::Result<super::Sha256Hex, ::std::string::String>,
-        type_: ::std::result::Result<super::OutputContentType, ::std::string::String>,
-        value: ::std::result::Result<::serde_json::Value, ::std::string::String>,
-    }
-    impl ::std::default::Default for OutputContent {
-        fn default() -> Self {
-            Self {
-                schema_hash: Err("no value supplied for schema_hash".to_string()),
-                type_: Err("no value supplied for type_".to_string()),
-                value: Err("no value supplied for value".to_string()),
-            }
-        }
-    }
-    impl OutputContent {
-        pub fn schema_hash<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<super::Sha256Hex>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.schema_hash = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for schema_hash: {e}"));
-            self
-        }
-        pub fn type_<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<super::OutputContentType>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.type_ = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for type_: {e}"));
-            self
-        }
-        pub fn value<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::serde_json::Value>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.value = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for value: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<OutputContent> for super::OutputContent {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: OutputContent,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                schema_hash: value.schema_hash?,
-                type_: value.type_?,
-                value: value.value?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::OutputContent> for OutputContent {
-        fn from(value: super::OutputContent) -> Self {
-            Self {
-                schema_hash: Ok(value.schema_hash),
-                type_: Ok(value.type_),
-                value: Ok(value.value),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
-    pub struct OutputRequest {
-        input: ::std::result::Result<
-            ::std::option::Option<super::OutputRequestInput>,
-            ::std::string::String,
-        >,
-        metadata: ::std::result::Result<
-            ::std::collections::HashMap<::std::string::String, ::std::string::String>,
-            ::std::string::String,
-        >,
-        schema: ::std::result::Result<super::OutputSchema, ::std::string::String>,
-        schema_hash: ::std::result::Result<super::Sha256Hex, ::std::string::String>,
-    }
-    impl ::std::default::Default for OutputRequest {
-        fn default() -> Self {
-            Self {
-                input: Ok(Default::default()),
-                metadata: Ok(Default::default()),
-                schema: Err("no value supplied for schema".to_string()),
-                schema_hash: Err("no value supplied for schema_hash".to_string()),
-            }
-        }
-    }
-    impl OutputRequest {
-        pub fn input<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<super::OutputRequestInput>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.input = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for input: {e}"));
-            self
-        }
-        pub fn metadata<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<
-                    ::std::collections::HashMap<::std::string::String, ::std::string::String>,
-                >,
-            T::Error: ::std::fmt::Display,
-        {
-            self.metadata = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for metadata: {e}"));
-            self
-        }
-        pub fn schema<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<super::OutputSchema>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.schema = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for schema: {e}"));
-            self
-        }
-        pub fn schema_hash<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<super::Sha256Hex>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.schema_hash = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for schema_hash: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<OutputRequest> for super::OutputRequest {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: OutputRequest,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                input: value.input?,
-                metadata: value.metadata?,
-                schema: value.schema?,
-                schema_hash: value.schema_hash?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::OutputRequest> for OutputRequest {
-        fn from(value: super::OutputRequest) -> Self {
-            Self {
-                input: Ok(value.input),
-                metadata: Ok(value.metadata),
-                schema: Ok(value.schema),
-                schema_hash: Ok(value.schema_hash),
             }
         }
     }
@@ -7511,12 +8129,17 @@ pub mod builder {
             ::std::option::Option<Vec<super::BuiltinTool>>,
             ::std::string::String,
         >,
+        external: ::std::result::Result<
+            ::std::vec::Vec<super::ExternalToolConfig>,
+            ::std::string::String,
+        >,
         mcp: ::std::result::Result<::std::vec::Vec<super::McpServerConfig>, ::std::string::String>,
     }
     impl ::std::default::Default for ToolsConfig {
         fn default() -> Self {
             Self {
                 builtin: Ok(Default::default()),
+                external: Ok(Default::default()),
                 mcp: Ok(Default::default()),
             }
         }
@@ -7530,6 +8153,16 @@ pub mod builder {
             self.builtin = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for builtin: {e}"));
+            self
+        }
+        pub fn external<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<super::ExternalToolConfig>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.external = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for external: {e}"));
             self
         }
         pub fn mcp<T>(mut self, value: T) -> Self
@@ -7550,6 +8183,7 @@ pub mod builder {
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 builtin: value.builtin?,
+                external: value.external?,
                 mcp: value.mcp?,
             })
         }
@@ -7558,7 +8192,95 @@ pub mod builder {
         fn from(value: super::ToolsConfig) -> Self {
             Self {
                 builtin: Ok(value.builtin),
+                external: Ok(value.external),
                 mcp: Ok(value.mcp),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct TurnResult {
+        call_id: ::std::result::Result<super::CallId, ::std::string::String>,
+        metadata: ::std::result::Result<
+            ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+            ::std::string::String,
+        >,
+        name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        value: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+    }
+    impl ::std::default::Default for TurnResult {
+        fn default() -> Self {
+            Self {
+                call_id: Err("no value supplied for call_id".to_string()),
+                metadata: Ok(Default::default()),
+                name: Err("no value supplied for name".to_string()),
+                value: Err("no value supplied for value".to_string()),
+            }
+        }
+    }
+    impl TurnResult {
+        pub fn call_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::CallId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.call_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for call_id: {e}"));
+            self
+        }
+        pub fn metadata<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.metadata = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+            self
+        }
+        pub fn name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for name: {e}"));
+            self
+        }
+        pub fn value<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::serde_json::Value>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.value = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for value: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<TurnResult> for super::TurnResult {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: TurnResult,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                call_id: value.call_id?,
+                metadata: value.metadata?,
+                name: value.name?,
+                value: value.value?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::TurnResult> for TurnResult {
+        fn from(value: super::TurnResult) -> Self {
+            Self {
+                call_id: Ok(value.call_id),
+                metadata: Ok(value.metadata),
+                name: Ok(value.name),
+                value: Ok(value.value),
             }
         }
     }

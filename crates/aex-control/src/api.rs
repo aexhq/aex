@@ -17,10 +17,12 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::Response;
 use axum::routing::{any, delete, get, post};
 use bytes::Bytes;
+use aex_contracts::session::ExternalToolCallRequest;
 use serde_json::{Value, json};
 
 use crate::brain::BrainClient;
 use crate::identity::{self, bearer};
+use crate::output::{self, PreparedMessage};
 use crate::payments::{PaymentStatus, Payments, RefundAttempt, StripeWebhook, StripeWebhookAction};
 use crate::rating::RateCard;
 use crate::store::{AccountRow, Db, KeyRow, RefundRow, SessionRow, TopupRow, WaitlistRow};
@@ -36,6 +38,8 @@ pub struct AppState {
     pub card: RateCard,
     /// SHA-256 of the separately configured operator token. `None` disables admin routes.
     pub operator_token_hash: Option<String>,
+    /// SHA-256 of the Brain-to-control executor bearer. None disables the internal route.
+    pub external_executor_token_hash: Option<String>,
     /// Defaults stamped onto new accounts: (max_concurrent_sessions, session_creates_per_hour).
     pub default_limits: (i64, i64),
 }
@@ -56,6 +60,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/webhooks/stripe", post(stripe_webhook))
         .route("/v1/usage", get(get_usage))
         .route("/v1/rates", get(get_rates))
+        .route("/internal/v1/tools/call", post(execute_external_tool))
         .route("/v1/sessions", any(proxy_sessions_root))
         .route("/v1/sessions/{*rest}", any(proxy_session))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
@@ -119,6 +124,35 @@ async fn auth_operator(state: &AppState, headers: &HeaderMap) -> Result<()> {
         return Err(Error::Unauthorized);
     }
     Ok(())
+}
+
+async fn auth_external_executor(state: &AppState, headers: &HeaderMap) -> Result<()> {
+    let expected = state
+        .external_executor_token_hash
+        .as_ref()
+        .ok_or(Error::NotFound)?;
+    let actual = bearer(headers).ok_or(Error::Unauthorized)?;
+    if identity::hash_secret(actual) != *expected {
+        return Err(Error::Unauthorized);
+    }
+    Ok(())
+}
+
+async fn execute_external_tool(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    unwrap_response(
+        async {
+            auth_external_executor(&state, &headers).await?;
+            let request: ExternalToolCallRequest = serde_json::from_slice(&body)
+                .map_err(|error| Error::Invalid(format!("external tool request: {error}")))?;
+            let response = output::execute(&state.db, request).await?;
+            Ok(json_response(200, &response))
+        }
+        .await,
+    )
 }
 
 // ---- JSON shapes (pinned to contracts/control/v1 by the e2e schema validation) ----
@@ -833,8 +867,15 @@ async fn proxy_sessions_root(
                             account.session_creates_per_hour
                         )));
                     }
-                    let resp = forward(&state, method, &path_and_query(&uri), &headers, Some(body))
-                        .await?;
+                    let body = output::inject_output_tool(&body)?;
+                    let resp = forward(
+                        &state,
+                        method,
+                        &path_and_query(&uri),
+                        &headers,
+                        Some(Bytes::from(body)),
+                    )
+                    .await?;
                     if resp.status() == StatusCode::CREATED {
                         let (parts, resp_body) = resp.into_parts();
                         let bytes = axum::body::to_bytes(resp_body, 16 * 1024 * 1024)
@@ -862,6 +903,7 @@ async fn proxy_sessions_root(
                                 shape: shape.to_string(),
                                 created_ms: now_ms(),
                                 is_final: false,
+                                output_capable: true,
                                 fold,
                             })
                             .await?;
@@ -915,8 +957,10 @@ async fn proxy_session(
                 .await?
                 .filter(|r| r.account_id == account.id)
                 .ok_or(Error::NotFound)?;
+            let output_capable = row.output_capable;
 
-            let is_work = method == Method::POST && matches!(sub, "/messages" | "/output");
+            let is_message = method == Method::POST && sub == "/messages";
+            let is_work = is_message;
             let is_delete = method == Method::DELETE && sub.is_empty();
             if is_work {
                 sweep_session(&state.db, &state.brain, &state.card, row.clone()).await?;
@@ -925,7 +969,77 @@ async fn proxy_session(
                 // Capture the tail of the journal while it still exists.
                 sweep_session(&state.db, &state.brain, &state.card, row).await?;
             }
-            let resp = forward(&state, method, &path_and_query(&uri), &headers, Some(body)).await?;
+            let resp = if is_message {
+                let idempotency = headers
+                    .get("Idempotency-Key")
+                    .and_then(|value| value.to_str().ok());
+                match output::prepare_message(
+                    &state.db,
+                    &session_id,
+                    output_capable,
+                    &body,
+                    idempotency,
+                )
+                .await?
+                {
+                    PreparedMessage::Plain(body) => {
+                        forward(
+                            &state,
+                            method.clone(),
+                            &path_and_query(&uri),
+                            &headers,
+                            Some(Bytes::from(body)),
+                        )
+                        .await?
+                    }
+                    PreparedMessage::Replay { accepted_json } => {
+                        let accepted: Value = serde_json::from_str(&accepted_json).map_err(|error| {
+                            Error::Internal(format!("stored message acceptance: {error}"))
+                        })?;
+                        return Ok(json_response(202, &accepted));
+                    }
+                    PreparedMessage::New {
+                        body,
+                        output_id,
+                        schema_hash,
+                    } => {
+                        let response = match forward(
+                            &state,
+                            method.clone(),
+                            &path_and_query(&uri),
+                            &headers,
+                            Some(Bytes::from(body)),
+                        )
+                        .await
+                        {
+                            Ok(response) => response,
+                            Err(error) => {
+                                state.db.abandon_output(output_id).await?;
+                                return Err(error);
+                            }
+                        };
+                        if response.status() != StatusCode::ACCEPTED {
+                            state.db.abandon_output(output_id).await?;
+                            return Ok(response);
+                        }
+                        let (parts, response_body) = response.into_parts();
+                        let bytes = axum::body::to_bytes(response_body, 1024 * 1024)
+                            .await
+                            .map_err(|error| {
+                                Error::Upstream(format!("message accepted body: {error}"))
+                            })?;
+                        let (turn_id, accepted_json) =
+                            output::augment_accepted(&bytes, &output_id, &schema_hash)?;
+                        state
+                            .db
+                            .accept_output(output_id, turn_id, accepted_json.clone())
+                            .await?;
+                        Response::from_parts(parts, Body::from(accepted_json))
+                    }
+                }
+            } else {
+                forward(&state, method, &path_and_query(&uri), &headers, Some(body)).await?
+            };
             if is_delete && resp.status() == StatusCode::NO_CONTENT {
                 // The brain now 404s; the sweep marks the session final and stops its meters.
                 if let Some(row) = state.db.session(session_id.clone()).await? {

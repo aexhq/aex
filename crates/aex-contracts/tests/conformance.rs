@@ -148,8 +148,12 @@ fn session_examples_validate_and_round_trip() {
             "CreateSessionRequest" => round_trip::<session::CreateSessionRequest>(&name, &value),
             "MessageRequest" => round_trip::<session::MessageRequest>(&name, &value),
             "MessageAccepted" => round_trip::<session::MessageAccepted>(&name, &value),
-            "OutputRequest" => round_trip::<session::OutputRequest>(&name, &value),
-            "OutputAccepted" => round_trip::<session::OutputAccepted>(&name, &value),
+            "ExternalToolCallRequest" => {
+                round_trip::<session::ExternalToolCallRequest>(&name, &value)
+            }
+            "ExternalToolCallResponse" => {
+                round_trip::<session::ExternalToolCallResponse>(&name, &value)
+            }
             "Event" => round_trip::<session::Event>(&name, &value),
             "ApiErrorResponse" => round_trip::<session::ApiErrorResponse>(&name, &value),
             "Artifact" => round_trip::<session::Artifact>(&name, &value),

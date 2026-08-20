@@ -1,11 +1,11 @@
 # @aexhq/tools
 
-Official, explicit tool selections for Aex sessions. Sessions have no tools unless the application
-adds them at creation:
+Official individual tool selections for Aex sessions. Sessions have no model tools unless the
+application adds them at creation:
 
 ```ts
 import { Aex } from "@aexhq/sdk";
-import { computer, subagents } from "@aexhq/tools";
+import { bash, edit, read, subagents, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: "aex_sk_..." });
 const session = await aex.sessions.create({
@@ -14,13 +14,13 @@ const session = await aex.sessions.create({
     name: "claude-sonnet-5",
     apiKey: "sk-ant-...",
   },
-  tools: [computer(), subagents()],
+  tools: [bash(), read(), write(), edit(), subagents()],
 });
 ```
 
-`computer()` enables `bash`, `read`, `write`, `edit`, `glob`, `grep`, and `ls`. Each is also
-exported separately for least-privilege sessions. `todo()`, `webSearch()`, and `webFetch()` are
-separate opt-ins.
+Omitting `tools` and passing `tools: []` both grant no model tools. Every non-empty list is the
+exact grant. `glob()`, `grep()`, `ls()`, `todo()`, `webSearch()`, and `webFetch()` are separate
+opt-ins. Duplicate selections fail before session creation.
 
 `subagents()` enables the stable `task` primitive. Each call runs one child in-process inside the
 parent turn. Children start with isolated history, share the parent's model, workspace, and enabled

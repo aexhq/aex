@@ -14,6 +14,7 @@
 pub mod api;
 pub mod brain;
 pub mod identity;
+pub mod output;
 pub mod payments;
 pub mod rating;
 pub mod store;
@@ -135,6 +136,7 @@ pub struct Config {
     pub topup_cancel_url: String,
     pub card: rating::RateCard,
     pub operator_token_hash: Option<String>,
+    pub external_executor_token_hash: Option<String>,
     pub max_concurrent_sessions: i64,
     pub session_creates_per_hour: i64,
     pub sweep_seconds: u64,
@@ -195,6 +197,10 @@ impl Config {
                 .unwrap_or_else(|_| "https://aex.dev/topup/cancelled".into()),
             card: rating::RateCard::from_env()?,
             operator_token_hash,
+            external_executor_token_hash: std::env::var("AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN")
+                .ok()
+                .filter(|token| !token.is_empty())
+                .map(|token| identity::hash_secret(&token)),
             max_concurrent_sessions: num("AEX_LIMIT_CONCURRENT_SESSIONS", 10)?,
             session_creates_per_hour: num("AEX_LIMIT_SESSION_CREATES_PER_HOUR", 30)?,
             sweep_seconds: num("AEX_SWEEP_SECONDS", 30)?,

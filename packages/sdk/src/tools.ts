@@ -11,14 +11,7 @@ export interface BuiltinTool {
   readonly name: BuiltinToolName;
 }
 
-/** A stable, ordered group of built-in tools. */
-export interface Toolset {
-  readonly kind: "aex.toolset";
-  readonly tools: readonly BuiltinTool[];
-}
-
 export type Tool = BuiltinTool;
-export type ToolSelection = Tool | Toolset;
 
 const BUILTIN_NAMES: ReadonlySet<string> = new Set<BuiltinToolName>([
   "bash",
@@ -35,7 +28,7 @@ const BUILTIN_NAMES: ReadonlySet<string> = new Set<BuiltinToolName>([
 ]);
 
 /** Compile public tool values into the session API's sealed wire configuration. */
-export function compileTools(selections: readonly ToolSelection[] | undefined): ToolsConfig {
+export function compileTools(selections: readonly Tool[] | undefined): ToolsConfig {
   const builtin: BuiltinToolName[] = [];
   const seen = new Set<BuiltinToolName>();
 
@@ -50,15 +43,7 @@ export function compileTools(selections: readonly ToolSelection[] | undefined): 
     builtin.push(tool.name);
   };
 
-  for (const selection of selections ?? []) {
-    if (selection?.kind === "aex.builtin") {
-      append(selection);
-    } else if (selection?.kind === "aex.toolset" && Array.isArray(selection.tools)) {
-      for (const tool of selection.tools) append(tool);
-    } else {
-      throw new TypeError("Invalid Aex tool value; import tools from @aexhq/tools");
-    }
-  }
+  for (const selection of selections ?? []) append(selection);
 
   return { builtin };
 }

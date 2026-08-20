@@ -31,8 +31,6 @@ export type {
   BuiltinTool,
   BuiltinToolName,
   Tool,
-  ToolSelection,
-  Toolset,
 } from "./tools.js";
 
 const DEFAULT_API_URL = "https://api.aex.dev";

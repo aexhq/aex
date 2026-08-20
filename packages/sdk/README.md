@@ -13,20 +13,19 @@ const session = await aex.sessions.create({
   },
 });
 
-const result = await session.output(
-  z.object({ answer: z.string() }),
-  "Answer the question.",
-);
+const result = await session.send("Answer the question.", {
+  output: z.object({ answer: z.string() }),
+});
 ```
 
-`send()` returns text. `output()` returns a normal typed Promise and uses `https://api.aex.dev` by
-default. Zod schemas must be representable as JSON Schema; process-local custom refinements and
-transforms fail before any model work is admitted.
+`send()` returns text by default. Passing `output` returns a normal typed Promise and uses
+`https://api.aex.dev` by default. Zod schemas must be representable as JSON Schema; process-local
+custom refinements and transforms fail before any model work is admitted.
 
-Sessions start with no tools. Select imported capabilities explicitly at creation:
+Sessions start with no model tools. Configure the exact capabilities at creation:
 
 ```ts
-import { computer, subagents } from "@aexhq/tools";
+import { bash, edit, read, subagents, write } from "@aexhq/tools";
 
 const session = await aex.sessions.create({
   model: {
@@ -34,6 +33,8 @@ const session = await aex.sessions.create({
     name: "claude-sonnet-5",
     apiKey: "sk-ant-...",
   },
-  tools: [computer(), subagents()],
+  tools: [bash(), read(), write(), edit(), subagents()],
 });
 ```
+
+Omitting `tools` and passing `tools: []` are equivalent.

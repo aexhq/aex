@@ -59,7 +59,7 @@ test("create uses the production origin and maps the small camelCase surface", a
   assert.equal(JSON.stringify(session).includes("aex_sk_test"), false);
 });
 
-test("create flattens imported tools in order and rejects duplicates", async () => {
+test("create preserves an explicit tool grant in order and rejects duplicates", async () => {
   const bodies = [];
   const aex = new Aex({
     apiKey: "aex_sk_test",
@@ -73,13 +73,8 @@ test("create flattens imported tools in order and rejects duplicates", async () 
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
     tools: [
       { kind: "aex.builtin", name: "task" },
-      {
-        kind: "aex.toolset",
-        tools: [
-          { kind: "aex.builtin", name: "read" },
-          { kind: "aex.builtin", name: "write" },
-        ],
-      },
+      { kind: "aex.builtin", name: "read" },
+      { kind: "aex.builtin", name: "write" },
     ],
   });
 
@@ -97,17 +92,36 @@ test("create flattens imported tools in order and rejects duplicates", async () 
   assert.equal(bodies.length, 1, "invalid tool selections fail before creating a session");
 });
 
-test("output hashes the Zod schema, follows events, and resolves inferred data", async () => {
+test("an explicit empty tool list is equivalent to omission", async () => {
+  let body;
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    fetch: async (_input, init) => {
+      body = JSON.parse(init.body);
+      return Response.json(snapshot, { status: 201 });
+    },
+  });
+
+  await aex.sessions.create({
+    model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
+    tools: [],
+  });
+
+  assert.deepEqual(body.tools, { builtin: [] });
+});
+
+test("send output hashes the Zod schema, follows events, and resolves inferred data", async () => {
   let outputBody;
   const fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/output")) {
+    if (url.endsWith("/messages")) {
       outputBody = JSON.parse(init.body);
       return Response.json(
         {
           session_id: "ses_01",
+          turn_id: "turn_out",
           output_id: "out_01",
-          schema_hash: outputBody.schema_hash,
+          schema_hash: outputBody.output.schema_hash,
           seq: 9,
         },
         { status: 202 },
@@ -115,15 +129,19 @@ test("output hashes the Zod schema, follows events, and resolves inferred data",
     }
     if (url.includes("/events?")) {
       const event = {
-        type: "output.completed",
+        type: "turn.completed",
         seq: 10,
         at: "2026-08-19T10:00:01.000Z",
         session_id: "ses_01",
-        output_id: "out_01",
-        output: {
-          type: "output",
-          schema_hash: outputBody.schema_hash,
+        turn_id: "turn_out",
+        stop_reason: "end_turn",
+        rounds: 1,
+        tool_calls: 1,
+        result: {
+          call_id: "call_01",
+          name: "aex_submit_output",
           value: { answer: 42 },
+          metadata: { output_id: "out_01", schema_hash: outputBody.output.schema_hash },
         },
       };
       return sse(event);
@@ -141,16 +159,18 @@ test("output hashes the Zod schema, follows events, and resolves inferred data",
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
 
-  const result = await live.output(z.object({ answer: z.number().int() }), "Give me the answer.");
+  const result = await live.send("Give me the answer.", {
+    output: z.object({ answer: z.number().int() }),
+  });
 
   assert.deepEqual(result, { answer: 42 });
-  assert.equal(outputBody.input, "Give me the answer.");
-  const canonical = canonicalize(outputBody.schema);
-  assert.equal(outputBody.schema_hash, createHash("sha256").update(canonical).digest("hex"));
+  assert.equal(outputBody.content, "Give me the answer.");
+  const canonical = canonicalize(outputBody.output.schema);
+  assert.equal(outputBody.output.schema_hash, createHash("sha256").update(canonical).digest("hex"));
   assert.equal(live.state, "idle");
 });
 
-test("output maps terminal validation details to OutputValidationError", async () => {
+test("send output maps terminal validation details to OutputValidationError", async () => {
   let schemaHash;
   const aex = new Aex({
     apiKey: "aex_sk_test",
@@ -158,22 +178,24 @@ test("output maps terminal validation details to OutputValidationError", async (
     fetch: async (input, init) => {
       const url = String(input);
       if (url.endsWith("/v1/sessions")) return Response.json(snapshot, { status: 201 });
-      if (url.endsWith("/output")) {
-        schemaHash = JSON.parse(init.body).schema_hash;
+      if (url.endsWith("/messages")) {
+        schemaHash = JSON.parse(init.body).output.schema_hash;
         return Response.json(
-          { session_id: "ses_01", output_id: "out_bad", schema_hash: schemaHash, seq: 3 },
+          { session_id: "ses_01", turn_id: "turn_bad", output_id: "out_bad", schema_hash: schemaHash, seq: 3 },
           { status: 202 },
         );
       }
       return sse({
-        type: "output.failed",
+        type: "turn.failed",
         seq: 4,
         at: "2026-08-19T10:00:01.000Z",
         session_id: "ses_01",
-        output_id: "out_bad",
-        schema_hash: schemaHash,
-        error: { code: "output_validation_error", message: "output did not match" },
-        issues: [{ path: "/answer", message: "must be number", keyword: "type" }],
+        turn_id: "turn_bad",
+        error: {
+          code: "output_validation_error",
+          message: "output did not match",
+          details: { issues: [{ path: "/answer", message: "must be number", keyword: "type" }] },
+        },
       });
     },
   });
@@ -182,7 +204,7 @@ test("output maps terminal validation details to OutputValidationError", async (
   });
 
   await assert.rejects(
-    session.output(z.object({ answer: z.number() })),
+    session.send("answer", { output: z.object({ answer: z.number() }) }),
     (error) =>
       error instanceof OutputValidationError &&
       error.issues[0]?.path === "/answer" &&
@@ -190,7 +212,7 @@ test("output maps terminal validation details to OutputValidationError", async (
   );
 });
 
-test("output rejects process-local Zod refinements before an API call", async () => {
+test("send output rejects process-local Zod refinements before an API call", async () => {
   let requests = 0;
   const aex = new Aex({
     apiKey: "aex_sk_test",
@@ -203,10 +225,13 @@ test("output rejects process-local Zod refinements before an API call", async ()
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
   });
   await assert.rejects(
-    session.output(z.object({ answer: z.string().refine((value) => value === "yes") })),
+    session.send("answer", { output: z.object({ answer: z.string().refine((value) => value === "yes") }) }),
     OutputSchemaError,
   );
-  await assert.rejects(session.output(z.object({ answer: z.string().trim() })), OutputSchemaError);
+  await assert.rejects(
+    session.send("answer", { output: z.object({ answer: z.string().trim() }) }),
+    OutputSchemaError,
+  );
   assert.equal(requests, 1, "schema rejection must not admit model work");
 });
 
@@ -249,7 +274,7 @@ test("send returns the final root assistant message", async () => {
   assert.equal(await session.send("Be concise."), "The concise answer.");
 });
 
-test("output retries transport loss with one identity and reconnects event replay", async () => {
+test("send output retries transport loss with one identity and reconnects event replay", async () => {
   let outputAttempts = 0;
   let eventAttempts = 0;
   const keys = [];
@@ -259,25 +284,33 @@ test("output retries transport loss with one identity and reconnects event repla
     fetch: async (input, init) => {
       const url = String(input);
       if (url.endsWith("/v1/sessions")) return Response.json(snapshot, { status: 201 });
-      if (url.endsWith("/output")) {
+      if (url.endsWith("/messages")) {
         outputAttempts += 1;
         keys.push(init.headers["Idempotency-Key"]);
         body = JSON.parse(init.body);
         if (outputAttempts === 1) throw new TypeError("connection reset after write");
         return Response.json(
-          { session_id: "ses_01", output_id: "out_retry", schema_hash: body.schema_hash, seq: 20 },
+          { session_id: "ses_01", turn_id: "turn_retry", output_id: "out_retry", schema_hash: body.output.schema_hash, seq: 20 },
           { status: 202 },
         );
       }
       eventAttempts += 1;
       if (eventAttempts === 1) throw new TypeError("stream disconnected");
       return sse({
-        type: "output.completed",
+        type: "turn.completed",
         seq: 21,
         at: "2026-08-19T10:00:01.000Z",
         session_id: "ses_01",
-        output_id: "out_retry",
-        output: { type: "output", schema_hash: body.schema_hash, value: { ok: true } },
+        turn_id: "turn_retry",
+        stop_reason: "end_turn",
+        rounds: 1,
+        tool_calls: 1,
+        result: {
+          call_id: "call_retry",
+          name: "aex_submit_output",
+          value: { ok: true },
+          metadata: { output_id: "out_retry", schema_hash: body.output.schema_hash },
+        },
       });
     },
   });
@@ -286,7 +319,8 @@ test("output retries transport loss with one identity and reconnects event repla
   });
 
   assert.deepEqual(
-    await session.output(z.object({ ok: z.boolean() }), undefined, {
+    await session.send("return ok", {
+      output: z.object({ ok: z.boolean() }),
       idempotencyKey: "stable-output-request",
     }),
     { ok: true },

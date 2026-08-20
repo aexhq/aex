@@ -15,7 +15,7 @@ This repository is the public contract and control-plane home:
 | `crates/aex-cli` | the existing internal Rust diagnostic CLI |
 | `packages/contracts` | generated TypeScript types (`@aexhq/contracts`) + the same hashes |
 | `packages/sdk` | the public TypeScript SDK (`@aexhq/sdk`) |
-| `packages/tools` | explicit built-in tool and toolset selections (`@aexhq/tools`) |
+| `packages/tools` | individual built-in tool selections (`@aexhq/tools`) |
 | `packages/cli` | the public Node CLI (`@aexhq/cli`, binary `aex`) |
 | `tools/` | `gen.sh` regenerates everything derived from `contracts/`; CI fails on drift. `m1.sh` starts the real-wire gate stack (local brain + control plane + Stripe) |
 | `docs/` | repository-level docs (the architecture record lives in `aex-research/docs/` until it moves here) |

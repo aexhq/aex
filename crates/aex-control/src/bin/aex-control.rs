@@ -83,6 +83,7 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         stripe_webhook,
         card: cfg.card.clone(),
         operator_token_hash: cfg.operator_token_hash,
+        external_executor_token_hash: cfg.external_executor_token_hash,
         default_limits: (cfg.max_concurrent_sessions, cfg.session_creates_per_hour),
     };
     let listener = tokio::net::TcpListener::bind(cfg.listen).await?;

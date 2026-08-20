@@ -55,34 +55,11 @@ export type paths = {
         /**
          * Send a user message; starts a turn
          * @description Returns 202 as soon as the turn is admitted and journaled. Follow progress on
-         *     `GET /events?after=<seq-1>`. 409 `session_busy` while a turn is running.
+         *     `GET /events?after=<seq-1>`. An optional `output` requests a typed result for this turn;
+         *     a successful result is attached to `turn.completed`. It does not change provider response
+         *     configuration or the session's sealed prefix. 409 `session_busy` while a turn is running.
          */
         post: operations["sendMessage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sessions/{session_id}/output": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Work from an optional user input, then commit a validated typed output
-         * @description The schema is private operation metadata: it is used only for the output commit step and
-         *     is never added to the conversation. Returns 202 after output.started is journaled. Follow
-         *     the session event stream from `seq - 1` until the matching output.completed or
-         *     output.failed event. Only one mutating request is admitted to a session at a time.
-         */
-        post: operations["requestSessionOutput"];
         delete?: never;
         options?: never;
         head?: never;
@@ -268,6 +245,8 @@ export type components = {
             /** @description JSON pointer to the offending request field, when applicable. */
             param?: string;
             request_id?: string;
+            /** @description Machine-readable failure details when available, such as bounded validation issues. */
+            details?: unknown;
         };
         ApiErrorResponse: {
             error: components["schemas"]["ApiError"];
@@ -396,11 +375,40 @@ export type components = {
             /** @description Whitelist; default all. */
             allowed_tools?: string[];
         };
+        /**
+         * @description Host-executed tools are root-only in the MVP, keeping terminal control out of subagents.
+         * @enum {string}
+         */
+        ExternalToolScope: "root";
+        /**
+         * @description continue returns the result to the model. return_direct may complete or fail the turn without another model call.
+         * @enum {string}
+         */
+        ExternalToolCompletion: "continue" | "return_direct";
+        /**
+         * @description replay_safe promises that repeating the same session_id and call_id returns the same logical result.
+         * @enum {string}
+         */
+        ExternalToolEffect: "opaque" | "replay_safe";
+        /** @description A model-visible tool executed by the Brain host's configured external executor. The executor address and credentials are host configuration, never session data. */
+        ExternalToolConfig: {
+            name: string;
+            description: string;
+            input_schema: {
+                [key: string]: unknown;
+            };
+            scope: components["schemas"]["ExternalToolScope"];
+            completion: components["schemas"]["ExternalToolCompletion"];
+            effect: components["schemas"]["ExternalToolEffect"];
+            max_input_bytes: number;
+        };
         /** @description Sealed at create with the rest of the prefix. Omitted tools default to an empty set. */
         ToolsConfig: {
-            /** @description Built-in tools to enable. Defaults to an empty array. */
+            /** @description Built-in tools to enable. Omitted or empty means no built-in tools. */
             builtin?: components["schemas"]["BuiltinTool"][];
             mcp?: components["schemas"]["McpServerConfig"][];
+            /** @description Host-executed tools sealed into the model prefix. Hosted Aex reserves its own output tool; direct Brain deployments may compose others. */
+            external?: components["schemas"]["ExternalToolConfig"][];
         };
         HandConfig: {
             /**
@@ -449,52 +457,48 @@ export type components = {
             /** @description A file already in the workspace; the model is told about it. */
             path: string;
         };
+        /** @description JSON Schema 2020-12 produced by the SDK. Aex validates it in the trusted host executor; it is never provider-native response-format configuration. */
+        OutputSchema: {
+            [key: string]: unknown;
+        };
+        Sha256Hex: string;
+        MessageOutput: {
+            schema: components["schemas"]["OutputSchema"];
+            /** @description SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model. */
+            schema_hash: components["schemas"]["Sha256Hex"];
+            /**
+             * @description Extra model attempts after the first invalid candidate.
+             * @default 1
+             */
+            retries: number;
+        };
         MessageRequest: {
             content: string | components["schemas"]["ContentPart"][];
             metadata?: {
                 [key: string]: string;
             };
+            /** @description Optional typed result requested for this turn. It is a per-message operation, not session configuration. */
+            output?: components["schemas"]["MessageOutput"];
         };
+        /** @description Correlation id for one output request. It is not a separately managed resource. */
+        OutputId: string;
         /** @description The turn was admitted and journaled. Follow it on GET /events?after=<seq-1>. */
         MessageAccepted: {
             session_id: components["schemas"]["SessionId"];
             turn_id: components["schemas"]["TurnId"];
             /** @description Journal sequence of the turn.started event. */
             seq: number;
+            /** @description Present when this message requested typed output. */
+            output_id?: components["schemas"]["OutputId"];
+            /** @description Present when this message requested typed output. */
+            schema_hash?: components["schemas"]["Sha256Hex"];
         };
-        /** @description JSON Schema 2020-12 produced by the SDK. Aex validates and normalises it for the selected model provider. */
-        OutputSchema: {
-            [key: string]: unknown;
-        };
-        Sha256Hex: string;
-        OutputRequest: {
-            schema: components["schemas"]["OutputSchema"];
-            /** @description SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model. */
-            schema_hash: components["schemas"]["Sha256Hex"];
-            /** @description Optional real user input. It is journaled and worked normally before the private output commit step. */
-            input?: string | components["schemas"]["ContentPart"][];
-            metadata?: {
-                [key: string]: string;
-            };
-        };
-        /** @description Correlation id for one output request. It is not a separately managed resource. */
-        OutputId: string;
-        /** @description The output request was admitted. Follow the session event stream from seq - 1 until the matching output.completed or output.failed event. */
-        OutputAccepted: {
-            session_id: components["schemas"]["SessionId"];
-            output_id: components["schemas"]["OutputId"];
-            schema_hash: components["schemas"]["Sha256Hex"];
-            /** @description Journal sequence of the output.started event. */
-            seq: number;
-        };
-        /** @description The only durable assistant content created by the private output commit phase. The schema and repair context are never journaled. */
-        OutputContent: {
-            /** @enum {string} */
-            type: "output";
-            schema_hash: components["schemas"]["Sha256Hex"];
-            /** @description The validated JSON value. */
-            value: unknown;
-        };
+        /** @description "root" for the session's root agent; subagents get brain-minted ids. */
+        AgentId: string;
+        /** @description Brain-minted id of one tool call (equals the ABI operation_id for hand tools). */
+        CallId: string;
+        /** @enum {string} */
+        ToolOutcome: "completed" | "failed" | "cancelled" | "deadline_exceeded" | "interrupted";
         /** @description Raw provider counters for one model call. A counter the provider did not send is absent here — never reported as 0. */
         ProviderUsage: {
             input_tokens?: number;
@@ -503,21 +507,17 @@ export type components = {
             cache_creation_input_tokens?: number;
             reasoning_tokens?: number;
         };
-        OutputValidationIssue: {
-            /** @description JSON Pointer into the candidate output. */
-            path: string;
-            message: string;
-            /** @description The failed JSON Schema keyword when available. */
-            keyword?: string;
-        };
-        /** @description "root" for the session's root agent; subagents get brain-minted ids. */
-        AgentId: string;
-        /** @description Brain-minted id of one tool call (equals the ABI operation_id for hand tools). */
-        CallId: string;
-        /** @enum {string} */
-        ToolOutcome: "completed" | "failed" | "cancelled" | "deadline_exceeded" | "interrupted";
         /** @enum {string} */
         StopReason: "end_turn" | "max_rounds" | "cancelled" | "error";
+        /** @description A replayable client-facing result returned directly by a generic external tool. */
+        TurnResult: {
+            call_id: components["schemas"]["CallId"];
+            name: string;
+            value: unknown;
+            metadata?: {
+                [key: string]: string;
+            };
+        };
         /** @description One journal event, delivered over SSE as `event: <type>` with `id: <seq>` and this object as data. Discriminated by `type`. */
         Event: {
             /** @enum {string} */
@@ -526,42 +526,6 @@ export type components = {
             at: components["schemas"]["Timestamp"];
             session_id: components["schemas"]["SessionId"];
             turn_id: components["schemas"]["TurnId"];
-        } | {
-            /** @enum {string} */
-            type: "output.started";
-            seq: number;
-            at: components["schemas"]["Timestamp"];
-            session_id: components["schemas"]["SessionId"];
-            /** @description Present when the output request included new user input. */
-            turn_id?: components["schemas"]["TurnId"];
-            output_id: components["schemas"]["OutputId"];
-            schema_hash: components["schemas"]["Sha256Hex"];
-            /** @description Last committed session sequence captured for this output request. */
-            source_seq: number;
-        } | {
-            /** @enum {string} */
-            type: "output.completed";
-            seq: number;
-            at: components["schemas"]["Timestamp"];
-            session_id: components["schemas"]["SessionId"];
-            turn_id?: components["schemas"]["TurnId"];
-            output_id: components["schemas"]["OutputId"];
-            output: components["schemas"]["OutputContent"];
-            /** @description Aggregate provider counters for the private commit and bounded repair calls. Absent counters remain absent. */
-            usage?: components["schemas"]["ProviderUsage"];
-        } | {
-            /** @enum {string} */
-            type: "output.failed";
-            seq: number;
-            at: components["schemas"]["Timestamp"];
-            session_id: components["schemas"]["SessionId"];
-            turn_id?: components["schemas"]["TurnId"];
-            output_id: components["schemas"]["OutputId"];
-            schema_hash: components["schemas"]["Sha256Hex"];
-            error: components["schemas"]["ApiError"];
-            issues?: components["schemas"]["OutputValidationIssue"][];
-            /** @description Aggregate provider counters for any private commit or repair calls completed before failure. */
-            usage?: components["schemas"]["ProviderUsage"];
         } | {
             /** @enum {string} */
             type: "assistant.delta";
@@ -688,6 +652,8 @@ export type components = {
             /** @description Model calls in this turn (root agent). */
             rounds: number;
             tool_calls: number;
+            /** @description Present when a return_direct external tool completed the turn. */
+            result?: components["schemas"]["TurnResult"];
         } | {
             /** @enum {string} */
             type: "turn.failed";
@@ -892,36 +858,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessageAccepted"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    requestSessionOutput: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description Repeating a request with the same key within 24 h returns the original result. */
-                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                session_id: components["parameters"]["SessionId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OutputRequest"];
-            };
-        };
-        responses: {
-            /** @description Accepted */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OutputAccepted"];
                 };
             };
             default: components["responses"]["Error"];

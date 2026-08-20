@@ -129,13 +129,16 @@ w(S + "Session.idle.json", sess)
 w(S + "CreateSessionRequest.full.json", {"model": {"provider": "anthropic", "name": "claude-sonnet-5", "api_key": "sk-ant-REDACTED", "max_output_tokens": 8192},
     "system_prompt": "You are a careful engineer.",
     "tools": {"builtin": ["bash", "read", "write", "edit", "glob", "grep", "ls", "task", "todo", "web_search"],
-              "mcp": [{"name": "github", "url": "https://mcp.example.com/github", "headers": {"Authorization": "Bearer REDACTED"}, "protocol": "auto"}]},
+              "mcp": [{"name": "github", "url": "https://mcp.example.com/github", "headers": {"Authorization": "Bearer REDACTED"}, "protocol": "auto"}],
+              "external": [{"name": "host_result", "description": "Return a result to the host.",
+                            "input_schema": {"type": "object", "additionalProperties": True},
+                            "scope": "root", "completion": "return_direct", "effect": "replay_safe",
+                            "max_input_bytes": 98304}]},
     "hand": {"shape": "2gb", "env": {"GH_TOKEN": "REDACTED"}, "sync_interval_seconds": 600},
     "files": [{"path": "README.md", "content_base64": "IyBIZWxsbwo="}], "metadata": {"customer_ref": "job-77"}})
 w(S + "CreateSessionRequest.minimal.json", {"model": {"provider": "openai", "name": "gpt-5", "api_key": "sk-REDACTED"}})
 w(S + "MessageRequest.text.json", {"content": "Run the test suite and fix the failing test."})
 w(S + "MessageRequest.parts.json", {"content": [{"type": "text", "text": "Summarise this file."}, {"type": "workspace_file", "path": "/workspace/README.md"}]})
-w(S + "MessageAccepted.example.json", {"session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0", "turn_id": "trn_01HZX8Y2K3M4N5P6Q7R8S9U1", "seq": 118})
 output_schema = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -148,16 +151,21 @@ output_schema = {
 }
 output_schema_hash = jcs_sha256(output_schema)
 output_id = "out_01HZX8Y2K3M4N5P6Q7R8S9V2"
-w(S + "OutputRequest.with-input.json", {
-    "schema": output_schema,
-    "schema_hash": output_schema_hash,
-    "input": "Research the available options and recommend one.",
+w(S + "MessageRequest.output.json", {"content": "Research the available options and recommend one.",
+                                       "output": {"schema": output_schema, "schema_hash": output_schema_hash,
+                                                  "retries": 1}})
+w(S + "MessageAccepted.example.json", {"session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0", "turn_id": "trn_01HZX8Y2K3M4N5P6Q7R8S9U1", "seq": 118,
+                                         "output_id": output_id, "schema_hash": output_schema_hash})
+w(S + "ExternalToolCallRequest.example.json", {
+    "session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0", "turn_id": "trn_01HZX8Y2K3M4N5P6Q7R8S9U1",
+    "agent_id": "root", "call_id": "call_01HZX8Y2K3M4N5P6Q7R8S9W3", "name": "host_result",
+    "input": {"recommendation": "Option A", "confidence": 0.86},
+    "context": {"aex.output_request_id": output_id},
 })
-w(S + "OutputAccepted.example.json", {
-    "session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0",
-    "output_id": output_id,
-    "schema_hash": output_schema_hash,
-    "seq": 132,
+w(S + "ExternalToolCallResponse.complete.json", {
+    "outcome": "completed", "content": "The result was accepted.", "is_error": False,
+    "disposition": "complete_turn", "result": {"recommendation": "Option A", "confidence": 0.86},
+    "result_metadata": {"output_id": output_id, "schema_hash": output_schema_hash},
 })
 base = {"session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0", "turn_id": "trn_01HZX8Y2K3M4N5P6Q7R8S9U1"}
 
@@ -167,18 +175,6 @@ def ev(seq, t, **k):
 
 
 w(S + "Event.turn.started.json", ev(118, "turn.started"))
-w(S + "Event.output.started.json", ev(132, "output.started", output_id=output_id,
-                                        schema_hash=output_schema_hash, source_seq=131))
-w(S + "Event.output.completed.json", ev(139, "output.completed", output_id=output_id,
-                                          output={"type": "output", "schema_hash": output_schema_hash,
-                                                  "value": {"recommendation": "Option A", "confidence": 0.86}},
-                                          usage={"input_tokens": 1840, "output_tokens": 47,
-                                                 "cache_read_input_tokens": 1600}))
-w(S + "Event.output.failed.json", ev(140, "output.failed", output_id=output_id,
-                                       schema_hash=output_schema_hash,
-                                       error={"code": "output_validation_error", "message": "Model output did not satisfy the schema"},
-                                       issues=[{"path": "/confidence", "message": "must be less than or equal to 1", "keyword": "maximum"}],
-                                       usage={"input_tokens": 2100, "output_tokens": 83}))
 w(S + "Event.assistant.delta.json", ev(119, "assistant.delta", agent_id="root", text="I will run"))
 w(S + "Event.assistant.message.json", ev(127, "assistant.message", agent_id="root", text="I will run the tests first."))
 w(S + "Event.tool.call.json", ev(120, "tool.call", agent_id="root", call_id="op-0001", name="bash", input={"command": "cargo test 2>&1 | tail -20"}, detach=False))
@@ -193,8 +189,12 @@ w(S + "Event.session.updated.json", {"type": "session.updated", "seq": 130, "at"
                                      "state": "idle", "hand": sess["hand"]})
 w(S + "Event.hand.lost.json", {"type": "hand.lost", "seq": 131, "at": "2026-08-18T09:46:00Z", "session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0",
                                "turn_id": "trn_01HZX8Y2K3M4N5P6Q7R8S9U1", "interrupted_calls": ["op-0002"], "workspace_synced_at": "2026-08-18T09:42:10Z"})
-w(S + "Event.turn.completed.json", ev(125, "turn.completed", stop_reason="end_turn", rounds=5, tool_calls=7))
-w(S + "Event.turn.failed.json", ev(126, "turn.failed", error={"code": "provider_error", "message": "anthropic: 401 invalid x-api-key", "request_id": "req_9x"}))
+w(S + "Event.turn.completed.json", ev(125, "turn.completed", stop_reason="end_turn", rounds=5, tool_calls=7,
+                                        result={"call_id": "call_01HZX8Y2K3M4N5P6Q7R8S9W3", "name": "host_result",
+                                                "value": {"recommendation": "Option A", "confidence": 0.86},
+                                                "metadata": {"output_id": output_id, "schema_hash": output_schema_hash}}))
+w(S + "Event.turn.failed.json", ev(126, "turn.failed", error={"code": "output_validation_error", "message": "Model output did not satisfy the schema",
+                                                               "request_id": "req_9x", "details": {"issues": [{"path": "/confidence", "message": "must be less than or equal to 1", "keyword": "maximum"}]}}))
 w(S + "ApiErrorResponse.example.json", {"error": {"code": "session_busy", "message": "a turn is already running", "request_id": "req_9y"}})
 w(S + "Artifact.example.json", {"object": "artifact", "session_id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0", "name": "report.pdf", "bytes": 204800, "sha256": H,
                                 "media_type": "application/pdf", "created_at": "2026-08-18T09:41:00Z",
