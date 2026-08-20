@@ -12,7 +12,7 @@ jobs:
       - name: Checkout pinned Brain packages
         run: |
           git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout ea73244489311cb3a11442c3a4306b289ec97ba7
+          git -C ../brain checkout e38094aa2916f1c7459835af745db7e173efa782
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.97.1"
