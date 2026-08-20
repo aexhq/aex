@@ -1,14 +1,13 @@
 import type {
   ApiError,
   Event,
-  MessageAccepted,
-  OutputValidationIssue,
+  MessageAccepted as BrainMessageAccepted,
   Provider,
   Session as SessionData,
   SessionList as SessionListData,
   SessionState,
-} from "@aexhq/contracts/session";
-import type { CreateSessionRequest } from "@aexhq/brain/session";
+  CreateSessionRequest,
+} from "@aexhq/brain/session";
 import * as z from "zod";
 
 import {
@@ -20,6 +19,7 @@ import {
   abortError,
   errorFromApi,
 } from "./errors.js";
+import type { OutputValidationIssue } from "./errors.js";
 import { canonicalize, jcsSha256, randomIdempotencyKey } from "./json.js";
 import type { EventOptions } from "./transport.js";
 import { Transport } from "./transport.js";
@@ -27,6 +27,12 @@ import { compileTools } from "./tools.js";
 import type { Tool } from "./tools.js";
 
 export type SessionInput = string;
+
+/** Aex adds trusted-output admission identity to Brain's neutral acknowledgement. */
+interface MessageAccepted extends BrainMessageAccepted {
+  output_id?: string;
+  schema_hash?: string;
+}
 
 export interface ModelOptions {
   provider: Provider;

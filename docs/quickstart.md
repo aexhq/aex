@@ -45,5 +45,5 @@ Omitting `tools` and passing `tools: []` are equivalent.
 Omit `output` when you want ordinary text, and call `session.send()` again to continue the same
 session.
 
-Reference: [session API](../contracts/session/v1/openapi.yaml) ·
+Reference: [session API](https://github.com/aexhq/brain/blob/main/contracts/session/v1/openapi.yaml) ·
 [control API](../contracts/control/v1/openapi.yaml) · [refund runbook](operator-refunds.md)

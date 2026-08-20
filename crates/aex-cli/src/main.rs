@@ -10,8 +10,8 @@
 use std::io::Write as _;
 use std::path::PathBuf;
 
-use brain_protocol::session::{Event, TurnId};
 use aex_sdk::Client;
+use brain_protocol::session::{Event, TurnId};
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 

@@ -1,4 +1,4 @@
-import type { ApiError, Event } from "@aexhq/contracts/session";
+import type { ApiError, Event } from "@aexhq/brain/session";
 
 import { AbortError, AexError, SessionError, abortError, errorFromApi } from "./errors.js";
 

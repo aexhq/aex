@@ -9,6 +9,7 @@ dependencies = [
  "aex-contracts",
  "aex-sdk",
  "anyhow",
+ "brain-protocol",
  "clap",
  "serde",
  "serde_json",
@@ -20,13 +21,10 @@ name = "aex-contracts"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "hex",
  "jsonschema",
- "regress",
+ "regress 0.11.1",
  "serde",
- "serde_jcs",
  "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -37,6 +35,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "brain-protocol",
  "bytes",
  "chrono",
  "futures-util",
@@ -62,6 +61,7 @@ name = "aex-sdk"
 version = "0.1.0"
 dependencies = [
  "aex-contracts",
+ "brain-protocol",
  "bytes",
  "futures-util",
  "percent-encoding",
@@ -302,6 +302,20 @@ name = "borrow-or-share"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
+
+[[package]]
+name = "brain-protocol"
+version = "0.1.0"
+source = "git+https://github.com/aexhq/brain.git?rev=35afb0aff1d14c02c4b43814e7466ca8ceedcca4#35afb0aff1d14c02c4b43814e7466ca8ceedcca4"
+dependencies = [
+ "chrono",
+ "hex",
+ "regress 0.10.5",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "sha2",
+]
 
 [[package]]
 name = "bumpalo"
@@ -1727,6 +1741,16 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "regress"
+version = "0.10.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2057b2325e68a893284d1538021ab90279adac1139957ca2a74426c6f118fb48"
+dependencies = [
+ "hashbrown 0.16.1",
+ "memchr",
+]
 
 [[package]]
 name = "regress"

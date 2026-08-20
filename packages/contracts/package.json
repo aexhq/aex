@@ -1,7 +1,7 @@
 {
   "name": "@aexhq/contracts",
   "version": "0.27.0",
-  "description": "Aex contracts: brain-hand ABI v1 and session API v1 types, generated from contracts/",
+  "description": "Aex-only account, billing, and control-plane contracts",
   "license": "Apache-2.0",
   "homepage": "https://aex.dev",
   "repository": {
@@ -22,10 +22,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./session": {
-      "types": "./dist/session.d.ts",
-      "import": "./dist/session.js"
-    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -34,8 +30,9 @@
   ],
   "scripts": {
     "gen": "node scripts/gen.mjs",
-    "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.json && node --test"
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "test": "npm run build && node --test"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

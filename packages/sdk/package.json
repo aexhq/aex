@@ -33,8 +33,7 @@
     "test": "tsc -p tsconfig.json && node --test"
   },
   "dependencies": {
-    "@aexhq/brain": "0.1.0",
-    "@aexhq/contracts": "0.27.0"
+    "@aexhq/brain": "0.1.0"
   },
   "peerDependencies": {
     "zod": "4.4.3"

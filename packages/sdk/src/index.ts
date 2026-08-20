@@ -10,7 +10,7 @@ export {
   OutputValidationError,
   SessionError,
 } from "./errors.js";
-export type { AexErrorOptions } from "./errors.js";
+export type { AexErrorOptions, OutputValidationIssue } from "./errors.js";
 export {
   Session,
   Sessions,

@@ -2,7 +2,7 @@
 //! sees the bill — over real HTTP against the control router, with a stub brain implementing
 //! session/v1 from the contracts and the fake payments adapter. Every control-plane response
 //! is validated against `contracts/control/v1/schemas.json`; the proxied session documents are
-//! validated against `contracts/session/v1/schemas.json`. The real-wire version of this flow
+//! validated against Brain's owned session schema. The real-wire version of this flow
 //! (real brain, real Stripe test mode) is `tools/m1.sh`.
 
 use std::collections::HashMap;
@@ -752,7 +752,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     )
     .await;
     assert_valid(
-        aex_contracts::SESSION_SCHEMA_JSON,
+        brain_protocol::SESSION_SCHEMA_JSON,
         "MessageAccepted",
         &accepted,
     );
@@ -793,7 +793,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         200,
     )
     .await;
-    assert_valid(aex_contracts::SESSION_SCHEMA_JSON, "SessionList", &listed);
+    assert_valid(brain_protocol::SESSION_SCHEMA_JSON, "SessionList", &listed);
     assert_eq!(listed["data"].as_array().unwrap().len(), 1);
 
     // The bill. 1.5 s on 1gb = 50 micro-USD compute, plus one successful managed search =
