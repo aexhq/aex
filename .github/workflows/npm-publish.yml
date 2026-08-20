@@ -17,12 +17,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Checkout pinned Brain packages
         run: |
           git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
           git -C ../brain checkout 830356e72cf1de7b8f4b6f3971f40eff01bbdb31
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
