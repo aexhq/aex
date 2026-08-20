@@ -12,10 +12,10 @@ repository = "https://github.com/aexhq/aex"
 aex-contracts = { path = "crates/aex-contracts" }
 aex-control = { path = "crates/aex-control" }
 aex-sdk = { path = "crates/aex-sdk" }
-brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "372871cf4a523b16bdfce98d07dfc00051fbe2a8" }
-brain = { git = "https://github.com/aexhq/brain.git", rev = "372871cf4a523b16bdfce98d07dfc00051fbe2a8" }
-brain-aws = { git = "https://github.com/aexhq/brain.git", rev = "372871cf4a523b16bdfce98d07dfc00051fbe2a8" }
-hand-brain-aws = { git = "https://github.com/aexhq/hands.git", rev = "e824fb7ed402524a377129dd43d865304fa3be54" }
+brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "830356e72cf1de7b8f4b6f3971f40eff01bbdb31" }
+brain = { git = "https://github.com/aexhq/brain.git", rev = "830356e72cf1de7b8f4b6f3971f40eff01bbdb31" }
+brain-aws = { git = "https://github.com/aexhq/brain.git", rev = "830356e72cf1de7b8f4b6f3971f40eff01bbdb31" }
+hand-brain-aws = { git = "https://github.com/aexhq/hands.git", rev = "02abba92220791e4fe0752527a59c72661628994" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "std", "clock"] }
