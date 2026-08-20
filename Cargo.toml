@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/aex-contracts", "crates/aex-control", "crates/aex-sdk", "crates/aex-cli"]
+members = ["crates/aex-contracts", "crates/aex-control", "crates/aex-sdk", "crates/aex-cli", "crates/aex-brain"]
 
 [workspace.package]
 edition = "2024"
@@ -13,6 +13,9 @@ aex-contracts = { path = "crates/aex-contracts" }
 aex-control = { path = "crates/aex-control" }
 aex-sdk = { path = "crates/aex-sdk" }
 brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "35afb0aff1d14c02c4b43814e7466ca8ceedcca4" }
+brain = { git = "https://github.com/aexhq/brain.git", rev = "35afb0aff1d14c02c4b43814e7466ca8ceedcca4" }
+brain-aws = { git = "https://github.com/aexhq/brain.git", rev = "35afb0aff1d14c02c4b43814e7466ca8ceedcca4" }
+hand-brain-aws = { git = "https://github.com/aexhq/hands.git", rev = "c15e260967fc8a343bc21860f418a6f53c0af7fe" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "std", "clock"] }

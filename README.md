@@ -11,6 +11,7 @@ This repository is the public contract and control-plane home:
 | `contracts/` | Aex-only account, billing, and control-plane JSON Schema, OpenAPI, and worked examples |
 | `crates/aex-contracts` | generated Rust types for Aex-owned control-plane contracts |
 | `crates/aex-control` | the control plane: identity (accounts, API keys), prepaid billing (signed Stripe webhooks, poll recovery, and operator refunds), session authority (the session API served verbatim in front of a brain, with admission), rated compute/storage/search usage folded from the session event log |
+| `crates/aex-brain` | Aex's downstream hosted composition: Brain + the selected Hands adapter + Aex's exact trusted capability set |
 | `crates/aex-sdk` | Rust client SDK over the generated types |
 | `crates/aex-cli` | the existing internal Rust diagnostic CLI |
 | `packages/contracts` | generated TypeScript types for Aex-owned contracts (`@aexhq/contracts`) |
@@ -36,12 +37,15 @@ by Brain. The SDK is the onboarding surface; raw HTTP remains available as refer
 ## Running the services locally
 
 ```
-# a brain (github.com/aexhq/brain), local mode:
-AEX_API_TOKEN=<token> brain
-# the control plane in front of it (payments default to a loud fake; set AEX_PAYMENTS=stripe
+# standalone Brain development is documented at github.com/aexhq/brain
+# the Aex control plane in front of Brain (payments default to a loud fake; set AEX_PAYMENTS=stripe
 # and STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET for real billing):
 AEX_BRAIN_TOKEN=<token> aex-control
 ```
+
+The hosted `aex-brain` image maps Aex's operator and private-executor credentials into public Brain
+ports, wires the AWS persistence adapters to Hands' Lambda MicroVM implementation, and registers
+only `aex.output.v1`, `aex.web.search.v1`, and `aex.web.fetch.v1`.
 
 Managed `web_search` is available when the brain has `SERPER_API_KEY`; successful committed
 search results are rated at the public per-query rate. `web_fetch` uses guarded outbound HTTPS

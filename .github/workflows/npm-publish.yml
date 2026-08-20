@@ -31,6 +31,7 @@ jobs:
         run: npm install --global npm@11.19.0
       - run: npm ci
       - run: npm test
+      - run: npm run package-smoke
       - name: Publish in dependency order
         shell: bash
         run: |
