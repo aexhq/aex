@@ -13,6 +13,7 @@ use crate::store::{BeginOutput, Db, OutputRequestRow};
 use crate::{Error, Result, now_ms};
 
 pub const OUTPUT_TOOL_NAME: &str = "aex_submit_output";
+pub const OUTPUT_CAPABILITY: &str = "aex.output.v1";
 pub const OUTPUT_CONTEXT_KEY: &str = "aex.output_request_id";
 const MAX_SCHEMA_BYTES: usize = 64 * 1024;
 const MAX_OUTPUT_BYTES: usize = 96 * 1024;
@@ -33,8 +34,8 @@ pub enum PreparedMessage {
     },
 }
 
-/// Hosted Aex owns this executor and therefore reserves the entire external-tool namespace on
-/// public creates for the MVP. Direct Brain deployments can still compose arbitrary declarations.
+/// Append Aex's stable output capability to Brain's native ordered Tool grant. Existing native
+/// Tool values remain unchanged and in the same order; the Aex capability is always last.
 pub fn inject_output_tool(body: &[u8]) -> Result<Vec<u8>> {
     let mut document: Value = serde_json::from_slice(body)
         .map_err(|error| Error::Invalid(format!("session body: {error}")))?;
@@ -45,18 +46,42 @@ pub fn inject_output_tool(body: &[u8]) -> Result<Vec<u8>> {
     let tools = tools
         .as_object_mut()
         .ok_or_else(|| Error::Invalid("tools must be an object".into()))?;
-    if tools
-        .get("external")
-        .and_then(Value::as_array)
-        .is_some_and(|tools| !tools.is_empty())
-    {
+    if tools.remove("external").is_some_and(|value| {
+        !value
+            .as_array()
+            .is_some_and(|legacy_tools| legacy_tools.is_empty())
+    }) {
         return Err(Error::Invalid(
-            "tools.external is reserved by hosted Aex in the MVP".into(),
+            "legacy tools.external is not accepted by this Aex revision".into(),
         ));
     }
-    tools.insert(
-        "external".into(),
-        json!([{
+    if tools.remove("builtin").is_some_and(|value| {
+        !value
+            .as_array()
+            .is_some_and(|legacy_tools| legacy_tools.is_empty())
+    }) {
+        return Err(Error::Invalid(
+            "legacy tools.builtin is not accepted by this Aex revision; use native Tool values"
+                .into(),
+        ));
+    }
+    let items = tools.entry("items").or_insert_with(|| json!([]));
+    let items = items
+        .as_array_mut()
+        .ok_or_else(|| Error::Invalid("tools.items must be an array".into()))?;
+    if items.iter().any(|item| {
+        item.pointer("/definition/name").and_then(Value::as_str) == Some(OUTPUT_TOOL_NAME)
+            || item
+                .pointer("/executor/capability")
+                .and_then(Value::as_str)
+                .is_some_and(|capability| capability.starts_with("aex.output"))
+    }) {
+        return Err(Error::Invalid(
+            "the aex_submit_output Tool name and aex.output capability are reserved".into(),
+        ));
+    }
+    items.push(json!({
+        "definition": {
             "name": OUTPUT_TOOL_NAME,
             "description": "Submit the final structured result requested by the latest user message. Call this once with exactly the result object; do not wrap it in another property.",
             "input_schema": {
@@ -64,12 +89,19 @@ pub fn inject_output_tool(body: &[u8]) -> Result<Vec<u8>> {
                 "properties": {},
                 "additionalProperties": true
             },
+            "output_schema": {
+                "$comment": "The trusted Aex executor returns the validated structured result."
+            }
+        },
+        "executor": {
+            "kind": "server",
+            "capability": OUTPUT_CAPABILITY,
             "scope": "root",
             "completion": "return_direct",
             "effect": "replay_safe",
             "max_input_bytes": MAX_OUTPUT_BYTES
-        }]),
-    );
+        }
+    }));
     serde_json::to_vec(&document).map_err(|error| Error::Internal(format!("session body: {error}")))
 }
 
@@ -213,6 +245,11 @@ pub async fn execute(db: &Db, request: ExternalToolCallRequest) -> Result<Value>
             "unknown hosted external tool {:?}",
             request.name
         )));
+    }
+    if request.context.get("brain.capability").map(String::as_str) != Some(OUTPUT_CAPABILITY) {
+        return Err(Error::Invalid(
+            "the sealed Aex output capability is missing from the executor call".into(),
+        ));
     }
     if let Some(response) = db
         .external_call_response(session_id.clone(), call_id.clone())
@@ -461,13 +498,41 @@ mod tests {
     }
 
     #[test]
-    fn injection_is_stable_and_rejects_customer_external_tools() {
-        let injected = inject_output_tool(br#"{"model":{"provider":"openai"}}"#).unwrap();
+    fn injection_appends_the_native_output_tool_without_mutating_ordinary_tools() {
+        let injected = inject_output_tool(
+            br#"{
+                "model":{"provider":"openai"},
+                "tools":{"items":[{
+                    "definition":{
+                        "name":"delegate",
+                        "description":"Delegate work.",
+                        "input_schema":{"type":"object"},
+                        "output_schema":{"type":"object"}
+                    },
+                    "executor":{"kind":"intrinsic","capability":"brain.subagents.v1"}
+                }]}
+            }"#,
+        )
+        .unwrap();
         let document: Value = serde_json::from_slice(&injected).unwrap();
-        assert_eq!(document["tools"]["external"][0]["name"], OUTPUT_TOOL_NAME);
+        assert_eq!(document["tools"]["items"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            document["tools"]["items"][0]["definition"]["name"],
+            "delegate"
+        );
+        assert_eq!(
+            document["tools"]["items"][1]["definition"]["name"],
+            OUTPUT_TOOL_NAME
+        );
+        assert_eq!(
+            document["tools"]["items"][1]["executor"]["capability"],
+            "aex.output.v1"
+        );
+        assert!(document["tools"].get("external").is_none());
         assert!(
             inject_output_tool(br#"{"tools":{"external":[{"name":"mine"}]},"model":{}}"#).is_err()
         );
+        assert!(inject_output_tool(br#"{"tools":{"builtin":["bash"]},"model":{}}"#).is_err());
     }
 
     #[test]
@@ -527,10 +592,19 @@ mod tests {
                 "call_id": call_id,
                 "name": OUTPUT_TOOL_NAME,
                 "input": input,
-                "context": {(OUTPUT_CONTEXT_KEY): output_id.clone()}
+                "context": {
+                    "brain.capability": OUTPUT_CAPABILITY,
+                    (OUTPUT_CONTEXT_KEY): output_id.clone()
+                }
             }))
             .unwrap()
         };
+        let mut unsealed = request("op_unsealed", json!({"answer": 42}));
+        unsealed.context.remove("brain.capability");
+        assert!(matches!(
+            execute(&db, unsealed).await,
+            Err(Error::Invalid(_))
+        ));
         let invalid_request = request("op_invalid", json!({"answer": "wrong"}));
         let invalid = execute(&db, invalid_request.clone()).await.unwrap();
         assert_eq!(invalid["disposition"], "continue");
@@ -603,7 +677,10 @@ mod tests {
             "call_id": "op_first_invalid",
             "name": OUTPUT_TOOL_NAME,
             "input": {"answer": "wrong"},
-            "context": {(OUTPUT_CONTEXT_KEY): output_id.clone()}
+            "context": {
+                "brain.capability": OUTPUT_CAPABILITY,
+                (OUTPUT_CONTEXT_KEY): output_id.clone()
+            }
         }))
         .unwrap();
 
