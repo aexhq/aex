@@ -26,7 +26,9 @@ use crate::identity::{self, bearer};
 use crate::output::{self, PreparedMessage};
 use crate::payments::{PaymentStatus, Payments, RefundAttempt, StripeWebhook, StripeWebhookAction};
 use crate::rating::RateCard;
-use crate::store::{AccountRow, Db, KeyRow, RefundRow, SessionRow, TopupRow, WaitlistRow};
+use crate::store::{
+    AccountRow, CreditGrantRow, Db, KeyRow, RefundRow, SessionRow, TopupRow, WaitlistRow,
+};
 use crate::sweep::{SweptLine, sweep_account, sweep_session};
 use crate::web::{self, WebRuntime};
 use crate::{Error, Result, now_ms, rfc3339, usd_display};
@@ -55,6 +57,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/waitlist", post(join_waitlist))
         .route("/v1/admin/waitlist", get(list_waitlist))
         .route("/v1/admin/invitations", post(create_invitation))
+        .route("/v1/admin/credit-grants", post(create_credit_grant))
         .route("/v1/admin/refunds", post(create_refund))
         .route("/v1/accounts", post(create_account))
         .route("/v1/account", get(get_account))
@@ -269,6 +272,18 @@ fn refund_json(r: &RefundRow) -> Value {
     value
 }
 
+fn credit_grant_json(grant: &CreditGrantRow) -> Value {
+    json!({
+        "id": grant.id,
+        "object": "credit_grant",
+        "account_id": grant.account_id,
+        "email": grant.email,
+        "amount_cents": grant.amount_cents,
+        "reason": grant.reason,
+        "created_at": rfc3339(grant.created_ms),
+    })
+}
+
 fn usage_line_json(line: &SweptLine) -> Value {
     let row: &SessionRow = &line.row;
     json!({
@@ -368,7 +383,7 @@ async fn create_invitation(
     )
 }
 
-fn refund_idempotency_key(headers: &HeaderMap) -> Result<String> {
+fn operator_idempotency_key(headers: &HeaderMap) -> Result<String> {
     let key = headers
         .get("Idempotency-Key")
         .and_then(|value| value.to_str().ok())
@@ -385,6 +400,52 @@ fn refund_idempotency_key(headers: &HeaderMap) -> Result<String> {
     Ok(key.to_owned())
 }
 
+/// Grant non-payment-backed service credit to an existing account. This is intentionally an
+/// operator-only, append-only ledger operation rather than a synthetic top-up: payment history
+/// and refund eligibility continue to describe only money that actually moved through Stripe.
+async fn create_credit_grant(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    unwrap_response(
+        async {
+            auth_operator(&state, &headers).await?;
+            let request_key = operator_idempotency_key(&headers)?;
+            let req: aex_contracts::control::CreateCreditGrantRequest = parse_body(&body)?;
+            let amount_cents = i64::try_from(req.amount_cents.get())
+                .map_err(|_| Error::Invalid("credit grant amount is too large".into()))?;
+            if amount_cents > 100_000 {
+                return Err(Error::Invalid(
+                    "credit grant amount must be 1 to 100,000 cents".into(),
+                ));
+            }
+            let reason = String::from(req.reason).trim().to_owned();
+            if reason.is_empty() {
+                return Err(Error::Invalid("credit grant reason cannot be blank".into()));
+            }
+
+            let (grant, created) = state
+                .db
+                .grant_credit(CreditGrantRow {
+                    id: identity::new_id("grt"),
+                    request_key,
+                    account_id: String::new(),
+                    email: normalized_email(req.email.as_str()),
+                    amount_cents,
+                    reason,
+                    created_ms: now_ms(),
+                })
+                .await?;
+            Ok(json_response(
+                if created { 201 } else { 200 },
+                &credit_grant_json(&grant),
+            ))
+        }
+        .await,
+    )
+}
+
 /// The operator support path for the public unused-credit promise. The ledger reservation is
 /// committed before Stripe is called. A provider/network error leaves it pending and unspendable;
 /// retrying the same request reconciles by durable Aex/Stripe metadata before creating anything.
@@ -392,7 +453,7 @@ async fn create_refund(State(state): State<AppState>, headers: HeaderMap, body: 
     unwrap_response(
         async {
             auth_operator(&state, &headers).await?;
-            let request_key = refund_idempotency_key(&headers)?;
+            let request_key = operator_idempotency_key(&headers)?;
             let req: aex_contracts::control::CreateRefundRequest = parse_body(&body)?;
             let amount_cents = i64::try_from(req.amount_cents.get())
                 .map_err(|_| Error::Invalid("refund amount is too large".into()))?;

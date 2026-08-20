@@ -3,6 +3,7 @@
 //!
 //! Money semantics: the ledger holds one signed row per `ref` in micro-USD.
 //! `topup:<id>` rows are credits, inserted exactly once (idempotent by primary key).
+//! `grant:<id>` rows are operator-issued service credits, also inserted exactly once.
 //! `usage:<session>` rows are debits, OVERWRITTEN by each sweep with the absolute rated total
 //! for that session — never incremented — so a replayed or racing sweep cannot double-bill.
 //! Balance = SUM(ledger). Meter-state updates are fenced monotonic (`folded_seq`,
@@ -72,6 +73,15 @@ CREATE TABLE IF NOT EXISTS refunds (
   updated_ms INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS refunds_topup ON refunds(topup_id, status);
+CREATE TABLE IF NOT EXISTS credit_grants (
+  id TEXT PRIMARY KEY,
+  request_key TEXT NOT NULL UNIQUE,
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+  reason TEXT NOT NULL,
+  created_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS credit_grants_account ON credit_grants(account_id, created_ms);
 CREATE TABLE IF NOT EXISTS ledger (
   ref TEXT PRIMARY KEY,
   account_id TEXT NOT NULL REFERENCES accounts(id),
@@ -184,6 +194,24 @@ pub struct RefundRow {
     pub failure_reason: Option<String>,
     pub created_ms: i64,
     pub updated_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreditGrantRow {
+    pub id: String,
+    pub request_key: String,
+    pub account_id: String,
+    pub email: String,
+    pub amount_cents: i64,
+    pub reason: String,
+    pub created_ms: i64,
+}
+
+enum GrantCreditOutcome {
+    Created(CreditGrantRow),
+    Existing(CreditGrantRow),
+    RequestMismatch,
+    AccountNotFound,
 }
 
 enum BeginRefundOutcome {
@@ -586,6 +614,81 @@ impl Db {
     }
 
     // ---- billing ----
+
+    /// Append operator-issued service credit once. The request key owns idempotency and every
+    /// successful grant has one durable audit row plus one immutable ledger row in the same
+    /// transaction. Grants are deliberately separate from paid top-ups and Stripe refunds.
+    pub async fn grant_credit(&self, proposed: CreditGrantRow) -> Result<(CreditGrantRow, bool)> {
+        let microusd = proposed
+            .amount_cents
+            .checked_mul(10_000)
+            .ok_or_else(|| Error::Invalid("credit grant amount is too large".into()))?;
+        let result = self
+            .call(move |c| {
+                let tx = c.transaction()?;
+                if let Some(existing) = tx
+                    .query_row(
+                        &format!("{CREDIT_GRANT_COLS} WHERE g.request_key = ?1"),
+                        params![&proposed.request_key],
+                        credit_grant_row,
+                    )
+                    .optional()?
+                {
+                    if existing.email.eq_ignore_ascii_case(&proposed.email)
+                        && existing.amount_cents == proposed.amount_cents
+                        && existing.reason == proposed.reason
+                    {
+                        return Ok(GrantCreditOutcome::Existing(existing));
+                    }
+                    return Ok(GrantCreditOutcome::RequestMismatch);
+                }
+
+                let account = tx
+                    .query_row(
+                        "SELECT id, email FROM accounts WHERE email = ?1 COLLATE NOCASE",
+                        params![&proposed.email],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()?;
+                let Some((account_id, email)) = account else {
+                    return Ok(GrantCreditOutcome::AccountNotFound);
+                };
+                let grant = CreditGrantRow {
+                    account_id,
+                    email,
+                    ..proposed
+                };
+                tx.execute(
+                    "INSERT INTO credit_grants
+                     (id, request_key, account_id, amount_cents, reason, created_ms)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        &grant.id,
+                        &grant.request_key,
+                        &grant.account_id,
+                        grant.amount_cents,
+                        &grant.reason,
+                        grant.created_ms
+                    ],
+                )?;
+                tx.execute(
+                    "INSERT INTO ledger (ref, account_id, microusd, updated_ms)
+                     VALUES ('grant:' || ?1, ?2, ?3, ?4)",
+                    params![&grant.id, &grant.account_id, microusd, grant.created_ms],
+                )?;
+                tx.commit()?;
+                Ok(GrantCreditOutcome::Created(grant))
+            })
+            .await?;
+        match result {
+            GrantCreditOutcome::Created(row) => Ok((row, true)),
+            GrantCreditOutcome::Existing(row) => Ok((row, false)),
+            GrantCreditOutcome::RequestMismatch => Err(Error::Conflict(
+                "Idempotency-Key was already used with different credit-grant fields".into(),
+            )),
+            GrantCreditOutcome::AccountNotFound => Err(Error::NotFound),
+        }
+    }
 
     pub async fn create_topup(&self, row: TopupRow) -> Result<()> {
         self.call(move |c| {
@@ -1339,6 +1442,10 @@ const SESSION_COLS: &str = "SELECT id, account_id, key_id, shape, created_ms, fi
 const REFUND_COLS: &str = "SELECT id, request_key, topup_id, account_id, amount_cents, status,
     provider_ref, failure_reason, created_ms, updated_ms FROM refunds";
 
+const CREDIT_GRANT_COLS: &str = "SELECT g.id, g.request_key, g.account_id, a.email,
+    g.amount_cents, g.reason, g.created_ms
+    FROM credit_grants g JOIN accounts a ON a.id = g.account_id";
+
 const OUTPUT_COLS: &str = "SELECT id, session_id, schema_hash, schema_json, max_attempts,
     attempts, status, turn_id, accepted_json, result_json, error_json, idempotency_key_hash,
     request_hash, created_ms FROM output_requests";
@@ -1401,6 +1508,18 @@ fn refund_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RefundRow> {
         failure_reason: r.get(7)?,
         created_ms: r.get(8)?,
         updated_ms: r.get(9)?,
+    })
+}
+
+fn credit_grant_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<CreditGrantRow> {
+    Ok(CreditGrantRow {
+        id: r.get(0)?,
+        request_key: r.get(1)?,
+        account_id: r.get(2)?,
+        email: r.get(3)?,
+        amount_cents: r.get(4)?,
+        reason: r.get(5)?,
+        created_ms: r.get(6)?,
     })
 }
 

@@ -20,6 +20,10 @@
       "type": "string",
       "pattern": "^rfd_[A-Za-z0-9]{20,32}$"
     },
+    "CreditGrantId": {
+      "type": "string",
+      "pattern": "^grt_[A-Za-z0-9]{20,32}$"
+    },
     "Timestamp": {
       "type": "string",
       "format": "date-time",
@@ -441,6 +445,71 @@
           "items": {
             "$ref": "#/$defs/Topup"
           }
+        }
+      }
+    },
+    "CreateCreditGrantRequest": {
+      "type": "object",
+      "required": [
+        "email",
+        "amount_cents",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+          "maxLength": 254
+        },
+        "amount_cents": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000,
+          "description": "Whole cents of operator-issued service credit."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Operator audit reason for this grant."
+        }
+      }
+    },
+    "CreditGrant": {
+      "type": "object",
+      "required": [
+        "id",
+        "object",
+        "account_id",
+        "email",
+        "amount_cents",
+        "reason",
+        "created_at"
+      ],
+      "description": "An operator-issued service-credit grant. It is not backed by a payment and is not refundable as a top-up. Retrying the same Idempotency-Key returns the same grant.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/CreditGrantId"
+        },
+        "object": {
+          "const": "credit_grant"
+        },
+        "account_id": {
+          "$ref": "#/$defs/AccountId"
+        },
+        "email": {
+          "type": "string"
+        },
+        "amount_cents": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
         }
       }
     },

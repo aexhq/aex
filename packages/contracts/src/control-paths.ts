@@ -54,6 +54,29 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/credit-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Grant service credit to an existing account
+         * @description Operator-only. Appends an auditable, non-payment credit to the account ledger.
+         *     Retrying the same Idempotency-Key with the same email, amount and reason returns
+         *     the original grant; changing any field returns 409. Grants are not Stripe top-ups
+         *     and cannot be refunded through the top-up refund operation.
+         */
+        post: operations["createCreditGrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/refunds": {
         parameters: {
             query?: never;
@@ -340,6 +363,26 @@ export type components = {
             invite_token: components["schemas"]["InvitationToken"];
             invited_at: components["schemas"]["Timestamp"];
         };
+        CreateCreditGrantRequest: {
+            email: string;
+            /** @description Whole cents of operator-issued service credit. */
+            amount_cents: number;
+            /** @description Operator audit reason for this grant. */
+            reason: string;
+        };
+        CreditGrantId: string;
+        AccountId: string;
+        /** @description An operator-issued service-credit grant. It is not backed by a payment and is not refundable as a top-up. Retrying the same Idempotency-Key returns the same grant. */
+        CreditGrant: {
+            id: components["schemas"]["CreditGrantId"];
+            /** @constant */
+            object: "credit_grant";
+            account_id: components["schemas"]["AccountId"];
+            email: string;
+            amount_cents: number;
+            reason: string;
+            created_at: components["schemas"]["Timestamp"];
+        };
         TopupId: string;
         CreateRefundRequest: {
             topup_id: components["schemas"]["TopupId"];
@@ -366,7 +409,6 @@ export type components = {
             email: string;
             invite_token: components["schemas"]["InvitationToken"];
         };
-        AccountId: string;
         /** @description Abuse controls (ARCHITECTURE-v1 §2.9): card + minimum top-up, concurrency and create-rate caps. */
         AccountLimits: {
             max_concurrent_sessions: number;
@@ -508,7 +550,7 @@ export type components = {
         };
     };
     parameters: {
-        /** @description A unique key for one intended refund; reuse it only to retry that request. */
+        /** @description A unique key for one intended operator mutation; reuse it only to retry that request. */
         IdempotencyKey: string;
     };
     requestBodies: never;
@@ -588,11 +630,48 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    createCreditGrant: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A unique key for one intended operator mutation; reuse it only to retry that request. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateCreditGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Idempotent replay of an existing grant */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditGrant"];
+                };
+            };
+            /** @description Credit granted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditGrant"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     createRefund: {
         parameters: {
             query?: never;
             header: {
-                /** @description A unique key for one intended refund; reuse it only to retry that request. */
+                /** @description A unique key for one intended operator mutation; reuse it only to retry that request. */
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;

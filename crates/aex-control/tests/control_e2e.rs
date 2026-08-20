@@ -1119,6 +1119,123 @@ async fn uncertain_refund_keeps_credit_reserved_and_retries_safely() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn operator_credit_grants_are_auditable_and_idempotent() {
+    let brain_token = "operator-token";
+    let brain_url = spawn_stub_brain(brain_token).await;
+    let base = spawn_control(&brain_url, brain_token, (10, 30)).await;
+    let http = reqwest::Client::new();
+    let created = invited_signup(&http, &base, "credit@example.com").await;
+    let account_token = created["account_token"].as_str().unwrap();
+    let account_id = created["account"]["id"].as_str().unwrap();
+    let request = json!({
+        "email": "credit@example.com",
+        "amount_cents": 500,
+        "reason": "Alpha evaluation"
+    });
+
+    let unauthenticated = http
+        .post(format!("{base}/v1/admin/credit-grants"))
+        .header("Idempotency-Key", "e2e-credit-grant-unauthenticated")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status().as_u16(), 401);
+
+    let missing_key = http
+        .post(format!("{base}/v1/admin/credit-grants"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_key.status().as_u16(), 400);
+
+    let grant = json_of(
+        http.post(format!("{base}/v1/admin/credit-grants"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .header("Idempotency-Key", "e2e-credit-grant-1")
+            .json(&request)
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    control_valid("CreditGrant", &grant);
+    assert_eq!(grant["account_id"], account_id);
+    assert_eq!(grant["email"], "credit@example.com");
+    assert_eq!(grant["amount_cents"], 500);
+    assert_eq!(grant["reason"], "Alpha evaluation");
+
+    let replay = json_of(
+        http.post(format!("{base}/v1/admin/credit-grants"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .header("Idempotency-Key", "e2e-credit-grant-1")
+            .json(&request)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    control_valid("CreditGrant", &replay);
+    assert_eq!(replay["id"], grant["id"]);
+
+    let mismatched_replay = http
+        .post(format!("{base}/v1/admin/credit-grants"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .header("Idempotency-Key", "e2e-credit-grant-1")
+        .json(&json!({
+            "email": "credit@example.com",
+            "amount_cents": 501,
+            "reason": "Alpha evaluation"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mismatched_replay.status().as_u16(), 409);
+
+    let unknown_account = http
+        .post(format!("{base}/v1/admin/credit-grants"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .header("Idempotency-Key", "e2e-credit-grant-unknown")
+        .json(&json!({
+            "email": "unknown@example.com",
+            "amount_cents": 500,
+            "reason": "Alpha evaluation"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown_account.status().as_u16(), 404);
+
+    let balance = json_of(
+        http.get(format!("{base}/v1/balance"))
+            .bearer_auth(account_token)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    control_valid("Balance", &balance);
+    assert_eq!(balance["microusd"], 5_000_000);
+
+    let topups = json_of(
+        http.get(format!("{base}/v1/topups"))
+            .bearer_auth(account_token)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    control_valid("TopupList", &topups);
+    assert_eq!(topups["data"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn abuse_caps_hold_concurrency_and_create_rate() {
     let brain_token = "operator-token";
     let brain_url = spawn_stub_brain(brain_token).await;

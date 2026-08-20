@@ -1178,6 +1178,204 @@ impl<'de> ::serde::Deserialize<'de> for CreateApiKeyRequestName {
             })
     }
 }
+#[doc = "`CreateCreditGrantRequest`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"amount_cents\","]
+#[doc = "    \"email\","]
+#[doc = "    \"reason\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"amount_cents\": {"]
+#[doc = "      \"description\": \"Whole cents of operator-issued service credit.\","]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 100000.0,"]
+#[doc = "      \"minimum\": 1.0"]
+#[doc = "    },"]
+#[doc = "    \"email\": {"]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"maxLength\": 254,"]
+#[doc = "      \"pattern\": \"^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$\""]
+#[doc = "    },"]
+#[doc = "    \"reason\": {"]
+#[doc = "      \"description\": \"Operator audit reason for this grant.\","]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"maxLength\": 200,"]
+#[doc = "      \"minLength\": 1"]
+#[doc = "    }"]
+#[doc = "  },"]
+#[doc = "  \"additionalProperties\": false"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CreateCreditGrantRequest {
+    #[doc = "Whole cents of operator-issued service credit."]
+    pub amount_cents: ::std::num::NonZeroU64,
+    pub email: CreateCreditGrantRequestEmail,
+    #[doc = "Operator audit reason for this grant."]
+    pub reason: CreateCreditGrantRequestReason,
+}
+impl CreateCreditGrantRequest {
+    pub fn builder() -> builder::CreateCreditGrantRequest {
+        Default::default()
+    }
+}
+#[doc = "`CreateCreditGrantRequestEmail`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"maxLength\": 254,"]
+#[doc = "  \"pattern\": \"^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct CreateCreditGrantRequestEmail(::std::string::String);
+impl ::std::ops::Deref for CreateCreditGrantRequestEmail {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<CreateCreditGrantRequestEmail> for ::std::string::String {
+    fn from(value: CreateCreditGrantRequestEmail) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for CreateCreditGrantRequestEmail {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 254usize {
+            return Err("longer than 254 characters".into());
+        }
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for CreateCreditGrantRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for CreateCreditGrantRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CreateCreditGrantRequestEmail {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CreateCreditGrantRequestEmail {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "Operator audit reason for this grant."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Operator audit reason for this grant.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"maxLength\": 200,"]
+#[doc = "  \"minLength\": 1"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct CreateCreditGrantRequestReason(::std::string::String);
+impl ::std::ops::Deref for CreateCreditGrantRequestReason {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<CreateCreditGrantRequestReason> for ::std::string::String {
+    fn from(value: CreateCreditGrantRequestReason) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for CreateCreditGrantRequestReason {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 200usize {
+            return Err("longer than 200 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for CreateCreditGrantRequestReason {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for CreateCreditGrantRequestReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CreateCreditGrantRequestReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CreateCreditGrantRequestReason {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
 #[doc = "`CreateInvitationRequest`"]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
@@ -1354,6 +1552,137 @@ pub struct CreateTopupRequest {
 impl CreateTopupRequest {
     pub fn builder() -> builder::CreateTopupRequest {
         Default::default()
+    }
+}
+#[doc = "An operator-issued service-credit grant. It is not backed by a payment and is not refundable as a top-up. Retrying the same Idempotency-Key returns the same grant."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"An operator-issued service-credit grant. It is not backed by a payment and is not refundable as a top-up. Retrying the same Idempotency-Key returns the same grant.\","]
+#[doc = "  \"type\": \"object\","]
+#[doc = "  \"required\": ["]
+#[doc = "    \"account_id\","]
+#[doc = "    \"amount_cents\","]
+#[doc = "    \"created_at\","]
+#[doc = "    \"email\","]
+#[doc = "    \"id\","]
+#[doc = "    \"object\","]
+#[doc = "    \"reason\""]
+#[doc = "  ],"]
+#[doc = "  \"properties\": {"]
+#[doc = "    \"account_id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/AccountId\""]
+#[doc = "    },"]
+#[doc = "    \"amount_cents\": {"]
+#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"minimum\": 1.0"]
+#[doc = "    },"]
+#[doc = "    \"created_at\": {"]
+#[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
+#[doc = "    },"]
+#[doc = "    \"email\": {"]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    },"]
+#[doc = "    \"id\": {"]
+#[doc = "      \"$ref\": \"#/$defs/CreditGrantId\""]
+#[doc = "    },"]
+#[doc = "    \"object\": {"]
+#[doc = "      \"const\": \"credit_grant\""]
+#[doc = "    },"]
+#[doc = "    \"reason\": {"]
+#[doc = "      \"type\": \"string\""]
+#[doc = "    }"]
+#[doc = "  }"]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct CreditGrant {
+    pub account_id: AccountId,
+    pub amount_cents: ::std::num::NonZeroU64,
+    pub created_at: Timestamp,
+    pub email: ::std::string::String,
+    pub id: CreditGrantId,
+    pub object: ::serde_json::Value,
+    pub reason: ::std::string::String,
+}
+impl CreditGrant {
+    pub fn builder() -> builder::CreditGrant {
+        Default::default()
+    }
+}
+#[doc = "`CreditGrantId`"]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"pattern\": \"^grt_[A-Za-z0-9]{20,32}$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct CreditGrantId(::std::string::String);
+impl ::std::ops::Deref for CreditGrantId {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<CreditGrantId> for ::std::string::String {
+    fn from(value: CreditGrantId) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for CreditGrantId {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^grt_[A-Za-z0-9]{20,32}$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^grt_[A-Za-z0-9]{20,32}$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for CreditGrantId {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for CreditGrantId {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CreditGrantId {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for CreditGrantId {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "The invitation token appears here and never again. Creating another invitation rotates it."]
@@ -3487,6 +3816,74 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct CreateCreditGrantRequest {
+        amount_cents: ::std::result::Result<::std::num::NonZeroU64, ::std::string::String>,
+        email: ::std::result::Result<super::CreateCreditGrantRequestEmail, ::std::string::String>,
+        reason: ::std::result::Result<super::CreateCreditGrantRequestReason, ::std::string::String>,
+    }
+    impl ::std::default::Default for CreateCreditGrantRequest {
+        fn default() -> Self {
+            Self {
+                amount_cents: Err("no value supplied for amount_cents".to_string()),
+                email: Err("no value supplied for email".to_string()),
+                reason: Err("no value supplied for reason".to_string()),
+            }
+        }
+    }
+    impl CreateCreditGrantRequest {
+        pub fn amount_cents<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::num::NonZeroU64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.amount_cents = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for amount_cents: {e}"));
+            self
+        }
+        pub fn email<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::CreateCreditGrantRequestEmail>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.email = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for email: {e}"));
+            self
+        }
+        pub fn reason<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::CreateCreditGrantRequestReason>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.reason = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for reason: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CreateCreditGrantRequest> for super::CreateCreditGrantRequest {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CreateCreditGrantRequest,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                amount_cents: value.amount_cents?,
+                email: value.email?,
+                reason: value.reason?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CreateCreditGrantRequest> for CreateCreditGrantRequest {
+        fn from(value: super::CreateCreditGrantRequest) -> Self {
+            Self {
+                amount_cents: Ok(value.amount_cents),
+                email: Ok(value.email),
+                reason: Ok(value.reason),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct CreateInvitationRequest {
         email: ::std::result::Result<super::CreateInvitationRequestEmail, ::std::string::String>,
     }
@@ -3617,6 +4014,130 @@ pub mod builder {
         fn from(value: super::CreateTopupRequest) -> Self {
             Self {
                 amount_cents: Ok(value.amount_cents),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct CreditGrant {
+        account_id: ::std::result::Result<super::AccountId, ::std::string::String>,
+        amount_cents: ::std::result::Result<::std::num::NonZeroU64, ::std::string::String>,
+        created_at: ::std::result::Result<super::Timestamp, ::std::string::String>,
+        email: ::std::result::Result<::std::string::String, ::std::string::String>,
+        id: ::std::result::Result<super::CreditGrantId, ::std::string::String>,
+        object: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+        reason: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for CreditGrant {
+        fn default() -> Self {
+            Self {
+                account_id: Err("no value supplied for account_id".to_string()),
+                amount_cents: Err("no value supplied for amount_cents".to_string()),
+                created_at: Err("no value supplied for created_at".to_string()),
+                email: Err("no value supplied for email".to_string()),
+                id: Err("no value supplied for id".to_string()),
+                object: Err("no value supplied for object".to_string()),
+                reason: Err("no value supplied for reason".to_string()),
+            }
+        }
+    }
+    impl CreditGrant {
+        pub fn account_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::AccountId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.account_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for account_id: {e}"));
+            self
+        }
+        pub fn amount_cents<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::num::NonZeroU64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.amount_cents = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for amount_cents: {e}"));
+            self
+        }
+        pub fn created_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Timestamp>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.created_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for created_at: {e}"));
+            self
+        }
+        pub fn email<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.email = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for email: {e}"));
+            self
+        }
+        pub fn id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::CreditGrantId>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for id: {e}"));
+            self
+        }
+        pub fn object<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::serde_json::Value>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.object = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for object: {e}"));
+            self
+        }
+        pub fn reason<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.reason = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for reason: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CreditGrant> for super::CreditGrant {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CreditGrant,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                account_id: value.account_id?,
+                amount_cents: value.amount_cents?,
+                created_at: value.created_at?,
+                email: value.email?,
+                id: value.id?,
+                object: value.object?,
+                reason: value.reason?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CreditGrant> for CreditGrant {
+        fn from(value: super::CreditGrant) -> Self {
+            Self {
+                account_id: Ok(value.account_id),
+                amount_cents: Ok(value.amount_cents),
+                created_at: Ok(value.created_at),
+                email: Ok(value.email),
+                id: Ok(value.id),
+                object: Ok(value.object),
+                reason: Ok(value.reason),
             }
         }
     }

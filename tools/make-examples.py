@@ -113,6 +113,26 @@ write(
     },
 )
 write("TopupList.example.json", {"object": "list", "data": [topup]})
+write(
+    "CreateCreditGrantRequest.example.json",
+    {
+        "email": account["email"],
+        "amount_cents": 1000,
+        "reason": "Alpha evaluation credit",
+    },
+)
+write(
+    "CreditGrant.example.json",
+    {
+        "id": "grt_01J5X8Y2K3M4N5P6Q7R8S9X5",
+        "object": "credit_grant",
+        "account_id": account["id"],
+        "email": account["email"],
+        "amount_cents": 1000,
+        "reason": "Alpha evaluation credit",
+        "created_at": "2026-08-18T09:55:00Z",
+    },
+)
 write("CreateRefundRequest.example.json", {"topup_id": topup["id"], "amount_cents": 500})
 write(
     "Refund.example.json",
