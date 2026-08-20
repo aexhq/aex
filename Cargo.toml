@@ -15,7 +15,7 @@ aex-sdk = { path = "crates/aex-sdk" }
 brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "ea73244489311cb3a11442c3a4306b289ec97ba7" }
 brain = { git = "https://github.com/aexhq/brain.git", rev = "ea73244489311cb3a11442c3a4306b289ec97ba7" }
 brain-aws = { git = "https://github.com/aexhq/brain.git", rev = "ea73244489311cb3a11442c3a4306b289ec97ba7" }
-hand-brain-aws = { git = "https://github.com/aexhq/hands.git", rev = "adc856060ff08069056e9b3b685f497db5759285" }
+hand-brain-aws = { git = "https://github.com/aexhq/hands.git", rev = "2353901d97a300f4861daa2e87553bddf6c233c0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "std", "clock"] }
