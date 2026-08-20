@@ -1560,7 +1560,7 @@ dependencies = [
 [[package]]
 name = "hand-brain-aws"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=adc856060ff08069056e9b3b685f497db5759285#adc856060ff08069056e9b3b685f497db5759285"
+source = "git+https://github.com/aexhq/hands.git?rev=2353901d97a300f4861daa2e87553bddf6c233c0#2353901d97a300f4861daa2e87553bddf6c233c0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1588,7 +1588,7 @@ dependencies = [
 [[package]]
 name = "hand-lambda"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=adc856060ff08069056e9b3b685f497db5759285#adc856060ff08069056e9b3b685f497db5759285"
+source = "git+https://github.com/aexhq/hands.git?rev=2353901d97a300f4861daa2e87553bddf6c233c0#2353901d97a300f4861daa2e87553bddf6c233c0"
 dependencies = [
  "anyhow",
  "aws-config",
