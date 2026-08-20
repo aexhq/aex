@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 aex-contracts.workspace = true
+brain-protocol.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

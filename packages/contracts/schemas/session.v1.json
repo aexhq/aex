@@ -144,22 +144,40 @@
         }
       }
     },
-    "BuiltinTool": {
+    "ToolName": {
       "type": "string",
-      "enum": [
-        "bash",
-        "read",
-        "write",
-        "edit",
-        "glob",
-        "grep",
-        "ls",
-        "task",
-        "todo",
-        "web_search",
-        "web_fetch"
+      "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$"
+    },
+    "ToolDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description",
+        "input_schema",
+        "output_schema"
       ],
-      "description": "bash..ls run in the hand; task/todo run in the brain; web_search/web_fetch are managed and billed."
+      "description": "The model-visible half of one Tool. Array order is preserved exactly in the immutable model prefix.",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/ToolName"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "input_schema": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        },
+        "output_schema": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        }
+      }
     },
     "McpProtocol": {
       "type": "string",
@@ -210,9 +228,10 @@
     "ExternalToolScope": {
       "type": "string",
       "enum": [
-        "root"
+        "root",
+        "all"
       ],
-      "description": "Host-executed tools are root-only in the MVP, keeping terminal control out of subagents."
+      "description": "Which agents may call a trusted server capability."
     },
     "ExternalToolCompletion": {
       "type": "string",
@@ -230,33 +249,106 @@
       ],
       "description": "replay_safe promises that repeating the same session_id and call_id returns the same logical result."
     },
-    "ExternalToolConfig": {
+    "IntrinsicToolExecutor": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "name",
-        "description",
-        "input_schema",
+        "kind",
+        "capability"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "intrinsic"
+        },
+        "capability": {
+          "type": "string",
+          "pattern": "^brain\\.[A-Za-z0-9_.:-]{1,120}$"
+        }
+      }
+    },
+    "HandToolSource": {
+      "type": "string",
+      "enum": [
+        "bundle",
+        "preinstalled"
+      ]
+    },
+    "HandToolExecutor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "protocol",
+        "checksum",
+        "source",
+        "required_env"
+      ],
+      "description": "A checksum-sealed executable in the session's default Hand.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "hand"
+        },
+        "protocol": {
+          "type": "integer",
+          "const": 1
+        },
+        "checksum": {
+          "$ref": "#/$defs/Sha256Hex"
+        },
+        "source": {
+          "$ref": "#/$defs/HandToolSource"
+        },
+        "required_env": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "description": "Environment-key names only. Secret values never enter the seal."
+        }
+      }
+    },
+    "AttachedToolExecutor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "callback_id"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "attached"
+        },
+        "callback_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+        }
+      }
+    },
+    "ServerToolExecutor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "capability",
         "scope",
         "completion",
         "effect",
         "max_input_bytes"
       ],
-      "description": "A model-visible tool executed by the Brain host's configured external executor. The executor address and credentials are host configuration, never session data.",
       "properties": {
-        "name": {
+        "kind": {
           "type": "string",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$"
+          "const": "server"
         },
-        "description": {
+        "capability": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 4096
-        },
-        "input_schema": {
-          "type": "object",
-          "minProperties": 1,
-          "additionalProperties": true
+          "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
         },
         "scope": {
           "$ref": "#/$defs/ExternalToolScope"
@@ -274,31 +366,112 @@
         }
       }
     },
+    "McpToolExecutor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "server",
+        "remote_name"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "mcp"
+        },
+        "server": {
+          "type": "string"
+        },
+        "remote_name": {
+          "type": "string"
+        }
+      }
+    },
+    "ToolExecutor": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/HandToolExecutor"
+        },
+        {
+          "$ref": "#/$defs/AttachedToolExecutor"
+        },
+        {
+          "$ref": "#/$defs/ServerToolExecutor"
+        },
+        {
+          "$ref": "#/$defs/IntrinsicToolExecutor"
+        },
+        {
+          "$ref": "#/$defs/McpToolExecutor"
+        }
+      ]
+    },
+    "ToolConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "definition",
+        "executor"
+      ],
+      "properties": {
+        "definition": {
+          "$ref": "#/$defs/ToolDefinition"
+        },
+        "executor": {
+          "$ref": "#/$defs/ToolExecutor"
+        }
+      }
+    },
+    "ToolBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checksum",
+        "content_base64",
+        "bytes",
+        "media_type"
+      ],
+      "description": "Create-time-only bundle bytes. Brain stages these outside the journal, then discards this representation.",
+      "properties": {
+        "checksum": {
+          "$ref": "#/$defs/Sha256Hex"
+        },
+        "content_base64": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "writeOnly": true,
+          "maxLength": 5592408
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4194304
+        },
+        "media_type": {
+          "type": "string",
+          "const": "application/javascript+esm"
+        }
+      }
+    },
     "ToolsConfig": {
       "type": "object",
       "additionalProperties": false,
       "description": "Sealed at create with the rest of the prefix. Omitted tools default to an empty set.",
       "properties": {
-        "builtin": {
+        "items": {
           "type": "array",
+          "maxItems": 128,
           "items": {
-            "$ref": "#/$defs/BuiltinTool"
+            "$ref": "#/$defs/ToolConfig"
           },
-          "uniqueItems": true,
-          "description": "Built-in tools to enable. Omitted or empty means no built-in tools."
+          "description": "The exact ordered native Tool grant. Omitted or empty means no native tools."
         },
         "mcp": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/McpServerConfig"
-          }
-        },
-        "external": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ExternalToolConfig"
           },
-          "description": "Host-executed tools sealed into the model prefix. Hosted Aex reserves its own output tool; direct Brain deployments may compose others."
+          "description": "Optional remote interoperability servers. Discovery resolves once at create and appends sealed MCP Tool descriptors."
         }
       }
     },
@@ -556,6 +729,15 @@
         },
         "tools": {
           "$ref": "#/$defs/ToolsConfig"
+        },
+        "tool_bundles": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/ToolBundle"
+          },
+          "writeOnly": true,
+          "description": "Bounded bundle payloads referenced by tools.items. Never part of the model prefix or journal."
         },
         "hand": {
           "$ref": "#/$defs/HandConfig"
@@ -890,6 +1072,7 @@
       "type": "string",
       "enum": [
         "end_turn",
+        "refusal",
         "max_rounds",
         "cancelled",
         "error"

@@ -352,11 +352,77 @@ export type components = {
              */
             reasoning_effort?: "low" | "medium" | "high";
         };
+        ToolName: string;
+        /** @description The model-visible half of one Tool. Array order is preserved exactly in the immutable model prefix. */
+        ToolDefinition: {
+            name: components["schemas"]["ToolName"];
+            description: string;
+            input_schema: {
+                [key: string]: unknown;
+            };
+            output_schema: {
+                [key: string]: unknown;
+            };
+        };
+        Sha256Hex: string;
+        /** @enum {string} */
+        HandToolSource: "bundle" | "preinstalled";
+        /** @description A checksum-sealed executable in the session's default Hand. */
+        HandToolExecutor: {
+            /** @constant */
+            kind: "hand";
+            /** @constant */
+            protocol: 1;
+            checksum: components["schemas"]["Sha256Hex"];
+            source: components["schemas"]["HandToolSource"];
+            /** @description Environment-key names only. Secret values never enter the seal. */
+            required_env: string[];
+        };
+        AttachedToolExecutor: {
+            /** @constant */
+            kind: "attached";
+            callback_id: string;
+        };
         /**
-         * @description bash..ls run in the hand; task/todo run in the brain; web_search/web_fetch are managed and billed.
+         * @description Which agents may call a trusted server capability.
          * @enum {string}
          */
-        BuiltinTool: "bash" | "read" | "write" | "edit" | "glob" | "grep" | "ls" | "task" | "todo" | "web_search" | "web_fetch";
+        ExternalToolScope: "root" | "all";
+        /**
+         * @description continue returns the result to the model. return_direct may complete or fail the turn without another model call.
+         * @enum {string}
+         */
+        ExternalToolCompletion: "continue" | "return_direct";
+        /**
+         * @description replay_safe promises that repeating the same session_id and call_id returns the same logical result.
+         * @enum {string}
+         */
+        ExternalToolEffect: "opaque" | "replay_safe";
+        ServerToolExecutor: {
+            /** @constant */
+            kind: "server";
+            capability: string;
+            scope: components["schemas"]["ExternalToolScope"];
+            completion: components["schemas"]["ExternalToolCompletion"];
+            effect: components["schemas"]["ExternalToolEffect"];
+            max_input_bytes: number;
+        };
+        IntrinsicToolExecutor: {
+            /** @constant */
+            kind: "intrinsic";
+            capability: string;
+        };
+        McpToolExecutor: {
+            /** @constant */
+            kind: "mcp";
+            server: string;
+            remote_name: string;
+        };
+        ToolExecutor: components["schemas"]["HandToolExecutor"] | components["schemas"]["AttachedToolExecutor"] | components["schemas"]["ServerToolExecutor"] | components["schemas"]["IntrinsicToolExecutor"] | components["schemas"]["McpToolExecutor"];
+        ToolConfig: {
+            definition: components["schemas"]["ToolDefinition"];
+            executor: components["schemas"]["ToolExecutor"];
+        };
         /**
          * @description auto probes server/discover and falls back to the legacy adapter (initialize + Mcp-Session-Id).
          * @enum {string}
@@ -375,40 +441,20 @@ export type components = {
             /** @description Whitelist; default all. */
             allowed_tools?: string[];
         };
-        /**
-         * @description Host-executed tools are root-only in the MVP, keeping terminal control out of subagents.
-         * @enum {string}
-         */
-        ExternalToolScope: "root";
-        /**
-         * @description continue returns the result to the model. return_direct may complete or fail the turn without another model call.
-         * @enum {string}
-         */
-        ExternalToolCompletion: "continue" | "return_direct";
-        /**
-         * @description replay_safe promises that repeating the same session_id and call_id returns the same logical result.
-         * @enum {string}
-         */
-        ExternalToolEffect: "opaque" | "replay_safe";
-        /** @description A model-visible tool executed by the Brain host's configured external executor. The executor address and credentials are host configuration, never session data. */
-        ExternalToolConfig: {
-            name: string;
-            description: string;
-            input_schema: {
-                [key: string]: unknown;
-            };
-            scope: components["schemas"]["ExternalToolScope"];
-            completion: components["schemas"]["ExternalToolCompletion"];
-            effect: components["schemas"]["ExternalToolEffect"];
-            max_input_bytes: number;
-        };
         /** @description Sealed at create with the rest of the prefix. Omitted tools default to an empty set. */
         ToolsConfig: {
-            /** @description Built-in tools to enable. Omitted or empty means no built-in tools. */
-            builtin?: components["schemas"]["BuiltinTool"][];
+            /** @description The exact ordered native Tool grant. Omitted or empty means no native tools. */
+            items?: components["schemas"]["ToolConfig"][];
+            /** @description Optional remote interoperability servers. Discovery resolves once at create and appends sealed MCP Tool descriptors. */
             mcp?: components["schemas"]["McpServerConfig"][];
-            /** @description Host-executed tools sealed into the model prefix. Hosted Aex reserves its own output tool; direct Brain deployments may compose others. */
-            external?: components["schemas"]["ExternalToolConfig"][];
+        };
+        /** @description Create-time-only bundle bytes. Brain stages these outside the journal, then discards this representation. */
+        ToolBundle: {
+            checksum: components["schemas"]["Sha256Hex"];
+            content_base64: string;
+            bytes: number;
+            /** @constant */
+            media_type: "application/javascript+esm";
         };
         HandConfig: {
             /**
@@ -441,6 +487,8 @@ export type components = {
             model: components["schemas"]["ModelConfig"];
             system_prompt?: string;
             tools?: components["schemas"]["ToolsConfig"];
+            /** @description Bounded bundle payloads referenced by tools.items. Never part of the model prefix or journal. */
+            tool_bundles?: components["schemas"]["ToolBundle"][];
             hand?: components["schemas"]["HandConfig"];
             files?: components["schemas"]["FileInput"][];
             metadata?: {
@@ -461,7 +509,6 @@ export type components = {
         OutputSchema: {
             [key: string]: unknown;
         };
-        Sha256Hex: string;
         MessageOutput: {
             schema: components["schemas"]["OutputSchema"];
             /** @description SHA-256 of RFC 8785 canonical JSON for schema. The server rejects a mismatch before calling the model. */
@@ -508,7 +555,7 @@ export type components = {
             reasoning_tokens?: number;
         };
         /** @enum {string} */
-        StopReason: "end_turn" | "max_rounds" | "cancelled" | "error";
+        StopReason: "end_turn" | "refusal" | "max_rounds" | "cancelled" | "error";
         /** @description A replayable client-facing result returned directly by a generic external tool. */
         TurnResult: {
             call_id: components["schemas"]["CallId"];

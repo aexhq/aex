@@ -5,9 +5,12 @@ publish the SDK before the matching control plane and Brain revisions are deploy
 
 ## Source order
 
-1. Merge and tag the Brain-owned protocol plus generic external-tool executor support.
-2. Point Aex at that immutable Brain protocol identity and regenerate its public contract views.
-3. Merge the Aex control-plane, SDK, and CLI changes.
+1. Merge and tag the Brain-owned protocol plus generic external-tool executor support; publish and
+   verify `@aexhq/brain` and `@aexhq/brain-tools` before their Aex consumers.
+2. Pin that immutable Brain identity in Hands and build the matching `brain-hand-aws` hosted
+   composition image.
+3. Point Aex at the exact Brain package versions and merge the Aex control-plane, SDK, tools, and
+   CLI changes.
 4. Configure Brain's `BRAIN_EXTERNAL_TOOL_EXECUTOR_URL` and give Brain's
    `BRAIN_EXTERNAL_TOOL_EXECUTOR_TOKEN` and aex-control's `AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN` the
    same secret. Never put that token in a session, journal, or hand.
@@ -23,10 +26,10 @@ The typed-output baseline was first published as:
 2. `@aexhq/sdk@0.55.0`
 3. `@aexhq/cli@0.26.0`
 
-For later patches, advance the versions in the package manifests and preserve this dependency
-order through npm trusted publishing: contracts, SDK, then CLI. Verify each exact version is
-visible before publishing its consumer. The packages request public access and provenance in
-their manifests.
+For this architecture, first publish Brain's SDK and portable Tools packages in dependency order,
+then advance Aex versions and preserve this trusted-publishing order: contracts, SDK, tools, CLI.
+Verify each exact version is visible before publishing its consumer. The packages request public
+access and provenance in their manifests.
 
 ## Final proof
 

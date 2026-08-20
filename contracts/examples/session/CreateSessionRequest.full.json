@@ -7,17 +7,91 @@
   },
   "system_prompt": "You are a careful engineer.",
   "tools": {
-    "builtin": [
-      "bash",
-      "read",
-      "write",
-      "edit",
-      "glob",
-      "grep",
-      "ls",
-      "task",
-      "todo",
-      "web_search"
+    "items": [
+      {
+        "definition": {
+          "name": "task",
+          "description": "Delegate a bounded task to a child agent.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "additionalProperties": false
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "executor": {
+          "kind": "intrinsic",
+          "capability": "brain.subagents.v1"
+        }
+      },
+      {
+        "definition": {
+          "name": "web_search",
+          "description": "Search the public web using Aex's managed search service.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "additionalProperties": false
+          },
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              },
+              "results": {
+                "type": "array"
+              }
+            },
+            "required": [
+              "query",
+              "results"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "executor": {
+          "kind": "server",
+          "capability": "aex.web.search.v1",
+          "scope": "all",
+          "completion": "continue",
+          "effect": "opaque",
+          "max_input_bytes": 8192
+        }
+      }
     ],
     "mcp": [
       {
@@ -27,20 +101,6 @@
           "Authorization": "Bearer REDACTED"
         },
         "protocol": "auto"
-      }
-    ],
-    "external": [
-      {
-        "name": "host_result",
-        "description": "Return a result to the host.",
-        "input_schema": {
-          "type": "object",
-          "additionalProperties": true
-        },
-        "scope": "root",
-        "completion": "return_direct",
-        "effect": "replay_safe",
-        "max_input_bytes": 98304
       }
     ]
   },

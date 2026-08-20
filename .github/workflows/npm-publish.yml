@@ -18,6 +18,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+      - name: Checkout pinned Brain packages
+        run: |
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain checkout 35afb0aff1d14c02c4b43814e7466ca8ceedcca4
       - uses: actions/setup-node@v6
         with:
           node-version: '24'

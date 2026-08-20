@@ -10,7 +10,7 @@
 use std::io::Write as _;
 use std::path::PathBuf;
 
-use aex_contracts::session::Event;
+use brain_protocol::session::{Event, TurnId};
 use aex_sdk::Client;
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
@@ -595,7 +595,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Render one event; returns false when the awaited turn is over.
-fn render_event(ev: &Event, turn: &aex_contracts::session::TurnId, saw_delta: &mut bool) -> bool {
+fn render_event(ev: &Event, turn: &TurnId, saw_delta: &mut bool) -> bool {
     match ev {
         Event::TurnStarted { .. } => true,
         Event::AssistantDelta { text, .. } => {

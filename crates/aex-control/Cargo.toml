@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 aex-contracts.workspace = true
+brain-protocol.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
@@ -17,6 +18,7 @@ chrono.workspace = true
 futures-util.workspace = true
 hex.workspace = true
 hmac.workspace = true
+html2text.workspace = true
 jsonschema.workspace = true
 rand.workspace = true
 reqwest.workspace = true

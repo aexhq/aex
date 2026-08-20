@@ -1091,12 +1091,41 @@ impl Db {
         turn_id: String,
         accepted_json: String,
     ) -> Result<()> {
-        self.call(move |connection| {
-            connection.execute(
-                "UPDATE output_requests SET turn_id = ?2, accepted_json = ?3 WHERE id = ?1",
-                params![id, turn_id, accepted_json],
-            )?;
+        let updated = self
+            .call(move |connection| {
+                let updated = connection.execute(
+                    "UPDATE output_requests SET turn_id = ?2, accepted_json = ?3
+                 WHERE id = ?1 AND (turn_id IS NULL OR turn_id = ?2)",
+                    params![id, turn_id, accepted_json],
+                )?;
+                Ok(updated == 1)
+            })
+            .await?;
+        if updated {
             Ok(())
+        } else {
+            Err(Error::Conflict(
+                "output request is bound to a different Brain turn".into(),
+            ))
+        }
+    }
+
+    /// Bind the authenticated executor delivery to the Brain turn that carried the reserved
+    /// message metadata. The executor can race the HTTP 202 response, so first delivery may claim
+    /// an unset turn; every subsequent writer must present the same identity.
+    pub async fn claim_output_turn(
+        &self,
+        id: String,
+        session_id: String,
+        turn_id: String,
+    ) -> Result<bool> {
+        self.call(move |connection| {
+            let updated = connection.execute(
+                "UPDATE output_requests SET turn_id = ?3
+                 WHERE id = ?1 AND session_id = ?2 AND (turn_id IS NULL OR turn_id = ?3)",
+                params![id, session_id, turn_id],
+            )?;
+            Ok(updated == 1)
         })
         .await
     }
@@ -1145,38 +1174,54 @@ impl Db {
         status: String,
         result_json: Option<String>,
         error_json: Option<String>,
+        expected_attempts: i64,
         now_ms: i64,
     ) -> Result<String> {
-        self.call(move |connection| {
-            let transaction = connection.transaction()?;
-            if let Some(existing) = transaction
-                .query_row(
-                    "SELECT response_json FROM external_tool_calls
+        let response = self
+            .call(move |connection| {
+                let transaction = connection.transaction()?;
+                if let Some(existing) = transaction
+                    .query_row(
+                        "SELECT response_json FROM external_tool_calls
                      WHERE session_id = ?1 AND call_id = ?2",
-                    params![session_id, call_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?
-            {
-                transaction.commit()?;
-                return Ok(existing);
-            }
-            transaction.execute(
-                "UPDATE output_requests
+                        params![session_id, call_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                {
+                    transaction.commit()?;
+                    return Ok(Some(existing));
+                }
+                let updated = transaction.execute(
+                    "UPDATE output_requests
                  SET attempts = attempts + 1, status = ?2, result_json = ?3, error_json = ?4
-                 WHERE id = ?1 AND session_id = ?5",
-                params![output_id, status, result_json, error_json, session_id],
-            )?;
-            transaction.execute(
-                "INSERT INTO external_tool_calls
+                 WHERE id = ?1 AND session_id = ?5 AND status = 'pending' AND attempts = ?6",
+                    params![
+                        output_id,
+                        status,
+                        result_json,
+                        error_json,
+                        session_id,
+                        expected_attempts
+                    ],
+                )?;
+                if updated != 1 {
+                    transaction.commit()?;
+                    return Ok(None);
+                }
+                transaction.execute(
+                    "INSERT INTO external_tool_calls
                  (session_id, call_id, output_id, response_json, created_ms)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![session_id, call_id, output_id, response_json, now_ms],
-            )?;
-            transaction.commit()?;
-            Ok(response_json)
+                    params![session_id, call_id, output_id, response_json, now_ms],
+                )?;
+                transaction.commit()?;
+                Ok(Some(response_json))
+            })
+            .await?;
+        response.ok_or_else(|| {
+            Error::Conflict("structured-output attempt lost a concurrent terminal race".into())
         })
-        .await
     }
 
     /// Persist a sweep: meter state + the session's absolute usage debit, in one transaction.

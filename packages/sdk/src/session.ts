@@ -1,6 +1,5 @@
 import type {
   ApiError,
-  CreateSessionRequest,
   Event,
   MessageAccepted,
   OutputValidationIssue,
@@ -9,6 +8,7 @@ import type {
   SessionList as SessionListData,
   SessionState,
 } from "@aexhq/contracts/session";
+import type { CreateSessionRequest } from "@aexhq/brain/session";
 import * as z from "zod";
 
 import {
@@ -20,7 +20,7 @@ import {
   abortError,
   errorFromApi,
 } from "./errors.js";
-import { jcsSha256, randomIdempotencyKey } from "./json.js";
+import { canonicalize, jcsSha256, randomIdempotencyKey } from "./json.js";
 import type { EventOptions } from "./transport.js";
 import { Transport } from "./transport.js";
 import { compileTools } from "./tools.js";
@@ -42,8 +42,22 @@ export interface CreateSessionOptions {
   model: ModelOptions;
   /** Omitted or empty grants no tools. A non-empty list is the exact grant. */
   tools?: readonly Tool[];
+  /** Optional remote MCP servers discovered and sealed by Brain at session creation. */
+  mcp?: readonly McpServerOptions[];
   systemPrompt?: string;
+  hand?: {
+    enabled?: boolean;
+    env?: Record<string, string>;
+  };
   metadata?: Record<string, string>;
+}
+
+export interface McpServerOptions {
+  name: string;
+  url: string;
+  headers?: Record<string, string>;
+  protocol?: "auto" | "2026-07" | "legacy";
+  allowedTools?: readonly string[];
 }
 
 export interface RequestOptions {
@@ -94,6 +108,12 @@ export class Sessions {
   }
 
   async create(options: CreateSessionOptions, request: RequestOptions = {}): Promise<Session> {
+    const compiledTools = await compileTools(options.tools);
+    if (compiledTools.attached.size > 0) {
+      throw new TypeError(
+        "Attached-process Tools are not available through this Aex SDK revision; use the default Hand execution mode",
+      );
+    }
     const body: CreateSessionRequest = {
       model: {
         provider: options.model.provider,
@@ -108,7 +128,31 @@ export class Sessions {
           ? {}
           : { reasoning_effort: options.model.reasoningEffort }),
       },
-      tools: compileTools(options.tools),
+      tools: {
+        items: compiledTools.items,
+        ...(options.mcp === undefined
+          ? {}
+          : {
+              mcp: options.mcp.map((server) => ({
+                name: server.name,
+                url: server.url,
+                ...(server.headers === undefined ? {} : { headers: server.headers }),
+                ...(server.protocol === undefined ? {} : { protocol: server.protocol }),
+                ...(server.allowedTools === undefined
+                  ? {}
+                  : { allowed_tools: [...server.allowedTools] }),
+              })),
+            }),
+      },
+      ...(compiledTools.bundles.length === 0 ? {} : { tool_bundles: compiledTools.bundles }),
+      ...(options.hand === undefined
+        ? {}
+        : {
+            hand: {
+              ...(options.hand.enabled === undefined ? {} : { enabled: options.hand.enabled }),
+              ...(options.hand.env === undefined ? {} : { env: options.hand.env }),
+            },
+          }),
       ...(options.systemPrompt === undefined ? {} : { system_prompt: options.systemPrompt }),
       ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
     };
@@ -251,8 +295,16 @@ export class Session implements SessionSummary {
           if (event.stop_reason === "cancelled") throw new AbortError();
           if (compiled !== undefined && outputOptions !== undefined) {
             if (event.result === undefined) {
-              throw new OutputRefusalError(
+              if (event.stop_reason === "refusal") {
+                throw new OutputRefusalError("The model refused the structured-output request");
+              }
+              throw new OutputValidationError(
                 "The model ended the turn without submitting the requested structured output",
+                [{
+                  path: "",
+                  message: "The model did not call aex_submit_output",
+                  keyword: "missing_output",
+                }],
               );
             }
             if (
@@ -336,7 +388,40 @@ async function compileOutputSchema(
   if (jsonSchema.type !== "object") {
     throw new OutputSchemaError("session.send() output requires a Zod object schema");
   }
+  assertSupportedJsonSchema(jsonSchema);
   return { jsonSchema, schemaHash: await jcsSha256(jsonSchema), retries };
+}
+
+function assertSupportedJsonSchema(schema: Record<string, unknown>): void {
+  const bytes = new TextEncoder().encode(canonicalize(schema));
+  if (bytes.byteLength > 64 * 1024) {
+    throw new OutputSchemaError("The output schema exceeds the 65536-byte service limit");
+  }
+  let nodes = 0;
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 64) throw new OutputSchemaError("The output schema exceeds the service depth limit");
+    nodes += 1;
+    if (nodes > 4096) throw new OutputSchemaError("The output schema exceeds the service node limit");
+    if (Array.isArray(value)) {
+      for (const child of value) visit(child, depth + 1);
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    const object = value as Record<string, unknown>;
+    if ("pattern" in object || "patternProperties" in object) {
+      throw new OutputSchemaError(
+        "Regular-expression JSON Schema keywords are not supported for Aex structured output",
+      );
+    }
+    for (const keyword of ["$ref", "$dynamicRef", "$recursiveRef"] as const) {
+      const reference = object[keyword];
+      if (typeof reference === "string" && !reference.startsWith("#")) {
+        throw new OutputSchemaError("Remote JSON Schema references are not supported for Aex structured output");
+      }
+    }
+    for (const child of Object.values(object)) visit(child, depth + 1);
+  };
+  visit(schema, 0);
 }
 
 function outputIssues(error: ApiError): readonly OutputValidationIssue[] {

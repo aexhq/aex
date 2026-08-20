@@ -9,6 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned Brain packages
+        run: |
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain checkout 35afb0aff1d14c02c4b43814e7466ca8ceedcca4
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.97.1"

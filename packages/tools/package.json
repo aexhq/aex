@@ -32,6 +32,11 @@
     "build": "tsc -p tsconfig.json",
     "test": "tsc -p tsconfig.json && node --test"
   },
+  "dependencies": {
+    "@aexhq/brain": "0.1.0",
+    "@aexhq/brain-tools": "0.1.0",
+    "zod": "4.4.3"
+  },
   "peerDependencies": {
     "@aexhq/sdk": ">=0.56.0 <1"
   },

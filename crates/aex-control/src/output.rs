@@ -4,12 +4,13 @@
 //! per-message schema. Candidate validation runs here, never in the customer's hand. Brain only
 //! knows the generic external-tool and return-direct contracts.
 
-use aex_contracts::session::ExternalToolCallRequest;
+use brain_protocol::session::ExternalToolCallRequest;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::identity;
 use crate::store::{BeginOutput, Db, OutputRequestRow};
+use crate::web::{FETCH_CAPABILITY, FETCH_TOOL_NAME, SEARCH_CAPABILITY, SEARCH_TOOL_NAME};
 use crate::{Error, Result, now_ms};
 
 pub const OUTPUT_TOOL_NAME: &str = "aex_submit_output";
@@ -19,7 +20,6 @@ const MAX_SCHEMA_BYTES: usize = 64 * 1024;
 const MAX_OUTPUT_BYTES: usize = 96 * 1024;
 const MAX_SCHEMA_DEPTH: usize = 64;
 const MAX_SCHEMA_NODES: usize = 4096;
-const MAX_PATTERN_CHARS: usize = 1024;
 const MAX_ISSUES: usize = 20;
 
 pub enum PreparedMessage {
@@ -69,16 +69,8 @@ pub fn inject_output_tool(body: &[u8]) -> Result<Vec<u8>> {
     let items = items
         .as_array_mut()
         .ok_or_else(|| Error::Invalid("tools.items must be an array".into()))?;
-    if items.iter().any(|item| {
-        item.pointer("/definition/name").and_then(Value::as_str) == Some(OUTPUT_TOOL_NAME)
-            || item
-                .pointer("/executor/capability")
-                .and_then(Value::as_str)
-                .is_some_and(|capability| capability.starts_with("aex.output"))
-    }) {
-        return Err(Error::Invalid(
-            "the aex_submit_output Tool name and aex.output capability are reserved".into(),
-        ));
+    for item in items.iter_mut() {
+        normalize_managed_tool(item)?;
     }
     items.push(json!({
         "definition": {
@@ -105,6 +97,125 @@ pub fn inject_output_tool(body: &[u8]) -> Result<Vec<u8>> {
     serde_json::to_vec(&document).map_err(|error| Error::Internal(format!("session body: {error}")))
 }
 
+fn normalize_managed_tool(item: &mut Value) -> Result<()> {
+    let name = item.pointer("/definition/name").and_then(Value::as_str);
+    let capability = item.pointer("/executor/capability").and_then(Value::as_str);
+    for (managed_name, managed_capability) in [
+        (SEARCH_TOOL_NAME, SEARCH_CAPABILITY),
+        (FETCH_TOOL_NAME, FETCH_CAPABILITY),
+    ] {
+        if name == Some(managed_name) || capability == Some(managed_capability) {
+            if name != Some(managed_name)
+                || capability != Some(managed_capability)
+                || item.pointer("/executor/kind").and_then(Value::as_str) != Some("server")
+            {
+                return Err(Error::Invalid(format!(
+                    "Aex-managed Tool {managed_name} must use its pinned name and capability"
+                )));
+            }
+            *item = managed_web_tool(managed_name);
+            return Ok(());
+        }
+    }
+    if name.is_some_and(|name| {
+        name.starts_with("aex_") || matches!(name, SEARCH_TOOL_NAME | FETCH_TOOL_NAME)
+    }) || capability.is_some_and(|capability| capability.starts_with("aex."))
+    {
+        return Err(Error::Invalid(
+            "Aex-managed Tool names and aex.* server capabilities are reserved".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn managed_web_tool(name: &str) -> Value {
+    match name {
+        SEARCH_TOOL_NAME => json!({
+            "definition": {
+                "name": SEARCH_TOOL_NAME,
+                "description": "Search the public web using Aex's managed search service.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "minLength": 1, "maxLength": 500},
+                        "num": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                        "country": {"type": "string", "minLength": 2, "maxLength": 8},
+                        "language": {"type": "string", "minLength": 2, "maxLength": 16}
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                },
+                "output_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "results": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "url": {"type": "string"},
+                                    "snippet": {"type": "string"},
+                                    "date": {"type": "string"}
+                                },
+                                "required": ["title", "url", "snippet"],
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "required": ["query", "results"],
+                    "additionalProperties": false
+                }
+            },
+            "executor": {
+                "kind": "server",
+                "capability": SEARCH_CAPABILITY,
+                "scope": "all",
+                "completion": "continue",
+                "effect": "opaque",
+                "max_input_bytes": 8192
+            }
+        }),
+        FETCH_TOOL_NAME => json!({
+            "definition": {
+                "name": FETCH_TOOL_NAME,
+                "description": "Fetch a public text, HTML, or JSON URL through Aex's guarded network service.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "format": "uri"},
+                        "max_chars": {"type": "integer", "minimum": 1, "maximum": 100000}
+                    },
+                    "required": ["url"],
+                    "additionalProperties": false
+                },
+                "output_schema": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string"},
+                        "status": {"type": "integer"},
+                        "content_type": {"type": "string"},
+                        "text": {"type": "string"},
+                        "truncated": {"type": "boolean"}
+                    },
+                    "required": ["url", "status", "content_type", "text", "truncated"],
+                    "additionalProperties": false
+                }
+            },
+            "executor": {
+                "kind": "server",
+                "capability": FETCH_CAPABILITY,
+                "scope": "all",
+                "completion": "continue",
+                "effect": "opaque",
+                "max_input_bytes": 8192
+            }
+        }),
+        _ => unreachable!("managed web Tool name was checked"),
+    }
+}
+
 pub async fn prepare_message(
     db: &Db,
     session_id: &str,
@@ -118,6 +229,7 @@ pub async fn prepare_message(
     let root = document
         .as_object_mut()
         .ok_or_else(|| Error::Invalid("message body must be an object".into()))?;
+    reject_reserved_metadata(root)?;
     let Some(output) = root.remove("output") else {
         return Ok(PreparedMessage::Plain(body.to_vec()));
     };
@@ -157,11 +269,6 @@ pub async fn prepare_message(
     let metadata = metadata
         .as_object_mut()
         .ok_or_else(|| Error::Invalid("metadata must be an object".into()))?;
-    if metadata.keys().any(|key| key.starts_with("aex.")) {
-        return Err(Error::Invalid(
-            "message metadata keys beginning with aex. are reserved".into(),
-        ));
-    }
     metadata.insert(OUTPUT_CONTEXT_KEY.into(), Value::String(output_id.clone()));
 
     let instruction = format!(
@@ -251,6 +358,33 @@ pub async fn execute(db: &Db, request: ExternalToolCallRequest) -> Result<Value>
             "the sealed Aex output capability is missing from the executor call".into(),
         ));
     }
+    if request.agent_id.to_string() != "root" {
+        return Err(Error::Forbidden(
+            "only the root Brain agent may submit Aex structured output".into(),
+        ));
+    }
+    let Some(output_id) = request.context.get(OUTPUT_CONTEXT_KEY).cloned() else {
+        return Ok(unarmed_response());
+    };
+    let Some(row) = db
+        .output_request(output_id.clone())
+        .await?
+        .filter(|row| row.session_id == session_id)
+    else {
+        return Ok(unarmed_response());
+    };
+    if !db
+        .claim_output_turn(
+            row.id.clone(),
+            session_id.clone(),
+            request.turn_id.to_string(),
+        )
+        .await?
+    {
+        return Err(Error::Forbidden(
+            "structured output is armed for a different Brain turn".into(),
+        ));
+    }
     if let Some(response) = db
         .external_call_response(session_id.clone(), call_id.clone())
         .await?
@@ -258,16 +392,6 @@ pub async fn execute(db: &Db, request: ExternalToolCallRequest) -> Result<Value>
         return serde_json::from_str(&response)
             .map_err(|error| Error::Internal(format!("cached executor response: {error}")));
     }
-    let output_id = request
-        .context
-        .get(OUTPUT_CONTEXT_KEY)
-        .ok_or_else(|| Error::Invalid("structured output is not armed for this turn".into()))?
-        .clone();
-    let row = db
-        .output_request(output_id.clone())
-        .await?
-        .filter(|row| row.session_id == session_id)
-        .ok_or(Error::NotFound)?;
     if row.status != "pending" {
         return Err(Error::Conflict(format!(
             "output request {} is already {}",
@@ -358,6 +482,7 @@ pub async fn execute(db: &Db, request: ExternalToolCallRequest) -> Result<Value>
             status,
             result_json,
             error_json,
+            row.attempts,
             now_ms(),
         )
         .await?;
@@ -365,45 +490,67 @@ pub async fn execute(db: &Db, request: ExternalToolCallRequest) -> Result<Value>
         .map_err(|error| Error::Internal(format!("executor response: {error}")))
 }
 
+fn unarmed_response() -> Value {
+    json!({
+        "outcome": "failed",
+        "content": "No structured output is requested for this turn. Continue the task normally and do not call this Tool again unless a later user message requests structured output.",
+        "is_error": true,
+        "disposition": "continue"
+    })
+}
+
 fn validate_schema(schema: &Value, claimed_hash: &str) -> Result<String> {
     if schema.get("type").and_then(Value::as_str) != Some("object") {
-        return Err(Error::Invalid(
+        return Err(Error::OutputSchema(
             "output.schema must have an object root".into(),
         ));
     }
     let canonical = serde_jcs::to_vec(schema)
-        .map_err(|error| Error::Invalid(format!("output.schema: {error}")))?;
+        .map_err(|error| Error::OutputSchema(format!("output.schema: {error}")))?;
     if canonical.len() > MAX_SCHEMA_BYTES {
-        return Err(Error::Invalid(format!(
+        return Err(Error::OutputSchema(format!(
             "output.schema is {} bytes; maximum is {MAX_SCHEMA_BYTES}",
             canonical.len()
         )));
     }
     let actual = hex::encode(Sha256::digest(&canonical));
     if actual != claimed_hash {
-        return Err(Error::Invalid(format!(
+        return Err(Error::OutputSchema(format!(
             "output.schema_hash mismatch; expected {actual}"
         )));
     }
     let mut nodes = 0;
     inspect_schema(schema, 0, &mut nodes)?;
     jsonschema::meta::validate(schema)
-        .map_err(|error| Error::Invalid(format!("output.schema: {error}")))?;
+        .map_err(|error| Error::OutputSchema(format!("output.schema: {error}")))?;
     jsonschema::draft202012::new(schema)
-        .map_err(|error| Error::Invalid(format!("output.schema: {error}")))?;
+        .map_err(|error| Error::OutputSchema(format!("output.schema: {error}")))?;
     String::from_utf8(canonical)
         .map_err(|error| Error::Internal(format!("canonical output schema: {error}")))
 }
 
+fn reject_reserved_metadata(root: &serde_json::Map<String, Value>) -> Result<()> {
+    if root
+        .get("metadata")
+        .and_then(Value::as_object)
+        .is_some_and(|metadata| metadata.keys().any(|key| key.starts_with("aex.")))
+    {
+        return Err(Error::Invalid(
+            "message metadata keys beginning with aex. are reserved".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn inspect_schema(value: &Value, depth: usize, nodes: &mut usize) -> Result<()> {
     if depth > MAX_SCHEMA_DEPTH {
-        return Err(Error::Invalid(format!(
+        return Err(Error::OutputSchema(format!(
             "output.schema exceeds depth {MAX_SCHEMA_DEPTH}"
         )));
     }
     *nodes += 1;
     if *nodes > MAX_SCHEMA_NODES {
-        return Err(Error::Invalid(format!(
+        return Err(Error::OutputSchema(format!(
             "output.schema exceeds {MAX_SCHEMA_NODES} nodes"
         )));
     }
@@ -413,17 +560,15 @@ fn inspect_schema(value: &Value, depth: usize, nodes: &mut usize) -> Result<()> 
                 if let Some(reference) = object.get(keyword).and_then(Value::as_str)
                     && !reference.starts_with('#')
                 {
-                    return Err(Error::Invalid(format!(
+                    return Err(Error::OutputSchema(format!(
                         "output.schema remote {keyword} values are not supported"
                     )));
                 }
             }
-            if let Some(pattern) = object.get("pattern").and_then(Value::as_str)
-                && pattern.chars().count() > MAX_PATTERN_CHARS
-            {
-                return Err(Error::Invalid(format!(
-                    "output.schema pattern exceeds {MAX_PATTERN_CHARS} characters"
-                )));
+            if object.contains_key("pattern") || object.contains_key("patternProperties") {
+                return Err(Error::OutputSchema(
+                    "output.schema regular-expression keywords are not supported in the MVP".into(),
+                ));
             }
             for child in object.values() {
                 inspect_schema(child, depth + 1, nodes)?;
@@ -533,6 +678,67 @@ mod tests {
             inject_output_tool(br#"{"tools":{"external":[{"name":"mine"}]},"model":{}}"#).is_err()
         );
         assert!(inject_output_tool(br#"{"tools":{"builtin":["bash"]},"model":{}}"#).is_err());
+        assert!(
+            inject_output_tool(
+                br#"{"tools":{"items":[{"definition":{"name":"aex_spoof","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"intrinsic","capability":"brain.subagents.v1"}}]},"model":{}}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn injection_pins_managed_web_tools_and_rejects_namespace_spoofing() {
+        let injected = inject_output_tool(
+            br#"{
+                "model":{"provider":"openai"},
+                "tools":{"items":[{
+                    "definition":{
+                        "name":"web_search",
+                        "description":"attacker controlled",
+                        "input_schema":{"type":"string"},
+                        "output_schema":{"type":"string"}
+                    },
+                    "executor":{
+                        "kind":"server",
+                        "capability":"aex.web.search.v1",
+                        "scope":"root",
+                        "completion":"return_direct",
+                        "effect":"replay_safe",
+                        "max_input_bytes":1
+                    }
+                }]}
+            }"#,
+        )
+        .unwrap();
+        let document: Value = serde_json::from_slice(&injected).unwrap();
+        let search = &document["tools"]["items"][0];
+        assert_eq!(
+            search["definition"]["description"],
+            "Search the public web using Aex's managed search service."
+        );
+        assert_eq!(search["executor"]["scope"], "all");
+        assert_eq!(search["executor"]["completion"], "continue");
+        assert_eq!(search["executor"]["effect"], "opaque");
+        assert_eq!(search["executor"]["max_input_bytes"], 8192);
+
+        assert!(
+            inject_output_tool(
+                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"server","capability":"aex.web.search.v1","scope":"all","completion":"continue","effect":"opaque","max_input_bytes":1}}]}}"#
+            )
+            .is_err()
+        );
+        assert!(
+            inject_output_tool(
+                br#"{"model":{},"tools":{"items":[{"definition":{"name":"web_fetch","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"hand","protocol":1,"checksum":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source":"preinstalled","required_env":[]}}]}}"#
+            )
+            .is_err()
+        );
+        assert!(
+            inject_output_tool(
+                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"server","capability":"aex.private.v1","scope":"all","completion":"continue","effect":"opaque","max_input_bytes":1}}]}}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -545,6 +751,24 @@ mod tests {
             json!({"type":"object","properties":{"x":{"$ref":"https://example.test/schema"}}});
         let remote_hash = canonical_hash(&remote).unwrap();
         assert!(validate_schema(&remote, &remote_hash).is_err());
+        let pattern =
+            json!({"type":"object","properties":{"x":{"type":"string","pattern":"^(a+)+$"}}});
+        let pattern_hash = canonical_hash(&pattern).unwrap();
+        assert!(validate_schema(&pattern, &pattern_hash).is_err());
+    }
+
+    #[tokio::test]
+    async fn reserved_metadata_is_rejected_even_without_an_output_request() {
+        let db = db_with_session(true).await;
+        let body = serde_json::to_vec(&json!({
+            "content": "plain message",
+            "metadata": {OUTPUT_CONTEXT_KEY: "out_attacker_controlled"}
+        }))
+        .unwrap();
+        assert!(matches!(
+            prepare_message(&db, SESSION_ID, true, &body, Some("reserved-metadata")).await,
+            Err(Error::Invalid(_))
+        ));
     }
 
     #[tokio::test]
@@ -605,6 +829,11 @@ mod tests {
             execute(&db, unsealed).await,
             Err(Error::Invalid(_))
         ));
+        let mut unarmed = request("op_unarmed", json!({"answer": 42}));
+        unarmed.context.remove(OUTPUT_CONTEXT_KEY);
+        let unarmed = execute(&db, unarmed).await.unwrap();
+        assert_eq!(unarmed["disposition"], "continue");
+        assert_eq!(unarmed["is_error"], true);
         let invalid_request = request("op_invalid", json!({"answer": "wrong"}));
         let invalid = execute(&db, invalid_request.clone()).await.unwrap();
         assert_eq!(invalid["disposition"], "continue");
@@ -618,6 +847,28 @@ mod tests {
             1,
             "same call id must not consume another attempt"
         );
+
+        let mut wrong_turn =
+            serde_json::to_value(request("op_wrong_turn", json!({"answer": 42}))).unwrap();
+        wrong_turn["turn_id"] = "trn_00000000000000000000".into();
+        assert!(matches!(
+            execute(
+                &db,
+                serde_json::from_value::<ExternalToolCallRequest>(wrong_turn).unwrap()
+            )
+            .await,
+            Err(Error::Forbidden(_))
+        ));
+        let mut child = serde_json::to_value(request("op_child", json!({"answer": 42}))).unwrap();
+        child["agent_id"] = "agent_child".into();
+        assert!(matches!(
+            execute(
+                &db,
+                serde_json::from_value::<ExternalToolCallRequest>(child).unwrap()
+            )
+            .await,
+            Err(Error::Forbidden(_))
+        ));
 
         let completed = execute(&db, request("op_valid", json!({"answer": 42})))
             .await

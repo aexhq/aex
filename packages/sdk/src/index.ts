@@ -18,6 +18,7 @@ export {
 export type {
   CreateSessionOptions,
   ListSessionsOptions,
+  McpServerOptions,
   ModelSummary,
   ModelOptions,
   OutputOptions,
@@ -27,11 +28,21 @@ export type {
   SessionSummary,
 } from "./session.js";
 export type { EventOptions } from "./transport.js";
+export {
+  defineIntrinsicTool,
+  definePreinstalledTool,
+  defineServerTool,
+  defineTool,
+} from "@aexhq/brain";
 export type {
-  BuiltinTool,
-  BuiltinToolName,
+  DefineIntrinsicToolOptions,
+  DefinePreinstalledToolOptions,
+  DefineServerToolOptions,
+  DefineToolOptions,
   Tool,
-} from "./tools.js";
+  ToolContext,
+  ToolHandler,
+} from "@aexhq/brain";
 
 const DEFAULT_API_URL = "https://api.aex.dev";
 

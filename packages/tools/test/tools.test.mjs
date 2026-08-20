@@ -5,7 +5,10 @@ import { Aex } from "@aexhq/sdk";
 import { bash, edit, read, subagents, webFetch, webSearch, write } from "../dist/index.js";
 
 test("subagents selects the stable task primitive", () => {
-  assert.deepEqual(subagents(), { kind: "aex.builtin", name: "task" });
+  assert.equal(subagents().kind, "brain.tool");
+  assert.equal(subagents().name, "task");
+  assert.equal(subagents().execution, "intrinsic");
+  assert.equal(subagents().executor.capability, "brain.subagents.v1");
   assert.ok(Object.isFrozen(subagents()));
 });
 
@@ -19,9 +22,13 @@ test("hand helpers select individual builtins", () => {
 test("managed web helpers select only their matching builtins", () => {
   assert.equal(webSearch().name, "web_search");
   assert.equal(webFetch().name, "web_fetch");
+  assert.equal(webSearch().executor.capability, "aex.web.search.v1");
+  assert.equal(webFetch().executor.capability, "aex.web.fetch.v1");
+  assert.equal(webSearch().execution, "server");
+  assert.equal(webFetch().execution, "server");
 });
 
-test("SDK creation compiles imported values into the sealed builtin order", async () => {
+test("SDK creation compiles imported values into Brain's sealed ordered Tool grant", async () => {
   let body;
   const aex = new Aex({
     apiKey: "aex_sk_test",
@@ -47,11 +54,19 @@ test("SDK creation compiles imported values into the sealed builtin order", asyn
     tools: [bash(), read(), write(), edit(), subagents()],
   });
 
-  assert.deepEqual(body.tools.builtin, [
+  assert.deepEqual(body.tools.items.map((item) => item.definition.name), [
     "bash",
     "read",
     "write",
     "edit",
     "task",
   ]);
+  assert.deepEqual(body.tools.items.map((item) => item.executor.kind), [
+    "hand",
+    "hand",
+    "hand",
+    "hand",
+    "intrinsic",
+  ]);
+  assert.equal(body.tool_bundles.length, 4);
 });

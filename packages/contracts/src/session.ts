@@ -69,23 +69,10 @@ export type HandShape = "1gb" | "2gb" | "4gb" | "8gb";
 export type Provider =
   "openai" | "anthropic" | "deepseek" | "moonshot" | "xai" | "openai_compatible";
 /**
- * bash..ls run in the hand; task/todo run in the brain; web_search/web_fetch are managed and billed.
- *
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
- * via the `definition` "BuiltinTool".
+ * via the `definition` "ToolName".
  */
-export type BuiltinTool =
-  | "bash"
-  | "read"
-  | "write"
-  | "edit"
-  | "glob"
-  | "grep"
-  | "ls"
-  | "task"
-  | "todo"
-  | "web_search"
-  | "web_fetch";
+export type ToolName = string;
 /**
  * auto probes server/discover and falls back to the legacy adapter (initialize + Mcp-Session-Id).
  *
@@ -94,12 +81,12 @@ export type BuiltinTool =
  */
 export type McpProtocol = "auto" | "2026-07" | "legacy";
 /**
- * Host-executed tools are root-only in the MVP, keeping terminal control out of subagents.
+ * Which agents may call a trusted server capability.
  *
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
  * via the `definition` "ExternalToolScope".
  */
-export type ExternalToolScope = "root";
+export type ExternalToolScope = "root" | "all";
 /**
  * continue returns the result to the model. return_direct may complete or fail the turn without another model call.
  *
@@ -114,6 +101,21 @@ export type ExternalToolCompletion = "continue" | "return_direct";
  * via the `definition` "ExternalToolEffect".
  */
 export type ExternalToolEffect = "opaque" | "replay_safe";
+/**
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "HandToolSource".
+ */
+export type HandToolSource = "bundle" | "preinstalled";
+/**
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "ToolExecutor".
+ */
+export type ToolExecutor =
+  | HandToolExecutor
+  | AttachedToolExecutor
+  | ServerToolExecutor
+  | IntrinsicToolExecutor
+  | McpToolExecutor;
 /**
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
  * via the `definition` "ContentPart".
@@ -175,7 +177,7 @@ export type ApiErrorCode =
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
  * via the `definition` "StopReason".
  */
-export type StopReason = "end_turn" | "max_rounds" | "cancelled" | "error";
+export type StopReason = "end_turn" | "refusal" | "max_rounds" | "cancelled" | "error";
 /**
  * One journal event, delivered over SSE as `event: <type>` with `id: <seq>` and this object as data. Discriminated by `type`.
  *
@@ -381,6 +383,22 @@ export interface ModelInfo {
   base_url?: string;
 }
 /**
+ * The model-visible half of one Tool. Array order is preserved exactly in the immutable model prefix.
+ *
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "ToolDefinition".
+ */
+export interface ToolDefinition {
+  name: ToolName;
+  description: string;
+  input_schema: {
+    [k: string]: unknown | undefined;
+  };
+  output_schema: {
+    [k: string]: unknown | undefined;
+  };
+}
+/**
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
  * via the `definition` "McpServerConfig".
  */
@@ -403,21 +421,79 @@ export interface McpServerConfig {
   allowed_tools?: string[];
 }
 /**
- * A model-visible tool executed by the Brain host's configured external executor. The executor address and credentials are host configuration, never session data.
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "IntrinsicToolExecutor".
+ */
+export interface IntrinsicToolExecutor {
+  kind: "intrinsic";
+  capability: string;
+}
+/**
+ * A checksum-sealed executable in the session's default Hand.
  *
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
- * via the `definition` "ExternalToolConfig".
+ * via the `definition` "HandToolExecutor".
  */
-export interface ExternalToolConfig {
-  name: string;
-  description: string;
-  input_schema: {
-    [k: string]: unknown | undefined;
-  };
+export interface HandToolExecutor {
+  kind: "hand";
+  protocol: 1;
+  checksum: Sha256Hex;
+  source: HandToolSource;
+  /**
+   * Environment-key names only. Secret values never enter the seal.
+   *
+   * @maxItems 64
+   */
+  required_env: string[];
+}
+/**
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "AttachedToolExecutor".
+ */
+export interface AttachedToolExecutor {
+  kind: "attached";
+  callback_id: string;
+}
+/**
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "ServerToolExecutor".
+ */
+export interface ServerToolExecutor {
+  kind: "server";
+  capability: string;
   scope: ExternalToolScope;
   completion: ExternalToolCompletion;
   effect: ExternalToolEffect;
   max_input_bytes: number;
+}
+/**
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "McpToolExecutor".
+ */
+export interface McpToolExecutor {
+  kind: "mcp";
+  server: string;
+  remote_name: string;
+}
+/**
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "ToolConfig".
+ */
+export interface ToolConfig {
+  definition: ToolDefinition;
+  executor: ToolExecutor;
+}
+/**
+ * Create-time-only bundle bytes. Brain stages these outside the journal, then discards this representation.
+ *
+ * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
+ * via the `definition` "ToolBundle".
+ */
+export interface ToolBundle {
+  checksum: Sha256Hex;
+  content_base64: string;
+  bytes: number;
+  media_type: "application/javascript+esm";
 }
 /**
  * Sealed at create with the rest of the prefix. Omitted tools default to an empty set.
@@ -427,14 +503,15 @@ export interface ExternalToolConfig {
  */
 export interface ToolsConfig {
   /**
-   * Built-in tools to enable. Omitted or empty means no built-in tools.
+   * The exact ordered native Tool grant. Omitted or empty means no native tools.
+   *
+   * @maxItems 128
    */
-  builtin?: BuiltinTool[];
-  mcp?: McpServerConfig[];
+  items?: ToolConfig[];
   /**
-   * Host-executed tools sealed into the model prefix. Hosted Aex reserves its own output tool; direct Brain deployments may compose others.
+   * Optional remote interoperability servers. Discovery resolves once at create and appends sealed MCP Tool descriptors.
    */
-  external?: ExternalToolConfig[];
+  mcp?: McpServerConfig[];
 }
 /**
  * This interface was referenced by `AexSessionAPIV1Types`'s JSON-Schema
@@ -570,6 +647,12 @@ export interface CreateSessionRequest {
   model: ModelConfig;
   system_prompt?: string;
   tools?: ToolsConfig;
+  /**
+   * Bounded bundle payloads referenced by tools.items. Never part of the model prefix or journal.
+   *
+   * @maxItems 128
+   */
+  tool_bundles?: ToolBundle[];
   hand?: HandConfig;
   files?: FileInput[];
   metadata?: {

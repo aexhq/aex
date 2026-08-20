@@ -126,14 +126,27 @@ sess = {"id": "ses_01HZX8Y2K3M4N5P6Q7R8S9T0", "object": "session", "state": "idl
         "created_at": "2026-08-18T09:00:00Z", "updated_at": "2026-08-18T09:42:10Z", "last_message_at": "2026-08-18T09:40:00Z", "turns": 4,
         "metadata": {"customer_ref": "job-77"}}
 w(S + "Session.idle.json", sess)
+task_tool = {
+    "definition": {
+        "name": "task", "description": "Delegate a bounded task to a child agent.",
+        "input_schema": {"type": "object", "properties": {"description": {"type": "string"}, "prompt": {"type": "string"}},
+                         "required": ["description", "prompt"], "additionalProperties": False},
+        "output_schema": {"type": "object", "properties": {"status": {"type": "string"}, "result": {"type": "string"}},
+                          "required": ["status", "result"], "additionalProperties": False}},
+    "executor": {"kind": "intrinsic", "capability": "brain.subagents.v1"}}
+web_search_tool = {
+    "definition": {
+        "name": "web_search", "description": "Search the public web using Aex's managed search service.",
+        "input_schema": {"type": "object", "properties": {"query": {"type": "string"}},
+                         "required": ["query"], "additionalProperties": False},
+        "output_schema": {"type": "object", "properties": {"query": {"type": "string"}, "results": {"type": "array"}},
+                          "required": ["query", "results"], "additionalProperties": False}},
+    "executor": {"kind": "server", "capability": "aex.web.search.v1", "scope": "all",
+                 "completion": "continue", "effect": "opaque", "max_input_bytes": 8192}}
 w(S + "CreateSessionRequest.full.json", {"model": {"provider": "anthropic", "name": "claude-sonnet-5", "api_key": "sk-ant-REDACTED", "max_output_tokens": 8192},
     "system_prompt": "You are a careful engineer.",
-    "tools": {"builtin": ["bash", "read", "write", "edit", "glob", "grep", "ls", "task", "todo", "web_search"],
-              "mcp": [{"name": "github", "url": "https://mcp.example.com/github", "headers": {"Authorization": "Bearer REDACTED"}, "protocol": "auto"}],
-              "external": [{"name": "host_result", "description": "Return a result to the host.",
-                            "input_schema": {"type": "object", "additionalProperties": True},
-                            "scope": "root", "completion": "return_direct", "effect": "replay_safe",
-                            "max_input_bytes": 98304}]},
+    "tools": {"items": [task_tool, web_search_tool],
+              "mcp": [{"name": "github", "url": "https://mcp.example.com/github", "headers": {"Authorization": "Bearer REDACTED"}, "protocol": "auto"}]},
     "hand": {"shape": "2gb", "env": {"GH_TOKEN": "REDACTED"}, "sync_interval_seconds": 600},
     "files": [{"path": "README.md", "content_base64": "IyBIZWxsbwo="}], "metadata": {"customer_ref": "job-77"}})
 w(S + "CreateSessionRequest.minimal.json", {"model": {"provider": "openai", "name": "gpt-5", "api_key": "sk-REDACTED"}})

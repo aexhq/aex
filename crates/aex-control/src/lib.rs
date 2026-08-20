@@ -14,11 +14,13 @@
 pub mod api;
 pub mod brain;
 pub mod identity;
+pub mod outbound;
 pub mod output;
 pub mod payments;
 pub mod rating;
 pub mod store;
 pub mod sweep;
+pub mod web;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -28,6 +30,8 @@ use std::path::PathBuf;
 pub enum Error {
     #[error("{0}")]
     Invalid(String),
+    #[error("{0}")]
+    OutputSchema(String),
     #[error("unauthorized")]
     Unauthorized,
     #[error("{0}")]
@@ -54,6 +58,7 @@ impl Error {
     pub fn code(&self) -> &'static str {
         match self {
             Error::Invalid(_) => "invalid_request",
+            Error::OutputSchema(_) => "output_schema_error",
             Error::Unauthorized => "unauthorized",
             Error::Forbidden(_) => "forbidden",
             Error::NotFound => "not_found",
@@ -68,7 +73,7 @@ impl Error {
 
     pub fn status(&self) -> u16 {
         match self {
-            Error::Invalid(_) => 400,
+            Error::Invalid(_) | Error::OutputSchema(_) => 400,
             Error::Unauthorized => 401,
             Error::Forbidden(_) => 403,
             Error::NotFound => 404,
@@ -128,6 +133,7 @@ pub enum PaymentsMode {
 /// errors, `AEX_PAYMENTS=stripe` without a key is an error.
 pub struct Config {
     pub listen: SocketAddr,
+    pub internal_listen: SocketAddr,
     pub brain_url: String,
     pub brain_token: String,
     pub db_path: PathBuf,
@@ -137,6 +143,7 @@ pub struct Config {
     pub card: rating::RateCard,
     pub operator_token_hash: Option<String>,
     pub external_executor_token_hash: Option<String>,
+    pub serper_api_key: Option<String>,
     pub max_concurrent_sessions: i64,
     pub session_creates_per_hour: i64,
     pub sweep_seconds: u64,
@@ -180,8 +187,16 @@ impl Config {
             ),
             Err(_) => None,
         };
+        let internal_listen: SocketAddr =
+            num("AEX_CONTROL_INTERNAL_LISTEN", "127.0.0.1:8601".parse()?)?;
+        if !internal_listen.ip().is_loopback() {
+            anyhow::bail!(
+                "AEX_CONTROL_INTERNAL_LISTEN must use a loopback address; got {internal_listen}"
+            );
+        }
         Ok(Config {
             listen: num("AEX_CONTROL_LISTEN", "127.0.0.1:8600".parse()?)?,
+            internal_listen,
             brain_url: std::env::var("AEX_BRAIN_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8700".into()),
             brain_token: std::env::var("AEX_BRAIN_TOKEN").map_err(|_| {
@@ -201,6 +216,9 @@ impl Config {
                 .ok()
                 .filter(|token| !token.is_empty())
                 .map(|token| identity::hash_secret(&token)),
+            serper_api_key: std::env::var("SERPER_API_KEY")
+                .ok()
+                .filter(|key| !key.is_empty()),
             max_concurrent_sessions: num("AEX_LIMIT_CONCURRENT_SESSIONS", 10)?,
             session_creates_per_hour: num("AEX_LIMIT_SESSION_CREATES_PER_HOUR", 30)?,
             sweep_seconds: num("AEX_SWEEP_SECONDS", 30)?,

@@ -10,7 +10,6 @@
 
 use std::sync::Arc;
 
-use aex_contracts::session::ExternalToolCallRequest;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -18,6 +17,8 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::Response;
 use axum::routing::{any, delete, get, post};
 use bytes::Bytes;
+use brain_protocol::session::ExternalToolCallRequest;
+use futures_util::StreamExt;
 use serde_json::{Value, json};
 
 use crate::brain::BrainClient;
@@ -27,7 +28,10 @@ use crate::payments::{PaymentStatus, Payments, RefundAttempt, StripeWebhook, Str
 use crate::rating::RateCard;
 use crate::store::{AccountRow, Db, KeyRow, RefundRow, SessionRow, TopupRow, WaitlistRow};
 use crate::sweep::{SweptLine, sweep_account, sweep_session};
+use crate::web::{self, WebRuntime};
 use crate::{Error, Result, now_ms, rfc3339, usd_display};
+
+const MAX_PUBLIC_SSE_FRAME_BYTES: usize = 512 * 1024;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -40,6 +44,8 @@ pub struct AppState {
     pub operator_token_hash: Option<String>,
     /// SHA-256 of the Brain-to-control executor bearer. None disables the internal route.
     pub external_executor_token_hash: Option<String>,
+    /// Trusted host implementation for Aex-managed server Tools.
+    pub web: WebRuntime,
     /// Defaults stamped onto new accounts: (max_concurrent_sessions, session_creates_per_hour).
     pub default_limits: (i64, i64),
 }
@@ -60,10 +66,18 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/webhooks/stripe", post(stripe_webhook))
         .route("/v1/usage", get(get_usage))
         .route("/v1/rates", get(get_rates))
-        .route("/internal/v1/tools/call", post(execute_external_tool))
         .route("/v1/sessions", any(proxy_sessions_root))
         .route("/v1/sessions/{*rest}", any(proxy_session))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+        .with_state(state)
+}
+
+/// Private Brain-to-Aex service surface. The binary serves this router on a separate loopback-only
+/// listener; mounting it separately makes network isolation independent of bearer authentication.
+pub fn internal_router(state: AppState) -> Router {
+    Router::new()
+        .route("/internal/v1/tools/call", post(execute_external_tool))
+        .layer(DefaultBodyLimit::max(128 * 1024))
         .with_state(state)
 }
 
@@ -148,7 +162,18 @@ async fn execute_external_tool(
             auth_external_executor(&state, &headers).await?;
             let request: ExternalToolCallRequest = serde_json::from_slice(&body)
                 .map_err(|error| Error::Invalid(format!("external tool request: {error}")))?;
-            let response = output::execute(&state.db, request).await?;
+            let capability = request.context.get("brain.capability").map(String::as_str);
+            let response = if capability == Some(output::OUTPUT_CAPABILITY) {
+                output::execute(&state.db, request).await?
+            } else if capability == Some(web::SEARCH_CAPABILITY)
+                || capability == Some(web::FETCH_CAPABILITY)
+            {
+                state.web.execute(request).await?
+            } else {
+                return Err(Error::Invalid(format!(
+                    "unknown hosted server capability {capability:?}"
+                )));
+            };
             Ok(json_response(200, &response))
         }
         .await,
@@ -805,7 +830,7 @@ async fn forward(
     if streaming {
         builder = builder.header(header::CACHE_CONTROL, "no-cache");
         Ok(builder
-            .body(Body::from_stream(upstream.bytes_stream()))
+            .body(Body::from_stream(filter_public_events(upstream)))
             .map_err(|e| Error::Internal(format!("response: {e}")))?)
     } else {
         let bytes = upstream
@@ -816,6 +841,93 @@ async fn forward(
             .body(Body::from(bytes))
             .map_err(|e| Error::Internal(format!("response: {e}")))?)
     }
+}
+
+/// Keep Aex's reserved protocol call private while preserving Brain sequence numbers and every
+/// ordinary event byte-for-byte. The successful validated value remains on `turn.completed`.
+fn filter_public_events(
+    upstream: reqwest::Response,
+) -> impl futures_util::Stream<Item = std::io::Result<Bytes>> {
+    let stream = Box::pin(upstream.bytes_stream());
+    futures_util::stream::try_unfold(
+        (stream, Vec::<u8>::new(), false),
+        |(mut stream, mut buffer, mut ended)| async move {
+            loop {
+                if let Some((index, delimiter_bytes)) = sse_frame_end(&buffer) {
+                    if index.saturating_add(delimiter_bytes) > MAX_PUBLIC_SSE_FRAME_BYTES {
+                        return Err(std::io::Error::other(format!(
+                            "Brain SSE frame exceeds {MAX_PUBLIC_SSE_FRAME_BYTES} bytes"
+                        )));
+                    }
+                    let frame: Vec<u8> = buffer.drain(..index + delimiter_bytes).collect();
+                    if suppress_public_event(&frame) {
+                        continue;
+                    }
+                    return Ok(Some((Bytes::from(frame), (stream, buffer, ended))));
+                }
+                if ended {
+                    if buffer.is_empty() {
+                        return Ok(None);
+                    }
+                    if buffer.len() > MAX_PUBLIC_SSE_FRAME_BYTES {
+                        return Err(std::io::Error::other(format!(
+                            "Brain SSE frame exceeds {MAX_PUBLIC_SSE_FRAME_BYTES} bytes"
+                        )));
+                    }
+                    let frame = std::mem::take(&mut buffer);
+                    if suppress_public_event(&frame) {
+                        return Ok(None);
+                    }
+                    return Ok(Some((Bytes::from(frame), (stream, buffer, ended))));
+                }
+                match stream.next().await {
+                    Some(Ok(chunk)) => {
+                        buffer.extend_from_slice(&chunk);
+                        if sse_frame_end(&buffer).is_none()
+                            && buffer.len() > MAX_PUBLIC_SSE_FRAME_BYTES
+                        {
+                            return Err(std::io::Error::other(format!(
+                                "Brain SSE frame exceeds {MAX_PUBLIC_SSE_FRAME_BYTES} bytes"
+                            )));
+                        }
+                    }
+                    Some(Err(error)) => {
+                        return Err(std::io::Error::other(format!("Brain SSE stream: {error}")));
+                    }
+                    None => ended = true,
+                }
+            }
+        },
+    )
+}
+
+fn sse_frame_end(buffer: &[u8]) -> Option<(usize, usize)> {
+    let lf = buffer.windows(2).position(|window| window == b"\n\n");
+    let crlf = buffer.windows(4).position(|window| window == b"\r\n\r\n");
+    match (lf, crlf) {
+        (Some(left), Some(right)) if left <= right => Some((left, 2)),
+        (Some(_), Some(right)) => Some((right, 4)),
+        (Some(index), None) => Some((index, 2)),
+        (None, Some(index)) => Some((index, 4)),
+        (None, None) => None,
+    }
+}
+
+fn suppress_public_event(frame: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(frame) else {
+        return false;
+    };
+    let data = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(|line| line.strip_prefix(' ').unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let Ok(event) = serde_json::from_str::<Value>(&data) else {
+        return false;
+    };
+    matches!(event["type"].as_str(), Some("tool.call" | "tool.result"))
+        && event["name"].as_str() == Some(output::OUTPUT_TOOL_NAME)
 }
 
 fn path_and_query(uri: &Uri) -> String {
@@ -1051,4 +1163,42 @@ async fn proxy_session(
         }
         .await,
     )
+}
+
+#[cfg(test)]
+mod event_filter_tests {
+    use super::*;
+
+    #[test]
+    fn frame_boundaries_support_lf_and_crlf() {
+        assert_eq!(sse_frame_end(b"data: {}\n\nnext"), Some((8, 2)));
+        assert_eq!(sse_frame_end(b"data: {}\r\n\r\nnext"), Some((8, 4)));
+        assert_eq!(sse_frame_end(b"data: {}"), None);
+    }
+
+    #[test]
+    fn only_reserved_protocol_call_and_result_events_are_hidden() {
+        let output_call = format!(
+            "event: tool.call\ndata: {{\"type\":\"tool.call\",\"name\":\"{}\",\"input\":{{\"secret\":true}}}}\n\n",
+            output::OUTPUT_TOOL_NAME
+        );
+        assert!(suppress_public_event(output_call.as_bytes()));
+        assert!(suppress_public_event(
+            format!(
+                "data: {{\"type\":\"tool.result\",\"name\":\"{}\"}}\r\n\r\n",
+                output::OUTPUT_TOOL_NAME
+            )
+            .as_bytes()
+        ));
+        assert!(!suppress_public_event(
+            b"data: {\"type\":\"tool.call\",\"name\":\"web_search\"}\n\n"
+        ));
+        assert!(!suppress_public_event(
+            format!(
+                "data: {{\"type\":\"turn.completed\",\"result\":{{\"name\":\"{}\"}}}}\n\n",
+                output::OUTPUT_TOOL_NAME
+            )
+            .as_bytes()
+        ));
+    }
 }

@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 
-import { Aex, OutputSchemaError, OutputValidationError } from "../dist/index.js";
+import {
+  Aex,
+  defineIntrinsicTool,
+  OutputRefusalError,
+  OutputSchemaError,
+  OutputValidationError,
+} from "../dist/index.js";
 import { z } from "zod";
 
 const snapshot = {
@@ -49,7 +55,7 @@ test("create uses the production origin and maps the small camelCase surface", a
       api_key: "sk-ant-test",
       max_output_tokens: 2048,
     },
-    tools: { builtin: [] },
+    tools: { items: [] },
   });
   assert.equal(request.init.headers.Authorization, "Bearer aex_sk_test");
   assert.ok(request.init.headers["Idempotency-Key"]);
@@ -69,23 +75,26 @@ test("create preserves an explicit tool grant in order and rejects duplicates", 
     },
   });
 
+  const task = intrinsicTool("task");
+  const read = intrinsicTool("read");
+  const write = intrinsicTool("write");
   await aex.sessions.create({
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
-    tools: [
-      { kind: "aex.builtin", name: "task" },
-      { kind: "aex.builtin", name: "read" },
-      { kind: "aex.builtin", name: "write" },
-    ],
+    tools: [task, read, write],
   });
 
-  assert.deepEqual(bodies[0].tools, { builtin: ["task", "read", "write"] });
+  assert.deepEqual(
+    bodies[0].tools.items.map((item) => item.definition.name),
+    ["task", "read", "write"],
+  );
+  assert.deepEqual(
+    bodies[0].tools.items.map((item) => item.executor.kind),
+    ["intrinsic", "intrinsic", "intrinsic"],
+  );
   await assert.rejects(
     aex.sessions.create({
       model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
-      tools: [
-        { kind: "aex.builtin", name: "read" },
-        { kind: "aex.builtin", name: "read" },
-      ],
+      tools: [read, read],
     }),
     /selected more than once/,
   );
@@ -107,7 +116,40 @@ test("an explicit empty tool list is equivalent to omission", async () => {
     tools: [],
   });
 
-  assert.deepEqual(body.tools, { builtin: [] });
+  assert.deepEqual(body.tools, { items: [] });
+});
+
+test("create maps remote MCP configuration into Brain's sealed tool grant", async () => {
+  let body;
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    fetch: async (_input, init) => {
+      body = JSON.parse(init.body);
+      return Response.json(snapshot, { status: 201 });
+    },
+  });
+
+  await aex.sessions.create({
+    model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
+    mcp: [{
+      name: "docs",
+      url: "https://mcp.example.test/rpc",
+      headers: { Authorization: "Bearer secret" },
+      protocol: "2026-07",
+      allowedTools: ["search"],
+    }],
+  });
+
+  assert.deepEqual(body.tools, {
+    items: [],
+    mcp: [{
+      name: "docs",
+      url: "https://mcp.example.test/rpc",
+      headers: { Authorization: "Bearer secret" },
+      protocol: "2026-07",
+      allowed_tools: ["search"],
+    }],
+  });
 });
 
 test("send output hashes the Zod schema, follows events, and resolves inferred data", async () => {
@@ -212,6 +254,59 @@ test("send output maps terminal validation details to OutputValidationError", as
   );
 });
 
+test("send output distinguishes a refusal from a missing submission", async () => {
+  let stopReason = "end_turn";
+  let turn = 0;
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    baseUrl: "https://example.test",
+    fetch: async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v1/sessions")) return Response.json(snapshot, { status: 201 });
+      if (url.endsWith("/messages")) {
+        turn += 1;
+        const schemaHash = JSON.parse(init.body).output.schema_hash;
+        return Response.json(
+          {
+            session_id: "ses_01",
+            turn_id: `turn_${turn}`,
+            output_id: `out_${turn}`,
+            schema_hash: schemaHash,
+            seq: turn * 2,
+          },
+          { status: 202 },
+        );
+      }
+      return sse({
+        type: "turn.completed",
+        seq: turn * 2 + 1,
+        at: "2026-08-19T10:00:01.000Z",
+        session_id: "ses_01",
+        turn_id: `turn_${turn}`,
+        stop_reason: stopReason,
+        rounds: 1,
+        tool_calls: 0,
+      });
+    },
+  });
+  const session = await aex.sessions.create({
+    model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
+  });
+
+  await assert.rejects(
+    session.send("answer", { output: z.object({ answer: z.number() }) }),
+    (error) =>
+      error instanceof OutputValidationError &&
+      error.issues[0]?.keyword === "missing_output",
+  );
+
+  stopReason = "refusal";
+  await assert.rejects(
+    session.send("answer", { output: z.object({ answer: z.number() }) }),
+    OutputRefusalError,
+  );
+});
+
 test("send output rejects process-local Zod refinements before an API call", async () => {
   let requests = 0;
   const aex = new Aex({
@@ -230,6 +325,10 @@ test("send output rejects process-local Zod refinements before an API call", asy
   );
   await assert.rejects(
     session.send("answer", { output: z.object({ answer: z.string().trim() }) }),
+    OutputSchemaError,
+  );
+  await assert.rejects(
+    session.send("answer", { output: z.object({ answer: z.string().regex(/^(a+)+$/) }) }),
     OutputSchemaError,
   );
   assert.equal(requests, 1, "schema rejection must not admit model work");
@@ -336,6 +435,16 @@ function sse(...events) {
   return new Response(body, {
     status: 200,
     headers: { "content-type": "text/event-stream" },
+  });
+}
+
+function intrinsicTool(name) {
+  return defineIntrinsicTool({
+    name,
+    description: `${name} test capability`,
+    input: z.object({}),
+    output: z.object({ ok: z.boolean() }),
+    capability: `test.${name}.v1`,
   });
 }
 
