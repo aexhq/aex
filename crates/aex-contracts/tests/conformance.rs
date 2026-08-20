@@ -104,6 +104,10 @@ fn examples_validate_and_round_trip() {
             "CreateTopupRequest" => round_trip::<control::CreateTopupRequest>(&name, &value),
             "Topup" => round_trip::<control::Topup>(&name, &value),
             "TopupList" => round_trip::<control::TopupList>(&name, &value),
+            "CreateCreditGrantRequest" => {
+                round_trip::<control::CreateCreditGrantRequest>(&name, &value)
+            }
+            "CreditGrant" => round_trip::<control::CreditGrant>(&name, &value),
             "CreateRefundRequest" => round_trip::<control::CreateRefundRequest>(&name, &value),
             "Refund" => round_trip::<control::Refund>(&name, &value),
             "RateCard" => round_trip::<control::RateCard>(&name, &value),

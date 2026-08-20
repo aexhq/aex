@@ -24,6 +24,11 @@ export type TopupId = string;
  */
 export type RefundId = string;
 /**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "CreditGrantId".
+ */
+export type CreditGrantId = string;
+/**
  * RFC 3339, UTC.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
@@ -282,6 +287,36 @@ export interface Topup {
 export interface TopupList {
   object: "list";
   data: Topup[];
+}
+/**
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "CreateCreditGrantRequest".
+ */
+export interface CreateCreditGrantRequest {
+  email: string;
+  /**
+   * Whole cents of operator-issued service credit.
+   */
+  amount_cents: number;
+  /**
+   * Operator audit reason for this grant.
+   */
+  reason: string;
+}
+/**
+ * An operator-issued service-credit grant. It is not backed by a payment and is not refundable as a top-up. Retrying the same Idempotency-Key returns the same grant.
+ *
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "CreditGrant".
+ */
+export interface CreditGrant {
+  id: CreditGrantId;
+  object: "credit_grant";
+  account_id: AccountId;
+  email: string;
+  amount_cents: number;
+  reason: string;
+  created_at: Timestamp;
 }
 /**
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema

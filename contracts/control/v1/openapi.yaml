@@ -87,6 +87,38 @@ paths:
               schema: { $ref: "schemas.json#/$defs/InvitationCreated" }
         default: { $ref: "#/components/responses/Error" }
 
+  /v1/admin/credit-grants:
+    post:
+      tags: [operator]
+      operationId: createCreditGrant
+      summary: Grant service credit to an existing account
+      description: |
+        Operator-only. Appends an auditable, non-payment credit to the account ledger.
+        Retrying the same Idempotency-Key with the same email, amount and reason returns
+        the original grant; changing any field returns 409. Grants are not Stripe top-ups
+        and cannot be refunded through the top-up refund operation.
+      security:
+        - operatorBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "schemas.json#/$defs/CreateCreditGrantRequest" }
+      responses:
+        "201":
+          description: Credit granted
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/CreditGrant" }
+        "200":
+          description: Idempotent replay of an existing grant
+          content:
+            application/json:
+              schema: { $ref: "schemas.json#/$defs/CreditGrant" }
+        default: { $ref: "#/components/responses/Error" }
+
   /v1/admin/refunds:
     post:
       tags: [operator]
@@ -331,7 +363,7 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      description: A unique key for one intended refund; reuse it only to retry that request.
+      description: A unique key for one intended operator mutation; reuse it only to retry that request.
       schema:
         type: string
         minLength: 8
