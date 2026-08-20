@@ -14,7 +14,8 @@ publish the SDK before the matching control plane and Brain revisions are deploy
 4. Configure Brain's `BRAIN_EXTERNAL_TOOL_EXECUTOR_URL` and give Brain's
    `BRAIN_EXTERNAL_TOOL_EXECUTOR_TOKEN` and aex-control's `AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN` the
    same secret. Never put that token in a session, journal, or hand.
-5. Deploy the matching Brain and control-plane revisions, then publish contracts, SDK, and CLI.
+5. Deploy the matching hosted Brain/Hand and control-plane revisions, then publish contracts, SDK,
+   tools, and CLI.
 6. Run the quickstart against production, including one valid output, one bounded repair, one
    final validation failure, cancellation, and one same-key retry.
 
