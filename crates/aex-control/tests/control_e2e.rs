@@ -2,18 +2,19 @@
 //! sees the bill — over real HTTP against the control router, with a stub brain implementing
 //! session/v1 from the contracts and the fake payments adapter. Every control-plane response
 //! is validated against `contracts/control/v1/schemas.json`; the proxied session documents are
-//! validated against `contracts/session/v1/schemas.json`. The real-wire version of this flow
+//! validated against Brain's owned session schema. The real-wire version of this flow
 //! (real brain, real Stripe test mode) is `tools/m1.sh`.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use aex_control::api::{AppState, router};
+use aex_control::api::{AppState, internal_router, router};
 use aex_control::brain::BrainClient;
 use aex_control::payments::{Checkout, FakePayments, PaymentStatus, Payments, RefundAttempt};
 use aex_control::rating::RateCard;
 use aex_control::store::Db;
+use aex_control::web::WebRuntime;
 use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{HeaderMap, Method, Uri, header};
@@ -21,6 +22,7 @@ use axum::response::Response;
 use serde_json::{Value, json};
 
 const OPERATOR_TOKEN: &str = "aex_ad_A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2";
+const EXECUTOR_TOKEN: &str = "brain-to-aex-private-test-token";
 
 // ---- a stub brain: session/v1, just enough, contract-shaped ----
 
@@ -187,6 +189,21 @@ async fn stub_handler(
                        "outcome":"completed", "duration_ms":500,
                        "output_preview":"{\"results\":[]}", "truncated":false}),
             );
+            // Aex's protocol Tool can appear in Brain's operator journal, but its raw candidate
+            // must never cross the hosted public event stream.
+            ev(
+                "tool.call",
+                t0 + 1_100,
+                json!({"agent_id":"root", "call_id":"call_output", "name":"aex_submit_output",
+                       "input":{"private_candidate":"must-not-leak"}, "detach":false}),
+            );
+            ev(
+                "tool.result",
+                t0 + 1_200,
+                json!({"agent_id":"root", "call_id":"call_output", "name":"aex_submit_output",
+                       "outcome":"completed", "duration_ms":100,
+                       "output_preview":"Structured output accepted.", "truncated":false}),
+            );
             ev(
                 "assistant.message",
                 t0 + 1_400,
@@ -195,7 +212,7 @@ async fn stub_handler(
             ev(
                 "turn.completed",
                 t0 + 1_500,
-                json!({"stop_reason": "end_turn", "rounds": 1, "tool_calls": 1}),
+                json!({"stop_reason": "end_turn", "rounds": 1, "tool_calls": 2}),
             );
             s.turns += 1;
             s.doc = stub_doc(
@@ -297,11 +314,31 @@ async fn spawn_control_with_payments(
         stripe_webhook: None,
         card: RateCard::default(),
         operator_token_hash: Some(aex_control::identity::hash_secret(OPERATOR_TOKEN)),
+        external_executor_token_hash: None,
+        web: WebRuntime::hosted(None),
         default_limits: limits,
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
+    base
+}
+
+async fn spawn_internal_executor(brain_url: &str, brain_token: &str) -> String {
+    let state = AppState {
+        db: Db::open_memory().unwrap(),
+        brain: BrainClient::new(brain_url, brain_token),
+        payments: Arc::new(FakePayments),
+        stripe_webhook: None,
+        card: RateCard::default(),
+        operator_token_hash: None,
+        external_executor_token_hash: Some(aex_control::identity::hash_secret(EXECUTOR_TOKEN)),
+        web: WebRuntime::hosted(None),
+        default_limits: (10, 30),
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, internal_router(state)).await.unwrap() });
     base
 }
 
@@ -418,12 +455,69 @@ async fn invited_signup(http: &reqwest::Client, base: &str, email: &str) -> Valu
 
 // ---- the gate flow ----
 
+#[tokio::test]
+async fn private_executor_requires_its_service_credential_and_routes_pinned_capabilities() {
+    let brain_token = "operator-token";
+    let brain_url = spawn_stub_brain(brain_token).await;
+    let base = spawn_internal_executor(&brain_url, brain_token).await;
+    let http = reqwest::Client::new();
+    let body = json!({
+        "session_id": "ses_01HZZZZZZZZZZZZZZZZZZZZZZZ",
+        "turn_id": "trn_01HZZZZZZZZZZZZZZZZZZZZZZZ",
+        "agent_id": "root",
+        "call_id": "call_01HZZZZZZZZZZZZZZZZZZZZZZZ",
+        "name": "web_fetch",
+        "input": {"url": "https://169.254.169.254/latest/meta-data/"},
+        "context": {"brain.capability": "aex.web.fetch.v1"}
+    });
+
+    let missing = http
+        .post(format!("{base}/internal/v1/tools/call"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status().as_u16(), 401);
+    let wrong = http
+        .post(format!("{base}/internal/v1/tools/call"))
+        .bearer_auth("wrong-token")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status().as_u16(), 401);
+    let accepted = json_of(
+        http.post(format!("{base}/internal/v1/tools/call"))
+            .bearer_auth(EXECUTOR_TOKEN)
+            .json(&body)
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(accepted["outcome"], "failed");
+    assert_eq!(accepted["disposition"], "continue");
+    assert!(accepted["content"].as_str().unwrap().contains("SSRF guard"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     let brain_token = "operator-token";
     let brain_url = spawn_stub_brain(brain_token).await;
     let base = spawn_control(&brain_url, brain_token, (10, 30)).await;
     let http = reqwest::Client::new();
+
+    let internal_on_public_port = http
+        .post(format!("{base}/internal/v1/tools/call"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        internal_on_public_port.status().as_u16(),
+        404,
+        "the Brain executor must not be mounted on the public listener"
+    );
 
     // Join the canonical waitlist, receive a one-time invitation, and sign up. The account
     // token appears once; the dashboard can establish its HttpOnly session now.
@@ -656,7 +750,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         201,
     )
     .await;
-    assert_valid(aex_contracts::SESSION_SCHEMA_JSON, "Session", &session);
+    assert_valid(brain_protocol::SESSION_SCHEMA_JSON, "Session", &session);
     let sid = session["id"].as_str().unwrap().to_string();
 
     let replay = json_of(
@@ -716,12 +810,13 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     )
     .await;
     assert_valid(
-        aex_contracts::SESSION_SCHEMA_JSON,
+        brain_protocol::SESSION_SCHEMA_JSON,
         "MessageAccepted",
         &accepted,
     );
 
-    // The event stream passes through the proxy verbatim (SSE framing intact).
+    // Ordinary event bytes and SSE framing pass through; the reserved output protocol stays on
+    // the operator stream so raw candidates are never exposed to customers.
     let events_text = http
         .get(format!(
             "{base}/v1/sessions/{sid}/events?after=0&follow=false"
@@ -743,6 +838,8 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         events_text.contains("event: turn.completed"),
         "{events_text}"
     );
+    assert!(!events_text.contains("aex_submit_output"), "{events_text}");
+    assert!(!events_text.contains("must-not-leak"), "{events_text}");
 
     // The list endpoint returns only this account's sessions, as contract Session documents.
     let listed = json_of(
@@ -754,7 +851,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         200,
     )
     .await;
-    assert_valid(aex_contracts::SESSION_SCHEMA_JSON, "SessionList", &listed);
+    assert_valid(brain_protocol::SESSION_SCHEMA_JSON, "SessionList", &listed);
     assert_eq!(listed["data"].as_array().unwrap().len(), 1);
 
     // The bill. 1.5 s on 1gb = 50 micro-USD compute, plus one successful managed search =

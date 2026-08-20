@@ -18,6 +18,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+      - name: Checkout pinned Brain packages
+        run: |
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain checkout ea73244489311cb3a11442c3a4306b289ec97ba7
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -25,9 +29,18 @@ jobs:
           package-manager-cache: false
       - name: Use an npm version with trusted publishing support
         run: npm install --global npm@11.19.0
+      - name: Build pinned Brain packages
+        run: |
+          npm ci --prefix ../brain
+          npm run build --prefix ../brain
       - run: npm ci
       - run: npm test
+      - run: npm run package-smoke
       - name: Publish in dependency order
+        env:
+          # Bootstrap-safe for a package's first release; provenance is still minted by this
+          # public GitHub Actions job. Existing packages may authenticate through OIDC instead.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -61,4 +74,5 @@ jobs:
 
           publish_workspace contracts
           publish_workspace sdk
+          publish_workspace tools
           publish_workspace cli

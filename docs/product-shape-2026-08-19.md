@@ -1,8 +1,13 @@
 # Aex product shape: session, tools, output
 
-Status: accepted; implementation in progress
+Status: superseded for typed output; retained as historical product research
 Date: 19 August 2026
 Scope: public product, API, SDK, CLI, dashboard, docs, pricing, and launch sequence
+
+> The typed-output API and architecture below were replaced on 20 August 2026. The implemented API
+> is `session.send(input, { output: schema, outputRetries })`; validation is handled by Aex's
+> trusted external-tool executor, with no private model call or provider-native response-format
+> switch. The canonical decision is `aex-research/docs/session-output-design.md`.
 
 ## Outcome
 
@@ -351,12 +356,12 @@ Tool selection is an array of imported values, never names:
 
 ```ts
 const session = await aex.sessions.create({
-  tools: [webSearch(), assets(), lookupCustomer],
+  tools: [bash(), read(), write(), edit(), subagents(), webSearch(), lookupCustomer],
 });
 ```
 
-The accepted type is `Tool | Toolset`. A toolset may provide several namespaced operations, so an
-array item does not have to correspond to one flat provider tool.
+The accepted type is `Tool`. Every array item corresponds to one model-visible capability, and
+array order is preserved in the sealed model prefix.
 
 Custom tools use ordinary TypeScript and Zod:
 
@@ -389,18 +394,18 @@ automatically.
 Tool signatures are fixed when the session is created for alpha. Hooks, approvals, call limits,
 remote endpoints, managed tool deployment, dynamic tool changes, and MCP follow after launch.
 
-An Aex package is an ordinary npm package exporting a `Tool` or `Toolset`. There is no Aex-specific
-package manifest or marketplace in the MVP. `@aexhq/tools` initially exports `webSearch()` and
-`assets()`.
+An Aex tool package is an ordinary npm package exporting individual `Tool` values. There is no
+Aex-specific package manifest or marketplace in the MVP. `@aexhq/tools` initially exports the hand
+tools, `subagents()`, `todo()`, `webSearch()`, and `webFetch()`. The durable-assets slice will add
+individual asset operations later.
 
 ## Computer and agent-allocated infrastructure
 
 Every session gets one logical computer automatically. The developer does not configure whether
-it exists, region, CPU, RAM, machine shape, substrate, or suspend behaviour.
-
-It contributes four always-available model tools: `read`, `bash`, `edit`, and `write`. This matches
-the useful minimal default in current Pi. Search, asset transfer, browser work, and customer
-integrations are explicit additions.
+it exists, region, CPU, RAM, machine shape, substrate, or suspend behaviour. It contributes no
+model tools by default: the developer grants each capability explicitly. Omitting `tools` and
+passing `tools: []` are equivalent. Hand operations, search, subagents, asset transfer, browser
+work, and customer integrations are all explicit additions.
 
 The contract promises that working files survive normal continuation during the session. Aex may
 stop, restore, or replace the underlying machine. Process memory and machine identity are not
@@ -438,8 +443,8 @@ Recommended alpha rules:
 - visible to the agent only when attached to the session or created by it.
 
 Do not add projects, buckets, folders, RLS policy language, or a workspace browser in the alpha.
-The SDK provides upload, download, get, list, and delete. The `assets()` tool provides agent-facing
-download-to-computer and upload-from-computer operations.
+The SDK provides upload, download, get, list, and delete. Individual asset tools provide
+agent-facing download-to-computer and upload-from-computer operations.
 
 ## Public API
 
@@ -475,7 +480,8 @@ Do not expose internal operation IDs as a collection developers must list or man
 Ship:
 
 - `@aexhq/sdk`: sessions, `send`, `output`, asset client, `defineTool`, events, typed errors;
-- `@aexhq/tools`: `webSearch()` and `assets()`;
+- `@aexhq/tools`: individual hand tools, `subagents()`, `todo()`, `webSearch()`, `webFetch()`, and
+  asset operations;
 - `@aexhq/cli`: binary name `aex`, able to load TypeScript tools.
 
 Minimum CLI:
@@ -576,7 +582,7 @@ Copy sweep:
 - Zod-based typed output with provider-native constraints, one bounded repair, and typed errors.
 - One automatic default computer with hidden sizing.
 - Private durable assets attached to sessions.
-- Official web-search and assets toolsets.
+- Official web-search and asset tools.
 - Callback custom tools while the SDK/CLI is attached.
 - Minimal site, concise docs, legal pages, support, status, and alert verification.
 
@@ -622,14 +628,14 @@ Copy sweep:
 
 - Add account-owned asset metadata, signed upload/download, and session grants.
 - Reuse the hand ABI's existing single-object presigned transfer model.
-- Package download/upload as the official assets toolset.
+- Package download/upload as official asset tools.
 - Remove the old public workspace-files and artifacts routes.
 
 ### 4. Tools (`brain`, `aex-control`)
 
 - Compile imported definitions into a fixed session tool manifest.
 - Add callback execution through journaled calls and lease-scoped results.
-- Package managed web search and assets as imported toolsets.
+- Package managed web search and assets as imported tools.
 - Keep MCP out of onboarding.
 
 ### 5. Hide compute (`aex`, `brain`, `platform`, `hands`)

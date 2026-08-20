@@ -16,16 +16,22 @@ use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::Response;
 use axum::routing::{any, delete, get, post};
+use brain_protocol::session::ExternalToolCallRequest;
 use bytes::Bytes;
+use futures_util::StreamExt;
 use serde_json::{Value, json};
 
 use crate::brain::BrainClient;
 use crate::identity::{self, bearer};
+use crate::output::{self, PreparedMessage};
 use crate::payments::{PaymentStatus, Payments, RefundAttempt, StripeWebhook, StripeWebhookAction};
 use crate::rating::RateCard;
 use crate::store::{AccountRow, Db, KeyRow, RefundRow, SessionRow, TopupRow, WaitlistRow};
 use crate::sweep::{SweptLine, sweep_account, sweep_session};
+use crate::web::{self, WebRuntime};
 use crate::{Error, Result, now_ms, rfc3339, usd_display};
+
+const MAX_PUBLIC_SSE_FRAME_BYTES: usize = 512 * 1024;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -36,6 +42,10 @@ pub struct AppState {
     pub card: RateCard,
     /// SHA-256 of the separately configured operator token. `None` disables admin routes.
     pub operator_token_hash: Option<String>,
+    /// SHA-256 of the Brain-to-control executor bearer. None disables the internal route.
+    pub external_executor_token_hash: Option<String>,
+    /// Trusted host implementation for Aex-managed server Tools.
+    pub web: WebRuntime,
     /// Defaults stamped onto new accounts: (max_concurrent_sessions, session_creates_per_hour).
     pub default_limits: (i64, i64),
 }
@@ -59,6 +69,15 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions", any(proxy_sessions_root))
         .route("/v1/sessions/{*rest}", any(proxy_session))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+        .with_state(state)
+}
+
+/// Private Brain-to-Aex service surface. The binary serves this router on a separate loopback-only
+/// listener; mounting it separately makes network isolation independent of bearer authentication.
+pub fn internal_router(state: AppState) -> Router {
+    Router::new()
+        .route("/internal/v1/tools/call", post(execute_external_tool))
+        .layer(DefaultBodyLimit::max(128 * 1024))
         .with_state(state)
 }
 
@@ -119,6 +138,46 @@ async fn auth_operator(state: &AppState, headers: &HeaderMap) -> Result<()> {
         return Err(Error::Unauthorized);
     }
     Ok(())
+}
+
+async fn auth_external_executor(state: &AppState, headers: &HeaderMap) -> Result<()> {
+    let expected = state
+        .external_executor_token_hash
+        .as_ref()
+        .ok_or(Error::NotFound)?;
+    let actual = bearer(headers).ok_or(Error::Unauthorized)?;
+    if identity::hash_secret(actual) != *expected {
+        return Err(Error::Unauthorized);
+    }
+    Ok(())
+}
+
+async fn execute_external_tool(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    unwrap_response(
+        async {
+            auth_external_executor(&state, &headers).await?;
+            let request: ExternalToolCallRequest = serde_json::from_slice(&body)
+                .map_err(|error| Error::Invalid(format!("external tool request: {error}")))?;
+            let capability = request.context.get("brain.capability").map(String::as_str);
+            let response = if capability == Some(output::OUTPUT_CAPABILITY) {
+                output::execute(&state.db, request).await?
+            } else if capability == Some(web::SEARCH_CAPABILITY)
+                || capability == Some(web::FETCH_CAPABILITY)
+            {
+                state.web.execute(request).await?
+            } else {
+                return Err(Error::Invalid(format!(
+                    "unknown hosted server capability {capability:?}"
+                )));
+            };
+            Ok(json_response(200, &response))
+        }
+        .await,
+    )
 }
 
 // ---- JSON shapes (pinned to contracts/control/v1 by the e2e schema validation) ----
@@ -790,7 +849,7 @@ async fn forward_with_idempotency(
     if streaming {
         builder = builder.header(header::CACHE_CONTROL, "no-cache");
         Ok(builder
-            .body(Body::from_stream(upstream.bytes_stream()))
+            .body(Body::from_stream(filter_public_events(upstream)))
             .map_err(|e| Error::Internal(format!("response: {e}")))?)
     } else {
         let bytes = upstream
@@ -801,6 +860,93 @@ async fn forward_with_idempotency(
             .body(Body::from(bytes))
             .map_err(|e| Error::Internal(format!("response: {e}")))?)
     }
+}
+
+/// Keep Aex's reserved protocol call private while preserving Brain sequence numbers and every
+/// ordinary event byte-for-byte. The successful validated value remains on `turn.completed`.
+fn filter_public_events(
+    upstream: reqwest::Response,
+) -> impl futures_util::Stream<Item = std::io::Result<Bytes>> {
+    let stream = Box::pin(upstream.bytes_stream());
+    futures_util::stream::try_unfold(
+        (stream, Vec::<u8>::new(), false),
+        |(mut stream, mut buffer, mut ended)| async move {
+            loop {
+                if let Some((index, delimiter_bytes)) = sse_frame_end(&buffer) {
+                    if index.saturating_add(delimiter_bytes) > MAX_PUBLIC_SSE_FRAME_BYTES {
+                        return Err(std::io::Error::other(format!(
+                            "Brain SSE frame exceeds {MAX_PUBLIC_SSE_FRAME_BYTES} bytes"
+                        )));
+                    }
+                    let frame: Vec<u8> = buffer.drain(..index + delimiter_bytes).collect();
+                    if suppress_public_event(&frame) {
+                        continue;
+                    }
+                    return Ok(Some((Bytes::from(frame), (stream, buffer, ended))));
+                }
+                if ended {
+                    if buffer.is_empty() {
+                        return Ok(None);
+                    }
+                    if buffer.len() > MAX_PUBLIC_SSE_FRAME_BYTES {
+                        return Err(std::io::Error::other(format!(
+                            "Brain SSE frame exceeds {MAX_PUBLIC_SSE_FRAME_BYTES} bytes"
+                        )));
+                    }
+                    let frame = std::mem::take(&mut buffer);
+                    if suppress_public_event(&frame) {
+                        return Ok(None);
+                    }
+                    return Ok(Some((Bytes::from(frame), (stream, buffer, ended))));
+                }
+                match stream.next().await {
+                    Some(Ok(chunk)) => {
+                        buffer.extend_from_slice(&chunk);
+                        if sse_frame_end(&buffer).is_none()
+                            && buffer.len() > MAX_PUBLIC_SSE_FRAME_BYTES
+                        {
+                            return Err(std::io::Error::other(format!(
+                                "Brain SSE frame exceeds {MAX_PUBLIC_SSE_FRAME_BYTES} bytes"
+                            )));
+                        }
+                    }
+                    Some(Err(error)) => {
+                        return Err(std::io::Error::other(format!("Brain SSE stream: {error}")));
+                    }
+                    None => ended = true,
+                }
+            }
+        },
+    )
+}
+
+fn sse_frame_end(buffer: &[u8]) -> Option<(usize, usize)> {
+    let lf = buffer.windows(2).position(|window| window == b"\n\n");
+    let crlf = buffer.windows(4).position(|window| window == b"\r\n\r\n");
+    match (lf, crlf) {
+        (Some(left), Some(right)) if left <= right => Some((left, 2)),
+        (Some(_), Some(right)) => Some((right, 4)),
+        (Some(index), None) => Some((index, 2)),
+        (None, Some(index)) => Some((index, 4)),
+        (None, None) => None,
+    }
+}
+
+fn suppress_public_event(frame: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(frame) else {
+        return false;
+    };
+    let data = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(|line| line.strip_prefix(' ').unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let Ok(event) = serde_json::from_str::<Value>(&data) else {
+        return false;
+    };
+    matches!(event["type"].as_str(), Some("tool.call" | "tool.result"))
+        && event["name"].as_str() == Some(output::OUTPUT_TOOL_NAME)
 }
 
 fn create_idempotency(headers: &HeaderMap, account_id: &str) -> Result<Option<(String, String)>> {
@@ -886,6 +1032,7 @@ async fn proxy_sessions_root(
                             )));
                         }
                     }
+                    let body = output::inject_output_tool(&body)?;
                     let content_type = headers
                         .get(header::CONTENT_TYPE)
                         .and_then(|value| value.to_str().ok());
@@ -895,7 +1042,7 @@ async fn proxy_sessions_root(
                         &path_and_query(&uri),
                         content_type,
                         idempotency.as_ref().map(|(key, _)| key.as_str()),
-                        Some(body),
+                        Some(Bytes::from(body)),
                     )
                     .await?;
                     if resp.status() == StatusCode::CREATED {
@@ -925,6 +1072,7 @@ async fn proxy_sessions_root(
                                 shape: shape.to_string(),
                                 created_ms: now_ms(),
                                 is_final: false,
+                                output_capable: true,
                                 fold,
                             })
                             .await?;
@@ -978,8 +1126,10 @@ async fn proxy_session(
                 .await?
                 .filter(|r| r.account_id == account.id)
                 .ok_or(Error::NotFound)?;
+            let output_capable = row.output_capable;
 
-            let is_work = method == Method::POST && matches!(sub, "/messages" | "/output");
+            let is_message = method == Method::POST && sub == "/messages";
+            let is_work = is_message;
             let is_delete = method == Method::DELETE && sub.is_empty();
             if is_work {
                 sweep_session(&state.db, &state.brain, &state.card, row.clone()).await?;
@@ -988,7 +1138,78 @@ async fn proxy_session(
                 // Capture the tail of the journal while it still exists.
                 sweep_session(&state.db, &state.brain, &state.card, row).await?;
             }
-            let resp = forward(&state, method, &path_and_query(&uri), &headers, Some(body)).await?;
+            let resp = if is_message {
+                let idempotency = headers
+                    .get("Idempotency-Key")
+                    .and_then(|value| value.to_str().ok());
+                match output::prepare_message(
+                    &state.db,
+                    &session_id,
+                    output_capable,
+                    &body,
+                    idempotency,
+                )
+                .await?
+                {
+                    PreparedMessage::Plain(body) => {
+                        forward(
+                            &state,
+                            method.clone(),
+                            &path_and_query(&uri),
+                            &headers,
+                            Some(Bytes::from(body)),
+                        )
+                        .await?
+                    }
+                    PreparedMessage::Replay { accepted_json } => {
+                        let accepted: Value =
+                            serde_json::from_str(&accepted_json).map_err(|error| {
+                                Error::Internal(format!("stored message acceptance: {error}"))
+                            })?;
+                        return Ok(json_response(202, &accepted));
+                    }
+                    PreparedMessage::New {
+                        body,
+                        output_id,
+                        schema_hash,
+                    } => {
+                        let response = match forward(
+                            &state,
+                            method.clone(),
+                            &path_and_query(&uri),
+                            &headers,
+                            Some(Bytes::from(body)),
+                        )
+                        .await
+                        {
+                            Ok(response) => response,
+                            Err(error) => {
+                                state.db.abandon_output(output_id).await?;
+                                return Err(error);
+                            }
+                        };
+                        if response.status() != StatusCode::ACCEPTED {
+                            state.db.abandon_output(output_id).await?;
+                            return Ok(response);
+                        }
+                        let (parts, response_body) = response.into_parts();
+                        let bytes = axum::body::to_bytes(response_body, 1024 * 1024)
+                            .await
+                            .map_err(|error| {
+                                Error::Upstream(format!("message accepted body: {error}"))
+                            })?;
+                        let (turn_id, accepted_json) =
+                            output::augment_accepted(&bytes, &output_id, &schema_hash)?;
+                        state
+                            .db
+                            .accept_output(output_id, turn_id, accepted_json.clone())
+                            .await?;
+                        Response::from_parts(parts, Body::from(accepted_json))
+                    }
+                }
+            } else {
+                forward(&state, method, &path_and_query(&uri), &headers, Some(body)).await?
+            };
             if is_delete && resp.status() == StatusCode::NO_CONTENT {
                 // The brain now 404s; the sweep marks the session final and stops its meters.
                 if let Some(row) = state.db.session(session_id.clone()).await? {
@@ -999,4 +1220,42 @@ async fn proxy_session(
         }
         .await,
     )
+}
+
+#[cfg(test)]
+mod event_filter_tests {
+    use super::*;
+
+    #[test]
+    fn frame_boundaries_support_lf_and_crlf() {
+        assert_eq!(sse_frame_end(b"data: {}\n\nnext"), Some((8, 2)));
+        assert_eq!(sse_frame_end(b"data: {}\r\n\r\nnext"), Some((8, 4)));
+        assert_eq!(sse_frame_end(b"data: {}"), None);
+    }
+
+    #[test]
+    fn only_reserved_protocol_call_and_result_events_are_hidden() {
+        let output_call = format!(
+            "event: tool.call\ndata: {{\"type\":\"tool.call\",\"name\":\"{}\",\"input\":{{\"secret\":true}}}}\n\n",
+            output::OUTPUT_TOOL_NAME
+        );
+        assert!(suppress_public_event(output_call.as_bytes()));
+        assert!(suppress_public_event(
+            format!(
+                "data: {{\"type\":\"tool.result\",\"name\":\"{}\"}}\r\n\r\n",
+                output::OUTPUT_TOOL_NAME
+            )
+            .as_bytes()
+        ));
+        assert!(!suppress_public_event(
+            b"data: {\"type\":\"tool.call\",\"name\":\"web_search\"}\n\n"
+        ));
+        assert!(!suppress_public_event(
+            format!(
+                "data: {{\"type\":\"turn.completed\",\"result\":{{\"name\":\"{}\"}}}}\n\n",
+                output::OUTPUT_TOOL_NAME
+            )
+            .as_bytes()
+        ));
+    }
 }

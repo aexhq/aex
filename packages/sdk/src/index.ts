@@ -10,7 +10,7 @@ export {
   OutputValidationError,
   SessionError,
 } from "./errors.js";
-export type { AexErrorOptions } from "./errors.js";
+export type { AexErrorOptions, OutputValidationIssue } from "./errors.js";
 export {
   Session,
   Sessions,
@@ -18,6 +18,7 @@ export {
 export type {
   CreateSessionOptions,
   ListSessionsOptions,
+  McpServerOptions,
   ModelSummary,
   ModelOptions,
   OutputOptions,
@@ -27,6 +28,21 @@ export type {
   SessionSummary,
 } from "./session.js";
 export type { EventOptions } from "./transport.js";
+export {
+  defineIntrinsicTool,
+  definePreinstalledTool,
+  defineServerTool,
+  defineTool,
+} from "@aexhq/brain";
+export type {
+  DefineIntrinsicToolOptions,
+  DefinePreinstalledToolOptions,
+  DefineServerToolOptions,
+  DefineToolOptions,
+  Tool,
+  ToolContext,
+  ToolHandler,
+} from "@aexhq/brain";
 
 const DEFAULT_API_URL = "https://api.aex.dev";
 

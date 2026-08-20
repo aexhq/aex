@@ -1,11 +1,12 @@
 # Working in this repository (for humans and agents)
 
-* `contracts/` is the source of truth. Never edit `crates/aex-contracts/src/{abi,session,control}.rs`,
-  `packages/contracts/src/{abi,session,control,paths,control-paths}.ts`, `packages/contracts/schemas/**`,
-  `contracts/examples/**` or `contracts/abi/v1/tools/manifest.digest` by hand — change the schema
-  (or `tools/make-examples.py`), run `tools/gen.sh`, commit both.
-* Every message type must have at least one example under `contracts/examples/`; CI enforces
-  coverage for ABI ops and session events and validates + round-trips every example in Rust and TS.
+* Aex owns account, billing, control-plane, and Aex-only public contracts. Neutral session and
+  Brain↔Hand contracts are owned by `aexhq/brain`; consume them from an immutable Brain identity and
+  do not copy or redefine them here. During the clean pre-GA migration, remove the old generated
+  duplicates only after downstream consumers use Brain's types.
+* For Aex-owned schemas, never hand-edit generated Rust/TypeScript files or examples: change the
+  schema (or generator), regenerate, and commit source plus generated views together. Every Aex
+  message type must retain validated examples and Rust/TypeScript round-trip coverage.
 * Fail fast: request bodies on the public API are strict; the ABI ignores unknown fields; absent
   provider counters stay absent (never 0).
 * Plain English in docs and comments; name operations precisely (running / suspended / released /

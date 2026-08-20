@@ -4,8 +4,13 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "gen": "npm run gen --workspaces --if-present",
-    "build": "npm run build --workspace @aexhq/contracts && npm run build --workspace @aexhq/sdk && npm run build --workspace @aexhq/cli",
-    "test": "npm test --workspace @aexhq/contracts && npm test --workspace @aexhq/sdk && npm test --workspace @aexhq/cli"
+    "build": "npm run build --workspace @aexhq/contracts && npm run build --workspace @aexhq/sdk && npm run build --workspace @aexhq/tools && npm run build --workspace @aexhq/cli",
+    "test": "npm test --workspace @aexhq/contracts && npm test --workspace @aexhq/sdk && npm test --workspace @aexhq/tools && npm test --workspace @aexhq/cli",
+    "package-smoke": "node tools/package-smoke.mjs"
+  },
+  "devDependencies": {
+    "@aexhq/brain": "file:../brain/packages/brain",
+    "@aexhq/brain-tools": "file:../brain/packages/brain-tools"
   },
   "engines": { "node": ">=22" }
 }

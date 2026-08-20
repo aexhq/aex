@@ -97,9 +97,36 @@ CREATE TABLE IF NOT EXISTS sessions (
   suspended_bytes INTEGER NOT NULL DEFAULT 0,
   artifact_bytes INTEGER NOT NULL DEFAULT 0,
   hand_state TEXT NOT NULL DEFAULT 'preparing',
-  session_state TEXT NOT NULL DEFAULT 'active'
+  session_state TEXT NOT NULL DEFAULT 'active',
+  output_capable INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);
+CREATE TABLE IF NOT EXISTS output_requests (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  schema_hash TEXT NOT NULL,
+  schema_json TEXT NOT NULL,
+  max_attempts INTEGER NOT NULL CHECK (max_attempts BETWEEN 1 AND 3),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed')),
+  turn_id TEXT,
+  accepted_json TEXT,
+  result_json TEXT,
+  error_json TEXT,
+  idempotency_key_hash TEXT,
+  request_hash TEXT NOT NULL,
+  created_ms INTEGER NOT NULL,
+  UNIQUE(session_id, idempotency_key_hash)
+);
+CREATE INDEX IF NOT EXISTS output_requests_session ON output_requests(session_id, created_ms);
+CREATE TABLE IF NOT EXISTS external_tool_calls (
+  session_id TEXT NOT NULL,
+  call_id TEXT NOT NULL,
+  output_id TEXT NOT NULL REFERENCES output_requests(id),
+  response_json TEXT NOT NULL,
+  created_ms INTEGER NOT NULL,
+  PRIMARY KEY(session_id, call_id)
+);
 ";
 
 #[derive(Debug, Clone)]
@@ -182,7 +209,35 @@ pub struct SessionRow {
     pub shape: String,
     pub created_ms: i64,
     pub is_final: bool,
+    /// True only for sessions created with the stable host-executed output tool in their sealed
+    /// Brain prefix. Existing pre-feature sessions remain false after migration.
+    pub output_capable: bool,
     pub fold: FoldState,
+}
+
+#[derive(Debug, Clone)]
+pub struct OutputRequestRow {
+    pub id: String,
+    pub session_id: String,
+    pub schema_hash: String,
+    pub schema_json: String,
+    pub max_attempts: i64,
+    pub attempts: i64,
+    pub status: String,
+    pub turn_id: Option<String>,
+    pub accepted_json: Option<String>,
+    pub result_json: Option<String>,
+    pub error_json: Option<String>,
+    pub idempotency_key_hash: Option<String>,
+    pub request_hash: String,
+    pub created_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+pub enum BeginOutput {
+    Created(OutputRequestRow),
+    Existing(OutputRequestRow),
+    RequestMismatch,
 }
 
 /// One SQLite file behind a mutex; every call runs on the blocking pool. Control-plane QPS is
@@ -237,7 +292,7 @@ impl Db {
         }
         // EFS carries the SQLite ledger across task and image upgrades. Additive schema
         // changes therefore migrate in place; new databases already contain the column.
-        let has_web_search_queries = {
+        let session_columns = {
             let mut stmt = conn
                 .prepare("PRAGMA table_info(sessions)")
                 .map_err(internal)?;
@@ -247,12 +302,20 @@ impl Db {
             names
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .map_err(internal)?
-                .iter()
-                .any(|name| name == "web_search_queries")
         };
-        if !has_web_search_queries {
+        if !session_columns
+            .iter()
+            .any(|name| name == "web_search_queries")
+        {
             conn.execute(
                 "ALTER TABLE sessions ADD COLUMN web_search_queries INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(internal)?;
+        }
+        if !session_columns.iter().any(|name| name == "output_capable") {
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN output_capable INTEGER NOT NULL DEFAULT 0",
                 [],
             )
             .map_err(internal)?;
@@ -905,15 +968,16 @@ impl Db {
             let tx = c.transaction()?;
             let inserted = tx.execute(
                 "INSERT OR IGNORE INTO sessions
-                 (id, account_id, key_id, shape, created_ms, metered_to_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 (id, account_id, key_id, shape, created_ms, metered_to_ms, output_capable)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     &row.id,
                     &row.account_id,
                     &row.key_id,
                     &row.shape,
                     row.created_ms,
-                    row.fold.metered_to_ms
+                    row.fold.metered_to_ms,
+                    row.output_capable as i64
                 ],
             )?;
             if inserted == 0 {
@@ -990,6 +1054,210 @@ impl Db {
         .await
     }
 
+    // ---- typed message output --------------------------------------------------------------
+
+    pub async fn begin_output(&self, row: OutputRequestRow) -> Result<BeginOutput> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            if let Some(key_hash) = row.idempotency_key_hash.as_ref()
+                && let Some(existing) = transaction
+                    .query_row(
+                        &format!(
+                            "{OUTPUT_COLS} WHERE session_id = ?1 AND idempotency_key_hash = ?2"
+                        ),
+                        params![row.session_id, key_hash],
+                        output_request_row,
+                    )
+                    .optional()?
+            {
+                transaction.commit()?;
+                return Ok(if existing.request_hash == row.request_hash {
+                    BeginOutput::Existing(existing)
+                } else {
+                    BeginOutput::RequestMismatch
+                });
+            }
+            transaction.execute(
+                "INSERT INTO output_requests
+                 (id, session_id, schema_hash, schema_json, max_attempts, attempts, status,
+                  turn_id, accepted_json, result_json, error_json, idempotency_key_hash,
+                  request_hash, created_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                params![
+                    row.id,
+                    row.session_id,
+                    row.schema_hash,
+                    row.schema_json,
+                    row.max_attempts,
+                    row.attempts,
+                    row.status,
+                    row.turn_id,
+                    row.accepted_json,
+                    row.result_json,
+                    row.error_json,
+                    row.idempotency_key_hash,
+                    row.request_hash,
+                    row.created_ms,
+                ],
+            )?;
+            transaction.commit()?;
+            Ok(BeginOutput::Created(row))
+        })
+        .await
+    }
+
+    pub async fn output_request(&self, id: String) -> Result<Option<OutputRequestRow>> {
+        self.call(move |connection| {
+            connection
+                .query_row(
+                    &format!("{OUTPUT_COLS} WHERE id = ?1"),
+                    params![id],
+                    output_request_row,
+                )
+                .optional()
+        })
+        .await
+    }
+
+    pub async fn accept_output(
+        &self,
+        id: String,
+        turn_id: String,
+        accepted_json: String,
+    ) -> Result<()> {
+        let updated = self
+            .call(move |connection| {
+                let updated = connection.execute(
+                    "UPDATE output_requests SET turn_id = ?2, accepted_json = ?3
+                 WHERE id = ?1 AND (turn_id IS NULL OR turn_id = ?2)",
+                    params![id, turn_id, accepted_json],
+                )?;
+                Ok(updated == 1)
+            })
+            .await?;
+        if updated {
+            Ok(())
+        } else {
+            Err(Error::Conflict(
+                "output request is bound to a different Brain turn".into(),
+            ))
+        }
+    }
+
+    /// Bind the authenticated executor delivery to the Brain turn that carried the reserved
+    /// message metadata. The executor can race the HTTP 202 response, so first delivery may claim
+    /// an unset turn; every subsequent writer must present the same identity.
+    pub async fn claim_output_turn(
+        &self,
+        id: String,
+        session_id: String,
+        turn_id: String,
+    ) -> Result<bool> {
+        self.call(move |connection| {
+            let updated = connection.execute(
+                "UPDATE output_requests SET turn_id = ?3
+                 WHERE id = ?1 AND session_id = ?2 AND (turn_id IS NULL OR turn_id = ?3)",
+                params![id, session_id, turn_id],
+            )?;
+            Ok(updated == 1)
+        })
+        .await
+    }
+
+    /// Remove an output identity whose message never reached Brain admission. Once accepted or
+    /// attempted, it is durable and must remain available to executor replay.
+    pub async fn abandon_output(&self, id: String) -> Result<()> {
+        self.call(move |connection| {
+            connection.execute(
+                "DELETE FROM output_requests
+                 WHERE id = ?1 AND accepted_json IS NULL AND attempts = 0",
+                params![id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn external_call_response(
+        &self,
+        session_id: String,
+        call_id: String,
+    ) -> Result<Option<String>> {
+        self.call(move |connection| {
+            connection
+                .query_row(
+                    "SELECT response_json FROM external_tool_calls
+                     WHERE session_id = ?1 AND call_id = ?2",
+                    params![session_id, call_id],
+                    |row| row.get(0),
+                )
+                .optional()
+        })
+        .await
+    }
+
+    /// Journal one executor decision and cache the exact response in the same SQLite
+    /// transaction. A replay with the same `(session_id, call_id)` returns the first response.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_external_attempt(
+        &self,
+        session_id: String,
+        call_id: String,
+        output_id: String,
+        response_json: String,
+        status: String,
+        result_json: Option<String>,
+        error_json: Option<String>,
+        expected_attempts: i64,
+        now_ms: i64,
+    ) -> Result<String> {
+        let response = self
+            .call(move |connection| {
+                let transaction = connection.transaction()?;
+                if let Some(existing) = transaction
+                    .query_row(
+                        "SELECT response_json FROM external_tool_calls
+                     WHERE session_id = ?1 AND call_id = ?2",
+                        params![session_id, call_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                {
+                    transaction.commit()?;
+                    return Ok(Some(existing));
+                }
+                let updated = transaction.execute(
+                    "UPDATE output_requests
+                 SET attempts = attempts + 1, status = ?2, result_json = ?3, error_json = ?4
+                 WHERE id = ?1 AND session_id = ?5 AND status = 'pending' AND attempts = ?6",
+                    params![
+                        output_id,
+                        status,
+                        result_json,
+                        error_json,
+                        session_id,
+                        expected_attempts
+                    ],
+                )?;
+                if updated != 1 {
+                    transaction.commit()?;
+                    return Ok(None);
+                }
+                transaction.execute(
+                    "INSERT INTO external_tool_calls
+                 (session_id, call_id, output_id, response_json, created_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![session_id, call_id, output_id, response_json, now_ms],
+                )?;
+                transaction.commit()?;
+                Ok(Some(response_json))
+            })
+            .await?;
+        response.ok_or_else(|| {
+            Error::Conflict("structured-output attempt lost a concurrent terminal race".into())
+        })
+    }
+
     /// Persist a sweep: meter state + the session's absolute usage debit, in one transaction.
     /// Fenced monotonic — a sweep that lost a race writes nothing.
     pub async fn apply_sweep(
@@ -1046,10 +1314,15 @@ impl Db {
 const SESSION_COLS: &str = "SELECT id, account_id, key_id, shape, created_ms, final,
     folded_seq, running_ms, turn_open_ms, susp_byte_s, ws_byte_s, art_byte_s,
     web_search_queries, metered_to_ms,
-    workspace_bytes, suspended_bytes, artifact_bytes, hand_state, session_state FROM sessions";
+    workspace_bytes, suspended_bytes, artifact_bytes, hand_state, session_state,
+    output_capable FROM sessions";
 
 const REFUND_COLS: &str = "SELECT id, request_key, topup_id, account_id, amount_cents, status,
     provider_ref, failure_reason, created_ms, updated_ms FROM refunds";
+
+const OUTPUT_COLS: &str = "SELECT id, session_id, schema_hash, schema_json, max_attempts,
+    attempts, status, turn_id, accepted_json, result_json, error_json, idempotency_key_hash,
+    request_hash, created_ms FROM output_requests";
 
 fn waitlist_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<WaitlistRow> {
     Ok(WaitlistRow {
@@ -1120,6 +1393,7 @@ fn session_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
         shape: r.get(3)?,
         created_ms: r.get(4)?,
         is_final: r.get::<_, i64>(5)? != 0,
+        output_capable: r.get::<_, i64>(19)? != 0,
         fold: FoldState {
             folded_seq: r.get(6)?,
             running_ms: r.get(7)?,
@@ -1135,6 +1409,25 @@ fn session_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
             hand_state: r.get(17)?,
             session_state: r.get(18)?,
         },
+    })
+}
+
+fn output_request_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OutputRequestRow> {
+    Ok(OutputRequestRow {
+        id: r.get(0)?,
+        session_id: r.get(1)?,
+        schema_hash: r.get(2)?,
+        schema_json: r.get(3)?,
+        max_attempts: r.get(4)?,
+        attempts: r.get(5)?,
+        status: r.get(6)?,
+        turn_id: r.get(7)?,
+        accepted_json: r.get(8)?,
+        result_json: r.get(9)?,
+        error_json: r.get(10)?,
+        idempotency_key_hash: r.get(11)?,
+        request_hash: r.get(12)?,
+        created_ms: r.get(13)?,
     })
 }
 
@@ -1157,10 +1450,12 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn existing_ledger_is_migrated_for_web_search_metering() {
+    async fn existing_ledger_is_migrated_for_additive_session_columns() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
         conn.execute("ALTER TABLE sessions DROP COLUMN web_search_queries", [])
+            .unwrap();
+        conn.execute("ALTER TABLE sessions DROP COLUMN output_capable", [])
             .unwrap();
         let db = Db::init(conn).unwrap();
         let columns: Vec<String> = db
@@ -1173,6 +1468,7 @@ mod tests {
             .await
             .unwrap();
         assert!(columns.iter().any(|name| name == "web_search_queries"));
+        assert!(columns.iter().any(|name| name == "output_capable"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1435,6 +1731,7 @@ mod tests {
             shape: "1gb".into(),
             created_ms: 5,
             is_final: false,
+            output_capable: true,
             fold: FoldState::default(),
         };
         db.insert_session(row.clone()).await.unwrap();
@@ -1604,6 +1901,7 @@ mod tests {
                 shape: "1gb".into(),
                 created_ms: 5,
                 is_final: false,
+                output_capable: true,
                 fold: FoldState::default(),
             };
             db.insert_session(row.clone()).await.unwrap();

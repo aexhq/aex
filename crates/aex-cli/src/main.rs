@@ -10,8 +10,8 @@
 use std::io::Write as _;
 use std::path::PathBuf;
 
-use aex_contracts::session::Event;
 use aex_sdk::Client;
+use brain_protocol::session::{Event, TurnId};
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
@@ -595,7 +595,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Render one event; returns false when the awaited turn is over.
-fn render_event(ev: &Event, turn: &aex_contracts::session::TurnId, saw_delta: &mut bool) -> bool {
+fn render_event(ev: &Event, turn: &TurnId, saw_delta: &mut bool) -> bool {
     match ev {
         Event::TurnStarted { .. } => true,
         Event::AssistantDelta { text, .. } => {
@@ -635,26 +635,6 @@ fn render_event(ev: &Event, turn: &aex_contracts::session::TurnId, saw_delta: &m
             );
             true
         }
-        Event::OutputStarted { output_id, .. } => {
-            println!("… output {} started", **output_id);
-            true
-        }
-        Event::OutputCompleted {
-            output_id, output, ..
-        } => {
-            println!(
-                "✓ output {} {}",
-                **output_id,
-                serde_json::to_string(&output.value).unwrap_or_default()
-            );
-            true
-        }
-        Event::OutputFailed {
-            output_id, error, ..
-        } => {
-            println!("✗ output {} failed: {}", **output_id, error.message);
-            true
-        }
         Event::ModelUsage { .. } | Event::SessionUpdated { .. } => true,
         Event::AgentSpawned {
             agent_id,
@@ -678,8 +658,16 @@ fn render_event(ev: &Event, turn: &aex_contracts::session::TurnId, saw_delta: &m
             turn_id,
             rounds,
             tool_calls,
+            result,
             ..
         } => {
+            if let Some(result) = result {
+                println!(
+                    "✓ {} {}",
+                    result.name,
+                    serde_json::to_string(&result.value).unwrap_or_default()
+                );
+            }
             println!("✓ turn completed ({rounds} rounds, {tool_calls} tool calls)");
             turn_id != turn
         }

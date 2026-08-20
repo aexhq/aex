@@ -1,13 +1,15 @@
 //! The Aex client SDK — a typed client over the generated contracts.
 //!
-//! Responses deserialize into `aex_contracts::control` / `aex_contracts::session` types (the
-//! same JSON Schemas the server is pinned to), so a wire drift is a decode error here, not a
+//! Responses deserialize into `aex_contracts::control` and Brain-owned
+//! `brain_protocol::session` types (the same JSON Schemas the server is pinned to), so a wire
+//! drift is a decode error here, not a
 //! silent surprise. Request bodies are anything serializable: the server validates strictly.
 //!
 //! Two credentials, two jobs, same as the API: the account token (`aex_at_`) for identity and
 //! billing, an API key (`aex_sk_`) for session work.
 
-use aex_contracts::{control, session};
+use aex_contracts::control;
+use brain_protocol::session;
 use futures_util::StreamExt;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Serialize;

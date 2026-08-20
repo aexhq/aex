@@ -16,7 +16,7 @@ Usage:
   aex session list
   aex session get <session-id>
   aex session send <session-id> <message>
-  aex session output <session-id> --schema <schema.json> [message]
+  aex session output <session-id> --schema <schema.json> <message>
   aex session events <session-id>
   aex session cancel <session-id>
   aex session delete <session-id>
@@ -80,8 +80,9 @@ async function sessionCommand(aex: Aex, argv: string[]): Promise<void> {
       const document = JSON.parse(await readFile(resolve(schemaPath), "utf8")) as z.core.JSONSchema.JSONSchema;
       const schema = z.fromJSONSchema(document);
       const input = rest.join(" ").trim();
+      if (input === "") usage("session output requires a message");
       const session = await aex.sessions.get(id);
-      const result = await session.output(schema, input === "" ? undefined : input);
+      const result = await session.send(input, { output: schema });
       print(result);
       return;
     }

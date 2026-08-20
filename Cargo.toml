@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/aex-contracts", "crates/aex-control", "crates/aex-sdk", "crates/aex-cli"]
+members = ["crates/aex-contracts", "crates/aex-control", "crates/aex-sdk", "crates/aex-cli", "crates/aex-brain"]
 
 [workspace.package]
 edition = "2024"
@@ -12,6 +12,10 @@ repository = "https://github.com/aexhq/aex"
 aex-contracts = { path = "crates/aex-contracts" }
 aex-control = { path = "crates/aex-control" }
 aex-sdk = { path = "crates/aex-sdk" }
+brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "ea73244489311cb3a11442c3a4306b289ec97ba7" }
+brain = { git = "https://github.com/aexhq/brain.git", rev = "ea73244489311cb3a11442c3a4306b289ec97ba7" }
+brain-aws = { git = "https://github.com/aexhq/brain.git", rev = "ea73244489311cb3a11442c3a4306b289ec97ba7" }
+hand-brain-aws = { git = "https://github.com/aexhq/hands.git", rev = "adc856060ff08069056e9b3b685f497db5759285" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "std", "clock"] }
@@ -28,6 +32,7 @@ axum = { version = "0.8", default-features = false, features = ["http1", "json",
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+html2text = "0.17.1"
 rand = "0.9"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json", "form"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
