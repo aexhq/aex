@@ -15,7 +15,7 @@ use aex_control::payments::{Checkout, FakePayments, PaymentStatus, Payments, Ref
 use aex_control::rating::RateCard;
 use aex_control::store::Db;
 use aex_control::web::WebRuntime;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{HeaderMap, Method, Uri, header};
 use axum::response::Response;
@@ -37,6 +37,7 @@ struct StubBrain {
     token: String,
     counter: AtomicI64,
     sessions: Mutex<HashMap<String, StubSession>>,
+    create_requests: Mutex<HashMap<String, (String, String)>>,
 }
 
 fn sse(events: &[Value]) -> String {
@@ -73,6 +74,7 @@ async fn stub_handler(
     method: Method,
     uri: Uri,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Response {
     let auth = headers
         .get(header::AUTHORIZATION)
@@ -95,6 +97,25 @@ async fn stub_handler(
     let mut sessions = stub.sessions.lock().unwrap();
     match (method.as_str(), parts.as_slice()) {
         ("POST", ["v1", "sessions"]) => {
+            let key = headers
+                .get("Idempotency-Key")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
+            let request_hash = aex_control::identity::hash_secret(
+                std::str::from_utf8(&body).expect("the control plane forwards JSON"),
+            );
+            if let Some(key) = &key
+                && let Some((original_hash, id)) =
+                    stub.create_requests.lock().unwrap().get(key).cloned()
+            {
+                if original_hash != request_hash {
+                    return respond(
+                        409,
+                        json!({"error": {"code": "conflict", "message": "key reused"}}),
+                    );
+                }
+                return respond(201, sessions.get(&id).unwrap().doc.clone());
+            }
             let n = stub.counter.fetch_add(1, Ordering::SeqCst);
             let id = format!("ses_stub{n:020}");
             let doc = stub_doc(
@@ -113,6 +134,16 @@ async fn stub_handler(
                     turns: 0,
                 },
             );
+            if let Some(key) = key {
+                assert!(
+                    key.starts_with("aex:acc_") && !key.contains("same-create-request"),
+                    "the control plane must namespace and hash the customer key"
+                );
+                stub.create_requests
+                    .lock()
+                    .unwrap()
+                    .insert(key, (request_hash, id));
+            }
             respond(201, doc)
         }
         ("GET", ["v1", "sessions", id]) => match sessions.get(*id) {
@@ -257,6 +288,7 @@ async fn spawn_stub_brain(token: &str) -> String {
         token: token.to_string(),
         counter: AtomicI64::new(0),
         sessions: Mutex::new(HashMap::new()),
+        create_requests: Mutex::new(HashMap::new()),
     });
     let app = axum::Router::new().fallback(stub_handler).with_state(stub);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -710,6 +742,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     let session = json_of(
         http.post(format!("{base}/v1/sessions"))
             .bearer_auth(&sk)
+            .header("Idempotency-Key", "same-create-request")
             .json(&json!({"model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"}}))
             .send()
             .await
@@ -719,6 +752,31 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     .await;
     assert_valid(brain_protocol::SESSION_SCHEMA_JSON, "Session", &session);
     let sid = session["id"].as_str().unwrap().to_string();
+
+    let replay = json_of(
+        http.post(format!("{base}/v1/sessions"))
+            .bearer_auth(&sk)
+            .header("Idempotency-Key", "same-create-request")
+            .json(&json!({"model": {"provider": "anthropic", "name": "m", "api_key": "sk-x"}}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    assert_eq!(
+        replay["id"], sid,
+        "a create replay returns the original session"
+    );
+    let changed_create = http
+        .post(format!("{base}/v1/sessions"))
+        .bearer_auth(&sk)
+        .header("Idempotency-Key", "same-create-request")
+        .json(&json!({"model": {"provider": "anthropic", "name": "changed", "api_key": "sk-x"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(changed_create.status().as_u16(), 409);
 
     // Ownership: a different account's key sees 404, not 403 — existence is not revealed.
     let other = invited_signup(&http, &base, "other@example.com").await;

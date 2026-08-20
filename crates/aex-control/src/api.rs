@@ -809,6 +809,25 @@ async fn forward(
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok());
     let idempotency = headers.get("Idempotency-Key").and_then(|v| v.to_str().ok());
+    forward_with_idempotency(
+        state,
+        method,
+        path_and_query,
+        content_type,
+        idempotency,
+        body,
+    )
+    .await
+}
+
+async fn forward_with_idempotency(
+    state: &AppState,
+    method: Method,
+    path_and_query: &str,
+    content_type: Option<&str>,
+    idempotency: Option<&str>,
+    body: Option<Bytes>,
+) -> Result<Response> {
     let method = reqwest::Method::from_bytes(method.as_str().as_bytes())
         .map_err(|_| Error::Invalid("method".into()))?;
     let upstream = state
@@ -930,6 +949,24 @@ fn suppress_public_event(frame: &[u8]) -> bool {
         && event["name"].as_str() == Some(output::OUTPUT_TOOL_NAME)
 }
 
+fn create_idempotency(headers: &HeaderMap, account_id: &str) -> Result<Option<(String, String)>> {
+    let Some(raw) = headers.get("Idempotency-Key") else {
+        return Ok(None);
+    };
+    let raw = raw
+        .to_str()
+        .map_err(|_| Error::Invalid("Idempotency-Key must be valid ASCII".into()))?;
+    if raw.is_empty() || raw.len() > 128 {
+        return Err(Error::Invalid(
+            "Idempotency-Key must contain 1 to 128 bytes".into(),
+        ));
+    }
+    let namespaced = format!("aex:{account_id}:{}", crate::identity::hash_secret(raw));
+    let hash = crate::identity::hash_secret(&namespaced);
+    let session_id = format!("ses_{}", &hash[..24]);
+    Ok(Some((namespaced, session_id)))
+}
+
 fn path_and_query(uri: &Uri) -> String {
     uri.path_and_query()
         .map(|pq| pq.as_str().to_string())
@@ -962,29 +999,49 @@ async fn proxy_sessions_root(
             let (key, account) = auth_key(&state, &headers).await?;
             match method {
                 Method::POST => {
-                    sweep_account(&state.db, &state.brain, &state.card, &account.id).await?;
-                    require_positive_balance(&state, &account).await?;
-                    let live = state.db.live_count(account.id.clone()).await?;
-                    if live >= account.max_concurrent_sessions {
-                        return Err(Error::RateLimited(format!(
-                            "{live} live sessions; the account limit is {}",
-                            account.max_concurrent_sessions
-                        )));
-                    }
-                    let hour_ago = now_ms() - 3_600_000;
-                    let created = state.db.creates_since(account.id.clone(), hour_ago).await?;
-                    if created >= account.session_creates_per_hour {
-                        return Err(Error::RateLimited(format!(
-                            "{created} sessions created in the last hour; the account limit is {}",
-                            account.session_creates_per_hour
-                        )));
+                    let idempotency = create_idempotency(&headers, &account.id)?;
+                    let replay = if let Some((_, session_id)) = &idempotency {
+                        match state.db.session(session_id.clone()).await? {
+                            Some(row) if row.account_id == account.id => true,
+                            Some(_) => {
+                                return Err(Error::Conflict(
+                                    "Idempotency-Key resolved to another account's session".into(),
+                                ));
+                            }
+                            None => false,
+                        }
+                    } else {
+                        false
+                    };
+                    if !replay {
+                        sweep_account(&state.db, &state.brain, &state.card, &account.id).await?;
+                        require_positive_balance(&state, &account).await?;
+                        let live = state.db.live_count(account.id.clone()).await?;
+                        if live >= account.max_concurrent_sessions {
+                            return Err(Error::RateLimited(format!(
+                                "{live} live sessions; the account limit is {}",
+                                account.max_concurrent_sessions
+                            )));
+                        }
+                        let hour_ago = now_ms() - 3_600_000;
+                        let created = state.db.creates_since(account.id.clone(), hour_ago).await?;
+                        if created >= account.session_creates_per_hour {
+                            return Err(Error::RateLimited(format!(
+                                "{created} sessions created in the last hour; the account limit is {}",
+                                account.session_creates_per_hour
+                            )));
+                        }
                     }
                     let body = output::inject_output_tool(&body)?;
-                    let resp = forward(
+                    let content_type = headers
+                        .get(header::CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok());
+                    let resp = forward_with_idempotency(
                         &state,
                         method,
                         &path_and_query(&uri),
-                        &headers,
+                        content_type,
+                        idempotency.as_ref().map(|(key, _)| key.as_str()),
                         Some(Bytes::from(body)),
                     )
                     .await?;

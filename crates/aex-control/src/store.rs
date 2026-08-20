@@ -263,12 +263,33 @@ impl Db {
     }
 
     fn init(conn: Connection) -> Result<Self> {
-        conn.pragma_update(None, "journal_mode", "WAL").ok();
+        // The production ledger lives on EFS (NFS). SQLite WAL relies on a shared-memory
+        // wal-index and is not safe on a network filesystem, so keep the database in the
+        // rollback-journal mode. A persisted WAL database is converted when the sole control
+        // task starts; refusing to remain in WAL mode keeps a bad deployment from serving.
+        conn.pragma_update(None, "journal_mode", "DELETE")
+            .map_err(internal)?;
+        let journal_mode: String = conn
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .map_err(internal)?;
+        if journal_mode.eq_ignore_ascii_case("wal") {
+            return Err(Error::Internal(
+                "sqlite: WAL mode is unsafe for the network-backed ledger".into(),
+            ));
+        }
         conn.pragma_update(None, "foreign_keys", "ON")
             .map_err(internal)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(internal)?;
         conn.execute_batch(SCHEMA).map_err(internal)?;
+        let integrity: String = conn
+            .query_row("PRAGMA quick_check(1)", [], |row| row.get(0))
+            .map_err(internal)?;
+        if integrity != "ok" {
+            return Err(Error::Internal(format!(
+                "sqlite: ledger integrity check failed: {integrity}"
+            )));
+        }
         // EFS carries the SQLite ledger across task and image upgrades. Additive schema
         // changes therefore migrate in place; new databases already contain the column.
         let session_columns = {
@@ -944,21 +965,34 @@ impl Db {
 
     pub async fn insert_session(&self, row: SessionRow) -> Result<()> {
         self.call(move |c| {
-            c.execute(
-                "INSERT INTO sessions
+            let tx = c.transaction()?;
+            let inserted = tx.execute(
+                "INSERT OR IGNORE INTO sessions
                  (id, account_id, key_id, shape, created_ms, metered_to_ms, output_capable)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
-                    row.id,
-                    row.account_id,
-                    row.key_id,
-                    row.shape,
+                    &row.id,
+                    &row.account_id,
+                    &row.key_id,
+                    &row.shape,
                     row.created_ms,
                     row.fold.metered_to_ms,
                     row.output_capable as i64
                 ],
-            )
-            .map(|_| ())
+            )?;
+            if inserted == 0 {
+                let owner: String = tx.query_row(
+                    "SELECT account_id FROM sessions WHERE id = ?1",
+                    params![&row.id],
+                    |record| record.get(0),
+                )?;
+                if owner != row.account_id {
+                    return Err(rusqlite::Error::InvalidParameterName(
+                        "session id belongs to another account".into(),
+                    ));
+                }
+            }
+            tx.commit()
         })
         .await
     }
@@ -1435,6 +1469,28 @@ mod tests {
             .unwrap();
         assert!(columns.iter().any(|name| name == "web_search_queries"));
         assert!(columns.iter().any(|name| name == "output_capable"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn file_ledger_uses_rollback_journaling() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "aex-control-journal-{}-{unique}.db",
+            std::process::id()
+        ));
+        let db = Db::open(&path).unwrap();
+        let mode: String = db
+            .call(|connection| {
+                connection.pragma_query_value(None, "journal_mode", |row| row.get(0))
+            })
+            .await
+            .unwrap();
+        assert_eq!(mode, "delete");
+        drop(db);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
