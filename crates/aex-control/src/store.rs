@@ -282,7 +282,10 @@ impl Db {
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .map_err(internal)?
         };
-        if !session_columns.iter().any(|name| name == "web_search_queries") {
+        if !session_columns
+            .iter()
+            .any(|name| name == "web_search_queries")
+        {
             conn.execute(
                 "ALTER TABLE sessions ADD COLUMN web_search_queries INTEGER NOT NULL DEFAULT 0",
                 [],

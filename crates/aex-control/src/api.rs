@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use aex_contracts::session::ExternalToolCallRequest;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -17,7 +18,6 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::Response;
 use axum::routing::{any, delete, get, post};
 use bytes::Bytes;
-use aex_contracts::session::ExternalToolCallRequest;
 use serde_json::{Value, json};
 
 use crate::brain::BrainClient;
@@ -993,9 +993,10 @@ async fn proxy_session(
                         .await?
                     }
                     PreparedMessage::Replay { accepted_json } => {
-                        let accepted: Value = serde_json::from_str(&accepted_json).map_err(|error| {
-                            Error::Internal(format!("stored message acceptance: {error}"))
-                        })?;
+                        let accepted: Value =
+                            serde_json::from_str(&accepted_json).map_err(|error| {
+                                Error::Internal(format!("stored message acceptance: {error}"))
+                            })?;
                         return Ok(json_response(202, &accepted));
                     }
                     PreparedMessage::New {

@@ -130,10 +130,7 @@ pub async fn prepare_message(
             "message metadata keys beginning with aex. are reserved".into(),
         ));
     }
-    metadata.insert(
-        OUTPUT_CONTEXT_KEY.into(),
-        Value::String(output_id.clone()),
-    );
+    metadata.insert(OUTPUT_CONTEXT_KEY.into(), Value::String(output_id.clone()));
 
     let instruction = format!(
         "Aex structured-output request. Before ending this turn, call `{OUTPUT_TOOL_NAME}` exactly once with the final result object. The call argument must validate against this JSON Schema. If the tool reports validation errors, correct the object and call it again. Do not merely print JSON.\n\nJSON Schema (RFC 8785 canonical form):\n{schema_json}"
@@ -204,10 +201,7 @@ pub fn augment_accepted(
         .ok_or_else(|| Error::Upstream("message accepted body has no turn_id".into()))?
         .to_string();
     object.insert("output_id".into(), Value::String(output_id.to_string()));
-    object.insert(
-        "schema_hash".into(),
-        Value::String(schema_hash.to_string()),
-    );
+    object.insert("schema_hash".into(), Value::String(schema_hash.to_string()));
     Ok((turn_id, accepted.to_string()))
 }
 
@@ -274,9 +268,11 @@ pub async fn execute(db: &Db, request: ExternalToolCallRequest) -> Result<Value>
         (
             response,
             "completed".to_string(),
-            Some(String::from_utf8(candidate_bytes).map_err(|error| {
-                Error::Internal(format!("candidate canonical JSON: {error}"))
-            })?),
+            Some(
+                String::from_utf8(candidate_bytes).map_err(|error| {
+                    Error::Internal(format!("candidate canonical JSON: {error}"))
+                })?,
+            ),
             None,
         )
     } else if attempt < row.max_attempts {
@@ -468,15 +464,9 @@ mod tests {
     fn injection_is_stable_and_rejects_customer_external_tools() {
         let injected = inject_output_tool(br#"{"model":{"provider":"openai"}}"#).unwrap();
         let document: Value = serde_json::from_slice(&injected).unwrap();
-        assert_eq!(
-            document["tools"]["external"][0]["name"],
-            OUTPUT_TOOL_NAME
-        );
+        assert_eq!(document["tools"]["external"][0]["name"], OUTPUT_TOOL_NAME);
         assert!(
-            inject_output_tool(
-                br#"{"tools":{"external":[{"name":"mine"}]},"model":{}}"#
-            )
-            .is_err()
+            inject_output_tool(br#"{"tools":{"external":[{"name":"mine"}]},"model":{}}"#).is_err()
         );
     }
 
@@ -486,7 +476,8 @@ mod tests {
         let hash = canonical_hash(&schema).unwrap();
         assert!(validate_schema(&schema, &hash).is_ok());
         assert!(validate_schema(&schema, &"0".repeat(64)).is_err());
-        let remote = json!({"type":"object","properties":{"x":{"$ref":"https://example.test/schema"}}});
+        let remote =
+            json!({"type":"object","properties":{"x":{"$ref":"https://example.test/schema"}}});
         let remote_hash = canonical_hash(&remote).unwrap();
         assert!(validate_schema(&remote, &remote_hash).is_err());
     }
@@ -506,21 +497,16 @@ mod tests {
             "output": {"schema": schema, "schema_hash": schema_hash, "retries": 1}
         }))
         .unwrap();
-        let (output_id, transformed) = match prepare_message(
-            &db,
-            SESSION_ID,
-            true,
-            &body,
-            Some("message-key"),
-        )
-        .await
-        .unwrap()
-        {
-            PreparedMessage::New {
-                body, output_id, ..
-            } => (output_id, serde_json::from_slice::<Value>(&body).unwrap()),
-            _ => panic!("expected a new output request"),
-        };
+        let (output_id, transformed) =
+            match prepare_message(&db, SESSION_ID, true, &body, Some("message-key"))
+                .await
+                .unwrap()
+            {
+                PreparedMessage::New {
+                    body, output_id, ..
+                } => (output_id, serde_json::from_slice::<Value>(&body).unwrap()),
+                _ => panic!("expected a new output request"),
+            };
         assert!(transformed.get("output").is_none());
         assert_eq!(
             transformed["metadata"][OUTPUT_CONTEXT_KEY],
@@ -583,5 +569,81 @@ mod tests {
             .err()
             .expect("old session must fail");
         assert!(matches!(error, Error::Conflict(_)));
+    }
+
+    #[tokio::test]
+    async fn zero_retries_fails_the_turn_on_the_first_invalid_candidate() {
+        let db = db_with_session(true).await;
+        let schema = json!({
+            "type": "object",
+            "properties": {"answer": {"type": "integer"}},
+            "required": ["answer"],
+            "additionalProperties": false
+        });
+        let body = serde_json::to_vec(&json!({
+            "content": "Answer with an integer.",
+            "output": {
+                "schema": schema,
+                "schema_hash": canonical_hash(&schema).unwrap(),
+                "retries": 0
+            }
+        }))
+        .unwrap();
+        let output_id = match prepare_message(&db, SESSION_ID, true, &body, Some("no-repair"))
+            .await
+            .unwrap()
+        {
+            PreparedMessage::New { output_id, .. } => output_id,
+            _ => panic!("expected a new output request"),
+        };
+        let request = serde_json::from_value::<ExternalToolCallRequest>(json!({
+            "session_id": SESSION_ID,
+            "turn_id": "trn_12345678901234567890",
+            "agent_id": "root",
+            "call_id": "op_first_invalid",
+            "name": OUTPUT_TOOL_NAME,
+            "input": {"answer": "wrong"},
+            "context": {(OUTPUT_CONTEXT_KEY): output_id.clone()}
+        }))
+        .unwrap();
+
+        let failed = execute(&db, request.clone()).await.unwrap();
+        assert_eq!(failed["disposition"], "fail_turn");
+        assert_eq!(failed["error"]["code"], "output_validation_error");
+        assert!(failed["error"]["details"]["issues"].is_array());
+        assert_eq!(failed, execute(&db, request).await.unwrap());
+        let row = db.output_request(output_id).await.unwrap().unwrap();
+        assert_eq!(row.status, "failed");
+        assert_eq!(row.attempts, 1, "replay must not consume another attempt");
+    }
+
+    #[tokio::test]
+    async fn an_unadmitted_output_identity_can_be_abandoned() {
+        let db = db_with_session(true).await;
+        let schema = json!({"type": "object"});
+        let body = serde_json::to_vec(&json!({
+            "content": "answer",
+            "output": {
+                "schema": schema,
+                "schema_hash": canonical_hash(&schema).unwrap()
+            }
+        }))
+        .unwrap();
+        let output_id = match prepare_message(&db, SESSION_ID, true, &body, None)
+            .await
+            .unwrap()
+        {
+            PreparedMessage::New { output_id, .. } => output_id,
+            _ => panic!("expected a new output request"),
+        };
+        assert!(
+            db.output_request(output_id.clone())
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        db.abandon_output(output_id.clone()).await.unwrap();
+        assert!(db.output_request(output_id).await.unwrap().is_none());
     }
 }

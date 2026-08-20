@@ -8,8 +8,9 @@ publish the SDK before the matching control plane and Brain revisions are deploy
 1. Merge and tag the Brain-owned protocol plus generic external-tool executor support.
 2. Point Aex at that immutable Brain protocol identity and regenerate its public contract views.
 3. Merge the Aex control-plane, SDK, and CLI changes.
-4. Configure Brain's `AEX_EXTERNAL_TOOL_EXECUTOR_URL` and give Brain and aex-control the same
-   `AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN` secret. Never put that token in a session, journal, or hand.
+4. Configure Brain's `BRAIN_EXTERNAL_TOOL_EXECUTOR_URL` and give Brain's
+   `BRAIN_EXTERNAL_TOOL_EXECUTOR_TOKEN` and aex-control's `AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN` the
+   same secret. Never put that token in a session, journal, or hand.
 5. Deploy the matching Brain and control-plane revisions, then publish contracts, SDK, and CLI.
 6. Run the quickstart against production, including one valid output, one bounded repair, one
    final validation failure, cancellation, and one same-key retry.
