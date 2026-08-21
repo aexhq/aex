@@ -21,6 +21,7 @@ jobs:
   build:
     if: github.event.workflow_run.conclusion == 'success'
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-24.04
@@ -100,7 +101,7 @@ jobs:
           test "$(docker image inspect --format '{{.Architecture}}' "$ref")" = "$ARCH"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")" = "$SOURCE_SHA"
           digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -er .digest)
-          echo "$ARCH candidate: `$IMAGE@$digest`" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s candidate: `%s@%s`\n' "$ARCH" "$IMAGE" "$digest" >> "$GITHUB_STEP_SUMMARY"
 
   manifest:
     if: github.event.workflow_run.conclusion == 'success'
@@ -175,11 +176,11 @@ jobs:
           {
             echo '### Aex control image'
             echo
-            echo "Immutable identity: `$IMAGE:sha-$SOURCE_SHA`"
+            printf 'Immutable identity: `%s:sha-%s`\n' "$IMAGE" "$SOURCE_SHA"
             echo
-            echo "Resolved manifest: `$IMAGE@$digest`"
+            printf 'Resolved manifest: `%s@%s`\n' "$IMAGE" "$digest"
             echo
-            echo "Platforms: `linux/amd64@$amd`, `linux/arm64@$arm`"
+            printf 'Platforms: `linux/amd64@%s`, `linux/arm64@%s`\n' "$amd" "$arm"
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v6
         with:
