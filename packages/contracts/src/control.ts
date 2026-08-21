@@ -36,12 +36,19 @@ export type CreditGrantId = string;
  */
 export type Timestamp = string;
 /**
- * Integer micro-USD; 1 USD = 1,000,000. Never a float.
+ * Canonical signed decimal-string integer micro-USD; 1 USD = 1,000,000. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "MicroUsd".
  */
-export type MicroUsd = number;
+export type MicroUsd = string;
+/**
+ * Canonical unsigned decimal-string integer. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point.
+ *
+ * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
+ * via the `definition` "UnsignedDecimalInteger".
+ */
+export type UnsignedDecimalInteger = string;
 /**
  * Manages the account: keys, top-ups, the bill. Shown once at signup; only a hash is stored.
  *
@@ -95,7 +102,7 @@ export type ControlErrorCode =
   | "internal";
 
 /**
- * Component types of the control plane: identity (accounts, API keys), prepaid billing (top-ups, balance), and rated usage on the two-rate card. Paths are in openapi.yaml. Session operations are NOT redefined here: the control plane serves session/v1 paths verbatim, authorized by an API key, in front of a brain. All money on the wire is integer micro-USD (1 USD = 1,000,000 micro-USD) except top-up amounts, which are whole cents (the payment surface). Storage is metered in decimal GB (1 GB = 1e9 bytes); a month is 730 hours.
+ * Component types of the control plane: identity (accounts, API keys), prepaid billing (top-ups, balance), and rated usage on the public rate card. Paths are in openapi.yaml. Session operations are NOT redefined here: the control plane serves session/v1 paths verbatim, authorized by an API key, in front of a brain. All money on the wire is a canonical decimal-string integer in micro-USD (1 USD = 1,000,000 micro-USD) except top-up amounts, which are whole cents (the payment surface). Storage is metered in decimal GB (1 GB = 1e9 bytes); a month is 730 hours.
  */
 export interface AexControlAPIV1Types {
   [k: string]: unknown | undefined;
@@ -161,13 +168,19 @@ export interface InvitationCreated {
   invited_at: Timestamp;
 }
 /**
- * Account-level limits for concurrent sessions and session creation rate.
+ * Account-level limits for resource-bearing root sessions and root-session creation rate. Open, asynchronously ending, failed, and deleting roots consume the concurrent limit until a strong ended projection or physical deletion proves resource release; durable child sessions are bounded by the root's sealed child policy.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "AccountLimits".
  */
 export interface AccountLimits {
+  /**
+   * Maximum resource-bearing root sessions in open, ending, failed, or deleting lifecycle. Child sessions do not consume or bypass this account limit.
+   */
   max_concurrent_sessions: number;
+  /**
+   * Maximum root-session creates per rolling hour.
+   */
   session_creates_per_hour: number;
 }
 /**
@@ -349,7 +362,7 @@ export interface Refund {
   failure_reason?: string;
 }
 /**
- * The public usage rate card. Compute is billed per second while running on the shape's baseline (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes held for a suspended hand; workspace storage covers synced workspace objects and persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours.
+ * The public usage rate card. Hosted alpha compute is billed per second on its only physical shape: 0.5 vCPU plus 1 GiB, or $0.12/hour at these component rates. Transient provider burst or peak capacity is not separately metered and is not a promised entitlement. Idle and provider snapshot-storage costs are absorbed in alpha. Session storage covers explicit durable objects and bytes reserved by an outstanding direct upload. Storage GB is decimal (1e9 bytes); a month is `month_hours` hours.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "RateCard".
@@ -358,24 +371,22 @@ export interface RateCard {
   object: "rate_card";
   vcpu_hour_microusd: MicroUsd;
   gb_hour_microusd: MicroUsd;
-  suspended_gb_month_microusd: MicroUsd;
-  workspace_gb_month_microusd: MicroUsd;
+  session_storage_gb_month_microusd: MicroUsd;
   web_search_query_microusd: MicroUsd;
   month_hours: number;
 }
 /**
- * Current stored bytes, as last reported by the brain (session/v1 StorageInfo).
+ * Current published bytes and outstanding upload-reserved capacity, as last reported by Brain (session/v1 StorageInfo). They remain separate so quota and billing are observable even before an upload is published.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "StorageMeters".
  */
 export interface StorageMeters {
-  workspace_bytes: number;
-  suspended_bytes: number;
-  artifact_bytes: number;
+  session_storage_bytes: number;
+  upload_reserved_bytes: number;
 }
 /**
- * One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. Successful web_search tool results are counted from the same event log.
+ * One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session event log. Session-storage integrals are reconstructed from durable storage.usage gauge transitions with exact internal byte-millisecond carry; the public byte-millisecond projection adds the current derived open interval through metered_to so it reproduces the charge. Successful web_search tool results are counted from the same journal.
  *
  * This interface was referenced by `AexControlAPIV1Types`'s JSON-Schema
  * via the `definition` "SessionUsage".
@@ -383,17 +394,24 @@ export interface StorageMeters {
 export interface SessionUsage {
   session_id: string;
   /**
-   * HandShape from session/v1 (1gb | 2gb | 4gb | 8gb).
+   * The hosted alpha's only physical shape: 0.5 vCPU and 1 GiB.
    */
-  shape: string;
+  shape: "1gb";
   /**
-   * SessionState from session/v1 (active | idle | deleted | failed).
+   * Lifecycle SessionState from session/v1 (open | ending | ended | deleting | deleted | failed); current-turn activity is a separate session projection.
    */
   state: string;
-  running_ms: number;
-  suspended_byte_seconds: number;
-  workspace_byte_seconds: number;
-  artifact_byte_seconds: number;
+  /**
+   * Cumulative running milliseconds as an exact canonical unsigned decimal string.
+   */
+  running_ms: string;
+  /**
+   * Published session-storage plus outstanding upload-reservation byte-milliseconds through metered_to as an exact canonical unsigned decimal string. It is the durable closed integral plus the derived open interval used for this response's charge; a delayed durable transition may replace that estimate upward or downward. Storage micro-USD is floor(value * session_storage_gb_month_microusd / (1000000000 * month_hours * 3600000)).
+   */
+  session_storage_byte_milliseconds: string;
+  /**
+   * Successful search results counted from the bounded per-session journal; the hosted 128 MiB journal ceiling makes this counter JavaScript-safe.
+   */
   web_search_queries: number;
   compute_microusd: MicroUsd;
   storage_microusd: MicroUsd;

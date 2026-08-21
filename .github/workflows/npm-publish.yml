@@ -2,73 +2,265 @@ name: publish npm packages
 
 on:
   workflow_dispatch:
-
-permissions:
-  contents: read
-  id-token: write
+    inputs:
+      operation:
+        description: Publish immutable versions under next, or promote those same versions to latest
+        type: choice
+        required: true
+        default: stage
+        options:
+          - stage
+          - promote
+      expected_commit:
+        description: Exact 40-character Aex commit selected by the workflow ref
+        type: string
+        required: true
+      stage_run_id:
+        description: Successful stage workflow run containing the immutable archives (promote only)
+        type: string
+        required: false
+        default: ''
 
 concurrency:
   group: npm-publish
   cancel-in-progress: false
 
 jobs:
-  publish:
-    if: github.ref == 'refs/heads/main'
+  validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@v7
-      - name: Checkout pinned Brain packages
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate the immutable source identity
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          OPERATION: ${{ inputs.operation }}
+          SELECTED_COMMIT: ${{ github.sha }}
+          SELECTED_REF: ${{ github.ref }}
+          STAGE_RUN_ID: ${{ inputs.stage_run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout 830356e72cf1de7b8f4b6f3971f40eff01bbdb31
+          set -euo pipefail
+          [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$SELECTED_COMMIT" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          test "$SELECTED_REF" = "refs/tags/release/sha-$EXPECTED_COMMIT"
+          test "$(git cat-file -t "$GITHUB_REF")" = tag
+          git merge-base --is-ancestor "$EXPECTED_COMMIT" origin/main
+          if [[ "$OPERATION" == promote ]]; then
+            [[ "$STAGE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            stage_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGE_RUN_ID")
+            test "$(jq -r .head_sha <<<"$stage_run")" = "$EXPECTED_COMMIT"
+            test "$(jq -r .event <<<"$stage_run")" = workflow_dispatch
+            test "$(jq -r .status <<<"$stage_run")" = completed
+            test "$(jq -r .conclusion <<<"$stage_run")" = success
+            stage_path=$(jq -r .path <<<"$stage_run")
+            [[ "$stage_path" == .github/workflows/npm-publish.yml || \
+              "$stage_path" == .github/workflows/npm-publish.yml@* ]]
+          else
+            test -z "$STAGE_RUN_ID"
+          fi
+
+  stage-tests:
+    if: inputs.operation == 'stage'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Use an npm version with trusted publishing support
+      - name: Use the npm version pinned for trusted publishing
         run: npm install --global npm@11.19.0
-      - name: Build pinned Brain packages
+      - name: Checkout the Brain revision pinned by Aex
+        shell: bash
+        run: |
+          set -euo pipefail
+          brain_revision=$(node tools/pinned-revision.mjs brain)
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain checkout "$brain_revision"
+          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
+      - name: Build the pinned Brain packages
         run: |
           npm ci --prefix ../brain
           npm run build --prefix ../brain
       - run: npm ci
       - run: npm test
-      - run: npm run package-smoke
-      - name: Publish with trusted publishing in dependency order
+
+  stage-package-smoke:
+    if: inputs.operation == 'stage'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Use the npm version pinned for trusted publishing
+        run: npm install --global npm@11.19.0
+      - name: Checkout the Brain revision pinned by Aex
         shell: bash
         run: |
           set -euo pipefail
+          brain_revision=$(node tools/pinned-revision.mjs brain)
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain checkout "$brain_revision"
+          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
+      - name: Build the pinned Brain packages
+        run: |
+          npm ci --prefix ../brain
+          npm run build --prefix ../brain
+      - run: npm ci
+      - run: npm run build
+      - run: npm run package-smoke
 
-          publish_workspace() {
-            local workspace="$1"
-            local package_json="packages/$workspace/package.json"
-            local name version spec version_url
-            name=$(node -p "require('./$package_json').name")
-            version=$(node -p "require('./$package_json').version")
-            spec="$name@$version"
-            version_url=$(node -e 'const [name, version] = process.argv.slice(1); process.stdout.write(`https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`)' "$name" "$version")
+  prepare:
+    if: inputs.operation == 'stage'
+    needs: [validate, stage-tests, stage-package-smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      versions: ${{ steps.pack.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Checkout the Brain revision pinned by Aex
+        shell: bash
+        run: |
+          set -euo pipefail
+          brain_revision=$(node tools/pinned-revision.mjs brain)
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain checkout "$brain_revision"
+          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
+      - name: Use the npm version pinned for trusted publishing
+        run: npm install --global npm@11.19.0
+      - name: Build the pinned Brain packages
+        run: |
+          npm ci --prefix ../brain
+          npm run build --prefix ../brain
+      - run: npm ci
+      - run: npm run build
+      - name: Pack the exact release archives
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/aex-npm-release"
+          node tools/npm-release.mjs pack "$release_dir"
+          versions=$(node tools/npm-release.mjs versions "$release_dir/manifest.json")
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Immutable Aex npm archives'
+            echo
+            node tools/npm-release.mjs markdown "$release_dir/manifest.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: aex-npm-release-${{ github.sha }}
+          path: ${{ runner.temp }}/aex-npm-release
+          if-no-files-found: error
+          retention-days: 30
 
-            if curl --fail --silent "$version_url" >/dev/null 2>&1; then
-              echo "$spec is already published"
-            else
-              npm publish --workspace "$name" --access public
-            fi
+  stage:
+    if: inputs.operation == 'stage'
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: aex-npm-release-${{ github.sha }}
+          path: ${{ runner.temp }}/aex-npm-release
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Use the npm version pinned for trusted publishing
+        run: npm install --global npm@11.19.0
+      - name: Require the staged Brain dependency set
+        shell: bash
+        run: node "$RUNNER_TEMP/aex-npm-release/verify-dependencies.mjs" next
+      - name: Publish once with provenance under next
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+        run: node "$RUNNER_TEMP/aex-npm-release/publish.mjs" stage
+      - name: Record staged versions
+        shell: bash
+        env:
+          VERSIONS: ${{ needs.prepare.outputs.versions }}
+        run: |
+          echo "Staged exact versions under npm dist-tag \`next\`: \`$VERSIONS\`" >> "$GITHUB_STEP_SUMMARY"
 
-            for attempt in $(seq 1 12); do
-              if curl --fail --silent "$version_url" >/dev/null 2>&1; then
-                echo "$spec is visible on the public registry"
-                return 0
-              fi
-              sleep 5
-            done
-
-            echo "$spec did not become visible after publication" >&2
-            return 1
-          }
-
-          publish_workspace contracts
-          publish_workspace sdk
-          publish_workspace tools
-          publish_workspace cli
+  promote:
+    if: inputs.operation == 'promote'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: npm-production
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: aex-npm-release-${{ github.sha }}
+          path: ${{ runner.temp }}/aex-npm-release
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.stage_run_id }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Use the npm version pinned for promotion
+        run: npm install --global npm@11.19.0
+      - name: Require the promoted Brain dependency set
+        shell: bash
+        run: node "$RUNNER_TEMP/aex-npm-release/verify-dependencies.mjs" latest
+      - name: Promote the already-staged archives without republishing
+        shell: bash
+        env:
+          # Trusted-publisher OIDC intentionally cannot mutate dist-tags. Keep this granular token
+          # scoped to the four Aex packages and protect it with the npm-production environment.
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}
+        run: node "$RUNNER_TEMP/aex-npm-release/publish.mjs" promote
+      - name: Record promoted versions
+        shell: bash
+        run: |
+          versions=$(node "$RUNNER_TEMP/aex-npm-release/npm-release.mjs" versions "$RUNNER_TEMP/aex-npm-release/manifest.json")
+          echo "Promoted the same registry objects to npm dist-tag \`latest\`: \`$versions\`" >> "$GITHUB_STEP_SUMMARY"

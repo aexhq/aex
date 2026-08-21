@@ -4,7 +4,7 @@
 //! per-message schema. Candidate validation runs here, never in the customer's hand. Brain only
 //! knows the generic external-tool and return-direct contracts.
 
-use brain_protocol::session::ExternalToolCallRequest;
+use brain_protocol::session::{ExternalToolCallRequest, ExternalToolCallResponse};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -14,10 +14,9 @@ use crate::web::{FETCH_CAPABILITY, FETCH_TOOL_NAME, SEARCH_CAPABILITY, SEARCH_TO
 use crate::{Error, Result, now_ms};
 
 pub const OUTPUT_TOOL_NAME: &str = "aex_submit_output";
-pub const OUTPUT_CAPABILITY: &str = "aex.output.v1";
+pub const OUTPUT_CAPABILITY: &str = "aex.output";
 pub const OUTPUT_CONTEXT_KEY: &str = "aex.output_request_id";
 const MAX_SCHEMA_BYTES: usize = 64 * 1024;
-const MAX_OUTPUT_BYTES: usize = 96 * 1024;
 const MAX_SCHEMA_DEPTH: usize = 64;
 const MAX_SCHEMA_NODES: usize = 4096;
 const MAX_ISSUES: usize = 20;
@@ -36,30 +35,36 @@ pub enum PreparedMessage {
 
 /// Append Aex's stable output capability to Brain's native ordered Tool grant. Existing native
 /// Tool values remain unchanged and in the same order; the Aex capability is always last.
-pub fn inject_output_tool(body: &[u8]) -> Result<Vec<u8>> {
-    let mut document: Value = serde_json::from_slice(body)
+pub fn inject_output_tool(body: impl AsRef<[u8]>) -> Result<Vec<u8>> {
+    let mut document: Value = serde_json::from_slice(body.as_ref())
         .map_err(|error| Error::Invalid(format!("session body: {error}")))?;
+    // The hosted create path passes its bounded Bytes by value. Release that 24 MiB allocation
+    // before serializing the amended document so the normal case holds input+tree or tree+output,
+    // not all three simultaneously. Slice-based unit callers remain allocation-free here.
+    drop(body);
     let root = document
         .as_object_mut()
         .ok_or_else(|| Error::Invalid("session body must be an object".into()))?;
+    match root.remove("shape") {
+        None => {}
+        Some(Value::String(shape)) if shape == "1gb" => {}
+        Some(Value::String(_)) => {
+            return Err(Error::Unprocessable(
+                "hosted alpha supports only shape `1gb` (0.5 vCPU and 1 GiB)".into(),
+            ));
+        }
+        Some(_) => return Err(Error::Invalid("shape must be a string".into())),
+    }
     let tools = root.entry("tools").or_insert_with(|| json!({}));
     let tools = tools
         .as_object_mut()
         .ok_or_else(|| Error::Invalid("tools must be an object".into()))?;
-    if tools.remove("external").is_some_and(|value| {
-        !value
-            .as_array()
-            .is_some_and(|legacy_tools| legacy_tools.is_empty())
-    }) {
+    if tools.remove("external").is_some() {
         return Err(Error::Invalid(
             "legacy tools.external is not accepted by this Aex revision".into(),
         ));
     }
-    if tools.remove("builtin").is_some_and(|value| {
-        !value
-            .as_array()
-            .is_some_and(|legacy_tools| legacy_tools.is_empty())
-    }) {
+    if tools.remove("builtin").is_some() {
         return Err(Error::Invalid(
             "legacy tools.builtin is not accepted by this Aex revision; use native Tool values"
                 .into(),
@@ -72,26 +77,23 @@ pub fn inject_output_tool(body: &[u8]) -> Result<Vec<u8>> {
     for item in items.iter_mut() {
         normalize_managed_tool(item)?;
     }
-    items.push(json!({
-        "definition": {
-            "name": OUTPUT_TOOL_NAME,
-            "description": "Submit the final structured result requested by the latest user message. Call this once with exactly the result object; do not wrap it in another property.",
-            "input_schema": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-            },
-            "output_schema": {
-                "$comment": "The trusted Aex executor returns the validated structured result."
-            }
+    let output_definition = definition_with_digest(json!({
+        "name": OUTPUT_TOOL_NAME,
+        "description": "Submit the final structured result requested by the latest user message. Call this once with exactly the result object; do not wrap it in another property.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": true
         },
+        "output_schema": {
+            "$comment": "The trusted Aex executor returns the validated structured result."
+        }
+    }))?;
+    items.push(json!({
+        "definition": output_definition,
         "executor": {
-            "kind": "server",
-            "capability": OUTPUT_CAPABILITY,
-            "scope": "root",
-            "completion": "return_direct",
-            "effect": "replay_safe",
-            "max_input_bytes": MAX_OUTPUT_BYTES
+            "kind": "engine",
+            "capability": OUTPUT_CAPABILITY
         }
     }));
     serde_json::to_vec(&document).map_err(|error| Error::Internal(format!("session body: {error}")))
@@ -107,13 +109,13 @@ fn normalize_managed_tool(item: &mut Value) -> Result<()> {
         if name == Some(managed_name) || capability == Some(managed_capability) {
             if name != Some(managed_name)
                 || capability != Some(managed_capability)
-                || item.pointer("/executor/kind").and_then(Value::as_str) != Some("server")
+                || item.pointer("/executor/kind").and_then(Value::as_str) != Some("engine")
             {
                 return Err(Error::Invalid(format!(
                     "Aex-managed Tool {managed_name} must use its pinned name and capability"
                 )));
             }
-            *item = managed_web_tool(managed_name);
+            *item = managed_web_tool(managed_name)?;
             return Ok(());
         }
     }
@@ -128,10 +130,10 @@ fn normalize_managed_tool(item: &mut Value) -> Result<()> {
     Ok(())
 }
 
-fn managed_web_tool(name: &str) -> Value {
-    match name {
-        SEARCH_TOOL_NAME => json!({
-            "definition": {
+fn managed_web_tool(name: &str) -> Result<Value> {
+    let (definition, capability) = match name {
+        SEARCH_TOOL_NAME => (
+            json!({
                 "name": SEARCH_TOOL_NAME,
                 "description": "Search the public web using Aex's managed search service.",
                 "input_schema": {
@@ -167,18 +169,11 @@ fn managed_web_tool(name: &str) -> Value {
                     "required": ["query", "results"],
                     "additionalProperties": false
                 }
-            },
-            "executor": {
-                "kind": "server",
-                "capability": SEARCH_CAPABILITY,
-                "scope": "all",
-                "completion": "continue",
-                "effect": "opaque",
-                "max_input_bytes": 8192
-            }
-        }),
-        FETCH_TOOL_NAME => json!({
-            "definition": {
+            }),
+            SEARCH_CAPABILITY,
+        ),
+        FETCH_TOOL_NAME => (
+            json!({
                 "name": FETCH_TOOL_NAME,
                 "description": "Fetch a public text, HTML, or JSON URL through Aex's guarded network service.",
                 "input_schema": {
@@ -202,24 +197,29 @@ fn managed_web_tool(name: &str) -> Value {
                     "required": ["url", "status", "content_type", "text", "truncated"],
                     "additionalProperties": false
                 }
-            },
-            "executor": {
-                "kind": "server",
-                "capability": FETCH_CAPABILITY,
-                "scope": "all",
-                "completion": "continue",
-                "effect": "opaque",
-                "max_input_bytes": 8192
-            }
-        }),
+            }),
+            FETCH_CAPABILITY,
+        ),
         _ => unreachable!("managed web Tool name was checked"),
-    }
+    };
+    Ok(json!({
+        "definition": definition_with_digest(definition)?,
+        "executor": {"kind": "engine", "capability": capability}
+    }))
+}
+
+fn definition_with_digest(mut definition: Value) -> Result<Value> {
+    let digest = canonical_hash(&definition)?;
+    definition
+        .as_object_mut()
+        .ok_or_else(|| Error::Internal("trusted Tool definition is not an object".into()))?
+        .insert("contract_digest".into(), Value::String(digest));
+    Ok(definition)
 }
 
 pub async fn prepare_message(
     db: &Db,
     session_id: &str,
-    output_capable: bool,
     body: &[u8],
     idempotency_key: Option<&str>,
 ) -> Result<PreparedMessage> {
@@ -233,12 +233,6 @@ pub async fn prepare_message(
     let Some(output) = root.remove("output") else {
         return Ok(PreparedMessage::Plain(body.to_vec()));
     };
-    if !output_capable {
-        return Err(Error::Conflict(
-            "this session predates typed output; create a new session before using send(..., { output })"
-                .into(),
-        ));
-    }
     let output = output
         .as_object()
         .ok_or_else(|| Error::Invalid("output must be an object".into()))?;
@@ -282,8 +276,7 @@ pub async fn prepare_message(
         Some(Value::Array(parts)) => parts.push(json!({"type": "text", "text": instruction})),
         _ => return Err(Error::Invalid("message.content is required".into())),
     }
-    let body = serde_json::to_vec(&document)
-        .map_err(|error| Error::Internal(format!("message body: {error}")))?;
+    let body = encode_prepared_message(&document)?;
     let row = OutputRequestRow {
         id: output_id,
         session_id: session_id.to_string(),
@@ -302,14 +295,28 @@ pub async fn prepare_message(
     };
     let row = match db.begin_output(row).await? {
         BeginOutput::Created(row) => row,
-        BeginOutput::Existing(row) => {
-            return match row.accepted_json {
-                Some(accepted_json) => Ok(PreparedMessage::Replay { accepted_json }),
-                None => Err(Error::Conflict(
-                    "the matching output request is still being admitted".into(),
-                )),
-            };
-        }
+        BeginOutput::Existing(row) => match row.accepted_json {
+            Some(accepted_json) => return Ok(PreparedMessage::Replay { accepted_json }),
+            None => {
+                // The earlier control-to-Brain request may have committed even when its HTTP
+                // response was lost. Reuse both durable identities and reconstruct the exact
+                // transformed bytes; Brain's message idempotency key can then return the original
+                // acceptance instead of seeing a different output request as a key conflict.
+                let metadata = document
+                    .get_mut("metadata")
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| {
+                        Error::Internal("prepared message metadata is missing".into())
+                    })?;
+                metadata.insert(OUTPUT_CONTEXT_KEY.into(), Value::String(row.id.clone()));
+                let body = encode_prepared_message(&document)?;
+                return Ok(PreparedMessage::New {
+                    body,
+                    output_id: row.id,
+                    schema_hash: row.schema_hash,
+                });
+            }
+        },
         BeginOutput::RequestMismatch => {
             return Err(Error::Conflict(
                 "Idempotency-Key was already used with a different request".into(),
@@ -322,6 +329,18 @@ pub async fn prepare_message(
         output_id: row.id,
         schema_hash: row.schema_hash,
     })
+}
+
+fn encode_prepared_message(document: &Value) -> Result<Vec<u8>> {
+    let body = serde_json::to_vec(document)
+        .map_err(|error| Error::Internal(format!("message body: {error}")))?;
+    if body.len() > brain_protocol::MAX_MESSAGE_REQUEST_BYTES {
+        return Err(Error::PayloadTooLarge(format!(
+            "structured-output message expands beyond the {}-byte journal ceiling",
+            brain_protocol::MAX_MESSAGE_REQUEST_BYTES
+        )));
+    }
+    Ok(body)
 }
 
 pub fn augment_accepted(
@@ -403,75 +422,55 @@ pub async fn execute(db: &Db, request: ExternalToolCallRequest) -> Result<Value>
         .map_err(|error| Error::Internal(format!("stored output schema: {error}")))?;
     let candidate_bytes = serde_jcs::to_vec(&request.input)
         .map_err(|error| Error::Internal(format!("candidate canonicalization: {error}")))?;
-    let mut issues = if candidate_bytes.len() > MAX_OUTPUT_BYTES {
+    let terminal_bytes = completed_terminal_bytes(&request.input, &row.id, &row.schema_hash)?;
+    let completed_response = json!({
+        "outcome": "completed",
+        "content": "Structured output accepted.",
+        "is_error": false,
+        "disposition": "complete_turn",
+        "result": request.input,
+        "result_metadata": {
+            "output_id": row.id,
+            "schema_hash": row.schema_hash
+        }
+    });
+    let mut issues = if !external_response_fits(&completed_response)? {
         vec![json!({
             "path": "",
-            "message": format!("result is {} bytes; maximum is {MAX_OUTPUT_BYTES}", candidate_bytes.len()),
+            "message": format!(
+                "result terminal projection is {terminal_bytes} bytes or another canonical response projection exceeds the {}-byte maximum",
+                brain_protocol::MAX_TOOL_TERMINAL_INLINE_BYTES
+            ),
             "keyword": "maxBytes"
         })]
     } else {
         validation_issues(&schema, &request.input)?
     };
     issues.truncate(MAX_ISSUES);
+    for issue in &mut issues {
+        bound_validation_issue(issue);
+    }
     let attempt = row.attempts + 1;
-    let (response, status, result_json, error_json) = if issues.is_empty() {
-        let response = json!({
-            "outcome": "completed",
-            "content": "Structured output accepted.",
-            "is_error": false,
-            "disposition": "complete_turn",
-            "result": request.input,
-            "result_metadata": {
-                "output_id": row.id,
-                "schema_hash": row.schema_hash
-            }
-        });
-        (
-            response,
-            "completed".to_string(),
-            Some(
-                String::from_utf8(candidate_bytes).map_err(|error| {
+    let (response, status, result_json, error_json) =
+        if issues.is_empty() {
+            (
+                completed_response,
+                "completed".to_string(),
+                Some(String::from_utf8(candidate_bytes).map_err(|error| {
                     Error::Internal(format!("candidate canonical JSON: {error}"))
-                })?,
-            ),
-            None,
-        )
-    } else if attempt < row.max_attempts {
-        (
-            json!({
-                "outcome": "failed",
-                "content": format!(
-                    "The submitted object did not match the requested schema. Correct it and call `{OUTPUT_TOOL_NAME}` again. Validation issues: {}",
-                    serde_json::to_string(&issues).unwrap_or_else(|_| "[]".into())
-                ),
-                "is_error": true,
-                "disposition": "continue"
-            }),
-            "pending".to_string(),
-            None,
-            Some(json!({"issues": issues}).to_string()),
-        )
-    } else {
-        let error = json!({
-            "code": "output_validation_error",
-            "message": format!(
-                "Model output did not satisfy the schema after {attempt} attempt(s)"
-            ),
-            "details": {"issues": issues}
-        });
-        (
-            json!({
-                "outcome": "failed",
-                "content": "Structured output validation failed and the configured attempt limit was reached.",
-                "is_error": true,
-                "disposition": "fail_turn",
-                "error": error
-            }),
-            "failed".to_string(),
-            None,
-            Some(error.to_string()),
-        )
-    };
+                })?),
+                None,
+            )
+        } else {
+            let (response, status, error_json) =
+                bounded_validation_response(&mut issues, attempt, row.max_attempts)?;
+            (response, status, None, Some(error_json))
+        };
+    if !external_response_fits(&response)? {
+        return Err(Error::Internal(
+            "structured output response exceeds Brain's canonical inline or transport bound".into(),
+        ));
+    }
     let response_json = response.to_string();
     let stored = db
         .record_external_attempt(
@@ -488,6 +487,116 @@ pub async fn execute(db: &Db, request: ExternalToolCallRequest) -> Result<Value>
         .await?;
     serde_json::from_str(&stored)
         .map_err(|error| Error::Internal(format!("executor response: {error}")))
+}
+
+/// Return-direct output is retained as a terminal projection, not just the bare model value.
+/// Measure the exact canonical Brain representation so metadata cannot push a nominally valid
+/// result over the shared terminal-inline ceiling after its effect has been accepted.
+fn completed_terminal_bytes(result: &Value, output_id: &str, schema_hash: &str) -> Result<usize> {
+    brain_protocol::contract::terminal_inline_bytes(&json!({
+        "value": result,
+        "metadata": {
+            "output_id": output_id,
+            "schema_hash": schema_hash
+        }
+    }))
+    .map_err(|error| Error::Internal(format!("output terminal projection: {error}")))
+}
+
+fn external_response_fits(response: &Value) -> Result<bool> {
+    let Ok(response) = serde_json::from_value::<ExternalToolCallResponse>(response.clone()) else {
+        return Ok(false);
+    };
+    Ok(
+        brain_protocol::contract::external_tool_response_inline_fits(&response)
+            && brain_protocol::contract::external_tool_response_wire_fits(&response),
+    )
+}
+
+/// A validation failure is model-visible recovery information, so it must itself fit the exact
+/// Brain response bounds. Pathological property names and values can make validator diagnostics
+/// much larger than the submitted value. Bound individual fields, then retain the longest prefix
+/// of issues whose complete retry/fail response is valid.
+fn bounded_validation_response(
+    issues: &mut Vec<Value>,
+    attempt: i64,
+    max_attempts: i64,
+) -> Result<(Value, String, String)> {
+    loop {
+        let retry = attempt < max_attempts;
+        let error = json!({
+            "code": "output_validation_error",
+            "message": format!(
+                "Model output did not satisfy the schema after {attempt} attempt(s)"
+            ),
+            "details": {"issues": issues}
+        });
+        let response = if retry {
+            json!({
+                "outcome": "failed",
+                "content": format!(
+                    "The submitted object did not match the requested schema. Correct it and call `{OUTPUT_TOOL_NAME}` again. Validation issues: {}",
+                    serde_json::to_string(issues).unwrap_or_else(|_| "[]".into())
+                ),
+                "is_error": true,
+                "disposition": "continue"
+            })
+        } else {
+            json!({
+                "outcome": "failed",
+                "content": "Structured output validation failed and the configured attempt limit was reached.",
+                "is_error": true,
+                "disposition": "fail_turn",
+                "error": error
+            })
+        };
+        if external_response_fits(&response)? {
+            let stored = if retry {
+                json!({"issues": issues}).to_string()
+            } else {
+                error.to_string()
+            };
+            return Ok((
+                response,
+                if retry { "pending" } else { "failed" }.into(),
+                stored,
+            ));
+        }
+        if issues.pop().is_none() {
+            return Err(Error::Internal(
+                "the minimal structured-output validation response exceeds Brain's bounds".into(),
+            ));
+        }
+    }
+}
+
+fn bound_validation_issue(issue: &mut Value) {
+    let Some(issue) = issue.as_object_mut() else {
+        *issue = json!({"path":"", "message":"Validation failed", "keyword":"invalid"});
+        return;
+    };
+    for (name, maximum) in [("path", 2_048), ("message", 4_096), ("keyword", 128)] {
+        if let Some(value) = issue.get_mut(name)
+            && let Some(text) = value.as_str()
+        {
+            *value = Value::String(prefix_bytes(text, maximum));
+        }
+    }
+}
+
+fn prefix_bytes(value: &str, maximum: usize) -> String {
+    if value.len() <= maximum {
+        return value.to_owned();
+    }
+    let mut end = 0;
+    for (offset, character) in value.char_indices() {
+        let next = offset + character.len_utf8();
+        if next > maximum {
+            break;
+        }
+        end = next;
+    }
+    value[..end].to_owned()
 }
 
 fn unarmed_response() -> Value {
@@ -612,7 +721,91 @@ mod tests {
 
     const SESSION_ID: &str = "ses_12345678901234567890";
 
-    async fn db_with_session(output_capable: bool) -> Db {
+    #[test]
+    fn output_reserves_exact_terminal_projection_headroom() {
+        let output_id = "out_12345678901234567890";
+        let schema_hash = &"a".repeat(64);
+        let empty = json!({"data": ""});
+        let envelope_bytes = completed_terminal_bytes(&empty, output_id, schema_hash).unwrap();
+        let limit = brain_protocol::MAX_TOOL_TERMINAL_INLINE_BYTES;
+        assert!(envelope_bytes < limit);
+
+        let exact = json!({"data": "x".repeat(limit - envelope_bytes)});
+        assert_eq!(
+            completed_terminal_bytes(&exact, output_id, schema_hash).unwrap(),
+            limit
+        );
+        assert!(
+            external_response_fits(&json!({
+                "outcome": "completed",
+                "content": "Structured output accepted.",
+                "is_error": false,
+                "disposition": "complete_turn",
+                "result": exact,
+                "result_metadata": {"output_id": output_id, "schema_hash": schema_hash}
+            }))
+            .unwrap()
+        );
+        let over = json!({"data": "x".repeat(limit - envelope_bytes + 1)});
+        assert_eq!(
+            completed_terminal_bytes(&over, output_id, schema_hash).unwrap(),
+            limit + 1
+        );
+        assert!(
+            !external_response_fits(&json!({
+                "outcome": "completed",
+                "content": "Structured output accepted.",
+                "is_error": false,
+                "disposition": "complete_turn",
+                "result": over,
+                "result_metadata": {"output_id": output_id, "schema_hash": schema_hash}
+            }))
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn pathological_validation_diagnostics_remain_normal_tool_failures() {
+        for (attempt, maximum, disposition) in [(1, 2, "continue"), (2, 2, "fail_turn")] {
+            let mut issues = (0..MAX_ISSUES)
+                .map(|_| {
+                    json!({
+                        "path": format!("/{}", "p".repeat(10_000)),
+                        "message": "\u{0001}".repeat(10_000),
+                        "keyword": "k".repeat(10_000)
+                    })
+                })
+                .collect::<Vec<_>>();
+            for issue in &mut issues {
+                bound_validation_issue(issue);
+            }
+            let original = issues.len();
+            let (response, status, stored) =
+                bounded_validation_response(&mut issues, attempt, maximum).unwrap();
+            assert!(external_response_fits(&response).unwrap());
+            assert_eq!(response["disposition"], disposition);
+            assert_eq!(
+                status,
+                if attempt < maximum {
+                    "pending"
+                } else {
+                    "failed"
+                }
+            );
+            assert!(!stored.is_empty());
+            assert!(
+                issues.len() < original,
+                "escaped diagnostics must be trimmed"
+            );
+            assert!(issues.first().is_some_and(|issue| {
+                issue["path"].as_str().unwrap().len() <= 2_048
+                    && issue["message"].as_str().unwrap().len() <= 4_096
+                    && issue["keyword"].as_str().unwrap().len() <= 128
+            }));
+        }
+    }
+
+    async fn db_with_session() -> Db {
         let db = Db::open_memory().unwrap();
         db.create_account(
             crate::store::AccountRow {
@@ -631,10 +824,12 @@ mod tests {
             id: SESSION_ID.into(),
             account_id: "acc_output".into(),
             key_id: "key_output".into(),
+            parent_id: None,
+            root_id: SESSION_ID.into(),
+            depth: 0,
             shape: "1gb".into(),
             created_ms: 1,
             is_final: false,
-            output_capable,
             fold: crate::rating::FoldState::default(),
         })
         .await
@@ -654,7 +849,7 @@ mod tests {
                         "input_schema":{"type":"object"},
                         "output_schema":{"type":"object"}
                     },
-                    "executor":{"kind":"intrinsic","capability":"brain.subagents.v1"}
+                    "executor":{"kind":"engine","capability":"brain.subagents"}
                 }]}
             }"#,
         )
@@ -671,16 +866,28 @@ mod tests {
         );
         assert_eq!(
             document["tools"]["items"][1]["executor"]["capability"],
-            "aex.output.v1"
+            OUTPUT_CAPABILITY
         );
         assert!(document["tools"].get("external").is_none());
         assert!(
             inject_output_tool(br#"{"tools":{"external":[{"name":"mine"}]},"model":{}}"#).is_err()
         );
+        assert!(inject_output_tool(br#"{"tools":{"external":[]},"model":{}}"#).is_err());
         assert!(inject_output_tool(br#"{"tools":{"builtin":["bash"]},"model":{}}"#).is_err());
+        assert!(inject_output_tool(br#"{"tools":{"builtin":[]},"model":{}}"#).is_err());
+        let hosted_shape = inject_output_tool(br#"{"shape":"1gb","model":{}}"#).unwrap();
+        let hosted_shape: Value = serde_json::from_slice(&hosted_shape).unwrap();
+        assert!(
+            hosted_shape.get("shape").is_none(),
+            "the hosted-only shape hint must not enter Brain's neutral create contract"
+        );
+        let unsupported = inject_output_tool(br#"{"shape":"2gb","model":{}}"#).unwrap_err();
+        assert!(matches!(unsupported, Error::Unprocessable(_)));
+        assert_eq!(unsupported.status(), 422);
+        assert!(inject_output_tool(br#"{"shape":2,"model":{}}"#).is_err());
         assert!(
             inject_output_tool(
-                br#"{"tools":{"items":[{"definition":{"name":"aex_spoof","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"intrinsic","capability":"brain.subagents.v1"}}]},"model":{}}"#
+                br#"{"tools":{"items":[{"definition":{"name":"aex_spoof","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"brain.subagents"}}]},"model":{}}"#
             )
             .is_err()
         );
@@ -699,12 +906,8 @@ mod tests {
                         "output_schema":{"type":"string"}
                     },
                     "executor":{
-                        "kind":"server",
-                        "capability":"aex.web.search.v1",
-                        "scope":"root",
-                        "completion":"return_direct",
-                        "effect":"replay_safe",
-                        "max_input_bytes":1
+                        "kind":"engine",
+                        "capability":"aex.web.search"
                     }
                 }]}
             }"#,
@@ -716,26 +919,26 @@ mod tests {
             search["definition"]["description"],
             "Search the public web using Aex's managed search service."
         );
-        assert_eq!(search["executor"]["scope"], "all");
-        assert_eq!(search["executor"]["completion"], "continue");
-        assert_eq!(search["executor"]["effect"], "opaque");
-        assert_eq!(search["executor"]["max_input_bytes"], 8192);
+        assert_eq!(
+            search["executor"],
+            json!({"kind": "engine", "capability": SEARCH_CAPABILITY})
+        );
 
         assert!(
             inject_output_tool(
-                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"server","capability":"aex.web.search.v1","scope":"all","completion":"continue","effect":"opaque","max_input_bytes":1}}]}}"#
+                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"aex.web.search"}}]}}"#
             )
             .is_err()
         );
         assert!(
             inject_output_tool(
-                br#"{"model":{},"tools":{"items":[{"definition":{"name":"web_fetch","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"hand","protocol":1,"checksum":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source":"preinstalled","required_env":[]}}]}}"#
+                br#"{"model":{},"tools":{"items":[{"definition":{"name":"web_fetch","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"aex_managed","bundle_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source":"preinstalled","required_env":[]}}]}}"#
             )
             .is_err()
         );
         assert!(
             inject_output_tool(
-                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"server","capability":"aex.private.v1","scope":"all","completion":"continue","effect":"opaque","max_input_bytes":1}}]}}"#
+                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"aex.private"}}]}}"#
             )
             .is_err()
         );
@@ -759,21 +962,21 @@ mod tests {
 
     #[tokio::test]
     async fn reserved_metadata_is_rejected_even_without_an_output_request() {
-        let db = db_with_session(true).await;
+        let db = db_with_session().await;
         let body = serde_json::to_vec(&json!({
             "content": "plain message",
             "metadata": {OUTPUT_CONTEXT_KEY: "out_attacker_controlled"}
         }))
         .unwrap();
         assert!(matches!(
-            prepare_message(&db, SESSION_ID, true, &body, Some("reserved-metadata")).await,
+            prepare_message(&db, SESSION_ID, &body, Some("reserved-metadata")).await,
             Err(Error::Invalid(_))
         ));
     }
 
     #[tokio::test]
     async fn executor_repairs_validates_and_replays_exact_decisions() {
-        let db = db_with_session(true).await;
+        let db = db_with_session().await;
         let schema = json!({
             "type": "object",
             "properties": {"answer": {"type": "integer"}},
@@ -787,7 +990,7 @@ mod tests {
         }))
         .unwrap();
         let (output_id, transformed) =
-            match prepare_message(&db, SESSION_ID, true, &body, Some("message-key"))
+            match prepare_message(&db, SESSION_ID, &body, Some("message-key"))
                 .await
                 .unwrap()
             {
@@ -881,24 +1084,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn old_sessions_are_rejected_before_output_admission() {
-        let db = db_with_session(false).await;
-        let schema = json!({"type": "object"});
-        let body = serde_json::to_vec(&json!({
-            "content": "answer",
-            "output": {"schema": schema, "schema_hash": canonical_hash(&schema).unwrap()}
-        }))
-        .unwrap();
-        let error = prepare_message(&db, SESSION_ID, false, &body, Some("old-session"))
-            .await
-            .err()
-            .expect("old session must fail");
-        assert!(matches!(error, Error::Conflict(_)));
-    }
-
-    #[tokio::test]
     async fn zero_retries_fails_the_turn_on_the_first_invalid_candidate() {
-        let db = db_with_session(true).await;
+        let db = db_with_session().await;
         let schema = json!({
             "type": "object",
             "properties": {"answer": {"type": "integer"}},
@@ -914,7 +1101,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let output_id = match prepare_message(&db, SESSION_ID, true, &body, Some("no-repair"))
+        let output_id = match prepare_message(&db, SESSION_ID, &body, Some("no-repair"))
             .await
             .unwrap()
         {
@@ -947,7 +1134,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unadmitted_output_identity_can_be_abandoned() {
-        let db = db_with_session(true).await;
+        let db = db_with_session().await;
         let schema = json!({"type": "object"});
         let body = serde_json::to_vec(&json!({
             "content": "answer",
@@ -957,10 +1144,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let output_id = match prepare_message(&db, SESSION_ID, true, &body, None)
-            .await
-            .unwrap()
-        {
+        let output_id = match prepare_message(&db, SESSION_ID, &body, None).await.unwrap() {
             PreparedMessage::New { output_id, .. } => output_id,
             _ => panic!("expected a new output request"),
         };
@@ -973,5 +1157,89 @@ mod tests {
 
         db.abandon_output(output_id.clone()).await.unwrap();
         assert!(db.output_request(output_id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_ambiguous_admission_retry_reuses_the_durable_output_identity() {
+        let db = db_with_session().await;
+        let schema = json!({
+            "type": "object",
+            "properties": {"answer": {"type": "integer"}},
+            "required": ["answer"]
+        });
+        let body = serde_json::to_vec(&json!({
+            "content": "answer",
+            "output": {
+                "schema": schema,
+                "schema_hash": canonical_hash(&schema).unwrap()
+            }
+        }))
+        .unwrap();
+        let first = prepare_message(&db, SESSION_ID, &body, Some("ambiguous-message"))
+            .await
+            .unwrap();
+        let second = prepare_message(&db, SESSION_ID, &body, Some("ambiguous-message"))
+            .await
+            .unwrap();
+        let (first_body, first_id, first_schema) = match first {
+            PreparedMessage::New {
+                body,
+                output_id,
+                schema_hash,
+            } => (body, output_id, schema_hash),
+            _ => panic!("first preparation must allocate an identity"),
+        };
+        let (second_body, second_id, second_schema) = match second {
+            PreparedMessage::New {
+                body,
+                output_id,
+                schema_hash,
+            } => (body, output_id, schema_hash),
+            _ => panic!("an unconfirmed retry must be dispatchable"),
+        };
+        assert_eq!(second_id, first_id);
+        assert_eq!(second_schema, first_schema);
+        assert_eq!(
+            second_body, first_body,
+            "Brain must see byte-identical input"
+        );
+
+        db.accept_output(
+            first_id,
+            "trn_12345678901234567890".into(),
+            json!({"session_id":SESSION_ID,"turn_id":"trn_12345678901234567890"}).to_string(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            prepare_message(&db, SESSION_ID, &body, Some("ambiguous-message"))
+                .await
+                .unwrap(),
+            PreparedMessage::Replay { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn structured_output_expansion_cannot_cross_the_journal_ceiling() {
+        let db = Db::open_memory().unwrap();
+        let schema = json!({"type": "object"});
+        let mut document = json!({
+            "content": "",
+            "output": {
+                "schema": schema,
+                "schema_hash": canonical_hash(&schema).unwrap()
+            }
+        });
+        let empty_bytes = serde_json::to_vec(&document).unwrap().len();
+        document["content"] = "x"
+            .repeat(brain_protocol::MAX_MESSAGE_REQUEST_BYTES - empty_bytes)
+            .into();
+        let body = serde_json::to_vec(&document).unwrap();
+        assert_eq!(body.len(), brain_protocol::MAX_MESSAGE_REQUEST_BYTES);
+
+        assert!(matches!(
+            prepare_message(&db, SESSION_ID, &body, None).await,
+            Err(Error::PayloadTooLarge(_))
+        ));
     }
 }

@@ -181,13 +181,13 @@ impl<'de> ::serde::Deserialize<'de> for AccountId {
             })
     }
 }
-#[doc = "Account-level limits for concurrent sessions and session creation rate."]
+#[doc = "Account-level limits for resource-bearing root sessions and root-session creation rate. Open, asynchronously ending, failed, and deleting roots consume the concurrent limit until a strong ended projection or physical deletion proves resource release; durable child sessions are bounded by the root's sealed child policy."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"Account-level limits for concurrent sessions and session creation rate.\","]
+#[doc = "  \"description\": \"Account-level limits for resource-bearing root sessions and root-session creation rate. Open, asynchronously ending, failed, and deleting roots consume the concurrent limit until a strong ended projection or physical deletion proves resource release; durable child sessions are bounded by the root's sealed child policy.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"required\": ["]
 #[doc = "    \"max_concurrent_sessions\","]
@@ -195,11 +195,15 @@ impl<'de> ::serde::Deserialize<'de> for AccountId {
 #[doc = "  ],"]
 #[doc = "  \"properties\": {"]
 #[doc = "    \"max_concurrent_sessions\": {"]
+#[doc = "      \"description\": \"Maximum resource-bearing root sessions in open, ending, failed, or deleting lifecycle. Child sessions do not consume or bypass this account limit.\","]
 #[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 1000000.0,"]
 #[doc = "      \"minimum\": 1.0"]
 #[doc = "    },"]
 #[doc = "    \"session_creates_per_hour\": {"]
+#[doc = "      \"description\": \"Maximum root-session creates per rolling hour.\","]
 #[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 1000000.0,"]
 #[doc = "      \"minimum\": 1.0"]
 #[doc = "    }"]
 #[doc = "  }"]
@@ -208,7 +212,9 @@ impl<'de> ::serde::Deserialize<'de> for AccountId {
 #[doc = r" </details>"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct AccountLimits {
+    #[doc = "Maximum resource-bearing root sessions in open, ending, failed, or deleting lifecycle. Child sessions do not consume or bypass this account limit."]
     pub max_concurrent_sessions: ::std::num::NonZeroU64,
+    #[doc = "Maximum root-session creates per rolling hour."]
     pub session_creates_per_hour: ::std::num::NonZeroU64,
 }
 impl AccountLimits {
@@ -289,7 +295,7 @@ impl<'de> ::serde::Deserialize<'de> for AccountToken {
             })
     }
 }
-#[doc = "Component types of the control plane: identity (accounts, API keys), prepaid billing (top-ups, balance), and rated usage on the two-rate card. Paths are in openapi.yaml. Session operations are NOT redefined here: the control plane serves session/v1 paths verbatim, authorized by an API key, in front of a brain. All money on the wire is integer micro-USD (1 USD = 1,000,000 micro-USD) except top-up amounts, which are whole cents (the payment surface). Storage is metered in decimal GB (1 GB = 1e9 bytes); a month is 730 hours."]
+#[doc = "Component types of the control plane: identity (accounts, API keys), prepaid billing (top-ups, balance), and rated usage on the public rate card. Paths are in openapi.yaml. Session operations are NOT redefined here: the control plane serves session/v1 paths verbatim, authorized by an API key, in front of a brain. All money on the wire is a canonical decimal-string integer in micro-USD (1 USD = 1,000,000 micro-USD) except top-up amounts, which are whole cents (the payment surface). Storage is metered in decimal GB (1 GB = 1e9 bytes); a month is 730 hours."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
@@ -297,7 +303,7 @@ impl<'de> ::serde::Deserialize<'de> for AccountToken {
 #[doc = "{"]
 #[doc = "  \"$id\": \"https://aex.dev/contracts/control/v1/schemas.json\","]
 #[doc = "  \"title\": \"Aex control API v1 types\","]
-#[doc = "  \"description\": \"Component types of the control plane: identity (accounts, API keys), prepaid billing (top-ups, balance), and rated usage on the two-rate card. Paths are in openapi.yaml. Session operations are NOT redefined here: the control plane serves session/v1 paths verbatim, authorized by an API key, in front of a brain. All money on the wire is integer micro-USD (1 USD = 1,000,000 micro-USD) except top-up amounts, which are whole cents (the payment surface). Storage is metered in decimal GB (1 GB = 1e9 bytes); a month is 730 hours.\""]
+#[doc = "  \"description\": \"Component types of the control plane: identity (accounts, API keys), prepaid billing (top-ups, balance), and rated usage on the public rate card. Paths are in openapi.yaml. Session operations are NOT redefined here: the control plane serves session/v1 paths verbatim, authorized by an API key, in front of a brain. All money on the wire is a canonical decimal-string integer in micro-USD (1 USD = 1,000,000 micro-USD) except top-up amounts, which are whole cents (the payment surface). Storage is metered in decimal GB (1 GB = 1e9 bytes); a month is 730 hours.\""]
 #[doc = "}"]
 #[doc = r" ```"]
 #[doc = r" </details>"]
@@ -1577,6 +1583,7 @@ impl CreateTopupRequest {
 #[doc = "    },"]
 #[doc = "    \"amount_cents\": {"]
 #[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 100000.0,"]
 #[doc = "      \"minimum\": 1.0"]
 #[doc = "    },"]
 #[doc = "    \"created_at\": {"]
@@ -1980,75 +1987,94 @@ impl<'de> ::serde::Deserialize<'de> for KeyId {
             })
     }
 }
-#[doc = "Integer micro-USD; 1 USD = 1,000,000. Never a float."]
+#[doc = "Canonical signed decimal-string integer micro-USD; 1 USD = 1,000,000. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"Integer micro-USD; 1 USD = 1,000,000. Never a float.\","]
-#[doc = "  \"type\": \"integer\""]
+#[doc = "  \"description\": \"Canonical signed decimal-string integer micro-USD; 1 USD = 1,000,000. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"pattern\": \"^(0|[1-9][0-9]*|-[1-9][0-9]*)$\""]
 #[doc = "}"]
 #[doc = r" ```"]
 #[doc = r" </details>"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
-pub struct MicroUsd(pub i64);
+pub struct MicroUsd(::std::string::String);
 impl ::std::ops::Deref for MicroUsd {
-    type Target = i64;
-    fn deref(&self) -> &i64 {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
         &self.0
     }
 }
-impl ::std::convert::From<MicroUsd> for i64 {
+impl ::std::convert::From<MicroUsd> for ::std::string::String {
     fn from(value: MicroUsd) -> Self {
         value.0
     }
 }
-impl ::std::convert::From<i64> for MicroUsd {
-    fn from(value: i64) -> Self {
-        Self(value)
-    }
-}
 impl ::std::str::FromStr for MicroUsd {
-    type Err = <i64 as ::std::str::FromStr>::Err;
-    fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
-        Ok(Self(value.parse()?))
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| {
+                ::regress::Regex::new("^(0|[1-9][0-9]*|-[1-9][0-9]*)$").unwrap()
+            });
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^(0|[1-9][0-9]*|-[1-9][0-9]*)$\"".into());
+        }
+        Ok(Self(value.to_string()))
     }
 }
 impl ::std::convert::TryFrom<&str> for MicroUsd {
-    type Error = <i64 as ::std::str::FromStr>::Err;
-    fn try_from(value: &str) -> ::std::result::Result<Self, Self::Error> {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<String> for MicroUsd {
-    type Error = <i64 as ::std::str::FromStr>::Err;
-    fn try_from(value: String) -> ::std::result::Result<Self, Self::Error> {
+impl ::std::convert::TryFrom<&::std::string::String> for MicroUsd {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::fmt::Display for MicroUsd {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        self.0.fmt(f)
+impl ::std::convert::TryFrom<::std::string::String> for MicroUsd {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
-#[doc = "The public usage rate card. Compute is billed per second while running on the shape's baseline (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes held for a suspended hand; workspace storage covers synced workspace objects and persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours."]
+impl<'de> ::serde::Deserialize<'de> for MicroUsd {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
+}
+#[doc = "The public usage rate card. Hosted alpha compute is billed per second on its only physical shape: 0.5 vCPU plus 1 GiB, or $0.12/hour at these component rates. Transient provider burst or peak capacity is not separately metered and is not a promised entitlement. Idle and provider snapshot-storage costs are absorbed in alpha. Session storage covers explicit durable objects and bytes reserved by an outstanding direct upload. Storage GB is decimal (1e9 bytes); a month is `month_hours` hours."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"The public usage rate card. Compute is billed per second while running on the shape's baseline (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes held for a suspended hand; workspace storage covers synced workspace objects and persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours.\","]
+#[doc = "  \"description\": \"The public usage rate card. Hosted alpha compute is billed per second on its only physical shape: 0.5 vCPU plus 1 GiB, or $0.12/hour at these component rates. Transient provider burst or peak capacity is not separately metered and is not a promised entitlement. Idle and provider snapshot-storage costs are absorbed in alpha. Session storage covers explicit durable objects and bytes reserved by an outstanding direct upload. Storage GB is decimal (1e9 bytes); a month is `month_hours` hours.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"required\": ["]
 #[doc = "    \"gb_hour_microusd\","]
 #[doc = "    \"month_hours\","]
 #[doc = "    \"object\","]
-#[doc = "    \"suspended_gb_month_microusd\","]
+#[doc = "    \"session_storage_gb_month_microusd\","]
 #[doc = "    \"vcpu_hour_microusd\","]
-#[doc = "    \"web_search_query_microusd\","]
-#[doc = "    \"workspace_gb_month_microusd\""]
+#[doc = "    \"web_search_query_microusd\""]
 #[doc = "  ],"]
 #[doc = "  \"properties\": {"]
 #[doc = "    \"gb_hour_microusd\": {"]
@@ -2056,21 +2082,19 @@ impl ::std::fmt::Display for MicroUsd {
 #[doc = "    },"]
 #[doc = "    \"month_hours\": {"]
 #[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 8760.0,"]
 #[doc = "      \"minimum\": 1.0"]
 #[doc = "    },"]
 #[doc = "    \"object\": {"]
 #[doc = "      \"const\": \"rate_card\""]
 #[doc = "    },"]
-#[doc = "    \"suspended_gb_month_microusd\": {"]
+#[doc = "    \"session_storage_gb_month_microusd\": {"]
 #[doc = "      \"$ref\": \"#/$defs/MicroUsd\""]
 #[doc = "    },"]
 #[doc = "    \"vcpu_hour_microusd\": {"]
 #[doc = "      \"$ref\": \"#/$defs/MicroUsd\""]
 #[doc = "    },"]
 #[doc = "    \"web_search_query_microusd\": {"]
-#[doc = "      \"$ref\": \"#/$defs/MicroUsd\""]
-#[doc = "    },"]
-#[doc = "    \"workspace_gb_month_microusd\": {"]
 #[doc = "      \"$ref\": \"#/$defs/MicroUsd\""]
 #[doc = "    }"]
 #[doc = "  }"]
@@ -2082,10 +2106,9 @@ pub struct RateCard {
     pub gb_hour_microusd: MicroUsd,
     pub month_hours: ::std::num::NonZeroU64,
     pub object: ::serde_json::Value,
-    pub suspended_gb_month_microusd: MicroUsd,
+    pub session_storage_gb_month_microusd: MicroUsd,
     pub vcpu_hour_microusd: MicroUsd,
     pub web_search_query_microusd: MicroUsd,
-    pub workspace_gb_month_microusd: MicroUsd,
 }
 impl RateCard {
     pub fn builder() -> builder::RateCard {
@@ -2112,6 +2135,7 @@ impl RateCard {
 #[doc = "  \"properties\": {"]
 #[doc = "    \"amount_cents\": {"]
 #[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 100000.0,"]
 #[doc = "      \"minimum\": 1.0"]
 #[doc = "    },"]
 #[doc = "    \"created_at\": {"]
@@ -2307,35 +2331,29 @@ impl ::std::convert::TryFrom<::std::string::String> for RefundStatus {
         value.parse()
     }
 }
-#[doc = "One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. Successful web_search tool results are counted from the same event log."]
+#[doc = "One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session event log. Session-storage integrals are reconstructed from durable storage.usage gauge transitions with exact internal byte-millisecond carry; the public byte-millisecond projection adds the current derived open interval through metered_to so it reproduces the charge. Successful web_search tool results are counted from the same journal."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. Successful web_search tool results are counted from the same event log.\","]
+#[doc = "  \"description\": \"One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session event log. Session-storage integrals are reconstructed from durable storage.usage gauge transitions with exact internal byte-millisecond carry; the public byte-millisecond projection adds the current derived open interval through metered_to so it reproduces the charge. Successful web_search tool results are counted from the same journal.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"required\": ["]
-#[doc = "    \"artifact_byte_seconds\","]
 #[doc = "    \"compute_microusd\","]
 #[doc = "    \"metered_to\","]
 #[doc = "    \"running_ms\","]
 #[doc = "    \"session_id\","]
+#[doc = "    \"session_storage_byte_milliseconds\","]
 #[doc = "    \"shape\","]
 #[doc = "    \"state\","]
 #[doc = "    \"storage\","]
 #[doc = "    \"storage_microusd\","]
-#[doc = "    \"suspended_byte_seconds\","]
 #[doc = "    \"total_microusd\","]
 #[doc = "    \"web_search_microusd\","]
-#[doc = "    \"web_search_queries\","]
-#[doc = "    \"workspace_byte_seconds\""]
+#[doc = "    \"web_search_queries\""]
 #[doc = "  ],"]
 #[doc = "  \"properties\": {"]
-#[doc = "    \"artifact_byte_seconds\": {"]
-#[doc = "      \"type\": \"integer\","]
-#[doc = "      \"minimum\": 0.0"]
-#[doc = "    },"]
 #[doc = "    \"compute_microusd\": {"]
 #[doc = "      \"$ref\": \"#/$defs/MicroUsd\""]
 #[doc = "    },"]
@@ -2343,19 +2361,24 @@ impl ::std::convert::TryFrom<::std::string::String> for RefundStatus {
 #[doc = "      \"$ref\": \"#/$defs/Timestamp\""]
 #[doc = "    },"]
 #[doc = "    \"running_ms\": {"]
-#[doc = "      \"type\": \"integer\","]
-#[doc = "      \"minimum\": 0.0"]
+#[doc = "      \"description\": \"Cumulative running milliseconds as an exact canonical unsigned decimal string.\","]
+#[doc = "      \"$ref\": \"#/$defs/UnsignedDecimalInteger\""]
 #[doc = "    },"]
 #[doc = "    \"session_id\": {"]
 #[doc = "      \"type\": \"string\","]
 #[doc = "      \"pattern\": \"^ses_[A-Za-z0-9]{20,32}$\""]
 #[doc = "    },"]
+#[doc = "    \"session_storage_byte_milliseconds\": {"]
+#[doc = "      \"description\": \"Published session-storage plus outstanding upload-reservation byte-milliseconds through metered_to as an exact canonical unsigned decimal string. It is the durable closed integral plus the derived open interval used for this response's charge; a delayed durable transition may replace that estimate upward or downward. Storage micro-USD is floor(value * session_storage_gb_month_microusd / (1000000000 * month_hours * 3600000)).\","]
+#[doc = "      \"$ref\": \"#/$defs/UnsignedDecimalInteger\""]
+#[doc = "    },"]
 #[doc = "    \"shape\": {"]
-#[doc = "      \"description\": \"HandShape from session/v1 (1gb | 2gb | 4gb | 8gb).\","]
-#[doc = "      \"type\": \"string\""]
+#[doc = "      \"description\": \"The hosted alpha's only physical shape: 0.5 vCPU and 1 GiB.\","]
+#[doc = "      \"type\": \"string\","]
+#[doc = "      \"const\": \"1gb\""]
 #[doc = "    },"]
 #[doc = "    \"state\": {"]
-#[doc = "      \"description\": \"SessionState from session/v1 (active | idle | deleted | failed).\","]
+#[doc = "      \"description\": \"Lifecycle SessionState from session/v1 (open | ending | ended | deleting | deleted | failed); current-turn activity is a separate session projection.\","]
 #[doc = "      \"type\": \"string\""]
 #[doc = "    },"]
 #[doc = "    \"storage\": {"]
@@ -2364,10 +2387,6 @@ impl ::std::convert::TryFrom<::std::string::String> for RefundStatus {
 #[doc = "    \"storage_microusd\": {"]
 #[doc = "      \"$ref\": \"#/$defs/MicroUsd\""]
 #[doc = "    },"]
-#[doc = "    \"suspended_byte_seconds\": {"]
-#[doc = "      \"type\": \"integer\","]
-#[doc = "      \"minimum\": 0.0"]
-#[doc = "    },"]
 #[doc = "    \"total_microusd\": {"]
 #[doc = "      \"$ref\": \"#/$defs/MicroUsd\""]
 #[doc = "    },"]
@@ -2375,11 +2394,9 @@ impl ::std::convert::TryFrom<::std::string::String> for RefundStatus {
 #[doc = "      \"$ref\": \"#/$defs/MicroUsd\""]
 #[doc = "    },"]
 #[doc = "    \"web_search_queries\": {"]
+#[doc = "      \"description\": \"Successful search results counted from the bounded per-session journal; the hosted 128 MiB journal ceiling makes this counter JavaScript-safe.\","]
 #[doc = "      \"type\": \"integer\","]
-#[doc = "      \"minimum\": 0.0"]
-#[doc = "    },"]
-#[doc = "    \"workspace_byte_seconds\": {"]
-#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 134217728.0,"]
 #[doc = "      \"minimum\": 0.0"]
 #[doc = "    }"]
 #[doc = "  }"]
@@ -2388,22 +2405,23 @@ impl ::std::convert::TryFrom<::std::string::String> for RefundStatus {
 #[doc = r" </details>"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct SessionUsage {
-    pub artifact_byte_seconds: u64,
     pub compute_microusd: MicroUsd,
     pub metered_to: Timestamp,
-    pub running_ms: u64,
+    #[doc = "Cumulative running milliseconds as an exact canonical unsigned decimal string."]
+    pub running_ms: UnsignedDecimalInteger,
     pub session_id: SessionUsageSessionId,
-    #[doc = "HandShape from session/v1 (1gb | 2gb | 4gb | 8gb)."]
+    #[doc = "Published session-storage plus outstanding upload-reservation byte-milliseconds through metered_to as an exact canonical unsigned decimal string. It is the durable closed integral plus the derived open interval used for this response's charge; a delayed durable transition may replace that estimate upward or downward. Storage micro-USD is floor(value * session_storage_gb_month_microusd / (1000000000 * month_hours * 3600000))."]
+    pub session_storage_byte_milliseconds: UnsignedDecimalInteger,
+    #[doc = "The hosted alpha's only physical shape: 0.5 vCPU and 1 GiB."]
     pub shape: ::std::string::String,
-    #[doc = "SessionState from session/v1 (active | idle | deleted | failed)."]
+    #[doc = "Lifecycle SessionState from session/v1 (open | ending | ended | deleting | deleted | failed); current-turn activity is a separate session projection."]
     pub state: ::std::string::String,
     pub storage: StorageMeters,
     pub storage_microusd: MicroUsd,
-    pub suspended_byte_seconds: u64,
     pub total_microusd: MicroUsd,
     pub web_search_microusd: MicroUsd,
-    pub web_search_queries: u64,
-    pub workspace_byte_seconds: u64,
+    #[doc = "Successful search results counted from the bounded per-session journal; the hosted 128 MiB journal ceiling makes this counter JavaScript-safe."]
+    pub web_search_queries: i64,
 }
 impl SessionUsage {
     pub fn builder() -> builder::SessionUsage {
@@ -2482,30 +2500,27 @@ impl<'de> ::serde::Deserialize<'de> for SessionUsageSessionId {
             })
     }
 }
-#[doc = "Current stored bytes, as last reported by the brain (session/v1 StorageInfo)."]
+#[doc = "Current published bytes and outstanding upload-reserved capacity, as last reported by Brain (session/v1 StorageInfo). They remain separate so quota and billing are observable even before an upload is published."]
 #[doc = r""]
 #[doc = r" <details><summary>JSON schema</summary>"]
 #[doc = r""]
 #[doc = r" ```json"]
 #[doc = "{"]
-#[doc = "  \"description\": \"Current stored bytes, as last reported by the brain (session/v1 StorageInfo).\","]
+#[doc = "  \"description\": \"Current published bytes and outstanding upload-reserved capacity, as last reported by Brain (session/v1 StorageInfo). They remain separate so quota and billing are observable even before an upload is published.\","]
 #[doc = "  \"type\": \"object\","]
 #[doc = "  \"required\": ["]
-#[doc = "    \"artifact_bytes\","]
-#[doc = "    \"suspended_bytes\","]
-#[doc = "    \"workspace_bytes\""]
+#[doc = "    \"session_storage_bytes\","]
+#[doc = "    \"upload_reserved_bytes\""]
 #[doc = "  ],"]
 #[doc = "  \"properties\": {"]
-#[doc = "    \"artifact_bytes\": {"]
+#[doc = "    \"session_storage_bytes\": {"]
 #[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 10737418240.0,"]
 #[doc = "      \"minimum\": 0.0"]
 #[doc = "    },"]
-#[doc = "    \"suspended_bytes\": {"]
+#[doc = "    \"upload_reserved_bytes\": {"]
 #[doc = "      \"type\": \"integer\","]
-#[doc = "      \"minimum\": 0.0"]
-#[doc = "    },"]
-#[doc = "    \"workspace_bytes\": {"]
-#[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 10737418240.0,"]
 #[doc = "      \"minimum\": 0.0"]
 #[doc = "    }"]
 #[doc = "  }"]
@@ -2514,9 +2529,8 @@ impl<'de> ::serde::Deserialize<'de> for SessionUsageSessionId {
 #[doc = r" </details>"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct StorageMeters {
-    pub artifact_bytes: u64,
-    pub suspended_bytes: u64,
-    pub workspace_bytes: u64,
+    pub session_storage_bytes: i64,
+    pub upload_reserved_bytes: i64,
 }
 impl StorageMeters {
     pub fn builder() -> builder::StorageMeters {
@@ -2595,6 +2609,7 @@ impl ::std::fmt::Display for Timestamp {
 #[doc = "  \"properties\": {"]
 #[doc = "    \"amount_cents\": {"]
 #[doc = "      \"type\": \"integer\","]
+#[doc = "      \"maximum\": 100000.0,"]
 #[doc = "      \"minimum\": 1.0"]
 #[doc = "    },"]
 #[doc = "    \"checkout_url\": {"]
@@ -2819,6 +2834,77 @@ impl ::std::convert::TryFrom<::std::string::String> for TopupStatus {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+#[doc = "Canonical unsigned decimal-string integer. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point."]
+#[doc = r""]
+#[doc = r" <details><summary>JSON schema</summary>"]
+#[doc = r""]
+#[doc = r" ```json"]
+#[doc = "{"]
+#[doc = "  \"description\": \"Canonical unsigned decimal-string integer. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point.\","]
+#[doc = "  \"type\": \"string\","]
+#[doc = "  \"pattern\": \"^(0|[1-9][0-9]*)$\""]
+#[doc = "}"]
+#[doc = r" ```"]
+#[doc = r" </details>"]
+#[derive(:: serde :: Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct UnsignedDecimalInteger(::std::string::String);
+impl ::std::ops::Deref for UnsignedDecimalInteger {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<UnsignedDecimalInteger> for ::std::string::String {
+    fn from(value: UnsignedDecimalInteger) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for UnsignedDecimalInteger {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        static PATTERN: ::std::sync::LazyLock<::regress::Regex> =
+            ::std::sync::LazyLock::new(|| ::regress::Regex::new("^(0|[1-9][0-9]*)$").unwrap());
+        if PATTERN.find(value).is_none() {
+            return Err("doesn't match pattern \"^(0|[1-9][0-9]*)$\"".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for UnsignedDecimalInteger {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<&::std::string::String> for UnsignedDecimalInteger {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: &::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for UnsignedDecimalInteger {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for UnsignedDecimalInteger {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "The bill: every session's rated line, the account balance after them, and the rate card they were rated on."]
@@ -4268,10 +4354,10 @@ pub mod builder {
         gb_hour_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
         month_hours: ::std::result::Result<::std::num::NonZeroU64, ::std::string::String>,
         object: ::std::result::Result<::serde_json::Value, ::std::string::String>,
-        suspended_gb_month_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
+        session_storage_gb_month_microusd:
+            ::std::result::Result<super::MicroUsd, ::std::string::String>,
         vcpu_hour_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
         web_search_query_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
-        workspace_gb_month_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
     }
     impl ::std::default::Default for RateCard {
         fn default() -> Self {
@@ -4279,15 +4365,12 @@ pub mod builder {
                 gb_hour_microusd: Err("no value supplied for gb_hour_microusd".to_string()),
                 month_hours: Err("no value supplied for month_hours".to_string()),
                 object: Err("no value supplied for object".to_string()),
-                suspended_gb_month_microusd: Err(
-                    "no value supplied for suspended_gb_month_microusd".to_string(),
+                session_storage_gb_month_microusd: Err(
+                    "no value supplied for session_storage_gb_month_microusd".to_string(),
                 ),
                 vcpu_hour_microusd: Err("no value supplied for vcpu_hour_microusd".to_string()),
                 web_search_query_microusd: Err(
                     "no value supplied for web_search_query_microusd".to_string()
-                ),
-                workspace_gb_month_microusd: Err(
-                    "no value supplied for workspace_gb_month_microusd".to_string(),
                 ),
             }
         }
@@ -4323,13 +4406,15 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for object: {e}"));
             self
         }
-        pub fn suspended_gb_month_microusd<T>(mut self, value: T) -> Self
+        pub fn session_storage_gb_month_microusd<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<super::MicroUsd>,
             T::Error: ::std::fmt::Display,
         {
-            self.suspended_gb_month_microusd = value.try_into().map_err(|e| {
-                format!("error converting supplied value for suspended_gb_month_microusd: {e}")
+            self.session_storage_gb_month_microusd = value.try_into().map_err(|e| {
+                format!(
+                    "error converting supplied value for session_storage_gb_month_microusd: {e}"
+                )
             });
             self
         }
@@ -4353,16 +4438,6 @@ pub mod builder {
             });
             self
         }
-        pub fn workspace_gb_month_microusd<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<super::MicroUsd>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.workspace_gb_month_microusd = value.try_into().map_err(|e| {
-                format!("error converting supplied value for workspace_gb_month_microusd: {e}")
-            });
-            self
-        }
     }
     impl ::std::convert::TryFrom<RateCard> for super::RateCard {
         type Error = super::error::ConversionError;
@@ -4371,10 +4446,9 @@ pub mod builder {
                 gb_hour_microusd: value.gb_hour_microusd?,
                 month_hours: value.month_hours?,
                 object: value.object?,
-                suspended_gb_month_microusd: value.suspended_gb_month_microusd?,
+                session_storage_gb_month_microusd: value.session_storage_gb_month_microusd?,
                 vcpu_hour_microusd: value.vcpu_hour_microusd?,
                 web_search_query_microusd: value.web_search_query_microusd?,
-                workspace_gb_month_microusd: value.workspace_gb_month_microusd?,
             })
         }
     }
@@ -4384,10 +4458,9 @@ pub mod builder {
                 gb_hour_microusd: Ok(value.gb_hour_microusd),
                 month_hours: Ok(value.month_hours),
                 object: Ok(value.object),
-                suspended_gb_month_microusd: Ok(value.suspended_gb_month_microusd),
+                session_storage_gb_month_microusd: Ok(value.session_storage_gb_month_microusd),
                 vcpu_hour_microusd: Ok(value.vcpu_hour_microusd),
                 web_search_query_microusd: Ok(value.web_search_query_microusd),
-                workspace_gb_month_microusd: Ok(value.workspace_gb_month_microusd),
             }
         }
     }
@@ -4532,58 +4605,41 @@ pub mod builder {
     }
     #[derive(Clone, Debug)]
     pub struct SessionUsage {
-        artifact_byte_seconds: ::std::result::Result<u64, ::std::string::String>,
         compute_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
         metered_to: ::std::result::Result<super::Timestamp, ::std::string::String>,
-        running_ms: ::std::result::Result<u64, ::std::string::String>,
+        running_ms: ::std::result::Result<super::UnsignedDecimalInteger, ::std::string::String>,
         session_id: ::std::result::Result<super::SessionUsageSessionId, ::std::string::String>,
+        session_storage_byte_milliseconds:
+            ::std::result::Result<super::UnsignedDecimalInteger, ::std::string::String>,
         shape: ::std::result::Result<::std::string::String, ::std::string::String>,
         state: ::std::result::Result<::std::string::String, ::std::string::String>,
         storage: ::std::result::Result<super::StorageMeters, ::std::string::String>,
         storage_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
-        suspended_byte_seconds: ::std::result::Result<u64, ::std::string::String>,
         total_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
         web_search_microusd: ::std::result::Result<super::MicroUsd, ::std::string::String>,
-        web_search_queries: ::std::result::Result<u64, ::std::string::String>,
-        workspace_byte_seconds: ::std::result::Result<u64, ::std::string::String>,
+        web_search_queries: ::std::result::Result<i64, ::std::string::String>,
     }
     impl ::std::default::Default for SessionUsage {
         fn default() -> Self {
             Self {
-                artifact_byte_seconds: Err(
-                    "no value supplied for artifact_byte_seconds".to_string()
-                ),
                 compute_microusd: Err("no value supplied for compute_microusd".to_string()),
                 metered_to: Err("no value supplied for metered_to".to_string()),
                 running_ms: Err("no value supplied for running_ms".to_string()),
                 session_id: Err("no value supplied for session_id".to_string()),
+                session_storage_byte_milliseconds: Err(
+                    "no value supplied for session_storage_byte_milliseconds".to_string(),
+                ),
                 shape: Err("no value supplied for shape".to_string()),
                 state: Err("no value supplied for state".to_string()),
                 storage: Err("no value supplied for storage".to_string()),
                 storage_microusd: Err("no value supplied for storage_microusd".to_string()),
-                suspended_byte_seconds: Err(
-                    "no value supplied for suspended_byte_seconds".to_string()
-                ),
                 total_microusd: Err("no value supplied for total_microusd".to_string()),
                 web_search_microusd: Err("no value supplied for web_search_microusd".to_string()),
                 web_search_queries: Err("no value supplied for web_search_queries".to_string()),
-                workspace_byte_seconds: Err(
-                    "no value supplied for workspace_byte_seconds".to_string()
-                ),
             }
         }
     }
     impl SessionUsage {
-        pub fn artifact_byte_seconds<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<u64>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.artifact_byte_seconds = value.try_into().map_err(|e| {
-                format!("error converting supplied value for artifact_byte_seconds: {e}")
-            });
-            self
-        }
         pub fn compute_microusd<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<super::MicroUsd>,
@@ -4606,7 +4662,7 @@ pub mod builder {
         }
         pub fn running_ms<T>(mut self, value: T) -> Self
         where
-            T: ::std::convert::TryInto<u64>,
+            T: ::std::convert::TryInto<super::UnsignedDecimalInteger>,
             T::Error: ::std::fmt::Display,
         {
             self.running_ms = value
@@ -4622,6 +4678,18 @@ pub mod builder {
             self.session_id = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for session_id: {e}"));
+            self
+        }
+        pub fn session_storage_byte_milliseconds<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::UnsignedDecimalInteger>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.session_storage_byte_milliseconds = value.try_into().map_err(|e| {
+                format!(
+                    "error converting supplied value for session_storage_byte_milliseconds: {e}"
+                )
+            });
             self
         }
         pub fn shape<T>(mut self, value: T) -> Self
@@ -4664,16 +4732,6 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for storage_microusd: {e}"));
             self
         }
-        pub fn suspended_byte_seconds<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<u64>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.suspended_byte_seconds = value.try_into().map_err(|e| {
-                format!("error converting supplied value for suspended_byte_seconds: {e}")
-            });
-            self
-        }
         pub fn total_microusd<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<super::MicroUsd>,
@@ -4696,21 +4754,11 @@ pub mod builder {
         }
         pub fn web_search_queries<T>(mut self, value: T) -> Self
         where
-            T: ::std::convert::TryInto<u64>,
+            T: ::std::convert::TryInto<i64>,
             T::Error: ::std::fmt::Display,
         {
             self.web_search_queries = value.try_into().map_err(|e| {
                 format!("error converting supplied value for web_search_queries: {e}")
-            });
-            self
-        }
-        pub fn workspace_byte_seconds<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<u64>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.workspace_byte_seconds = value.try_into().map_err(|e| {
-                format!("error converting supplied value for workspace_byte_seconds: {e}")
             });
             self
         }
@@ -4721,87 +4769,75 @@ pub mod builder {
             value: SessionUsage,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
-                artifact_byte_seconds: value.artifact_byte_seconds?,
                 compute_microusd: value.compute_microusd?,
                 metered_to: value.metered_to?,
                 running_ms: value.running_ms?,
                 session_id: value.session_id?,
+                session_storage_byte_milliseconds: value.session_storage_byte_milliseconds?,
                 shape: value.shape?,
                 state: value.state?,
                 storage: value.storage?,
                 storage_microusd: value.storage_microusd?,
-                suspended_byte_seconds: value.suspended_byte_seconds?,
                 total_microusd: value.total_microusd?,
                 web_search_microusd: value.web_search_microusd?,
                 web_search_queries: value.web_search_queries?,
-                workspace_byte_seconds: value.workspace_byte_seconds?,
             })
         }
     }
     impl ::std::convert::From<super::SessionUsage> for SessionUsage {
         fn from(value: super::SessionUsage) -> Self {
             Self {
-                artifact_byte_seconds: Ok(value.artifact_byte_seconds),
                 compute_microusd: Ok(value.compute_microusd),
                 metered_to: Ok(value.metered_to),
                 running_ms: Ok(value.running_ms),
                 session_id: Ok(value.session_id),
+                session_storage_byte_milliseconds: Ok(value.session_storage_byte_milliseconds),
                 shape: Ok(value.shape),
                 state: Ok(value.state),
                 storage: Ok(value.storage),
                 storage_microusd: Ok(value.storage_microusd),
-                suspended_byte_seconds: Ok(value.suspended_byte_seconds),
                 total_microusd: Ok(value.total_microusd),
                 web_search_microusd: Ok(value.web_search_microusd),
                 web_search_queries: Ok(value.web_search_queries),
-                workspace_byte_seconds: Ok(value.workspace_byte_seconds),
             }
         }
     }
     #[derive(Clone, Debug)]
     pub struct StorageMeters {
-        artifact_bytes: ::std::result::Result<u64, ::std::string::String>,
-        suspended_bytes: ::std::result::Result<u64, ::std::string::String>,
-        workspace_bytes: ::std::result::Result<u64, ::std::string::String>,
+        session_storage_bytes: ::std::result::Result<i64, ::std::string::String>,
+        upload_reserved_bytes: ::std::result::Result<i64, ::std::string::String>,
     }
     impl ::std::default::Default for StorageMeters {
         fn default() -> Self {
             Self {
-                artifact_bytes: Err("no value supplied for artifact_bytes".to_string()),
-                suspended_bytes: Err("no value supplied for suspended_bytes".to_string()),
-                workspace_bytes: Err("no value supplied for workspace_bytes".to_string()),
+                session_storage_bytes: Err(
+                    "no value supplied for session_storage_bytes".to_string()
+                ),
+                upload_reserved_bytes: Err(
+                    "no value supplied for upload_reserved_bytes".to_string()
+                ),
             }
         }
     }
     impl StorageMeters {
-        pub fn artifact_bytes<T>(mut self, value: T) -> Self
+        pub fn session_storage_bytes<T>(mut self, value: T) -> Self
         where
-            T: ::std::convert::TryInto<u64>,
+            T: ::std::convert::TryInto<i64>,
             T::Error: ::std::fmt::Display,
         {
-            self.artifact_bytes = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for artifact_bytes: {e}"));
+            self.session_storage_bytes = value.try_into().map_err(|e| {
+                format!("error converting supplied value for session_storage_bytes: {e}")
+            });
             self
         }
-        pub fn suspended_bytes<T>(mut self, value: T) -> Self
+        pub fn upload_reserved_bytes<T>(mut self, value: T) -> Self
         where
-            T: ::std::convert::TryInto<u64>,
+            T: ::std::convert::TryInto<i64>,
             T::Error: ::std::fmt::Display,
         {
-            self.suspended_bytes = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for suspended_bytes: {e}"));
-            self
-        }
-        pub fn workspace_bytes<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<u64>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.workspace_bytes = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for workspace_bytes: {e}"));
+            self.upload_reserved_bytes = value.try_into().map_err(|e| {
+                format!("error converting supplied value for upload_reserved_bytes: {e}")
+            });
             self
         }
     }
@@ -4811,18 +4847,16 @@ pub mod builder {
             value: StorageMeters,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
-                artifact_bytes: value.artifact_bytes?,
-                suspended_bytes: value.suspended_bytes?,
-                workspace_bytes: value.workspace_bytes?,
+                session_storage_bytes: value.session_storage_bytes?,
+                upload_reserved_bytes: value.upload_reserved_bytes?,
             })
         }
     }
     impl ::std::convert::From<super::StorageMeters> for StorageMeters {
         fn from(value: super::StorageMeters) -> Self {
             Self {
-                artifact_bytes: Ok(value.artifact_bytes),
-                suspended_bytes: Ok(value.suspended_bytes),
-                workspace_bytes: Ok(value.workspace_bytes),
+                session_storage_bytes: Ok(value.session_storage_bytes),
+                upload_reserved_bytes: Ok(value.upload_reserved_bytes),
             }
         }
     }

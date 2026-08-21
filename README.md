@@ -58,7 +58,8 @@ Your app  →   Brain       ↔       Hands       ↔       Sandbox
 
 - **Brain** owns the model loop, context, and recovery.
 - **Hands** run typed tool operations.
-- **Sandbox** isolates processes, files, secrets, and network access.
+- **Sandbox** constrains processes, files, declared secrets, and network access; the
+  [quickstart](docs/quickstart.md#where-tools-run) states the exact guest boundary.
 
 Session journals live in the database. Files become durable only when copied to storage.
 

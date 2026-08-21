@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use brain_protocol::session::ExternalToolCallRequest;
+use brain_protocol::session::{ExternalToolCallRequest, ExternalToolCallResponse};
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -14,12 +14,11 @@ use crate::outbound::Outbound;
 use crate::{Error, Result};
 
 pub const SEARCH_TOOL_NAME: &str = "web_search";
-pub const SEARCH_CAPABILITY: &str = "aex.web.search.v1";
+pub const SEARCH_CAPABILITY: &str = "aex.web.search";
 pub const FETCH_TOOL_NAME: &str = "web_fetch";
-pub const FETCH_CAPABILITY: &str = "aex.web.fetch.v1";
+pub const FETCH_CAPABILITY: &str = "aex.web.fetch";
 
 const SEARCH_ENDPOINT: &str = "https://google.serper.dev/search";
-const MAX_RESULT_BYTES: usize = 96 * 1024;
 const SEARCH_MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const FETCH_MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const FETCH_MAX_CHARS: usize = 100_000;
@@ -203,9 +202,10 @@ impl WebRuntime {
             })
             .collect();
         loop {
-            let encoded = serde_json::to_string(&json!({"query": query, "results": results}))
+            let result = json!({"query": query, "results": results});
+            let encoded = serde_json::to_string(&result)
                 .map_err(|error| Error::Internal(format!("web search result: {error}")))?;
-            if encoded.len() <= MAX_RESULT_BYTES {
+            if external_result_fits(&result, &encoded) {
                 return Ok(encoded);
             }
             if results.pop().is_none() {
@@ -341,15 +341,16 @@ fn encode_fetch_result(
     while low <= high {
         let middle = low + (high - low) / 2;
         let text = take_chars(full_text, middle);
-        let encoded = serde_json::to_string(&json!({
+        let result = json!({
             "url": url,
             "status": status,
             "content_type": content_type,
             "text": text,
             "truncated": requested_truncation || middle < available
-        }))
-        .map_err(|error| Error::Internal(format!("web fetch result: {error}")))?;
-        if encoded.len() <= MAX_RESULT_BYTES {
+        });
+        let encoded = serde_json::to_string(&result)
+            .map_err(|error| Error::Internal(format!("web fetch result: {error}")))?;
+        if external_result_fits(&result, &encoded) {
             best = Some(encoded);
             low = middle.saturating_add(1);
         } else if middle == 0 {
@@ -359,6 +360,23 @@ fn encode_fetch_result(
         }
     }
     best.ok_or_else(|| Error::Internal("web fetch metadata exceeds the Tool result bound".into()))
+}
+
+/// Use Brain's canonical projections rather than approximating its terminal envelope locally.
+/// `continue` independently retains model-visible content and the structured value; the helper
+/// also keeps this code correct if metadata or disposition changes later.
+fn external_result_fits(result: &Value, content: &str) -> bool {
+    serde_json::from_value::<ExternalToolCallResponse>(json!({
+        "outcome": "completed",
+        "content": content,
+        "is_error": false,
+        "disposition": "continue",
+        "result": result
+    }))
+    .is_ok_and(|response| {
+        brain_protocol::contract::external_tool_response_inline_fits(&response)
+            && brain_protocol::contract::external_tool_response_wire_fits(&response)
+    })
 }
 
 async fn read_bounded(response: reqwest::Response, max_bytes: usize) -> Result<Vec<u8>> {
@@ -455,8 +473,29 @@ mod tests {
         let text = "\u{0000}\"é".repeat(100_000);
         let encoded =
             encode_fetch_result("https://example.com/", 200, "text/plain", &text, 100_000).unwrap();
-        assert!(encoded.len() <= MAX_RESULT_BYTES);
+        assert!(encoded.len() <= brain_protocol::MAX_TOOL_TERMINAL_INLINE_BYTES);
         let value: Value = serde_json::from_str(&encoded).unwrap();
+        assert!(brain_protocol::contract::terminal_inline_fits(&value));
         assert_eq!(value["truncated"], true);
+    }
+
+    #[test]
+    fn web_result_uses_brains_exact_inline_boundary() {
+        let limit = brain_protocol::MAX_TOOL_TERMINAL_INLINE_BYTES;
+        let exact = Value::String("x".repeat(limit - 2));
+        let exact_content = serde_json::to_string(&exact).unwrap();
+        assert_eq!(
+            brain_protocol::contract::terminal_inline_bytes(&exact).unwrap(),
+            limit
+        );
+        assert!(external_result_fits(&exact, &exact_content));
+
+        let over = Value::String("x".repeat(limit - 1));
+        let over_content = serde_json::to_string(&over).unwrap();
+        assert_eq!(
+            brain_protocol::contract::terminal_inline_bytes(&over).unwrap(),
+            limit + 1
+        );
+        assert!(!external_result_fits(&over, &over_content));
     }
 }

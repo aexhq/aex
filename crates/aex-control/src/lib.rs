@@ -4,15 +4,17 @@
 //! meters; it serves the control API (`contracts/control/v1`) and every `session/v1` path
 //! verbatim as an authorizing, admitting, metering proxy. The brain's journal is the billing
 //! record: compute time is folded from each session's event log (turn intervals, with the
-//! pre-suspend idle window absorbed), and storage comes from Brain-reported byte meters integrated
-//! over wall time.
+//! pre-suspend idle window absorbed), and storage comes from durable Brain `storage.usage`
+//! transitions integrated exactly in byte-milliseconds.
 //!
 //! Substrate posture matches the brain: SQLite on local disk by default (one file, zero
 //! config), payments faked by default with a loud banner; `AEX_PAYMENTS=stripe` +
 //! `STRIPE_SECRET_KEY` is the configured production path.
 
+pub mod admission;
 pub mod api;
 pub mod brain;
+pub mod customer_hand;
 pub mod identity;
 pub mod outbound;
 pub mod output;
@@ -31,6 +33,8 @@ pub enum Error {
     #[error("{0}")]
     Invalid(String),
     #[error("{0}")]
+    Unprocessable(String),
+    #[error("{0}")]
     OutputSchema(String),
     #[error("unauthorized")]
     Unauthorized,
@@ -44,6 +48,10 @@ pub enum Error {
     InsufficientBalance(String),
     #[error("{0}")]
     RateLimited(String),
+    #[error("{0}")]
+    PayloadTooLarge(String),
+    #[error("{0}")]
+    StorageQuota(String),
     #[error("payment provider: {0}")]
     Payment(String),
     #[error("brain: {0}")]
@@ -57,7 +65,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 impl Error {
     pub fn code(&self) -> &'static str {
         match self {
-            Error::Invalid(_) => "invalid_request",
+            Error::Invalid(_) | Error::Unprocessable(_) => "invalid_request",
             Error::OutputSchema(_) => "output_schema_error",
             Error::Unauthorized => "unauthorized",
             Error::Forbidden(_) => "forbidden",
@@ -65,6 +73,8 @@ impl Error {
             Error::Conflict(_) => "conflict",
             Error::InsufficientBalance(_) => "insufficient_balance",
             Error::RateLimited(_) => "rate_limited",
+            Error::PayloadTooLarge(_) => "file_too_large",
+            Error::StorageQuota(_) => "storage_quota_exceeded",
             Error::Payment(_) => "payment_error",
             Error::Upstream(_) => "upstream_error",
             Error::Internal(_) => "internal",
@@ -74,12 +84,15 @@ impl Error {
     pub fn status(&self) -> u16 {
         match self {
             Error::Invalid(_) | Error::OutputSchema(_) => 400,
+            Error::Unprocessable(_) => 422,
             Error::Unauthorized => 401,
             Error::Forbidden(_) => 403,
             Error::NotFound => 404,
             Error::Conflict(_) => 409,
             Error::InsufficientBalance(_) => 402,
             Error::RateLimited(_) => 429,
+            Error::PayloadTooLarge(_) => 413,
+            Error::StorageQuota(_) => 409,
             Error::Payment(_) => 502,
             Error::Upstream(_) => 502,
             Error::Internal(_) => 500,
@@ -129,6 +142,24 @@ pub enum PaymentsMode {
     },
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct StorageLimits {
+    pub max_object_bytes: u64,
+    pub max_session_bytes: u64,
+}
+
+/// Hosted alpha's public, authoritative per-session published-plus-reserved storage ceiling.
+pub const MAX_HOSTED_SESSION_STORAGE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+
+impl Default for StorageLimits {
+    fn default() -> Self {
+        Self {
+            max_object_bytes: 512 * 1024 * 1024,
+            max_session_bytes: MAX_HOSTED_SESSION_STORAGE_BYTES,
+        }
+    }
+}
+
 /// Server configuration. Fail fast: `AEX_BRAIN_TOKEN` has no default, malformed numbers are
 /// errors, `AEX_PAYMENTS=stripe` without a key is an error.
 pub struct Config {
@@ -143,10 +174,19 @@ pub struct Config {
     pub card: rating::RateCard,
     pub operator_token_hash: Option<String>,
     pub external_executor_token_hash: Option<String>,
+    pub customer_hand_gateway: Option<customer_hand::CustomerHandGateway>,
     pub serper_api_key: Option<String>,
     pub max_concurrent_sessions: i64,
+    pub max_retained_root_sessions: i64,
     pub session_creates_per_hour: i64,
+    pub max_concurrent_create_bodies: usize,
+    pub max_concurrent_message_bodies: usize,
+    pub max_concurrent_inline_session_bodies: usize,
     pub sweep_seconds: u64,
+    pub discovery_overlap_ms: i64,
+    pub discovery_session_limit: usize,
+    pub storage_limits: StorageLimits,
+    pub admission: admission::AdmissionConfig,
 }
 
 impl Config {
@@ -194,14 +234,123 @@ impl Config {
                 "AEX_CONTROL_INTERNAL_LISTEN must use a loopback address; got {internal_listen}"
             );
         }
+        let customer_hand_gateway = match std::env::var("AEX_CUSTOMER_HAND_GATEWAY_TOKEN") {
+            Ok(token) => {
+                let trusted = std::env::var("AEX_CUSTOMER_HAND_TRUSTED_PROXY_CIDRS").map_err(|_| {
+                    anyhow::anyhow!(
+                        "AEX_CUSTOMER_HAND_GATEWAY_TOKEN needs AEX_CUSTOMER_HAND_TRUSTED_PROXY_CIDRS"
+                    )
+                })?;
+                let blocked = std::env::var("AEX_MANAGED_SANDBOX_NAT_CIDRS").map_err(|_| {
+                    anyhow::anyhow!(
+                        "AEX_CUSTOMER_HAND_GATEWAY_TOKEN needs AEX_MANAGED_SANDBOX_NAT_CIDRS"
+                    )
+                })?;
+                Some(
+                    customer_hand::CustomerHandGateway::new(
+                        &token,
+                        customer_hand::parse_cidrs(
+                            "AEX_CUSTOMER_HAND_TRUSTED_PROXY_CIDRS",
+                            &trusted,
+                        )?,
+                        customer_hand::parse_cidrs("AEX_MANAGED_SANDBOX_NAT_CIDRS", &blocked)?,
+                    )
+                    .map_err(|error| anyhow::anyhow!("customer-Hand gateway: {error}"))?,
+                )
+            }
+            Err(_) => None,
+        };
+        let sweep_seconds = num("AEX_SWEEP_SECONDS", 30u64)?;
+        if !(1..=3_600).contains(&sweep_seconds) {
+            anyhow::bail!("AEX_SWEEP_SECONDS must be between 1 and 3600");
+        }
+        let discovery_overlap_seconds = num(
+            "AEX_DISCOVERY_OVERLAP_SECONDS",
+            sweep_seconds.saturating_mul(2).max(120),
+        )?;
+        let discovery_overlap_ms = i64::try_from(discovery_overlap_seconds)
+            .map_err(|_| anyhow::anyhow!("AEX_DISCOVERY_OVERLAP_SECONDS is too large"))?
+            .checked_mul(1_000)
+            .ok_or_else(|| anyhow::anyhow!("AEX_DISCOVERY_OVERLAP_SECONDS is too large"))?;
+        if discovery_overlap_ms <= 0 {
+            anyhow::bail!("AEX_DISCOVERY_OVERLAP_SECONDS must be positive");
+        }
+        let discovery_session_limit = num("AEX_DISCOVERY_SESSION_LIMIT", 100_000usize)?;
+        if !(1..=1_000_000).contains(&discovery_session_limit) {
+            anyhow::bail!("AEX_DISCOVERY_SESSION_LIMIT must be between 1 and 1000000");
+        }
+        let storage_limits = StorageLimits {
+            max_object_bytes: num(
+                "AEX_STORAGE_MAX_OBJECT_BYTES",
+                StorageLimits::default().max_object_bytes,
+            )?,
+            max_session_bytes: num(
+                "AEX_STORAGE_MAX_SESSION_BYTES",
+                StorageLimits::default().max_session_bytes,
+            )?,
+        };
+        if storage_limits.max_object_bytes == 0
+            || storage_limits.max_session_bytes < storage_limits.max_object_bytes
+            || storage_limits.max_session_bytes > MAX_HOSTED_SESSION_STORAGE_BYTES
+        {
+            anyhow::bail!(
+                "AEX_STORAGE_MAX_SESSION_BYTES must be at least the positive AEX_STORAGE_MAX_OBJECT_BYTES and at most 10 GiB"
+            );
+        }
+        let default_admission_seconds = sweep_seconds.saturating_mul(2).max(60);
+        let admission_stale_seconds =
+            num("AEX_ADMISSION_STALE_SECONDS", default_admission_seconds)?;
+        let admission_reservation_seconds = num(
+            "AEX_ADMISSION_RESERVATION_SECONDS",
+            default_admission_seconds,
+        )?;
+        let admission = admission::AdmissionConfig {
+            action_exposure_microusd: num("AEX_ADMISSION_ACTION_EXPOSURE_MICROUSD", 100_000)?,
+            account_exposure_microusd: num("AEX_ADMISSION_ACCOUNT_EXPOSURE_MICROUSD", 1_000_000)?,
+            low_balance_microusd: num("AEX_ADMISSION_LOW_BALANCE_MICROUSD", 1_000_000)?,
+            stale_after_ms: i64::try_from(admission_stale_seconds)
+                .map_err(|_| anyhow::anyhow!("AEX_ADMISSION_STALE_SECONDS is too large"))?
+                .checked_mul(1_000)
+                .ok_or_else(|| anyhow::anyhow!("AEX_ADMISSION_STALE_SECONDS is too large"))?,
+            reservation_ttl_ms: i64::try_from(admission_reservation_seconds)
+                .map_err(|_| anyhow::anyhow!("AEX_ADMISSION_RESERVATION_SECONDS is too large"))?
+                .checked_mul(1_000)
+                .ok_or_else(|| anyhow::anyhow!("AEX_ADMISSION_RESERVATION_SECONDS is too large"))?,
+            max_cached_accounts: num("AEX_ADMISSION_MAX_CACHED_ACCOUNTS", 10_000usize)?,
+        }
+        .validate()?;
+        let max_concurrent_create_bodies = num("AEX_MAX_CONCURRENT_CREATE_BODIES", 4usize)?;
+        if !(1..=64).contains(&max_concurrent_create_bodies) {
+            anyhow::bail!("AEX_MAX_CONCURRENT_CREATE_BODIES must be between 1 and 64");
+        }
+        let max_concurrent_message_bodies = num("AEX_MAX_CONCURRENT_MESSAGE_BODIES", 256usize)?;
+        if !(1..=4_096).contains(&max_concurrent_message_bodies) {
+            anyhow::bail!("AEX_MAX_CONCURRENT_MESSAGE_BODIES must be between 1 and 4096");
+        }
+        let max_concurrent_inline_session_bodies =
+            num("AEX_MAX_CONCURRENT_INLINE_SESSION_BODIES", 64usize)?;
+        if !(1..=1_024).contains(&max_concurrent_inline_session_bodies) {
+            anyhow::bail!("AEX_MAX_CONCURRENT_INLINE_SESSION_BODIES must be between 1 and 1024");
+        }
+        let max_concurrent_sessions = num("AEX_LIMIT_CONCURRENT_SESSIONS", 10)?;
+        let max_retained_root_sessions = num("AEX_LIMIT_RETAINED_ROOT_SESSIONS", 100)?;
+        let session_creates_per_hour = num("AEX_LIMIT_SESSION_CREATES_PER_HOUR", 30)?;
+        if !(1..=1_000_000).contains(&max_concurrent_sessions)
+            || max_retained_root_sessions < max_concurrent_sessions
+            || max_retained_root_sessions > 1_000_000
+            || !(1..=1_000_000).contains(&session_creates_per_hour)
+        {
+            anyhow::bail!(
+                "root concurrent, retained, and hourly-create limits must be between 1 and 1000000, with retained at least concurrent"
+            );
+        }
         Ok(Config {
             listen: num("AEX_CONTROL_LISTEN", "127.0.0.1:8600".parse()?)?,
             internal_listen,
             brain_url: std::env::var("AEX_BRAIN_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8700".into()),
-            brain_token: std::env::var("AEX_BRAIN_TOKEN").map_err(|_| {
-                anyhow::anyhow!("AEX_BRAIN_TOKEN is not set (the brain's AEX_API_TOKEN)")
-            })?,
+            brain_token: std::env::var("AEX_BRAIN_TOKEN")
+                .map_err(|_| anyhow::anyhow!("AEX_BRAIN_TOKEN is not set"))?,
             db_path: std::env::var("AEX_CONTROL_DB")
                 .unwrap_or_else(|_| "./aex-control-data/control.db".into())
                 .into(),
@@ -216,12 +365,21 @@ impl Config {
                 .ok()
                 .filter(|token| !token.is_empty())
                 .map(|token| identity::hash_secret(&token)),
+            customer_hand_gateway,
             serper_api_key: std::env::var("SERPER_API_KEY")
                 .ok()
                 .filter(|key| !key.is_empty()),
-            max_concurrent_sessions: num("AEX_LIMIT_CONCURRENT_SESSIONS", 10)?,
-            session_creates_per_hour: num("AEX_LIMIT_SESSION_CREATES_PER_HOUR", 30)?,
-            sweep_seconds: num("AEX_SWEEP_SECONDS", 30)?,
+            max_concurrent_sessions,
+            max_retained_root_sessions,
+            session_creates_per_hour,
+            max_concurrent_create_bodies,
+            max_concurrent_message_bodies,
+            max_concurrent_inline_session_bodies,
+            sweep_seconds,
+            discovery_overlap_ms,
+            discovery_session_limit,
+            storage_limits,
+            admission,
         })
     }
 }

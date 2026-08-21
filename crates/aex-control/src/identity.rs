@@ -44,6 +44,24 @@ pub fn hash_secret(secret: &str) -> String {
     hex::encode(Sha256::digest(secret.as_bytes()))
 }
 
+/// Compare a presented secret with one stored SHA-256 hex digest without leaking a matching
+/// prefix through ordinary string equality. The stored digest is host-owned; malformed values
+/// simply fail authentication.
+pub fn secret_matches_hash(secret: &str, expected_hex: &str) -> bool {
+    let candidate = Sha256::digest(secret.as_bytes());
+    let mut expected = [0u8; 32];
+    if hex::decode_to_slice(expected_hex, &mut expected).is_err() {
+        return false;
+    }
+    candidate
+        .iter()
+        .zip(expected)
+        .fold(0u8, |difference, (left, right)| {
+            difference | (*left ^ right)
+        })
+        == 0
+}
+
 /// The bearer token out of an Authorization header, if any.
 pub fn bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
     headers
@@ -70,6 +88,9 @@ mod tests {
         assert!(a.secret.starts_with(&a.prefix));
         assert_eq!(a.hash, hash_secret(&a.secret));
         assert_ne!(a.hash, b.hash);
+        assert!(secret_matches_hash(&a.secret, &a.hash));
+        assert!(!secret_matches_hash(&b.secret, &a.hash));
+        assert!(!secret_matches_hash(&a.secret, "not-a-digest"));
     }
 
     #[test]

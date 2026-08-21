@@ -7,6 +7,8 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
+use brain_protocol::network::special_use_reason;
+
 use crate::{Error, Result};
 
 #[derive(Clone)]
@@ -42,77 +44,55 @@ impl Outbound {
     /// Check one user- or provider-selected target before giving it to the guarded client.
     pub fn check_url(&self, url: &str) -> Result<reqwest::Url> {
         let parsed = reqwest::Url::parse(url)
-            .map_err(|error| Error::Invalid(format!("URL {url:?}: {error}")))?;
+            .map_err(|error| Error::Invalid(format!("invalid outbound URL: {error}")))?;
         if parsed.scheme() != "https" {
             return Err(Error::Invalid(format!(
-                "URL {url:?}: scheme {:?} is not allowed (HTTPS required)",
+                "outbound URL scheme {:?} is not allowed (HTTPS required)",
                 parsed.scheme()
             )));
         }
         if !parsed.username().is_empty() || parsed.password().is_some() {
-            return Err(Error::Invalid(format!(
-                "URL {url:?}: userinfo is not allowed"
-            )));
+            return Err(Error::Invalid(
+                "outbound URL userinfo is not allowed".into(),
+            ));
+        }
+        if parsed.fragment().is_some() {
+            return Err(Error::Invalid(
+                "outbound URL fragments are not allowed".into(),
+            ));
         }
         let host = parsed
             .host_str()
-            .ok_or_else(|| Error::Invalid(format!("URL {url:?}: no host")))?;
+            .ok_or_else(|| Error::Invalid("outbound URL has no host".into()))?;
         // Literal IPs bypass DNS resolution, so they need the same policy here.
         let bare = host.trim_start_matches('[').trim_end_matches(']');
         if let Ok(ip) = bare.parse::<IpAddr>()
-            && let Some(reason) = deny_reason(&ip)
+            && let Some(reason) = special_use_reason(&ip)
         {
             return Err(Error::Invalid(format!(
-                "URL {url:?}: address is {reason} (SSRF guard)"
+                "outbound URL address is {reason} (SSRF guard)"
             )));
         }
         Ok(parsed)
     }
 }
 
-/// Why an address cannot be a public outbound target.
-pub fn deny_reason(ip: &IpAddr) -> Option<&'static str> {
-    match ip {
-        IpAddr::V4(v4) => {
-            let octets = v4.octets();
-            if v4.is_loopback() {
-                Some("loopback")
-            } else if v4.is_private() {
-                Some("private (RFC1918)")
-            } else if v4.is_link_local() {
-                Some("link-local (metadata service range)")
-            } else if octets[0] == 100 && (octets[1] & 0xc0) == 64 {
-                Some("carrier-grade NAT (RFC6598)")
-            } else if v4.is_unspecified() {
-                Some("unspecified")
-            } else if v4.is_broadcast() || v4.is_multicast() {
-                Some("broadcast/multicast")
-            } else if octets[0] == 192 && octets[1] == 0 && octets[2] == 0 {
-                Some("IETF protocol assignments (RFC6890)")
-            } else {
-                None
-            }
-        }
-        IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return deny_reason(&IpAddr::V4(mapped));
-            }
-            let segments = v6.segments();
-            if v6.is_loopback() {
-                Some("loopback")
-            } else if v6.is_unspecified() {
-                Some("unspecified")
-            } else if (segments[0] & 0xffc0) == 0xfe80 {
-                Some("link-local")
-            } else if (segments[0] & 0xfe00) == 0xfc00 {
-                Some("unique-local (fc00::/7)")
-            } else if v6.is_multicast() {
-                Some("multicast")
-            } else {
-                None
-            }
+fn validate_resolved_addresses(
+    host: &str,
+    addresses: &[std::net::SocketAddr],
+) -> std::result::Result<(), String> {
+    if addresses.is_empty() {
+        return Err(format!("DNS {host}: no addresses"));
+    }
+    for address in addresses {
+        if let Some(reason) = special_use_reason(&address.ip()) {
+            return Err(format!(
+                "DNS {host}: resolves to {} which is {reason} (SSRF guard)",
+                address.ip()
+            ));
         }
     }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -129,18 +109,8 @@ impl reqwest::dns::Resolve for GuardingResolver {
                     format!("DNS {host}: {error}").into()
                 })?
                 .collect();
-            if addresses.is_empty() {
-                return Err(format!("DNS {host}: no addresses").into());
-            }
-            for address in &addresses {
-                if let Some(reason) = deny_reason(&address.ip()) {
-                    return Err(format!(
-                        "DNS {host}: resolves to {} which is {reason} (SSRF guard)",
-                        address.ip()
-                    )
-                    .into());
-                }
-            }
+            validate_resolved_addresses(&host, &addresses)
+                .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
             Ok(Box::new(addresses.into_iter()) as reqwest::dns::Addrs)
         })
     }
@@ -156,28 +126,18 @@ mod tests {
 
     #[test]
     fn deny_table_refuses_internal_address_classes() {
-        for address in [
-            "127.0.0.1",
-            "10.0.0.1",
-            "172.31.255.255",
-            "192.168.1.1",
-            "169.254.169.254",
-            "100.64.0.1",
-            "0.0.0.0",
-            "255.255.255.255",
-            "224.0.0.1",
-            "192.0.0.170",
-            "::1",
-            "::",
-            "fe80::1",
-            "fc00::1",
-            "ff02::1",
-            "::ffff:10.0.0.1",
-            "::ffff:169.254.169.254",
-        ] {
+        for &(address, expected) in brain_protocol::network::SPECIAL_USE_FIXTURES {
             assert!(
-                deny_reason(&ip(address)).is_some(),
+                special_use_reason(&ip(address)).is_some(),
                 "{address} must be denied"
+            );
+            assert_eq!(special_use_reason(&ip(address)), Some(expected));
+        }
+        for &address in brain_protocol::network::PUBLIC_UNICAST_FIXTURES {
+            assert_eq!(
+                special_use_reason(&ip(address)),
+                None,
+                "{address} must stay public"
             );
         }
     }
@@ -191,6 +151,7 @@ mod tests {
             "https://127.0.0.1/",
             "https://169.254.169.254/latest/meta-data/",
             "https://[::1]/",
+            "https://example.com/path#fragment",
             "ftp://example.com/",
         ] {
             assert!(outbound.check_url(url).is_err(), "{url} must be refused");
@@ -208,5 +169,15 @@ mod tests {
             .await
             .expect_err("localhost must not connect");
         assert!(format!("{error:?}").contains("SSRF guard"));
+    }
+
+    #[test]
+    fn one_denied_answer_rejects_a_mixed_dns_set() {
+        let public = "93.184.216.34:443".parse().unwrap();
+        let private = "10.0.0.7:443".parse().unwrap();
+        let documentation = "[2001:db8::7]:443".parse().unwrap();
+        assert!(validate_resolved_addresses("mixed.test", &[public, private]).is_err());
+        assert!(validate_resolved_addresses("mixed.test", &[public, documentation]).is_err());
+        assert!(validate_resolved_addresses("public.test", &[public]).is_ok());
     }
 }

@@ -1,27 +1,30 @@
 # `@aexhq/tools`
 
-Explicit tool selections for Aex sessions. Nothing is granted by default.
+Explicit execution-capability selections for Aex sessions. Nothing effectful is granted by default;
+the SDK's reserved structured-output protocol is inert unless one `send({ output })` request arms it.
 
 ```ts
 import { Aex } from "@aexhq/sdk";
-import { bash, edit, read, subagents, write } from "@aexhq/tools";
+import { bash, edit, read, sandbox, storage, subagents, write } from "@aexhq/tools";
 
 const aex = new Aex({ apiKey: process.env.AEX_API_KEY! });
 const session = await aex.sessions.create({
   model: {
     provider: "openai",
-    name: "openai/gpt-5.4",
-    apiKey: process.env.AI_GATEWAY_API_KEY!,
-    baseUrl: "https://ai-gateway.vercel.sh",
+    name: "gpt-5.4",
+    apiKey: process.env.OPENAI_API_KEY!,
   },
-  tools: [bash(), read(), write(), edit(), subagents()],
+  tools: [bash(), read(), write(), edit(), storage(), sandbox(), subagents()],
 });
 ```
 
-`glob()`, `grep()`, `ls()`, `todo()`, `webSearch()`, and `webFetch()` are separate opt-ins.
-Duplicate selections fail before session creation.
+`storage()` gives the model one action-discriminated Tool for explicit save/load/list operations;
+the application alone can delete through `session.storage`. `sandbox()` manages additional isolated
+sandboxes and is separate from the shared default sandbox used by ordinary managed Tools.
 
-`subagents()` enables the `task` tool. Each call runs one child agent inside the parent turn with
-isolated history and the parent's model, workspace, and enabled tools (except `todo`). Calls from
-one model message can run in parallel. Nesting, child count, cancellation, and replay are bounded
-by the session engine.
+`glob()`, `grep()`, `ls()`, `todo()`, `webSearch()`, and `webFetch()` are separate opt-ins. Duplicate
+selections fail before session creation.
+
+`subagents()` operates durable direct child sessions with explicit spawn, message, follow-up, wait,
+list, interrupt and end actions. Children have independent journals/context but share the root's
+default sandbox; use the separate `sandbox()` Tool when isolation is required.

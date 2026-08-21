@@ -1,6 +1,7 @@
 import { Sessions } from "./session.js";
 import type { Fetch } from "./transport.js";
 import { Transport } from "./transport.js";
+import type { WebSocketFactory } from "@aexhq/brain";
 
 export {
   AbortError,
@@ -18,7 +19,6 @@ export {
 export type {
   CreateSessionOptions,
   ListSessionsOptions,
-  McpServerOptions,
   ModelSummary,
   ModelOptions,
   OutputOptions,
@@ -27,21 +27,42 @@ export type {
   SessionList,
   SessionSummary,
 } from "./session.js";
-export type { EventOptions } from "./transport.js";
 export {
-  defineIntrinsicTool,
-  definePreinstalledTool,
-  defineServerTool,
-  defineTool,
-} from "@aexhq/brain";
+  SandboxFiles,
+  SessionChild,
+  SessionChildren,
+  SessionSandbox,
+  SessionStorage,
+} from "./resources.js";
 export type {
-  DefineIntrinsicToolOptions,
-  DefinePreinstalledToolOptions,
-  DefineServerToolOptions,
-  DefineToolOptions,
+  BinarySource,
+  ChildSummary,
+  IdempotentOperationOptions,
+  OperationOptions,
+  PageOptions,
+  SandboxFile,
+  SandboxFileOptions,
+  SandboxFilePage,
+  SandboxFilePageOptions,
+  SandboxStatus,
+  StorageObject,
+  StoragePage,
+  StreamingUploadSource,
+  UploadSource,
+} from "./resources.js";
+export type { EventOptions } from "./transport.js";
+export { tool } from "@aexhq/brain";
+export type {
+  ClientToolOptions,
   Tool,
+  ToolBuilder,
+  ToolContract,
   ToolContext,
   ToolHandler,
+  ServerToolOptions,
+  NetworkDestination,
+  NetworkPolicy,
+  WebSocketFactory,
 } from "@aexhq/brain";
 
 const DEFAULT_API_URL = "https://api.aex.dev";
@@ -50,6 +71,9 @@ export interface AexOptions {
   apiKey: string;
   baseUrl?: string;
   fetch?: Fetch;
+  webSocketFactory?: WebSocketFactory;
+  /** Stable tenant-scoped identity for this exact customer-application runner. */
+  client?: { id: string };
 }
 
 export class Aex {
@@ -61,7 +85,24 @@ export class Aex {
     if (fetchImplementation === undefined) {
       throw new TypeError("This runtime does not provide fetch; pass a fetch implementation to Aex");
     }
+    if (
+      options.client !== undefined &&
+      !/^[A-Za-z0-9_.:-]{1,128}$/u.test(options.client.id)
+    ) {
+      throw new TypeError(
+        "Aex client.id must contain 1 through 128 letters, digits, dots, colons, underscores, or hyphens",
+      );
+    }
     const transport = new Transport(options.apiKey, options.baseUrl ?? DEFAULT_API_URL, fetchImplementation);
-    this.sessions = new Sessions(transport);
+    const webSocketFactory = options.webSocketFactory ??
+      (globalThis.WebSocket === undefined
+        ? undefined
+        : (request) => new globalThis.WebSocket(request.url, request.protocol));
+    this.sessions = new Sessions(transport, webSocketFactory, options.client?.id);
+  }
+
+  /** Stop customer-app execution permanently; this Aex instance cannot create another session. */
+  close(): void {
+    this.sessions.close();
   }
 }

@@ -1,4 +1,5 @@
-import { defineServerTool, type Tool } from "@aexhq/brain";
+import type { Tool } from "@aexhq/brain";
+import { officialTool } from "@aexhq/brain/internal";
 import {
   bash as portableBash,
   edit as portableEdit,
@@ -6,6 +7,8 @@ import {
   grep as portableGrep,
   ls as portableLs,
   read as portableRead,
+  sandbox as portableSandbox,
+  storage as portableStorage,
   subagents as portableSubagents,
   todo as portableTodo,
   write as portableWrite,
@@ -22,8 +25,10 @@ export const glob = selected(portableGlob);
 export const grep = selected(portableGrep);
 export const ls = selected(portableLs);
 export const todo = selected(portableTodo);
+export const storage = selected(portableStorage);
+export const sandbox = selected(portableSandbox);
 
-const webSearchTool = defineServerTool({
+const webSearchTool = officialTool({
   name: "web_search",
   description: "Search the public web using Aex's managed search service.",
   input: z.object({
@@ -41,12 +46,10 @@ const webSearchTool = defineServerTool({
       date: z.string().optional(),
     })),
   }),
-  capability: "aex.web.search.v1",
-  scope: "all",
-  maxInputBytes: 8 * 1024,
+  capability: "aex.web.search",
 });
 
-const webFetchTool = defineServerTool({
+const webFetchTool = officialTool({
   name: "web_fetch",
   description: "Fetch a public text, HTML, or JSON URL through Aex's guarded network service.",
   input: z.object({
@@ -60,16 +63,13 @@ const webFetchTool = defineServerTool({
     text: z.string(),
     truncated: z.boolean(),
   }),
-  capability: "aex.web.fetch.v1",
-  scope: "all",
-  maxInputBytes: 8 * 1024,
+  capability: "aex.web.fetch",
 });
 
 export const webSearch = selected(webSearchTool);
 export const webFetch = selected(webFetchTool);
 
 /**
- * Let the agent delegate self-contained work to bounded, in-process child agents.
- * The stable session wire calls this primitive `task`; applications select it by intent.
+ * Let the agent create and explicitly interact with durable direct child sessions.
  */
 export const subagents = selected(portableSubagents);

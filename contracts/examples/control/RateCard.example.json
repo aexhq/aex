@@ -1,9 +1,8 @@
 {
   "object": "rate_card",
-  "vcpu_hour_microusd": 190000,
-  "gb_hour_microusd": 25000,
-  "suspended_gb_month_microusd": 100000,
-  "workspace_gb_month_microusd": 30000,
-  "web_search_query_microusd": 3000,
+  "vcpu_hour_microusd": "190000",
+  "gb_hour_microusd": "25000",
+  "session_storage_gb_month_microusd": "30000",
+  "web_search_query_microusd": "3000",
   "month_hours": 730
 }

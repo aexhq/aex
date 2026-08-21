@@ -1,22 +1,34 @@
 //! The Aex control-plane server.
 //!
-//! Env: AEX_BRAIN_TOKEN required (the brain's AEX_API_TOKEN); AEX_BRAIN_URL (default
+//! Env: AEX_BRAIN_TOKEN required; AEX_BRAIN_URL (default
 //! http://127.0.0.1:8700); AEX_CONTROL_LISTEN (default 127.0.0.1:8600);
 //! AEX_CONTROL_INTERNAL_LISTEN (loopback only, default 127.0.0.1:8601); AEX_CONTROL_DB
 //! (default ./aex-control-data/control.db); AEX_PAYMENTS fake|stripe (default fake — loud
 //! banner; stripe needs STRIPE_SECRET_KEY); AEX_TOPUP_SUCCESS_URL / AEX_TOPUP_CANCEL_URL;
-//! AEX_RATE_* card overrides; AEX_LIMIT_CONCURRENT_SESSIONS / AEX_LIMIT_SESSION_CREATES_PER_HOUR;
-//! AEX_OPERATOR_TOKEN (enables waitlist administration); AEX_SWEEP_SECONDS (default 30).
+//! AEX_RATE_* card overrides; AEX_LIMIT_CONCURRENT_SESSIONS (root sessions) /
+//! AEX_LIMIT_SESSION_CREATES_PER_HOUR (root creates);
+//! AEX_OPERATOR_TOKEN (enables waitlist administration); AEX_SWEEP_SECONDS (default 30);
+//! AEX_DISCOVERY_OVERLAP_SECONDS (default max(2*sweep, 120));
+//! AEX_DISCOVERY_SESSION_LIMIT (one-time bootstrap safety bound, default 100,000).
+//! AEX_STORAGE_MAX_OBJECT_BYTES (default 512 MiB) and AEX_STORAGE_MAX_SESSION_BYTES
+//! (default 10 GiB) bound durable session uploads.
+//! AEX_MAX_CONCURRENT_CREATE_BODIES (default 4) bounds simultaneous 24 MiB request buffers.
+//! AEX_MAX_CONCURRENT_MESSAGE_BODIES (default 256) and
+//! AEX_MAX_CONCURRENT_INLINE_SESSION_BODIES (default 64) separately bound authenticated
+//! 192 KiB prompt/message and 2 MiB inline-session request buffers.
 //! AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN authenticates the private Brain route; SERPER_API_KEY enables
 //! the managed web_search Tool without entering Brain or the Hand.
+//! AEX_CUSTOMER_HAND_GATEWAY_TOKEN, AEX_CUSTOMER_HAND_TRUSTED_PROXY_CIDRS and
+//! AEX_MANAGED_SANDBOX_NAT_CIDRS jointly enable the API Gateway WebSocket adapter.
 
 use std::sync::Arc;
 
+use aex_control::admission::Admission;
 use aex_control::api::{AppState, internal_router, router};
 use aex_control::brain::BrainClient;
 use aex_control::payments::{FakePayments, Payments, StripePayments, StripeWebhook};
 use aex_control::store::Db;
-use aex_control::sweep::run_sweeper;
+use aex_control::sweep::{run_deletion_worker, run_sweeper};
 use aex_control::web::WebRuntime;
 use aex_control::{Config, PaymentsMode};
 
@@ -65,12 +77,14 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         }
     };
     let db = Db::open(&cfg.db_path)?;
-    let brain = BrainClient::new(cfg.brain_url.clone(), cfg.brain_token.clone());
+    let brain = BrainClient::new(cfg.brain_url.clone(), cfg.brain_token.clone())
+        .with_discovery_policy(cfg.discovery_overlap_ms, cfg.discovery_session_limit);
+    let admission = Admission::new(cfg.admission)?;
     tracing::info!(
         "brain: {} · db: {} · card: 1gb {}/h running",
         cfg.brain_url,
         cfg.db_path.display(),
-        aex_control::usd_display(cfg.card.hourly_microusd("1gb")),
+        aex_control::usd_display(cfg.card.hourly_microusd("1gb")?),
     );
 
     tokio::spawn(run_sweeper(
@@ -78,6 +92,12 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         brain.clone(),
         cfg.card.clone(),
         cfg.sweep_seconds,
+        admission.clone(),
+    ));
+    tokio::spawn(run_deletion_worker(
+        db.clone(),
+        brain.clone(),
+        cfg.card.clone(),
     ));
 
     let state = AppState {
@@ -88,8 +108,21 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         card: cfg.card.clone(),
         operator_token_hash: cfg.operator_token_hash,
         external_executor_token_hash: cfg.external_executor_token_hash,
+        customer_hand_gateway: cfg.customer_hand_gateway,
         web: WebRuntime::hosted(cfg.serper_api_key),
+        admission,
+        create_body_slots: Arc::new(tokio::sync::Semaphore::new(
+            cfg.max_concurrent_create_bodies,
+        )),
+        message_body_slots: Arc::new(tokio::sync::Semaphore::new(
+            cfg.max_concurrent_message_bodies,
+        )),
+        inline_session_body_slots: Arc::new(tokio::sync::Semaphore::new(
+            cfg.max_concurrent_inline_session_bodies,
+        )),
         default_limits: (cfg.max_concurrent_sessions, cfg.session_creates_per_hour),
+        max_retained_root_sessions: cfg.max_retained_root_sessions,
+        storage_limits: cfg.storage_limits,
     };
     let listener = tokio::net::TcpListener::bind(cfg.listen).await?;
     let internal_listener = tokio::net::TcpListener::bind(cfg.internal_listen).await?;
@@ -102,7 +135,11 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         let _ = shutdown.send(true);
     });
     tokio::try_join!(
-        axum::serve(listener, router(state.clone())).with_graceful_shutdown(async move {
+        axum::serve(
+            listener,
+            router(state.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
             if !*public_shutdown.borrow() {
                 let _ = public_shutdown.changed().await;
             }

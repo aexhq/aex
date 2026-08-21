@@ -274,7 +274,7 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        /** The bill — every session's rated line on the two-rate card, storage meters included */
+        /** The bill — every session's rated line on the public rate card, storage meters included */
         get: operations["getUsage"];
         put?: never;
         post?: never;
@@ -409,9 +409,11 @@ export type components = {
             email: string;
             invite_token: components["schemas"]["InvitationToken"];
         };
-        /** @description Account-level limits for concurrent sessions and session creation rate. */
+        /** @description Account-level limits for resource-bearing root sessions and root-session creation rate. Open, asynchronously ending, failed, and deleting roots consume the concurrent limit until a strong ended projection or physical deletion proves resource release; durable child sessions are bounded by the root's sealed child policy. */
         AccountLimits: {
+            /** @description Maximum resource-bearing root sessions in open, ending, failed, or deleting lifecycle. Child sessions do not consume or bypass this account limit. */
             max_concurrent_sessions: number;
+            /** @description Maximum root-session creates per rolling hour. */
             session_creates_per_hour: number;
         };
         Account: {
@@ -456,8 +458,8 @@ export type components = {
             key: components["schemas"]["ApiKey"];
             secret: components["schemas"]["ApiKeySecret"];
         };
-        /** @description Integer micro-USD; 1 USD = 1,000,000. Never a float. */
-        MicroUsd: number;
+        /** @description Canonical signed decimal-string integer micro-USD; 1 USD = 1,000,000. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point. */
+        MicroUsd: string;
         /** @description Prepaid balance = credits minus rated usage, metered up to `metered_to`. May be negative: usage is rated after the fact; new sessions and messages are refused while it is not positive. */
         Balance: {
             /** @constant */
@@ -490,23 +492,28 @@ export type components = {
             /** @description Whole cents. Alpha top-ups are $10.00 to $1,000.00. */
             amount_cents: number;
         };
-        /** @description Current stored bytes, as last reported by the brain (session/v1 StorageInfo). */
+        /** @description Canonical unsigned decimal-string integer. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point. */
+        UnsignedDecimalInteger: string;
+        /** @description Current published bytes and outstanding upload-reserved capacity, as last reported by Brain (session/v1 StorageInfo). They remain separate so quota and billing are observable even before an upload is published. */
         StorageMeters: {
-            workspace_bytes: number;
-            suspended_bytes: number;
-            artifact_bytes: number;
+            session_storage_bytes: number;
+            upload_reserved_bytes: number;
         };
-        /** @description One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. Successful web_search tool results are counted from the same event log. */
+        /** @description One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session event log. Session-storage integrals are reconstructed from durable storage.usage gauge transitions with exact internal byte-millisecond carry; the public byte-millisecond projection adds the current derived open interval through metered_to so it reproduces the charge. Successful web_search tool results are counted from the same journal. */
         SessionUsage: {
             session_id: string;
-            /** @description HandShape from session/v1 (1gb | 2gb | 4gb | 8gb). */
-            shape: string;
-            /** @description SessionState from session/v1 (active | idle | deleted | failed). */
+            /**
+             * @description The hosted alpha's only physical shape: 0.5 vCPU and 1 GiB.
+             * @constant
+             */
+            shape: "1gb";
+            /** @description Lifecycle SessionState from session/v1 (open | ending | ended | deleting | deleted | failed); current-turn activity is a separate session projection. */
             state: string;
-            running_ms: number;
-            suspended_byte_seconds: number;
-            workspace_byte_seconds: number;
-            artifact_byte_seconds: number;
+            /** @description Cumulative running milliseconds as an exact canonical unsigned decimal string. */
+            running_ms: components["schemas"]["UnsignedDecimalInteger"];
+            /** @description Published session-storage plus outstanding upload-reservation byte-milliseconds through metered_to as an exact canonical unsigned decimal string. It is the durable closed integral plus the derived open interval used for this response's charge; a delayed durable transition may replace that estimate upward or downward. Storage micro-USD is floor(value * session_storage_gb_month_microusd / (1000000000 * month_hours * 3600000)). */
+            session_storage_byte_milliseconds: components["schemas"]["UnsignedDecimalInteger"];
+            /** @description Successful search results counted from the bounded per-session journal; the hosted 128 MiB journal ceiling makes this counter JavaScript-safe. */
             web_search_queries: number;
             compute_microusd: components["schemas"]["MicroUsd"];
             storage_microusd: components["schemas"]["MicroUsd"];
@@ -515,14 +522,13 @@ export type components = {
             storage: components["schemas"]["StorageMeters"];
             metered_to: components["schemas"]["Timestamp"];
         };
-        /** @description The public usage rate card. Compute is billed per second while running on the shape's baseline (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes held for a suspended hand; workspace storage covers synced workspace objects and persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours. */
+        /** @description The public usage rate card. Hosted alpha compute is billed per second on its only physical shape: 0.5 vCPU plus 1 GiB, or $0.12/hour at these component rates. Transient provider burst or peak capacity is not separately metered and is not a promised entitlement. Idle and provider snapshot-storage costs are absorbed in alpha. Session storage covers explicit durable objects and bytes reserved by an outstanding direct upload. Storage GB is decimal (1e9 bytes); a month is `month_hours` hours. */
         RateCard: {
             /** @constant */
             object: "rate_card";
             vcpu_hour_microusd: components["schemas"]["MicroUsd"];
             gb_hour_microusd: components["schemas"]["MicroUsd"];
-            suspended_gb_month_microusd: components["schemas"]["MicroUsd"];
-            workspace_gb_month_microusd: components["schemas"]["MicroUsd"];
+            session_storage_gb_month_microusd: components["schemas"]["MicroUsd"];
             web_search_query_microusd: components["schemas"]["MicroUsd"];
             month_hours: number;
         };
