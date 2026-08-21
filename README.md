@@ -7,7 +7,7 @@
   Aex
 </h1>
 
-<p align="center"><strong>The backend for AI workloads.</strong></p>
+<p align="center"><strong>Your backend for AI workloads.</strong></p>
 <p align="center">
   High-performance, reliable, and simple infrastructure for running AI workloads.<br />
   Start a session with your models and tools, give it work, and get back structured data.
