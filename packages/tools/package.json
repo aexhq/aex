@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/tools",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Official tool selections for Aex sessions",
   "license": "Apache-2.0",
   "homepage": "https://aex.dev",
@@ -15,7 +15,8 @@
   },
   "publishConfig": {
     "access": "public",
-    "provenance": true
+    "provenance": true,
+    "tag": "next"
   },
   "exports": {
     ".": {
@@ -33,15 +34,15 @@
     "test": "tsc -p tsconfig.json && node --test"
   },
   "dependencies": {
-    "@aexhq/brain": "0.1.0",
-    "@aexhq/brain-tools": "0.1.0",
+    "@aexhq/brain": "0.2.0",
+    "@aexhq/brain-tools": "0.2.0",
     "zod": "4.4.3"
   },
   "peerDependencies": {
-    "@aexhq/sdk": ">=0.56.0 <1"
+    "@aexhq/sdk": ">=0.57.0 <1"
   },
   "devDependencies": {
-    "@aexhq/sdk": "0.56.0",
+    "@aexhq/sdk": "0.57.0",
     "typescript": "^5.9.2"
   }
 }

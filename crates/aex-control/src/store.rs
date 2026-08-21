@@ -8,7 +8,8 @@
 //! for that session — never incremented — so a replayed or racing sweep cannot double-bill.
 //! Balance = SUM(ledger). Meter-state updates are fenced monotonic (`folded_seq`,
 //! `metered_to_ms` never move backwards), so concurrent sweeps are safe: the loser's write is
-//! simply skipped.
+//! simply skipped. `storage_transition_ms` is deliberately separate: a newly replayed durable
+//! transition may predate an earlier wall-clock estimate and must still correct that estimate.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -17,6 +18,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::rating::FoldState;
 use crate::{Error, Result};
+
+const KEY_LAST_USED_WRITE_INTERVAL_MS: i64 = 60_000;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS waitlist (
@@ -93,25 +96,72 @@ CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL REFERENCES accounts(id),
   key_id TEXT NOT NULL,
+  parent_id TEXT,
+  root_id TEXT NOT NULL,
+  depth INTEGER NOT NULL CHECK (depth BETWEEN 0 AND 8),
   shape TEXT NOT NULL,
   created_ms INTEGER NOT NULL,
   final INTEGER NOT NULL DEFAULT 0,
   folded_seq INTEGER NOT NULL DEFAULT 0,
   running_ms INTEGER NOT NULL DEFAULT 0,
   turn_open_ms INTEGER,
-  susp_byte_s INTEGER NOT NULL DEFAULT 0,
-  ws_byte_s INTEGER NOT NULL DEFAULT 0,
-  art_byte_s INTEGER NOT NULL DEFAULT 0,
+  session_storage_byte_s INTEGER NOT NULL DEFAULT 0,
+  session_storage_byte_ms_remainder INTEGER NOT NULL DEFAULT 0,
   web_search_queries INTEGER NOT NULL DEFAULT 0,
+  storage_transition_ms INTEGER NOT NULL DEFAULT 0,
   metered_to_ms INTEGER NOT NULL DEFAULT 0,
-  workspace_bytes INTEGER NOT NULL DEFAULT 0,
-  suspended_bytes INTEGER NOT NULL DEFAULT 0,
-  artifact_bytes INTEGER NOT NULL DEFAULT 0,
-  hand_state TEXT NOT NULL DEFAULT 'preparing',
-  session_state TEXT NOT NULL DEFAULT 'active',
-  output_capable INTEGER NOT NULL DEFAULT 0
+  session_storage_bytes INTEGER NOT NULL DEFAULT 0,
+  upload_reserved_bytes INTEGER NOT NULL DEFAULT 0,
+  session_state TEXT NOT NULL DEFAULT 'open'
 );
 CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);
+CREATE INDEX IF NOT EXISTS sessions_parent ON sessions(account_id, parent_id);
+CREATE INDEX IF NOT EXISTS sessions_open_turn ON sessions(account_id, final, turn_open_ms);
+CREATE INDEX IF NOT EXISTS sessions_meter_due ON sessions(account_id, final, metered_to_ms);
+CREATE TABLE IF NOT EXISTS session_create_requests (
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  request_key_hash TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  created_ms INTEGER NOT NULL,
+  PRIMARY KEY(account_id, request_key_hash)
+);
+CREATE TABLE IF NOT EXISTS session_create_intents (
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  request_key_hash TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('dispatching', 'uncertain')),
+  covered_session_id TEXT,
+  created_ms INTEGER NOT NULL,
+  updated_ms INTEGER NOT NULL,
+  PRIMARY KEY(account_id, request_key_hash)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS session_create_intents_covered
+  ON session_create_intents(covered_session_id) WHERE covered_session_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS session_discovery (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+  watermark_ms INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS session_deletions (
+  session_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  anchor_id TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('ending', 'settling', 'purging', 'awaiting_purge', 'succeeded')),
+  accepted_ms INTEGER NOT NULL,
+  updated_ms INTEGER NOT NULL,
+  completed_ms INTEGER,
+  last_error TEXT,
+  claimed_ms INTEGER,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_ms INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS session_deletions_account ON session_deletions(account_id, phase, accepted_ms);
+CREATE TABLE IF NOT EXISTS session_deletion_dependencies (
+  session_id TEXT NOT NULL REFERENCES session_deletions(session_id),
+  dependency_id TEXT NOT NULL REFERENCES session_deletions(session_id),
+  PRIMARY KEY(session_id, dependency_id),
+  CHECK(session_id != dependency_id)
+);
 CREATE TABLE IF NOT EXISTS output_requests (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id),
@@ -138,6 +188,14 @@ CREATE TABLE IF NOT EXISTS external_tool_calls (
   created_ms INTEGER NOT NULL,
   PRIMARY KEY(session_id, call_id)
 );
+CREATE TABLE IF NOT EXISTS hosted_tool_calls (
+  session_id TEXT NOT NULL,
+  call_id TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  response_json TEXT NOT NULL,
+  created_ms INTEGER NOT NULL,
+  PRIMARY KEY(session_id, call_id)
+);
 ";
 
 #[derive(Debug, Clone)]
@@ -156,6 +214,22 @@ pub struct AccountRow {
     pub created_ms: i64,
     pub max_concurrent_sessions: i64,
     pub session_creates_per_hour: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeletionRow {
+    pub session_id: String,
+    pub account_id: String,
+    /// The executable deletion job. An alias has a different anchor and never calls Brain itself.
+    pub anchor_id: String,
+    pub phase: String,
+    pub accepted_ms: i64,
+    pub updated_ms: i64,
+    pub completed_ms: Option<i64>,
+    pub last_error: Option<String>,
+    pub claimed_ms: Option<i64>,
+    pub attempts: i64,
+    pub next_attempt_ms: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -235,13 +309,33 @@ pub struct SessionRow {
     pub id: String,
     pub account_id: String,
     pub key_id: String,
+    pub parent_id: Option<String>,
+    pub root_id: String,
+    pub depth: i64,
     pub shape: String,
     pub created_ms: i64,
     pub is_final: bool,
-    /// True only for sessions created with the stable host-executed output tool in their sealed
-    /// Brain prefix. Existing pre-feature sessions remain false after migration.
-    pub output_capable: bool,
     pub fold: FoldState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionCreateRow {
+    pub request_hash: String,
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionCreateIntentRow {
+    pub request_hash: String,
+    pub covered: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionCreateIntent {
+    Created,
+    Existing,
+    Conflict,
+    RetainedRootLimit,
 }
 
 #[derive(Debug, Clone)]
@@ -342,13 +436,115 @@ impl Db {
             )
             .map_err(internal)?;
         }
-        if !session_columns.iter().any(|name| name == "output_capable") {
+        if !session_columns.iter().any(|name| name == "parent_id") {
+            conn.execute("ALTER TABLE sessions ADD COLUMN parent_id TEXT", [])
+                .map_err(internal)?;
+        }
+        if !session_columns.iter().any(|name| name == "root_id") {
             conn.execute(
-                "ALTER TABLE sessions ADD COLUMN output_capable INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE sessions ADD COLUMN root_id TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(internal)?;
+            conn.execute("UPDATE sessions SET root_id = id WHERE root_id = ''", [])
+                .map_err(internal)?;
+        }
+        if !session_columns.iter().any(|name| name == "depth") {
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN depth INTEGER NOT NULL DEFAULT 0",
                 [],
             )
             .map_err(internal)?;
         }
+        if !session_columns
+            .iter()
+            .any(|name| name == "upload_reserved_bytes")
+        {
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN upload_reserved_bytes INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(internal)?;
+        }
+        if !session_columns
+            .iter()
+            .any(|name| name == "session_storage_byte_ms_remainder")
+        {
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN session_storage_byte_ms_remainder \
+                 INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(internal)?;
+        }
+        if !session_columns
+            .iter()
+            .any(|name| name == "storage_transition_ms")
+        {
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN storage_transition_ms INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(internal)?;
+        }
+        let deletion_columns = {
+            let mut statement = conn
+                .prepare("PRAGMA table_info(session_deletions)")
+                .map_err(internal)?;
+            statement
+                .query_map([], |record| record.get::<_, String>(1))
+                .map_err(internal)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(internal)?
+        };
+        if !deletion_columns.iter().any(|name| name == "anchor_id") {
+            conn.execute(
+                "ALTER TABLE session_deletions ADD COLUMN anchor_id TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(internal)?;
+            conn.execute(
+                "UPDATE session_deletions SET anchor_id = session_id WHERE anchor_id = ''",
+                [],
+            )
+            .map_err(internal)?;
+        }
+        if !deletion_columns.iter().any(|name| name == "claimed_ms") {
+            conn.execute(
+                "ALTER TABLE session_deletions ADD COLUMN claimed_ms INTEGER",
+                [],
+            )
+            .map_err(internal)?;
+        }
+        if !deletion_columns.iter().any(|name| name == "attempts") {
+            conn.execute(
+                "ALTER TABLE session_deletions ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(internal)?;
+        }
+        if !deletion_columns
+            .iter()
+            .any(|name| name == "next_attempt_ms")
+        {
+            conn.execute(
+                "ALTER TABLE session_deletions ADD COLUMN next_attempt_ms INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(internal)?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS session_deletions_anchor
+             ON session_deletions(anchor_id, phase)",
+            [],
+        )
+        .map_err(internal)?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS session_deletions_due
+             ON session_deletions(phase, next_attempt_ms, accepted_ms)",
+            [],
+        )
+        .map_err(internal)?;
         Ok(Db {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -537,7 +733,9 @@ impl Db {
         .await
     }
 
-    /// Resolve an unrevoked API key secret to (key, account); stamps `last_used_ms`.
+    /// Resolve an unrevoked API key secret to (key, account). The audit timestamp is deliberately
+    /// write-coalesced: hosted SQLite uses a rollback journal on EFS, so rewriting it for every
+    /// proxied session request would turn authentication into a forced-write hot path.
     pub async fn key_auth(
         &self,
         secret_hash: String,
@@ -573,7 +771,11 @@ impl Db {
                     },
                 )
                 .optional()?;
-            if found.is_some() {
+            if found.as_ref().is_some_and(|(key, _)| {
+                key.last_used_ms.is_none_or(|last_used_ms| {
+                    now_ms.saturating_sub(last_used_ms) >= KEY_LAST_USED_WRITE_INTERVAL_MS
+                })
+            }) {
                 c.execute(
                     "UPDATE api_keys SET last_used_ms = ?2 WHERE secret_hash = ?1",
                     params![secret_hash, now_ms],
@@ -1088,33 +1290,379 @@ impl Db {
     pub async fn insert_session(&self, row: SessionRow) -> Result<()> {
         self.call(move |c| {
             let tx = c.transaction()?;
-            let inserted = tx.execute(
-                "INSERT OR IGNORE INTO sessions
-                 (id, account_id, key_id, shape, created_ms, metered_to_ms, output_capable)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    &row.id,
-                    &row.account_id,
-                    &row.key_id,
-                    &row.shape,
-                    row.created_ms,
-                    row.fold.metered_to_ms,
-                    row.output_capable as i64
-                ],
+            insert_session_record(&tx, &row)?;
+            tx.commit()
+        })
+        .await
+    }
+
+    pub async fn session_create_request(
+        &self,
+        account_id: String,
+        request_key_hash: String,
+    ) -> Result<Option<SessionCreateRow>> {
+        self.call(move |connection| {
+            connection
+                .query_row(
+                    "SELECT request_hash, session_id FROM session_create_requests
+                     WHERE account_id = ?1 AND request_key_hash = ?2",
+                    params![account_id, request_key_hash],
+                    |record| {
+                        Ok(SessionCreateRow {
+                            request_hash: record.get(0)?,
+                            session_id: record.get(1)?,
+                        })
+                    },
+                )
+                .optional()
+        })
+        .await
+    }
+
+    pub async fn session_create_intent(
+        &self,
+        account_id: String,
+        request_key_hash: String,
+    ) -> Result<Option<SessionCreateIntentRow>> {
+        self.call(move |connection| {
+            connection
+                .query_row(
+                    "SELECT request_hash, covered_session_id IS NOT NULL
+                     FROM session_create_intents
+                     WHERE account_id = ?1 AND request_key_hash = ?2",
+                    params![account_id, request_key_hash],
+                    |record| {
+                        Ok(SessionCreateIntentRow {
+                            request_hash: record.get(0)?,
+                            covered: record.get(1)?,
+                        })
+                    },
+                )
+                .optional()
+        })
+        .await
+    }
+
+    /// Durably reserve one hosted create identity before it can reach Brain. A process crash or
+    /// ambiguous response leaves this row as a conservative root slot; only the identical body
+    /// may resume it. There is deliberately no time-only expiry because the tenant GSI is
+    /// eventually consistent and cannot prove that an old request did not commit.
+    pub async fn ensure_session_create_intent(
+        &self,
+        account_id: String,
+        request_key_hash: String,
+        request_hash: String,
+        now_ms: i64,
+        max_retained_roots: i64,
+    ) -> Result<SessionCreateIntent> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            let existing = transaction
+                .query_row(
+                    "SELECT request_hash FROM session_create_intents
+                     WHERE account_id = ?1 AND request_key_hash = ?2",
+                    params![&account_id, &request_key_hash],
+                    |record| record.get::<_, String>(0),
+                )
+                .optional()?;
+            let outcome = match existing {
+                Some(existing_hash) if existing_hash == request_hash => {
+                    SessionCreateIntent::Existing
+                }
+                Some(_) => SessionCreateIntent::Conflict,
+                None => {
+                    // This count and the new intent are one SQLite transaction. A retained root
+                    // consumes its slot through open/ending/ended/failed/deleting and is released
+                    // only when physical deletion marks the local tombstone final. An uncovered
+                    // ambiguous intent is one additional possible root; a covered intent is
+                    // already represented by its discovered root row.
+                    let retained: i64 = transaction.query_row(
+                        "SELECT
+                           (SELECT COUNT(*) FROM sessions
+                            WHERE account_id = ?1 AND parent_id IS NULL AND final = 0) +
+                           (SELECT COUNT(*) FROM session_create_intents
+                            WHERE account_id = ?1 AND covered_session_id IS NULL)",
+                        params![&account_id],
+                        |record| record.get(0),
+                    )?;
+                    if retained >= max_retained_roots.max(1) {
+                        transaction.commit()?;
+                        return Ok(SessionCreateIntent::RetainedRootLimit);
+                    }
+                    transaction.execute(
+                        "INSERT INTO session_create_intents
+                           (account_id, request_key_hash, request_hash, state,
+                            covered_session_id, created_ms, updated_ms)
+                         VALUES (?1, ?2, ?3, 'dispatching', NULL, ?4, ?4)",
+                        params![account_id, request_key_hash, request_hash, now_ms],
+                    )?;
+                    SessionCreateIntent::Created
+                }
+            };
+            transaction.commit()?;
+            Ok(outcome)
+        })
+        .await
+    }
+
+    /// Exact singleton-control accounting for the hosted retained-root quota. This is diagnostic;
+    /// create admission performs the same expression inside its insert transaction.
+    pub async fn retained_root_slots(&self, account_id: String) -> Result<i64> {
+        self.call(move |connection| {
+            connection.query_row(
+                "SELECT
+                   (SELECT COUNT(*) FROM sessions
+                    WHERE account_id = ?1 AND parent_id IS NULL AND final = 0) +
+                   (SELECT COUNT(*) FROM session_create_intents
+                    WHERE account_id = ?1 AND covered_session_id IS NULL)",
+                params![account_id],
+                |record| record.get(0),
+            )
+        })
+        .await
+    }
+
+    /// A transport, redirect, server response, or process restart cannot prove non-commit. Mark
+    /// the durable slot explicitly for operators/tests; both states count identically for safety.
+    pub async fn mark_session_create_uncertain(
+        &self,
+        account_id: String,
+        request_key_hash: String,
+        request_hash: String,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.call(move |connection| {
+            connection.execute(
+                "UPDATE session_create_intents SET state = 'uncertain', updated_ms = ?4
+                 WHERE account_id = ?1 AND request_key_hash = ?2 AND request_hash = ?3",
+                params![account_id, request_key_hash, request_hash, now_ms],
             )?;
-            if inserted == 0 {
-                let owner: String = tx.query_row(
-                    "SELECT account_id FROM sessions WHERE id = ?1",
-                    params![&row.id],
-                    |record| record.get(0),
+            Ok(())
+        })
+        .await
+    }
+
+    /// Release only a definitive pre-commit rejection of the exact request. Ambiguous slots must
+    /// never use this path.
+    pub async fn abandon_session_create_intent(
+        &self,
+        account_id: String,
+        request_key_hash: String,
+        request_hash: String,
+    ) -> Result<()> {
+        self.call(move |connection| {
+            connection.execute(
+                "DELETE FROM session_create_intents
+                 WHERE account_id = ?1 AND request_key_hash = ?2 AND request_hash = ?3",
+                params![account_id, request_key_hash, request_hash],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Durable intents not already conservatively paired with an observed root are additional
+    /// possible root sessions. Pairing is one-to-one and only reduces double-counting; every
+    /// observed root remains counted independently in `sessions`.
+    pub async fn uncovered_session_create_intents(&self, account_id: String) -> Result<i64> {
+        self.call(move |connection| {
+            connection.query_row(
+                "SELECT COUNT(*) FROM session_create_intents
+                 WHERE account_id = ?1 AND covered_session_id IS NULL",
+                params![account_id],
+                |record| record.get(0),
+            )
+        })
+        .await
+    }
+
+    /// Atomically install the owned projection and its durable idempotency mapping. The boolean
+    /// is true exactly once for a newly inserted session, which is the only response that may
+    /// convert a pending create reservation into a live-session increment.
+    pub async fn record_created_session(
+        &self,
+        row: SessionRow,
+        create: Option<(String, String, i64)>,
+    ) -> Result<bool> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            let inserted = insert_session_record(&transaction, &row)?;
+            if let Some((request_key_hash, request_hash, created_ms)) = create {
+                let existing = transaction
+                    .query_row(
+                        "SELECT request_hash, session_id FROM session_create_requests
+                         WHERE account_id = ?1 AND request_key_hash = ?2",
+                        params![&row.account_id, &request_key_hash],
+                        |record| Ok((record.get::<_, String>(0)?, record.get::<_, String>(1)?)),
+                    )
+                    .optional()?;
+                match existing {
+                    Some((existing_hash, existing_session))
+                        if existing_hash == request_hash && existing_session == row.id => {}
+                    Some(_) => {
+                        return Err(rusqlite::Error::InvalidParameterName(
+                            "create idempotency identity was reused".into(),
+                        ));
+                    }
+                    None => {
+                        transaction.execute(
+                            "INSERT INTO session_create_requests
+                               (account_id, request_key_hash, request_hash, session_id, created_ms)
+                             VALUES (?1, ?2, ?3, ?4, ?5)",
+                            params![
+                                &row.account_id,
+                                request_key_hash,
+                                request_hash,
+                                &row.id,
+                                created_ms
+                            ],
+                        )?;
+                    }
+                }
+                transaction.execute(
+                    "DELETE FROM session_create_intents
+                     WHERE account_id = ?1 AND request_key_hash = ?2 AND request_hash = ?3",
+                    params![&row.account_id, request_key_hash, request_hash],
                 )?;
-                if owner != row.account_id {
-                    return Err(rusqlite::Error::InvalidParameterName(
-                        "session id belongs to another account".into(),
-                    ));
+            }
+            transaction.commit()?;
+            Ok(inserted)
+        })
+        .await
+    }
+
+    /// Insert Brain-discovered sessions as one transaction. Existing meter folds are never
+    /// replaced; only authoritative tree identity and immutable compute shape are refreshed. A
+    /// cross-tenant ID collision aborts the whole batch.
+    pub async fn upsert_discovered_sessions(&self, rows: Vec<SessionRow>) -> Result<()> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            for row in rows {
+                if let Some(owner) = transaction
+                    .query_row(
+                        "SELECT account_id FROM sessions WHERE id = ?1",
+                        params![&row.id],
+                        |record| record.get::<_, String>(0),
+                    )
+                    .optional()?
+                {
+                    if owner != row.account_id {
+                        return Err(rusqlite::Error::InvalidParameterName(
+                            "discovered session id belongs to another account".into(),
+                        ));
+                    }
+                    transaction.execute(
+                        "UPDATE sessions SET parent_id = ?2, root_id = ?3, depth = ?4, shape = ?5
+                         WHERE id = ?1",
+                        params![&row.id, &row.parent_id, &row.root_id, row.depth, &row.shape],
+                    )?;
+                    continue;
+                }
+                transaction.execute(
+                    "INSERT INTO sessions
+                     (id, account_id, key_id, parent_id, root_id, depth, shape, created_ms, final,
+                      folded_seq, running_ms, turn_open_ms, session_storage_byte_s,
+                      session_storage_byte_ms_remainder, web_search_queries,
+                      storage_transition_ms, metered_to_ms, session_storage_bytes,
+                      upload_reserved_bytes, session_state)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                             ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                    params![
+                        &row.id,
+                        &row.account_id,
+                        &row.key_id,
+                        &row.parent_id,
+                        &row.root_id,
+                        row.depth,
+                        &row.shape,
+                        row.created_ms,
+                        row.is_final as i64,
+                        row.fold.folded_seq,
+                        row.fold.running_ms,
+                        row.fold.turn_open_ms,
+                        row.fold.session_storage_byte_seconds,
+                        row.fold.session_storage_byte_millisecond_remainder,
+                        row.fold.web_search_queries,
+                        row.fold.storage_transition_ms,
+                        row.fold.metered_to_ms,
+                        row.fold.session_storage_bytes,
+                        row.fold.upload_reserved_bytes,
+                        row.fold.session_state,
+                    ],
+                )?;
+                if row.parent_id.is_none() {
+                    // A root first observed through strong follow-up of tenant discovery may be
+                    // the result of a create whose HTTP response was lost. Pair it with one
+                    // unresolved intent so the root and possible commit are not double-counted.
+                    // This is only a counting cover, never an idempotency mapping: an identical
+                    // retry still asks Brain and proves its exact session identity.
+                    transaction.execute(
+                        "UPDATE session_create_intents
+                         SET covered_session_id = ?2, state = 'uncertain',
+                             updated_ms = MAX(updated_ms, ?3)
+                         WHERE account_id = ?1 AND request_key_hash = (
+                           SELECT request_key_hash FROM session_create_intents
+                           WHERE account_id = ?1 AND covered_session_id IS NULL
+                           ORDER BY created_ms, request_key_hash LIMIT 1
+                         )",
+                        params![&row.account_id, &row.id, row.created_ms],
+                    )?;
                 }
             }
-            tx.commit()
+            transaction.commit()
+        })
+        .await
+    }
+
+    /// Register an account for background Brain-index discovery before the first create call.
+    /// This closes the commit/response crash gap without scanning accounts that never use Brain.
+    pub async fn enable_session_discovery(&self, account_id: String) -> Result<()> {
+        self.call(move |connection| {
+            connection.execute(
+                "INSERT OR IGNORE INTO session_discovery (account_id, watermark_ms)
+                 VALUES (?1, 0)",
+                params![account_id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn discovery_watermark(&self, account_id: String) -> Result<i64> {
+        self.enable_session_discovery(account_id.clone()).await?;
+        self.call(move |connection| {
+            connection.query_row(
+                "SELECT watermark_ms FROM session_discovery WHERE account_id = ?1",
+                params![account_id],
+                |record| record.get(0),
+            )
+        })
+        .await
+    }
+
+    /// Successful discoveries advance monotonically; failed sweeps deliberately never call this.
+    pub async fn advance_discovery_watermark(
+        &self,
+        account_id: String,
+        cutoff_ms: i64,
+    ) -> Result<()> {
+        self.call(move |connection| {
+            connection.execute(
+                "UPDATE session_discovery
+                 SET watermark_ms = MAX(watermark_ms, ?2)
+                 WHERE account_id = ?1",
+                params![account_id, cutoff_ms],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn discovery_accounts(&self) -> Result<Vec<String>> {
+        self.call(move |connection| {
+            let mut statement = connection
+                .prepare("SELECT account_id FROM session_discovery ORDER BY account_id")?;
+            statement.query_map([], |record| record.get(0))?.collect()
         })
         .await
     }
@@ -1142,6 +1690,77 @@ impl Db {
         .await
     }
 
+    /// Batch lookup for one bounded changed window. Chunking stays below SQLite's portable bind
+    /// limit and uses one blocking-pool hop instead of one hop per discovered child.
+    pub async fn sessions_by_ids(
+        &self,
+        account_id: String,
+        ids: Vec<String>,
+    ) -> Result<Vec<SessionRow>> {
+        self.call(move |connection| {
+            let mut rows = Vec::with_capacity(ids.len());
+            for chunk in ids.chunks(500) {
+                let placeholders = std::iter::repeat_n("?", chunk.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let mut statement = connection.prepare(&format!(
+                    "{SESSION_COLS} WHERE account_id = ? AND id IN ({placeholders})"
+                ))?;
+                rows.extend(
+                    statement
+                        .query_map(
+                            rusqlite::params_from_iter(
+                                std::iter::once(&account_id).chain(chunk.iter()),
+                            ),
+                            session_row,
+                        )?
+                        .collect::<rusqlite::Result<Vec<_>>>()?,
+                );
+            }
+            Ok(rows)
+        })
+        .await
+    }
+
+    /// Locally known turns whose running estimate must advance even when the remote HEAD has not
+    /// changed since admission. This is bounded by the product's concurrent-turn policy.
+    pub async fn open_turn_sessions(&self, account_id: String) -> Result<Vec<SessionRow>> {
+        self.call(move |connection| {
+            let mut statement = connection.prepare(&format!(
+                "{SESSION_COLS} WHERE account_id = ?1 AND final = 0
+                 AND turn_open_ms IS NOT NULL ORDER BY turn_open_ms, id"
+            ))?;
+            statement
+                .query_map(params![account_id], session_row)?
+                .collect()
+        })
+        .await
+    }
+
+    /// Oldest non-zero byte meters due for a background integral settlement. The indexed time
+    /// predicate and batch bound prevent the ordinary discovery tick from scanning every ended
+    /// session merely because its durable storage remains billable.
+    pub async fn due_storage_sessions(
+        &self,
+        account_id: String,
+        due_before_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<SessionRow>> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX).max(1);
+        self.call(move |connection| {
+            let mut statement = connection.prepare(&format!(
+                "{SESSION_COLS} WHERE account_id = ?1 AND final = 0
+                 AND metered_to_ms <= ?2
+                 AND (session_storage_bytes > 0 OR upload_reserved_bytes > 0)
+                 ORDER BY metered_to_ms, id LIMIT ?3"
+            ))?;
+            statement
+                .query_map(params![account_id, due_before_ms, limit], session_row)?
+                .collect()
+        })
+        .await
+    }
+
     pub async fn sessions_to_sweep(&self) -> Result<Vec<SessionRow>> {
         self.call(move |c| {
             let mut stmt = c.prepare(&format!("{SESSION_COLS} WHERE final = 0"))?;
@@ -1151,13 +1770,16 @@ impl Db {
         .await
     }
 
-    /// Sessions that count against the concurrency cap: not final, and either mid-turn or
-    /// holding a live or suspended hand (a released hand costs storage only).
-    pub async fn live_count(&self, account_id: String) -> Result<i64> {
+    /// Resource-bearing roots count against the account cap whether or not their lazy sandbox
+    /// exists. Failed and deleting are not release proofs: only a strong ended projection or a
+    /// physically completed deletion frees the local floor. Durable descendants have a separate
+    /// Brain-sealed tree quota.
+    pub async fn live_root_count(&self, account_id: String) -> Result<i64> {
         self.call(move |c| {
             c.query_row(
                 "SELECT COUNT(*) FROM sessions WHERE account_id = ?1 AND final = 0
-                 AND (session_state = 'active' OR hand_state IN ('preparing', 'ready', 'suspended'))",
+                 AND parent_id IS NULL
+                 AND session_state IN ('open', 'ending', 'failed', 'deleting')",
                 params![account_id],
                 |r| r.get(0),
             )
@@ -1165,13 +1787,501 @@ impl Db {
         .await
     }
 
-    pub async fn creates_since(&self, account_id: String, since_ms: i64) -> Result<i64> {
+    pub async fn root_creates_since(&self, account_id: String, since_ms: i64) -> Result<i64> {
         self.call(move |c| {
             c.query_row(
-                "SELECT COUNT(*) FROM sessions WHERE account_id = ?1 AND created_ms >= ?2",
+                "SELECT COUNT(*) FROM sessions
+                 WHERE account_id = ?1 AND parent_id IS NULL AND created_ms >= ?2",
                 params![account_id, since_ms],
                 |r| r.get(0),
             )
+        })
+        .await
+    }
+
+    /// Mark the selected session and every locally discovered descendant as deleting and retain
+    /// one small anchor for efficient Brain-side completion checks.
+    pub async fn begin_subtree_deletion(
+        &self,
+        account_id: String,
+        session_id: String,
+        accepted_ms: i64,
+    ) -> Result<()> {
+        self.begin_subtree_deletion_with_chain(account_id, session_id, Vec::new(), accepted_ms)
+            .await
+    }
+
+    /// Atomically install a strongly hydrated ancestor chain before resolving overlap aliases.
+    /// This is essential for a Brain-native descendant first seen on its DELETE request: without
+    /// its previously hidden parents, a locally active ancestor purge would be invisible and the
+    /// two jobs could be claimed concurrently.
+    pub async fn begin_subtree_deletion_with_chain(
+        &self,
+        account_id: String,
+        session_id: String,
+        chain: Vec<SessionRow>,
+        accepted_ms: i64,
+    ) -> Result<()> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            for row in &chain {
+                if row.account_id != account_id {
+                    return Err(rusqlite::Error::InvalidParameterName(
+                        "hydrated deletion ancestor belongs to another account".into(),
+                    ));
+                }
+                insert_session_record(&transaction, row)?;
+                let identity = transaction.query_row(
+                    "SELECT account_id, parent_id, root_id, depth FROM sessions WHERE id = ?1",
+                    params![&row.id],
+                    |record| {
+                        Ok((
+                            record.get::<_, String>(0)?,
+                            record.get::<_, Option<String>>(1)?,
+                            record.get::<_, String>(2)?,
+                            record.get::<_, i64>(3)?,
+                        ))
+                    },
+                )?;
+                if identity
+                    != (
+                        row.account_id.clone(),
+                        row.parent_id.clone(),
+                        row.root_id.clone(),
+                        row.depth,
+                    )
+                {
+                    return Err(rusqlite::Error::InvalidParameterName(
+                        "hydrated deletion ancestor contradicts persisted identity".into(),
+                    ));
+                }
+            }
+            transaction.execute(
+                "WITH RECURSIVE subtree(id) AS (
+                   SELECT id FROM sessions WHERE id = ?1 AND account_id = ?2
+                   UNION ALL
+                   SELECT child.id FROM sessions child JOIN subtree parent
+                     ON child.parent_id = parent.id
+                   WHERE child.account_id = ?2
+                 )
+                 UPDATE sessions SET session_state = 'deleting'
+                 WHERE id IN (SELECT id FROM subtree) AND final = 0",
+                params![&session_id, &account_id],
+            )?;
+            if transaction
+                .query_row(
+                    "SELECT 1 FROM session_deletions WHERE session_id = ?1",
+                    params![&session_id],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some()
+            {
+                transaction.commit()?;
+                return Ok(());
+            }
+
+            // A later descendant request is a durable status alias when an ancestor purge
+            // already covers it. Resolve through an existing alias to the executable anchor.
+            let ancestor_anchor = transaction
+                .query_row(
+                    "WITH RECURSIVE ancestors(id, parent_id, distance) AS (
+                       SELECT id, parent_id, 0 FROM sessions
+                        WHERE id = ?1 AND account_id = ?2
+                       UNION ALL
+                       SELECT parent.id, parent.parent_id, child.distance + 1
+                         FROM sessions parent JOIN ancestors child ON parent.id = child.parent_id
+                        WHERE parent.account_id = ?2
+                     )
+                     SELECT deletion.anchor_id, anchor.phase, anchor.completed_ms
+                       FROM ancestors
+                       JOIN session_deletions deletion ON deletion.session_id = ancestors.id
+                       JOIN session_deletions anchor ON anchor.session_id = deletion.anchor_id
+                      WHERE ancestors.id != ?1
+                      ORDER BY ancestors.distance
+                      LIMIT 1",
+                    params![&session_id, &account_id],
+                    |record| {
+                        Ok((
+                            record.get::<_, String>(0)?,
+                            record.get::<_, String>(1)?,
+                            record.get::<_, Option<i64>>(2)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let (anchor_id, phase, completed_ms) = match ancestor_anchor {
+                Some((anchor_id, phase, completed_ms)) if phase == "succeeded" => {
+                    (anchor_id, "succeeded", completed_ms)
+                }
+                Some((anchor_id, _, _)) => (anchor_id, "ending", None),
+                None => (session_id.clone(), "ending", None),
+            };
+            transaction.execute(
+                "INSERT INTO session_deletions
+                   (session_id, account_id, anchor_id, phase, accepted_ms, updated_ms,
+                    completed_ms, next_attempt_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?5)",
+                params![
+                    &session_id,
+                    &account_id,
+                    &anchor_id,
+                    phase,
+                    accepted_ms,
+                    completed_ms
+                ],
+            )?;
+
+            if anchor_id == session_id && phase != "succeeded" {
+                // A newly accepted ancestor waits behind every already-active descendant anchor.
+                // This also covers descendants that were claimed immediately before acceptance.
+                let dependencies = {
+                    let mut statement = transaction.prepare(
+                        "WITH RECURSIVE subtree(id) AS (
+                           SELECT id FROM sessions WHERE id = ?1 AND account_id = ?2
+                           UNION ALL
+                           SELECT child.id FROM sessions child JOIN subtree parent
+                             ON child.parent_id = parent.id
+                            WHERE child.account_id = ?2
+                         )
+                         SELECT DISTINCT deletion.anchor_id
+                           FROM subtree
+                           JOIN session_deletions deletion ON deletion.session_id = subtree.id
+                           JOIN session_deletions anchor ON anchor.session_id = deletion.anchor_id
+                          WHERE subtree.id != ?1 AND anchor.phase != 'succeeded'
+                            AND deletion.anchor_id != ?1",
+                    )?;
+                    statement
+                        .query_map(params![&session_id, &account_id], |record| {
+                            record.get::<_, String>(0)
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?
+                };
+                for dependency_id in dependencies {
+                    transaction.execute(
+                        "INSERT OR IGNORE INTO session_deletion_dependencies
+                           (session_id, dependency_id) VALUES (?1, ?2)",
+                        params![&session_id, dependency_id],
+                    )?;
+                }
+            }
+            transaction.commit()
+        })
+        .await
+    }
+
+    pub async fn deletion_roots(&self, account_id: String) -> Result<Vec<String>> {
+        self.call(move |connection| {
+            let mut statement = connection.prepare(
+                "SELECT session_id FROM session_deletions
+                 WHERE account_id = ?1 AND phase != 'succeeded'
+                 ORDER BY accepted_ms, session_id",
+            )?;
+            statement
+                .query_map(params![account_id], |record| record.get(0))?
+                .collect()
+        })
+        .await
+    }
+
+    pub async fn deletion(&self, session_id: String) -> Result<Option<DeletionRow>> {
+        self.call(move |connection| {
+            connection
+                .query_row(
+                    &format!("{DELETION_COLS} FROM session_deletions WHERE session_id = ?1"),
+                    params![session_id],
+                    deletion_row,
+                )
+                .optional()
+        })
+        .await
+    }
+
+    /// Oldest retryable jobs. The singleton worker may repeat a row after a crash; every phase is
+    /// idempotent and advances only after the corresponding remote/durable boundary succeeds.
+    pub async fn pending_deletions(&self, limit: usize) -> Result<Vec<DeletionRow>> {
+        self.call(move |connection| {
+            let mut statement = connection.prepare(&format!(
+                "{DELETION_COLS} FROM session_deletions WHERE phase != 'succeeded'
+                 ORDER BY updated_ms, accepted_ms, session_id LIMIT ?1"
+            ))?;
+            statement
+                .query_map(
+                    params![i64::try_from(limit).unwrap_or(i64::MAX)],
+                    deletion_row,
+                )?
+                .collect()
+        })
+        .await
+    }
+
+    /// Recover all scheduler leases on singleton startup. Platform stops the old task before
+    /// starting its replacement, so no live worker can still own these process-local claims.
+    pub async fn clear_deletion_claims(&self) -> Result<()> {
+        self.call(move |connection| {
+            connection.execute(
+                "UPDATE session_deletions SET claimed_ms = NULL
+                 WHERE phase != 'succeeded' AND claimed_ms IS NOT NULL",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Claim one non-overlapping retry batch atomically. Aliases never execute, dependencies must
+    /// have completed, and no selected ancestor/descendant pair can race its Brain purge. Siblings
+    /// remain independent and may run together.
+    pub async fn claim_pending_deletions(
+        &self,
+        limit: usize,
+        claimed_ms: i64,
+    ) -> Result<Vec<DeletionRow>> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            let scan_limit =
+                i64::try_from(limit.max(1).saturating_mul(16).min(4096)).unwrap_or(i64::MAX);
+            let candidates = {
+                let mut statement = transaction.prepare(&format!(
+                    "{DELETION_COLS} FROM session_deletions job
+                     WHERE job.phase != 'succeeded' AND job.claimed_ms IS NULL
+                       AND job.next_attempt_ms <= ?2
+                       AND job.anchor_id = job.session_id
+                       AND NOT EXISTS (
+                         SELECT 1 FROM session_deletion_dependencies dependency
+                         JOIN session_deletions prerequisite
+                           ON prerequisite.session_id = dependency.dependency_id
+                         WHERE dependency.session_id = job.session_id
+                           AND prerequisite.phase != 'succeeded'
+                       )
+                     ORDER BY job.updated_ms, job.accepted_ms, job.session_id LIMIT ?1"
+                ))?;
+                statement
+                    .query_map(params![scan_limit, claimed_ms], deletion_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let mut selected: Vec<DeletionRow> = Vec::with_capacity(limit);
+            for mut candidate in candidates {
+                if selected.len() >= limit {
+                    break;
+                }
+                let mut overlaps = false;
+                for claimed in &selected {
+                    if claimed.account_id != candidate.account_id {
+                        continue;
+                    }
+                    let related: i64 = transaction.query_row(
+                        "WITH RECURSIVE candidate_tree(id) AS (
+                           SELECT id FROM sessions WHERE id = ?1 AND account_id = ?3
+                           UNION ALL
+                           SELECT child.id FROM sessions child JOIN candidate_tree parent
+                             ON child.parent_id = parent.id WHERE child.account_id = ?3
+                         ), claimed_tree(id) AS (
+                           SELECT id FROM sessions WHERE id = ?2 AND account_id = ?3
+                           UNION ALL
+                           SELECT child.id FROM sessions child JOIN claimed_tree parent
+                             ON child.parent_id = parent.id WHERE child.account_id = ?3
+                         )
+                         SELECT EXISTS(SELECT 1 FROM candidate_tree WHERE id = ?2)
+                              OR EXISTS(SELECT 1 FROM claimed_tree WHERE id = ?1)",
+                        params![
+                            &candidate.session_id,
+                            &claimed.session_id,
+                            &candidate.account_id
+                        ],
+                        |record| record.get(0),
+                    )?;
+                    if related != 0 {
+                        overlaps = true;
+                        break;
+                    }
+                }
+                if overlaps {
+                    continue;
+                }
+                let changed = transaction.execute(
+                    "UPDATE session_deletions SET claimed_ms = ?2
+                     WHERE session_id = ?1 AND phase != 'succeeded' AND claimed_ms IS NULL",
+                    params![&candidate.session_id, claimed_ms],
+                )?;
+                if changed == 1 {
+                    candidate.claimed_ms = Some(claimed_ms);
+                    selected.push(candidate);
+                }
+            }
+            transaction.commit()?;
+            Ok(selected)
+        })
+        .await
+    }
+
+    pub async fn release_deletion_claim(&self, session_id: String) -> Result<()> {
+        self.call(move |connection| {
+            connection.execute(
+                "UPDATE session_deletions SET claimed_ms = NULL WHERE session_id = ?1",
+                params![session_id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn set_deletion_phase(
+        &self,
+        session_id: String,
+        phase: String,
+        updated_ms: i64,
+    ) -> Result<()> {
+        self.call(move |connection| {
+            let changed = connection.execute(
+                "UPDATE session_deletions
+                 SET phase = ?2, updated_ms = ?3, last_error = NULL, attempts = 0,
+                     next_attempt_ms = ?3
+                 WHERE session_id = ?1 AND phase != 'succeeded'",
+                params![session_id, phase, updated_ms],
+            )?;
+            if changed == 0 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn record_deletion_error(
+        &self,
+        session_id: String,
+        error: String,
+        updated_ms: i64,
+    ) -> Result<()> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            let attempts = transaction
+                .query_row(
+                    "SELECT attempts FROM session_deletions
+                     WHERE session_id = ?1 AND phase != 'succeeded'",
+                    params![&session_id],
+                    |record| record.get::<_, i64>(0),
+                )
+                .optional()?;
+            let Some(attempts) = attempts else {
+                transaction.commit()?;
+                return Ok(());
+            };
+            let next_attempt = attempts.saturating_add(1);
+            let retry_at_ms = updated_ms.saturating_add(deletion_retry_delay_ms(
+                &session_id,
+                u32::try_from(next_attempt).unwrap_or(u32::MAX),
+            ));
+            transaction.execute(
+                "UPDATE session_deletions
+                 SET updated_ms = ?2, last_error = ?3, attempts = ?4, next_attempt_ms = ?5
+                 WHERE session_id = ?1 AND phase != 'succeeded'",
+                params![
+                    &session_id,
+                    updated_ms,
+                    error.chars().take(512).collect::<String>(),
+                    next_attempt,
+                    retry_at_ms,
+                ],
+            )?;
+            transaction.commit()
+        })
+        .await
+    }
+
+    pub async fn subtree_sessions(
+        &self,
+        account_id: String,
+        session_id: String,
+    ) -> Result<Vec<SessionRow>> {
+        self.call(move |connection| {
+            let mut statement = connection.prepare(&format!(
+                "{SESSION_COLS} WHERE account_id = ?2 AND id IN (
+                   WITH RECURSIVE subtree(id) AS (
+                     SELECT id FROM sessions WHERE id = ?1 AND account_id = ?2
+                     UNION ALL
+                     SELECT child.id FROM sessions child JOIN subtree parent
+                       ON child.parent_id = parent.id
+                     WHERE child.account_id = ?2
+                   )
+                   SELECT id FROM subtree
+                 ) ORDER BY created_ms DESC"
+            ))?;
+            statement
+                .query_map(params![session_id, account_id], session_row)?
+                .collect()
+        })
+        .await
+    }
+
+    /// Complete every selected deletion anchor in the local subtree. Keeping the small tombstone
+    /// makes a lost strict-delete response observable without retaining Brain/S3 content.
+    pub async fn finish_subtree_deletion(
+        &self,
+        account_id: String,
+        session_id: String,
+    ) -> Result<()> {
+        self.call(move |connection| {
+            let transaction = connection.transaction()?;
+            // Billing folds and the small session/deletion tombstones are retained, but cached
+            // model-visible Tool payloads are not part of the ledger. Purge them atomically once
+            // Brain confirms the physical subtree deletion; the alpha promises no content
+            // retention after `session.delete()` completes.
+            for table in [
+                "external_tool_calls",
+                "hosted_tool_calls",
+                "output_requests",
+            ] {
+                transaction.execute(
+                    &format!(
+                        "WITH RECURSIVE subtree(id) AS (
+                           SELECT id FROM sessions WHERE id = ?1 AND account_id = ?2
+                           UNION ALL
+                           SELECT child.id FROM sessions child JOIN subtree parent
+                             ON child.parent_id = parent.id
+                           WHERE child.account_id = ?2
+                         )
+                         DELETE FROM {table} WHERE session_id IN (SELECT id FROM subtree)"
+                    ),
+                    params![&session_id, &account_id],
+                )?;
+            }
+            // A discovery-covered ambiguous create is already represented by its root row while
+            // retained. Once Brain confirms that subtree physically gone, neither representation
+            // may continue consuming a retained-root slot.
+            transaction.execute(
+                "DELETE FROM session_create_intents
+                 WHERE account_id = ?2 AND covered_session_id IN (
+                   WITH RECURSIVE subtree(id) AS (
+                     SELECT id FROM sessions WHERE id = ?1 AND account_id = ?2
+                     UNION ALL
+                     SELECT child.id FROM sessions child JOIN subtree parent
+                       ON child.parent_id = parent.id
+                     WHERE child.account_id = ?2
+                   )
+                   SELECT id FROM subtree
+                 )",
+                params![&session_id, &account_id],
+            )?;
+            transaction.execute(
+                "UPDATE session_deletions
+                 SET phase = 'succeeded', updated_ms = ?3, completed_ms = ?3,
+                     last_error = NULL, claimed_ms = NULL, attempts = 0,
+                     next_attempt_ms = ?3
+                 WHERE account_id = ?2 AND session_id IN (
+                   WITH RECURSIVE subtree(id) AS (
+                     SELECT id FROM sessions WHERE id = ?1 AND account_id = ?2
+                     UNION ALL
+                     SELECT child.id FROM sessions child JOIN subtree parent
+                       ON child.parent_id = parent.id
+                     WHERE child.account_id = ?2
+                   )
+                   SELECT id FROM subtree
+                 )",
+                params![&session_id, &account_id, crate::now_ms()],
+            )?;
+            transaction.commit()
         })
         .await
     }
@@ -1318,6 +2428,73 @@ impl Db {
         .await
     }
 
+    /// Exact-result cache for replay-safe hosted capabilities such as managed web reads. The
+    /// request hash prevents a reused call identity from changing its logical operation.
+    pub async fn hosted_tool_response(
+        &self,
+        session_id: String,
+        call_id: String,
+        request_hash: String,
+    ) -> Result<Option<String>> {
+        let row = self
+            .call(move |connection| {
+                connection
+                    .query_row(
+                        "SELECT request_hash, response_json FROM hosted_tool_calls
+                     WHERE session_id = ?1 AND call_id = ?2",
+                        params![session_id, call_id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()
+            })
+            .await?;
+        match row {
+            Some((stored_hash, _)) if stored_hash != request_hash => Err(Error::Conflict(
+                "hosted Tool call identity was reused with a different request".into(),
+            )),
+            Some((_, response)) => Ok(Some(response)),
+            None => Ok(None),
+        }
+    }
+
+    /// Store or race-replay one hosted result. Every concurrent caller returns the first committed
+    /// response, so Brain observes one stable logical result even if a transport retry overlaps.
+    pub async fn record_hosted_tool_response(
+        &self,
+        session_id: String,
+        call_id: String,
+        request_hash: String,
+        response_json: String,
+        now_ms: i64,
+    ) -> Result<String> {
+        let expected_hash = request_hash.clone();
+        let (stored_hash, stored_response) = self
+            .call(move |connection| {
+                let transaction = connection.transaction()?;
+                transaction.execute(
+                    "INSERT OR IGNORE INTO hosted_tool_calls
+                 (session_id, call_id, request_hash, response_json, created_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![session_id, call_id, request_hash, response_json, now_ms],
+                )?;
+                let stored = transaction.query_row(
+                    "SELECT request_hash, response_json FROM hosted_tool_calls
+                 WHERE session_id = ?1 AND call_id = ?2",
+                    params![session_id, call_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )?;
+                transaction.commit()?;
+                Ok(stored)
+            })
+            .await?;
+        if stored_hash != expected_hash {
+            return Err(Error::Conflict(
+                "hosted Tool call identity was reused with a different request".into(),
+            ));
+        }
+        Ok(stored_response)
+    }
+
     /// Journal one executor decision and cache the exact response in the same SQLite
     /// transaction. A replay with the same `(session_id, call_id)` returns the first response.
     #[allow(clippy::too_many_arguments)]
@@ -1395,25 +2572,23 @@ impl Db {
             let tx = c.transaction()?;
             let n = tx.execute(
                 "UPDATE sessions SET folded_seq = ?2, running_ms = ?3, turn_open_ms = ?4,
-                    susp_byte_s = ?5, ws_byte_s = ?6, art_byte_s = ?7,
-                    web_search_queries = ?8, metered_to_ms = ?9,
-                    workspace_bytes = ?10, suspended_bytes = ?11, artifact_bytes = ?12,
-                    hand_state = ?13, session_state = ?14, final = ?15
+                    session_storage_byte_s = ?5, session_storage_byte_ms_remainder = ?6,
+                    web_search_queries = ?7, storage_transition_ms = ?8, metered_to_ms = ?9,
+                    session_storage_bytes = ?10, upload_reserved_bytes = ?11,
+                    session_state = ?12, final = ?13
                  WHERE id = ?1 AND folded_seq <= ?2 AND metered_to_ms <= ?9 AND final = 0",
                 params![
                     session_id,
                     fold.folded_seq,
                     fold.running_ms,
                     fold.turn_open_ms,
-                    fold.suspended_byte_seconds,
-                    fold.workspace_byte_seconds,
-                    fold.artifact_byte_seconds,
+                    fold.session_storage_byte_seconds,
+                    fold.session_storage_byte_millisecond_remainder,
                     fold.web_search_queries,
+                    fold.storage_transition_ms,
                     fold.metered_to_ms,
-                    fold.workspace_bytes,
-                    fold.suspended_bytes,
-                    fold.artifact_bytes,
-                    fold.hand_state,
+                    fold.session_storage_bytes,
+                    fold.upload_reserved_bytes,
                     fold.session_state,
                     is_final as i64,
                 ],
@@ -1422,7 +2597,8 @@ impl Db {
                 tx.execute(
                     "INSERT INTO ledger (ref, account_id, microusd, updated_ms)
                      VALUES ('usage:' || ?1, ?2, ?3, ?4)
-                     ON CONFLICT(ref) DO UPDATE SET microusd = ?3, updated_ms = ?4",
+                     ON CONFLICT(ref) DO UPDATE SET microusd = ?3, updated_ms = ?4
+                     WHERE excluded.updated_ms >= ledger.updated_ms",
                     params![session_id, account_id, -usage_microusd, now_ms],
                 )?;
             }
@@ -1433,11 +2609,15 @@ impl Db {
     }
 }
 
-const SESSION_COLS: &str = "SELECT id, account_id, key_id, shape, created_ms, final,
-    folded_seq, running_ms, turn_open_ms, susp_byte_s, ws_byte_s, art_byte_s,
-    web_search_queries, metered_to_ms,
-    workspace_bytes, suspended_bytes, artifact_bytes, hand_state, session_state,
-    output_capable FROM sessions";
+const SESSION_COLS: &str =
+    "SELECT id, account_id, key_id, parent_id, root_id, depth, shape, created_ms, final,
+    folded_seq, running_ms, turn_open_ms, session_storage_byte_s,
+    session_storage_byte_ms_remainder, web_search_queries, storage_transition_ms,
+    metered_to_ms, session_storage_bytes, upload_reserved_bytes, session_state
+    FROM sessions";
+
+const DELETION_COLS: &str = "SELECT session_id, account_id, anchor_id, phase, accepted_ms,
+    updated_ms, completed_ms, last_error, claimed_ms, attempts, next_attempt_ms";
 
 const REFUND_COLS: &str = "SELECT id, request_key, topup_id, account_id, amount_cents, status,
     provider_ref, failure_reason, created_ms, updated_ms FROM refunds";
@@ -1523,31 +2703,120 @@ fn credit_grant_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<CreditGrantRow> {
     })
 }
 
+fn insert_session_record(
+    transaction: &rusqlite::Transaction<'_>,
+    row: &SessionRow,
+) -> rusqlite::Result<bool> {
+    let inserted = transaction.execute(
+        "INSERT OR IGNORE INTO sessions
+         (id, account_id, key_id, parent_id, root_id, depth, shape, created_ms, final,
+          folded_seq, running_ms, turn_open_ms, session_storage_byte_s,
+          session_storage_byte_ms_remainder, web_search_queries, storage_transition_ms,
+          metered_to_ms, session_storage_bytes, upload_reserved_bytes, session_state)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                 ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+        params![
+            &row.id,
+            &row.account_id,
+            &row.key_id,
+            &row.parent_id,
+            &row.root_id,
+            row.depth,
+            &row.shape,
+            row.created_ms,
+            row.is_final as i64,
+            row.fold.folded_seq,
+            row.fold.running_ms,
+            row.fold.turn_open_ms,
+            row.fold.session_storage_byte_seconds,
+            row.fold.session_storage_byte_millisecond_remainder,
+            row.fold.web_search_queries,
+            row.fold.storage_transition_ms,
+            row.fold.metered_to_ms,
+            row.fold.session_storage_bytes,
+            row.fold.upload_reserved_bytes,
+            row.fold.session_state,
+        ],
+    )?;
+    if inserted == 0 {
+        let owner: String = transaction.query_row(
+            "SELECT account_id FROM sessions WHERE id = ?1",
+            params![&row.id],
+            |record| record.get(0),
+        )?;
+        if owner != row.account_id {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "session id belongs to another account".into(),
+            ));
+        }
+    }
+    Ok(inserted != 0)
+}
+
 fn session_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
     Ok(SessionRow {
         id: r.get(0)?,
         account_id: r.get(1)?,
         key_id: r.get(2)?,
-        shape: r.get(3)?,
-        created_ms: r.get(4)?,
-        is_final: r.get::<_, i64>(5)? != 0,
-        output_capable: r.get::<_, i64>(19)? != 0,
+        parent_id: r.get(3)?,
+        root_id: r.get(4)?,
+        depth: r.get(5)?,
+        shape: r.get(6)?,
+        created_ms: r.get(7)?,
+        is_final: r.get::<_, i64>(8)? != 0,
         fold: FoldState {
-            folded_seq: r.get(6)?,
-            running_ms: r.get(7)?,
-            turn_open_ms: r.get(8)?,
-            suspended_byte_seconds: r.get(9)?,
-            workspace_byte_seconds: r.get(10)?,
-            artifact_byte_seconds: r.get(11)?,
-            web_search_queries: r.get(12)?,
-            metered_to_ms: r.get(13)?,
-            workspace_bytes: r.get(14)?,
-            suspended_bytes: r.get(15)?,
-            artifact_bytes: r.get(16)?,
-            hand_state: r.get(17)?,
-            session_state: r.get(18)?,
+            folded_seq: r.get(9)?,
+            running_ms: r.get(10)?,
+            turn_open_ms: r.get(11)?,
+            session_storage_byte_seconds: r.get(12)?,
+            session_storage_byte_millisecond_remainder: r.get(13)?,
+            web_search_queries: r.get(14)?,
+            storage_transition_ms: r.get(15)?,
+            metered_to_ms: r.get(16)?,
+            session_storage_bytes: r.get(17)?,
+            upload_reserved_bytes: r.get(18)?,
+            session_state: r.get(19)?,
         },
     })
+}
+
+fn deletion_row(record: &rusqlite::Row<'_>) -> rusqlite::Result<DeletionRow> {
+    Ok(DeletionRow {
+        session_id: record.get(0)?,
+        account_id: record.get(1)?,
+        anchor_id: record.get(2)?,
+        phase: record.get(3)?,
+        accepted_ms: record.get(4)?,
+        updated_ms: record.get(5)?,
+        completed_ms: record.get(6)?,
+        last_error: record.get(7)?,
+        claimed_ms: record.get(8)?,
+        attempts: record.get(9)?,
+        next_attempt_ms: record.get(10)?,
+    })
+}
+
+/// Capped exponential retry with stable per-session jitter. Persisting the resulting deadline in
+/// SQLite prevents a control restart from collapsing every failed destructive job into a retry
+/// storm. The one-second worker tick remains the lower scheduling resolution.
+fn deletion_retry_delay_ms(session_id: &str, attempt: u32) -> i64 {
+    const BASE_MS: u64 = 1_000;
+    const MAX_BASE_MS: u64 = 240_000;
+
+    let shift = attempt.saturating_sub(1).min(31);
+    let base = BASE_MS.saturating_mul(1_u64 << shift).min(MAX_BASE_MS);
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in session_id
+        .as_bytes()
+        .iter()
+        .copied()
+        .chain(attempt.to_le_bytes())
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let jitter = hash % (base / 5 + 1);
+    i64::try_from(base + jitter).unwrap_or(i64::MAX)
 }
 
 fn output_request_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OutputRequestRow> {
@@ -1587,13 +2856,60 @@ mod tests {
         }
     }
 
+    async fn deletion_tree() -> Db {
+        let db = Db::open_memory().unwrap();
+        db.create_account(
+            acct("acc_delete"),
+            "delete@example.com".into(),
+            "h-delete".into(),
+        )
+        .await
+        .unwrap();
+        for (id, parent_id) in [
+            ("ses_root", None),
+            ("ses_child_a", Some("ses_root")),
+            ("ses_grandchild", Some("ses_child_a")),
+            ("ses_child_b", Some("ses_root")),
+        ] {
+            db.insert_session(SessionRow {
+                id: id.into(),
+                account_id: "acc_delete".into(),
+                key_id: "key_delete".into(),
+                parent_id: parent_id.map(str::to_owned),
+                root_id: "ses_root".into(),
+                depth: match id {
+                    "ses_root" => 0,
+                    "ses_grandchild" => 2,
+                    _ => 1,
+                },
+                shape: "1gb".into(),
+                created_ms: 5,
+                is_final: false,
+                fold: FoldState {
+                    session_state: "open".into(),
+                    ..Default::default()
+                },
+            })
+            .await
+            .unwrap();
+        }
+        db
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn existing_ledger_is_migrated_for_additive_session_columns() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
         conn.execute("ALTER TABLE sessions DROP COLUMN web_search_queries", [])
             .unwrap();
-        conn.execute("ALTER TABLE sessions DROP COLUMN output_capable", [])
+        conn.execute("ALTER TABLE sessions DROP COLUMN upload_reserved_bytes", [])
+            .unwrap();
+        conn.execute(
+            "ALTER TABLE sessions DROP COLUMN session_storage_byte_ms_remainder",
+            [],
+        )
+        .unwrap();
+        conn.execute("ALTER TABLE sessions DROP COLUMN storage_transition_ms", [])
             .unwrap();
         let db = Db::init(conn).unwrap();
         let columns: Vec<String> = db
@@ -1606,7 +2922,55 @@ mod tests {
             .await
             .unwrap();
         assert!(columns.iter().any(|name| name == "web_search_queries"));
-        assert!(columns.iter().any(|name| name == "output_capable"));
+        assert!(columns.iter().any(|name| name == "upload_reserved_bytes"));
+        assert!(
+            columns
+                .iter()
+                .any(|name| name == "session_storage_byte_ms_remainder")
+        );
+        assert!(columns.iter().any(|name| name == "storage_transition_ms"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn existing_deletion_jobs_gain_durable_scheduler_fields() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_deletions (
+               session_id TEXT PRIMARY KEY,
+               account_id TEXT NOT NULL,
+               phase TEXT NOT NULL,
+               accepted_ms INTEGER NOT NULL,
+               updated_ms INTEGER NOT NULL,
+               completed_ms INTEGER,
+               last_error TEXT
+             );
+             INSERT INTO session_deletions
+               (session_id, account_id, phase, accepted_ms, updated_ms)
+             VALUES ('ses_old', 'acc_old', 'settling', 10, 11);",
+        )
+        .unwrap();
+
+        let db = Db::init(conn).unwrap();
+        let job = db.deletion("ses_old".into()).await.unwrap().unwrap();
+        assert_eq!(job.anchor_id, "ses_old");
+        assert_eq!(job.claimed_ms, None);
+        assert_eq!(job.attempts, 0);
+        assert_eq!(job.next_attempt_ms, 0);
+        let claimed = db.claim_pending_deletions(1, 12).await.unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].session_id, "ses_old");
+    }
+
+    #[test]
+    fn deletion_retry_backoff_is_stable_exponential_and_bounded() {
+        let first = deletion_retry_delay_ms("ses_retry", 1);
+        assert!((1_000..=1_200).contains(&first));
+        assert_eq!(first, deletion_retry_delay_ms("ses_retry", 1));
+
+        let second = deletion_retry_delay_ms("ses_retry", 2);
+        assert!((2_000..=2_400).contains(&second));
+        let capped = deletion_retry_delay_ms("ses_retry", u32::MAX);
+        assert!((240_000..=288_000).contains(&capped));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1628,6 +2992,151 @@ mod tests {
             .unwrap();
         assert_eq!(mode, "delete");
         drop(db);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exact_storage_remainder_survives_process_restart() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "aex-control-storage-fold-{}-{unique}.db",
+            std::process::id()
+        ));
+        {
+            let db = Db::open(&path).unwrap();
+            db.create_account(
+                acct("acc_storage"),
+                "storage@example.com".into(),
+                "hash".into(),
+            )
+            .await
+            .unwrap();
+            let mut fold = FoldState {
+                storage_transition_ms: 1_000,
+                metered_to_ms: 1_000,
+                session_storage_bytes: 3,
+                session_state: "open".into(),
+                ..FoldState::default()
+            };
+            crate::rating::accrue_storage(&mut fold, 1_001).unwrap();
+            db.insert_session(SessionRow {
+                id: "ses_storage".into(),
+                account_id: "acc_storage".into(),
+                key_id: "key".into(),
+                parent_id: None,
+                root_id: "ses_storage".into(),
+                depth: 0,
+                shape: "1gb".into(),
+                created_ms: 1_000,
+                is_final: false,
+                fold,
+            })
+            .await
+            .unwrap();
+        }
+        {
+            let db = Db::open(&path).unwrap();
+            let mut row = db.session("ses_storage".into()).await.unwrap().unwrap();
+            assert_eq!(row.fold.session_storage_byte_seconds, 0);
+            assert_eq!(row.fold.session_storage_byte_millisecond_remainder, 3);
+            crate::rating::accrue_storage(&mut row.fold, 1_334).unwrap();
+            row.fold.metered_to_ms = 1_334;
+            db.apply_sweep(row.id, row.account_id, row.fold, false, 0, 1_334)
+                .await
+                .unwrap();
+        }
+        {
+            let db = Db::open(&path).unwrap();
+            let row = db.session("ses_storage".into()).await.unwrap().unwrap();
+            assert_eq!(row.fold.session_storage_byte_seconds, 1);
+            assert_eq!(row.fold.session_storage_byte_millisecond_remainder, 2);
+            let priced =
+                crate::rating::price(&crate::rating::RateCard::default(), "1gb", &row.fold, 1_334)
+                    .unwrap();
+            assert_eq!(priced.session_storage_byte_milliseconds, 1_002);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn discovery_watermark_survives_process_restart_and_never_moves_backwards() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "aex-control-discovery-{}-{unique}.db",
+            std::process::id()
+        ));
+        {
+            let db = Db::open(&path).unwrap();
+            db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+                .await
+                .unwrap();
+            assert_eq!(db.discovery_watermark("acc_a".into()).await.unwrap(), 0);
+            db.advance_discovery_watermark("acc_a".into(), 500)
+                .await
+                .unwrap();
+        }
+        {
+            let db = Db::open(&path).unwrap();
+            assert_eq!(db.discovery_watermark("acc_a".into()).await.unwrap(), 500);
+            db.advance_discovery_watermark("acc_a".into(), 400)
+                .await
+                .unwrap();
+            assert_eq!(db.discovery_watermark("acc_a".into()).await.unwrap(), 500);
+            assert_eq!(db.discovery_accounts().await.unwrap(), vec!["acc_a"]);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn deletion_phase_survives_process_restart() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "aex-control-deletion-{}-{unique}.db",
+            std::process::id()
+        ));
+        {
+            let db = Db::open(&path).unwrap();
+            db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+                .await
+                .unwrap();
+            db.insert_session(SessionRow {
+                id: "ses_root".into(),
+                account_id: "acc_a".into(),
+                key_id: "key_1".into(),
+                parent_id: None,
+                root_id: "ses_root".into(),
+                depth: 0,
+                shape: "1gb".into(),
+                created_ms: 5,
+                is_final: false,
+                fold: FoldState::default(),
+            })
+            .await
+            .unwrap();
+            db.begin_subtree_deletion("acc_a".into(), "ses_root".into(), 10)
+                .await
+                .unwrap();
+            db.set_deletion_phase("ses_root".into(), "settling".into(), 11)
+                .await
+                .unwrap();
+        }
+        {
+            let db = Db::open(&path).unwrap();
+            let job = db.pending_deletions(10).await.unwrap().pop().unwrap();
+            assert_eq!(job.session_id, "ses_root");
+            assert_eq!(job.phase, "settling");
+            assert_eq!(job.accepted_ms, 10);
+            assert_eq!(job.updated_ms, 11);
+        }
         std::fs::remove_file(path).unwrap();
     }
 
@@ -1866,10 +3375,12 @@ mod tests {
             id: "ses_1".into(),
             account_id: "acc_a".into(),
             key_id: "key_1".into(),
+            parent_id: None,
+            root_id: "ses_1".into(),
+            depth: 0,
             shape: "1gb".into(),
             created_ms: 5,
             is_final: false,
-            output_capable: true,
             fold: FoldState::default(),
         };
         db.insert_session(row.clone()).await.unwrap();
@@ -1902,9 +3413,41 @@ mod tests {
             .unwrap()
         );
         assert_eq!(db.balance("acc_a".into()).await.unwrap(), -800);
+        // Absolute replacement may move down when a delayed durable transition shortens an
+        // earlier open-interval estimate, then up again when a later transition reveals usage.
+        row.fold.folded_seq = 30;
+        row.fold.metered_to_ms = 300;
+        assert!(
+            db.apply_sweep(
+                "ses_1".into(),
+                "acc_a".into(),
+                row.fold.clone(),
+                false,
+                400,
+                300
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(db.balance("acc_a".into()).await.unwrap(), -400);
+        row.fold.folded_seq = 40;
+        row.fold.metered_to_ms = 400;
+        assert!(
+            db.apply_sweep(
+                "ses_1".into(),
+                "acc_a".into(),
+                row.fold.clone(),
+                false,
+                1_200,
+                400
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(db.balance("acc_a".into()).await.unwrap(), -1_200);
         // A stale sweep (lower fence) writes nothing.
-        row.fold.folded_seq = 15;
-        row.fold.metered_to_ms = 150;
+        row.fold.folded_seq = 35;
+        row.fold.metered_to_ms = 350;
         assert!(
             !db.apply_sweep(
                 "ses_1".into(),
@@ -1912,12 +3455,12 @@ mod tests {
                 row.fold.clone(),
                 false,
                 9999,
-                150
+                350
             )
             .await
             .unwrap()
         );
-        assert_eq!(db.balance("acc_a".into()).await.unwrap(), -800);
+        assert_eq!(db.balance("acc_a".into()).await.unwrap(), -1_200);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1942,14 +3485,26 @@ mod tests {
         .unwrap();
         let (k, a) = db.key_auth("sh1".into(), 9).await.unwrap().unwrap();
         assert_eq!((k.id.as_str(), a.id.as_str()), ("key_1", "acc_a"));
+        db.key_auth("sh1".into(), 10).await.unwrap().unwrap();
+        assert_eq!(
+            db.list_keys("acc_a".into()).await.unwrap()[0].last_used_ms,
+            Some(9),
+            "ordinary requests do not force one EFS journal write apiece"
+        );
+        db.key_auth("sh1".into(), 60_009).await.unwrap().unwrap();
+        assert_eq!(
+            db.list_keys("acc_a".into()).await.unwrap()[0].last_used_ms,
+            Some(60_009),
+            "the audit timestamp still advances at its bounded cadence"
+        );
         assert!(
-            db.revoke_key("acc_a".into(), "key_1".into(), 10)
+            db.revoke_key("acc_a".into(), "key_1".into(), 60_010)
                 .await
                 .unwrap()
         );
-        assert!(db.key_auth("sh1".into(), 11).await.unwrap().is_none());
+        assert!(db.key_auth("sh1".into(), 60_011).await.unwrap().is_none());
         assert!(
-            !db.revoke_key("acc_a".into(), "key_1".into(), 12)
+            !db.revoke_key("acc_a".into(), "key_1".into(), 60_012)
                 .await
                 .unwrap()
         );
@@ -2021,34 +3576,899 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn live_count_ignores_released_and_final() {
+    async fn account_create_limits_count_resource_bearing_roots_only() {
         let db = Db::open_memory().unwrap();
         db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
             .await
             .unwrap();
-        for (id, hand, state, is_final) in [
-            ("ses_a", "ready", "idle", false),
-            ("ses_b", "suspended", "idle", false),
-            ("ses_c", "released", "idle", false),
-            ("ses_d", "ready", "idle", true),
+        for (id, state, is_final) in [
+            ("ses_a", "open", false),
+            ("ses_b", "open", false),
+            ("ses_c", "ending", false),
+            ("ses_d", "open", true),
+            ("ses_e", "ended", false),
+            ("ses_f", "failed", false),
+            ("ses_g", "deleting", false),
         ] {
             let mut row = SessionRow {
                 id: id.into(),
                 account_id: "acc_a".into(),
                 key_id: "key_1".into(),
+                parent_id: None,
+                root_id: id.into(),
+                depth: 0,
                 shape: "1gb".into(),
                 created_ms: 5,
                 is_final: false,
-                output_capable: true,
                 fold: FoldState::default(),
             };
             db.insert_session(row.clone()).await.unwrap();
-            row.fold.hand_state = hand.into();
             row.fold.session_state = state.into();
             db.apply_sweep(id.into(), "acc_a".into(), row.fold, is_final, 0, 6)
                 .await
                 .unwrap();
         }
-        assert_eq!(db.live_count("acc_a".into()).await.unwrap(), 2);
+        db.insert_session(SessionRow {
+            id: "ses_child".into(),
+            account_id: "acc_a".into(),
+            key_id: "key_1".into(),
+            parent_id: Some("ses_a".into()),
+            root_id: "ses_a".into(),
+            depth: 1,
+            shape: "1gb".into(),
+            created_ms: 5,
+            is_final: false,
+            fold: FoldState {
+                session_state: "open".into(),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+        assert_eq!(db.live_root_count("acc_a".into()).await.unwrap(), 5);
+        assert_eq!(db.root_creates_since("acc_a".into(), 0).await.unwrap(), 7);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn accepted_root_deletion_keeps_capacity_until_physical_completion() {
+        let db = Db::open_memory().unwrap();
+        db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+            .await
+            .unwrap();
+        let row = SessionRow {
+            id: "ses_root".into(),
+            account_id: "acc_a".into(),
+            key_id: "key_1".into(),
+            parent_id: None,
+            root_id: "ses_root".into(),
+            depth: 0,
+            shape: "1gb".into(),
+            created_ms: 5,
+            is_final: false,
+            fold: FoldState {
+                session_state: "open".into(),
+                ..Default::default()
+            },
+        };
+        db.insert_session(row.clone()).await.unwrap();
+
+        db.begin_subtree_deletion("acc_a".into(), "ses_root".into(), 10)
+            .await
+            .unwrap();
+        assert_eq!(db.live_root_count("acc_a".into()).await.unwrap(), 1);
+        for (phase, at) in [("settling", 11), ("purging", 12), ("awaiting_purge", 13)] {
+            db.set_deletion_phase("ses_root".into(), phase.into(), at)
+                .await
+                .unwrap();
+            assert_eq!(
+                db.live_root_count("acc_a".into()).await.unwrap(),
+                1,
+                "a locally advanced deletion phase is not a sandbox-release proof"
+            );
+        }
+
+        let mut deleted = row.fold;
+        deleted.session_state = "deleted".into();
+        db.apply_sweep("ses_root".into(), "acc_a".into(), deleted, true, 0, 14)
+            .await
+            .unwrap();
+        db.finish_subtree_deletion("acc_a".into(), "ses_root".into())
+            .await
+            .unwrap();
+        assert_eq!(db.live_root_count("acc_a".into()).await.unwrap(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn subtree_deletion_tracks_one_anchor_and_selects_only_descendants() {
+        let db = Db::open_memory().unwrap();
+        db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+            .await
+            .unwrap();
+        for (id, parent_id, root_id) in [
+            ("ses_root", None, "ses_root"),
+            ("ses_child", Some("ses_root"), "ses_root"),
+            ("ses_grandchild", Some("ses_child"), "ses_root"),
+            ("ses_sibling_root", None, "ses_sibling_root"),
+        ] {
+            db.insert_session(SessionRow {
+                id: id.into(),
+                account_id: "acc_a".into(),
+                key_id: "key_1".into(),
+                parent_id: parent_id.map(str::to_owned),
+                root_id: root_id.into(),
+                depth: match id {
+                    "ses_grandchild" => 2,
+                    "ses_child" => 1,
+                    _ => 0,
+                },
+                shape: "1gb".into(),
+                created_ms: 5,
+                is_final: false,
+                fold: FoldState {
+                    session_state: "open".into(),
+                    ..Default::default()
+                },
+            })
+            .await
+            .unwrap();
+        }
+        db.begin_subtree_deletion("acc_a".into(), "ses_child".into(), 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.deletion_roots("acc_a".into()).await.unwrap(),
+            vec!["ses_child"]
+        );
+        let accepted = db.deletion("ses_child".into()).await.unwrap().unwrap();
+        assert_eq!(accepted.phase, "ending");
+        assert_eq!(accepted.accepted_ms, 10);
+        assert_eq!(db.pending_deletions(10).await.unwrap().len(), 1);
+        db.set_deletion_phase("ses_child".into(), "settling".into(), 11)
+            .await
+            .unwrap();
+        db.record_deletion_error("ses_child".into(), "retry me".into(), 12)
+            .await
+            .unwrap();
+        let retry = db.deletion("ses_child".into()).await.unwrap().unwrap();
+        assert_eq!(retry.phase, "settling");
+        assert_eq!(retry.last_error.as_deref(), Some("retry me"));
+        assert_eq!(retry.attempts, 1);
+        assert!(retry.next_attempt_ms >= 1_012);
+        assert!(retry.next_attempt_ms <= 1_212);
+        assert!(
+            db.claim_pending_deletions(1, retry.next_attempt_ms - 1)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let due = db
+            .claim_pending_deletions(1, retry.next_attempt_ms)
+            .await
+            .unwrap();
+        assert_eq!(due.len(), 1);
+        db.release_deletion_claim("ses_child".into()).await.unwrap();
+        db.set_deletion_phase("ses_child".into(), "settling".into(), retry.next_attempt_ms)
+            .await
+            .unwrap();
+        let reset = db.deletion("ses_child".into()).await.unwrap().unwrap();
+        assert_eq!(reset.attempts, 0);
+        assert_eq!(reset.next_attempt_ms, retry.next_attempt_ms);
+        let selected = db
+            .subtree_sessions("acc_a".into(), "ses_child".into())
+            .await
+            .unwrap();
+        assert_eq!(selected.len(), 2);
+        assert!(
+            selected
+                .iter()
+                .all(|row| row.fold.session_state == "deleting")
+        );
+        assert_eq!(
+            db.session("ses_root".into())
+                .await
+                .unwrap()
+                .unwrap()
+                .fold
+                .session_state,
+            "open"
+        );
+        db.record_hosted_tool_response(
+            "ses_child".into(),
+            "call_child".into(),
+            "hash_child".into(),
+            r#"{"content":"sensitive child result"}"#.into(),
+            12,
+        )
+        .await
+        .unwrap();
+        db.record_hosted_tool_response(
+            "ses_root".into(),
+            "call_root".into(),
+            "hash_root".into(),
+            r#"{"content":"retained sibling payload"}"#.into(),
+            12,
+        )
+        .await
+        .unwrap();
+        db.call(|connection| {
+            connection.execute(
+                "INSERT INTO output_requests
+                   (id, session_id, schema_hash, schema_json, max_attempts, attempts, status,
+                    request_hash, created_ms)
+                 VALUES ('out_child', 'ses_child', 'schema', '{}', 2, 1, 'completed',
+                         'request', 12)",
+                [],
+            )?;
+            connection.execute(
+                "INSERT INTO external_tool_calls
+                   (session_id, call_id, output_id, response_json, created_ms)
+                 VALUES ('ses_child', 'output_call', 'out_child',
+                         '{\"content\":\"sensitive structured result\"}', 12)",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        db.finish_subtree_deletion("acc_a".into(), "ses_child".into())
+            .await
+            .unwrap();
+        assert!(db.deletion_roots("acc_a".into()).await.unwrap().is_empty());
+        let completed = db.deletion("ses_child".into()).await.unwrap().unwrap();
+        assert_eq!(completed.phase, "succeeded");
+        assert!(completed.completed_ms.is_some());
+        assert!(completed.last_error.is_none());
+        assert_eq!(completed.attempts, 0);
+        assert!(
+            db.hosted_tool_response("ses_child".into(), "call_child".into(), "hash_child".into())
+                .await
+                .unwrap()
+                .is_none(),
+            "deleted subtree payloads must not survive the completion boundary"
+        );
+        assert!(
+            db.hosted_tool_response("ses_root".into(), "call_root".into(), "hash_root".into())
+                .await
+                .unwrap()
+                .is_some(),
+            "deleting one subtree must not purge its ancestor's payload"
+        );
+        let retained_sensitive_rows = db
+            .call(|connection| {
+                connection.query_row(
+                    "SELECT
+                       (SELECT COUNT(*) FROM output_requests WHERE session_id = 'ses_child') +
+                       (SELECT COUNT(*) FROM external_tool_calls WHERE session_id = 'ses_child')",
+                    [],
+                    |record| record.get::<_, i64>(0),
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(retained_sensitive_rows, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn root_first_deletion_aliases_descendants_and_recovers_claims() {
+        let db = deletion_tree().await;
+        db.begin_subtree_deletion("acc_delete".into(), "ses_root".into(), 10)
+            .await
+            .unwrap();
+        db.begin_subtree_deletion("acc_delete".into(), "ses_root".into(), 11)
+            .await
+            .unwrap();
+        db.begin_subtree_deletion("acc_delete".into(), "ses_child_a".into(), 12)
+            .await
+            .unwrap();
+        db.begin_subtree_deletion("acc_delete".into(), "ses_grandchild".into(), 13)
+            .await
+            .unwrap();
+
+        assert_eq!(db.pending_deletions(10).await.unwrap().len(), 3);
+        assert_eq!(
+            db.deletion("ses_child_a".into())
+                .await
+                .unwrap()
+                .unwrap()
+                .anchor_id,
+            "ses_root"
+        );
+        assert_eq!(
+            db.deletion("ses_grandchild".into())
+                .await
+                .unwrap()
+                .unwrap()
+                .anchor_id,
+            "ses_root"
+        );
+        let first = db.claim_pending_deletions(8, 20).await.unwrap();
+        assert_eq!(
+            first
+                .iter()
+                .map(|job| job.session_id.as_str())
+                .collect::<Vec<_>>(),
+            ["ses_root"]
+        );
+
+        // A process restart reclaims only the executable root, never either durable alias.
+        db.clear_deletion_claims().await.unwrap();
+        let recovered = db.claim_pending_deletions(8, 21).await.unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].session_id, "ses_root");
+
+        db.finish_subtree_deletion("acc_delete".into(), "ses_root".into())
+            .await
+            .unwrap();
+        for id in ["ses_root", "ses_child_a", "ses_grandchild"] {
+            assert_eq!(
+                db.deletion(id.into()).await.unwrap().unwrap().phase,
+                "succeeded"
+            );
+        }
+        assert!(db.claim_pending_deletions(8, 22).await.unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn root_first_deletion_hydrates_a_hidden_deep_child_before_aliasing_and_restart() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "aex-control-hidden-child-{}-{unique}.db",
+            std::process::id()
+        ));
+        let session = |id: &str, parent_id: Option<&str>, depth: i64| SessionRow {
+            id: id.into(),
+            account_id: "acc_hidden".into(),
+            key_id: "key_hidden".into(),
+            parent_id: parent_id.map(str::to_owned),
+            root_id: "ses_root".into(),
+            depth,
+            shape: "1gb".into(),
+            created_ms: 5 + depth,
+            is_final: false,
+            fold: FoldState {
+                session_state: "open".into(),
+                ..Default::default()
+            },
+        };
+
+        {
+            let db = Db::open(&path).unwrap();
+            db.create_account(
+                acct("acc_hidden"),
+                "hidden@example.com".into(),
+                "hidden-token".into(),
+            )
+            .await
+            .unwrap();
+            db.insert_session(session("ses_root", None, 0))
+                .await
+                .unwrap();
+            db.begin_subtree_deletion("acc_hidden".into(), "ses_root".into(), 10)
+                .await
+                .unwrap();
+            assert_eq!(
+                db.claim_pending_deletions(8, 11).await.unwrap()[0].session_id,
+                "ses_root"
+            );
+
+            // Neither descendant existed in the local discovery index when the root was accepted.
+            // A strong Brain parent walk supplies the complete chain in selected-to-root order.
+            db.begin_subtree_deletion_with_chain(
+                "acc_hidden".into(),
+                "ses_grandchild".into(),
+                vec![
+                    session("ses_grandchild", Some("ses_child"), 2),
+                    session("ses_child", Some("ses_root"), 1),
+                    session("ses_root", None, 0),
+                ],
+                12,
+            )
+            .await
+            .unwrap();
+            let alias = db.deletion("ses_grandchild".into()).await.unwrap().unwrap();
+            assert_eq!(alias.anchor_id, "ses_root");
+            assert!(db.session("ses_child".into()).await.unwrap().is_some());
+        }
+
+        {
+            let db = Db::open(&path).unwrap();
+            db.clear_deletion_claims().await.unwrap();
+            let recovered = db.claim_pending_deletions(8, 20).await.unwrap();
+            assert_eq!(recovered.len(), 1);
+            assert_eq!(recovered[0].session_id, "ses_root");
+            assert_eq!(
+                db.deletion("ses_grandchild".into())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .anchor_id,
+                "ses_root"
+            );
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn child_admitted_after_ancestor_completion_is_a_succeeded_alias() {
+        let db = deletion_tree().await;
+        db.begin_subtree_deletion("acc_delete".into(), "ses_root".into(), 10)
+            .await
+            .unwrap();
+        db.finish_subtree_deletion("acc_delete".into(), "ses_root".into())
+            .await
+            .unwrap();
+        let hidden = SessionRow {
+            id: "ses_late_hidden".into(),
+            account_id: "acc_delete".into(),
+            key_id: "key_delete".into(),
+            parent_id: Some("ses_root".into()),
+            root_id: "ses_root".into(),
+            depth: 1,
+            shape: "1gb".into(),
+            created_ms: 6,
+            is_final: true,
+            fold: FoldState {
+                session_state: "deleted".into(),
+                ..Default::default()
+            },
+        };
+        let root = db.session("ses_root".into()).await.unwrap().unwrap();
+        db.begin_subtree_deletion_with_chain(
+            "acc_delete".into(),
+            hidden.id.clone(),
+            vec![hidden.clone(), root],
+            20,
+        )
+        .await
+        .unwrap();
+        let alias = db.deletion(hidden.id).await.unwrap().unwrap();
+        assert_eq!(alias.anchor_id, "ses_root");
+        assert_eq!(alias.phase, "succeeded");
+        assert!(alias.completed_ms.is_some());
+        assert!(db.claim_pending_deletions(8, 21).await.unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn child_first_deletion_blocks_ancestor_but_allows_siblings() {
+        let db = deletion_tree().await;
+        db.begin_subtree_deletion("acc_delete".into(), "ses_child_a".into(), 10)
+            .await
+            .unwrap();
+        let claimed_child = db.claim_pending_deletions(8, 11).await.unwrap();
+        assert_eq!(claimed_child.len(), 1);
+        assert_eq!(claimed_child[0].session_id, "ses_child_a");
+
+        // Accepting the ancestor while its child is already claimed creates a durable dependency.
+        db.begin_subtree_deletion("acc_delete".into(), "ses_root".into(), 12)
+            .await
+            .unwrap();
+        db.begin_subtree_deletion("acc_delete".into(), "ses_root".into(), 13)
+            .await
+            .unwrap();
+        assert!(db.claim_pending_deletions(8, 14).await.unwrap().is_empty());
+
+        // Simulate a crash between claim and execution. The same child resumes first; the parent
+        // cannot be claimed until its durable prerequisite succeeds.
+        db.clear_deletion_claims().await.unwrap();
+        let recovered_child = db.claim_pending_deletions(8, 15).await.unwrap();
+        assert_eq!(recovered_child.len(), 1);
+        assert_eq!(recovered_child[0].session_id, "ses_child_a");
+        db.finish_subtree_deletion("acc_delete".into(), "ses_child_a".into())
+            .await
+            .unwrap();
+        let root = db.claim_pending_deletions(8, 16).await.unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].session_id, "ses_root");
+        db.finish_subtree_deletion("acc_delete".into(), "ses_root".into())
+            .await
+            .unwrap();
+        assert!(db.pending_deletions(8).await.unwrap().is_empty());
+
+        let siblings = deletion_tree().await;
+        siblings
+            .begin_subtree_deletion("acc_delete".into(), "ses_child_a".into(), 20)
+            .await
+            .unwrap();
+        siblings
+            .begin_subtree_deletion("acc_delete".into(), "ses_child_b".into(), 21)
+            .await
+            .unwrap();
+        let parallel = siblings.claim_pending_deletions(8, 22).await.unwrap();
+        assert_eq!(parallel.len(), 2);
+        assert_eq!(
+            parallel
+                .iter()
+                .map(|job| job.session_id.as_str())
+                .collect::<std::collections::HashSet<_>>(),
+            std::collections::HashSet::from(["ses_child_a", "ses_child_b"])
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_idempotency_mapping_and_live_increment_identity_are_exactly_once() {
+        let db = Db::open_memory().unwrap();
+        db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+            .await
+            .unwrap();
+        let row = SessionRow {
+            id: "ses_created".into(),
+            account_id: "acc_a".into(),
+            key_id: "key_1".into(),
+            parent_id: None,
+            root_id: "ses_created".into(),
+            depth: 0,
+            shape: "1gb".into(),
+            created_ms: 5,
+            is_final: false,
+            fold: FoldState::default(),
+        };
+        assert!(
+            db.record_created_session(
+                row.clone(),
+                Some(("key-hash".into(), "request-hash".into(), 5))
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(
+            db.session_create_request("acc_a".into(), "key-hash".into())
+                .await
+                .unwrap(),
+            Some(SessionCreateRow {
+                request_hash: "request-hash".into(),
+                session_id: "ses_created".into(),
+            })
+        );
+        assert!(
+            !db.record_created_session(
+                row.clone(),
+                Some(("key-hash".into(), "request-hash".into(), 6))
+            )
+            .await
+            .unwrap(),
+            "a concurrent or later replay must not increment the live cache twice"
+        );
+        assert!(
+            db.record_created_session(
+                row,
+                Some(("key-hash".into(), "different-request".into(), 7))
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn retained_root_quota_is_atomic_and_releases_only_after_physical_delete() {
+        let db = Db::open_memory().unwrap();
+        db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+            .await
+            .unwrap();
+        let root = SessionRow {
+            id: "ses_ended".into(),
+            account_id: "acc_a".into(),
+            key_id: "key_1".into(),
+            parent_id: None,
+            root_id: "ses_ended".into(),
+            depth: 0,
+            shape: "1gb".into(),
+            created_ms: 1,
+            is_final: false,
+            fold: FoldState {
+                session_state: "ended".into(),
+                ..FoldState::default()
+            },
+        };
+        db.insert_session(root.clone()).await.unwrap();
+        assert_eq!(db.retained_root_slots("acc_a".into()).await.unwrap(), 1);
+        assert_eq!(
+            db.ensure_session_create_intent(
+                "acc_a".into(),
+                "blocked".into(),
+                "request".into(),
+                2,
+                1,
+            )
+            .await
+            .unwrap(),
+            SessionCreateIntent::RetainedRootLimit,
+            "logical end must not release retained journal capacity",
+        );
+
+        let mut deleted = root.fold;
+        deleted.session_state = "deleted".into();
+        deleted.metered_to_ms = 3;
+        assert!(
+            db.apply_sweep("ses_ended".into(), "acc_a".into(), deleted, true, 0, 3)
+                .await
+                .unwrap()
+        );
+        assert_eq!(db.retained_root_slots("acc_a".into()).await.unwrap(), 0);
+        assert_eq!(
+            db.ensure_session_create_intent(
+                "acc_a".into(),
+                "replacement".into(),
+                "request".into(),
+                4,
+                1,
+            )
+            .await
+            .unwrap(),
+            SessionCreateIntent::Created,
+        );
+        assert_eq!(db.retained_root_slots("acc_a".into()).await.unwrap(), 1);
+        assert_eq!(
+            db.ensure_session_create_intent(
+                "acc_a".into(),
+                "replacement".into(),
+                "request".into(),
+                5,
+                1,
+            )
+            .await
+            .unwrap(),
+            SessionCreateIntent::Existing,
+            "same-key recovery keeps access to its already-reserved identity at the cap",
+        );
+        assert_eq!(
+            db.ensure_session_create_intent(
+                "acc_a".into(),
+                "second".into(),
+                "request".into(),
+                5,
+                1,
+            )
+            .await
+            .unwrap(),
+            SessionCreateIntent::RetainedRootLimit,
+        );
+
+        let replacement = SessionRow {
+            id: "ses_replacement".into(),
+            account_id: "acc_a".into(),
+            key_id: "key_1".into(),
+            parent_id: None,
+            root_id: "ses_replacement".into(),
+            depth: 0,
+            shape: "1gb".into(),
+            created_ms: 6,
+            is_final: false,
+            fold: FoldState::default(),
+        };
+        db.upsert_discovered_sessions(vec![replacement.clone()])
+            .await
+            .unwrap();
+        assert!(
+            db.session_create_intent("acc_a".into(), "replacement".into())
+                .await
+                .unwrap()
+                .unwrap()
+                .covered
+        );
+        assert_eq!(
+            db.retained_root_slots("acc_a".into()).await.unwrap(),
+            1,
+            "covering an ambiguous identity with its discovered root must not double count",
+        );
+        let mut deleted = replacement.fold;
+        deleted.session_state = "deleted".into();
+        deleted.metered_to_ms = 7;
+        assert!(
+            db.apply_sweep(
+                "ses_replacement".into(),
+                "acc_a".into(),
+                deleted,
+                true,
+                0,
+                7,
+            )
+            .await
+            .unwrap()
+        );
+        db.finish_subtree_deletion("acc_a".into(), "ses_replacement".into())
+            .await
+            .unwrap();
+        assert!(
+            db.session_create_intent("acc_a".into(), "replacement".into())
+                .await
+                .unwrap()
+                .is_none(),
+            "physical deletion removes the covered ambiguous reservation",
+        );
+        assert_eq!(db.retained_root_slots("acc_a".into()).await.unwrap(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn racing_durable_create_intents_cannot_cross_the_retained_root_cap() {
+        let db = Db::open_memory().unwrap();
+        db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+            .await
+            .unwrap();
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(100));
+        let mut tasks = Vec::new();
+        for index in 0..100 {
+            let db = db.clone();
+            let barrier = barrier.clone();
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                db.ensure_session_create_intent(
+                    "acc_a".into(),
+                    format!("key-{index}"),
+                    format!("request-{index}"),
+                    1,
+                    10,
+                )
+                .await
+                .unwrap()
+            }));
+        }
+        let mut created = 0;
+        let mut limited = 0;
+        for task in tasks {
+            match task.await.unwrap() {
+                SessionCreateIntent::Created => created += 1,
+                SessionCreateIntent::RetainedRootLimit => limited += 1,
+                outcome => panic!("unexpected durable create outcome: {outcome:?}"),
+            }
+        }
+        assert_eq!((created, limited), (10, 90));
+        assert_eq!(db.retained_root_slots("acc_a".into()).await.unwrap(), 10);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn uncertain_create_slots_survive_restart_and_strong_discovery_covers_once() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "aex-control-create-intent-{}-{unique}.db",
+            std::process::id()
+        ));
+        {
+            let db = Db::open(&path).unwrap();
+            db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
+                .await
+                .unwrap();
+            assert_eq!(
+                db.ensure_session_create_intent(
+                    "acc_a".into(),
+                    "key-a".into(),
+                    "request-a".into(),
+                    5,
+                    100,
+                )
+                .await
+                .unwrap(),
+                SessionCreateIntent::Created
+            );
+            db.mark_session_create_uncertain("acc_a".into(), "key-a".into(), "request-a".into(), 6)
+                .await
+                .unwrap();
+        }
+        {
+            let db = Db::open(&path).unwrap();
+            assert_eq!(
+                db.uncovered_session_create_intents("acc_a".into())
+                    .await
+                    .unwrap(),
+                1,
+                "a restart must not silently free an ambiguous root slot"
+            );
+            assert_eq!(
+                db.ensure_session_create_intent(
+                    "acc_a".into(),
+                    "key-a".into(),
+                    "request-a".into(),
+                    7,
+                    100,
+                )
+                .await
+                .unwrap(),
+                SessionCreateIntent::Existing
+            );
+            assert_eq!(
+                db.ensure_session_create_intent(
+                    "acc_a".into(),
+                    "key-a".into(),
+                    "different".into(),
+                    7,
+                    100,
+                )
+                .await
+                .unwrap(),
+                SessionCreateIntent::Conflict
+            );
+            assert_eq!(
+                db.ensure_session_create_intent(
+                    "acc_a".into(),
+                    "key-b".into(),
+                    "request-b".into(),
+                    8,
+                    100,
+                )
+                .await
+                .unwrap(),
+                SessionCreateIntent::Created
+            );
+            let row = SessionRow {
+                id: "ses_discovered".into(),
+                account_id: "acc_a".into(),
+                key_id: "key_1".into(),
+                parent_id: None,
+                root_id: "ses_discovered".into(),
+                depth: 0,
+                shape: "1gb".into(),
+                created_ms: 9,
+                is_final: false,
+                fold: FoldState {
+                    session_state: "open".into(),
+                    ..Default::default()
+                },
+            };
+            db.upsert_discovered_sessions(vec![row.clone()])
+                .await
+                .unwrap();
+            assert_eq!(
+                db.uncovered_session_create_intents("acc_a".into())
+                    .await
+                    .unwrap(),
+                1,
+                "one observed root covers exactly one possible commit"
+            );
+            db.record_created_session(row, Some(("key-a".into(), "request-a".into(), 10)))
+                .await
+                .unwrap();
+            db.abandon_session_create_intent("acc_a".into(), "key-b".into(), "request-b".into())
+                .await
+                .unwrap();
+            assert_eq!(
+                db.uncovered_session_create_intents("acc_a".into())
+                    .await
+                    .unwrap(),
+                0
+            );
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn hosted_tool_results_replay_exactly_and_reject_identity_reuse() {
+        let db = Db::open_memory().unwrap();
+        assert!(
+            db.hosted_tool_response("ses_a".into(), "call_a".into(), "hash_a".into())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let first = db
+            .record_hosted_tool_response(
+                "ses_a".into(),
+                "call_a".into(),
+                "hash_a".into(),
+                r#"{"result":1}"#.into(),
+                1,
+            )
+            .await
+            .unwrap();
+        let replay = db
+            .record_hosted_tool_response(
+                "ses_a".into(),
+                "call_a".into(),
+                "hash_a".into(),
+                r#"{"result":2}"#.into(),
+                2,
+            )
+            .await
+            .unwrap();
+        assert_eq!(first, replay);
+        assert!(matches!(
+            db.hosted_tool_response("ses_a".into(), "call_a".into(), "different".into())
+                .await,
+            Err(Error::Conflict(_))
+        ));
     }
 }

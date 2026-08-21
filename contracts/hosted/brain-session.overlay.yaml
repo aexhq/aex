@@ -1,0 +1,25 @@
+overlay: 1.0.0
+info:
+  title: Aex hosted policy for the Brain session API
+  version: mvp
+extends: https://raw.githubusercontent.com/aexhq/brain/ca29e5ecda3c86b32ad303c6048ca7158776bbbb/contracts/session/v1/openapi.yaml
+x-aex-brain-openapi-sha256: 3185db5486c4ba3eefcf83eaee90a92cd5aaf24002352ba9f4bde32ad2e9c084
+actions:
+  - target: $.components.parameters.IdempotencyKey
+    description: Hosted Aex requires a recoverable identity anywhere neutral Brain accepts one.
+    update:
+      required: true
+      description: Required 1-to-128-byte exact-replay identity for hosted admission and retry.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  - target: "$['paths']['/v1/sessions']['post']"
+    description: Record the one managed-compute shape available in hosted alpha.
+    update:
+      description: |
+        Hosted Aex seals every root tree to `1gb` (0.5 vCPU and 1 GiB). SDK callers omit a shape;
+        an explicit request for any other shape is rejected before neutral Brain admission.
+      x-aex-managed-compute:
+        shape: 1gb
+        selectable: false

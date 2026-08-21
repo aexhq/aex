@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aex.dev/contracts/control/v1/schemas.json",
   "title": "Aex control API v1 types",
-  "description": "Component types of the control plane: identity (accounts, API keys), prepaid billing (top-ups, balance), and rated usage on the two-rate card. Paths are in openapi.yaml. Session operations are NOT redefined here: the control plane serves session/v1 paths verbatim, authorized by an API key, in front of a brain. All money on the wire is integer micro-USD (1 USD = 1,000,000 micro-USD) except top-up amounts, which are whole cents (the payment surface). Storage is metered in decimal GB (1 GB = 1e9 bytes); a month is 730 hours.",
+  "description": "Component types of the control plane: identity (accounts, API keys), prepaid billing (top-ups, balance), and rated usage on the public rate card. Paths are in openapi.yaml. Session operations are NOT redefined here: the control plane serves session/v1 paths verbatim, authorized by an API key, in front of a brain. All money on the wire is a canonical decimal-string integer in micro-USD (1 USD = 1,000,000 micro-USD) except top-up amounts, which are whole cents (the payment surface). Storage is metered in decimal GB (1 GB = 1e9 bytes); a month is 730 hours.",
   "$defs": {
     "AccountId": {
       "type": "string",
@@ -30,8 +30,14 @@
       "description": "RFC 3339, UTC."
     },
     "MicroUsd": {
-      "type": "integer",
-      "description": "Integer micro-USD; 1 USD = 1,000,000. Never a float."
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*|-[1-9][0-9]*)$",
+      "description": "Canonical signed decimal-string integer micro-USD; 1 USD = 1,000,000. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point."
+    },
+    "UnsignedDecimalInteger": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "description": "Canonical unsigned decimal-string integer. Parse with arbitrary-precision integer arithmetic such as JavaScript BigInt; never Number or floating point."
     },
     "AccountToken": {
       "type": "string",
@@ -186,15 +192,19 @@
         "max_concurrent_sessions",
         "session_creates_per_hour"
       ],
-      "description": "Account-level limits for concurrent sessions and session creation rate.",
+      "description": "Account-level limits for resource-bearing root sessions and root-session creation rate. Open, asynchronously ending, failed, and deleting roots consume the concurrent limit until a strong ended projection or physical deletion proves resource release; durable child sessions are bounded by the root's sealed child policy.",
       "properties": {
         "max_concurrent_sessions": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000,
+          "description": "Maximum resource-bearing root sessions in open, ending, failed, or deleting lifecycle. Child sessions do not consume or bypass this account limit."
         },
         "session_creates_per_hour": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000,
+          "description": "Maximum root-session creates per rolling hour."
         }
       }
     },
@@ -413,7 +423,8 @@
         },
         "amount_cents": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 100000
         },
         "status": {
           "$ref": "#/$defs/TopupStatus"
@@ -503,7 +514,8 @@
         },
         "amount_cents": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 100000
         },
         "reason": {
           "type": "string"
@@ -564,7 +576,8 @@
         },
         "amount_cents": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 100000
         },
         "status": {
           "$ref": "#/$defs/RefundStatus"
@@ -587,12 +600,11 @@
         "object",
         "vcpu_hour_microusd",
         "gb_hour_microusd",
-        "suspended_gb_month_microusd",
-        "workspace_gb_month_microusd",
+        "session_storage_gb_month_microusd",
         "web_search_query_microusd",
         "month_hours"
       ],
-      "description": "The public usage rate card. Compute is billed per second while running on the shape's baseline (vCPU = memory/2; bursts are free); the pre-suspend idle window is absorbed. Suspended storage covers the bytes held for a suspended hand; workspace storage covers synced workspace objects and persisted artifacts. GB is decimal (1e9 bytes); a month is `month_hours` hours.",
+      "description": "The public usage rate card. Hosted alpha compute is billed per second on its only physical shape: 0.5 vCPU plus 1 GiB, or $0.12/hour at these component rates. Transient provider burst or peak capacity is not separately metered and is not a promised entitlement. Idle and provider snapshot-storage costs are absorbed in alpha. Session storage covers explicit durable objects and bytes reserved by an outstanding direct upload. Storage GB is decimal (1e9 bytes); a month is `month_hours` hours.",
       "properties": {
         "object": {
           "const": "rate_card"
@@ -603,10 +615,7 @@
         "gb_hour_microusd": {
           "$ref": "#/$defs/MicroUsd"
         },
-        "suspended_gb_month_microusd": {
-          "$ref": "#/$defs/MicroUsd"
-        },
-        "workspace_gb_month_microusd": {
+        "session_storage_gb_month_microusd": {
           "$ref": "#/$defs/MicroUsd"
         },
         "web_search_query_microusd": {
@@ -614,30 +623,28 @@
         },
         "month_hours": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 8760
         }
       }
     },
     "StorageMeters": {
       "type": "object",
       "required": [
-        "workspace_bytes",
-        "suspended_bytes",
-        "artifact_bytes"
+        "session_storage_bytes",
+        "upload_reserved_bytes"
       ],
-      "description": "Current stored bytes, as last reported by the brain (session/v1 StorageInfo).",
+      "description": "Current published bytes and outstanding upload-reserved capacity, as last reported by Brain (session/v1 StorageInfo). They remain separate so quota and billing are observable even before an upload is published.",
       "properties": {
-        "workspace_bytes": {
+        "session_storage_bytes": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 10737418240
         },
-        "suspended_bytes": {
+        "upload_reserved_bytes": {
           "type": "integer",
-          "minimum": 0
-        },
-        "artifact_bytes": {
-          "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 10737418240
         }
       }
     },
@@ -648,9 +655,7 @@
         "shape",
         "state",
         "running_ms",
-        "suspended_byte_seconds",
-        "workspace_byte_seconds",
-        "artifact_byte_seconds",
+        "session_storage_byte_milliseconds",
         "web_search_queries",
         "compute_microusd",
         "storage_microusd",
@@ -659,7 +664,7 @@
         "storage",
         "metered_to"
       ],
-      "description": "One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session's event log — the journal is the billing record. Storage integrals are exact byte-seconds of the brain-reported meters, piecewise-constant between meter readings. Successful web_search tool results are counted from the same event log.",
+      "description": "One session's rated line. Compute time is the sum of turn intervals (turn.started to turn.completed/failed) folded from the session event log. Session-storage integrals are reconstructed from durable storage.usage gauge transitions with exact internal byte-millisecond carry; the public byte-millisecond projection adds the current derived open interval through metered_to so it reproduces the charge. Successful web_search tool results are counted from the same journal.",
       "properties": {
         "session_id": {
           "type": "string",
@@ -667,31 +672,26 @@
         },
         "shape": {
           "type": "string",
-          "description": "HandShape from session/v1 (1gb | 2gb | 4gb | 8gb)."
+          "const": "1gb",
+          "description": "The hosted alpha's only physical shape: 0.5 vCPU and 1 GiB."
         },
         "state": {
           "type": "string",
-          "description": "SessionState from session/v1 (active | idle | deleted | failed)."
+          "description": "Lifecycle SessionState from session/v1 (open | ending | ended | deleting | deleted | failed); current-turn activity is a separate session projection."
         },
         "running_ms": {
-          "type": "integer",
-          "minimum": 0
+          "$ref": "#/$defs/UnsignedDecimalInteger",
+          "description": "Cumulative running milliseconds as an exact canonical unsigned decimal string."
         },
-        "suspended_byte_seconds": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "workspace_byte_seconds": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "artifact_byte_seconds": {
-          "type": "integer",
-          "minimum": 0
+        "session_storage_byte_milliseconds": {
+          "$ref": "#/$defs/UnsignedDecimalInteger",
+          "description": "Published session-storage plus outstanding upload-reservation byte-milliseconds through metered_to as an exact canonical unsigned decimal string. It is the durable closed integral plus the derived open interval used for this response's charge; a delayed durable transition may replace that estimate upward or downward. Storage micro-USD is floor(value * session_storage_gb_month_microusd / (1000000000 * month_hours * 3600000))."
         },
         "web_search_queries": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 134217728,
+          "description": "Successful search results counted from the bounded per-session journal; the hosted 128 MiB journal ceiling makes this counter JavaScript-safe."
         },
         "compute_microusd": {
           "$ref": "#/$defs/MicroUsd"

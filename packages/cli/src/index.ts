@@ -121,7 +121,11 @@ async function sessionCommand(aex: Aex, argv: string[]): Promise<void> {
 function summary(session: SessionSummary): SessionSummary {
   return {
     id: session.id,
+    parentId: session.parentId,
+    rootId: session.rootId,
+    depth: session.depth,
     state: session.state,
+    turnState: session.turnState,
     model: session.model,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,

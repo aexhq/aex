@@ -5,7 +5,7 @@
 FROM rust:1.97-bookworm AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --release -p aex-control --bin aex-control
+RUN cargo build --locked --release -p aex-control --bin aex-control
 
 FROM debian:bookworm-slim
 RUN apt-get update \

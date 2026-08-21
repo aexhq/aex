@@ -72,17 +72,16 @@ try {
   );
   await writeFile(
     path.join(consumer, "custom.ts"),
-    `import { defineTool } from "@aexhq/sdk";
+    `import { tool } from "@aexhq/sdk";
 import { z } from "zod";
 
-const custom = defineTool({
-  module: import.meta.url,
-  name: "package_smoke_echo",
-  description: "Return the exact input.",
-  input: z.object({ value: z.string() }),
-  output: z.object({ value: z.string() }),
-  async execute(input) { return input; },
-});
+const custom = tool(
+  z.object({ value: z.string() }),
+  async function packageSmokeEcho(input) { return input; },
+)
+  .describe("Return the exact input.")
+  .returns(z.object({ value: z.string() }))
+  .server(import.meta.url);
 
 export default custom;
 `,
@@ -90,15 +89,15 @@ export default custom;
   await writeFile(
     path.join(consumer, "smoke.ts"),
     `import assert from "node:assert/strict";
-import { compileTools, defineTool as brainDefineTool, type Tool } from "@aexhq/brain";
-import { Aex, defineTool as aexDefineTool } from "@aexhq/sdk";
+import { compileTools, tool as brainTool, type Tool } from "@aexhq/brain";
+import { Aex, tool as aexTool } from "@aexhq/sdk";
 import { bash } from "@aexhq/tools";
 import custom from "./custom.js";
 
-assert.equal(aexDefineTool, brainDefineTool, "Aex must re-export Brain's one Tool constructor");
+assert.equal(aexTool, brainTool, "Aex must re-export Brain's one Tool constructor");
 const selected: readonly Tool[] = [custom, bash()];
 const prepared = await compileTools(selected);
-assert.deepEqual(prepared.items.map((item) => item.definition.name), ["package_smoke_echo", "bash"]);
+assert.deepEqual(prepared.items.map((item) => item.definition.name), ["packageSmokeEcho", "bash"]);
 
 async function typecheckAex(aex: Aex): Promise<void> {
   await aex.sessions.create({

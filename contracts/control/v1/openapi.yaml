@@ -334,7 +334,7 @@ paths:
     get:
       tags: [billing]
       operationId: getUsage
-      summary: The bill — every session's rated line on the two-rate card, storage meters included
+      summary: The bill — every session's rated line on the public rate card, storage meters included
       responses:
         "200":
           description: OK

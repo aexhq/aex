@@ -1,44 +1,62 @@
-# The self-contained local stack: one brain (local mode — in-memory journal, subprocess tools;
-# NOT durable, NOT a sandbox) behind one control plane (fake payments — every top-up instantly
-# "paid"). This is for trying aex on your own machine with prompts you trust; production is
-# the Fargate deploy in the private platform repo (AWS-mode brain, MicroVM hands, real Stripe).
+# The self-contained local stack: the Aex-owned Brain composition in explicit durable-local mode
+# (SQLite journal, encrypted custody, durable inline session storage, and unsandboxed host Tool
+# execution inside its container) behind one control plane (fake payments — every top-up is
+# instantly "paid"). It registers the same fixed official capability policy as production. This is
+# for trusted local development; production is the hosted AWS Brain + MicroVM Hands composition.
 #
-#   docker compose up
-#   aex --base-url http://127.0.0.1:8600 signup --email you@example.com
-#   aex topup --usd 10 && aex keys create --name local
-#   aex session new --provider anthropic --model claude-sonnet-5   # BYOK via ANTHROPIC_API_KEY
+#   docker compose up --build
 #
-# AEX_LOCAL_TOKEN is the brain-side operator token shared between the two containers. It never
-# leaves the compose network; override it in a .env file if you expose anything.
+# Then point the TypeScript SDK or CLI at http://127.0.0.1:8600. Account bootstrap remains an
+# explicit control-plane operation; see docs/quickstart.md for the session client.
+#
+# The Brain and control processes share one network namespace so their private authenticated route
+# remains loopback-only. Override both development secrets in the workspace-root .env if you expose
+# anything.
 
 services:
-  brain:
-    image: ghcr.io/aexhq/brain:latest
-    build: ../brain # used only if you `docker compose build` with the brain repo checked out alongside
-    environment:
-      AEX_MODE: local
-      AEX_LISTEN: 0.0.0.0:8700 # container-network only; not published to the host
-      AEX_API_TOKEN: ${AEX_LOCAL_TOKEN:-dev-local-token}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      VERCEL_AI_GATEWAY_API_KEY: ${VERCEL_AI_GATEWAY_API_KEY:-}
-      SERPER_API_KEY: ${SERPER_API_KEY:-}
-    volumes:
-      - brain-data:/data
-
   control:
     image: ghcr.io/aexhq/aex-control:latest
     build: .
-    depends_on:
-      - brain
     environment:
-      AEX_BRAIN_URL: http://brain:8700
-      AEX_BRAIN_TOKEN: ${AEX_LOCAL_TOKEN:-dev-local-token}
+      AEX_BRAIN_URL: http://127.0.0.1:8700
+      AEX_BRAIN_TOKEN: ${AEX_LOCAL_BRAIN_TOKEN:-dev-local-brain-token}
       AEX_CONTROL_LISTEN: 0.0.0.0:8600
+      AEX_CONTROL_INTERNAL_LISTEN: 127.0.0.1:8601
+      AEX_CONTROL_DB: /data/control.db
+      AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN: ${AEX_LOCAL_EXECUTOR_TOKEN:-dev-local-executor-token}
+      AEX_MAX_CONCURRENT_CREATE_BODIES: 4
+      AEX_MAX_CONCURRENT_MESSAGE_BODIES: 256
+      AEX_MAX_CONCURRENT_INLINE_SESSION_BODIES: 64
       AEX_PAYMENTS: fake
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
     ports:
       - "127.0.0.1:8600:8600"
+      - "127.0.0.1:8700:8700"
     volumes:
       - control-data:/data
+
+  brain:
+    image: ghcr.io/aexhq/aex-brain:latest
+    build:
+      context: .
+      dockerfile: crates/aex-brain/Dockerfile
+    depends_on:
+      - control
+    network_mode: service:control
+    environment:
+      BRAIN_MODE: local
+      BRAIN_DATA_DIR: /data
+      BRAIN_MAX_ADDITIONAL_SANDBOXES_PER_ROOT: 2
+      AEX_BRAIN_LISTEN: 0.0.0.0:8700
+      AEX_CUSTOMER_HAND_WEBSOCKET_URL: ws://127.0.0.1:8700/v1/customer-hand/socket
+      # Receipts return through the same authenticated Aex origin used by the SDK; control then
+      # forwards the scoped grant/token pair to Brain. The socket itself remains Brain-direct.
+      AEX_CUSTOMER_HAND_OBSERVATION_BASE_URL: http://127.0.0.1:8600
+      AEX_BRAIN_TOKEN: ${AEX_LOCAL_BRAIN_TOKEN:-dev-local-brain-token}
+      AEX_EXTERNAL_TOOL_EXECUTOR_TOKEN: ${AEX_LOCAL_EXECUTOR_TOKEN:-dev-local-executor-token}
+      AEX_CONTROL_INTERNAL_URL: http://127.0.0.1:8601/internal/v1/tools/call
+    volumes:
+      - brain-data:/data
 
 volumes:
   brain-data:

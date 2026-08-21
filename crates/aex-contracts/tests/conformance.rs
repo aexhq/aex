@@ -118,3 +118,72 @@ fn examples_validate_and_round_trip() {
         }
     }
 }
+
+#[test]
+fn exact_integer_strings_are_canonical_and_numeric_fields_are_bounded() {
+    let signed = validator("MicroUsd");
+    for valid in [
+        "0",
+        "1",
+        "-1",
+        "9223372036854775807",
+        "-9223372036854775808",
+    ] {
+        assert!(
+            signed.is_valid(&serde_json::json!(valid)),
+            "rejected signed {valid}"
+        );
+    }
+    for invalid in ["", "-0", "+1", "00", "01", "-01", "1.0", "1e3", " 1"] {
+        assert!(
+            !signed.is_valid(&serde_json::json!(invalid)),
+            "accepted non-canonical signed {invalid:?}"
+        );
+    }
+    assert!(!signed.is_valid(&serde_json::json!(1)));
+
+    let unsigned = validator("UnsignedDecimalInteger");
+    for valid in ["0", "1", "9007199254740992", "9223372036854775807"] {
+        assert!(
+            unsigned.is_valid(&serde_json::json!(valid)),
+            "rejected unsigned {valid}"
+        );
+    }
+    for invalid in ["", "-0", "-1", "+1", "00", "01", "1.0", "1e3", " 1"] {
+        assert!(
+            !unsigned.is_valid(&serde_json::json!(invalid)),
+            "accepted non-canonical unsigned {invalid:?}"
+        );
+    }
+    assert!(!unsigned.is_valid(&serde_json::json!(0)));
+
+    let limits = validator("AccountLimits");
+    assert!(limits.is_valid(&serde_json::json!({
+        "max_concurrent_sessions": 1,
+        "session_creates_per_hour": 1_000_000
+    })));
+    assert!(!limits.is_valid(&serde_json::json!({
+        "max_concurrent_sessions": 0,
+        "session_creates_per_hour": 1
+    })));
+    assert!(!limits.is_valid(&serde_json::json!({
+        "max_concurrent_sessions": 1,
+        "session_creates_per_hour": 1_000_001
+    })));
+
+    let topup = validator("CreateTopupRequest");
+    assert!(topup.is_valid(&serde_json::json!({"amount_cents": 1_000})));
+    assert!(topup.is_valid(&serde_json::json!({"amount_cents": 100_000})));
+    assert!(!topup.is_valid(&serde_json::json!({"amount_cents": 999})));
+    assert!(!topup.is_valid(&serde_json::json!({"amount_cents": 100_001})));
+
+    let storage = validator("StorageMeters");
+    assert!(storage.is_valid(&serde_json::json!({
+        "session_storage_bytes": 10_737_418_240u64,
+        "upload_reserved_bytes": 0
+    })));
+    assert!(!storage.is_valid(&serde_json::json!({
+        "session_storage_bytes": 10_737_418_241u64,
+        "upload_reserved_bytes": 0
+    })));
+}

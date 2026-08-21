@@ -7,17 +7,12 @@ on:
 jobs:
   contracts:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
-      - name: Checkout pinned Brain packages
-        run: |
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout 830356e72cf1de7b8f4b6f3971f40eff01bbdb31
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.97.1"
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -25,20 +20,98 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Install cargo-typify
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97.1"
+          components: rustfmt
+      - name: Checkout the pinned Brain contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          brain_revision=$(node tools/pinned-revision.mjs brain)
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain checkout "$brain_revision"
+          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
+      - run: npm ci
+      - name: Install the pinned contract generator
         run: cargo install cargo-typify --version 0.7.0 --locked
-      - name: Build pinned Brain packages
+      - name: Regenerate owning contracts and fail on drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/gen.sh
+          node tools/verify-brain-overlay.mjs
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+
+  rust:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97.1"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  npm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Checkout the pinned Brain packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          brain_revision=$(node tools/pinned-revision.mjs brain)
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain checkout "$brain_revision"
+          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
+      - name: Build the pinned Brain packages
         run: |
           npm ci --prefix ../brain
           npm run build --prefix ../brain
       - run: npm ci
-      - name: Regenerate from contracts/ and fail on drift
-        run: |
-          bash tools/gen.sh
-          git status --porcelain
-          git diff --exit-code
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
       - run: npm test
+
+  package-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Checkout the pinned Brain packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          brain_revision=$(node tools/pinned-revision.mjs brain)
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain checkout "$brain_revision"
+          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
+      - name: Build the pinned Brain packages
+        run: |
+          npm ci --prefix ../brain
+          npm run build --prefix ../brain
+      - run: npm ci
+      - run: npm run build
       - run: npm run package-smoke

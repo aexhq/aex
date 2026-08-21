@@ -8,6 +8,12 @@ import type {
   SessionState,
   CreateSessionRequest,
 } from "@aexhq/brain/session";
+import { CustomerHand } from "@aexhq/brain";
+import type {
+  ClientRegistration,
+  NetworkPolicy,
+  WebSocketFactory,
+} from "@aexhq/brain";
 import * as z from "zod";
 
 import {
@@ -25,6 +31,7 @@ import type { EventOptions } from "./transport.js";
 import { Transport } from "./transport.js";
 import { compileTools } from "./tools.js";
 import type { Tool } from "./tools.js";
+import { SessionChildren, SessionSandbox, SessionStorage } from "./resources.js";
 
 export type SessionInput = string;
 
@@ -40,6 +47,8 @@ export interface ModelOptions {
   apiKey: string;
   baseUrl?: string;
   maxOutputTokens?: number;
+  /** Immutable context capacity used for admission and compaction; Brain never guesses by name. */
+  contextWindowTokens?: number;
   temperature?: number;
   reasoningEffort?: "low" | "medium" | "high";
 }
@@ -48,22 +57,24 @@ export interface CreateSessionOptions {
   model: ModelOptions;
   /** Omitted or empty grants no tools. A non-empty list is the exact grant. */
   tools?: readonly Tool[];
-  /** Optional remote MCP servers discovered and sealed by Brain at session creation. */
-  mcp?: readonly McpServerOptions[];
   systemPrompt?: string;
-  hand?: {
-    enabled?: boolean;
-    env?: Record<string, string>;
+  /** Write-only values for environment names declared by managed Tools. */
+  secrets?: Record<string, string>;
+  /** Maximum direct outbound network authority sealed for managed sandboxes. Omission is deny-all. */
+  network?: NetworkPolicy;
+  /** Replacement attempts after an unrecoverable provider outcome. Defaults to one. */
+  providerRecoveryRetries?: 0 | 1;
+  client?: {
+    /** Replacement sends to the same customer process and operation. Defaults to one. */
+    submitRetries?: 0 | 1;
+  };
+  /** Optional ceilings for durable child sessions. Omitted fields use the hosted defaults. */
+  children?: {
+    maxDepth?: number;
+    maxDirectChildren?: number;
+    maxDescendants?: number;
   };
   metadata?: Record<string, string>;
-}
-
-export interface McpServerOptions {
-  name: string;
-  url: string;
-  headers?: Record<string, string>;
-  protocol?: "auto" | "2026-07" | "legacy";
-  allowedTools?: readonly string[];
 }
 
 export interface RequestOptions {
@@ -95,11 +106,16 @@ export interface ModelSummary {
   provider: Provider;
   name: string;
   baseUrl?: string;
+  contextWindowTokens: number;
 }
 
 export interface SessionSummary {
   id: string;
+  parentId: string | undefined;
+  rootId: string;
+  depth: number;
   state: SessionState;
+  turnState: SessionData["turn_state"];
   model: ModelSummary;
   createdAt: string;
   updatedAt: string;
@@ -108,19 +124,35 @@ export interface SessionSummary {
 
 export class Sessions {
   readonly #transport: Transport;
+  readonly #webSocketFactory: WebSocketFactory | undefined;
+  readonly #clientId: string | undefined;
+  #customerHand: Promise<CustomerHand> | undefined;
+  #customerHandInstance: CustomerHand | undefined;
+  #closed = false;
 
-  constructor(transport: Transport) {
+  constructor(transport: Transport, webSocketFactory?: WebSocketFactory, clientId?: string) {
     this.#transport = transport;
+    this.#webSocketFactory = webSocketFactory;
+    this.#clientId = clientId;
+  }
+
+  /** @internal Called by `Aex.close()`. */
+  close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#customerHandInstance?.close();
+    this.#customerHandInstance = undefined;
+    this.#customerHand = undefined;
   }
 
   async create(options: CreateSessionOptions, request: RequestOptions = {}): Promise<Session> {
+    if (this.#closed) throw new SessionError("Aex client is closed");
     const compiledTools = await compileTools(options.tools);
-    if (compiledTools.attached.size > 0) {
-      throw new TypeError(
-        "Attached-process Tools are not available through this Aex SDK revision; use the default Hand execution mode",
-      );
+    if (options.client?.submitRetries !== undefined && this.#clientId === undefined) {
+      throw new TypeError("client.submitRetries requires Aex({ client: { id } })");
     }
-    const body: CreateSessionRequest = {
+    await this.#ensureCustomerHand(compiledTools.clientRegistrations, request.signal);
+    const body = {
       model: {
         provider: options.model.provider,
         name: options.model.name,
@@ -129,6 +161,9 @@ export class Sessions {
         ...(options.model.maxOutputTokens === undefined
           ? {}
           : { max_output_tokens: options.model.maxOutputTokens }),
+        ...(options.model.contextWindowTokens === undefined
+          ? {}
+          : { context_window_tokens: options.model.contextWindowTokens }),
         ...(options.model.temperature === undefined ? {} : { temperature: options.model.temperature }),
         ...(options.model.reasoningEffort === undefined
           ? {}
@@ -136,31 +171,42 @@ export class Sessions {
       },
       tools: {
         items: compiledTools.items,
-        ...(options.mcp === undefined
-          ? {}
-          : {
-              mcp: options.mcp.map((server) => ({
-                name: server.name,
-                url: server.url,
-                ...(server.headers === undefined ? {} : { headers: server.headers }),
-                ...(server.protocol === undefined ? {} : { protocol: server.protocol }),
-                ...(server.allowedTools === undefined
-                  ? {}
-                  : { allowed_tools: [...server.allowedTools] }),
-              })),
-            }),
       },
       ...(compiledTools.bundles.length === 0 ? {} : { tool_bundles: compiledTools.bundles }),
-      ...(options.hand === undefined
-        ? {}
-        : {
-            hand: {
-              ...(options.hand.enabled === undefined ? {} : { enabled: options.hand.enabled }),
-              ...(options.hand.env === undefined ? {} : { env: options.hand.env }),
-            },
-          }),
+      ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
       ...(options.systemPrompt === undefined ? {} : { system_prompt: options.systemPrompt }),
       ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
+      ...(options.network === undefined
+        ? {}
+        : { network: options.network as NonNullable<CreateSessionRequest["network"]> }),
+      ...(options.providerRecoveryRetries === undefined
+        ? {}
+        : { provider_recovery_retries: options.providerRecoveryRetries }),
+      ...(this.#clientId === undefined
+        ? {}
+        : {
+            client: {
+              id: this.#clientId,
+              ...(options.client?.submitRetries === undefined
+                ? {}
+                : { submit_retries: options.client.submitRetries }),
+            },
+          }),
+      ...(options.children === undefined
+        ? {}
+        : {
+            children: {
+              ...(options.children.maxDepth === undefined
+                ? {}
+                : { max_depth: options.children.maxDepth }),
+              ...(options.children.maxDirectChildren === undefined
+                ? {}
+                : { max_direct_children: options.children.maxDirectChildren }),
+              ...(options.children.maxDescendants === undefined
+                ? {}
+                : { max_descendants: options.children.maxDescendants }),
+            },
+          }),
     };
     const data = await this.#transport.json<SessionData>("POST", "/v1/sessions", {
       body,
@@ -195,15 +241,101 @@ export class Sessions {
       ...(list.next_cursor === undefined ? {} : { nextCursor: list.next_cursor }),
     };
   }
+
+  async #ensureCustomerHand(
+    registrations: readonly ClientRegistration[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (this.#closed) throw new SessionError("Aex client is closed");
+    if (registrations.length === 0) return;
+    if (this.#clientId === undefined) {
+      throw new TypeError("Customer-app Tools require Aex({ client: { id } })");
+    }
+    if (this.#webSocketFactory === undefined) {
+      throw new TypeError("This runtime does not provide WebSocket; pass webSocketFactory to Aex");
+    }
+    if (this.#customerHand === undefined) {
+      let partial: CustomerHand | undefined;
+      const starting = (async () => {
+        try {
+          partial = new CustomerHand(
+            async () => {
+              const grant = await this.#transport.customerHandGrant(
+                this.#clientId!,
+              );
+              return {
+                request: { url: grant.url, protocol: grant.protocol },
+                observe: (observation) => this.#transport.customerHandObserve(
+                  grant.observationUrl,
+                  grant.observationToken,
+                  observation,
+                ),
+              };
+            },
+            registrations,
+            this.#webSocketFactory!,
+            { clientId: this.#clientId! },
+          );
+          this.#customerHandInstance = partial;
+          await partial.ready;
+          if (this.#closed) {
+            partial.close();
+            throw new SessionError("Aex client is closed");
+          }
+          return partial;
+        } catch (error) {
+          partial?.close();
+          throw error;
+        }
+      })();
+      this.#customerHand = starting;
+      void starting.catch(() => {
+        if (this.#customerHand === starting) {
+          this.#customerHand = undefined;
+          if (this.#customerHandInstance === partial) this.#customerHandInstance = undefined;
+        }
+      });
+      // The request may stop waiting, but the process-scoped runner remains reconnectable for
+      // later sessions. Its grant/reconnect lifetime must never inherit one create signal.
+      await waitWithSignal(starting, signal);
+      return;
+    }
+    const hand = await waitWithSignal(this.#customerHand, signal);
+    if (this.#closed) throw new SessionError("Aex client is closed");
+    await waitWithSignal(hand.register(registrations), signal);
+  }
+}
+
+function waitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return promise;
+  if (signal.aborted) return Promise.reject(abortError(signal.reason));
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = (): void => signal.removeEventListener("abort", onAbort);
+    const onAbort = (): void => {
+      cleanup();
+      reject(abortError(signal.reason));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => { cleanup(); resolve(value); },
+      (error) => { cleanup(); reject(error); },
+    );
+  });
 }
 
 export class Session implements SessionSummary {
   readonly #transport: Transport;
   #data: SessionData;
+  readonly sandbox: SessionSandbox;
+  readonly storage: SessionStorage;
+  readonly children: SessionChildren;
 
   constructor(transport: Transport, data: SessionData) {
     this.#transport = transport;
     this.#data = data;
+    this.sandbox = new SessionSandbox(transport, data.id);
+    this.storage = new SessionStorage(transport, data.id);
+    this.children = new SessionChildren(transport, data.id);
   }
 
   get id(): string {
@@ -214,11 +346,28 @@ export class Session implements SessionSummary {
     return this.#data.state;
   }
 
+  get turnState(): SessionData["turn_state"] {
+    return this.#data.turn_state;
+  }
+
+  get parentId(): string | undefined {
+    return this.#data.parent_id;
+  }
+
+  get rootId(): string {
+    return this.#data.root_id;
+  }
+
+  get depth(): number {
+    return this.#data.depth;
+  }
+
   get model(): ModelSummary {
     return {
       provider: this.#data.model.provider,
       name: this.#data.model.name,
       ...(this.#data.model.base_url === undefined ? {} : { baseUrl: this.#data.model.base_url }),
+      contextWindowTokens: this.#data.model.context_window_tokens,
     };
   }
 
@@ -346,6 +495,11 @@ export class Session implements SessionSummary {
     throw new SessionError("The Aex event stream ended before the session finished its work");
   }
 
+  /**
+   * Raw, attempt-aware event stream. Provisional frames have no durable cursor and may later be
+   * superseded; consumers rendering them must key by `attempt_id` and process
+   * `model.attempt_superseded`. Use `send()` when only the durable winning answer is needed.
+   */
   events(options: EventOptions = {}): AsyncGenerator<Event> {
     return this.#transport.events(this.id, options);
   }
@@ -354,20 +508,30 @@ export class Session implements SessionSummary {
     this.#data = await this.#transport.json<SessionData>(
       "POST",
       `/v1/sessions/${encodeURIComponent(this.id)}/cancel`,
-      { signal: options.signal },
+      { signal: options.signal, retry: true },
     );
     return this;
   }
 
-  async delete(options: Pick<RequestOptions, "signal"> = {}): Promise<void> {
-    await this.#transport.json<void>("DELETE", `/v1/sessions/${encodeURIComponent(this.id)}`, {
-      signal: options.signal,
-    });
-    this.#data = { ...this.#data, state: "deleted" };
+  async end(options: Pick<RequestOptions, "signal"> = {}): Promise<this> {
+    this.#data = await this.#transport.json<SessionData>(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(this.id)}/end`,
+      { signal: options.signal, retry: true },
+    );
+    return this;
+  }
+
+  async delete(options: Pick<RequestOptions, "signal"> & { queue?: boolean } = {}): Promise<void> {
+    await this.#transport.deleteSession(this.id, options.queue !== true, options.signal);
+    this.#data = {
+      ...this.#data,
+      state: options.queue === true ? "deleting" : "deleted",
+    };
   }
 
   private markIdle(): void {
-    this.#data = { ...this.#data, state: "idle" };
+    this.#data = { ...this.#data, turn_state: "idle" };
   }
 }
 

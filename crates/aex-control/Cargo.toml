@@ -19,6 +19,7 @@ chrono.workspace = true
 futures-util.workspace = true
 hex.workspace = true
 hmac.workspace = true
+ipnet.workspace = true
 html2text.workspace = true
 jsonschema.workspace = true
 rand.workspace = true

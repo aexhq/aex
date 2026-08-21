@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/sdk",
-  "version": "0.56.0",
+  "version": "0.57.0",
   "description": "TypeScript SDK for Aex sessions",
   "license": "Apache-2.0",
   "homepage": "https://aex.dev",
@@ -15,7 +15,8 @@
   },
   "publishConfig": {
     "access": "public",
-    "provenance": true
+    "provenance": true,
+    "tag": "next"
   },
   "exports": {
     ".": {
@@ -33,7 +34,7 @@
     "test": "tsc -p tsconfig.json && node --test"
   },
   "dependencies": {
-    "@aexhq/brain": "0.1.0"
+    "@aexhq/brain": "0.2.0"
   },
   "peerDependencies": {
     "zod": "4.4.3"
