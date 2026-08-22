@@ -46,6 +46,10 @@ pub struct BrainDeletionStatus {
 
 const DISCOVERY_STATES: [&str; 5] = ["open", "ending", "ended", "deleting", "failed"];
 const CUSTOMER_HAND_HOP_TIMEOUT: Duration = Duration::from_secs(15);
+/// Every bounded (non-streaming) Brain call carries this total deadline: a stalled
+/// established connection must not hang the sweeper, deletion worker, or /v1/balance.
+/// The SSE follow forward is the one exemption (it streams indefinitely by design).
+const BRAIN_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl BrainClient {
     pub fn new(base: impl Into<String>, token: impl Into<String>) -> Self {
@@ -87,6 +91,8 @@ impl BrainClient {
     }
 
     /// Forward a request as the operator. `path_and_query` starts with `/v1/...`.
+    // One argument per independent request dimension; a builder here would be ceremony.
+    #[allow(clippy::too_many_arguments)]
     pub async fn forward(
         &self,
         tenant_id: &str,
@@ -95,6 +101,7 @@ impl BrainClient {
         content_type: Option<&str>,
         idempotency_key: Option<&str>,
         body: Option<reqwest::Body>,
+        deadline: Option<Duration>,
     ) -> Result<reqwest::Response> {
         let mut req = self
             .http
@@ -109,6 +116,9 @@ impl BrainClient {
         }
         if let Some(b) = body {
             req = req.body(b);
+        }
+        if let Some(deadline) = deadline {
+            req = req.timeout(deadline);
         }
         req.send()
             .await
@@ -207,6 +217,7 @@ impl BrainClient {
                 None,
                 None,
                 None,
+                Some(BRAIN_REQUEST_TIMEOUT),
             )
             .await?;
         match resp.status().as_u16() {
@@ -231,6 +242,7 @@ impl BrainClient {
                 None,
                 None,
                 None,
+                Some(BRAIN_REQUEST_TIMEOUT),
             )
             .await?;
         if response.status().is_success() {
@@ -263,7 +275,15 @@ impl BrainClient {
         }
         let path = format!("{}?{}", url.path(), url.query().unwrap_or_default());
         let response = self
-            .forward(tenant_id, reqwest::Method::GET, &path, None, None, None)
+            .forward(
+                tenant_id,
+                reqwest::Method::GET,
+                &path,
+                None,
+                None,
+                None,
+                Some(BRAIN_REQUEST_TIMEOUT),
+            )
             .await?;
         if !response.status().is_success() {
             return Err(Error::Upstream(format!(
@@ -313,6 +333,7 @@ impl BrainClient {
                 None,
                 None,
                 None,
+                Some(BRAIN_REQUEST_TIMEOUT),
             )
             .await?;
         match response.status().as_u16() {
@@ -337,6 +358,7 @@ impl BrainClient {
                 None,
                 None,
                 None,
+                Some(BRAIN_REQUEST_TIMEOUT),
             )
             .await?;
         match response.status().as_u16() {
@@ -390,6 +412,9 @@ impl BrainClient {
                 None,
                 None,
                 None,
+                // A bounded replay, but its SSE body can be large: a generous wall that
+                // still refuses to hang the rating fold forever on a stalled connection.
+                Some(Duration::from_secs(600)),
             )
             .await?;
         let status = resp.status().as_u16();
@@ -507,7 +532,15 @@ impl BrainClient {
                     None => url.path().to_owned(),
                 };
                 let response = self
-                    .forward(tenant_id, reqwest::Method::GET, &path, None, None, None)
+                    .forward(
+                        tenant_id,
+                        reqwest::Method::GET,
+                        &path,
+                        None,
+                        None,
+                        None,
+                        Some(BRAIN_REQUEST_TIMEOUT),
+                    )
                     .await?;
                 if !response.status().is_success() {
                     return Err(Error::Upstream(format!(
@@ -589,7 +622,15 @@ impl BrainClient {
                     None => url.path().to_owned(),
                 };
                 let response = self
-                    .forward(tenant_id, reqwest::Method::GET, &path, None, None, None)
+                    .forward(
+                        tenant_id,
+                        reqwest::Method::GET,
+                        &path,
+                        None,
+                        None,
+                        None,
+                        Some(BRAIN_REQUEST_TIMEOUT),
+                    )
                     .await?;
                 if !response.status().is_success() {
                     return Err(Error::Upstream(format!(

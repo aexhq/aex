@@ -982,6 +982,204 @@ async fn private_executor_requires_its_service_credential_and_routes_pinned_capa
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn topup_create_replays_on_the_idempotency_key() {
+    let brain_token = "operator-token";
+    let brain_url = spawn_stub_brain(brain_token).await;
+    let base = spawn_control(&brain_url, brain_token, (10, 30)).await;
+    let http = reqwest::Client::new();
+    let created = invited_signup(&http, &base, "topup-idem@example.com").await;
+    let at = created["account_token"].as_str().unwrap().to_string();
+
+    // The header is required: money creation without a replay identity is refused.
+    let missing = http
+        .post(format!("{base}/v1/topups"))
+        .bearer_auth(&at)
+        .json(&json!({"amount_cents": 1000}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        missing.status().as_u16(),
+        400,
+        "Idempotency-Key is required"
+    );
+
+    let first = json_of(
+        http.post(format!("{base}/v1/topups"))
+            .bearer_auth(&at)
+            .header("Idempotency-Key", "retry-after-lost-response")
+            .json(&json!({"amount_cents": 1000}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    // The lost-response retry: same key replays the same topup and checkout link — no
+    // second live payment is minted.
+    let replay = json_of(
+        http.post(format!("{base}/v1/topups"))
+            .bearer_auth(&at)
+            .header("Idempotency-Key", "retry-after-lost-response")
+            .json(&json!({"amount_cents": 1000}))
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(first["id"], replay["id"]);
+    assert_eq!(first["checkout_url"], replay["checkout_url"]);
+
+    // The same key with a different amount is a conflict, never a silent second charge.
+    let conflicted = http
+        .post(format!("{base}/v1/topups"))
+        .bearer_auth(&at)
+        .header("Idempotency-Key", "retry-after-lost-response")
+        .json(&json!({"amount_cents": 2000}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(conflicted.status().as_u16(), 409);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_signup_response_heals_by_retrying_the_same_invite() {
+    let brain_token = "operator-token";
+    let brain_url = spawn_stub_brain(brain_token).await;
+    let base = spawn_control(&brain_url, brain_token, (10, 30)).await;
+    let http = reqwest::Client::new();
+    let email = "lost-response@example.com";
+    json_of(
+        http.post(format!("{base}/v1/waitlist"))
+            .json(&json!({"email": email}))
+            .send()
+            .await
+            .unwrap(),
+        202,
+    )
+    .await;
+    let invitation = json_of(
+        http.post(format!("{base}/v1/admin/invitations"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .json(&json!({"email": email}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    let invite_token = invitation["invite_token"].as_str().unwrap();
+    let created = json_of(
+        http.post(format!("{base}/v1/accounts"))
+            .json(&json!({"email": email, "invite_token": invite_token}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    let lost_token = created["account_token"].as_str().unwrap();
+
+    // The 201 was lost: the retry with the same one-time invite rotates the token instead
+    // of dead-ending on Conflict. The invite is the proof of authority.
+    let retried = json_of(
+        http.post(format!("{base}/v1/accounts"))
+            .json(&json!({"email": email, "invite_token": invite_token}))
+            .send()
+            .await
+            .unwrap(),
+        200,
+    )
+    .await;
+    assert_eq!(retried["account"]["id"], created["account"]["id"]);
+    let fresh_token = retried["account_token"].as_str().unwrap();
+    assert_ne!(fresh_token, lost_token);
+
+    // The rotated-away token is dead; the fresh one authenticates.
+    let dead = http
+        .get(format!("{base}/v1/account"))
+        .bearer_auth(lost_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dead.status().as_u16(), 401);
+    let alive = http
+        .get(format!("{base}/v1/account"))
+        .bearer_auth(fresh_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(alive.status().as_u16(), 200);
+
+    // A wrong invite for a joined email still refuses.
+    let stranger = http
+        .post(format!("{base}/v1/accounts"))
+        .json(&json!({
+            "email": email,
+            "invite_token": "aex_iv_A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stranger.status().as_u16(), 403);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_operator_reinvites_a_joined_but_never_used_account() {
+    let brain_token = "operator-token";
+    let brain_url = spawn_stub_brain(brain_token).await;
+    let base = spawn_control(&brain_url, brain_token, (10, 30)).await;
+    let http = reqwest::Client::new();
+    let email = "lost-forever@example.com";
+    let created = invited_signup(&http, &base, email).await;
+
+    // The account token is gone and the retry window has passed: the operator re-invite
+    // deletes the never-used account and reopens the invite.
+    let reinvited = json_of(
+        http.post(format!("{base}/v1/admin/invitations"))
+            .bearer_auth(OPERATOR_TOKEN)
+            .json(&json!({"email": email}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    let rejoined = json_of(
+        http.post(format!("{base}/v1/accounts"))
+            .json(&json!({"email": email, "invite_token": reinvited["invite_token"]}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    assert_ne!(rejoined["account"]["id"], created["account"]["id"]);
+
+    // An account that has been used (holds an api key) refuses the escape hatch.
+    let at = rejoined["account_token"].as_str().unwrap();
+    json_of(
+        http.post(format!("{base}/v1/keys"))
+            .bearer_auth(at)
+            .json(&json!({"name": "in-use"}))
+            .send()
+            .await
+            .unwrap(),
+        201,
+    )
+    .await;
+    let refused = http
+        .post(format!("{base}/v1/admin/invitations"))
+        .bearer_auth(OPERATOR_TOKEN)
+        .json(&json!({"email": email}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status().as_u16(), 409, "in-use accounts stay put");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn checkout_return_reconciles_by_session_id_without_disclosing_the_topup() {
     let brain_token = "operator-token";
     let brain_url = spawn_stub_brain(brain_token).await;
@@ -996,6 +1194,7 @@ async fn checkout_return_reconciles_by_session_id_without_disclosing_the_topup()
     let topup = json_of(
         http.post(format!("{base}/v1/topups"))
             .bearer_auth(account_token)
+            .header("Idempotency-Key", "e2e-topup-key-01")
             .json(&json!({"amount_cents": 1000}))
             .send()
             .await
@@ -1561,6 +1760,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     let topup = json_of(
         http.post(format!("{base}/v1/topups"))
             .bearer_auth(&at)
+            .header("Idempotency-Key", "e2e-topup-key-02")
             .json(&json!({"amount_cents": 1000}))
             .send()
             .await
@@ -1574,6 +1774,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     let below_min = http
         .post(format!("{base}/v1/topups"))
         .bearer_auth(&at)
+        .header("Idempotency-Key", "e2e-topup-key-03")
         .json(&json!({"amount_cents": 999}))
         .send()
         .await
@@ -1582,6 +1783,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     let above_max = http
         .post(format!("{base}/v1/topups"))
         .bearer_auth(&at)
+        .header("Idempotency-Key", "e2e-topup-key-04")
         .json(&json!({"amount_cents": 100_001}))
         .send()
         .await
@@ -2159,6 +2361,7 @@ async fn uncertain_refund_keeps_credit_reserved_and_retries_safely() {
     let topup = json_of(
         http.post(format!("{base}/v1/topups"))
             .bearer_auth(account_token)
+            .header("Idempotency-Key", "e2e-topup-key-05")
             .json(&json!({"amount_cents": 1000}))
             .send()
             .await
@@ -2364,6 +2567,7 @@ async fn abuse_caps_hold_concurrency_and_create_rate() {
     let topup = json_of(
         http.post(format!("{base}/v1/topups"))
             .bearer_auth(at)
+            .header("Idempotency-Key", "e2e-topup-key-06")
             .json(&json!({"amount_cents": 1000}))
             .send()
             .await
@@ -2493,6 +2697,7 @@ async fn retained_root_cap_requires_confirmed_physical_deletion() {
     let topup = json_of(
         http.post(format!("{base}/v1/topups"))
             .bearer_auth(account_token)
+            .header("Idempotency-Key", "e2e-topup-key-07")
             .json(&json!({"amount_cents": 1000}))
             .send()
             .await

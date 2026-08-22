@@ -33,8 +33,8 @@ use crate::output::{self, PreparedMessage};
 use crate::payments::{PaymentStatus, Payments, RefundAttempt, StripeWebhook, StripeWebhookAction};
 use crate::rating::RateCard;
 use crate::store::{
-    AccountRow, CreditGrantRow, Db, DeletionRow, KeyRow, RefundRow, SessionRow, TopupRow,
-    WaitlistRow,
+    AccountRow, CreditGrantRow, Db, DeletionRow, InvitedJoin, KeyRow, RefundRow, SessionRow,
+    TopupRow, WaitlistRow,
 };
 use crate::sweep::{SweptLine, sweep_account, sweep_account_incremental};
 use crate::web::{self, WebRuntime};
@@ -179,7 +179,23 @@ pub fn router(state: AppState) -> Router {
 pub fn internal_router(state: AppState) -> Router {
     Router::new()
         .route("/internal/v1/tools/call", post(execute_external_tool))
+        .route("/internal/v1/status", axum::routing::get(internal_status))
         .with_state(state)
+}
+
+/// Verified Stripe paid events that matched no `(id, provider_ref, amount)` topup row —
+/// "customer paid, ledger silent". Exposed on the internal status route for alerting.
+pub static UNMATCHED_PAID_EVENTS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+async fn internal_status() -> Response {
+    json_response(
+        200,
+        &json!({
+            "object": "internal.status",
+            "unmatched_paid_events": UNMATCHED_PAID_EVENTS.load(std::sync::atomic::Ordering::Relaxed),
+        }),
+    )
 }
 
 // ---- plumbing ----
@@ -560,11 +576,19 @@ async fn create_invitation(
             let email = normalized_email(req.email.as_str());
             let minted = identity::mint_secret("iv");
             let invited_ms = now_ms();
-            state
+            let invited = state
                 .db
-                .invite_waitlist(email.clone(), minted.hash, invited_ms)
-                .await?
-                .ok_or(Error::NotFound)?;
+                .invite_waitlist(email.clone(), minted.hash.clone(), invited_ms)
+                .await?;
+            if invited.is_none() {
+                // Joined rows refuse a plain re-invite; the escape hatch below reopens the
+                // invite only when the joined account was never used (lost-token recovery).
+                state
+                    .db
+                    .reinvite_lost_account(email.clone(), minted.hash, invited_ms)
+                    .await?
+                    .ok_or(Error::NotFound)?;
+            }
             Ok(json_response(
                 201,
                 &json!({
@@ -579,7 +603,7 @@ async fn create_invitation(
     )
 }
 
-fn operator_idempotency_key(headers: &HeaderMap) -> Result<String> {
+fn idempotency_key(headers: &HeaderMap) -> Result<String> {
     let key = headers
         .get("Idempotency-Key")
         .and_then(|value| value.to_str().ok())
@@ -607,7 +631,7 @@ async fn create_credit_grant(
     unwrap_response(
         async {
             auth_operator(&state, &headers).await?;
-            let request_key = operator_idempotency_key(&headers)?;
+            let request_key = idempotency_key(&headers)?;
             let req: aex_contracts::control::CreateCreditGrantRequest = parse_body(&body)?;
             let amount_cents = i64::try_from(req.amount_cents.get())
                 .map_err(|_| Error::Invalid("credit grant amount is too large".into()))?;
@@ -650,7 +674,7 @@ async fn create_refund(State(state): State<AppState>, headers: HeaderMap, body: 
     unwrap_response(
         async {
             auth_operator(&state, &headers).await?;
-            let request_key = operator_idempotency_key(&headers)?;
+            let request_key = idempotency_key(&headers)?;
             let req: aex_contracts::control::CreateRefundRequest = parse_body(&body)?;
             let amount_cents = i64::try_from(req.amount_cents.get())
                 .map_err(|_| Error::Invalid("refund amount is too large".into()))?;
@@ -786,7 +810,7 @@ async fn create_account(State(state): State<AppState>, body: Bytes) -> Response 
                 max_concurrent_sessions: state.default_limits.0,
                 session_creates_per_hour: state.default_limits.1,
             };
-            state
+            match state
                 .db
                 .create_invited_account(
                     row.clone(),
@@ -795,11 +819,19 @@ async fn create_account(State(state): State<AppState>, body: Bytes) -> Response 
                     invite_hash,
                     row.created_ms,
                 )
-                .await?;
-            Ok(json_response(
-                201,
-                &json!({"account": account_json(&row), "account_token": minted.secret}),
-            ))
+                .await?
+            {
+                InvitedJoin::Created => Ok(json_response(
+                    201,
+                    &json!({"account": account_json(&row), "account_token": minted.secret}),
+                )),
+                // A lost-response retry with the same invite: the existing account with a
+                // freshly rotated token (the one from the lost response is dead).
+                InvitedJoin::RotatedExisting(existing) => Ok(json_response(
+                    200,
+                    &json!({"account": account_json(&existing), "account_token": minted.secret}),
+                )),
+            }
         }
         .await,
     )
@@ -920,6 +952,22 @@ async fn create_topup(State(state): State<AppState>, headers: HeaderMap, body: B
             if req.amount_cents > 100_000 {
                 return Err(Error::Invalid("maximum top-up is $1,000.00".into()));
             }
+            // Money creation is idempotent end to end: the required Idempotency-Key keys
+            // the row (a retry after a lost response replays it), and the Stripe checkout
+            // create is keyed on the topup id so no second live payment link is minted.
+            let request_key = idempotency_key(&headers)?;
+            if let Some(existing) = state
+                .db
+                .topup_by_request_key(a.id.clone(), request_key.clone())
+                .await?
+            {
+                if existing.amount_cents != req.amount_cents {
+                    return Err(Error::Conflict(
+                        "this Idempotency-Key was already used with a different amount".into(),
+                    ));
+                }
+                return Ok(json_response(200, &topup_json(&existing)));
+            }
             let id = identity::new_id("top");
             let checkout = state
                 .payments
@@ -936,7 +984,7 @@ async fn create_topup(State(state): State<AppState>, headers: HeaderMap, body: B
                 created_ms: now_ms(),
                 paid_ms: None,
             };
-            state.db.create_topup(row.clone()).await?;
+            state.db.create_topup(row.clone(), request_key).await?;
             Ok(json_response(201, &topup_json(&row)))
         }
         .await,
@@ -988,7 +1036,16 @@ async fn stripe_webhook(
                         .stripe_topup_paid(topup_id.clone(), provider_ref, amount_cents, now_ms())
                         .await?
                     {
-                        tracing::warn!("ignored unmatched Stripe paid event");
+                        // Money moved at Stripe with no ledger credit: ack (poll remains the
+                        // recovery path) but count and log at ERROR so alerting cannot miss
+                        // it — a warn line was the only signal before the 2026-08-22 audit.
+                        UNMATCHED_PAID_EVENTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        tracing::error!(
+                            event = "stripe_paid_event_unmatched",
+                            total =
+                                UNMATCHED_PAID_EVENTS.load(std::sync::atomic::Ordering::Relaxed),
+                            "verified Stripe paid event matched no topup row"
+                        );
                     } else if let Some(topup) = state.db.operator_topup(topup_id).await? {
                         state.admission.invalidate_balance(&topup.account_id);
                     }
@@ -1291,6 +1348,9 @@ async fn forward_with_idempotency(
             content_type,
             idempotency,
             body,
+            // No total deadline: this is the customer proxy and may carry an SSE follow
+            // stream; the customer ends it. Internal bounded ops set their own deadlines.
+            None,
         )
         .await?;
     proxy_brain_response(upstream)
@@ -1299,16 +1359,20 @@ async fn forward_with_idempotency(
 fn proxy_brain_response(upstream: reqwest::Response) -> Result<Response> {
     let status =
         StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    // Pass Content-Type through faithfully; a response Brain sent without one is forwarded
+    // without one, never relabeled as JSON.
     let content_type = upstream
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/json")
-        .to_string();
-    let streaming = content_type.starts_with("text/event-stream");
-    let mut builder = Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, content_type);
+        .map(str::to_string);
+    let streaming = content_type
+        .as_deref()
+        .is_some_and(|value| value.starts_with("text/event-stream"));
+    let mut builder = Response::builder().status(status);
+    if let Some(content_type) = content_type {
+        builder = builder.header(header::CONTENT_TYPE, content_type);
+    }
     for name in [
         header::CONTENT_DISPOSITION,
         header::CONTENT_LENGTH,

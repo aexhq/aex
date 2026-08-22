@@ -243,10 +243,14 @@ pub async fn prepare_message(
         .get("schema_hash")
         .and_then(Value::as_str)
         .ok_or_else(|| Error::Invalid("output.schema_hash is required".into()))?;
-    let retries = output.get("retries").and_then(Value::as_i64).unwrap_or(1);
-    if !(0..=2).contains(&retries) {
-        return Err(Error::Invalid("output.retries must be 0, 1, or 2".into()));
-    }
+    // Absent means the default; present-but-not-an-integer is invalid, never the default.
+    let retries = match output.get("retries") {
+        None => 1,
+        Some(value) => value
+            .as_i64()
+            .filter(|retries| (0..=2).contains(retries))
+            .ok_or_else(|| Error::Invalid("output.retries must be 0, 1, or 2".into()))?,
+    };
     let schema_json = validate_schema(schema, schema_hash)?;
 
     let idempotency_key_hash = match idempotency_key {

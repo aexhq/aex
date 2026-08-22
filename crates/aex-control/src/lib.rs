@@ -27,7 +27,12 @@ pub mod web;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-/// Control-plane failure, mapped 1:1 onto `contracts/control/v1` `ControlErrorCode`.
+/// Control-plane failure. `code()` maps onto the UNION of two vocabularies: the
+/// `contracts/control/v1` `ControlErrorCode` enum, plus the three session-vocabulary codes
+/// (`output_schema_error`, `file_too_large`, `storage_quota_exceeded`) that only
+/// session-scoped routes produce (output validation, uploads, storage quota). A test below
+/// pins every variant to one of the two sets so a new code cannot drift off-contract
+/// silently; the full per-route typed split is recorded in the audit backlog.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
@@ -100,6 +105,51 @@ impl Error {
     }
 }
 
+#[cfg(test)]
+mod error_code_contract {
+    /// Every code `Error::code()` can emit is either in the control contract's enum or in
+    /// the named session-vocabulary set. Adding a variant forces a conscious classification.
+    #[test]
+    fn every_error_code_is_classified() {
+        let schemas: serde_json::Value =
+            serde_json::from_str(include_str!("../../../contracts/control/v1/schemas.json"))
+                .expect("control schemas parse");
+        let control: Vec<String> = schemas["$defs"]["ControlErrorCode"]["enum"]
+            .as_array()
+            .expect("ControlErrorCode enum")
+            .iter()
+            .map(|v| v.as_str().expect("code string").to_owned())
+            .collect();
+        let session_only = [
+            "output_schema_error",
+            "file_too_large",
+            "storage_quota_exceeded",
+        ];
+        let all = [
+            super::Error::Invalid(String::new()).code(),
+            super::Error::Unprocessable(String::new()).code(),
+            super::Error::OutputSchema(String::new()).code(),
+            super::Error::Unauthorized.code(),
+            super::Error::Forbidden(String::new()).code(),
+            super::Error::NotFound.code(),
+            super::Error::Conflict(String::new()).code(),
+            super::Error::InsufficientBalance(String::new()).code(),
+            super::Error::RateLimited(String::new()).code(),
+            super::Error::PayloadTooLarge(String::new()).code(),
+            super::Error::StorageQuota(String::new()).code(),
+            super::Error::Payment(String::new()).code(),
+            super::Error::Upstream(String::new()).code(),
+            super::Error::Internal(String::new()).code(),
+        ];
+        for code in all {
+            assert!(
+                control.iter().any(|c| c == code) || session_only.contains(&code),
+                "error code {code:?} is in neither the control contract nor the session set"
+            );
+        }
+    }
+}
+
 /// Epoch milliseconds now.
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -108,8 +158,9 @@ pub fn now_ms() -> i64 {
 /// Epoch milliseconds -> RFC 3339 UTC with milliseconds ("2026-08-18T09:45:00.000Z") — billing
 /// folds on event timestamps, so the sub-second part is load-bearing.
 pub fn rfc3339(ms: i64) -> String {
+    // Billing responses must never render a plausible 1970 lie for an out-of-range value.
     chrono::DateTime::from_timestamp_millis(ms)
-        .unwrap_or_default()
+        .unwrap_or_else(|| panic!("timestamp {ms}ms is outside the representable range"))
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
