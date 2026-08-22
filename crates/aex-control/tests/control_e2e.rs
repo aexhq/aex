@@ -2186,7 +2186,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
             assert!(status["completed_at_ms"].as_i64().is_some());
             break;
         }
-        assert_eq!(status["state"], "running");
+        assert_eq!(status["state"], "deleting");
         assert!(
             tokio::time::Instant::now() < deadline,
             "durable deletion did not finish: {status}"
