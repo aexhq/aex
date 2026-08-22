@@ -90,7 +90,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain)
+          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
           git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
           git -C ../brain checkout "$brain_revision"
           test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
@@ -123,7 +123,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain)
+          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
           git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
           git -C ../brain checkout "$brain_revision"
           test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
@@ -157,7 +157,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain)
+          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
           git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
           git -C ../brain checkout "$brain_revision"
           test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"

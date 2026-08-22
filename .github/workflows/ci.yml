@@ -24,15 +24,23 @@ jobs:
         with:
           toolchain: "1.97.1"
           components: rustfmt
+      - name: Checkout the pinned Brain package source
+        shell: bash
+        run: |
+          set -euo pipefail
+          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain checkout "$brain_revision"
+          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
+      - run: npm ci
       - name: Checkout the pinned Brain contract
         shell: bash
         run: |
           set -euo pipefail
           brain_revision=$(node tools/pinned-revision.mjs brain)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain fetch --depth=1 origin "$brain_revision"
           git -C ../brain checkout "$brain_revision"
           test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
-      - run: npm ci
       - name: Install the pinned contract generator
         run: cargo install cargo-typify --version 0.7.0 --locked
       - name: Regenerate owning contracts and fail on drift
@@ -77,7 +85,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain)
+          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
           git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
           git -C ../brain checkout "$brain_revision"
           test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
@@ -104,7 +112,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain)
+          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
           git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
           git -C ../brain checkout "$brain_revision"
           test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
