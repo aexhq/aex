@@ -215,7 +215,7 @@ fn deletion_status_response(job: &DeletionRow) -> Response {
         &json!({
             "object": "session.deletion",
             "session_id": job.session_id,
-            "state": if succeeded { "succeeded" } else { "running" },
+            "state": if succeeded { "succeeded" } else { "deleting" },
             "requested_at_ms": job.accepted_ms,
             "updated_at_ms": job.updated_ms,
             "completed_at_ms": job.completed_ms,
