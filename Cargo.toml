@@ -11,11 +11,11 @@ repository = "https://github.com/aexhq/aex"
 [workspace.dependencies]
 aex-contracts = { path = "crates/aex-contracts" }
 aex-control = { path = "crates/aex-control" }
-brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "8fbc42569d1e3bbe1af9b1e6e2e1bcc517de432b" }
-brain = { git = "https://github.com/aexhq/brain.git", rev = "8fbc42569d1e3bbe1af9b1e6e2e1bcc517de432b" }
-brain-aws = { git = "https://github.com/aexhq/brain.git", rev = "8fbc42569d1e3bbe1af9b1e6e2e1bcc517de432b" }
-brain-standalone = { git = "https://github.com/aexhq/brain.git", rev = "8fbc42569d1e3bbe1af9b1e6e2e1bcc517de432b" }
-hand-brain-aws = { git = "https://github.com/aexhq/hands.git", rev = "650ad593f891002397405bd42ff946d2a7bdb489" }
+brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "61561d468eafb192f3515a4f7b14c6488da11690" }
+brain = { git = "https://github.com/aexhq/brain.git", rev = "61561d468eafb192f3515a4f7b14c6488da11690" }
+brain-aws = { git = "https://github.com/aexhq/brain.git", rev = "61561d468eafb192f3515a4f7b14c6488da11690" }
+brain-standalone = { git = "https://github.com/aexhq/brain.git", rev = "61561d468eafb192f3515a4f7b14c6488da11690" }
+hand-brain-aws = { git = "https://github.com/aexhq/hands.git", rev = "c8bf06466b81425af77232d3bef25422cb899a9c" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "std", "clock"] }
