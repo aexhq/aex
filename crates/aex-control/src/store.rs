@@ -116,7 +116,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   session_state TEXT NOT NULL DEFAULT 'open'
 );
 CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);
-CREATE INDEX IF NOT EXISTS sessions_parent ON sessions(account_id, parent_id);
 CREATE INDEX IF NOT EXISTS sessions_open_turn ON sessions(account_id, final, turn_open_ms);
 CREATE INDEX IF NOT EXISTS sessions_meter_due ON sessions(account_id, final, metered_to_ms);
 CREATE TABLE IF NOT EXISTS session_create_requests (
@@ -481,6 +480,17 @@ impl Db {
         }
         if !session_columns
             .iter()
+            .any(|name| name == "session_storage_byte_s")
+        {
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN session_storage_byte_s \
+                 INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(internal)?;
+        }
+        if !session_columns
+            .iter()
             .any(|name| name == "session_storage_byte_ms_remainder")
         {
             conn.execute(
@@ -500,6 +510,32 @@ impl Db {
             )
             .map_err(internal)?;
         }
+        if !session_columns
+            .iter()
+            .any(|name| name == "session_storage_bytes")
+        {
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN session_storage_bytes INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(internal)?;
+        }
+        // Pre-MVP ledgers used turn activity as the lifecycle axis. Preserve final tombstones and
+        // conservatively treat every other legacy row as an open root until strong discovery
+        // projects its canonical lifecycle.
+        conn.execute(
+            "UPDATE sessions SET session_state = 'open' WHERE session_state IN ('active', 'idle')",
+            [],
+        )
+        .map_err(internal)?;
+        // This index must be created after the additive parent_id migration. CREATE TABLE IF NOT
+        // EXISTS does not upgrade the EFS-backed table, so placing it in SCHEMA breaks startup on
+        // the first canonical-MVP image.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS sessions_parent ON sessions(account_id, parent_id)",
+            [],
+        )
+        .map_err(internal)?;
         let topup_columns = {
             let mut statement = conn
                 .prepare("PRAGMA table_info(topups)")
@@ -516,7 +552,8 @@ impl Db {
         }
         // Outside SCHEMA because legacy ledgers gain the column just above.
         conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS topups_request_key              ON topups(account_id, request_key) WHERE request_key IS NOT NULL",
+            "CREATE UNIQUE INDEX IF NOT EXISTS topups_request_key \
+             ON topups(account_id, request_key) WHERE request_key IS NOT NULL",
             [],
         )
         .map_err(internal)?;
@@ -3059,38 +3096,106 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn existing_ledger_is_migrated_for_additive_session_columns() {
+    async fn deployed_pre_mvp_ledger_migrates_before_parent_index_creation() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(SCHEMA).unwrap();
-        conn.execute("ALTER TABLE sessions DROP COLUMN web_search_queries", [])
-            .unwrap();
-        conn.execute("ALTER TABLE sessions DROP COLUMN upload_reserved_bytes", [])
-            .unwrap();
-        conn.execute(
-            "ALTER TABLE sessions DROP COLUMN session_storage_byte_ms_remainder",
-            [],
+        conn.execute_batch(
+            "CREATE TABLE accounts (
+               id TEXT PRIMARY KEY,
+               email TEXT NOT NULL UNIQUE,
+               token_hash TEXT NOT NULL UNIQUE,
+               created_ms INTEGER NOT NULL,
+               max_concurrent_sessions INTEGER NOT NULL,
+               session_creates_per_hour INTEGER NOT NULL
+             );
+             CREATE TABLE sessions (
+               id TEXT PRIMARY KEY,
+               account_id TEXT NOT NULL REFERENCES accounts(id),
+               key_id TEXT NOT NULL,
+               shape TEXT NOT NULL,
+               created_ms INTEGER NOT NULL,
+               final INTEGER NOT NULL DEFAULT 0,
+               folded_seq INTEGER NOT NULL DEFAULT 0,
+               running_ms INTEGER NOT NULL DEFAULT 0,
+               turn_open_ms INTEGER,
+               susp_byte_s INTEGER NOT NULL DEFAULT 0,
+               ws_byte_s INTEGER NOT NULL DEFAULT 0,
+               art_byte_s INTEGER NOT NULL DEFAULT 0,
+               web_search_queries INTEGER NOT NULL DEFAULT 0,
+               metered_to_ms INTEGER NOT NULL DEFAULT 0,
+               workspace_bytes INTEGER NOT NULL DEFAULT 0,
+               suspended_bytes INTEGER NOT NULL DEFAULT 0,
+               artifact_bytes INTEGER NOT NULL DEFAULT 0,
+               hand_state TEXT NOT NULL DEFAULT 'preparing',
+               session_state TEXT NOT NULL DEFAULT 'active',
+               output_capable INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO accounts VALUES ('acc_old', 'old@example.test', 'old-hash', 1, 10, 30);
+             INSERT INTO sessions
+               (id, account_id, key_id, shape, created_ms, folded_seq, running_ms,
+                web_search_queries, metered_to_ms, session_state)
+             VALUES ('ses_old', 'acc_old', 'key_old', '1gb', 2, 3, 4, 5, 6, 'active');",
         )
         .unwrap();
-        conn.execute("ALTER TABLE sessions DROP COLUMN storage_transition_ms", [])
-            .unwrap();
         let db = Db::init(conn).unwrap();
-        let columns: Vec<String> = db
+        let (columns, migrated, parent_index): (Vec<String>, _, i64) = db
             .call(|connection| {
                 let mut statement = connection.prepare("PRAGMA table_info(sessions)")?;
-                statement
+                let columns = statement
                     .query_map([], |row| row.get(1))?
-                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                let migrated = connection.query_row(
+                    "SELECT parent_id, root_id, depth, session_storage_byte_s,
+                            session_storage_byte_ms_remainder, storage_transition_ms,
+                            session_storage_bytes, upload_reserved_bytes, session_state,
+                            folded_seq, running_ms, web_search_queries, metered_to_ms
+                     FROM sessions WHERE id = 'ses_old'",
+                    [],
+                    |row| {
+                        Ok((
+                            (
+                                row.get::<_, Option<String>>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, i64>(2)?,
+                                row.get::<_, String>(8)?,
+                            ),
+                            (
+                                row.get::<_, i64>(3)?,
+                                row.get::<_, i64>(4)?,
+                                row.get::<_, i64>(5)?,
+                                row.get::<_, i64>(6)?,
+                                row.get::<_, i64>(7)?,
+                                row.get::<_, i64>(9)?,
+                                row.get::<_, i64>(10)?,
+                                row.get::<_, i64>(11)?,
+                                row.get::<_, i64>(12)?,
+                            ),
+                        ))
+                    },
+                )?;
+                let parent_index = connection.query_row(
+                    "SELECT COUNT(*) FROM pragma_index_list('sessions') WHERE name = 'sessions_parent'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok((columns, migrated, parent_index))
             })
             .await
             .unwrap();
-        assert!(columns.iter().any(|name| name == "web_search_queries"));
-        assert!(columns.iter().any(|name| name == "upload_reserved_bytes"));
-        assert!(
-            columns
-                .iter()
-                .any(|name| name == "session_storage_byte_ms_remainder")
-        );
-        assert!(columns.iter().any(|name| name == "storage_transition_ms"));
+        for required in [
+            "parent_id",
+            "root_id",
+            "depth",
+            "session_storage_byte_s",
+            "session_storage_byte_ms_remainder",
+            "storage_transition_ms",
+            "session_storage_bytes",
+            "upload_reserved_bytes",
+        ] {
+            assert!(columns.iter().any(|name| name == required), "{required}");
+        }
+        assert_eq!(migrated.0, (None, "ses_old".into(), 0, "open".into()));
+        assert_eq!(migrated.1, (0, 0, 0, 0, 0, 3, 4, 5, 6));
+        assert_eq!(parent_index, 1);
     }
 
     #[tokio::test(flavor = "multi_thread")]
