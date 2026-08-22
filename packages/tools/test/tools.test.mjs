@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { compileTools } from "@aexhq/brain";
 import { Aex } from "@aexhq/sdk";
 import {
   bash,
@@ -32,6 +33,13 @@ test("hand helpers select individual builtins", () => {
     [bash(), read(), write(), edit()].map((tool) => tool.name),
     ["bash", "read", "write", "edit"],
   );
+});
+
+test("the selected portable bundle retains its explicit runtime name", async () => {
+  const compiled = await compileTools([bash()]);
+  const loaded = await import(`data:text/javascript;base64,${compiled.bundles[0].content_base64}`);
+  assert.equal(loaded.default.name, "bash");
+  assert.equal(typeof loaded.default.execute, "function");
 });
 
 test("managed web helpers select only their matching builtins", () => {
