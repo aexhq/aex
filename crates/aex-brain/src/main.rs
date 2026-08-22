@@ -56,7 +56,18 @@ async fn main() -> anyhow::Result<()> {
         }
         _ => unreachable!("BRAIN_MODE was validated above"),
     };
-    serve(AppState { brain, token }, address).await
+    // The Aex control plane fronts every request and always stamps x-brain-tenant-id;
+    // hosted mode refuses a header-less request rather than booking tenant "local".
+    let require_tenant = mode == "production";
+    serve(
+        AppState {
+            brain,
+            token,
+            require_tenant,
+        },
+        address,
+    )
+    .await
 }
 
 /// Build the exact Aex policy and its private control-plane executor in every runtime mode.
@@ -149,6 +160,10 @@ fn compose_local(
             customer_delivery: None,
             customer_transport: Some(customer_transport),
             compactor: None,
+            // The hosted composition runs the kernel's builtin aex loop; loop-host wiring
+            // (custom uploads, seeded officials) is the recorded next composition step.
+            agentloop: None,
+            agentloop_registry: None,
         },
         provider_factory,
     );
@@ -643,6 +658,7 @@ socket.addEventListener('message', (event) => {
                 brain::api::router(AppState {
                     brain: server_brain,
                     token: token.into(),
+                    require_tenant: false,
                 }),
             )
             .await
