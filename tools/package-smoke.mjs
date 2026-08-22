@@ -30,9 +30,10 @@ const pack = (directory) => {
 try {
   await mkdir(artifacts);
   await mkdir(consumer);
+  // @aexhq/tools resolves its exact released brain-tools patch from the registry; Brain itself
+  // remains the separately pinned 0.2 package source used by the SDK.
   const packages = [
     pack(path.join(brain, "packages/brain")),
-    pack(path.join(brain, "packages/brain-tools")),
     pack(path.join(root, "packages/contracts")),
     pack(path.join(root, "packages/sdk")),
     pack(path.join(root, "packages/tools")),
