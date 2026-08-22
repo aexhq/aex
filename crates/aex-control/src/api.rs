@@ -2415,7 +2415,7 @@ async fn proxy_session(
                             }
                             return Ok(response);
                         }
-                        let (parts, response_body) = response.into_parts();
+                        let (mut parts, response_body) = response.into_parts();
                         let bytes = axum::body::to_bytes(response_body, 1024 * 1024)
                             .await
                             .map_err(|error| {
@@ -2427,6 +2427,7 @@ async fn proxy_session(
                             .db
                             .accept_output(output_id, turn_id, accepted_json.clone())
                             .await?;
+                        parts.headers.remove(header::CONTENT_LENGTH);
                         Response::from_parts(parts, Body::from(accepted_json))
                     }
                 }
