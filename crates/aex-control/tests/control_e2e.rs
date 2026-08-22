@@ -24,6 +24,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, Method, Uri, header};
 use axum::response::Response;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 const OPERATOR_TOKEN: &str = "aex_ad_A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2";
 const EXECUTOR_TOKEN: &str = "brain-to-aex-private-test-token";
@@ -1996,22 +1997,57 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         .unwrap();
     assert_eq!(oversized_message.status().as_u16(), 413);
 
-    // A message; the stub journals a 1.5 s turn.
-    let accepted = json_of(
-        http.post(format!("{base}/v1/sessions/{sid}/messages"))
-            .bearer_auth(&sk)
-            .header("Idempotency-Key", "root-message")
-            .json(&json!({"content": "run"}))
-            .send()
-            .await
-            .unwrap(),
-        202,
-    )
-    .await;
+    // Hosted structured output adds its durable identity to Brain's acceptance. The proxy must
+    // not retain Brain's shorter Content-Length after replacing that response body.
+    let output_schema = json!({
+        "type": "object",
+        "properties": {"ok": {"const": "AEX_OUTPUT_OK"}},
+        "required": ["ok"],
+        "additionalProperties": false
+    });
+    let output_schema_hash =
+        hex::encode(Sha256::digest(serde_jcs::to_vec(&output_schema).unwrap()));
+    let typed_response = http
+        .post(format!("{base}/v1/sessions/{sid}/messages"))
+        .bearer_auth(&sk)
+        .header("Idempotency-Key", "typed-output-message")
+        .json(&json!({
+            "content": "return structured output",
+            "output": {
+                "schema": output_schema,
+                "schema_hash": output_schema_hash,
+                "retries": 1
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(typed_response.status().as_u16(), 202);
+    let declared_length = typed_response
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok());
+    let typed_bytes = typed_response.bytes().await.unwrap();
+    if let Some(declared_length) = declared_length {
+        assert_eq!(declared_length, typed_bytes.len());
+    }
+    let accepted: Value = serde_json::from_slice(&typed_bytes).unwrap();
+    assert!(accepted["output_id"].as_str().is_some());
+    assert_eq!(accepted["schema_hash"], output_schema_hash);
+    let mut neutral_accepted = accepted.clone();
+    neutral_accepted
+        .as_object_mut()
+        .unwrap()
+        .remove("output_id");
+    neutral_accepted
+        .as_object_mut()
+        .unwrap()
+        .remove("schema_hash");
     assert_valid(
         brain_protocol::SESSION_SCHEMA_JSON,
         "MessageAccepted",
-        &accepted,
+        &neutral_accepted,
     );
     let unidentified_message = http
         .post(format!("{base}/v1/sessions/{sid}/messages"))
