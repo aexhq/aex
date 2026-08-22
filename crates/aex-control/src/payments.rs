@@ -272,7 +272,13 @@ impl StripePayments {
         api_base: String,
     ) -> Self {
         StripePayments {
-            http: reqwest::Client::new(),
+            // A hung Stripe connection must not stall customer topup/refund/checkout-return
+            // requests indefinitely: bound both connect and total request time.
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("the Stripe HTTP client builds"),
             api_base: api_base.trim_end_matches('/').to_owned(),
             secret_key,
             success_url,
@@ -399,6 +405,9 @@ impl Payments for StripePayments {
             .http
             .post(format!("{}/v1/checkout/sessions", self.api_base))
             .bearer_auth(&self.secret_key)
+            // Keyed on the topup id: a retried create for the same topup replays the same
+            // Checkout Session at Stripe instead of minting a second live payment link.
+            .header("Idempotency-Key", format!("aex-topup:{topup_id}"))
             .form(&form)
             .send()
             .await

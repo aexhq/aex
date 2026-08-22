@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS topups (
   provider_ref TEXT NOT NULL,
   checkout_url TEXT,
   created_ms INTEGER NOT NULL,
-  paid_ms INTEGER
+  paid_ms INTEGER,
+  request_key TEXT
 );
 CREATE INDEX IF NOT EXISTS topups_account ON topups(account_id);
 CREATE UNIQUE INDEX IF NOT EXISTS topups_provider_ref ON topups(provider, provider_ref);
@@ -241,6 +242,18 @@ pub struct KeyRow {
     pub created_ms: i64,
     pub last_used_ms: Option<i64>,
     pub revoked_ms: Option<i64>,
+}
+
+/// A retried join with the same invite may rotate the lost token this long after joining.
+/// Short enough that the one-time invite never becomes a standing second credential.
+pub const INVITE_RETRY_ROTATION_MS: i64 = 60 * 60 * 1000;
+
+/// Outcome of consuming an invitation: a fresh account, or a lost-response retry whose
+/// token was rotated on the existing account.
+#[derive(Debug)]
+pub enum InvitedJoin {
+    Created,
+    RotatedExisting(AccountRow),
 }
 
 #[derive(Debug, Clone)]
@@ -487,6 +500,26 @@ impl Db {
             )
             .map_err(internal)?;
         }
+        let topup_columns = {
+            let mut statement = conn
+                .prepare("PRAGMA table_info(topups)")
+                .map_err(internal)?;
+            statement
+                .query_map([], |record| record.get::<_, String>(1))
+                .map_err(internal)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(internal)?
+        };
+        if !topup_columns.iter().any(|name| name == "request_key") {
+            conn.execute("ALTER TABLE topups ADD COLUMN request_key TEXT", [])
+                .map_err(internal)?;
+        }
+        // Outside SCHEMA because legacy ledgers gain the column just above.
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS topups_request_key              ON topups(account_id, request_key) WHERE request_key IS NOT NULL",
+            [],
+        )
+        .map_err(internal)?;
         let deletion_columns = {
             let mut statement = conn
                 .prepare("PRAGMA table_info(session_deletions)")
@@ -626,7 +659,83 @@ impl Db {
         .await
     }
 
+    /// The operator escape hatch for a lost account token: re-invite a joined email whose
+    /// account was never used (no api keys, sessions, topups or credit grants). The orphaned
+    /// account row is deleted and the waitlist entry reopens as invited, so the normal join
+    /// flow mints a fresh account.
+    pub async fn reinvite_lost_account(
+        &self,
+        email: String,
+        invite_hash: String,
+        now_ms: i64,
+    ) -> Result<Option<WaitlistRow>> {
+        let result = self
+            .call(move |c| {
+                let tx = c.transaction()?;
+                let joined = tx
+                    .query_row(
+                        "SELECT 1 FROM waitlist WHERE email = ?1 AND status = 'joined'",
+                        params![email],
+                        |_| Ok(()),
+                    )
+                    .optional()?
+                    .is_some();
+                if !joined {
+                    return Ok(Err(None));
+                }
+                if let Some(account_id) = tx
+                    .query_row(
+                        "SELECT id FROM accounts WHERE email = ?1",
+                        params![email],
+                        |r| r.get::<_, String>(0),
+                    )
+                    .optional()?
+                {
+                    let in_use: bool = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM api_keys WHERE account_id = ?1)
+                             OR EXISTS(SELECT 1 FROM sessions WHERE account_id = ?1)
+                             OR EXISTS(SELECT 1 FROM topups WHERE account_id = ?1)
+                             OR EXISTS(SELECT 1 FROM credit_grants WHERE account_id = ?1)",
+                        params![account_id],
+                        |r| r.get(0),
+                    )?;
+                    if in_use {
+                        return Ok(Err(Some(())));
+                    }
+                    tx.execute("DELETE FROM accounts WHERE id = ?1", params![account_id])?;
+                }
+                tx.execute(
+                    "UPDATE waitlist
+                     SET status = 'invited', invite_hash = ?2, invited_ms = ?3, joined_ms = NULL
+                     WHERE email = ?1",
+                    params![email, invite_hash, now_ms],
+                )?;
+                let row = tx.query_row(
+                    "SELECT email, status, created_ms, invited_ms, joined_ms
+                     FROM waitlist WHERE email = ?1",
+                    params![email],
+                    waitlist_row,
+                )?;
+                tx.commit()?;
+                Ok(Ok(row))
+            })
+            .await?;
+        match result {
+            Ok(row) => Ok(Some(row)),
+            Err(None) => Ok(None),
+            Err(Some(())) => Err(Error::Conflict(
+                "the joined account is in use and cannot be re-invited".into(),
+            )),
+        }
+    }
+
     /// Consume an invitation and create its account in one SQLite transaction.
+    ///
+    /// A retry that presents the same invite within [`INVITE_RETRY_ROTATION_MS`] of joining
+    /// heals a lost 201 response: the once-shown account token is rotated and re-issued
+    /// (the invite secret is the proof of authority). The window keeps the invite from
+    /// becoming a standing second credential; `invite_hash` is cleared when it closes via
+    /// the next successful authentication being unnecessary — rotation is refused after it.
     pub async fn create_invited_account(
         &self,
         row: AccountRow,
@@ -634,7 +743,7 @@ impl Db {
         token_hash: String,
         invite_hash: String,
         joined_ms: i64,
-    ) -> Result<()> {
+    ) -> Result<InvitedJoin> {
         let result = self
             .call(move |c| {
                 let tx = c.transaction()?;
@@ -648,26 +757,60 @@ impl Db {
                     .optional()?
                     .is_some();
                 if !invited {
-                    return Ok(false);
+                    // The lost-response retry: same email, same one-time invite, already
+                    // joined moments ago. Rotate the token instead of dead-ending.
+                    let retry = tx
+                        .query_row(
+                            "SELECT a.id, a.email, a.created_ms, a.max_concurrent_sessions,
+                                    a.session_creates_per_hour, w.joined_ms
+                             FROM waitlist w JOIN accounts a ON a.email = w.email
+                             WHERE w.email = ?1 AND w.status = 'joined' AND w.invite_hash = ?2",
+                            params![email, invite_hash],
+                            |r| {
+                                Ok((
+                                    AccountRow {
+                                        id: r.get(0)?,
+                                        email: r.get(1)?,
+                                        created_ms: r.get(2)?,
+                                        max_concurrent_sessions: r.get(3)?,
+                                        session_creates_per_hour: r.get(4)?,
+                                    },
+                                    r.get::<_, i64>(5)?,
+                                ))
+                            },
+                        )
+                        .optional()?;
+                    if let Some((account, prior_joined_ms)) = retry
+                        && joined_ms.saturating_sub(prior_joined_ms) <= INVITE_RETRY_ROTATION_MS
+                    {
+                        tx.execute(
+                            "UPDATE accounts SET token_hash = ?2 WHERE id = ?1",
+                            params![account.id, token_hash],
+                        )?;
+                        tx.commit()?;
+                        return Ok(Some(InvitedJoin::RotatedExisting(account)));
+                    }
+                    return Ok(None);
                 }
                 tx.execute(
                     "INSERT INTO accounts (id, email, token_hash, created_ms, max_concurrent_sessions, session_creates_per_hour)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![row.id, email, token_hash, row.created_ms, row.max_concurrent_sessions, row.session_creates_per_hour],
                 )?;
+                // invite_hash survives the join for the retry-rotation window above.
                 tx.execute(
                     "UPDATE waitlist
-                     SET status = 'joined', invite_hash = NULL, joined_ms = ?2
+                     SET status = 'joined', joined_ms = ?2
                      WHERE email = ?1",
                     params![email, joined_ms],
                 )?;
                 tx.commit()?;
-                Ok(true)
+                Ok(Some(InvitedJoin::Created))
             })
             .await;
         match result {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(Error::Forbidden(
+            Ok(Some(join)) => Ok(join),
+            Ok(None) => Err(Error::Forbidden(
                 "a valid one-time alpha invitation is required".into(),
             )),
             Err(Error::Internal(message)) if message.contains("UNIQUE") => Err(Error::Conflict(
@@ -892,15 +1035,34 @@ impl Db {
         }
     }
 
-    pub async fn create_topup(&self, row: TopupRow) -> Result<()> {
+    pub async fn create_topup(&self, row: TopupRow, request_key: String) -> Result<()> {
         self.call(move |c| {
             c.execute(
-                "INSERT INTO topups (id, account_id, amount_cents, status, provider, provider_ref, checkout_url, created_ms, paid_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO topups (id, account_id, amount_cents, status, provider, provider_ref, checkout_url, created_ms, paid_ms, request_key)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![row.id, row.account_id, row.amount_cents, row.status, row.provider,
-                        row.provider_ref, row.checkout_url, row.created_ms, row.paid_ms],
+                        row.provider_ref, row.checkout_url, row.created_ms, row.paid_ms, request_key],
             )
             .map(|_| ())
+        })
+        .await
+    }
+
+    /// The topup a prior create with this Idempotency-Key produced, if any: the replay row
+    /// for retried creates.
+    pub async fn topup_by_request_key(
+        &self,
+        account_id: String,
+        request_key: String,
+    ) -> Result<Option<TopupRow>> {
+        self.call(move |c| {
+            c.query_row(
+                "SELECT id, account_id, amount_cents, status, provider, provider_ref, checkout_url, created_ms, paid_ms
+                 FROM topups WHERE account_id = ?1 AND request_key = ?2",
+                params![account_id, request_key],
+                topup_row,
+            )
+            .optional()
         })
         .await
     }
@@ -3146,17 +3308,20 @@ mod tests {
         db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
             .await
             .unwrap();
-        db.create_topup(TopupRow {
-            id: "top_1".into(),
-            account_id: "acc_a".into(),
-            amount_cents: 1000,
-            status: "pending".into(),
-            provider: "fake".into(),
-            provider_ref: "r1".into(),
-            checkout_url: None,
-            created_ms: 2,
-            paid_ms: None,
-        })
+        db.create_topup(
+            TopupRow {
+                id: "top_1".into(),
+                account_id: "acc_a".into(),
+                amount_cents: 1000,
+                status: "pending".into(),
+                provider: "fake".into(),
+                provider_ref: "r1".into(),
+                checkout_url: None,
+                created_ms: 2,
+                paid_ms: None,
+            },
+            "store-test-key-01".into(),
+        )
         .await
         .unwrap();
         db.topup_paid("top_1".into(), 3).await.unwrap();
@@ -3176,17 +3341,20 @@ mod tests {
         db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
             .await
             .unwrap();
-        db.create_topup(TopupRow {
-            id: "top_1".into(),
-            account_id: "acc_a".into(),
-            amount_cents: 1000,
-            status: "pending".into(),
-            provider: "fake".into(),
-            provider_ref: "fake_top_1".into(),
-            checkout_url: None,
-            created_ms: 2,
-            paid_ms: None,
-        })
+        db.create_topup(
+            TopupRow {
+                id: "top_1".into(),
+                account_id: "acc_a".into(),
+                amount_cents: 1000,
+                status: "pending".into(),
+                provider: "fake".into(),
+                provider_ref: "fake_top_1".into(),
+                checkout_url: None,
+                created_ms: 2,
+                paid_ms: None,
+            },
+            "store-test-key-02".into(),
+        )
         .await
         .unwrap();
         db.topup_paid("top_1".into(), 3).await.unwrap();
@@ -3272,17 +3440,20 @@ mod tests {
             .await
             .unwrap();
         for id in ["top_1", "top_2"] {
-            db.create_topup(TopupRow {
-                id: id.into(),
-                account_id: "acc_a".into(),
-                amount_cents: 1000,
-                status: "pending".into(),
-                provider: "fake".into(),
-                provider_ref: format!("fake_{id}"),
-                checkout_url: None,
-                created_ms: 2,
-                paid_ms: None,
-            })
+            db.create_topup(
+                TopupRow {
+                    id: id.into(),
+                    account_id: "acc_a".into(),
+                    amount_cents: 1000,
+                    status: "pending".into(),
+                    provider: "fake".into(),
+                    provider_ref: format!("fake_{id}"),
+                    checkout_url: None,
+                    created_ms: 2,
+                    paid_ms: None,
+                },
+                format!("store-test-key-03-{id}"),
+            )
             .await
             .unwrap();
             db.topup_paid(id.into(), 3).await.unwrap();
@@ -3327,17 +3498,20 @@ mod tests {
         db.create_account(acct("acc_a"), "a@example.com".into(), "h1".into())
             .await
             .unwrap();
-        db.create_topup(TopupRow {
-            id: "top_1".into(),
-            account_id: "acc_a".into(),
-            amount_cents: 1000,
-            status: "pending".into(),
-            provider: "stripe".into(),
-            provider_ref: "cs_test_1".into(),
-            checkout_url: None,
-            created_ms: 2,
-            paid_ms: None,
-        })
+        db.create_topup(
+            TopupRow {
+                id: "top_1".into(),
+                account_id: "acc_a".into(),
+                amount_cents: 1000,
+                status: "pending".into(),
+                provider: "stripe".into(),
+                provider_ref: "cs_test_1".into(),
+                checkout_url: None,
+                created_ms: 2,
+                paid_ms: None,
+            },
+            "store-test-key-04".into(),
+        )
         .await
         .unwrap();
 
