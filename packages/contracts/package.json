@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/contracts",
-  "version": "0.28.3",
+  "version": "0.28.4",
   "description": "Aex-only account, billing, and control-plane contracts",
   "license": "Apache-2.0",
   "homepage": "https://aex.dev",

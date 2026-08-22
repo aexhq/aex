@@ -15,7 +15,7 @@ brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "ca29e5ecda
 brain = { git = "https://github.com/aexhq/brain.git", rev = "ca29e5ecda3c86b32ad303c6048ca7158776bbbb" }
 brain-aws = { git = "https://github.com/aexhq/brain.git", rev = "ca29e5ecda3c86b32ad303c6048ca7158776bbbb" }
 brain-standalone = { git = "https://github.com/aexhq/brain.git", rev = "ca29e5ecda3c86b32ad303c6048ca7158776bbbb" }
-hand-brain-aws = { git = "https://github.com/aexhq/hands.git", rev = "cdd620de6957feac3a00cd6e89b5ee4736402c58" }
+hand-brain-aws = { git = "https://github.com/aexhq/hands.git", rev = "1b0836b4f0b760323df5e512750f51f56261c5a5" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "std", "clock"] }

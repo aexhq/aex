@@ -1835,7 +1835,7 @@ dependencies = [
 [[package]]
 name = "hand-brain-aws"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=cdd620de6957feac3a00cd6e89b5ee4736402c58#cdd620de6957feac3a00cd6e89b5ee4736402c58"
+source = "git+https://github.com/aexhq/hands.git?rev=1b0836b4f0b760323df5e512750f51f56261c5a5#1b0836b4f0b760323df5e512750f51f56261c5a5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1872,7 +1872,7 @@ dependencies = [
 [[package]]
 name = "hand-core"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=cdd620de6957feac3a00cd6e89b5ee4736402c58#cdd620de6957feac3a00cd6e89b5ee4736402c58"
+source = "git+https://github.com/aexhq/hands.git?rev=1b0836b4f0b760323df5e512750f51f56261c5a5#1b0836b4f0b760323df5e512750f51f56261c5a5"
 dependencies = [
  "async-trait",
  "cap-std",
@@ -1889,7 +1889,7 @@ dependencies = [
 [[package]]
 name = "hand-egress-gateway"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=cdd620de6957feac3a00cd6e89b5ee4736402c58#cdd620de6957feac3a00cd6e89b5ee4736402c58"
+source = "git+https://github.com/aexhq/hands.git?rev=1b0836b4f0b760323df5e512750f51f56261c5a5#1b0836b4f0b760323df5e512750f51f56261c5a5"
 dependencies = [
  "base64",
  "brain-protocol",
@@ -1910,7 +1910,7 @@ dependencies = [
 [[package]]
 name = "hand-lambda"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=cdd620de6957feac3a00cd6e89b5ee4736402c58#cdd620de6957feac3a00cd6e89b5ee4736402c58"
+source = "git+https://github.com/aexhq/hands.git?rev=1b0836b4f0b760323df5e512750f51f56261c5a5#1b0836b4f0b760323df5e512750f51f56261c5a5"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -1938,7 +1938,7 @@ dependencies = [
 [[package]]
 name = "hand-wire"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=cdd620de6957feac3a00cd6e89b5ee4736402c58#cdd620de6957feac3a00cd6e89b5ee4736402c58"
+source = "git+https://github.com/aexhq/hands.git?rev=1b0836b4f0b760323df5e512750f51f56261c5a5#1b0836b4f0b760323df5e512750f51f56261c5a5"
 dependencies = [
  "brain",
  "brain-protocol",
