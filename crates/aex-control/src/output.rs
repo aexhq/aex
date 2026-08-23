@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 
 use crate::identity;
 use crate::store::{BeginOutput, Db, OutputRequestRow};
+use crate::subagents_tool::{SUBAGENTS_CAPABILITY, SUBAGENTS_TOOL_NAME};
 use crate::web::{FETCH_CAPABILITY, FETCH_TOOL_NAME, SEARCH_CAPABILITY, SEARCH_TOOL_NAME};
 use crate::{Error, Result, now_ms};
 
@@ -105,6 +106,7 @@ fn normalize_managed_tool(item: &mut Value) -> Result<()> {
     for (managed_name, managed_capability) in [
         (SEARCH_TOOL_NAME, SEARCH_CAPABILITY),
         (FETCH_TOOL_NAME, FETCH_CAPABILITY),
+        (SUBAGENTS_TOOL_NAME, SUBAGENTS_CAPABILITY),
     ] {
         if name == Some(managed_name) || capability == Some(managed_capability) {
             if name != Some(managed_name)
@@ -115,7 +117,7 @@ fn normalize_managed_tool(item: &mut Value) -> Result<()> {
                     "Aex-managed Tool {managed_name} must use its pinned name and capability"
                 )));
             }
-            *item = managed_web_tool(managed_name)?;
+            *item = pinned_official_tool(managed_name)?;
             return Ok(());
         }
     }
@@ -128,6 +130,66 @@ fn normalize_managed_tool(item: &mut Value) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn pinned_official_tool(name: &str) -> Result<Value> {
+    if name == SUBAGENTS_TOOL_NAME {
+        managed_subagents_tool()
+    } else {
+        managed_web_tool(name)
+    }
+}
+
+/// Server-pinned twin of `@aexhq/tools` `subagents`: same verbs and field bounds; the hosted
+/// executor stays authoritative for which fields each action requires.
+fn managed_subagents_tool() -> Result<Value> {
+    let definition = json!({
+        "name": SUBAGENTS_TOOL_NAME,
+        "description": "Create and explicitly interact with durable direct child sessions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "spawn_agent",
+                        "send_message",
+                        "follow_up",
+                        "wait",
+                        "peek",
+                        "list_children",
+                        "interrupt_agent",
+                        "end_agent"
+                    ]
+                },
+                "task_name": {"type": "string", "minLength": 1, "maxLength": 128},
+                "message": {"type": "string", "minLength": 1, "maxLength": 196608},
+                "fork_turns": {
+                    "anyOf": [
+                        {"const": "all"},
+                        {"const": "none"},
+                        {"type": "string", "maxLength": 10, "pattern": "^[1-9][0-9]*$"}
+                    ]
+                },
+                "child_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+                },
+                "timeout_ms": {"type": "integer", "minimum": 0, "maximum": 300000},
+                "cursor": {"type": "string", "maxLength": 4096},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        },
+        "output_schema": {}
+    });
+    Ok(json!({
+        "definition": definition_with_digest(definition)?,
+        "executor": {"kind": "engine", "capability": SUBAGENTS_CAPABILITY}
+    }))
 }
 
 fn managed_web_tool(name: &str) -> Result<Value> {
@@ -943,6 +1005,55 @@ mod tests {
         assert!(
             inject_output_tool(
                 br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"aex.private"}}]}}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn injection_pins_the_subagents_tool() {
+        let injected = inject_output_tool(
+            br#"{
+                "model":{"provider":"openai"},
+                "tools":{"items":[{
+                    "definition":{
+                        "name":"subagents",
+                        "description":"attacker controlled",
+                        "input_schema":{"type":"string"},
+                        "output_schema":{"type":"string"}
+                    },
+                    "executor":{
+                        "kind":"engine",
+                        "capability":"aex.subagents"
+                    }
+                }]}
+            }"#,
+        )
+        .unwrap();
+        let document: Value = serde_json::from_slice(&injected).unwrap();
+        let subagents = &document["tools"]["items"][0];
+        assert_eq!(
+            subagents["definition"]["description"],
+            "Create and explicitly interact with durable direct child sessions."
+        );
+        assert_eq!(
+            subagents["executor"],
+            json!({"kind": "engine", "capability": SUBAGENTS_CAPABILITY})
+        );
+        assert_eq!(
+            subagents["definition"]["input_schema"]["required"],
+            json!(["action"])
+        );
+
+        assert!(
+            inject_output_tool(
+                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"aex.subagents"}}]}}"#
+            )
+            .is_err()
+        );
+        assert!(
+            inject_output_tool(
+                br#"{"model":{},"tools":{"items":[{"definition":{"name":"subagents","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"brain.subagents"}}]}}"#
             )
             .is_err()
         );
