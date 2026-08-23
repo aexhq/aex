@@ -900,7 +900,7 @@ export default Object.freeze({{
         let mut lines = BufReader::new(stdout).lines();
         let ready = tokio::time::timeout(Duration::from_secs(10), lines.next_line())
             .await
-            .expect("Node customer Hand readiness timeout")
+            .expect("Node customer Environment readiness timeout")
             .expect("read Node readiness");
         assert_eq!(ready.as_deref(), Some("READY"));
 
