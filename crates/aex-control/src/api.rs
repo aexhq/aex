@@ -32,6 +32,7 @@ use crate::identity::{self, bearer};
 use crate::output::{self, PreparedMessage};
 use crate::payments::{PaymentStatus, Payments, RefundAttempt, StripeWebhook, StripeWebhookAction};
 use crate::rating::RateCard;
+use crate::storage_tool;
 use crate::store::{
     AccountRow, CreditGrantRow, Db, DeletionRow, InvitedJoin, KeyRow, RefundRow, SessionRow,
     TopupRow, WaitlistRow,
@@ -358,6 +359,8 @@ async fn execute_external_tool(
                         Error::Internal(format!("stored hosted Tool response: {error}"))
                     })?
                 }
+            } else if capability == Some(storage_tool::STORAGE_CAPABILITY) {
+                storage_tool::execute(&state.db, &state.brain, request).await?
             } else {
                 return Err(Error::Invalid(format!(
                     "unknown hosted server capability {capability:?}"

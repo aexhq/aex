@@ -20,7 +20,12 @@ use brain_server::api::{AppState, Tenancy, serve};
 use brain_standalone::durable_local_parts;
 use hand_brain_aws::AwsHand;
 
-const CAPABILITIES: [&str; 3] = ["aex.output", "aex.web.search", "aex.web.fetch"];
+const CAPABILITIES: [&str; 4] = [
+    "aex.output",
+    "aex.web.search",
+    "aex.web.fetch",
+    "aex.storage",
+];
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -247,6 +252,19 @@ fn official_capabilities() -> HashMap<String, ServerToolPolicy> {
                 max_input_bytes: 8 * 1024,
             },
         ),
+        (
+            // The former brain.storage kernel intrinsic, decoupled: ordinary service code in
+            // aex-control over Brain's session-scoped storage API. Replay-safe through the
+            // executor's exact-response memo plus Brain-side copy idempotency keys.
+            "aex.storage",
+            ServerToolPolicy {
+                capability: "aex.storage".into(),
+                scope: ExternalToolScope::All,
+                completion: ExternalToolCompletion::Continue,
+                effect: ExternalToolEffect::ReplaySafe,
+                max_input_bytes: brain_protocol::MAX_EXTERNAL_TOOL_INPUT_BYTES,
+            },
+        ),
     ]
     .into_iter()
     .map(|(capability, policy)| (capability.to_owned(), policy))
@@ -413,7 +431,12 @@ socket.addEventListener('message', (event) => {
     fn hosted_capability_set_is_exact_and_stable() {
         assert_eq!(
             CAPABILITIES,
-            ["aex.output", "aex.web.search", "aex.web.fetch"]
+            [
+                "aex.output",
+                "aex.web.search",
+                "aex.web.fetch",
+                "aex.storage"
+            ]
         );
         let policies = official_capabilities();
         assert_eq!(policies.len(), CAPABILITIES.len());
