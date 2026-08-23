@@ -665,7 +665,7 @@ async function collectDeclared(
   return result;
 }
 
-function encodeBase64(bytes: Uint8Array): string {
+export function encodeBase64(bytes: Uint8Array): string {
   let binary = "";
   for (let offset = 0; offset < bytes.byteLength; offset += 32_768) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));

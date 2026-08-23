@@ -17,6 +17,7 @@ export {
   Sessions,
 } from "./session.js";
 export type {
+  AgentloopBundle,
   CreateSessionOptions,
   ListSessionsOptions,
   ModelSummary,
