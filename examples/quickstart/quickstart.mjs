@@ -36,6 +36,29 @@ const session = await aex.sessions.create({
 });
 console.log(`      session ${session.id}`);
 
+// Live telemetry: every session event is journal-derived and durable — the same stream
+// replays from any cursor after a crash (`after` is the seq high-water you last saw).
+const eventsDone = AbortSignal.timeout(600_000);
+const follower = (async () => {
+  try {
+    for await (const event of session.events({ after: 0, signal: eventsDone })) {
+      const detail = [
+        event.name,
+        event.outcome,
+        event.stop_reason,
+        event.usage ? `in=${event.usage.input_tokens} out=${event.usage.output_tokens}` : undefined,
+        event.output_preview ? JSON.stringify(String(event.output_preview).slice(0, 60)) : undefined,
+      ]
+        .filter(Boolean)
+        .join(" | ");
+      console.log(`      [event seq=${event.seq ?? "-"}] ${event.type}${detail ? `  ${detail}` : ""}`);
+      if (event.type === "session.deleted") break;
+    }
+  } catch {
+    // The stream closes when the session is deleted or the signal fires; both are fine.
+  }
+})();
+
 console.log("[2/4] first turn: real bash inside the managed sandbox...");
 const first = await session.send(
   "Use bash to run `uname -a` and `date -u` in your sandbox, then write both lines " +
@@ -60,6 +83,7 @@ console.log("      typed result:", JSON.stringify(report, null, 2));
 
 console.log("[4/4] cleaning up (deletion is destructive and polls to completion)...");
 await session.delete({ signal: AbortSignal.timeout(240_000) });
+await Promise.race([follower, new Promise((resolve) => setTimeout(resolve, 3_000))]);
 aex.close();
 console.log("QUICKSTART COMPLETE — that session ran durably on the hosted Brain,");
 console.log("with bash executing inside a real MicroVM sandbox and typed output.");
