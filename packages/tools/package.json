@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/tools",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Official tool selections for Aex sessions",
   "license": "Apache-2.0",
   "homepage": "https://aex.dev",
@@ -42,7 +42,7 @@
     "@aexhq/sdk": ">=0.57.0 <1"
   },
   "devDependencies": {
-    "@aexhq/sdk": "0.57.4",
+    "@aexhq/sdk": "0.57.5",
     "typescript": "^5.9.2"
   }
 }
