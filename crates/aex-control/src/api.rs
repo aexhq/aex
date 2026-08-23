@@ -17,6 +17,7 @@ use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::Response;
 use axum::routing::{any, delete, get, post};
+use base64::Engine as _;
 use brain_protocol::session::ExternalToolCallRequest;
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -34,7 +35,7 @@ use crate::payments::{PaymentStatus, Payments, RefundAttempt, StripeWebhook, Str
 use crate::rating::RateCard;
 use crate::store::{
     AccountRow, CreditGrantRow, Db, DeletionRow, InvitedJoin, KeyRow, RefundRow, SessionRow,
-    TopupRow, WaitlistRow,
+    ToolArtifactLayerRow, TopupRow, WaitlistRow,
 };
 use crate::subagents_tool;
 use crate::sweep::{SweptLine, sweep_account, sweep_account_incremental};
@@ -49,6 +50,7 @@ const MAX_CUSTOMER_HAND_OBSERVATION_BYTES: usize = brain_protocol::MAX_CUSTOMER_
 // Ordinary inline session operations never carry compiled Tool bundles. A 1 MiB file expands to
 // ~1.34 MiB in base64; 2 MiB leaves JSON overhead without giving every route create-sized memory.
 const MAX_INLINE_SESSION_REQUEST_BYTES: usize = 2 * 1024 * 1024;
+const MAX_TOOL_ARTIFACT_LAYER_BYTES: usize = 64 * 1024 * 1024;
 
 fn message_too_large() -> Error {
     Error::PayloadTooLarge(format!(
@@ -72,6 +74,95 @@ async fn bounded_create_body(body: Body) -> Result<Bytes> {
                 brain_protocol::MAX_CREATE_SESSION_REQUEST_BYTES
             ))
         })
+}
+
+async fn bounded_artifact_layer_body(body: Body) -> Result<Bytes> {
+    axum::body::to_bytes(body, MAX_TOOL_ARTIFACT_LAYER_BYTES)
+        .await
+        .map_err(|_| {
+            Error::PayloadTooLarge(format!(
+                "Tool artifact layer exceeds {MAX_TOOL_ARTIFACT_LAYER_BYTES} bytes"
+            ))
+        })
+}
+
+async fn inject_uploaded_artifact_layers(db: &Db, account_id: &str, body: Bytes) -> Result<Bytes> {
+    let mut document: Value = serde_json::from_slice(&body)
+        .map_err(|error| Error::Invalid(format!("create-session JSON: {error}")))?;
+    let Some(root) = document.as_object_mut() else {
+        return Ok(body);
+    };
+    let mut referenced = std::collections::BTreeMap::<String, (u64, String)>::new();
+    if let Some(bundles) = root.get("tool_bundles").and_then(Value::as_array) {
+        for bundle in bundles {
+            let Some(layers) = bundle.get("layers").and_then(Value::as_array) else {
+                continue;
+            };
+            for layer in layers {
+                let (Some(digest), Some(bytes), Some(media_type)) = (
+                    layer.get("checksum").and_then(Value::as_str),
+                    layer.get("bytes").and_then(Value::as_u64),
+                    layer.get("media_type").and_then(Value::as_str),
+                ) else {
+                    continue;
+                };
+                if let Some(previous) =
+                    referenced.insert(digest.to_owned(), (bytes, media_type.to_owned()))
+                    && previous != (bytes, media_type.to_owned())
+                {
+                    return Err(Error::Invalid(format!(
+                        "Tool artifact layer {digest} has conflicting manifests"
+                    )));
+                }
+            }
+        }
+    }
+    let supplied = root
+        .get("tool_artifact_layers")
+        .and_then(Value::as_array)
+        .map(|layers| {
+            layers
+                .iter()
+                .filter_map(|layer| layer.get("checksum").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+    if referenced.keys().all(|digest| supplied.contains(digest)) {
+        return Ok(body);
+    }
+    let mut layers = root
+        .remove("tool_artifact_layers")
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default();
+    for (digest, (bytes, media_type)) in referenced {
+        if supplied.contains(&digest) {
+            continue;
+        }
+        let stored = db
+            .tool_artifact_layer(account_id.to_owned(), digest.clone())
+            .await?
+            .ok_or_else(|| {
+                Error::Invalid(format!(
+                    "Tool artifact layer {digest} has not been uploaded for this account"
+                ))
+            })?;
+        if stored.bytes as u64 != bytes || stored.media_type != media_type {
+            return Err(Error::Invalid(format!(
+                "Tool artifact layer {digest} metadata does not match its uploaded bytes"
+            )));
+        }
+        layers.push(json!({
+            "checksum": digest,
+            "bytes": bytes,
+            "media_type": media_type,
+            "content_base64": base64::engine::general_purpose::STANDARD.encode(stored.content),
+        }));
+    }
+    root.insert("tool_artifact_layers".into(), Value::Array(layers));
+    serde_json::to_vec(&document)
+        .map(Bytes::from)
+        .map_err(|error| Error::Internal(format!("create-session JSON: {error}")))
 }
 
 async fn bounded_inline_session_body(body: Body) -> Result<Bytes> {
@@ -170,6 +261,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/customer-hand/observations/{grant_id}",
             post(customer_hand_observation),
         )
+        .route("/v1/artifacts/{digest}", any(tool_artifact_layer))
         .route("/v1/sessions", any(proxy_sessions_root))
         .route("/v1/sessions/{*rest}", any(proxy_session))
         .with_state(state)
@@ -1991,6 +2083,91 @@ async fn hydrate_delete_parent_chain(
     Ok(chain)
 }
 
+async fn tool_artifact_layer(
+    State(state): State<AppState>,
+    method: Method,
+    Path(digest): Path<String>,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    unwrap_response(
+        async {
+            let (_, account) = auth_key(&state, &headers).await?;
+            if digest.len() != 64
+                || !digest
+                    .as_bytes()
+                    .iter()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+            {
+                return Err(Error::Invalid(
+                    "Tool artifact digest must be lower-case SHA-256 hex".into(),
+                ));
+            }
+            match method {
+                Method::HEAD => {
+                    let layer = state
+                        .db
+                        .tool_artifact_layer(account.id, digest)
+                        .await?
+                        .ok_or(Error::NotFound)?;
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_LENGTH, layer.bytes.to_string())
+                        .header(header::CONTENT_TYPE, layer.media_type)
+                        .body(Body::empty())
+                        .map_err(|error| Error::Internal(format!("artifact response: {error}")))
+                }
+                Method::PUT => {
+                    let media_type = headers
+                        .get(header::CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok())
+                        .filter(|value| !value.is_empty() && value.len() <= 128)
+                        .ok_or_else(|| {
+                            Error::Invalid(
+                                "Tool artifact upload requires a bounded Content-Type".into(),
+                            )
+                        })?
+                        .to_owned();
+                    let content = bounded_artifact_layer_body(body).await?;
+                    if content.is_empty() {
+                        return Err(Error::Invalid("Tool artifact layer cannot be empty".into()));
+                    }
+                    if hex::encode(Sha256::digest(&content)) != digest {
+                        return Err(Error::Invalid(
+                            "Tool artifact bytes do not match the URL digest".into(),
+                        ));
+                    }
+                    let inserted = state
+                        .db
+                        .store_tool_artifact_layer(
+                            account.id,
+                            ToolArtifactLayerRow {
+                                digest,
+                                bytes: content.len() as i64,
+                                media_type,
+                                content: content.to_vec(),
+                            },
+                            now_ms(),
+                        )
+                        .await?;
+                    Ok(Response::builder()
+                        .status(if inserted {
+                            StatusCode::CREATED
+                        } else {
+                            StatusCode::NO_CONTENT
+                        })
+                        .body(Body::empty())
+                        .map_err(|error| Error::Internal(format!("artifact response: {error}")))?)
+                }
+                _ => Err(Error::Invalid(format!(
+                    "{method} not supported on /v1/artifacts/{{digest}}"
+                ))),
+            }
+        }
+        .await,
+    )
+}
+
 /// `POST /v1/sessions` (create, with admission) and `GET /v1/sessions` (this account's list).
 async fn proxy_sessions_root(
     State(state): State<AppState>,
@@ -2023,6 +2200,12 @@ async fn proxy_sessions_root(
                         .await?;
                     let idempotency = create_idempotency(&headers, &account.id)?;
                     let body = output::inject_output_tool(body)?;
+                    let body = inject_uploaded_artifact_layers(
+                        &state.db,
+                        &account.id,
+                        body.into(),
+                    )
+                    .await?;
                     if body.len() > brain_protocol::MAX_CREATE_SESSION_REQUEST_BYTES {
                         return Err(Error::PayloadTooLarge(format!(
                             "create-session request exceeds {} bytes after official Tool sealing",
@@ -2483,7 +2666,7 @@ mod event_filter_tests {
             "name": "web_search",
             "input": {"query": "aex"},
             "context": {
-                "brain.capability": "aex.web.search",
+                "brain.capability": "brain.web.search",
                 "padding": "x".repeat(padding)
             }
         }))
@@ -3077,7 +3260,7 @@ mod event_filter_tests {
     async fn public_authentication_precedes_body_polling_and_create_uses_brains_exact_ceiling() {
         assert_eq!(
             brain_protocol::MAX_CREATE_SESSION_REQUEST_BYTES,
-            24 * 1024 * 1024
+            144 * 1024 * 1024
         );
         let exact = bounded_create_body(Body::from(vec![
             b'x';

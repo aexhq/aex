@@ -910,7 +910,7 @@ async fn private_executor_requires_its_service_credential_and_routes_pinned_capa
         "call_id": "call_01HZZZZZZZZZZZZZZZZZZZZZZZ",
         "name": "web_fetch",
         "input": {"url": "https://169.254.169.254/latest/meta-data/"},
-        "context": {"brain.capability": "aex.web.fetch"}
+        "context": {"brain.capability": "brain.web.fetch"}
     });
 
     let missing = http

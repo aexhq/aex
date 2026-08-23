@@ -89,7 +89,7 @@ pub(crate) fn tool_failure(outcome: &str, message: String) -> Value {
     })
 }
 
-pub const SUBAGENTS_CAPABILITY: &str = "aex.subagents";
+pub const SUBAGENTS_CAPABILITY: &str = "brain.subagents";
 pub const SUBAGENTS_TOOL_NAME: &str = "subagents";
 
 /// The contract's wait ceiling is 300 s; the host deadline leaves margin for transport.

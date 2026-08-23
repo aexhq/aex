@@ -15,7 +15,7 @@ use crate::web::{FETCH_CAPABILITY, FETCH_TOOL_NAME, SEARCH_CAPABILITY, SEARCH_TO
 use crate::{Error, Result, now_ms};
 
 pub const OUTPUT_TOOL_NAME: &str = "aex_submit_output";
-pub const OUTPUT_CAPABILITY: &str = "aex.output";
+pub const OUTPUT_CAPABILITY: &str = "brain.output";
 pub const OUTPUT_CONTEXT_KEY: &str = "aex.output_request_id";
 const MAX_SCHEMA_BYTES: usize = 64 * 1024;
 const MAX_SCHEMA_DEPTH: usize = 64;
@@ -915,7 +915,7 @@ mod tests {
                         "input_schema":{"type":"object"},
                         "output_schema":{"type":"object"}
                     },
-                    "executor":{"kind":"engine","capability":"brain.subagents"}
+                    "executor":{"kind":"environment","environment":"application","callback_registration":"delegate","requirements":{}}
                 }]}
             }"#,
         )
@@ -973,7 +973,7 @@ mod tests {
                     },
                     "executor":{
                         "kind":"engine",
-                        "capability":"aex.web.search"
+                        "capability":"brain.web.search"
                     }
                 }]}
             }"#,
@@ -992,7 +992,7 @@ mod tests {
 
         assert!(
             inject_output_tool(
-                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"aex.web.search"}}]}}"#
+                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"brain.web.search"}}]}}"#
             )
             .is_err()
         );
@@ -1024,7 +1024,7 @@ mod tests {
                     },
                     "executor":{
                         "kind":"engine",
-                        "capability":"aex.subagents"
+                        "capability":"brain.subagents"
                     }
                 }]}
             }"#,
@@ -1047,13 +1047,13 @@ mod tests {
 
         assert!(
             inject_output_tool(
-                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"aex.subagents"}}]}}"#
+                br#"{"model":{},"tools":{"items":[{"definition":{"name":"other","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"brain.subagents"}}]}}"#
             )
             .is_err()
         );
         assert!(
             inject_output_tool(
-                br#"{"model":{},"tools":{"items":[{"definition":{"name":"subagents","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"engine","capability":"brain.subagents"}}]}}"#
+                br#"{"model":{},"tools":{"items":[{"definition":{"name":"subagents","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"environment","environment":"application","callback_registration":"subagents","requirements":{}}}]}}"#
             )
             .is_err()
         );
