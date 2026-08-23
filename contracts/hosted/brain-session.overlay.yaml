@@ -2,7 +2,7 @@ overlay: 1.0.0
 info:
   title: Aex hosted policy for the Brain session API
   version: mvp
-extends: https://raw.githubusercontent.com/aexhq/brain/6ea80b25777d18ae676e47eabc994fe6d86d8aaf/contracts/session/v1/openapi.yaml
+extends: https://raw.githubusercontent.com/aexhq/brain/82fdb7aed626a82a8e692c4f9f153b8147ca4ac5/contracts/session/v1/openapi.yaml
 x-aex-brain-openapi-sha256: d344a06f654e778b10f5c6eefa5e18aa5139f9beb7e67e3c6be8015de4f808c8
 actions:
   - target: $.components.parameters.IdempotencyKey
