@@ -2172,7 +2172,7 @@ dependencies = [
 [[package]]
 name = "hand-brain-aws"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=08c6a34ebe4da63d009d25dd044abaf3df6879c2#08c6a34ebe4da63d009d25dd044abaf3df6879c2"
+source = "git+https://github.com/aexhq/hands.git?rev=2f11353ee20283e1de588dd32bcf0dd4f440c5ec#2f11353ee20283e1de588dd32bcf0dd4f440c5ec"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2209,7 +2209,7 @@ dependencies = [
 [[package]]
 name = "hand-core"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=08c6a34ebe4da63d009d25dd044abaf3df6879c2#08c6a34ebe4da63d009d25dd044abaf3df6879c2"
+source = "git+https://github.com/aexhq/hands.git?rev=2f11353ee20283e1de588dd32bcf0dd4f440c5ec#2f11353ee20283e1de588dd32bcf0dd4f440c5ec"
 dependencies = [
  "async-trait",
  "cap-std",
@@ -2227,7 +2227,7 @@ dependencies = [
 [[package]]
 name = "hand-egress-gateway"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=08c6a34ebe4da63d009d25dd044abaf3df6879c2#08c6a34ebe4da63d009d25dd044abaf3df6879c2"
+source = "git+https://github.com/aexhq/hands.git?rev=2f11353ee20283e1de588dd32bcf0dd4f440c5ec#2f11353ee20283e1de588dd32bcf0dd4f440c5ec"
 dependencies = [
  "base64",
  "brain-protocol",
@@ -2246,7 +2246,7 @@ dependencies = [
 [[package]]
 name = "hand-lambda"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=08c6a34ebe4da63d009d25dd044abaf3df6879c2#08c6a34ebe4da63d009d25dd044abaf3df6879c2"
+source = "git+https://github.com/aexhq/hands.git?rev=2f11353ee20283e1de588dd32bcf0dd4f440c5ec#2f11353ee20283e1de588dd32bcf0dd4f440c5ec"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -2274,7 +2274,7 @@ dependencies = [
 [[package]]
 name = "hand-policy"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=08c6a34ebe4da63d009d25dd044abaf3df6879c2#08c6a34ebe4da63d009d25dd044abaf3df6879c2"
+source = "git+https://github.com/aexhq/hands.git?rev=2f11353ee20283e1de588dd32bcf0dd4f440c5ec#2f11353ee20283e1de588dd32bcf0dd4f440c5ec"
 dependencies = [
  "brain-protocol",
  "serde",
@@ -2286,7 +2286,7 @@ dependencies = [
 [[package]]
 name = "hand-wire"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/hands.git?rev=08c6a34ebe4da63d009d25dd044abaf3df6879c2#08c6a34ebe4da63d009d25dd044abaf3df6879c2"
+source = "git+https://github.com/aexhq/hands.git?rev=2f11353ee20283e1de588dd32bcf0dd4f440c5ec#2f11353ee20283e1de588dd32bcf0dd4f440c5ec"
 dependencies = [
  "brain",
  "brain-protocol",
