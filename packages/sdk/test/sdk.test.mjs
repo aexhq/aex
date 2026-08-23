@@ -236,6 +236,34 @@ test("an explicit empty tool list is equivalent to omission", async () => {
   assert.deepEqual(body.tools, { items: [] });
 });
 
+test("create seals an imported agentloop as digest, toolchain and bytes", async () => {
+  let request;
+  const aex = new Aex({
+    apiKey: "aex_sk_test",
+    fetch: async (input, init) => {
+      request = { init };
+      return Response.json(snapshot, { status: 201 });
+    },
+  });
+
+  const source = 'export const activate = () => 1;' + String.fromCharCode(10);
+  await aex.sessions.create({
+    model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
+    agentloop: {
+      source,
+      sha256: "a".repeat(64),
+      toolchain: "starlingmonkey-componentize-js-0.22.0",
+    },
+  });
+
+  const body = JSON.parse(request.init.body);
+  assert.deepEqual(body.agentloop, {
+    source_bundle_sha256: "a".repeat(64),
+    toolchain: "starlingmonkey-componentize-js-0.22.0",
+    bundle_base64: Buffer.from(source, "utf8").toString("base64"),
+  });
+});
+
 test("create seals managed network and bounded recovery policy", async () => {
   let body;
   const aex = new Aex({

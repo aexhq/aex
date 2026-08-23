@@ -31,7 +31,7 @@ import type { EventOptions } from "./transport.js";
 import { Transport } from "./transport.js";
 import { compileTools } from "./tools.js";
 import type { Tool } from "./tools.js";
-import { SessionChildren, SessionSandbox, SessionStorage } from "./resources.js";
+import { encodeBase64, SessionChildren, SessionSandbox, SessionStorage } from "./resources.js";
 
 export type SessionInput = string;
 
@@ -53,10 +53,30 @@ export interface ModelOptions {
   reasoningEffort?: "low" | "medium" | "high";
 }
 
+/**
+ * A built agentloop implementation, as exported by a loop package or produced by
+ * `buildLoopBundle` from `@aexhq/agentloop`. Assignment is by import, never by name:
+ * the sealed identity is the content digest plus the pinned toolchain.
+ */
+export interface AgentloopBundle {
+  /** The complete deterministic ESM source bundle — the exact bytes sealed and uploaded. */
+  source: string;
+  /** SHA-256 hex of the UTF-8 source bytes. */
+  sha256: string;
+  /** The pinned loop-toolchain identity the bundle was built for. */
+  toolchain: string;
+}
+
 export interface CreateSessionOptions {
   model: ModelOptions;
   /** Omitted or empty grants no tools. A non-empty list is the exact grant. */
   tools?: readonly Tool[];
+  /**
+   * The agentloop driving this session's turns, assigned by importing its implementation.
+   * Sealed at create for the life of the session; children inherit it. Omission seals the
+   * official aex loop.
+   */
+  agentloop?: AgentloopBundle;
   systemPrompt?: string;
   /** Write-only values for environment names declared by managed Tools. */
   secrets?: Record<string, string>;
@@ -173,6 +193,15 @@ export class Sessions {
         items: compiledTools.items,
       },
       ...(compiledTools.bundles.length === 0 ? {} : { tool_bundles: compiledTools.bundles }),
+      ...(options.agentloop === undefined
+        ? {}
+        : {
+            agentloop: {
+              source_bundle_sha256: options.agentloop.sha256,
+              toolchain: options.agentloop.toolchain,
+              bundle_base64: encodeBase64(new TextEncoder().encode(options.agentloop.source)),
+            },
+          }),
       ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
       ...(options.systemPrompt === undefined ? {} : { system_prompt: options.systemPrompt }),
       ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
