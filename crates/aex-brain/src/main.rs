@@ -21,12 +21,7 @@ use brain_providers::external::HttpExternalToolExecutor;
 use brain_server::api::{AppState, Tenancy, serve};
 use brain_standalone::durable_local_parts;
 
-const CAPABILITIES: [&str; 4] = [
-    "brain.output",
-    "brain.web.search",
-    "brain.web.fetch",
-    "brain.subagents",
-];
+const CAPABILITIES: [&str; 3] = ["brain.output", "brain.web.search", "brain.web.fetch"];
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -281,18 +276,6 @@ fn official_capabilities() -> HashMap<String, ServerToolPolicy> {
                 max_input_bytes: 8 * 1024,
             },
         ),
-        (
-            // The former brain.subagents intrinsic: the same child-session verbs, spoken over
-            // Brain's session-scoped children API by ordinary Aex service code.
-            "brain.subagents",
-            ServerToolPolicy {
-                capability: "brain.subagents".into(),
-                scope: ExternalToolScope::All,
-                completion: ExternalToolCompletion::Continue,
-                effect: ExternalToolEffect::ReplaySafe,
-                max_input_bytes: brain_protocol::MAX_EXTERNAL_TOOL_INPUT_BYTES,
-            },
-        ),
     ]
     .into_iter()
     .map(|(capability, policy)| (capability.to_owned(), policy))
@@ -495,12 +478,7 @@ socket.addEventListener('message', (event) => {
     fn hosted_capability_set_is_exact_and_stable() {
         assert_eq!(
             CAPABILITIES,
-            [
-                "brain.output",
-                "brain.web.search",
-                "brain.web.fetch",
-                "brain.subagents"
-            ]
+            ["brain.output", "brain.web.search", "brain.web.fetch"]
         );
         let policies = official_capabilities();
         assert_eq!(policies.len(), CAPABILITIES.len());

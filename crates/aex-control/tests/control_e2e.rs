@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 const OPERATOR_TOKEN: &str = "aex_ad_A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2A1b2";
 const EXECUTOR_TOKEN: &str = "brain-to-aex-private-test-token";
 const GATEWAY_TOKEN: &str = "api-gateway-private-test-token-000000000000";
+const TENANT_TOOL_KEY: &str = "tenant-tool-test-key-00000000000000000000000000000000";
 
 // ---- a stub brain: session/v1, just enough, contract-shaped ----
 
@@ -647,6 +648,10 @@ async fn spawn_control_with_product_limits(
         card: card.clone(),
         operator_token_hash: Some(aex_control::identity::hash_secret(OPERATOR_TOKEN)),
         external_executor_token_hash: None,
+        tenant_tool_token_key: Some(
+            aex_control::identity::TenantToolTokenKey::new(TENANT_TOOL_KEY).unwrap(),
+        ),
+        public_api_url: "https://api.aex.dev".into(),
         customer_environment_gateway: Some(
             CustomerEnvironmentGateway::new(
                 GATEWAY_TOKEN,
@@ -691,6 +696,8 @@ async fn spawn_control_without_deletion_worker(
         card: RateCard::default(),
         operator_token_hash: Some(aex_control::identity::hash_secret(OPERATOR_TOKEN)),
         external_executor_token_hash: None,
+        tenant_tool_token_key: None,
+        public_api_url: "https://api.aex.dev".into(),
         customer_environment_gateway: None,
         web: WebRuntime::hosted(None),
         admission: Admission::new(AdmissionConfig::default()).unwrap(),
@@ -737,6 +744,8 @@ async fn spawn_internal_executor(brain_url: &str, brain_token: &str) -> String {
         card: RateCard::default(),
         operator_token_hash: None,
         external_executor_token_hash: Some(aex_control::identity::hash_secret(EXECUTOR_TOKEN)),
+        tenant_tool_token_key: None,
+        public_api_url: "https://api.aex.dev".into(),
         customer_environment_gateway: None,
         web: WebRuntime::hosted(None),
         admission: Admission::new(AdmissionConfig::default()).unwrap(),
@@ -1445,6 +1454,8 @@ async fn ambiguous_create_recovery_keeps_its_original_admission_at_zero_balance(
         card: RateCard::default(),
         operator_token_hash: None,
         external_executor_token_hash: None,
+        tenant_tool_token_key: None,
+        public_api_url: "https://api.aex.dev".into(),
         customer_environment_gateway: None,
         web: WebRuntime::hosted(None),
         admission: admission.clone(),
@@ -1937,6 +1948,22 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     .await;
     assert_valid(brain_protocol::SESSION_SCHEMA_JSON, "Session", &session);
     let sid = session["id"].as_str().unwrap().to_string();
+    let tool_key = aex_control::identity::TenantToolTokenKey::new(TENANT_TOOL_KEY).unwrap();
+    let tool_token = tool_key.mint(&account_id);
+    let tool_read = http
+        .get(format!("{base}/v1/sessions/{sid}"))
+        .bearer_auth(&tool_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(tool_read.status().as_u16(), 200);
+    let tool_account = http
+        .get(format!("{base}/v1/account"))
+        .bearer_auth(&tool_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(tool_account.status().as_u16(), 401);
 
     let oversized_upload = http
         .post(format!("{base}/v1/sessions/{sid}/storage/uploads"))
@@ -1999,6 +2026,14 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         .await
         .unwrap();
     assert_eq!(foreign.status().as_u16(), 404);
+    let other_tool_token = tool_key.mint(other["account"]["id"].as_str().unwrap());
+    let foreign_tool = http
+        .get(format!("{base}/v1/sessions/{sid}"))
+        .bearer_auth(other_tool_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign_tool.status().as_u16(), 404);
 
     // The public proxy rejects one byte beyond Brain's exact journal-record ceiling before
     // buffering, output preparation, admission, or an upstream call.

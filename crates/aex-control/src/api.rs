@@ -37,7 +37,6 @@ use crate::store::{
     AccountRow, CreditGrantRow, Db, DeletionRow, InvitedJoin, KeyRow, RefundRow, SessionRow,
     ToolArtifactLayerRow, TopupRow, WaitlistRow,
 };
-use crate::subagents_tool;
 use crate::sweep::{SweptLine, sweep_account, sweep_account_incremental};
 use crate::web::{self, WebRuntime};
 use crate::{Error, Result, StorageLimits, now_ms, rfc3339, usd_display};
@@ -213,6 +212,10 @@ pub struct AppState {
     pub operator_token_hash: Option<String>,
     /// SHA-256 of the Brain-to-control executor bearer. None disables the internal route.
     pub external_executor_token_hash: Option<String>,
+    /// Mints and verifies credentials that grant tools access only to one tenant's session API.
+    pub tenant_tool_token_key: Option<identity::TenantToolTokenKey>,
+    /// Public origin injected for official environment Tools that call Aex session APIs.
+    pub public_api_url: String,
     /// Authenticates API Gateway WebSocket integration calls; None disables hosted customer Environments.
     pub customer_environment_gateway: Option<CustomerEnvironmentGateway>,
     /// Trusted host implementation for Aex-managed server Tools.
@@ -382,6 +385,40 @@ async fn auth_key(state: &AppState, headers: &HeaderMap) -> Result<(KeyRow, Acco
         .ok_or(Error::Unauthorized)
 }
 
+struct SessionPrincipal {
+    account: AccountRow,
+    key_id: String,
+}
+
+async fn auth_session(state: &AppState, headers: &HeaderMap) -> Result<SessionPrincipal> {
+    let token = bearer(headers).ok_or(Error::Unauthorized)?;
+    if token.starts_with("aex_sk_") {
+        let (key, account) = state
+            .db
+            .key_auth(identity::hash_secret(token), now_ms())
+            .await?
+            .ok_or(Error::Unauthorized)?;
+        return Ok(SessionPrincipal {
+            account,
+            key_id: key.id,
+        });
+    }
+    let account_id = state
+        .tenant_tool_token_key
+        .as_ref()
+        .and_then(|key| key.authenticate(token))
+        .ok_or(Error::Unauthorized)?;
+    let account = state
+        .db
+        .account(account_id)
+        .await?
+        .ok_or(Error::Unauthorized)?;
+    Ok(SessionPrincipal {
+        account,
+        key_id: "tenant-tool".into(),
+    })
+}
+
 async fn auth_operator(state: &AppState, headers: &HeaderMap) -> Result<()> {
     let expected = state.operator_token_hash.as_ref().ok_or(Error::NotFound)?;
     let token = bearer(headers).ok_or(Error::Unauthorized)?;
@@ -458,8 +495,6 @@ async fn execute_external_tool(
                         Error::Internal(format!("stored hosted Tool response: {error}"))
                     })?
                 }
-            } else if capability == Some(subagents_tool::SUBAGENTS_CAPABILITY) {
-                subagents_tool::execute(&state.db, &state.brain, request).await?
             } else {
                 return Err(Error::Invalid(format!(
                     "unknown hosted server capability {capability:?}"
@@ -1944,7 +1979,7 @@ fn validate_storage_upload(
 
 async fn owned_session_row(
     state: &AppState,
-    key: &KeyRow,
+    key_id: &str,
     account: &AccountRow,
     session_id: &str,
 ) -> Result<SessionRow> {
@@ -1966,7 +2001,7 @@ async fn owned_session_row(
             "session HEAD identity does not match the requested resource".into(),
         ));
     }
-    let row = session_row_from_snapshot(snapshot, &account.id, &key.id);
+    let row = session_row_from_snapshot(snapshot, &account.id, key_id);
     state.db.insert_session(row.clone()).await?;
     Ok(row)
 }
@@ -2008,7 +2043,7 @@ fn session_row_from_snapshot(
 async fn hydrate_delete_parent_chain(
     state: &AppState,
     account: &AccountRow,
-    key: &KeyRow,
+    key_id: &str,
     selected: &SessionRow,
 ) -> Result<Vec<SessionRow>> {
     const MAX_PARENT_HOPS: i64 = 8;
@@ -2086,7 +2121,7 @@ async fn hydrate_delete_parent_chain(
         }
         child_depth = snapshot.depth;
         expected_parent = snapshot.parent_id.clone();
-        chain.push(session_row_from_snapshot(snapshot, &account.id, &key.id));
+        chain.push(session_row_from_snapshot(snapshot, &account.id, key_id));
     }
     if child_depth != 0 || expected_parent.is_some() {
         return Err(Error::Upstream(format!(
@@ -2214,6 +2249,12 @@ async fn proxy_sessions_root(
                         .await?;
                     let idempotency = create_idempotency(&headers, &account.id)?;
                     let body = output::inject_output_tool(body)?;
+                    let body = output::inject_tool_credentials(
+                        body,
+                        &account.id,
+                        &state.public_api_url,
+                        state.tenant_tool_token_key.as_ref(),
+                    )?;
                     let body = inject_uploaded_artifact_layers(
                         &state.db,
                         &account.id,
@@ -2458,14 +2499,15 @@ async fn proxy_session(
 ) -> Response {
     unwrap_response(
         async {
-            let (key, account) = auth_key(&state, &headers).await?;
+            let principal = auth_session(&state, &headers).await?;
+            let account = principal.account;
             if rejects_declared_get_body(&method, &headers) {
                 return Err(Error::Invalid("session GET requires an empty body".into()));
             }
             let session_id = rest.split('/').next().unwrap_or("").to_string();
             let sub = rest.strip_prefix(&session_id).unwrap_or("");
             // Unknown or foreign sessions are 404, never 403: existence is not revealed.
-            let row = owned_session_row(&state, &key, &account, &session_id).await?;
+            let row = owned_session_row(&state, &principal.key_id, &account, &session_id).await?;
             let is_message = method == Method::POST && sub == "/messages";
             let is_child_message = is_child_message_request(&method, sub);
             if requires_idempotency_key(&method, sub) {
@@ -2506,7 +2548,8 @@ async fn proxy_session(
                 // The retry worker performs the recursive end fence, strong billing settlement,
                 // and Brain/S3/Hand purge. A strict SDK caller observes `/deletion`; it never
                 // keeps this HTTP request open across external cleanup.
-                let chain = hydrate_delete_parent_chain(&state, &account, &key, &row).await?;
+                let chain =
+                    hydrate_delete_parent_chain(&state, &account, &principal.key_id, &row).await?;
                 state
                     .db
                     .begin_subtree_deletion_with_chain(
@@ -2730,6 +2773,8 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: Some(identity::hash_secret("executor-secret")),
+            tenant_tool_token_key: None,
+            public_api_url: "https://api.aex.dev".into(),
             customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),
@@ -3049,6 +3094,8 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
+            tenant_tool_token_key: None,
+            public_api_url: "https://api.aex.dev".into(),
             customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),
@@ -3152,6 +3199,8 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
+            tenant_tool_token_key: None,
+            public_api_url: "https://api.aex.dev".into(),
             customer_environment_gateway: Some(
                 CustomerEnvironmentGateway::new(
                     gateway_token,
@@ -3345,6 +3394,8 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
+            tenant_tool_token_key: None,
+            public_api_url: "https://api.aex.dev".into(),
             customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),

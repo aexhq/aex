@@ -108,6 +108,8 @@ async fn run(cfg: Config) -> anyhow::Result<()> {
         card: cfg.card.clone(),
         operator_token_hash: cfg.operator_token_hash,
         external_executor_token_hash: cfg.external_executor_token_hash,
+        tenant_tool_token_key: cfg.tenant_tool_token_key,
+        public_api_url: cfg.public_api_url,
         customer_environment_gateway: cfg.customer_environment_gateway,
         web: WebRuntime::hosted(cfg.serper_api_key),
         admission,

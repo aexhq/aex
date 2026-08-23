@@ -983,6 +983,19 @@ impl Db {
         .await
     }
 
+    pub async fn account(&self, account_id: String) -> Result<Option<AccountRow>> {
+        self.call(move |c| {
+            c.query_row(
+                "SELECT id, email, created_ms, max_concurrent_sessions, session_creates_per_hour
+                 FROM accounts WHERE id = ?1",
+                params![account_id],
+                account_row,
+            )
+            .optional()
+        })
+        .await
+    }
+
     pub async fn create_key(&self, row: KeyRow, secret_hash: String) -> Result<()> {
         self.call(move |c| {
             c.execute(

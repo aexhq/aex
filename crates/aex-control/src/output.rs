@@ -10,13 +10,15 @@ use sha2::{Digest, Sha256};
 
 use crate::identity;
 use crate::store::{BeginOutput, Db, OutputRequestRow};
-use crate::subagents_tool::{SUBAGENTS_CAPABILITY, SUBAGENTS_TOOL_NAME};
 use crate::web::{FETCH_CAPABILITY, FETCH_TOOL_NAME, SEARCH_CAPABILITY, SEARCH_TOOL_NAME};
 use crate::{Error, Result, now_ms};
 
 pub const OUTPUT_TOOL_NAME: &str = "aex_submit_output";
 pub const OUTPUT_CAPABILITY: &str = "brain.output";
 pub const OUTPUT_CONTEXT_KEY: &str = "aex.output_request_id";
+pub const SUBAGENTS_TOOL_NAME: &str = "subagents";
+pub const TOOL_API_URL_ENV: &str = "AEX_API_URL";
+pub const TOOL_TOKEN_ENV: &str = "AEX_TOOL_TOKEN";
 const MAX_SCHEMA_BYTES: usize = 64 * 1024;
 const MAX_SCHEMA_DEPTH: usize = 64;
 const MAX_SCHEMA_NODES: usize = 4096;
@@ -100,13 +102,107 @@ pub fn inject_output_tool(body: impl AsRef<[u8]>) -> Result<Vec<u8>> {
     serde_json::to_vec(&document).map_err(|error| Error::Internal(format!("session body: {error}")))
 }
 
+pub fn inject_tool_credentials(
+    body: impl AsRef<[u8]>,
+    account_id: &str,
+    public_api_url: &str,
+    token_key: Option<&identity::TenantToolTokenKey>,
+) -> Result<Vec<u8>> {
+    let mut document: Value = serde_json::from_slice(body.as_ref())
+        .map_err(|error| Error::Invalid(format!("session body: {error}")))?;
+    drop(body);
+    let root = document
+        .as_object_mut()
+        .ok_or_else(|| Error::Invalid("session body must be an object".into()))?;
+    let Some(items) = root
+        .get_mut("tools")
+        .and_then(Value::as_object_mut)
+        .and_then(|tools| tools.get_mut("items"))
+        .and_then(Value::as_array_mut)
+    else {
+        return serde_json::to_vec(&document)
+            .map_err(|error| Error::Internal(format!("session body: {error}")));
+    };
+    let mut selected = false;
+    for item in items {
+        if item.pointer("/definition/name").and_then(Value::as_str) != Some(SUBAGENTS_TOOL_NAME) {
+            continue;
+        }
+        if selected {
+            return Err(Error::Invalid(
+                "subagents was selected more than once".into(),
+            ));
+        }
+        selected = true;
+        let requirements = item
+            .pointer_mut("/executor/requirements")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| {
+                Error::Invalid("subagents executor requirements must be an object".into())
+            })?;
+        let env = requirements.entry("env").or_insert_with(|| json!([]));
+        let env = env.as_array_mut().ok_or_else(|| {
+            Error::Invalid("subagents executor requirements.env must be an array".into())
+        })?;
+        for name in [TOOL_API_URL_ENV, TOOL_TOKEN_ENV] {
+            if !env.iter().any(|value| value.as_str() == Some(name)) {
+                env.push(Value::String(name.into()));
+            }
+        }
+    }
+    if !selected {
+        return serde_json::to_vec(&document)
+            .map_err(|error| Error::Internal(format!("session body: {error}")));
+    }
+    let token_key = token_key.ok_or_else(|| {
+        Error::Unprocessable("subagents is unavailable in this Aex deployment".into())
+    })?;
+    let secrets = root.entry("secrets").or_insert_with(|| json!({}));
+    let secrets = secrets
+        .as_object_mut()
+        .ok_or_else(|| Error::Invalid("secrets must be an object".into()))?;
+    for name in [TOOL_API_URL_ENV, TOOL_TOKEN_ENV] {
+        if secrets.contains_key(name) {
+            return Err(Error::Invalid(format!(
+                "session secret {name} is reserved by Aex"
+            )));
+        }
+    }
+    secrets.insert(
+        TOOL_API_URL_ENV.into(),
+        Value::String(public_api_url.into()),
+    );
+    secrets.insert(
+        TOOL_TOKEN_ENV.into(),
+        Value::String(token_key.mint(account_id)),
+    );
+    serde_json::to_vec(&document).map_err(|error| Error::Internal(format!("session body: {error}")))
+}
+
 fn normalize_managed_tool(item: &mut Value) -> Result<()> {
     let name = item.pointer("/definition/name").and_then(Value::as_str);
     let capability = item.pointer("/executor/capability").and_then(Value::as_str);
+    if capability == Some("brain.subagents") {
+        return Err(Error::Invalid(
+            "brain.subagents is obsolete; use the prepared subagents Tool".into(),
+        ));
+    }
+    if name == Some(SUBAGENTS_TOOL_NAME) {
+        if item.pointer("/executor/kind").and_then(Value::as_str) != Some("environment")
+            || item
+                .pointer("/executor/artifact_digest")
+                .and_then(Value::as_str)
+                .is_none()
+        {
+            return Err(Error::Invalid(
+                "subagents must be a prepared Tool bound to an Environment".into(),
+            ));
+        }
+        return Ok(());
+    }
     for (managed_name, managed_capability) in [
         (SEARCH_TOOL_NAME, SEARCH_CAPABILITY),
         (FETCH_TOOL_NAME, FETCH_CAPABILITY),
-        (SUBAGENTS_TOOL_NAME, SUBAGENTS_CAPABILITY),
     ] {
         if name == Some(managed_name) || capability == Some(managed_capability) {
             if name != Some(managed_name)
@@ -122,7 +218,11 @@ fn normalize_managed_tool(item: &mut Value) -> Result<()> {
         }
     }
     if name.is_some_and(|name| {
-        name.starts_with("aex_") || matches!(name, SEARCH_TOOL_NAME | FETCH_TOOL_NAME)
+        name.starts_with("aex_")
+            || matches!(
+                name,
+                SEARCH_TOOL_NAME | FETCH_TOOL_NAME | SUBAGENTS_TOOL_NAME
+            )
     }) || capability.is_some_and(|capability| capability.starts_with("aex."))
     {
         return Err(Error::Invalid(
@@ -133,63 +233,7 @@ fn normalize_managed_tool(item: &mut Value) -> Result<()> {
 }
 
 fn pinned_official_tool(name: &str) -> Result<Value> {
-    if name == SUBAGENTS_TOOL_NAME {
-        managed_subagents_tool()
-    } else {
-        managed_web_tool(name)
-    }
-}
-
-/// Server-pinned twin of `@aexhq/tools` `subagents`: same verbs and field bounds; the hosted
-/// executor stays authoritative for which fields each action requires.
-fn managed_subagents_tool() -> Result<Value> {
-    let definition = json!({
-        "name": SUBAGENTS_TOOL_NAME,
-        "description": "Create and explicitly interact with durable direct child sessions.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": [
-                        "spawn_agent",
-                        "send_message",
-                        "follow_up",
-                        "wait",
-                        "peek",
-                        "list_children",
-                        "interrupt_agent",
-                        "end_agent"
-                    ]
-                },
-                "task_name": {"type": "string", "minLength": 1, "maxLength": 128},
-                "message": {"type": "string", "minLength": 1, "maxLength": 196608},
-                "fork_turns": {
-                    "anyOf": [
-                        {"const": "all"},
-                        {"const": "none"},
-                        {"type": "string", "maxLength": 10, "pattern": "^[1-9][0-9]*$"}
-                    ]
-                },
-                "child_id": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-                },
-                "timeout_ms": {"type": "integer", "minimum": 0, "maximum": 300000},
-                "cursor": {"type": "string", "maxLength": 4096},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100}
-            },
-            "required": ["action"],
-            "additionalProperties": false
-        },
-        "output_schema": {}
-    });
-    Ok(json!({
-        "definition": definition_with_digest(definition)?,
-        "executor": {"kind": "engine", "capability": SUBAGENTS_CAPABILITY}
-    }))
+    managed_web_tool(name)
 }
 
 fn managed_web_tool(name: &str) -> Result<Value> {
@@ -1011,39 +1055,46 @@ mod tests {
     }
 
     #[test]
-    fn injection_pins_the_subagents_tool() {
+    fn injection_keeps_subagents_in_its_environment_and_adds_tenant_credentials() {
         let injected = inject_output_tool(
             br#"{
                 "model":{"provider":"openai"},
                 "tools":{"items":[{
                     "definition":{
                         "name":"subagents",
-                        "description":"attacker controlled",
-                        "input_schema":{"type":"string"},
-                        "output_schema":{"type":"string"}
+                        "description":"Create child sessions.",
+                        "input_schema":{"type":"object"},
+                        "output_schema":{},
+                        "contract_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     },
                     "executor":{
-                        "kind":"engine",
-                        "capability":"brain.subagents"
+                        "kind":"environment",
+                        "environment":"workspace",
+                        "artifact_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "requirements":{"network":[{"host":"api.aex.dev","ports":[443],"protocol":"tls"}]}
                     }
                 }]}
             }"#,
         )
         .unwrap();
+        let key = identity::TenantToolTokenKey::new("k".repeat(32)).unwrap();
+        let injected =
+            inject_tool_credentials(injected, "acc_test", "https://api.aex.dev", Some(&key))
+                .unwrap();
         let document: Value = serde_json::from_slice(&injected).unwrap();
         let subagents = &document["tools"]["items"][0];
         assert_eq!(
             subagents["definition"]["description"],
-            "Create and explicitly interact with durable direct child sessions."
+            "Create child sessions."
         );
+        assert_eq!(subagents["executor"]["environment"], "workspace");
         assert_eq!(
-            subagents["executor"],
-            json!({"kind": "engine", "capability": SUBAGENTS_CAPABILITY})
+            subagents["executor"]["requirements"]["env"],
+            json!([TOOL_API_URL_ENV, TOOL_TOKEN_ENV])
         );
-        assert_eq!(
-            subagents["definition"]["input_schema"]["required"],
-            json!(["action"])
-        );
+        assert_eq!(document["secrets"][TOOL_API_URL_ENV], "https://api.aex.dev");
+        let token = document["secrets"][TOOL_TOKEN_ENV].as_str().unwrap();
+        assert_eq!(key.authenticate(token).as_deref(), Some("acc_test"));
 
         assert!(
             inject_output_tool(
@@ -1056,6 +1107,9 @@ mod tests {
                 br#"{"model":{},"tools":{"items":[{"definition":{"name":"subagents","description":"x","input_schema":{},"output_schema":{}},"executor":{"kind":"environment","environment":"application","callback_registration":"subagents","requirements":{}}}]}}"#
             )
             .is_err()
+        );
+        assert!(
+            inject_tool_credentials(&injected, "acc_test", "https://api.aex.dev", None,).is_err()
         );
     }
 
