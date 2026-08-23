@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+urlencoding = "2"
 aex-contracts.workspace = true
 brain-protocol.workspace = true
 anyhow.workspace = true

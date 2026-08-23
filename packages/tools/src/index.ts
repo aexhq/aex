@@ -9,7 +9,6 @@ import {
   read as portableRead,
   sandbox as portableSandbox,
   storage as portableStorage,
-  subagents as portableSubagents,
   todo as portableTodo,
   write as portableWrite,
 } from "@aexhq/brain-tools";
@@ -71,5 +70,46 @@ export const webFetch = selected(webFetchTool);
 
 /**
  * Let the agent create and explicitly interact with durable direct child sessions.
+ * The former brain.subagents intrinsic as an ordinary hosted capability: same verbs,
+ * served by Aex over Brain's session-scoped children API.
  */
-export const subagents = selected(portableSubagents);
+const subagentChildId = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+const subagentForkTurns = z.union([
+  z.literal("all"),
+  z.literal("none"),
+  z.string().max(10).regex(/^[1-9][0-9]*$/),
+]);
+
+const subagentsTool = officialTool({
+  name: "subagents",
+  description: "Create and explicitly interact with durable direct child sessions.",
+  // One provider-friendly object schema; the hosted executor stays authoritative for which
+  // fields each action requires and ignores irrelevant optional fields.
+  input: z.object({
+    action: z.enum([
+      "spawn_agent",
+      "send_message",
+      "follow_up",
+      "wait",
+      "peek",
+      "list_children",
+      "interrupt_agent",
+      "end_agent",
+    ]),
+    task_name: z.string().min(1).max(128).optional(),
+    message: z.string().min(1).max(192 * 1024).optional(),
+    fork_turns: subagentForkTurns.optional(),
+    child_id: subagentChildId.optional(),
+    timeout_ms: z.number().int().nonnegative().max(300_000).optional(),
+    cursor: z.string().max(4096).optional(),
+    limit: z.number().int().positive().max(100).optional(),
+  }),
+  output: z.unknown(),
+  capability: "aex.subagents",
+});
+
+export const subagents = selected(subagentsTool);
