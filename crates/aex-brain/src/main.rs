@@ -10,13 +10,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use brain::adapter::ToolExecutor;
-use brain::api::{AppState, serve};
 use brain::config::ServerToolPolicy;
 use brain::customer::CustomerTransportConfig;
-use brain::external::HttpExternalToolExecutor;
 use brain::session::{Brain, BrainConfig, BrainServices, ProviderFactory};
 use brain_aws::{AwsPersistenceConfig, AwsRuntimePorts};
 use brain_protocol::session::{ExternalToolCompletion, ExternalToolEffect, ExternalToolScope};
+use brain_providers::external::HttpExternalToolExecutor;
+use brain_server::api::{AppState, Tenancy, serve};
 use brain_standalone::durable_local_parts;
 use hand_brain_aws::AwsHand;
 
@@ -58,12 +58,16 @@ async fn main() -> anyhow::Result<()> {
     };
     // The Aex control plane fronts every request and always stamps x-brain-tenant-id;
     // hosted mode refuses a header-less request rather than booking tenant "local".
-    let require_tenant = mode == "production";
+    let tenancy = if mode == "production" {
+        Tenancy::Required
+    } else {
+        Tenancy::Implicit("local".into())
+    };
     serve(
         AppState {
             brain,
             token,
-            require_tenant,
+            tenancy,
         },
         address,
     )
@@ -118,6 +122,12 @@ async fn compose_production(
             external_executor: Some(external),
             customer_delivery: Some(customer_delivery),
             customer_transport: Some(customer_transport),
+            // The hosted composition runs the kernel's builtin aex loop; loop-host wiring
+            // (custom uploads, seeded officials) is the recorded next composition step.
+            agentloop: None,
+            agentloop_registry: None,
+            // The hosted default: guarded live transport with private addresses denied.
+            provider_factory: None,
         },
     )
     .await
@@ -143,6 +153,7 @@ fn compose_local(
     data_dir: impl Into<std::path::PathBuf>,
     provider_factory: Option<ProviderFactory>,
 ) -> anyhow::Result<Arc<Brain>> {
+    let allow_private = config.outbound_allow_private;
     let parts = durable_local_parts(data_dir).map_err(anyhow::Error::msg)?;
     let local_hand = parts.local_hand.clone();
     let brain = Brain::with_parts_and_services(
@@ -165,7 +176,7 @@ fn compose_local(
             agentloop: None,
             agentloop_registry: None,
         },
-        provider_factory,
+        provider_factory.unwrap_or_else(|| brain_providers::default_factory(allow_private)),
     );
     local_hand
         .attach_secret_delivery(brain.clone())
@@ -655,10 +666,10 @@ socket.addEventListener('message', (event) => {
         let server = tokio::spawn(async move {
             axum::serve(
                 listener,
-                brain::api::router(AppState {
+                brain_server::api::router(AppState {
                     brain: server_brain,
                     token: token.into(),
-                    require_tenant: false,
+                    tenancy: Tenancy::Implicit("local".into()),
                 }),
             )
             .await
