@@ -19,9 +19,12 @@
   <a href="https://discord.gg/Qk2YnHMHVb">Discord</a>
 </p>
 
-Aex is a session-oriented backend for AI applications. It keeps the model loop and context
-durable, then starts isolated compute only when a tool needs it. Bring your own model key, choose
-the tools a session can use, and receive text or validated data.
+Aex is a session-oriented backend for AI applications, built on a minimal and extensible
+kernel ([Brain](https://github.com/aexhq/brain)). The kernel owns mechanism — durable
+sessions, journaled effects, recovery; your agent's behavior is extension policy. It keeps
+the model loop and context durable, then starts isolated compute only when a tool needs it.
+Bring your own model key, choose the tools a session can use, and receive text or validated
+data.
 
 ## Quickstart
 
