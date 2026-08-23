@@ -11,8 +11,8 @@ pub struct ApiGatewayCustomerDelivery {
 
 impl ApiGatewayCustomerDelivery {
     pub async fn from_env() -> anyhow::Result<Self> {
-        let callback_url = std::env::var("AEX_CUSTOMER_HAND_CALLBACK_URL")
-            .map_err(|_| anyhow::anyhow!("AEX_CUSTOMER_HAND_CALLBACK_URL is not set"))?;
+        let callback_url = std::env::var("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL")
+            .map_err(|_| anyhow::anyhow!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL is not set"))?;
         validate_callback_url(&callback_url)?;
         let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".into());
         let shared = aws_config::from_env()
@@ -81,18 +81,18 @@ impl CustomerEnvironmentDeliveryPort for ApiGatewayCustomerDelivery {
 
 fn validate_callback_url(value: &str) -> anyhow::Result<()> {
     let url = reqwest::Url::parse(value)
-        .map_err(|error| anyhow::anyhow!("AEX_CUSTOMER_HAND_CALLBACK_URL: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL: {error}"))?;
     if url.scheme() != "https" {
-        anyhow::bail!("AEX_CUSTOMER_HAND_CALLBACK_URL must use HTTPS");
+        anyhow::bail!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL must use HTTPS");
     }
     if url.host_str().is_none() {
-        anyhow::bail!("AEX_CUSTOMER_HAND_CALLBACK_URL must have a host");
+        anyhow::bail!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL must have a host");
     }
     if !url.username().is_empty() || url.password().is_some() {
-        anyhow::bail!("AEX_CUSTOMER_HAND_CALLBACK_URL must not contain credentials");
+        anyhow::bail!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL must not contain credentials");
     }
     if url.query().is_some() || url.fragment().is_some() {
-        anyhow::bail!("AEX_CUSTOMER_HAND_CALLBACK_URL must not contain a query or fragment");
+        anyhow::bail!("AEX_CUSTOMER_ENVIRONMENT_CALLBACK_URL must not contain a query or fragment");
     }
     Ok(())
 }

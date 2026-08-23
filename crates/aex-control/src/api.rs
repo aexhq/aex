@@ -28,7 +28,7 @@ use crate::admission::{
     Admission, AdmissionDecision, SessionCreateDecision, SessionCreateReservation,
 };
 use crate::brain::BrainClient;
-use crate::customer_hand::{CustomerHandGateway, GatewayRoute};
+use crate::customer_environment::{CustomerEnvironmentGateway, GatewayRoute};
 use crate::identity::{self, bearer};
 use crate::output::{self, PreparedMessage};
 use crate::payments::{PaymentStatus, Payments, RefundAttempt, StripeWebhook, StripeWebhookAction};
@@ -44,9 +44,10 @@ use crate::{Error, Result, StorageLimits, now_ms, rfc3339, usd_display};
 
 // The neutral ceiling is the JSON data payload; a small separate allowance covers SSE fields.
 const MAX_PUBLIC_SSE_FRAME_BYTES: usize = brain_protocol::MAX_PUBLIC_EVENT_BYTES + 4 * 1024;
-const MAX_CUSTOMER_HAND_GRANT_BYTES: usize = 16 * 1024;
-const MAX_CUSTOMER_HAND_FRAME_BYTES: usize = brain_protocol::MAX_CUSTOMER_WS_FRAME_BYTES;
-const MAX_CUSTOMER_HAND_OBSERVATION_BYTES: usize = brain_protocol::MAX_CUSTOMER_OBSERVATION_BYTES;
+const MAX_CUSTOMER_ENVIRONMENT_GRANT_BYTES: usize = 16 * 1024;
+const MAX_CUSTOMER_ENVIRONMENT_FRAME_BYTES: usize = brain_protocol::MAX_CUSTOMER_WS_FRAME_BYTES;
+const MAX_CUSTOMER_ENVIRONMENT_OBSERVATION_BYTES: usize =
+    brain_protocol::MAX_CUSTOMER_OBSERVATION_BYTES;
 // Ordinary inline session operations never carry compiled Tool bundles. A 1 MiB file expands to
 // ~1.34 MiB in base64; 2 MiB leaves JSON overhead without giving every route create-sized memory.
 const MAX_INLINE_SESSION_REQUEST_BYTES: usize = 2 * 1024 * 1024;
@@ -175,10 +176,10 @@ async fn bounded_inline_session_body(body: Body) -> Result<Bytes> {
         })
 }
 
-async fn bounded_customer_hand_body(body: Body, limit: usize, label: &str) -> Result<Bytes> {
+async fn bounded_customer_environment_body(body: Body, limit: usize, label: &str) -> Result<Bytes> {
     axum::body::to_bytes(body, limit).await.map_err(|_| {
         Error::PayloadTooLarge(format!(
-            "customer-Hand {label} exceeds the {limit}-byte ceiling"
+            "customer-environment {label} exceeds the {limit}-byte ceiling"
         ))
     })
 }
@@ -212,15 +213,15 @@ pub struct AppState {
     pub operator_token_hash: Option<String>,
     /// SHA-256 of the Brain-to-control executor bearer. None disables the internal route.
     pub external_executor_token_hash: Option<String>,
-    /// Authenticates API Gateway WebSocket integration calls; None disables hosted customer Hands.
-    pub customer_hand_gateway: Option<CustomerHandGateway>,
+    /// Authenticates API Gateway WebSocket integration calls; None disables hosted customer Environments.
+    pub customer_environment_gateway: Option<CustomerEnvironmentGateway>,
     /// Trusted host implementation for Aex-managed server Tools.
     pub web: WebRuntime,
     /// Fast prepaid admission and bounded in-memory unbilled reservations.
     pub admission: Admission,
     /// Bounds simultaneous create-sized buffers after authentication (24 MiB each).
     pub create_body_slots: Arc<tokio::sync::Semaphore>,
-    /// Bounds simultaneous prompt/message and customer-Hand buffers after authentication
+    /// Bounds simultaneous prompt/message and customer-environment buffers after authentication
     /// (at most 192 KiB each).
     pub message_body_slots: Arc<tokio::sync::Semaphore>,
     /// Bounds other buffered session requests after authentication (2 MiB each).
@@ -255,11 +256,17 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/webhooks/stripe", post(stripe_webhook))
         .route("/v1/usage", get(get_usage))
         .route("/v1/rates", get(get_rates))
-        .route("/v1/customer-hand/grants", post(create_customer_hand_grant))
-        .route("/v1/customer-hand/gateway", post(customer_hand_gateway))
         .route(
-            "/v1/customer-hand/observations/{grant_id}",
-            post(customer_hand_observation),
+            "/v1/customer-environment/grants",
+            post(create_customer_environment_grant),
+        )
+        .route(
+            "/v1/customer-environment/gateway",
+            post(customer_environment_gateway),
+        )
+        .route(
+            "/v1/customer-environment/observations/{grant_id}",
+            post(customer_environment_observation),
         )
         .route("/v1/artifacts/{digest}", any(tool_artifact_layer))
         .route("/v1/sessions", any(proxy_sessions_root))
@@ -1280,9 +1287,9 @@ async fn get_rates(State(state): State<AppState>) -> Response {
     json_response(200, &state.card.to_json())
 }
 
-// ---- hosted customer Hand ----
+// ---- hosted customer Environment ----
 
-async fn create_customer_hand_grant(
+async fn create_customer_environment_grant(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Body,
@@ -1291,15 +1298,18 @@ async fn create_customer_hand_grant(
         async {
             let (_key, account) = auth_key(&state, &headers).await?;
             let _body_slot = try_body_slot(&state.message_body_slots, "message")?;
-            let body =
-                bounded_customer_hand_body(body, MAX_CUSTOMER_HAND_GRANT_BYTES, "grant request")
-                    .await?;
+            let body = bounded_customer_environment_body(
+                body,
+                MAX_CUSTOMER_ENVIRONMENT_GRANT_BYTES,
+                "grant request",
+            )
+            .await?;
             let content_type = headers
                 .get(header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok());
             let upstream = state
                 .brain
-                .customer_hand_grant(&account.id, content_type, body)
+                .customer_environment_grant(&account.id, content_type, body)
                 .await?;
             proxy_brain_response(upstream)
         }
@@ -1307,7 +1317,7 @@ async fn create_customer_hand_grant(
     )
 }
 
-async fn customer_hand_gateway(
+async fn customer_environment_gateway(
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1316,7 +1326,7 @@ async fn customer_hand_gateway(
     unwrap_response(
         async {
             let gateway = state
-                .customer_hand_gateway
+                .customer_environment_gateway
                 .as_ref()
                 .ok_or(Error::NotFound)?;
             let metadata = gateway.authenticate(&headers, peer)?;
@@ -1330,14 +1340,18 @@ async fn customer_hand_gateway(
                     .expect("static disconnect response"));
             }
             let _body_slot = try_body_slot(&state.message_body_slots, "message")?;
-            let body =
-                bounded_customer_hand_body(body, MAX_CUSTOMER_HAND_FRAME_BYTES, "frame").await?;
+            let body = bounded_customer_environment_body(
+                body,
+                MAX_CUSTOMER_ENVIRONMENT_FRAME_BYTES,
+                "frame",
+            )
+            .await?;
             let content_type = headers
                 .get(header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok());
             let upstream = state
                 .brain
-                .customer_hand_gateway(&metadata, content_type, body)
+                .customer_environment_gateway(&metadata, content_type, body)
                 .await?;
             proxy_brain_response(upstream)
         }
@@ -1345,7 +1359,7 @@ async fn customer_hand_gateway(
     )
 }
 
-async fn customer_hand_observation(
+async fn customer_environment_observation(
     State(state): State<AppState>,
     Path(grant_id): Path<String>,
     headers: HeaderMap,
@@ -1360,7 +1374,7 @@ async fn customer_hand_observation(
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
             {
                 return Err(Error::Invalid(
-                    "invalid customer-Hand observation grant id".into(),
+                    "invalid customer-environment observation grant id".into(),
                 ));
             }
             let grant = bearer(&headers).ok_or(Error::Unauthorized)?;
@@ -1371,9 +1385,9 @@ async fn customer_hand_observation(
                 return Err(Error::Unauthorized);
             }
             let _body_slot = try_body_slot(&state.message_body_slots, "message")?;
-            let body = bounded_customer_hand_body(
+            let body = bounded_customer_environment_body(
                 body,
-                MAX_CUSTOMER_HAND_OBSERVATION_BYTES,
+                MAX_CUSTOMER_ENVIRONMENT_OBSERVATION_BYTES,
                 "observation",
             )
             .await?;
@@ -1382,7 +1396,7 @@ async fn customer_hand_observation(
                 .and_then(|value| value.to_str().ok());
             let upstream = state
                 .brain
-                .customer_hand_observation(&grant_id, grant, content_type, body)
+                .customer_environment_observation(&grant_id, grant, content_type, body)
                 .await?;
             proxy_brain_response(upstream)
         }
@@ -2716,7 +2730,7 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: Some(identity::hash_secret("executor-secret")),
-            customer_hand_gateway: None,
+            customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),
             create_body_slots: Arc::new(tokio::sync::Semaphore::new(4)),
@@ -3035,7 +3049,7 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
-            customer_hand_gateway: None,
+            customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),
             create_body_slots: Arc::new(tokio::sync::Semaphore::new(4)),
@@ -3098,26 +3112,26 @@ mod event_filter_tests {
     }
 
     #[tokio::test]
-    async fn customer_hand_auth_and_capacity_precede_every_body_poll() {
+    async fn customer_environment_auth_and_capacity_precede_every_body_poll() {
         let db = Db::open_memory().unwrap();
-        let api_key = "aex_sk_customer_hand_body_test";
+        let api_key = "aex_sk_customer_environment_body_test";
         db.create_account(
             AccountRow {
-                id: "acc_customer_hand_body".into(),
-                email: "customer-hand-body@example.com".into(),
+                id: "acc_customer_environment_body".into(),
+                email: "customer-environment-body@example.com".into(),
                 created_ms: 1,
                 max_concurrent_sessions: 10,
                 session_creates_per_hour: 30,
             },
-            "customer-hand-body@example.com".into(),
+            "customer-environment-body@example.com".into(),
             identity::hash_secret("aex_at_unused"),
         )
         .await
         .unwrap();
         db.create_key(
             KeyRow {
-                id: "key_customer_hand_body".into(),
-                account_id: "acc_customer_hand_body".into(),
+                id: "key_customer_environment_body".into(),
+                account_id: "acc_customer_environment_body".into(),
                 name: "test".into(),
                 prefix: "aex_sk_customer".into(),
                 created_ms: 1,
@@ -3138,8 +3152,8 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
-            customer_hand_gateway: Some(
-                CustomerHandGateway::new(
+            customer_environment_gateway: Some(
+                CustomerEnvironmentGateway::new(
                     gateway_token,
                     vec!["127.0.0.0/8".parse().unwrap()],
                     vec!["198.51.100.0/24".parse().unwrap()],
@@ -3170,7 +3184,7 @@ mod event_filter_tests {
 
         let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         assert_eq!(
-            create_customer_hand_grant(
+            create_customer_environment_grant(
                 State(state.clone()),
                 HeaderMap::new(),
                 counted_body(polls.clone()),
@@ -3182,7 +3196,7 @@ mod event_filter_tests {
         let mut gateway_without_token = gateway_headers.clone();
         gateway_without_token.remove("x-aex-apigateway-token");
         assert_eq!(
-            customer_hand_gateway(
+            customer_environment_gateway(
                 ConnectInfo("127.0.0.1:1234".parse().unwrap()),
                 State(state.clone()),
                 gateway_without_token,
@@ -3193,7 +3207,7 @@ mod event_filter_tests {
             StatusCode::UNAUTHORIZED,
         );
         assert_eq!(
-            customer_hand_observation(
+            customer_environment_observation(
                 State(state.clone()),
                 Path("chg_test".into()),
                 HeaderMap::new(),
@@ -3212,7 +3226,7 @@ mod event_filter_tests {
             format!("Bearer {api_key}").parse().unwrap(),
         );
         assert_eq!(
-            create_customer_hand_grant(
+            create_customer_environment_grant(
                 State(state.clone()),
                 api_headers,
                 counted_body(polls.clone()),
@@ -3222,7 +3236,7 @@ mod event_filter_tests {
             StatusCode::TOO_MANY_REQUESTS,
         );
         assert_eq!(
-            customer_hand_gateway(
+            customer_environment_gateway(
                 ConnectInfo("127.0.0.1:1234".parse().unwrap()),
                 State(state.clone()),
                 gateway_headers,
@@ -3238,7 +3252,7 @@ mod event_filter_tests {
             "Bearer observation-grant".parse().unwrap(),
         );
         assert_eq!(
-            customer_hand_observation(
+            customer_environment_observation(
                 State(state),
                 Path("chg_test".into()),
                 observation_headers,
@@ -3251,7 +3265,7 @@ mod event_filter_tests {
         assert_eq!(
             polls.load(std::sync::atomic::Ordering::SeqCst),
             0,
-            "customer-Hand auth failures and saturated requests must not poll their bodies",
+            "customer-environment auth failures and saturated requests must not poll their bodies",
         );
         drop(held);
     }
@@ -3331,7 +3345,7 @@ mod event_filter_tests {
             card: RateCard::default(),
             operator_token_hash: None,
             external_executor_token_hash: None,
-            customer_hand_gateway: None,
+            customer_environment_gateway: None,
             web: WebRuntime::hosted(None),
             admission: Admission::new(crate::admission::AdmissionConfig::default()).unwrap(),
             create_body_slots: create_body_slots.clone(),

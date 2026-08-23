@@ -13,7 +13,7 @@ use aex_control::StorageLimits;
 use aex_control::admission::{Admission, AdmissionConfig};
 use aex_control::api::{AppState, internal_router, router};
 use aex_control::brain::BrainClient;
-use aex_control::customer_hand::CustomerHandGateway;
+use aex_control::customer_environment::CustomerEnvironmentGateway;
 use aex_control::payments::{Checkout, FakePayments, PaymentStatus, Payments, RefundAttempt};
 use aex_control::rating::RateCard;
 use aex_control::store::{AccountRow, Db, KeyRow};
@@ -122,21 +122,21 @@ async fn stub_handler(
     };
     let mut sessions = stub.sessions.lock().unwrap();
     match (method.as_str(), parts.as_slice()) {
-        ("POST", ["internal", "v1", "customer-hand", "grants"]) => {
+        ("POST", ["internal", "v1", "customer-environment", "grants"]) => {
             assert!(headers.get("x-brain-tenant-id").is_some());
             respond(
                 201,
                 json!({
-                    "url": "wss://customer-hand.example.test/connect",
+                    "url": "wss://customer-environment.example.test/connect",
                     "protocol": "aex.grant.test",
                     "expires_at": "2026-08-18T09:05:00Z",
                     "grant_id": "chg_test",
-                    "observation_url": "https://api.example.test/v1/customer-hand/observations/chg_test",
+                    "observation_url": "https://api.example.test/v1/customer-environment/observations/chg_test",
                     "observation_token": "observation-grant"
                 }),
             )
         }
-        ("POST", ["internal", "v1", "customer-hand", "gateway"]) => {
+        ("POST", ["internal", "v1", "customer-environment", "gateway"]) => {
             assert!(headers.get("x-brain-tenant-id").is_none());
             match headers["x-brain-route-key"].to_str().unwrap() {
                 "$connect" => {
@@ -163,10 +163,19 @@ async fn stub_handler(
                         )
                     }
                 }
-                route => panic!("Aex forwarded untrusted customer-Hand route {route}"),
+                route => panic!("Aex forwarded untrusted customer-environment route {route}"),
             }
         }
-        ("POST", ["internal", "v1", "customer-hand", "observations", grant_id]) => {
+        (
+            "POST",
+            [
+                "internal",
+                "v1",
+                "customer-environment",
+                "observations",
+                grant_id,
+            ],
+        ) => {
             if *grant_id != "chg_test"
                 || headers
                     .get("x-brain-observation-grant")
@@ -638,8 +647,8 @@ async fn spawn_control_with_product_limits(
         card: card.clone(),
         operator_token_hash: Some(aex_control::identity::hash_secret(OPERATOR_TOKEN)),
         external_executor_token_hash: None,
-        customer_hand_gateway: Some(
-            CustomerHandGateway::new(
+        customer_environment_gateway: Some(
+            CustomerEnvironmentGateway::new(
                 GATEWAY_TOKEN,
                 vec!["127.0.0.0/8".parse().unwrap()],
                 vec!["198.51.100.0/24".parse().unwrap()],
@@ -682,7 +691,7 @@ async fn spawn_control_without_deletion_worker(
         card: RateCard::default(),
         operator_token_hash: Some(aex_control::identity::hash_secret(OPERATOR_TOKEN)),
         external_executor_token_hash: None,
-        customer_hand_gateway: None,
+        customer_environment_gateway: None,
         web: WebRuntime::hosted(None),
         admission: Admission::new(AdmissionConfig::default()).unwrap(),
         create_body_slots: Arc::new(tokio::sync::Semaphore::new(4)),
@@ -728,7 +737,7 @@ async fn spawn_internal_executor(brain_url: &str, brain_token: &str) -> String {
         card: RateCard::default(),
         operator_token_hash: None,
         external_executor_token_hash: Some(aex_control::identity::hash_secret(EXECUTOR_TOKEN)),
-        customer_hand_gateway: None,
+        customer_environment_gateway: None,
         web: WebRuntime::hosted(None),
         admission: Admission::new(AdmissionConfig::default()).unwrap(),
         create_body_slots: Arc::new(tokio::sync::Semaphore::new(4)),
@@ -1436,7 +1445,7 @@ async fn ambiguous_create_recovery_keeps_its_original_admission_at_zero_balance(
         card: RateCard::default(),
         operator_token_hash: None,
         external_executor_token_hash: None,
-        customer_hand_gateway: None,
+        customer_environment_gateway: None,
         web: WebRuntime::hosted(None),
         admission: admission.clone(),
         create_body_slots: Arc::new(tokio::sync::Semaphore::new(4)),
@@ -1590,9 +1599,9 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     // A customer-app Hand receives a short-lived scoped WebSocket grant. API Gateway callbacks
     // are admitted only through the authenticated integration and carry trusted connection
     // metadata to Brain. Brain derives tenant/client from the grant; Aex never supplies a tenant
-    // header on this path. A managed-sandbox NAT source is rejected before forwarding.
+    // header on this path. A managed-environment NAT source is rejected before forwarding.
     let grant = json_of(
-        http.post(format!("{base}/v1/customer-hand/grants"))
+        http.post(format!("{base}/v1/customer-environment/grants"))
             .bearer_auth(&sk)
             .json(&json!({"client_id": "orders-api"}))
             .send()
@@ -1601,10 +1610,13 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         201,
     )
     .await;
-    assert_eq!(grant["url"], "wss://customer-hand.example.test/connect");
+    assert_eq!(
+        grant["url"],
+        "wss://customer-environment.example.test/connect"
+    );
     assert_eq!(
         grant["observation_url"],
-        "https://api.example.test/v1/customer-hand/observations/chg_test"
+        "https://api.example.test/v1/customer-environment/observations/chg_test"
     );
     assert!(
         !grant["observation_url"]
@@ -1615,7 +1627,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     );
     assert_eq!(grant["protocol"], "aex.grant.test");
     let connect = http
-        .post(format!("{base}/v1/customer-hand/gateway"))
+        .post(format!("{base}/v1/customer-environment/gateway"))
         .header("x-aex-apigateway-token", GATEWAY_TOKEN)
         .header("x-aex-connection-id", "connection-1")
         .header("x-aex-route-key", "$connect")
@@ -1635,7 +1647,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     // without that integration token, but Brain must verify the raw connection-bound proof before
     // it mutates registration or liveness.
     let send_frame = |proof: &'static str, request_id: &'static str| {
-        http.post(format!("{base}/v1/customer-hand/gateway"))
+        http.post(format!("{base}/v1/customer-environment/gateway"))
             .header("x-aex-connection-id", "connection-1")
             .header("x-aex-route-key", "$default")
             .header("x-aex-request-id", request_id)
@@ -1663,7 +1675,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     // `$disconnect` has no cryptographic proof, so Aex drops it and Brain expires by heartbeat or
     // a confirmed outbound 410 instead of accepting unauthenticated state mutation.
     let disconnect = http
-        .post(format!("{base}/v1/customer-hand/gateway"))
+        .post(format!("{base}/v1/customer-environment/gateway"))
         .header("x-aex-connection-id", "connection-1")
         .header("x-aex-route-key", "$disconnect")
         .header("x-aex-request-id", "request-4")
@@ -1674,7 +1686,9 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         .unwrap();
     assert_eq!(disconnect.status().as_u16(), 204);
     let observation = http
-        .post(format!("{base}/v1/customer-hand/observations/chg_test"))
+        .post(format!(
+            "{base}/v1/customer-environment/observations/chg_test"
+        ))
         .bearer_auth("observation-grant")
         .json(&json!({
             "type": "terminal",
@@ -1689,7 +1703,9 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         .unwrap();
     assert_eq!(observation.status().as_u16(), 204);
     let missing_observation_token = http
-        .post(format!("{base}/v1/customer-hand/observations/chg_test"))
+        .post(format!(
+            "{base}/v1/customer-environment/observations/chg_test"
+        ))
         .json(&json!({
             "type": "terminal",
             "epoch": 7,
@@ -1704,7 +1720,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
     assert_eq!(missing_observation_token.status().as_u16(), 401);
     let swapped_observation = http
         .post(format!(
-            "{base}/v1/customer-hand/observations/chg_different"
+            "{base}/v1/customer-environment/observations/chg_different"
         ))
         .bearer_auth("observation-grant")
         .json(&json!({
@@ -1720,7 +1736,7 @@ async fn a_stranger_signs_up_tops_up_keys_runs_and_sees_the_bill() {
         .unwrap();
     assert_eq!(swapped_observation.status().as_u16(), 401);
     let blocked = http
-        .post(format!("{base}/v1/customer-hand/gateway"))
+        .post(format!("{base}/v1/customer-environment/gateway"))
         .header("x-aex-apigateway-token", GATEWAY_TOKEN)
         .header("x-aex-connection-id", "connection-2")
         .header("x-aex-route-key", "$connect")
