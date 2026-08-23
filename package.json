@@ -4,7 +4,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "gen": "npm run gen --workspaces --if-present",
-    "build": "npm run build --workspace @aexhq/contracts && npm run build --workspace @aexhq/environment && npm run build --workspace @aexhq/sdk && npm run build --workspace @aexhq/tools && npm run build --workspace @aexhq/cli",
+    "build": "npm run build --workspace @aexhq/contracts && npm run build --workspace @aexhq/environment && npm run build --workspace @aexhq/sdk && npm run build --workspace @aexhq/cli && npm run build --workspace @aexhq/tools",
     "test": "npm test --workspace @aexhq/contracts && npm test --workspace @aexhq/environment && npm test --workspace @aexhq/sdk && npm test --workspace @aexhq/tools && npm test --workspace @aexhq/cli && node tools/verify-brain-overlay.mjs",
     "package-smoke": "node tools/package-smoke.mjs"
   },

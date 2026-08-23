@@ -20,29 +20,42 @@
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./index.d.ts",
+      "import": "./index.mjs"
     },
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
+    "index.mjs",
+    "index.d.ts",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.json && node --test"
+    "build": "node ../cli/dist/index.js tools build",
+    "test": "npm run build && node --test"
   },
   "dependencies": {
-    "@aexhq/brain": "0.3.0",
-    "@aexhq/brain-tools": "0.2.2",
+    "@aexhq/sdk": "0.57.5",
     "zod": "4.4.3"
   },
-  "peerDependencies": {
-    "@aexhq/sdk": ">=0.57.0 <1"
-  },
   "devDependencies": {
-    "@aexhq/sdk": "0.57.5",
+    "@aexhq/cli": "0.28.5",
     "typescript": "^5.9.2"
+  },
+  "aex": {
+    "tools": {
+      "entries": {
+        "./bash": "./src/bash.ts",
+        "./edit": "./src/edit.ts",
+        "./glob": "./src/glob.ts",
+        "./grep": "./src/grep.ts",
+        "./ls": "./src/ls.ts",
+        "./read": "./src/read.ts",
+        "./todo": "./src/todo.ts",
+        "./write": "./src/write.ts"
+      },
+      "outDir": "./dist"
+    }
   }
 }

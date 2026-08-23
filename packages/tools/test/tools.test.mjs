@@ -1,57 +1,44 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { compileTools } from "@aexhq/brain";
+import { computer, defineEnvironment, linux } from "@aexhq/environment";
 import { Aex } from "@aexhq/sdk";
-import {
-  bash,
-  edit,
-  read,
-  sandbox,
-  storage,
-  subagents,
-  webFetch,
-  webSearch,
-  write,
-} from "../dist/index.js";
+import { bash, edit, glob, grep, ls, read, todo, write } from "../index.mjs";
 
-test("official state tools expose one stable action-discriminated capability each", () => {
-  assert.equal(subagents().kind, "brain.tool");
-  assert.equal(subagents().name, "subagents");
-  assert.equal(subagents().execution, "engine");
-  assert.equal(subagents().executor.capability, "aex.subagents");
-  assert.equal(storage().executor.capability, "brain.storage");
-  assert.equal(sandbox().executor.capability, "brain.sandbox");
-  assert.ok(storage().input.safeParse({ action: "list" }).success);
-  assert.ok(sandbox().input.safeParse({ action: "create" }).success);
-  assert.ok(!storage().input.safeParse({ action: "delete", key: "report" }).success);
-  assert.ok(Object.isFrozen(subagents()));
+const runtime = defineEnvironment({
+  identity: "test.computer",
+  protocol: "environment/v1",
+  profile: computer({ platform: linux.amd64, network: "allowlist", recovery: "retained" }),
+  serialize: () => ({}),
+  handle: () => ({}),
+});
+const loop = Object.freeze({ source: "export const activate=()=>{}", sha256: "a".repeat(64), toolchain: "test-loop" });
+
+test("official tools are prepared computer extensions with explicit requirements", () => {
+  const values = [bash(), edit(), glob(), grep(), ls(), read(), todo(), write()];
+  assert.deepEqual(values.map((value) => value.name), ["bash", "edit", "glob", "grep", "ls", "read", "todo", "write"]);
+  for (const value of values) {
+    assert.equal(value.kind, "aex.tool");
+    assert.equal(value.requirements.workspace, true);
+    assert.equal(value.requirements.recovery, "retained");
+    assert.match(value.artifact.digest, /^[0-9a-f]{64}$/);
+    assert.equal(value.artifact.target, "linux-amd64");
+  }
+  assert.equal(bash().requirements.processes, true);
+  assert.equal(grep().requirements.processes, true);
 });
 
-test("hand helpers select individual builtins", () => {
-  assert.deepEqual(
-    [bash(), read(), write(), edit()].map((tool) => tool.name),
-    ["bash", "read", "write", "edit"],
-  );
+test("the prepared runtime uses an immutable absolute entrypoint", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../dist/bash.artifact.json", import.meta.url), "utf8"));
+  assert.equal(manifest.execute, `/artifacts/${manifest.digest}/execute`);
+  const runtimeModule = (await import(new URL(`../dist/${manifest.blobs[0].file}`, import.meta.url))).default;
+  assert.equal(runtimeModule.kind, "tool-runtime/v1");
+  assert.equal(runtimeModule.name, "bash");
+  assert.equal(typeof runtimeModule.execute, "function");
 });
 
-test("the selected portable bundle retains its explicit runtime name", async () => {
-  const compiled = await compileTools([bash()]);
-  const loaded = await import(`data:text/javascript;base64,${compiled.bundles[0].content_base64}`);
-  assert.equal(loaded.default.name, "bash");
-  assert.equal(typeof loaded.default.execute, "function");
-});
-
-test("managed web helpers select only their matching builtins", () => {
-  assert.equal(webSearch().name, "web_search");
-  assert.equal(webFetch().name, "web_fetch");
-  assert.equal(webSearch().executor.capability, "aex.web.search");
-  assert.equal(webFetch().executor.capability, "aex.web.fetch");
-  assert.equal(webSearch().execution, "engine");
-  assert.equal(webFetch().execution, "engine");
-});
-
-test("SDK creation compiles imported values into Brain's sealed ordered Tool grant", async () => {
+test("SDK creation binds every official tool to the one compatible environment", async () => {
   let body;
   const aex = new Aex({
     apiKey: "aex_sk_test",
@@ -64,39 +51,25 @@ test("SDK creation compiles imported values into Brain's sealed ordered Tool gra
         object: "session",
         state: "open",
         turn_state: "idle",
-        model: { provider: "anthropic", name: "test", context_window_tokens: 32_768 },
+        model: { provider: "openai", name: "test", context_window_tokens: 32_768 },
         storage: { session_storage_bytes: 0, upload_reserved_bytes: 0 },
-        created_at: "2026-08-19T10:00:00.000Z",
-        updated_at: "2026-08-19T10:00:00.000Z",
+        created_at: "2026-08-23T10:00:00.000Z",
+        updated_at: "2026-08-23T10:00:00.000Z",
         turns: 0,
         last_seq: 0,
         metadata: {},
       });
     },
   });
-
+  const workspace = runtime();
   await aex.sessions.create({
-    model: { provider: "anthropic", name: "test", apiKey: "sk-ant-test" },
-    tools: [bash(), read(), write(), edit(), storage(), sandbox(), subagents()],
+    model: { provider: "openai", name: "test", apiKey: "sk-test" },
+    loop,
+    environments: { workspace },
+    tools: [bash(), read(), write(), edit()],
   });
 
-  assert.deepEqual(body.tools.items.map((item) => item.definition.name), [
-    "bash",
-    "read",
-    "write",
-    "edit",
-    "storage",
-    "sandbox",
-    "subagents",
-  ]);
-  assert.deepEqual(body.tools.items.map((item) => item.executor.kind), [
-    "aex_managed",
-    "aex_managed",
-    "aex_managed",
-    "aex_managed",
-    "engine",
-    "engine",
-    "engine",
-  ]);
+  assert.deepEqual(body.tools.items.map((item) => item.executor.environment), ["workspace", "workspace", "workspace", "workspace"]);
+  assert.ok(body.tools.items.every((item) => item.executor.kind === "environment"));
   assert.equal(body.tool_bundles.length, 4);
 });

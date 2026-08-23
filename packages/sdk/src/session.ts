@@ -54,8 +54,6 @@ export interface ModelOptions {
   maxOutputTokens?: number;
   /** Immutable context capacity used for admission and compaction; Brain never guesses by name. */
   contextWindowTokens?: number;
-  temperature?: number;
-  reasoningEffort?: "low" | "medium" | "high";
 }
 
 /**
@@ -184,10 +182,6 @@ export class Sessions {
         ...(options.model.contextWindowTokens === undefined
           ? {}
           : { context_window_tokens: options.model.contextWindowTokens }),
-        ...(options.model.temperature === undefined ? {} : { temperature: options.model.temperature }),
-        ...(options.model.reasoningEffort === undefined
-          ? {}
-          : { reasoning_effort: options.model.reasoningEffort }),
       },
       tools: {
         items: compiledTools.items,
