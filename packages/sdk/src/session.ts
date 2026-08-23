@@ -7,14 +7,14 @@ import type {
   SessionList as SessionListData,
   SessionState,
   CreateSessionRequest,
-} from "@aexhq/brain/session";
-import { CustomerEnvironment } from "@aexhq/brain";
+} from "@aexhq/session-protocol/session";
+import { CustomerEnvironment } from "@aexhq/session-protocol";
 import { inspectEnvironment, type EnvironmentRef, type HandleOf } from "@aexhq/environment";
 import type {
   ClientRegistration,
   NetworkPolicy,
   WebSocketFactory,
-} from "@aexhq/brain";
+} from "@aexhq/session-protocol";
 import * as z from "zod";
 
 import {
@@ -36,7 +36,7 @@ import type {
   EnvironmentValue,
   ToolSelection,
 } from "./tools.js";
-import { encodeBase64, SessionChildren, SessionSandbox, SessionStorage } from "./resources.js";
+import { encodeBase64, SessionChildren, SessionStorage } from "./resources.js";
 
 export type SessionInput = string;
 
@@ -153,7 +153,7 @@ export class Sessions {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
-    for (const hand of this.#customerEnvironmentInstances.values()) hand.close();
+    for (const environment of this.#customerEnvironmentInstances.values()) environment.close();
     this.#customerEnvironmentInstances.clear();
     this.#customerEnvironments.clear();
   }
@@ -165,6 +165,14 @@ export class Sessions {
     if (this.#closed) throw new SessionError("Aex client is closed");
     if (options.loop === undefined) throw new TypeError("sessions.create requires an imported loop");
     const compiledTools = await compileTools(options.tools, options.environments, options.secrets);
+    await Promise.all(compiledTools.layers.map((layer) =>
+      this.#transport.ensureArtifactLayer(
+        layer.checksum,
+        layer.media_type,
+        layer.content,
+        request.signal,
+      )
+    ));
     await this.#ensureCustomerEnvironment(
       compiledTools.callbackClientId,
       compiledTools.clientRegistrations,
@@ -320,9 +328,9 @@ export class Sessions {
       await waitWithSignal(starting, signal);
       return;
     }
-    const hand = await waitWithSignal(existing, signal);
+    const environment = await waitWithSignal(existing, signal);
     if (this.#closed) throw new SessionError("Aex client is closed");
-    await waitWithSignal(hand.register(registrations), signal);
+    await waitWithSignal(environment.register(registrations), signal);
   }
 }
 
@@ -359,7 +367,7 @@ export class Session<Environments extends EnvironmentMap = EnvironmentMap> imple
     this.#transport = transport;
     this.#data = data;
     this.#environmentNames = environmentNames;
-    this.storage = new SessionStorage(transport, data.id);
+    this.storage = new SessionStorage(transport, data.id, environmentNames);
     this.children = new SessionChildren(transport, data.id);
   }
 

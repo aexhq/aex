@@ -11,7 +11,7 @@ import {
 } from "../dist/index.js";
 import { parseEventStream, Transport } from "../dist/transport.js";
 import { compileTools, withPreparedArtifact } from "../dist/tools.js";
-import { MAX_PUBLIC_EVENT_BYTES } from "@aexhq/brain";
+import { MAX_PUBLIC_EVENT_BYTES } from "@aexhq/session-protocol";
 import { callbacks, computer, defineEnvironment, linux } from "@aexhq/environment";
 import { z } from "zod";
 
@@ -45,14 +45,37 @@ const computerEnvironment = defineEnvironment({
 });
 
 function prepared(name) {
+  const code = Buffer.from(`export default ${JSON.stringify(name)}`);
+  const layerDigest = createHash("sha256").update(code).digest("hex");
+  const layers = [{
+    checksum: layerDigest,
+    bytes: code.byteLength,
+    media_type: "application/javascript+esm",
+    mount_path: "/tool/runtime.mjs",
+    unpack: "file",
+  }];
+  const digest = createHash("sha256").update(canonicalize({
+    profile: "computer/v1",
+    target: "linux-amd64",
+    execute_path: "/tool/runtime.mjs",
+    setup_path: null,
+    layers,
+  })).digest("hex");
   return withPreparedArtifact(
     tool(async function execute() {}).named(name),
     {
-      digest: createHash("sha256").update(name).digest("hex"),
+      digest,
       target: "linux-amd64",
-      contentBase64: Buffer.from(`export default ${JSON.stringify(name)}`).toString("base64"),
-      bytes: Buffer.byteLength(`export default ${JSON.stringify(name)}`),
-      execute: "/artifact/execute",
+      bytes: code.byteLength,
+      execute: "/tool/runtime.mjs",
+      layers: [{
+        digest: layerDigest,
+        bytes: code.byteLength,
+        mediaType: "application/javascript+esm",
+        mountPath: "/tool/runtime.mjs",
+        unpack: "file",
+        source: new URL(`data:application/javascript;base64,${code.toString("base64")}`),
+      }],
     },
   );
 }
@@ -272,6 +295,8 @@ test("create preserves an explicit tool grant in order and rejects duplicates", 
   const aex = new Aex({
     apiKey: "aex_sk_test",
     fetch: async (_input, init) => {
+      if (init.method === "HEAD") return new Response(null, { status: 404 });
+      if (init.method === "PUT") return new Response(null, { status: 201 });
       bodies.push(JSON.parse(init.body));
       return Response.json(snapshot, { status: 201 });
     },
@@ -1171,13 +1196,13 @@ test("storage and durable child resources keep wire details explicit", async () 
       if (url.pathname === "/v1/sessions" && init.method === "POST") {
         return Response.json(snapshot, { status: 201 });
       }
-      if (url.pathname.endsWith("/sandbox") && init.method === "GET") {
+      if (url.pathname.endsWith("/environments/workspace") && init.method === "GET") {
         return Response.json({
           target: {
-            kind: "default",
+            kind: "environment",
             session_id: "ses_01",
             root_id: "ses_01",
-            binding_ref: "default",
+            binding_ref: "env_workspace",
           },
           state: "running",
           generation: "gen_01",
@@ -1185,24 +1210,24 @@ test("storage and durable child resources keep wire details explicit", async () 
           expires_at_ms: Date.parse("2026-08-20T12:30:00Z"),
         });
       }
-      if (url.pathname.endsWith("/sandbox/files/list")) {
+      if (url.pathname.endsWith("/environments/workspace/files/list")) {
         return Response.json({ data: [file], has_more: false, generation: "gen_01" });
       }
-      if (url.pathname.endsWith("/sandbox/files/grep")) {
+      if (url.pathname.endsWith("/environments/workspace/files/grep")) {
         return Response.json({ data: [file], has_more: false, generation: "gen_01" });
       }
-      if (url.pathname.endsWith("/sandbox/files/stat")) return Response.json(file);
-      if (url.pathname.endsWith("/sandbox/files/read-inline")) {
+      if (url.pathname.endsWith("/environments/workspace/files/stat")) return Response.json(file);
+      if (url.pathname.endsWith("/environments/workspace/files/read-inline")) {
         return Response.json({ entry: file, content_base64: "aGVsbG8=" });
       }
-      if (url.pathname.endsWith("/sandbox/files/write-inline")) return Response.json(file);
+      if (url.pathname.endsWith("/environments/workspace/files/write-inline")) return Response.json(file);
       if (url.pathname.endsWith("/storage/stat")) return Response.json(object);
       if (url.pathname.endsWith("/storage/write-inline")) return Response.json(object);
       if (url.pathname.endsWith("/storage/read-inline")) {
         return Response.json({ object, content_base64: "aGVsbG8=" });
       }
-      if (url.pathname.endsWith("/storage/copy-from-sandbox")) return Response.json(object);
-      if (url.pathname.endsWith("/storage/copy-to-sandbox")) return Response.json(file);
+      if (url.pathname.endsWith("/storage/copy-from-environment/workspace")) return Response.json(object);
+      if (url.pathname.endsWith("/storage/copy-to-environment/workspace")) return Response.json(file);
       if (url.pathname.endsWith("/children") && init.method === "POST") return Response.json(child, { status: 201 });
       if (url.pathname.endsWith("/children/ses_child") && init.method === "GET") return Response.json(child);
       if (url.pathname.endsWith("/messages")) {
@@ -1217,12 +1242,25 @@ test("storage and durable child resources keep wire details explicit", async () 
       throw new Error(`unexpected request: ${init.method} ${url.pathname}`);
     },
   });
+  const workspace = computerEnvironment();
   const session = await create(aex, {
     model: { provider: "anthropic", name: "claude-sonnet-5", apiKey: "sk-ant-test" },
+    environments: { workspace },
   });
 
+  assert.equal((await session.environment(workspace).status()).state, "running");
   await session.storage.upload(object.key, "hello", { contentType: "text/plain" });
   assert.equal(new TextDecoder().decode(await session.storage.download(object.key)), "hello");
+  await session.storage.copyFromEnvironment(workspace, {
+    key: object.key,
+    path: file.path,
+    generation: "gen_01",
+  });
+  await session.storage.copyToEnvironment(workspace, {
+    key: object.key,
+    path: file.path,
+    generation: "gen_01",
+  });
   const childHandle = await session.children.create(
     { prompt: "Research this.", name: "research", forkTurns: "3" },
     { idempotencyKey: "child-create" },
@@ -1243,6 +1281,10 @@ test("storage and durable child resources keep wire details explicit", async () 
   const childRequest = requests.find((request) => request.path.endsWith("/children") && request.method === "POST");
   assert.deepEqual(childRequest.body, { prompt: "Research this.", name: "research", fork_turns: "3" });
   assert.equal(childRequest.idempotencyKey, "child-create");
+  assert.deepEqual(
+    requests.find((request) => request.path.endsWith("/storage/copy-from-environment/workspace")).body,
+    { key: object.key, path: file.path, environment_generation: "gen_01" },
+  );
   assert.equal(
     requests.find((request) => request.path.endsWith("/children/ses_child/messages"))
       .idempotencyKey,

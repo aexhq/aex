@@ -1,11 +1,11 @@
-import type { ApiError, Event } from "@aexhq/brain/session";
-import type { JsonRequestOptions, TransferTicket } from "@aexhq/brain";
+import type { ApiError, Event } from "@aexhq/session-protocol/session";
+import type { JsonRequestOptions, TransferTicket } from "@aexhq/session-protocol";
 import {
   MAX_CREATE_SESSION_REQUEST_BYTES,
   MAX_CUSTOMER_OBSERVATION_BYTES,
   MAX_MESSAGE_REQUEST_BYTES,
   MAX_PUBLIC_EVENT_BYTES,
-} from "@aexhq/brain";
+} from "@aexhq/session-protocol";
 
 import { AbortError, AexError, SessionError, abortError, errorFromApi } from "./errors.js";
 
@@ -201,6 +201,42 @@ export class Transport {
         status: response.status,
       });
     }
+  }
+
+  async ensureArtifactLayer(
+    digest: string,
+    mediaType: string,
+    content: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const path = `/v1/artifacts/${encodeURIComponent(digest)}`;
+    const authorization = `Bearer ${this.#apiKey}`;
+    const existing = await this.#fetch(`${this.baseUrl}${path}`, {
+      method: "HEAD",
+      redirect: "error",
+      headers: { Authorization: authorization },
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (existing.ok) {
+      const bytes = Number(existing.headers.get("content-length"));
+      const storedMediaType = existing.headers.get("content-type");
+      if (bytes !== content.byteLength || storedMediaType !== mediaType) {
+        throw new SessionError(`Uploaded Tool artifact ${digest} has conflicting metadata`);
+      }
+      return;
+    }
+    if (existing.status !== 404) throw await this.responseError(existing);
+    const uploaded = await this.#fetch(`${this.baseUrl}${path}`, {
+      method: "PUT",
+      redirect: "error",
+      headers: {
+        Authorization: authorization,
+        "Content-Type": mediaType,
+      },
+      body: arrayBufferBody(content),
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (!uploaded.ok) throw await this.responseError(uploaded);
   }
 
   async json<T>(

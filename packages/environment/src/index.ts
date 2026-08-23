@@ -7,7 +7,8 @@ export const linux = Object.freeze({
 
 export type ComputerPlatform = (typeof linux)[keyof typeof linux];
 export type NetworkEnforcement = "none" | "allowlist" | "unrestricted";
-export type RecoveryBehavior = "retained" | "connection" | "replay_safe";
+export type RecoveryBehavior = "retained" | "connection" | "replay-safe";
+type WireRecoveryBehavior = "retained" | "connection" | "replay_safe";
 
 export interface ComputerProfile {
   readonly kind: "computer";
@@ -23,7 +24,7 @@ export interface ComputerProfile {
 export interface CallbacksProfile {
   readonly kind: "callbacks";
   readonly network: "unrestricted";
-  readonly recovery: "connection" | "replay_safe";
+  readonly recovery: "connection" | "replay-safe";
   readonly workspace: false;
   readonly processes: false;
   readonly streaming: true;
@@ -50,7 +51,7 @@ export function computer(options: {
 }
 
 export function callbacks(options: {
-  recovery?: "connection" | "replay_safe";
+  recovery?: "connection" | "replay-safe";
 } = {}): CallbacksProfile {
   return Object.freeze({
     kind: "callbacks",
@@ -150,7 +151,7 @@ export interface SerializedEnvironment {
     readonly kind: EnvironmentProfile["kind"];
     readonly platform?: ComputerPlatform;
     readonly network: NetworkEnforcement;
-    readonly recovery: RecoveryBehavior;
+    readonly recovery: WireRecoveryBehavior;
   };
   readonly configuration: Readonly<Record<string, unknown>>;
 }
@@ -169,7 +170,9 @@ export function inspectEnvironment(environment: EnvironmentRef): {
         kind: descriptor.profile.kind,
         ...(descriptor.profile.kind === "computer" ? { platform: descriptor.profile.platform } : {}),
         network: descriptor.profile.network,
-        recovery: descriptor.profile.recovery,
+        recovery: descriptor.profile.recovery === "replay-safe"
+          ? "replay_safe"
+          : descriptor.profile.recovery,
       }),
       configuration: descriptor.configuration,
     }),

@@ -90,7 +90,7 @@ export default custom;
   await writeFile(
     path.join(consumer, "smoke.ts"),
     `import assert from "node:assert/strict";
-import { compileTools, tool as brainTool, type Tool } from "@aexhq/brain";
+import { compileTools, tool as brainTool, type Tool } from "@aexhq/session-protocol";
 import { Aex, tool as aexTool } from "@aexhq/sdk";
 import { bash } from "@aexhq/tools";
 import custom from "./custom.js";

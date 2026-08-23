@@ -4,17 +4,12 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "gen": "npm run gen --workspaces --if-present",
-    "build": "npm run build --workspace @aexhq/contracts && npm run build --workspace @aexhq/environment && npm run build --workspace @aexhq/sdk && npm run build --workspace @aexhq/cli && npm run build --workspace @aexhq/tools",
-    "test": "npm test --workspace @aexhq/contracts && npm test --workspace @aexhq/environment && npm test --workspace @aexhq/sdk && npm test --workspace @aexhq/tools && npm test --workspace @aexhq/cli && node tools/verify-brain-overlay.mjs",
+    "build": "npm run build --workspace @aexhq/contracts && npm run build --workspace @aexhq/environment && npm run build --workspace @aexhq/session-protocol && npm run build --workspace @aexhq/sdk && npm run build --workspace @aexhq/cli",
+    "test": "npm test --workspace @aexhq/contracts && npm test --workspace @aexhq/environment && npm test --workspace @aexhq/session-protocol && npm test --workspace @aexhq/sdk && npm test --workspace @aexhq/cli && node tools/verify-brain-overlay.mjs",
     "package-smoke": "node tools/package-smoke.mjs"
   },
   "devDependencies": {
-    "@aexhq/brain": "file:../brain/packages/brain",
-    "@aexhq/brain-tools": "0.2.1",
     "yaml": "2.9.0"
-  },
-  "overrides": {
-    "@aexhq/brain": "$@aexhq/brain"
   },
   "engines": { "node": ">=22" }
 }
