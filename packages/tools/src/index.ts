@@ -8,6 +8,7 @@ import {
   ls as portableLs,
   read as portableRead,
   sandbox as portableSandbox,
+  storage as portableStorage,
   todo as portableTodo,
   write as portableWrite,
 } from "@aexhq/brain-tools";
@@ -23,47 +24,7 @@ export const glob = selected(portableGlob);
 export const grep = selected(portableGrep);
 export const ls = selected(portableLs);
 export const todo = selected(portableTodo);
-// The former brain.storage kernel intrinsic as an ordinary hosted capability: same
-// model-facing contract, served by Aex over Brain's session-scoped storage API.
-const storageKey = z.string().min(1).max(1024);
-const storagePath = z.string().min(1).max(4096);
-const storageGeneration = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
-
-const storageTool = officialTool({
-  name: "storage",
-  description: "Explicitly save, load, or list durable files for this session.",
-  input: z.discriminatedUnion("action", [
-    z.object({
-      action: z.literal("save"),
-      key: storageKey,
-      source: z.discriminatedUnion("kind", [
-        z.object({ kind: z.literal("sandbox_path"), path: storagePath, generation: storageGeneration }),
-        z.object({ kind: z.literal("inline_text"), text: z.string().max(94_208) }),
-      ]),
-      overwrite: z.boolean().optional(),
-    }),
-    z.object({
-      action: z.literal("load"),
-      key: storageKey,
-      path: storagePath,
-      generation: storageGeneration,
-      overwrite: z.boolean().optional(),
-    }),
-    z.object({
-      action: z.literal("list"),
-      prefix: z.string().max(1024).optional(),
-      cursor: z.string().max(4096).optional(),
-      limit: z.number().int().positive().max(100).optional(),
-    }),
-  ]),
-  capability: "aex.storage",
-});
-
-export const storage = selected(storageTool);
+export const storage = selected(portableStorage);
 export const sandbox = selected(portableSandbox);
 
 const webSearchTool = officialTool({

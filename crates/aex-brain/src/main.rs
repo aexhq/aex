@@ -20,11 +20,10 @@ use brain_server::api::{AppState, Tenancy, serve};
 use brain_standalone::durable_local_parts;
 use hand_brain_aws::AwsHand;
 
-const CAPABILITIES: [&str; 5] = [
+const CAPABILITIES: [&str; 4] = [
     "aex.output",
     "aex.web.search",
     "aex.web.fetch",
-    "aex.storage",
     "aex.subagents",
 ];
 
@@ -254,19 +253,6 @@ fn official_capabilities() -> HashMap<String, ServerToolPolicy> {
             },
         ),
         (
-            // The former brain.storage kernel intrinsic, decoupled: ordinary service code in
-            // aex-control over Brain's session-scoped storage API. Replay-safe through the
-            // executor's exact-response memo plus Brain-side copy idempotency keys.
-            "aex.storage",
-            ServerToolPolicy {
-                capability: "aex.storage".into(),
-                scope: ExternalToolScope::All,
-                completion: ExternalToolCompletion::Continue,
-                effect: ExternalToolEffect::ReplaySafe,
-                max_input_bytes: brain_protocol::MAX_EXTERNAL_TOOL_INPUT_BYTES,
-            },
-        ),
-        (
             // The former brain.subagents intrinsic: the same child-session verbs, spoken over
             // Brain's session-scoped children API by ordinary Aex service code.
             "aex.subagents",
@@ -448,7 +434,6 @@ socket.addEventListener('message', (event) => {
                 "aex.output",
                 "aex.web.search",
                 "aex.web.fetch",
-                "aex.storage",
                 "aex.subagents"
             ]
         );

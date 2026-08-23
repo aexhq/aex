@@ -12,9 +12,82 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::brain::BrainClient;
-use crate::storage_tool::{ToolError, brain_json, tool_failure};
 use crate::store::Db;
 use crate::{Error, Result, now_ms};
+
+/// A model-visible failure (honest tool error content) versus a host failure (the executor
+/// itself misbehaved and Brain should see a retryable transport-level error).
+pub(crate) enum ToolError {
+    Model(String),
+    Host(Error),
+}
+
+impl From<Error> for ToolError {
+    fn from(error: Error) -> Self {
+        ToolError::Host(error)
+    }
+}
+
+/// One session-scoped Brain call. Brain 4xx bodies become honest model-visible failures;
+/// 5xx and transport losses stay host errors so Brain's executor adapter surfaces a
+/// retryable failure instead of caching a spurious terminal.
+pub(crate) async fn brain_json(
+    brain: &BrainClient,
+    tenant_id: &str,
+    method: reqwest::Method,
+    path: &str,
+    idempotency_key: Option<&str>,
+    body: Option<Value>,
+    deadline: Duration,
+) -> std::result::Result<Value, ToolError> {
+    let response = brain
+        .forward(
+            tenant_id,
+            method,
+            path,
+            body.is_some().then_some("application/json"),
+            idempotency_key,
+            body.map(|body| body.to_string().into()),
+            Some(deadline),
+        )
+        .await
+        .map_err(ToolError::Host)?;
+    let status = response.status().as_u16();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| ToolError::Host(Error::Upstream(format!("storage body: {error}"))))?;
+    if (200..300).contains(&status) {
+        return serde_json::from_slice(&bytes)
+            .map_err(|error| ToolError::Host(Error::Upstream(format!("storage JSON: {error}"))));
+    }
+    let message = serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| format!("storage operation failed with status {status}"));
+    if (400..500).contains(&status) {
+        Err(ToolError::Model(message))
+    } else {
+        Err(ToolError::Host(Error::Upstream(format!(
+            "storage -> {status}: {message}"
+        ))))
+    }
+}
+
+pub(crate) fn tool_failure(outcome: &str, message: String) -> Value {
+    json!({
+        "outcome": outcome,
+        "content": message,
+        "is_error": true,
+        "disposition": "continue",
+    })
+}
 
 pub const SUBAGENTS_CAPABILITY: &str = "aex.subagents";
 pub const SUBAGENTS_TOOL_NAME: &str = "subagents";
