@@ -30,21 +30,13 @@ jobs:
         with:
           toolchain: "1.97.1"
           components: rustfmt
-      - name: Checkout the pinned Brain package source
-        shell: bash
-        run: |
-          set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout "$brain_revision"
-          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
       - run: npm ci
       - name: Checkout the pinned Brain contract
         shell: bash
         run: |
           set -euo pipefail
           brain_revision=$(node tools/pinned-revision.mjs brain)
-          git -C ../brain fetch --depth=1 origin "$brain_revision"
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
           git -C ../brain checkout "$brain_revision"
           test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
       - name: cache cargo-typify
@@ -124,18 +116,6 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - name: Checkout the pinned Brain packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout "$brain_revision"
-          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
-      - name: Build the pinned Brain packages
-        run: |
-          npm ci --prefix ../brain
-          npm run build --prefix ../brain
       - run: npm ci
       - run: npm test
 
@@ -151,18 +131,6 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - name: Checkout the pinned Brain packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout "$brain_revision"
-          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
-      - name: Build the pinned Brain packages
-        run: |
-          npm ci --prefix ../brain
-          npm run build --prefix ../brain
       - run: npm ci
       - run: npm run build
       - run: npm run package-smoke

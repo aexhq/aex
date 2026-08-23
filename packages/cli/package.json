@@ -1,6 +1,6 @@
 {
   "name": "@aexhq/cli",
-  "version": "0.28.5",
+  "version": "0.29.0",
   "description": "Command-line client for Aex sessions",
   "license": "Apache-2.0",
   "homepage": "https://aex.dev",
@@ -30,7 +30,7 @@
     "test": "tsc -p tsconfig.json && node --test"
   },
   "dependencies": {
-    "@aexhq/sdk": "0.57.5",
+    "@aexhq/sdk": "0.58.0",
     "esbuild": "0.25.9",
     "zod": "4.4.3"
   },

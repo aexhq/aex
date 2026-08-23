@@ -86,18 +86,6 @@ jobs:
           package-manager-cache: false
       - name: Use the npm version pinned for trusted publishing
         run: npm install --global npm@11.19.0
-      - name: Checkout the Brain revision pinned by Aex
-        shell: bash
-        run: |
-          set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout "$brain_revision"
-          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
-      - name: Build the pinned Brain packages
-        run: |
-          npm ci --prefix ../brain
-          npm run build --prefix ../brain
       - run: npm ci
       - run: npm test
 
@@ -119,18 +107,6 @@ jobs:
           package-manager-cache: false
       - name: Use the npm version pinned for trusted publishing
         run: npm install --global npm@11.19.0
-      - name: Checkout the Brain revision pinned by Aex
-        shell: bash
-        run: |
-          set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout "$brain_revision"
-          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
-      - name: Build the pinned Brain packages
-        run: |
-          npm ci --prefix ../brain
-          npm run build --prefix ../brain
       - run: npm ci
       - run: npm run build
       - run: npm run package-smoke
@@ -153,20 +129,8 @@ jobs:
           node-version: '24'
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Checkout the Brain revision pinned by Aex
-        shell: bash
-        run: |
-          set -euo pipefail
-          brain_revision=$(node tools/pinned-revision.mjs brain-packages)
-          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
-          git -C ../brain checkout "$brain_revision"
-          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
       - name: Use the npm version pinned for trusted publishing
         run: npm install --global npm@11.19.0
-      - name: Build the pinned Brain packages
-        run: |
-          npm ci --prefix ../brain
-          npm run build --prefix ../brain
       - run: npm ci
       - run: npm run build
       - name: Pack the exact release archives
@@ -210,7 +174,7 @@ jobs:
           package-manager-cache: false
       - name: Use the npm version pinned for trusted publishing
         run: npm install --global npm@11.19.0
-      - name: Require the staged Brain dependency set
+      - name: Require the staged external dependency set
         shell: bash
         run: node "$RUNNER_TEMP/aex-npm-release/verify-dependencies.mjs" next
       - name: Publish once with provenance under next
@@ -248,7 +212,7 @@ jobs:
           package-manager-cache: false
       - name: Use the npm version pinned for promotion
         run: npm install --global npm@11.19.0
-      - name: Require the promoted Brain dependency set
+      - name: Require the promoted external dependency set
         shell: bash
         run: node "$RUNNER_TEMP/aex-npm-release/verify-dependencies.mjs" latest
       - name: Promote the already-staged archives without republishing
