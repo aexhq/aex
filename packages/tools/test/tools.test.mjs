@@ -19,7 +19,7 @@ test("official state tools expose one stable action-discriminated capability eac
   assert.equal(subagents().kind, "brain.tool");
   assert.equal(subagents().name, "subagents");
   assert.equal(subagents().execution, "engine");
-  assert.equal(subagents().executor.capability, "brain.subagents");
+  assert.equal(subagents().executor.capability, "aex.subagents");
   assert.equal(storage().executor.capability, "aex.storage");
   assert.equal(sandbox().executor.capability, "brain.sandbox");
   assert.ok(storage().input.safeParse({ action: "list" }).success);

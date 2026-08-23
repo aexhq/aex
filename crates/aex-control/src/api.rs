@@ -37,6 +37,7 @@ use crate::store::{
     AccountRow, CreditGrantRow, Db, DeletionRow, InvitedJoin, KeyRow, RefundRow, SessionRow,
     TopupRow, WaitlistRow,
 };
+use crate::subagents_tool;
 use crate::sweep::{SweptLine, sweep_account, sweep_account_incremental};
 use crate::web::{self, WebRuntime};
 use crate::{Error, Result, StorageLimits, now_ms, rfc3339, usd_display};
@@ -361,6 +362,8 @@ async fn execute_external_tool(
                 }
             } else if capability == Some(storage_tool::STORAGE_CAPABILITY) {
                 storage_tool::execute(&state.db, &state.brain, request).await?
+            } else if capability == Some(subagents_tool::SUBAGENTS_CAPABILITY) {
+                subagents_tool::execute(&state.db, &state.brain, request).await?
             } else {
                 return Err(Error::Invalid(format!(
                     "unknown hosted server capability {capability:?}"

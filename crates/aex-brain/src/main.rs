@@ -20,11 +20,12 @@ use brain_server::api::{AppState, Tenancy, serve};
 use brain_standalone::durable_local_parts;
 use hand_brain_aws::AwsHand;
 
-const CAPABILITIES: [&str; 4] = [
+const CAPABILITIES: [&str; 5] = [
     "aex.output",
     "aex.web.search",
     "aex.web.fetch",
     "aex.storage",
+    "aex.subagents",
 ];
 
 #[tokio::main]
@@ -265,6 +266,18 @@ fn official_capabilities() -> HashMap<String, ServerToolPolicy> {
                 max_input_bytes: brain_protocol::MAX_EXTERNAL_TOOL_INPUT_BYTES,
             },
         ),
+        (
+            // The former brain.subagents intrinsic: the same child-session verbs, spoken over
+            // Brain's session-scoped children API by ordinary Aex service code.
+            "aex.subagents",
+            ServerToolPolicy {
+                capability: "aex.subagents".into(),
+                scope: ExternalToolScope::All,
+                completion: ExternalToolCompletion::Continue,
+                effect: ExternalToolEffect::ReplaySafe,
+                max_input_bytes: brain_protocol::MAX_EXTERNAL_TOOL_INPUT_BYTES,
+            },
+        ),
     ]
     .into_iter()
     .map(|(capability, policy)| (capability.to_owned(), policy))
@@ -435,7 +448,8 @@ socket.addEventListener('message', (event) => {
                 "aex.output",
                 "aex.web.search",
                 "aex.web.fetch",
-                "aex.storage"
+                "aex.storage",
+                "aex.subagents"
             ]
         );
         let policies = official_capabilities();

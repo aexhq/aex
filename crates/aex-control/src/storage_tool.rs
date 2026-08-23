@@ -88,7 +88,7 @@ pub async fn execute(
 
 /// A model-visible failure (honest tool error content) versus a host failure (the executor
 /// itself misbehaved and Brain should see a retryable transport-level error).
-enum ToolError {
+pub(crate) enum ToolError {
     Model(String),
     Host(Error),
 }
@@ -120,9 +120,11 @@ async fn perform(
             brain_json(
                 brain,
                 tenant_id,
+                reqwest::Method::POST,
                 &format!("/v1/sessions/{session_id}/storage/list"),
                 None,
-                body,
+                Some(body),
+                STORAGE_TIMEOUT,
             )
             .await
         }
@@ -147,9 +149,11 @@ async fn perform(
                     brain_json(
                         brain,
                         tenant_id,
+                        reqwest::Method::POST,
                         &format!("/v1/sessions/{session_id}/storage/write-inline"),
                         None,
-                        body,
+                        Some(body),
+                        STORAGE_TIMEOUT,
                     )
                     .await
                 }
@@ -163,9 +167,11 @@ async fn perform(
                     brain_json(
                         brain,
                         tenant_id,
+                        reqwest::Method::POST,
                         &format!("/v1/sessions/{session_id}/storage/copy-from-sandbox"),
                         Some(call_id),
-                        body,
+                        Some(body),
+                        STORAGE_TIMEOUT,
                     )
                     .await
                 }
@@ -184,9 +190,11 @@ async fn perform(
             brain_json(
                 brain,
                 tenant_id,
+                reqwest::Method::POST,
                 &format!("/v1/sessions/{session_id}/storage/copy-to-sandbox"),
                 Some(call_id),
-                body,
+                Some(body),
+                STORAGE_TIMEOUT,
             )
             .await
         }
@@ -199,22 +207,24 @@ async fn perform(
 /// One session-scoped Brain call. Brain 4xx bodies become honest model-visible failures;
 /// 5xx and transport losses stay host errors so Brain's executor adapter surfaces a
 /// retryable failure instead of caching a spurious terminal.
-async fn brain_json(
+pub(crate) async fn brain_json(
     brain: &BrainClient,
     tenant_id: &str,
+    method: reqwest::Method,
     path: &str,
     idempotency_key: Option<&str>,
-    body: Value,
+    body: Option<Value>,
+    deadline: Duration,
 ) -> std::result::Result<Value, ToolError> {
     let response = brain
         .forward(
             tenant_id,
-            reqwest::Method::POST,
+            method,
             path,
-            Some("application/json"),
+            body.is_some().then_some("application/json"),
             idempotency_key,
-            Some(body.to_string().into()),
-            Some(STORAGE_TIMEOUT),
+            body.map(|body| body.to_string().into()),
+            Some(deadline),
         )
         .await
         .map_err(ToolError::Host)?;
@@ -246,7 +256,7 @@ async fn brain_json(
     }
 }
 
-fn tool_failure(outcome: &str, message: String) -> Value {
+pub(crate) fn tool_failure(outcome: &str, message: String) -> Value {
     json!({
         "outcome": outcome,
         "content": message,

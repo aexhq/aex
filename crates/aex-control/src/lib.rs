@@ -22,6 +22,7 @@ pub mod payments;
 pub mod rating;
 pub mod storage_tool;
 pub mod store;
+pub mod subagents_tool;
 pub mod sweep;
 pub mod web;
 
