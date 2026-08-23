@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@aexhq/sdk": "0.57.5",
+    "esbuild": "0.25.9",
     "zod": "4.4.3"
   },
   "devDependencies": {
