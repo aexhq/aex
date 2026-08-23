@@ -1,0 +1,19 @@
+{
+  "name": "@aexhq/environment",
+  "version": "0.1.0",
+  "description": "Provider-neutral Aex environment extension authoring kit",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": { "node": ">=22.0.0" },
+  "publishConfig": { "access": "public", "provenance": true, "tag": "next" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test"
+  },
+  "devDependencies": { "typescript": "^5.9.2" }
+}
