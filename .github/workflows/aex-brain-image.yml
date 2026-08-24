@@ -101,6 +101,14 @@ jobs:
           docker pull "$ref" >/dev/null
           test "$(docker image inspect --format '{{.Architecture}}' "$ref")" = "$ARCH"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref")" = "$SOURCE_SHA"
+          docker run --rm --entrypoint /bin/sh "$ref" -c '
+            test "$BRAIN_LOOPHOST_TOOLCHAIN_DIR" = /opt/brain-loophost/guest
+            test -f "$BRAIN_LOOPHOST_TOOLCHAIN_DIR/componentize-one.mjs"
+            test -f /opt/brain-loophost/wit/guest.wit
+            cd "$BRAIN_LOOPHOST_TOOLCHAIN_DIR"
+            node --input-type=module -e "import(\"@bytecodealliance/componentize-js\")"
+            ! command -v npm
+          '
           digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -er .digest)
           printf '%s candidate: `%s@%s`\n' "$ARCH" "$IMAGE" "$digest" >> "$GITHUB_STEP_SUMMARY"
 
