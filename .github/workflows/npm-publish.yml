@@ -219,11 +219,11 @@ jobs:
           package-manager-cache: false
       - name: Use the npm version pinned for trusted publishing
         run: npm install --global npm@11.19.0
-      - name: Publish only package names absent from npm
+      - name: Publish only new or placeholder package names
         shell: bash
         env:
-          # npm cannot configure OIDC for a package before its first publish. This protected token
-          # may create names; every later version still goes through the ordinary stage operation.
+          # npm cannot configure OIDC before the first publish. This protected token may create a
+          # name or replace its 0.0.0 reservation; every later version uses the stage operation.
           EXPECTED_COMMIT: ${{ inputs.expected_commit }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}
         run: node "$RUNNER_TEMP/aex-npm-release/publish.mjs" bootstrap
