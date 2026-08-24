@@ -18,7 +18,7 @@ brain-standalone = { git = "https://github.com/aexhq/brain.git", rev = "2017073c
 brain-loophost = { git = "https://github.com/aexhq/brain.git", rev = "2017073cfc097477c63d13216cdc84468d00d1d9" }
 brain-server = { git = "https://github.com/aexhq/brain.git", rev = "2017073cfc097477c63d13216cdc84468d00d1d9" }
 brain-providers = { git = "https://github.com/aexhq/brain.git", rev = "2017073cfc097477c63d13216cdc84468d00d1d9" }
-aws-microvm-controller = { git = "https://github.com/aexhq/extensions.git", rev = "7ddcffc5a50dd12dc73c494196275c5097ab8452" }
+aws-microvm-controller = { git = "https://github.com/aexhq/extensions.git", rev = "c06e409ac113cfc1b99d0e2ae7c529253e91f7e1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "std", "clock"] }
