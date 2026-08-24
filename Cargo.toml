@@ -11,14 +11,14 @@ repository = "https://github.com/aexhq/aex"
 [workspace.dependencies]
 aex-contracts = { path = "crates/aex-contracts" }
 aex-control = { path = "crates/aex-control" }
-brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "c0254068b71c9f06b6c7ffcb7c3e53930eb4e026" }
-brain = { git = "https://github.com/aexhq/brain.git", rev = "c0254068b71c9f06b6c7ffcb7c3e53930eb4e026" }
-brain-aws = { git = "https://github.com/aexhq/brain.git", rev = "c0254068b71c9f06b6c7ffcb7c3e53930eb4e026" }
-brain-standalone = { git = "https://github.com/aexhq/brain.git", rev = "c0254068b71c9f06b6c7ffcb7c3e53930eb4e026" }
-brain-loophost = { git = "https://github.com/aexhq/brain.git", rev = "c0254068b71c9f06b6c7ffcb7c3e53930eb4e026" }
-brain-server = { git = "https://github.com/aexhq/brain.git", rev = "c0254068b71c9f06b6c7ffcb7c3e53930eb4e026" }
-brain-providers = { git = "https://github.com/aexhq/brain.git", rev = "c0254068b71c9f06b6c7ffcb7c3e53930eb4e026" }
-aws-microvm-controller = { git = "https://github.com/aexhq/extensions.git", rev = "975652148eebfc54611d2473330a343412328ce7" }
+brain-protocol = { git = "https://github.com/aexhq/brain.git", rev = "f5c3dbe741c9194c1d664da29b87b1d2dea993af" }
+brain = { git = "https://github.com/aexhq/brain.git", rev = "f5c3dbe741c9194c1d664da29b87b1d2dea993af" }
+brain-aws = { git = "https://github.com/aexhq/brain.git", rev = "f5c3dbe741c9194c1d664da29b87b1d2dea993af" }
+brain-standalone = { git = "https://github.com/aexhq/brain.git", rev = "f5c3dbe741c9194c1d664da29b87b1d2dea993af" }
+brain-loophost = { git = "https://github.com/aexhq/brain.git", rev = "f5c3dbe741c9194c1d664da29b87b1d2dea993af" }
+brain-server = { git = "https://github.com/aexhq/brain.git", rev = "f5c3dbe741c9194c1d664da29b87b1d2dea993af" }
+brain-providers = { git = "https://github.com/aexhq/brain.git", rev = "f5c3dbe741c9194c1d664da29b87b1d2dea993af" }
+aws-microvm-controller = { git = "https://github.com/aexhq/extensions.git", rev = "dd2ba61f46da3520019580767a781f2a97a56073" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "std", "clock"] }
