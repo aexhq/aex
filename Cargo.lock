@@ -353,7 +353,7 @@ dependencies = [
 [[package]]
 name = "aws-microvm-controller"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/extensions.git?rev=128959532186da07610b7923fe311ee0f9bfa64c#128959532186da07610b7923fe311ee0f9bfa64c"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1029,7 +1029,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 [[package]]
 name = "brain"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=a103d878236191b40b1f5a81b54622b99f26e5b4#a103d878236191b40b1f5a81b54622b99f26e5b4"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1058,7 +1058,7 @@ dependencies = [
 [[package]]
 name = "brain-aws"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=a103d878236191b40b1f5a81b54622b99f26e5b4#a103d878236191b40b1f5a81b54622b99f26e5b4"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1083,7 +1083,7 @@ dependencies = [
 [[package]]
 name = "brain-loophost"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=a103d878236191b40b1f5a81b54622b99f26e5b4#a103d878236191b40b1f5a81b54622b99f26e5b4"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1104,7 +1104,7 @@ dependencies = [
 [[package]]
 name = "brain-protocol"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=a103d878236191b40b1f5a81b54622b99f26e5b4#a103d878236191b40b1f5a81b54622b99f26e5b4"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "chrono",
  "hex",
@@ -1118,7 +1118,7 @@ dependencies = [
 [[package]]
 name = "brain-providers"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=a103d878236191b40b1f5a81b54622b99f26e5b4#a103d878236191b40b1f5a81b54622b99f26e5b4"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1135,7 +1135,7 @@ dependencies = [
 [[package]]
 name = "brain-server"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=a103d878236191b40b1f5a81b54622b99f26e5b4#a103d878236191b40b1f5a81b54622b99f26e5b4"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1160,7 +1160,7 @@ dependencies = [
 [[package]]
 name = "brain-standalone"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/brain.git?rev=a103d878236191b40b1f5a81b54622b99f26e5b4#a103d878236191b40b1f5a81b54622b99f26e5b4"
+source = "git+https://github.com/aexhq/brain.git?rev=6a5c5063f532f85c90f0bb9b6473ecc081086a79#6a5c5063f532f85c90f0bb9b6473ecc081086a79"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -1883,7 +1883,7 @@ dependencies = [
 [[package]]
 name = "environment-core"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/extensions.git?rev=128959532186da07610b7923fe311ee0f9bfa64c#128959532186da07610b7923fe311ee0f9bfa64c"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
 dependencies = [
  "async-trait",
  "cap-std",
@@ -1901,7 +1901,7 @@ dependencies = [
 [[package]]
 name = "environment-egress-gateway"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/extensions.git?rev=128959532186da07610b7923fe311ee0f9bfa64c#128959532186da07610b7923fe311ee0f9bfa64c"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
 dependencies = [
  "base64",
  "brain-protocol",
@@ -1920,7 +1920,7 @@ dependencies = [
 [[package]]
 name = "environment-lambda"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/extensions.git?rev=128959532186da07610b7923fe311ee0f9bfa64c#128959532186da07610b7923fe311ee0f9bfa64c"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -1948,7 +1948,7 @@ dependencies = [
 [[package]]
 name = "environment-policy"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/extensions.git?rev=128959532186da07610b7923fe311ee0f9bfa64c#128959532186da07610b7923fe311ee0f9bfa64c"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
 dependencies = [
  "brain-protocol",
  "serde",
@@ -1960,7 +1960,7 @@ dependencies = [
 [[package]]
 name = "environment-wire"
 version = "0.1.0"
-source = "git+https://github.com/aexhq/extensions.git?rev=128959532186da07610b7923fe311ee0f9bfa64c#128959532186da07610b7923fe311ee0f9bfa64c"
+source = "git+https://github.com/aexhq/extensions.git?rev=8e08d155fb24458972f6cee902c014cb459da576#8e08d155fb24458972f6cee902c014cb459da576"
 dependencies = [
  "brain",
  "brain-protocol",
