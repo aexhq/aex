@@ -16,8 +16,9 @@
   <a href="https://aex.dev">Website</a> ·
   <a href="docs/quickstart.md">Quickstart</a> ·
   <a href="https://aex.dev/dashboard">Dashboard</a> ·
-  <a href="https://discord.gg/Qk2YnHMHVb">Discord</a>
 </p>
+
+> This repo is under early and heavy development
 
 Aex is a session-oriented backend for AI applications, built on a minimal and extensible
 kernel ([Brain](https://github.com/aexhq/brain)). The kernel owns mechanism — durable
