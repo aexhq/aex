@@ -87,6 +87,14 @@ jobs:
       - name: Use the npm version pinned for trusted publishing
         run: npm install --global npm@11.19.0
       - run: npm ci
+      - name: Checkout the pinned Brain contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          brain_revision=$(node tools/pinned-revision.mjs brain)
+          git clone --filter=blob:none https://github.com/aexhq/brain.git ../brain
+          git -C ../brain checkout "$brain_revision"
+          test "$(git -C ../brain rev-parse HEAD)" = "$brain_revision"
       - run: npm test
 
   stage-package-smoke:
