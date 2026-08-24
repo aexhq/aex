@@ -56,11 +56,18 @@ if (operation === "bootstrap") {
   if (!process.env.NODE_AUTH_TOKEN) {
     throw new Error("the protected npm-production environment has no NPM_DIST_TAG_TOKEN");
   }
-  const missing = manifest.packages.filter(
-    (item) => registryValue(item.name, "name") === undefined,
-  );
+  const missing = manifest.packages.filter((item) => {
+    const versions = registryValue(item.name, "versions");
+    return (
+      versions === undefined ||
+      (item.version !== "0.0.0" &&
+        Array.isArray(versions) &&
+        versions.length === 1 &&
+        versions[0] === "0.0.0")
+    );
+  });
   if (missing.length === 0) {
-    throw new Error("every package name in this release already exists; use stage");
+    throw new Error("every package in this release has a non-placeholder version; use stage");
   }
   for (const item of missing) {
     const spec = `${item.name}@${item.version}`;
@@ -81,11 +88,6 @@ if (operation === "bootstrap") {
         "--provenance",
       ],
       "inherit",
-    );
-    await waitFor(
-      () => registryValue(spec, "dist.integrity"),
-      item.integrity,
-      `${spec} integrity`,
     );
     process.stdout.write(`bootstrapped ${spec} (${item.integrity})\n`);
   }
